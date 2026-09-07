@@ -169,7 +169,7 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
   `TWILIGHT_PLUGIN_INDEX_URL` 切换到自托管 HTTPS `plugins.json`。
 - 第三方插件源码不再写入 Twilight Echo 主项目。后续新增第三方插件统一写入
   `D:\Twilight-Echo-plugins`，对应 GitHub 仓库为
-  `https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`；主项目只实现通用宿主能力，
+  `https://github.com/Px-asen/Twilight-Echo-plugins/`；主项目只实现通用宿主能力，
   通过远程 `plugins.json` 消费插件。
 
 ---

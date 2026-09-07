@@ -9,14 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/asenyarzc-cpu/Twilight_Echo?display_name=tag&style=flat-square" /></a>
+  <a href="https://github.com/Px-asen/Twilight_Echo/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Px-asen/Twilight_Echo?display_name=tag&style=flat-square" /></a>
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb?style=flat-square&logo=windows11&logoColor=white" />
   <img alt="Version" src="https://img.shields.io/badge/version-1.1.2-0f766e?style=flat-square" />
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest"><strong>下载最新版</strong></a>
+  <a href="https://github.com/Px-asen/Twilight_Echo/releases/latest"><strong>下载最新版</strong></a>
   ·
   <a href="#功能一览">功能一览</a>
   ·
@@ -24,7 +24,7 @@
   ·
   <a href="#支持的音频格式">格式支持</a>
   ·
-  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/issues">问题反馈</a>
+  <a href="https://github.com/Px-asen/Twilight_Echo/issues">问题反馈</a>
 </p>
 
 ![Twilight Echo 本地音乐主页](./assets/screenshots/local-dashboard.png)
@@ -174,7 +174,7 @@ PCM SRC 支持 SWR；SoXR 是随 FFmpeg 构建可选的运行时引擎，在没�
 
 ### Windows 10 / 11
 
-1. 前往 [Releases](https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest)。
+1. 前往 [Releases](https://github.com/Px-asen/Twilight_Echo/releases/latest)。
 2. 下载名称以 <code>-setup.exe</code> 结尾的安装程序。
 3. 如果 Release 同时提供 <code>.sha256</code> 文件，请在安装前核对校验值。
 4. 运行安装程序并按向导完成安装。
@@ -205,7 +205,7 @@ CoreAudio 与 ALSA 后端已存在，但目前没有经过与 Windows 同等级�
 - [插件开发指南](./docs/PLUGIN_README.md)
 - [插件规范](./docs/twilight-echo-plugin-spec.md)
 - [Windows 发布检查](./docs/windows-release-gate.md)
-- [第三方插件仓库](https://github.com/asenyarzc-cpu/Twilight-Echo-plugins)
+- [第三方插件仓库](https://github.com/Px-asen/Twilight-Echo-plugins)
 
 从源码运行需要 Node.js 22 与项目锁定的 <code>pnpm@11.7.0</code>：
 
@@ -217,8 +217,8 @@ pnpm run dev</code></pre>
 
 ## 反馈与贡献
 
-- 遇到问题或希望提出建议：[提交 Issue](https://github.com/asenyarzc-cpu/Twilight_Echo/issues)
-- 下载历史版本：[查看 Releases](https://github.com/asenyarzc-cpu/Twilight_Echo/releases)
+- 遇到问题或希望提出建议：[提交 Issue](https://github.com/Px-asen/Twilight_Echo/issues)
+- 下载历史版本：[查看 Releases](https://github.com/Px-asen/Twilight_Echo/releases)
 - 提交代码前请先阅读开发者文档，并使用项目规定的 pnpm 工作流。
 
 反馈问题时，建议附上 Twilight Echo 版本、Windows 版本、音频输出后端、设备/驱动名称、复现步骤和相关日志；音频问题如涉及 DSD、ASIO 或独占模式，也请注明文件格式与采样参数。

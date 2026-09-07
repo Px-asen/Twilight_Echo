@@ -174,7 +174,7 @@ test('loads remote index, records source status, and writes cache', async () => 
   const fixture = await createIndexFixture()
   const cachePath = join(fixture.root, 'cache', 'plugins.json')
   const remoteUrl =
-    'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
+    'https://raw.githubusercontent.com/Px-asen/Twilight-Echo-plugins/main/plugins.json'
   const service = new PluginIndexService({
     appVersion: '0.20.0',
     localIndexPath: fixture.indexPath,

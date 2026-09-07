@@ -41,7 +41,7 @@ const DEFAULT_LIMIT = 20
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 const FETCH_TIMEOUT_MS = 8_000
 const USER_AGENT =
-  'TwilightEcho/1.0 (radio-browser client; +https://github.com/asenyarzc-cpu/Twilight_Echo)'
+  'TwilightEcho/1.0 (radio-browser client; +https://github.com/Px-asen/Twilight_Echo)'
 
 export async function searchRadioBrowserStations(
   options: RadioBrowserSearchOptions

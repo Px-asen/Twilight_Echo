@@ -904,7 +904,7 @@ async function installUpdate(): Promise<void> {
 }
 
 function openReleasePage(): void {
-  const url = releaseUrl.value || 'https://github.com/asenyarzc-cpu/Twilight_Echo/releases'
+  const url = releaseUrl.value || 'https://github.com/Px-asen/Twilight_Echo/releases'
   void window.api?.shell?.openExternal?.(url)
 }
 

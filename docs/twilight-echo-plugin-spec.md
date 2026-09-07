@@ -74,7 +74,7 @@ primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时�
 - Twilight Echo 主项目仓库不保存第三方插件源码、测试或第三方插件专属 `.tep` 发布包。
 - 主项目只保存宿主能力、插件 API / tooling、内置基础插件和应用内插件市场客户端。
 - 第三方插件源码统一写入独立插件仓库：
-  - GitHub：`https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`
+  - GitHub：`https://github.com/Px-asen/Twilight-Echo-plugins/`
   - 本地：`D:\Twilight-Echo-plugins`
 - 新增第三方插件时，源码放在 `D:\Twilight-Echo-plugins\plugins\<plugin-name>\`，
   打包产物放在 `D:\Twilight-Echo-plugins\packages\`，索引写入
@@ -276,7 +276,7 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - `create-twilight-plugin` 提供 `init` 与 `pack`：模板覆盖 `tool`、`provider`、`ui-tool`、`theme`；`pack` 产物为 `.tep` zip，根目录必须包含 `plugin.json`。
 - 官方索引为远程 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified` 与 `publisherSignature`。为兼容 API v1 保留 `verified`，但它严格表示“索引发布者声明已审核”，自定义索引、缓存索引和离线索引中的 `verified: true` 最多显示为“索引声明”。
 - `publisherSignature` 格式固定为 `{ schemaVersion: 1, algorithm: "ed25519", keyId, value }`，其中 `value` 是 canonical base64 编码的 64-byte Ed25519 签名。签名 payload 是 canonical JSON：`{ schemaVersion: 1, indexOrigin, entry }`；`entry` 包含规范化后的完整 manifest、`sourceUrl`、`checksumSha256`、`tags` 和 `verified`，只排除 `publisherSignature` 及宿主派生的 `verification` / `installState` / `installedVersion`。manifest 的 nested `main` / `icon` / `binary.*` 路径必须先按 POSIX `/` canonicalize，因此 Windows host 与 Linux signer 产生完全相同的 bytes。修改来源 URL、checksum、审核声明、路径或任一 manifest 字段都会使签名失效。
-- “官方验证”徽章必须同时满足：索引来源精确等于固定 URL `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`；本次为 fresh、未发生 redirect 的远程直连加载；实际 origin 已绑定且与配置一致；记录未 stale、未过期；`verified: true`；签名由当前有效且未吊销的可信发布者 key 验证通过。`list`、`getIndexStatus` 与下载边界每次都按当前时间重新计算 `expiresAt` 与 key `notBefore` / `notAfter`，加载时的 official 结果不得永久缓存。任一条件缺失都降级为“发布者签名有效”“索引声明”或“未验证”。URL 前后缀、相似域名和任何 redirected response 均不等价。
+- “官方验证”徽章必须同时满足：索引来源精确等于固定 URL `https://raw.githubusercontent.com/Px-asen/Twilight-Echo-plugins/main/plugins.json`；本次为 fresh、未发生 redirect 的远程直连加载；实际 origin 已绑定且与配置一致；记录未 stale、未过期；`verified: true`；签名由当前有效且未吊销的可信发布者 key 验证通过。`list`、`getIndexStatus` 与下载边界每次都按当前时间重新计算 `expiresAt` 与 key `notBefore` / `notAfter`，加载时的 official 结果不得永久缓存。任一条件缺失都降级为“发布者签名有效”“索引声明”或“未验证”。URL 前后缀、相似域名和任何 redirected response 均不等价。
 - 可信发布者公钥注册表位于 `resources/plugin-index/trusted-publishers.json`，允许多个 active key、`notBefore` / `notAfter` 有效期、key 状态和集中 `revokedKeyIds`，用于无中断轮换与紧急吊销。未知状态、重复 key ID、无效 key 或损坏注册表必须 fail closed。生产私钥禁止进入应用仓库；签名在外部插件发布仓库的受保护 CI 或离线签名环境完成，应用仓库只发布公钥。当前注册表在正式 release key 配置前保持空，现有未签名条目不会获得官方徽章。
 - 应用内市场默认读取上述固定 URL；`TWILIGHT_PLUGIN_INDEX_URL` 可覆盖为自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程成功后以 `cacheSchemaVersion: 1` envelope 缓存，强制持久化 `origin`、`fetchedAt`、`expiresAt` 与原始 `index`。远程失败时可回退缓存，但缓存一律标记 stale；过期状态按持久化时间计算，envelope 自带的任何“可信”布尔值均被忽略，`originVerified` 只由持久化 origin 与当前配置精确相等推导。旧版裸 `plugins.json` cache 作为 `legacy` 读取时同时标记 stale、expired、origin unverified，永不升级信任。
 - `resources/plugin-index/plugins.json` 是随应用分发的离线发现快照，不是官方审核或签名信任根；远程与缓存都不可用时才用于发现，任何字段都不能触发官方徽章。安装前仍必须校验 sourceUrl、包大小、sha256 与包内 manifest；manager 对最终私有 staging 包再次计算 SHA-256 并与索引期望比较，防止下载校验后包被替换。

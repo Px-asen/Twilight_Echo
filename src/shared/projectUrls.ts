@@ -1,4 +1,4 @@
-export const GITHUB_OWNER = 'asenyarzc-cpu'
+export const GITHUB_OWNER = 'Px-asen'
 export const GITHUB_REPO = 'Twilight_Echo'
 export const GITHUB_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
 export const RELEASES_URL = `${GITHUB_URL}/releases`

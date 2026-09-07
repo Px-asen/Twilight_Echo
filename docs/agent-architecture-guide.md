@@ -243,7 +243,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 权威契约在 `docs/twilight-echo-plugin-spec.md` 与 `docs/twilight-echo-plugin-plan.md`，改插件行为前必须完整阅读。摘要：
 
 - 插件只运行在 `pluginHost`（utilityProcess），通过版本化 `twilight` API 访问宿主能力；禁止 import Electron / Node / 宿主内部。
-- **第三方插件源码不得写入本仓库**。外部插件仓：https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/（本地 `D:\Twilight-Echo-plugins`）。布局：`plugins/<name>/` → pack 到 `packages/` → 索引进 `plugins.json`。app 索引顺序：`TWILIGHT_PLUGIN_INDEX_URL` → 缓存 → `resources/plugin-index/plugins.json`。
+- **第三方插件源码不得写入本仓库**。外部插件仓：https://github.com/Px-asen/Twilight-Echo-plugins/（本地 `D:\Twilight-Echo-plugins`）。布局：`plugins/<name>/` → pack 到 `packages/` → 索引进 `plugins.json`。app 索引顺序：`TWILIGHT_PLUGIN_INDEX_URL` → 缓存 → `resources/plugin-index/plugins.json`。
 - 内置例外仅 `resources/plugins/ncm-provider`（`com.twilightecho.provider.ncm`），不是第三方先例。
 - 主题插件只允许 CSS 变量/样式表；结构化主题运行时在 `src/shared/theme.ts`，归档校验/库在 `src/main/themes/`。
 - DSP 原生插件走 C ABI（spec 第 5 节），实时安全铁律是审核硬性项；宿主侧有 ABI 校验与隔离（`audio-engine` 内 tests/plugins）。

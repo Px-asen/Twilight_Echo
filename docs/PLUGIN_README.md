@@ -262,7 +262,7 @@ TLS 由 `undici.ProxyAgent` 处理，使用系统 CA 校验证书。重定向由
 | `verified`                | 索引发布者声明“已审核”的元数据；单独出现时只显示“索引声明”                                    |
 | `publisherSignature`      | 索引专用 Ed25519 发布者签名；不写入包内 `plugin.json`，也不等同于 manifest 的预留 `signature` |
 
-默认远程索引是 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`。第三方插件源码和发布 `.tep` 包不放在主仓库；开发和发布时应写入外部插件仓库，由外部仓库生成 `plugins.json`。
+默认远程索引是 `https://raw.githubusercontent.com/Px-asen/Twilight-Echo-plugins/main/plugins.json`。第三方插件源码和发布 `.tep` 包不放在主仓库；开发和发布时应写入外部插件仓库，由外部仓库生成 `plugins.json`。
 
 `TWILIGHT_PLUGIN_INDEX_URL` 环境变量优先级最高，可指向自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。自定义索引的 `verified: true` 只表示该索引自己的声明。官方徽章要求本次从上面的固定官方 URL 直接、fresh 加载，实际 origin 与配置精确一致，记录未 stale/过期，并由 `resources/plugin-index/trusted-publishers.json` 中当前有效且未吊销的 Ed25519 key 验签通过。宿主在每次 list/status/download 时按当前时间重验索引 TTL 与 key 有效期，不把加载时结果永久缓存。
 
@@ -278,7 +278,7 @@ TLS 由 `undici.ProxyAgent` 处理，使用系统 CA 校验证书。重定向由
 
 第三方插件源码、测试、`.tep` 发布包**不进应用主仓库**。它们统一放在独立的外部插件仓库：
 
-- GitHub：`https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`
+- GitHub：`https://github.com/Px-asen/Twilight-Echo-plugins/`
 - 本地路径：`D:\Twilight-Echo-plugins`
 
 外部仓库的布局：

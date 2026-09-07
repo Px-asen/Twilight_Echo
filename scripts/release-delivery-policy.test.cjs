@@ -116,7 +116,7 @@ test('update checks download GitHub release installers without electron-updater'
   const projectUrls = read('src/shared/projectUrls.ts')
   const updater = read('src/main/ipc/appIpc.ts')
   const service = read('src/main/app/appUpdateService.ts')
-  assert.match(projectUrls, /export const GITHUB_OWNER = 'asenyarzc-cpu'/)
+  assert.match(projectUrls, /export const GITHUB_OWNER = 'Px-asen'/)
   assert.match(projectUrls, /export const GITHUB_REPO = 'Twilight_Echo'/)
   assert.match(
     projectUrls,
