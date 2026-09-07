@@ -132,7 +132,7 @@ PCM SRC 支持 SWR；SoXR 是随 FFmpeg 构建可选的运行时引擎，在没�
 - 自研 C++20 原生音频引擎，使用独立服务进程隔离播放与离线分析任务。
 - Windows 支持 WASAPI Shared 与 WASAPI Exclusive；共享模式经过系统混音，独占模式可在设备允许时进行格式直通。
 - DSD 播放设备协商确认时，才由专用后端/设备承载，与 PCM 输出路径解耦；支持 DoP 以及 SACD ISO、DSF、DFF 等 DSD 内容，具体可用模式由音频设备、驱动和当前后端决定。
-- Windows x64 包含独立的 ASIO 兼容层；当前属于实验性能力，需要兼容设备和显式启用。
+- Windows x64 构建中的 ASIO 兼容层仍属实验性，真实设备支持尚未验证；具体以发布包的能力清单与输出诊断为准。
 - 输出后端、设备、采样格式、缓冲设置与设备能力诊断均可在应用内查看和切换。
 - WASAPI 与 CoreAudio 没有平台级 native DSD 通道，会使用 DoP 或 PCM 回退；Linux 仅在兼容的 ALSA <code>hw:</code> 设备上尝试 native DSD。
 - 音频服务崩溃可重启并恢复输出配置、DSP 状态和队列。
