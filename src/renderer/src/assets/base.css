@@ -1994,9 +1994,9 @@ html[data-theme='dark'] .modal-overlay {
 }
 
 html[data-theme='dark'] .import-dialog,
-html[data-theme='dark'] .folder-list,
-html[data-theme='dark'] .folder-item,
-html[data-theme='dark'] .progress-bar-bg {
+html[data-theme='dark'] .import-dialog .folder-list,
+html[data-theme='dark'] .import-dialog .folder-item,
+html[data-theme='dark'] .import-dialog .progress-bar-bg {
   border-color: rgba(148, 163, 184, 0.16);
   background: #0d1320;
   color: rgba(248, 250, 252, 0.94);

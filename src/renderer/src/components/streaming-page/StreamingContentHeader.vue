@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AnimatedInput from '../AnimatedInput.vue'
-import type { MediaProviderProfile } from '../../providers/mediaProvider'
+import StreamingProviderSwitcher from './StreamingProviderSwitcher.vue'
+import type { StreamingProviderOption } from '../../utils/streamingNavigation'
 
 defineProps<{
   isDetail: boolean
@@ -12,19 +13,18 @@ defineProps<{
   showUnifiedSearch: boolean
   searchQuery: string
   searchLoading: boolean
-  loggedIn: boolean
-  profile: MediaProviderProfile | null
+  providerId: string
+  providerOptions: StreamingProviderOption[]
 }>()
 
 const emit = defineEmits<{
   back: []
   'clear-search': []
   'update:searchQuery': [value: string]
-  login: []
+  'select-provider': [providerId: string]
 }>()
 
 const searchInputFocused = ref(false)
-const avatarLoadFailed = ref(false)
 </script>
 
 <template>
@@ -83,21 +83,13 @@ const avatarLoadFailed = ref(false)
           <i class="pi pi-times"></i>
         </button>
       </div>
-      <button
-        v-if="loggedIn"
-        type="button"
-        class="streaming-avatar-btn"
-        title="个人资料"
-        @click="emit('login')"
-      >
-        <img
-          v-if="profile?.avatarUrl && !avatarLoadFailed"
-          :src="profile.avatarUrl"
-          alt=""
-          @error="avatarLoadFailed = true"
-        />
-        <i v-else class="pi pi-user"></i>
-      </button>
+      <StreamingProviderSwitcher
+        v-if="providerOptions.length > 0"
+        class="streaming-header-provider-switcher"
+        :model-value="providerId"
+        :options="providerOptions"
+        @change="emit('select-provider', $event)"
+      />
     </div>
   </header>
 </template>

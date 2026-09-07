@@ -167,9 +167,20 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - 主页只对显式声明 `ui.streamingSections[]` 且实际实现对应 method 的音源开放，
   按区块的 `id/title/icon/method/args` 加载推荐内容；仅为能力兼容而提供空实现的
   provider 不得进入主页音源列表。`fetchRecommendPlaylists` 作为已准入首页的可选歌单架。
+  可选的 `ui.streamingHome` 启用品牌首页版式：`subtitle` 为页首文案，
+  `requiresLogin: false` 允许在确认插件免责声明后浏览公开推荐（包含推荐歌单）；
+  缺省仍要求登录。分区可提供 `eyebrow` 与 `description`，说明内容来源，公开新歌和榜单不得标为个性化推荐。
+  单个分区可声明 `requiresLogin: true`，未登录时跳过该请求并显示登录入口，不阻止其它公开分区加载。
+  首页调用与普通 provider 调用均通过 `toProviderIpcArgs` 转换 Vue 响应式参数，再进入 preload。
+  新字段的跨进程类型统一位于 `src/shared/providerHome.ts`。首页最多展示三个歌曲分区及十二张歌单，
+  分区请求失败时保留其它成功内容，并提供重试；刷新保留已有内容，切源后废弃旧请求。
+  私人 FM 续播按当前播放曲目的音源请求，切换首页音源不会向原 FM 队列混入其它音源。
+  续播对现有播放队列去重，重复批次进入冷却；刷新或登录态变化后的首页不接收旧请求结果。
   发现页以 `fetchDiscoveryPlaylists` 为准入条件，
   `fetchPlaylistCategories` 与 `fetchHighQualityPlaylists` 均为可选增强；缺失时对应分类或精品
   控件必须隐藏。用户切换音源后，旧 provider 的迟到响应不得覆盖新页面状态。
+  上游不支持排序时可声明 `ui.streamingDiscovery.supportsSort: false`。
+  未返回总数的分页响应用 `total: 0` 与真实 `hasMore`，宿主仅显示当前页和前后翻页按钮，不推算总页数。
 - 网易云音乐是 Twilight Echo 自带基础 `MediaProvider` 插件：插件 ID 为
   `com.twilightecho.provider.ncm`，provider 前缀固定为 `ncm`，随软件分发并默认启用；
   用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。

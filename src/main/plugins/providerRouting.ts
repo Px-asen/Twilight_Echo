@@ -161,7 +161,12 @@ export function normalizeProviderUi(raw: unknown): TwilightMediaProviderRegistra
         title: typeof item.title === 'string' ? item.title : '',
         icon: typeof item.icon === 'string' ? item.icon : 'pi pi-music',
         method: typeof item.method === 'string' ? item.method : '',
-        args: Array.isArray(item.args) ? item.args : undefined
+        args: Array.isArray(item.args) ? item.args : undefined,
+        ...(typeof item.requiresLogin === 'boolean' ? { requiresLogin: item.requiresLogin } : {}),
+        ...(typeof item.eyebrow === 'string' ? { eyebrow: item.eyebrow.slice(0, 60) } : {}),
+        ...(typeof item.description === 'string'
+          ? { description: item.description.slice(0, 240) }
+          : {})
       }))
       .filter((section) => section.id && section.title && section.method)
   }
@@ -188,6 +193,26 @@ export function normalizeProviderUi(raw: unknown): TwilightMediaProviderRegistra
           .filter((action) => action.label && action.method)
       : undefined,
     streamingSections,
+    ...(record.streamingDiscovery && typeof record.streamingDiscovery === 'object'
+      ? {
+          streamingDiscovery: {
+            supportsSort:
+              (record.streamingDiscovery as Record<string, unknown>).supportsSort !== false
+          }
+        }
+      : {}),
+    ...(record.streamingHome && typeof record.streamingHome === 'object'
+      ? {
+          streamingHome: {
+            requiresLogin:
+              (record.streamingHome as Record<string, unknown>).requiresLogin !== false,
+            subtitle:
+              typeof (record.streamingHome as Record<string, unknown>).subtitle === 'string'
+                ? String((record.streamingHome as Record<string, unknown>).subtitle).slice(0, 120)
+                : undefined
+          }
+        }
+      : {}),
     streamingLibraryTab:
       typeof record.streamingLibraryTab === 'boolean' ? record.streamingLibraryTab : undefined,
     streamingSearch:

@@ -50,12 +50,16 @@ const albumCards = computed(() =>
     trackCount: album.trackCount
   }))
 )
-const summary = computed(() => ({
-  tracks: tracks.value.length,
-  albums: albums.value.length,
-  artists: artists.value.length,
-  hours: Math.round(library.value.totalSeconds / 3600)
-}))
+const summary = computed(() => {
+  const totalMinutes = Math.round(library.value.totalSeconds / 60)
+  return {
+    tracks: tracks.value.length,
+    albums: albums.value.length,
+    artists: artists.value.length,
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60
+  }
+})
 
 function play(track: Track): void {
   if (currentTrack.value?.id === track.id) {

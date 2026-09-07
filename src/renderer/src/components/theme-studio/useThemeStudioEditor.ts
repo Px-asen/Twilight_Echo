@@ -1,4 +1,10 @@
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  matchesStudioSearch,
+  studioModeLabels,
+  studioTokenGroup,
+  studioTokenLabel
+} from '@renderer/components/theme-studio/themeVisualControls'
 import {
   BUILT_IN_THEME_PRESETS,
   BUILT_IN_THEME_FONTS,
@@ -31,10 +37,10 @@ import {
   type ThemeVisibilitySlotId,
   type ThemeWindowDefaults
 } from '../../../../shared/theme.ts'
-import { useExtensionRegistry, type ThemeContribution } from '../../extensions/registry'
-import { getPluginThemeKey } from '../../extensions/themeSelection'
-import { useThemeStore } from '../../stores/useThemeStore'
-import { createThemePreviewScheduler } from '../../utils/themePreviewScheduler'
+import { useExtensionRegistry, type ThemeContribution } from '@renderer/extensions/registry'
+import { getPluginThemeKey } from '@renderer/extensions/themeSelection'
+import { useThemeStore } from '@renderer/stores/useThemeStore'
+import { createThemePreviewScheduler } from '@renderer/utils/themePreviewScheduler'
 
 export type { BuiltInThemePresetId } from '../../../../shared/theme.ts'
 export type ThemePreviewSurface = 'dashboard' | 'player' | 'equalizer'
@@ -62,6 +68,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   const tone = ref<ThemeTone>('pureWhite')
   const domain = ref<ThemeStudioDomain>(options.initialDomain ?? 'presets')
   const studioSearchQuery = ref('')
+  const editorPaneRef = ref<HTMLElement | null>(null)
   const previewSurface = ref<ThemePreviewSurface>('dashboard')
   const previewViewportRef = ref<HTMLElement | null>(null)
   const previewViewportStyle = ref<Record<string, string>>({})
@@ -79,16 +86,16 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   )
 
   const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
-    { id: 'presets', label: '预设画廊', icon: 'ph ph-grid-four' },
-    { id: 'personalization', label: '个性化与材质', icon: 'ph ph-palette' },
+    { id: 'presets', label: '选择主题', icon: 'ph ph-grid-four' },
+    { id: 'personalization', label: '配色与背景', icon: 'ph ph-palette' },
     { id: 'shell', label: '界面与设置', icon: 'ph ph-squares-four' },
-    { id: 'navigation', label: '图标与导航', icon: 'ph ph-sidebar' },
+    { id: 'navigation', label: '图标与侧边栏', icon: 'ph ph-sidebar' },
     { id: 'library', label: '媒体库', icon: 'ph ph-music-notes-simple' },
     { id: 'typography', label: '字体与歌词', icon: 'ph ph-text-aa' },
     { id: 'player', label: '播放器与封面', icon: 'ph ph-play-circle' },
-    { id: 'windows', label: '独立窗口', icon: 'ph ph-app-window' },
-    { id: 'motion', label: '动效', icon: 'ph ph-wind' },
-    { id: 'advanced', label: '高级令牌', icon: 'ph ph-sliders-horizontal' }
+    { id: 'windows', label: '小窗与桌面歌词', icon: 'ph ph-app-window' },
+    { id: 'motion', label: '动画', icon: 'ph ph-wind' },
+    { id: 'advanced', label: '更多外观', icon: 'ph ph-sliders-horizontal' }
   ]
 
   const playerLayouts: Array<{ id: ThemePlayerLayout; label: string }> = [
@@ -109,12 +116,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     { id: 'playerAlbumArtist', label: '专辑与艺术家' },
     { id: 'playerArtwork', label: '播放器封面' },
     { id: 'playerTrackMenu', label: '曲目菜单' },
-    { id: 'playerMiscIcons', label: '杂项图标' },
+    { id: 'playerMiscIcons', label: '播放辅助按钮' },
     { id: 'playerDuration', label: '时长显示' },
-    { id: 'playerWaveform', label: '进度轨道' },
+    { id: 'playerWaveform', label: '播放进度条' },
     { id: 'playerTrackInfo', label: '曲目信息' },
     { id: 'equalizerGrid', label: '均衡器辅助线' },
-    { id: 'equalizerFrequencyGuides', label: '频率准线' },
+    { id: 'equalizerFrequencyGuides', label: '频率参考线' },
     { id: 'equalizerSpectrum', label: '频谱曲线' },
     { id: 'previousButton', label: '上一首按钮' },
     { id: 'nextButton', label: '下一首按钮' },
@@ -137,7 +144,6 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     'material.glassShadow',
     'shape.globalRadius',
     'material.surfaceOpacity',
-    'layout.uiScale',
     'background.gradientStart',
     'background.gradientEnd',
     'background.gradientAngle',
@@ -147,6 +153,8 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   const typographyTokenIds = new Set([
     'typography.bodySize',
+    'typography.bodyWeight',
+    'typography.metaWeight',
     'typography.titleWeight',
     'typography.chromeText'
   ])
@@ -208,25 +216,27 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
       title: item.label,
       terms: `${item.id} ${item.label}`
     })),
-    ...THEME_TOKEN_DEFINITIONS.map((definition) => ({
+    ...THEME_TOKEN_DEFINITIONS.filter(
+      (definition) => definition.kind !== 'raw' && definition.id !== 'layout.uiScale'
+    ).map((definition) => ({
       domain: domainForToken(definition),
       kind: 'token' as const,
       id: definition.id,
-      title: definition.label,
-      terms: `${definition.id} ${definition.surface} ${definition.group} ${definition.cssVariable}`
+      title: studioTokenLabel(definition.label, definition.id),
+      terms: `${definition.label} ${definition.id} ${definition.surface} ${definition.group} ${definition.cssVariable}`
     })),
     ...THEME_MODE_DEFINITIONS.map((definition) => ({
       domain: domainForModeId(definition.id),
       kind: 'mode' as const,
       id: definition.id,
-      title: definition.label,
-      terms: `${definition.id} ${definition.options.join(' ')}`
+      title: studioModeLabels[definition.id] ?? definition.label,
+      terms: `${definition.label} ${definition.id} ${definition.options.join(' ')}`
     })),
     {
       domain: 'player',
       kind: 'section',
       id: 'visibility',
-      title: '可见性',
+      title: '显示哪些内容',
       terms: 'visibility 可见性 隐藏 显示'
     },
     {
@@ -269,32 +279,73 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     if (domain.value === 'motion') {
       return THEME_TOKEN_DEFINITIONS.filter((definition) => definition.group === 'motion')
     }
-    return [...THEME_TOKEN_DEFINITIONS]
+    return THEME_TOKEN_DEFINITIONS.filter(
+      (definition) =>
+        domainForToken(definition) === 'advanced' &&
+        definition.kind !== 'raw' &&
+        definition.id !== 'layout.uiScale'
+    )
   })
 
   const visibleDefinitions = computed(() => {
     const query = studioSearchQuery.value.trim().toLowerCase()
     if (!query) return definitions.value
     return definitions.value.filter((definition) =>
-      `${definition.label} ${definition.id} ${definition.surface} ${definition.group}`
-        .toLowerCase()
-        .includes(query)
+      matchesStudioSearch(
+        query,
+        studioTokenLabel(definition.label, definition.id),
+        definition.label,
+        definition.id,
+        definition.surface,
+        definition.group
+      )
     )
+  })
+
+  const appearanceGroups = computed(() => {
+    const groups = new Map<string, ThemeTokenDefinition[]>()
+    for (const definition of visibleDefinitions.value) {
+      const name = studioTokenGroup(definition.id)
+      const group = groups.get(name) ?? []
+      group.push(definition)
+      groups.set(name, group)
+    }
+    return [...groups].map(([name, items]) => ({ name, items }))
   })
 
   const filteredStudioHits = computed(() => {
     const query = studioSearchQuery.value.trim().toLowerCase()
     if (!query) return [] as StudioSearchHit[]
     return STUDIO_SEARCH_INDEX.filter((hit) =>
-      `${hit.title} ${hit.terms}`.toLowerCase().includes(query)
+      matchesStudioSearch(query, hit.title, hit.terms)
     ).slice(0, 40)
   })
 
-  function jumpToSearchHit(hit: StudioSearchHit): void {
+  async function jumpToSearchHit(hit: StudioSearchHit): Promise<void> {
     domain.value = hit.domain
-    if (hit.kind === 'section' && hit.id !== 'visibility' && hit.id !== 'palettes') {
-      studioSearchQuery.value = ''
+    studioSearchQuery.value = ''
+    await nextTick()
+    const pane = editorPaneRef.value
+    if (!pane) return
+    const target = [...pane.querySelectorAll<HTMLElement>('[data-studio-setting]')].find(
+      (element) => element.dataset.studioSetting === hit.id
+    )
+    if (!target) {
+      pane.scrollTop = 0
+      return
     }
+    for (
+      let parent = target.parentElement;
+      parent && parent !== pane;
+      parent = parent.parentElement
+    ) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true
+    }
+    const control = target.matches('input, select, button')
+      ? target
+      : (target.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled)') ?? target)
+    control.focus({ preventScroll: true })
+    target.scrollIntoView({ block: 'center', behavior: 'instant' })
   }
 
   const activeDomain = computed(
@@ -362,13 +413,13 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         minimum: 4.5
       },
       {
-        label: '设置文字 / 设置表面',
+        label: '设置页文字与背景',
         foreground: valueForId('settings.text.primary'),
         background: valueForId('surface.settings'),
         minimum: 4.5
       },
       {
-        label: '导航文字 / 导航表面',
+        label: '侧边栏文字与背景',
         foreground: valueForId('navigation.text'),
         background: valueForId('navigation.surface'),
         minimum: 4.5
@@ -403,7 +454,6 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     { key: 'displayFont', tokenId: 'typography.display', label: '标题字体' },
     { key: 'roundedFont', tokenId: 'typography.rounded', label: '歌词字体' }
   ]
-  const personalizationBackgroundBindings = backgroundBindings.slice(0, 1)
 
   function cloneProfile(profile: ThemeProfileV2): ThemeProfileV2 {
     return JSON.parse(JSON.stringify(profile)) as ThemeProfileV2
@@ -527,6 +577,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
       }
     }
     await themeStore.preview(profile)
+    if (domain.value === 'presets') domain.value = 'personalization'
   }
 
   async function derivePreset(preset: ThemeProfileV2): Promise<void> {
@@ -555,7 +606,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
       if (assetId) bindings[key] = assetId
       else delete bindings[key]
       profile.assetBindings = Object.keys(bindings).length > 0 ? bindings : undefined
-      if (key === 'appBackground' && assetId) {
+      if (key.endsWith('Background') && assetId) {
         profile.modes.appearance = {
           ...(profile.modes.appearance ?? {}),
           backgroundTreatment: 'image'
@@ -616,24 +667,53 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     updateWindowDefault(section, key, (event.target as HTMLInputElement).checked)
   }
 
+  const resolvedTokens = computed(() =>
+    resolveThemeProfileTokens(draft.value ?? selectedBuiltInPreset.value, tone.value)
+  )
+
   function valueFor(definition: ThemeTokenDefinition): string {
-    if (draft.value) {
-      return (
-        resolveThemeProfileTokens(draft.value, tone.value)[definition.id] ??
-        definition.defaults[tone.value]
-      )
-    }
-    if (selectedBuiltInPreset.value) {
-      return (
-        resolveThemeProfileTokens(selectedBuiltInPreset.value, tone.value)[definition.id] ??
-        definition.defaults[tone.value]
-      )
-    }
+    if (draft.value?.overrides[tone.value][definition.id] != null)
+      return resolvedTokens.value[definition.id] ?? definition.defaults[tone.value]
     return (
-      TWILIGHT_DEFAULT_THEME.variants[tone.value].tokens[definition.id] ??
+      themeStore.effectiveVariables.value[definition.cssVariable] ||
+      resolvedTokens.value[definition.id] ||
       definition.defaults[tone.value]
     )
   }
+
+  function tokenHint(definition: ThemeTokenDefinition): string {
+    const id = definition.id
+    const appearance = activeModes.value.appearance
+    if (id.startsWith('background.gradient') && appearance?.backgroundTreatment !== 'gradient')
+      return '选择“双色渐变”背景后可以调整。'
+    if (id === 'surface.app' && appearance?.backgroundTreatment !== 'solid')
+      return '选择“实色”背景后可以调整。'
+    if (id === 'background.coverBlur' && appearance?.backgroundTreatment !== 'cover-blur')
+      return '选择“封面模糊”背景后可以调整。'
+    if (id === 'color.primary.500' && appearance?.accentSource === 'cover')
+      return '颜色正在跟随封面；选择“固定颜色”后可以手动调整。'
+    if (['surface.card', 'material.glassShadow', 'material.surfaceOpacity'].includes(id))
+      return '启用液态玻璃的区域由设置中的玻璃外观单独控制。'
+    if (id === 'library.page.surface') return '作用于歌曲列表页面的背景。'
+    return ''
+  }
+
+  function tokenUnavailable(definition: ThemeTokenDefinition): boolean {
+    const appearance = activeModes.value.appearance
+    if (definition.id.startsWith('background.gradient'))
+      return appearance?.backgroundTreatment !== 'gradient'
+    if (definition.id === 'surface.app') return appearance?.backgroundTreatment !== 'solid'
+    if (definition.id === 'background.coverBlur')
+      return appearance?.backgroundTreatment !== 'cover-blur'
+    if (definition.id === 'color.primary.500') return appearance?.accentSource === 'cover'
+    return false
+  }
+
+  watch(domain, (next) => {
+    if (editorPaneRef.value) editorPaneRef.value.scrollTop = 0
+    if (next === 'player' || next === 'typography') previewSurface.value = 'player'
+    else if (next !== 'advanced' && next !== 'motion') previewSurface.value = 'dashboard'
+  })
 
   function valueForId(id: string): string {
     const definition = tokenDefinitionById.get(id)
@@ -641,9 +721,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function sourceFor(definition: ThemeTokenDefinition): string {
-    if (draft.value?.overrides[tone.value][definition.id] != null) return '当前配置档'
+    if (draft.value?.overrides[tone.value][definition.id] != null) return '已自定义'
     const sourcePreset = getBuiltInThemePreset(draft.value?.baseThemeId)
-    if (sourcePreset?.overrides[tone.value][definition.id] != null) return '来源预设'
+    if (sourcePreset?.overrides[tone.value][definition.id] != null) return '原主题'
     const plugin = selectedPluginTheme.value
     if (
       plugin?.structured?.variants[tone.value]?.tokens?.[definition.id] != null ||
@@ -655,11 +735,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function assetSource(key: keyof ThemeAssetBindings): string {
-    return draft.value?.assetBindings?.[key] ? '当前配置档' : '内置默认'
+    return draft.value?.assetBindings?.[key] ? '已选择图片' : '跟随主题'
   }
 
   function updateDraft(mutator: (profile: ThemeProfileV2) => void): void {
     if (!draft.value) return
+    notice.value = ''
     const next = cloneProfile(draft.value)
     mutator(next)
     next.updatedAt = new Date().toISOString()
@@ -670,8 +751,17 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   function updateToken(definition: ThemeTokenDefinition, raw: string): void {
     const normalized = normalizeThemeTokenValue(definition.id, raw)
-    if (!normalized) {
-      localError.value = `${definition.label}的值无效`
+    const cssProperties: Partial<Record<ThemeTokenDefinition['kind'], string>> = {
+      color: 'color',
+      shadow: 'box-shadow',
+      gradient: 'background-image',
+      filter: 'filter',
+      easing: 'transition-timing-function',
+      font: 'font-family'
+    }
+    const cssProperty = cssProperties[definition.kind]
+    if (!normalized || (cssProperty && !CSS.supports(cssProperty, normalized))) {
+      localError.value = `${studioTokenLabel(definition.label, definition.id)}的值无效`
       return
     }
     localError.value = ''
@@ -689,6 +779,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   function applyAccentPalette(value: string): void {
     updateDraft((profile) => {
+      profile.modes.appearance = { ...profile.modes.appearance, accentSource: 'fixed' }
       Object.assign(
         profile.overrides[tone.value],
         createThemeAccentTokenOverrides(value, tone.value, valueForId('surface.app'))
@@ -698,6 +789,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   function applyBackgroundPalette(value: string): void {
     updateDraft((profile) => {
+      profile.modes.appearance = { ...profile.modes.appearance, backgroundTreatment: 'solid' }
       for (const id of [
         'surface.app',
         'surface.local',
@@ -764,7 +856,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function updateNavigationMode(key: 'style' | 'iconScale' | 'logo', event: Event): void {
-    const value = (event.target as HTMLSelectElement).value
+    const value =
+      key === 'logo'
+        ? (event.target as HTMLInputElement).checked
+          ? 'show'
+          : 'hide'
+        : (event.target as HTMLSelectElement).value
     updateDraft((profile) => {
       const navigation = { ...(profile.modes.navigation ?? {}) }
       if (key === 'style' && ['expanded', 'compact', 'rail'].includes(value)) {
@@ -779,7 +876,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function updateLibraryMode(key: 'density' | 'selection' | 'titleOverlay', event: Event): void {
-    const value = (event.target as HTMLSelectElement).value
+    const value =
+      key === 'titleOverlay'
+        ? (event.target as HTMLInputElement).checked
+          ? 'on'
+          : 'off'
+        : (event.target as HTMLSelectElement).value
     updateDraft((profile) => {
       const library = { ...(profile.modes.library ?? {}) }
       if (key === 'density' && (value === 'comfortable' || value === 'compact')) {
@@ -815,7 +917,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function updateArtworkMode(key: 'transition' | 'shadow', event: Event): void {
-    const value = (event.target as HTMLSelectElement).value
+    const value =
+      key === 'shadow'
+        ? (event.target as HTMLInputElement).checked
+          ? 'on'
+          : 'off'
+        : (event.target as HTMLSelectElement).value
     updateDraft((profile) => {
       const artwork = { ...(profile.modes.artwork ?? {}) }
       if (key === 'transition' && ['fade', 'slide', 'none'].includes(value)) {
@@ -899,9 +1006,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function fontSource(binding: (typeof fontBindings)[number]): string {
-    if (draft.value?.assetBindings?.[binding.key]) return '当前配置档 · 本地资源'
-    if (draft.value?.overrides[tone.value][binding.tokenId]) return '当前配置档 · 内置字体'
-    return '内置默认'
+    if (draft.value?.assetBindings?.[binding.key]) return '已导入的字体'
+    if (draft.value?.overrides[tone.value][binding.tokenId]) return '已自定义'
+    return '跟随主题'
   }
 
   function updateFontSlot(binding: (typeof fontBindings)[number], event: Event): void {
@@ -955,6 +1062,10 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         profile.modes.appearance = undefined
         profile.toneSchedule = undefined
         for (const id of [
+          'surface.local',
+          'surface.settings',
+          'surface.streaming',
+          'surface.player',
           'color.primary.400',
           'color.primary.300',
           'color.primary.rgb',
@@ -967,7 +1078,10 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
           delete profile.overrides[tone.value][id]
         }
       }
-      if (domain.value === 'typography') profile.modes.typography = undefined
+      if (domain.value === 'typography') {
+        profile.modes.typography = undefined
+        for (const binding of fontBindings) delete profile.overrides[tone.value][binding.tokenId]
+      }
       if (domain.value === 'navigation') {
         profile.modes.navigation = undefined
         profile.modes.icons = undefined
@@ -1118,7 +1232,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     try {
       await themeStore.setWindowInheritance({ ...current, [key]: !current[key] })
     } catch (cause) {
-      localError.value = cause instanceof Error ? cause.message : '窗口主题继承设置失败'
+      localError.value = cause instanceof Error ? cause.message : '无法更改小窗主题设置'
     }
   }
 
@@ -1128,14 +1242,6 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     updateDraft((profile) => {
       profile.name = name
     })
-  }
-
-  function rangeNumber(definition: ThemeTokenDefinition): number {
-    return Number.parseFloat(valueFor(definition))
-  }
-
-  function supportsColorPicker(value: string): boolean {
-    return /^#[0-9a-f]{6}$/i.test(value)
   }
 
   async function setTone(nextTone: ThemeTone): Promise<void> {
@@ -1222,6 +1328,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     activeDomain,
     activeKey,
     activeModes,
+    appearanceGroups,
     applyAccentPalette,
     applyBackgroundPalette,
     applySelected,
@@ -1238,6 +1345,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     domain,
     domains,
     draft,
+    editorPaneRef,
     duplicateSelected,
     exportTheme,
     filteredStudioHits,
@@ -1257,7 +1365,6 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     localError,
     notice,
     persistedHistory,
-    personalizationBackgroundBindings,
     playerLayouts,
     presetPreviewStyle,
     previewCanvasStyle,
@@ -1267,7 +1374,6 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     previewViewportRef,
     previewViewportStyle,
     profiles,
-    rangeNumber,
     redo,
     removeOverride,
     resetAll,
@@ -1283,8 +1389,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     setPlayerLayout,
     setTone,
     sourceFor,
+    tokenHint,
+    tokenUnavailable,
     studioSearchQuery,
-    supportsColorPicker,
     themeContributions,
     themeStore,
     toggleWindowInheritance,

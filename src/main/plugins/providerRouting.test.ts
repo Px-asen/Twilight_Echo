@@ -195,6 +195,32 @@ test('normalizes provider UI metadata defaults and filters malformed sections', 
   assert.equal(normalizeProviderUi(undefined), undefined)
 })
 
+test('homepage presentation preserves public browsing and bounds provider copy', () => {
+  const ui = normalizeProviderUi({
+    streamingHome: { requiresLogin: false, subtitle: '首页'.repeat(100) },
+    streamingDiscovery: { supportsSort: false },
+    streamingSections: [
+      {
+        id: 'new',
+        title: '新歌首发',
+        method: 'fetchRecommendSongs',
+        args: ['new'],
+        requiresLogin: true,
+        eyebrow: 'FRESH',
+        description: '新歌'.repeat(200)
+      }
+    ]
+  })
+  assert.equal(ui?.streamingHome?.requiresLogin, false)
+  assert.equal(ui?.streamingHome?.subtitle?.length, 120)
+  assert.equal(ui?.streamingDiscovery?.supportsSort, false)
+  assert.equal(ui?.streamingSections?.[0].requiresLogin, true)
+  assert.equal(ui?.streamingSections?.[0].description?.length, 240)
+  assert.equal(ui?.streamingSections?.[0].eyebrow, 'FRESH')
+  assert.deepEqual(ui?.streamingSections?.[0].args, ['new'])
+  assert.equal(normalizeProviderUi({ streamingHome: {} })?.streamingHome?.requiresLogin, true)
+})
+
 test('derives provider method health success rates without mutating records', () => {
   const stats = getProviderMethodStats({
     providerId: 'ncm',

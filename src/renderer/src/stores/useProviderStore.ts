@@ -1,4 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
+import { toProviderIpcArgs } from '@renderer/providers/mediaProvider'
 import type {
   MediaProviderPlaylistSummary,
   MediaProviderProfile,
@@ -54,13 +55,9 @@ export interface ProviderUiMetadata {
     icon: string
     method: string
   }>
-  streamingSections?: Array<{
-    id: string
-    title: string
-    icon: string
-    method: string
-    args?: unknown[]
-  }>
+  streamingHome?: import('../../../shared/providerHome').ProviderHomePresentation
+  streamingDiscovery?: import('../../../shared/providerHome').ProviderDiscoveryPresentation
+  streamingSections?: import('../../../shared/providerHome').ProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean
   /** 接入统一音乐库切换器（资料卡音源下拉），不再占侧边栏独立条目 */
@@ -158,7 +155,11 @@ async function callProvider<T>(
   method: string,
   args: unknown[] = []
 ): Promise<T> {
-  return (await window.api.providers.call(providerId, method as never, args)) as T
+  return (await window.api.providers.call(
+    providerId,
+    method as never,
+    toProviderIpcArgs(args)
+  )) as T
 }
 
 export function useProviderStore(): OnlineProviderStore {

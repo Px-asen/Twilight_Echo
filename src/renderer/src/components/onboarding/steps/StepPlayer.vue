@@ -48,6 +48,7 @@ function setMode(mode: PlayerBarMode): void {
   emit('update:playerBar', {
     ...props.playerBar,
     mode,
+    modeSource: 'user',
     // The standard bar's inline progress is the only progress readout it has;
     // auto-hide would silently take that information away, so keep it safe.
     visibility:

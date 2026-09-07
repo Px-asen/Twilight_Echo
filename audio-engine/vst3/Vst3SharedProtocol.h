@@ -7,11 +7,12 @@
 namespace twilight::vst3::ipc {
 
 constexpr uint32_t kProtocolMagic = 0x33564554u;  // "TEV3"
-constexpr uint32_t kProtocolVersion = 1;
+constexpr uint32_t kProtocolVersion = 2;
 constexpr uint32_t kSlotCount = 4;
 constexpr uint32_t kMaxChannels = 8;
 constexpr uint32_t kMaxFrames = 4096;
-constexpr uint32_t kMaxParameterJsonBytes = 8192;
+constexpr uint32_t kMaxParameters = 2048;
+constexpr uint32_t kMaxParameterJsonBytes = kMaxParameters * 64 + 1;
 constexpr uint32_t kMaxStatusMessageBytes = 512;
 
 enum class HostState : int32_t {

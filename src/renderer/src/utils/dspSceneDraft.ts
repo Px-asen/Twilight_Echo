@@ -7,15 +7,13 @@ export function cloneDspScene(scene: DspScene, id = scene.id, name = scene.name)
 export async function submitDspSceneDraft(
   api: {
     setDspScenes: (scenes: DspScene[], pinnedSceneId: string | null) => Promise<DspSceneState>
-    applyDspScene: (sceneId: string) => Promise<DspSceneState>
   },
   scenes: DspScene[],
   pinnedSceneId: string | null,
   applySceneId?: string
 ): Promise<DspSceneState> {
-  const saved = await api.setDspScenes(
+  return api.setDspScenes(
     scenes.map((scene) => cloneDspScene(scene)),
-    pinnedSceneId
+    applySceneId ?? pinnedSceneId
   )
-  return applySceneId === undefined ? saved : api.applyDspScene(applySceneId)
 }

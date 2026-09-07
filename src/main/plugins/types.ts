@@ -289,6 +289,8 @@ export interface TwilightProviderUiMetadata {
     method: string
   }>
   /** 流媒体首页推荐区块声明 */
+  streamingHome?: import('../../shared/providerHome').ProviderHomePresentation
+  streamingDiscovery?: import('../../shared/providerHome').ProviderDiscoveryPresentation
   streamingSections?: TwilightProviderStreamingSection[]
   /** 是否在流媒体页显示"资料库"标签 */
   streamingLibraryTab?: boolean
@@ -306,18 +308,8 @@ export interface TwilightProviderUiMetadata {
 /**
  * 流媒体首页推荐区块。插件声明后，宿主会自动调用对应 provider 方法获取歌曲列表并渲染。
  */
-export interface TwilightProviderStreamingSection {
-  /** 区块唯一 ID */
-  id: string
-  /** 区块标题 */
-  title: string
-  /** PrimeIcons 图标类名 */
-  icon: string
-  /** provider 方法名（需在 capabilities 中声明对应能力） */
-  method: string
-  /** 方法参数（可选） */
-  args?: unknown[]
-}
+export type TwilightProviderStreamingSection =
+  import('../../shared/providerHome').ProviderStreamingSection
 
 export interface TwilightQrLoginRequest {
   key: string

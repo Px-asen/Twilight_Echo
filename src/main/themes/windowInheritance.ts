@@ -6,8 +6,25 @@ import {
   type ThemeWindowDefaults
 } from '../../shared/theme.ts'
 import { cloneMiniPlayerSettings } from '../../shared/miniPlayer.ts'
+import { resolveThemePlayerBarMode } from '../../shared/themePlayerBar.ts'
 import { runtime } from '../core/runtime.ts'
 import type { AppSettings } from '../core/types.ts'
+
+export function createThemePlayerBarSettingsPatch(
+  snapshot: ThemeLibrarySnapshot
+): Partial<AppSettings> {
+  const selection = snapshot.data.activeTheme
+  const profile =
+    selection.kind === 'user'
+      ? (snapshot.data.profiles.find((entry) => entry.id === selection.id) ?? null)
+      : null
+  const mode = resolveThemePlayerBarMode(selection, profile)
+  const current = runtime.appSettings.playerBar
+  if (mode === null || current.modeSource === 'user' || current.mode === mode) return {}
+  return {
+    playerBar: { ...current, mode, modeSource: 'theme' }
+  }
+}
 
 export async function createInheritedThemeSettingsPatch(
   snapshot: ThemeLibrarySnapshot
@@ -83,6 +100,8 @@ export async function createInheritedThemeSettingsPatch(
       ...(lyrics.shadowColor ? { shadowColor: lyrics.shadowColor } : {})
     }
   }
+
+  Object.assign(patch, createThemePlayerBarSettingsPatch(snapshot))
 
   return patch
 }

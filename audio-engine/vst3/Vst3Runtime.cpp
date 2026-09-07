@@ -1,4 +1,5 @@
 #include "Vst3Runtime.h"
+#include "Vst3SharedProtocol.h"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -34,7 +35,7 @@ namespace twilight::vst3 {
 namespace {
 
 constexpr uint32_t kMaxChannels = 8;
-constexpr uint32_t kMaxParameters = 2048;
+constexpr uint32_t kMaxParameters = ipc::kMaxParameters;
 constexpr uintmax_t kMaxStateBytes = 64u * 1024u * 1024u;
 
 struct ParameterValue {

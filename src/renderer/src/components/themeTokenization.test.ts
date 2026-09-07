@@ -37,6 +37,14 @@ const equalizerSurfaces = [
 const dspRack = readFileSync(new URL('./DspRackPage.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
+const auroraReferenceLayout = readFileSync(
+  new URL('../assets/theme-layouts/aurora-reference.css', import.meta.url),
+  'utf8'
+)
+const obsidianGlassLayout = readFileSync(
+  new URL('../assets/theme-layouts/obsidian-glass.css', import.meta.url),
+  'utf8'
+)
 const settingsPage = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
 const settingsAppearance = readFileSync(
   new URL('./settings-page/AppearanceSettingsSection.vue', import.meta.url),
@@ -67,7 +75,15 @@ const virtualScroll = readFileSync(
   'utf8'
 )
 const localDashboard = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
-const rendererMain = readFileSync(new URL('../main.ts', import.meta.url), 'utf8')
+const nightHarborHome = readFileSync(
+  new URL('./local-dashboard/NightHarborHome.vue', import.meta.url),
+  'utf8'
+)
+const nightHarborHomeStyle = readFileSync(
+  new URL('./local-dashboard/NightHarborHome.css', import.meta.url),
+  'utf8'
+)
+const rendererIconFonts = readFileSync(new URL('../assets/icon-fonts.ts', import.meta.url), 'utf8')
 const settingsStyle = readFileSync(
   new URL('./settings-page/SettingsPage.css', import.meta.url),
   'utf8'
@@ -169,7 +185,7 @@ test('theme studio is a dedicated navigable settings surface', () => {
   assert.match(app, /@open-theme-studio="openThemeStudioPage"/)
   assert.match(settingsSurfaces, /打开主题工作室/)
   assert.doesNotMatch(studioSurfaces, /structuredClone\(profile\)/)
-  assert.match(studioSurfaces, /个性化与材质/)
+  assert.match(studioSurfaces, /配色与背景/)
   assert.match(studio, /theme-domain-list/)
   assert.match(studio, /sourceFor\(definition\)/)
   assert.match(studio, /assetSource\(binding\.key\)/)
@@ -275,12 +291,21 @@ test('phase two unified surface and background tokens are wired into host CSS', 
 })
 
 test('phase three icon, navigation, and library modes use static host-owned presentation', () => {
-  assert.match(rendererMain, /@phosphor-icons\/web\/regular/)
-  assert.doesNotMatch(rendererMain, /@phosphor-icons\/web\/(?:bold|fill)/)
+  assert.match(rendererIconFonts, /@phosphor-icons\/web\/regular/)
+  assert.match(rendererIconFonts, /@phosphor-icons\/web\/bold/)
+  assert.match(rendererIconFonts, /@phosphor-icons\/web\/fill/)
   assert.match(themeIcon, /THEME_ICON_SLOT_REGISTRY/)
   assert.match(themeIcon, /data-theme-icon-slot/)
   assert.match(sideMenu, /icon-slot="navigation\.streaming"/)
   assert.match(sideMenu, /data-te-navigation-style='rail'/)
+  assert.match(sideMenu, /--te-menu-width: 72px !important/)
+  assert.match(obsidianGlassLayout, /data-te-navigation-style='rail'/)
+  assert.match(obsidianGlassLayout, /width: 44px/)
+  assert.match(obsidianGlassLayout, /--te-titlebar-height: 44px/)
+  assert.match(obsidianGlassLayout, /streaming-sidebar-inner/)
+  assert.match(obsidianGlassLayout, /streaming-menu-label[\s\S]*display: none/)
+  assert.match(obsidianGlassLayout, /\.title-bar-start\s*\{\s*transform: translateY\(-4px\)/)
+  assert.match(studioStyle, /inset: var\(--te-titlebar-height, 32px\) 0 0/)
   assert.match(sideMenu, /data-te-navigation-icon-scale='lg'/)
   assert.match(studioSurfaces, /updateIconFamily/)
   assert.match(studio, /updateNavigationMode\('style'/)
@@ -320,6 +345,18 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
   assert.match(dspRack, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
+  assert.match(
+    auroraReferenceLayout,
+    /\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*background: var\(--te-player-bg\)/
+  )
+  assert.match(
+    auroraReferenceLayout,
+    /\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*backdrop-filter: none/
+  )
+  assert.match(
+    auroraReferenceLayout,
+    /\[data-theme='dark'\][\s\S]*\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*background: var\(--te-player-bg\) !important/
+  )
 })
 
 test('phase five presets, recovery, window inheritance, and contextual entries stay declarative', () => {
@@ -329,10 +366,13 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(studioEditor, /persistedHistory/)
   assert.match(studioEditor, /restoreVersion/)
   assert.match(studioEditor, /resetAll/)
-  assert.match(studioSurfaces, /独立窗口/)
+  assert.match(studioSurfaces, /小窗与桌面歌词/)
   assert.match(studioEditor, /updateWindowDefault/)
   assert.match(songListView, /定制此区域外观/)
   assert.match(playingMusic, /定制此区域外观/)
+  assert.doesNotMatch(nightHarborHome, /nh-masthead|nh-wordmark|nh-wordmark-sub|nh-date/)
+  assert.match(nightHarborHomeStyle, /\.nh-intro\s*\{[^}]*padding: 0 0 29px/)
+  assert.match(nightHarborHomeStyle, /\.nh-intro\s*\{\s*padding: 0 0 27px/)
   assert.match(windowInheritance, /surfaceColor/)
   assert.match(windowInheritance, /fontFamily/)
   assert.match(windowInheritance, /shadowColor/)
@@ -403,7 +443,16 @@ test('preview and failed writes restore the persisted runtime without partially 
 test('applying and closing the studio cannot restore stale preview state over the active theme', () => {
   assert.match(
     themeStore,
-    /const next = await window\.api\.themes\.setActive[\s\S]*snapshot\.value = next[\s\S]*previewProfile\.value = null[\s\S]*previewSelection\.value = null[\s\S]*await nextTick\(\)[\s\S]*await applyActiveTheme\(true\)/
+    /const next = await window\.api\.themes\.setActive[\s\S]*acceptThemeSnapshot\(next\)[\s\S]*previewProfile\.value = null[\s\S]*previewSelection\.value = null[\s\S]*await nextTick\(\)[\s\S]*await applyActiveTheme\(true\)/
+  )
+  assert.match(
+    themeStore,
+    /window\.api\.themes\.onChanged\(\(next\) => \{[\s\S]*if \(!acceptThemeSnapshot\(next\)\) return/
+  )
+  assert.match(themeStore, /themeSelectionsEqual\(previousActiveTheme, next\.data\.activeTheme\)/)
+  assert.match(
+    themeStore,
+    /'data-te-preset-layout': resolvePresetLayout\(selection, selectedProfile\)/
   )
   assert.match(studioEditor, /if \(previewCleanup\) return previewCleanup/)
   assert.match(studioEditor, /function closeStudio\(\)[\s\S]*void clearStudioPreview\(\)/)

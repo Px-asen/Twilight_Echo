@@ -50,6 +50,19 @@ function subjectClasses(selector: string): Set<string> {
   return new Set((subject.match(/\.[a-zA-Z_-][\w-]*/g) ?? []).map((name) => name.slice(1)))
 }
 
+function subjectNegatedClasses(selector: string): Set<string> {
+  const subject =
+    selector
+      .split(/[\s>+~]+/)
+      .filter(Boolean)
+      .pop() ?? ''
+  return new Set(
+    [...subject.matchAll(/:not\(([^)]*)\)/g)].flatMap(([, argument]) =>
+      [...argument.matchAll(/\.[a-zA-Z_-][\w-]*/g)].map((name) => name[0].slice(1))
+    )
+  )
+}
+
 /**
  * Brace-aware rule walk. A regex over `{…}` desyncs on `@media` preludes and on
  * nested blocks, which would silently drop the rules this test needs to see.
@@ -321,12 +334,21 @@ test('no preset theme layout can out-specify a shape rule on a property that sha
   const collisions: string[] = []
   for (const shape of shapeRules) {
     const shapeSubject = subjectClasses(shape.selector)
+    const shapeNegated = subjectNegatedClasses(shape.selector)
     if (shapeSubject.size === 0) continue
     for (const theme of themeRules) {
       if (theme.selector.includes('::')) continue
+      const themeSubject = subjectClasses(theme.selector)
+      const themeNegated = subjectNegatedClasses(theme.selector)
+      if (
+        [...themeNegated].some((name) => shapeSubject.has(name)) ||
+        [...shapeNegated].some((name) => themeSubject.has(name))
+      ) {
+        continue
+      }
       // Same subject element: the theme rule ends on a class the shape also ends on.
       const shared = [...shapeSubject].filter(
-        (name) => subjectClasses(theme.selector).has(name) && !ownMarkers.has(name)
+        (name) => themeSubject.has(name) && !ownMarkers.has(name)
       )
       if (shared.length === 0) continue
       const contested = shape.properties.filter((property) => theme.properties.includes(property))

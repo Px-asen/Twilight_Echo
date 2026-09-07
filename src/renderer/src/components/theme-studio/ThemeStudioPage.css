@@ -2,19 +2,19 @@
   position: fixed;
   /* Reserve the native title-bar strip, the way the settings route does. This
      surface resolves to `titleSurface: 'settings'`, so the bar paints an opaque
-     backplate at z-index 9999 over its own 32px — anything laid out underneath is
+     backplate at z-index 9999 over its configured height — anything laid out underneath is
      covered outright, not merely overlapped. The header centers a 68px row, so
      without this its title and the top half of every control disappear.
      The offset cannot be shared with SettingsPage.css verbatim: this page lives
      inside `.main-content`, whose `transform` makes it the containing block for
      fixed children, and theme-authored shells put the bar in flow above that box
      (see the reset below). */
-  inset: 32px 0 0;
+  inset: var(--te-titlebar-height, 32px) 0 0;
   /* Above the sidebar (1000) and player bar (1002); below the title bar (9999). */
   z-index: 2000;
   display: flex;
   flex-direction: column;
-  min-width: 1080px;
+  min-width: 0;
   color: var(--te-neutral-900);
   background-color: var(--te-app-bg);
   background-image: var(--te-app-bg-image);
@@ -143,8 +143,12 @@ html[data-te-shell-layout='custom'] .theme-studio-page {
 
 .studio-command.primary {
   border-color: var(--te-primary-500);
-  color: #ffffff;
+  color: var(--te-app-bg);
   background: var(--te-primary-500);
+}
+
+.studio-command.primary span {
+  color: inherit;
 }
 
 .theme-studio-workspace {
@@ -1322,10 +1326,8 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
   display: grid;
   gap: 8px;
   margin-bottom: 12px;
-  padding: 10px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 6px;
-  background: var(--te-subtle-bg);
+  padding: 12px 0 18px;
+  border-bottom: 1px solid var(--te-card-border);
 }
 
 .asset-editor-heading,
@@ -1483,15 +1485,12 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
 
 .studio-control-section,
 .palette-editor,
-.font-library-editor,
-.contrast-warning {
+.font-library-editor {
   display: grid;
   gap: 8px;
   margin-bottom: 12px;
-  padding: 10px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 6px;
-  background: var(--te-subtle-bg);
+  padding: 12px 0 18px;
+  border-bottom: 1px solid var(--te-card-border);
 }
 
 .control-section-heading,
@@ -1505,7 +1504,7 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
 
 .control-section-heading > span,
 .font-library-editor .asset-editor-heading > span {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -1522,7 +1521,7 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
   min-width: 0;
   gap: 2px;
   color: var(--te-neutral-700);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .studio-setting-row select,
@@ -1530,17 +1529,17 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
 .font-library-editor select,
 .font-library-editor button {
   min-width: 0;
-  height: 30px;
+  height: 34px;
   border: 1px solid var(--te-card-border);
   border-radius: 5px;
   color: var(--te-neutral-700);
   background: var(--te-card-bg);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .studio-setting-row select,
 .font-library-editor select {
-  width: 160px;
+  width: min(160px, 50%);
   padding: 0 7px;
 }
 
@@ -1551,10 +1550,7 @@ html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] 
 
 .window-default-grid .studio-control-section {
   margin: 0;
-  padding: 11px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 6px;
-  background: var(--te-subtle-bg);
+  padding: 12px 0 18px;
 }
 
 .window-default-grid .studio-setting-row {
@@ -1911,4 +1907,348 @@ html[data-te-library-title-overlay='on'] .preview-heading {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+.studio-appearance-list {
+  display: grid;
+  gap: 0;
+  margin-top: 16px;
+}
+
+.studio-appearance-group {
+  min-width: 0;
+  border-bottom: 1px solid var(--te-card-border);
+}
+
+.studio-appearance-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+}
+
+.studio-appearance-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.studio-appearance-group > summary > span {
+  margin-left: auto;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+}
+
+.studio-appearance-group[open] > summary > i {
+  transform: rotate(90deg);
+}
+
+.studio-appearance-control {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid var(--te-card-border);
+  min-width: 0;
+}
+
+.studio-appearance-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-appearance-heading > strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-appearance-heading .studio-code-button {
+  color: var(--te-neutral-500);
+}
+
+.studio-appearance-control:focus,
+.studio-appearance-control:focus-within {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 4px;
+}
+
+.studio-appearance-heading .studio-icon-button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+
+.studio-color-control {
+  display: grid;
+  gap: 10px;
+}
+
+.studio-color-swatch,
+.studio-opacity-control,
+.studio-value-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.studio-color-swatch input {
+  width: 48px;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 8px;
+  background: var(--te-subtle-bg);
+  cursor: pointer;
+}
+
+.studio-opacity-control > span {
+  color: var(--te-neutral-500);
+}
+
+.studio-appearance-control input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  accent-color: var(--te-primary-500);
+}
+
+.studio-appearance-control output {
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-fill-preview {
+  height: 44px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 8px;
+}
+
+.studio-shadow-preview {
+  display: grid;
+  place-items: center;
+  height: 78px;
+  border-radius: 8px;
+  background: var(--te-subtle-bg);
+  overflow: hidden;
+}
+
+.studio-shadow-preview > span {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 38px;
+  border-radius: 8px;
+  background: var(--te-card-bg);
+  font-weight: 600;
+}
+
+.studio-choice-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.studio-choice-grid button {
+  flex: 1;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--te-subtle-bg);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.studio-choice-grid button[aria-pressed='true'] {
+  color: var(--te-primary-500);
+  border-color: var(--te-primary-500);
+  background: var(--te-active-bg);
+}
+
+.studio-choice-grid button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.studio-control-hint {
+  margin: 0;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.studio-style-details {
+  color: var(--te-neutral-500);
+  font-size: 11px;
+}
+
+.studio-style-details label {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.studio-style-details input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 6px;
+  color: var(--te-neutral-900);
+  background: var(--te-subtle-bg);
+}
+
+.studio-appearance-control :disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.theme-studio-page :is(button, input, select, summary):focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
+}
+
+.read-only-theme {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 8px;
+}
+
+.studio-setting-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--te-primary-500);
+  cursor: pointer;
+}
+
+.studio-follow-theme {
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--te-card-border);
+  margin-bottom: 8px;
+}
+
+.theme-studio-header > div:first-child {
+  flex-shrink: 0;
+}
+
+.theme-studio-header + .studio-message {
+  margin: 0;
+  padding: 8px 24px;
+  background: var(--te-card-bg);
+}
+
+.read-only-theme p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--te-neutral-500);
+}
+
+@media (max-width: 1180px) {
+  .theme-studio-workspace {
+    grid-template-columns: 160px minmax(320px, 1fr) minmax(280px, 1fr);
+  }
+  .theme-studio-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .theme-profile-picker {
+    min-width: 0;
+    margin-left: 0;
+  }
+  .preview-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 850px) {
+  .theme-studio-workspace {
+    grid-template-areas: 'domains editor' 'domains preview';
+    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 1fr) minmax(180px, 0.65fr);
+  }
+  .theme-studio-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+  .theme-preview-pane {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 600px) {
+  .theme-studio-workspace {
+    grid-template-areas: 'domains' 'editor' 'preview';
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) minmax(140px, 0.5fr);
+  }
+
+  .theme-library-pane {
+    padding: 8px 12px;
+    overflow: visible;
+  }
+
+  .theme-library-pane > .pane-heading {
+    display: none;
+  }
+
+  .theme-domain-list {
+    display: flex;
+    overflow-x: auto;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .theme-domain-list button {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
+    padding: 8px;
+  }
+
+  .studio-search-hits {
+    max-height: 120px;
+  }
+
+  .theme-studio-header h1 {
+    font-size: 16px;
+  }
+
+  .theme-profile-picker {
+    flex: 1;
+  }
+
+  .theme-profile-picker > span {
+    display: none;
+  }
+
+  .theme-profile-picker select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .studio-appearance-heading {
+    gap: 4px;
+  }
+}
+
+.studio-single-color {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.studio-single-color .studio-color-swatch > span {
+  display: none;
 }

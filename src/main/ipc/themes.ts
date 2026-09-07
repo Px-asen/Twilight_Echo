@@ -36,7 +36,10 @@ import {
   setActiveTheme,
   setThemeWindowInheritance
 } from '../themes/themeLibrary.ts'
-import { createInheritedThemeSettingsPatch } from '../themes/windowInheritance.ts'
+import {
+  createInheritedThemeSettingsPatch,
+  createThemePlayerBarSettingsPatch
+} from '../themes/windowInheritance.ts'
 
 const MAX_THEME_IPC_BYTES = 2 * 1024 * 1024
 let nativeThemeListenerSetup = false
@@ -59,7 +62,9 @@ export function setupThemeIpc(): void {
 
   ipcMain.handle('themes:getBootstrap', async (event) => {
     assertTrustedIpcSender(event, 'theme IPC')
-    return { library: await loadThemeLibrary(), defaultTheme: TWILIGHT_DEFAULT_THEME }
+    const library = await loadThemeLibrary()
+    await synchronizeThemePlayerBarDefault(library)
+    return { library, defaultTheme: TWILIGHT_DEFAULT_THEME }
   })
 
   ipcMain.handle('themes:list', async (event) => {
@@ -227,6 +232,13 @@ export async function synchronizeThemeSettings(snapshot: ThemeLibrarySnapshot): 
     themeWindowInheritance: snapshot.data.windowInheritance,
     ...(await createInheritedThemeSettingsPatch(snapshot))
   })
+}
+
+export async function synchronizeThemePlayerBarDefault(
+  snapshot: ThemeLibrarySnapshot
+): Promise<void> {
+  const patch = createThemePlayerBarSettingsPatch(snapshot)
+  if (patch.playerBar) await updateAppSettings(patch)
 }
 
 export async function reconcileThemeAfterPluginChange(): Promise<void> {

@@ -238,7 +238,14 @@ int serve(const ServeArguments& arguments) {
     InterlockedIncrement(reinterpret_cast<volatile LONG*>(&shared->hostHeartbeat));
     if (readAtomic(&shared->hostState) != static_cast<LONG>(HostState::Ready)) break;
 
-    for (auto& slot : shared->slots) {
+    for (uint32_t processed = 0; processed < twilight::vst3::ipc::kSlotCount; ++processed) {
+      twilight::vst3::ipc::AudioSlot* next = nullptr;
+      for (auto& candidate : shared->slots) {
+        if (readAtomic(&candidate.state) != static_cast<LONG>(SlotState::Ready)) continue;
+        if (!next || static_cast<int32_t>(candidate.sequence - next->sequence) < 0) next = &candidate;
+      }
+      if (!next) break;
+      auto& slot = *next;
       if (compareExchange(
               &slot.state,
               static_cast<LONG>(SlotState::Processing),
@@ -331,7 +338,8 @@ int renderTest(const RenderTestArguments& arguments) {
 
 int wmain(int argc, wchar_t* argv[]) {
   if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test") {
-    std::cout << "{\"kind\":\"twilight-vst3-host\",\"protocolVersion\":1,\"status\":\"ready\"}";
+    std::cout << "{\"kind\":\"twilight-vst3-host\",\"protocolVersion\":"
+              << twilight::vst3::ipc::kProtocolVersion << ",\"status\":\"ready\"}";
     return 0;
   }
   if (argc == 3 && std::wstring_view(argv[1]) == L"--inspect") {

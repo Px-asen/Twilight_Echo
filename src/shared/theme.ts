@@ -1203,6 +1203,7 @@ export const THEME_MANAGED_DATA_ATTRIBUTES: readonly `data-te-${string}`[] = Obj
   ...THEME_MODE_DEFINITIONS.map((definition) => definition.dataAttribute),
   ...THEME_VISIBILITY_SLOT_IDS.map(visibilityDataAttribute),
   ...THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
+  'data-te-preset-layout',
   'data-te-liquid-glass-coverage'
 ])
 

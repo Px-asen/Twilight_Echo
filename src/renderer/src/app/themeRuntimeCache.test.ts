@@ -66,7 +66,10 @@ test('persists and synchronously injects a bounded theme runtime cache', () => {
     })
     persistThemeRuntimeCache({
       css: ':root { --te-app-bg: #123456; }',
-      attributes: { 'data-te-shell-layout': 'classic' },
+      attributes: {
+        'data-te-preset-layout': 'aurora-reference',
+        'data-te-shell-layout': 'classic'
+      },
       activeTheme: 'builtin:twilight-echo-default',
       tone: 'dark'
     })
@@ -77,6 +80,10 @@ test('persists and synchronously injects a bounded theme runtime cache', () => {
       ':root { --te-app-bg: #123456; }'
     )
     assert.equal(fakeDocument.documentElement.dataset.theme, 'dark')
+    assert.equal(
+      fakeDocument.documentElement.getAttribute('data-te-preset-layout'),
+      'aurora-reference'
+    )
     assert.equal(fakeDocument.documentElement.getAttribute('data-te-shell-layout'), 'classic')
     assert.equal(fakeDocument.documentElement.getAttribute('data-theme-cached'), 'true')
   } finally {

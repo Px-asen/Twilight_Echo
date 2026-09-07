@@ -601,13 +601,7 @@ interface TwilightPluginIndexStatus {
   error: string | null
 }
 
-interface TwilightProviderStreamingSection {
-  id: string
-  title: string
-  icon: string
-  method: string
-  args?: unknown[]
-}
+type TwilightProviderStreamingSection = import('../shared/providerHome').ProviderStreamingSection
 
 interface TwilightProviderUiMetadata {
   icon: string
@@ -628,6 +622,8 @@ interface TwilightProviderUiMetadata {
     icon: string
     method: string
   }>
+  streamingHome?: import('../shared/providerHome').ProviderHomePresentation
+  streamingDiscovery?: import('../shared/providerHome').ProviderDiscoveryPresentation
   streamingSections?: TwilightProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean

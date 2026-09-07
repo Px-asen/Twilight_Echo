@@ -2,17 +2,21 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import type { MediaProviderPlaylistSummary } from '../providers/mediaProvider'
-import type { StreamingProviderOption } from '../utils/streamingNavigation'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { resolveMotionMode } from '../../../shared/motion.ts'
 import CoverImg from './CoverImg.vue'
-import StreamingProviderSwitcher from './streaming-page/StreamingProviderSwitcher.vue'
+import ProviderMusicHome from '@renderer/components/streaming-page/ProviderMusicHome.vue'
+import type {
+  ProviderHomePresentation,
+  ProviderHomeSectionPresentation
+} from '../../../shared/providerHome'
 
-interface RecSection {
+interface RecSection extends ProviderHomeSectionPresentation {
   key: string
   title: string
   tracks: Track[]
   icon: string
+  error?: string
 }
 
 interface CollageCover {
@@ -21,9 +25,10 @@ interface CollageCover {
 }
 
 const props = defineProps<{
-  providerId: string
   providerLabel: string
-  providerOptions: StreamingProviderOption[]
+  providerColor?: string
+  presentation?: ProviderHomePresentation
+  supportsDiscovery?: boolean
   isLoggedIn: boolean
   recsLoading: boolean
   recsError: string
@@ -38,7 +43,7 @@ const emit = defineEmits<{
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   playTrack: [track: Track, queue: Track[]]
   requestLogin: []
-  selectProvider: [providerId: string]
+  openDiscovery: []
 }>()
 
 // ─── Sections ───────────────────────────────────────────────────────────────
@@ -206,14 +211,17 @@ function playPersonalizedStream(section: RecSection | null): void {
 </script>
 
 <template>
-  <div class="home-view">
-    <div class="home-toolbar">
-      <StreamingProviderSwitcher
-        :model-value="providerId"
-        :options="providerOptions"
-        @change="emit('selectProvider', $event)"
-      />
-    </div>
+  <ProviderMusicHome
+    v-if="presentation"
+    v-bind="props"
+    @load-recommendations="emit('loadRecommendations')"
+    @open-rec-section="emit('openRecSection', $event)"
+    @open-playlist="emit('openPlaylist', $event)"
+    @play-track="(track, queue) => emit('playTrack', track, queue)"
+    @request-login="emit('requestLogin')"
+    @open-discovery="emit('openDiscovery')"
+  />
+  <div v-else class="home-view">
     <!-- ── Signed-out invite ─────────────────────────────────────────── -->
     <section v-if="!isLoggedIn" class="hero-invite">
       <div class="invite-orb invite-orb-a" aria-hidden="true"></div>
@@ -489,12 +497,6 @@ function playPersonalizedStream(section: RecSection | null): void {
   --home-cyan-tint: color-mix(in srgb, var(--te-accent-cyan) 12%, transparent);
   --home-shadow: 0 18px 44px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
   --home-shadow-lift: 0 24px 56px color-mix(in srgb, var(--te-neutral-900) 13%, transparent);
-}
-
-.home-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 18px;
 }
 
 .home-flow {

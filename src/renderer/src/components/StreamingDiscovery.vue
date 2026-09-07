@@ -4,16 +4,13 @@ import type {
   MediaProviderPlaylistCatalogue,
   MediaProviderPlaylistSummary
 } from '../providers/mediaProvider'
-import type { StreamingProviderOption } from '../utils/streamingNavigation'
 import type { DiscoveryOrder } from './streaming-page/useStreamingDiscovery'
 import type { PageState } from './streaming-page/types'
 import CoverImg from './CoverImg.vue'
-import StreamingProviderSwitcher from './streaming-page/StreamingProviderSwitcher.vue'
 
 const props = defineProps<{
-  providerId: string
   providerLabel: string
-  providerOptions: StreamingProviderOption[]
+  supportsSort?: boolean
   supportsCategories: boolean
   supportsHighQuality: boolean
   catalogue: MediaProviderPlaylistCatalogue | null
@@ -41,7 +38,6 @@ const emit = defineEmits<{
   loadMore: []
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   retry: []
-  selectProvider: [providerId: string]
 }>()
 
 const pageSize = 30
@@ -60,6 +56,7 @@ const subline = computed(() => {
   if (props.listError && props.playlists.length === 0) return '加载遇到了一点问题'
   if (props.total > 0) {
     if (props.highQuality) return `${props.providerLabel} 精选 · 共 ${totalLabel.value} 张`
+    if (props.supportsSort === false) return `共 ${totalLabel.value} 张歌单`
     return `共 ${totalLabel.value} 张歌单 · 按${props.order === 'hot' ? '最热' : '最新'}排列`
   }
   return '每一张歌单，都是一次有主张的收藏'
@@ -91,7 +88,10 @@ const currentPage = computed(() => Math.floor(props.offset / pageSize) + 1)
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / pageSize)))
 const showPaginator = computed(
   () =>
-    !props.highQuality && !props.listLoading && props.playlists.length > 0 && props.total > pageSize
+    !props.highQuality &&
+    !props.listLoading &&
+    props.playlists.length > 0 &&
+    (props.total > pageSize || (props.total === 0 && (props.hasMore || props.offset > 0)))
 )
 
 function formatPlayCount(playCount: number | undefined): string {
@@ -123,12 +123,12 @@ function emitPage(nextOffset: number): void {
       </div>
 
       <div class="disc-tools">
-        <StreamingProviderSwitcher
-          :model-value="providerId"
-          :options="providerOptions"
-          @change="emit('selectProvider', $event)"
-        />
-        <div v-if="!highQuality" class="disc-order" role="group" aria-label="排序方式">
+        <div
+          v-if="!highQuality && supportsSort !== false"
+          class="disc-order"
+          role="group"
+          aria-label="排序方式"
+        >
           <button
             type="button"
             class="disc-order-btn"
@@ -362,14 +362,14 @@ function emitPage(nextOffset: number): void {
           <i class="pi pi-arrow-left"></i>
         </button>
         <span class="disc-pager-text">
-          第 <em>{{ currentPage }}</em> 页 · 共 {{ pageCount }} 页
+          第 <em>{{ currentPage }}</em> 页<span v-if="total > 0"> · 共 {{ pageCount }} 页</span>
         </span>
         <button
           type="button"
           class="disc-pager-btn"
           data-te-interactive
           aria-label="下一页"
-          :disabled="!hasMore && offset + pageSize >= total"
+          :disabled="!hasMore"
           @click="emitPage(offset + pageSize)"
         >
           <i class="pi pi-arrow-right"></i>

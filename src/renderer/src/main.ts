@@ -1,5 +1,4 @@
 import './assets/main.css'
-import '@phosphor-icons/web/regular'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
@@ -55,6 +54,7 @@ document.addEventListener(
 )
 
 async function mountApp(): Promise<void> {
+  await import('./assets/icon-fonts')
   const startupSnapshot = isSatelliteWindow ? null : beginStartupSnapshot()
   const rootComponent = isMiniPlayer
     ? (await import('./mini-player/MiniPlayerApp.vue')).default

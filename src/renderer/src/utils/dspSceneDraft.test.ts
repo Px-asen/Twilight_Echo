@@ -27,9 +27,6 @@ test('saving reactive DSP drafts submits cloneable VST3 parameters and state ref
         assert.equal(pin, 'draft')
         saved.scenes = structuredClone(payload)
         return saved
-      },
-      async applyDspScene() {
-        assert.fail('Save must preserve the existing scene selection')
       }
     },
     scenes,
@@ -41,23 +38,20 @@ test('saving reactive DSP drafts submits cloneable VST3 parameters and state ref
   assert.deepEqual(saved.scenes[0].graph.nodes.at(-1)!.params.parameters, { '7': 0.75 })
 })
 
-test('applying a draft waits for persistence before applying the selected scene', async () => {
+test('applying a draft submits its parameters and selected scene in one transaction', async () => {
   const scenes = draft()
   const calls: string[] = []
   const applied = { scenes } as DspSceneState
   let finishSave!: (state: DspSceneState) => void
   const pending = submitDspSceneDraft(
     {
-      setDspScenes(payload) {
-        structuredClone(payload)
+      setDspScenes(payload, pin) {
+        assert.equal(pin, 'draft')
+        assert.deepEqual(structuredClone(payload), JSON.parse(JSON.stringify(scenes)))
         calls.push('save')
         return new Promise((resolve) => {
           finishSave = resolve
         })
-      },
-      async applyDspScene(id) {
-        calls.push(id)
-        return applied
       }
     },
     scenes,
@@ -65,9 +59,9 @@ test('applying a draft waits for persistence before applying the selected scene'
     'draft'
   )
   assert.deepEqual(calls, ['save'])
-  finishSave({ scenes: [] } as unknown as DspSceneState)
+  finishSave(applied)
   assert.equal(await pending, applied)
-  assert.deepEqual(calls, ['save', 'draft'])
+  assert.deepEqual(calls, ['save'])
 })
 
 test('failed persistence does not apply stale parameters or discard the draft', async () => {
@@ -77,9 +71,6 @@ test('failed persistence does not apply stale parameters or discard the draft', 
       {
         async setDspScenes() {
           throw new Error('save failed')
-        },
-        async applyDspScene() {
-          assert.fail('Must not apply stale state after a failed save')
         }
       },
       scenes,
@@ -89,6 +80,26 @@ test('failed persistence does not apply stale parameters or discard the draft', 
     /save failed/
   )
   assert.deepEqual(scenes[0].graph.nodes.at(-1)!.params.parameters, { '7': 0.75 })
+})
+
+test('applying a DSD draft returns the PCM confirmation requirement without a second submit', async () => {
+  const state = { requiresPcmFallback: true, dsdPcmFallbackApplied: false } as DspSceneState
+  let calls = 0
+  const result = await submitDspSceneDraft(
+    {
+      async setDspScenes(_scenes, pin) {
+        calls += 1
+        assert.equal(pin, 'draft')
+        return state
+      }
+    },
+    draft(),
+    'another-scene',
+    'draft'
+  )
+  assert.equal(calls, 1)
+  assert.equal(result.requiresPcmFallback, true)
+  assert.equal(result.dsdPcmFallbackApplied, false)
 })
 
 test('scene copies and A snapshots isolate nested rules and VST3 state', () => {

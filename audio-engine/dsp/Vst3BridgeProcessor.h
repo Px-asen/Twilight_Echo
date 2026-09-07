@@ -48,6 +48,8 @@ class Vst3BridgeProcessor final : public IAudioProcessor {
   bool launchHost();
   void destroyHost();
   void processBlock(float* samples, uint32_t frameCount) noexcept;
+  void storeDelayedFrames(uint64_t firstFrame, const float* samples, uint32_t frameCount) noexcept;
+  void readDelayedFrames(uint64_t firstFrame, float* samples, uint32_t frameCount) noexcept;
   void setFailure(const std::string& message);
 
   Vst3BridgeConfig bridgeConfig_;
@@ -64,17 +66,14 @@ class Vst3BridgeProcessor final : public IAudioProcessor {
   std::atomic<uint64_t> overrunCount_{0};
   static std::atomic<size_t> liveInstanceCount_;
   uint32_t nextSequence_ = 0;
-  uint64_t submittedBlockCount_ = 0;
-  uint32_t lastSubmittedFrames_ = 0;
-  static constexpr uint32_t kPipelineBlocks = 1;
+  uint64_t inputFramePosition_ = 0;
   static constexpr uint32_t kSlotCount = 4;
   static constexpr uint32_t kMaxFrames = 4096;
   static constexpr uint32_t kMaxChannels = 8;
-  static constexpr size_t kBufferedSamples = static_cast<size_t>(kMaxFrames) * kMaxChannels;
-  std::array<std::array<float, kBufferedSamples>, kSlotCount> dryBuffers_{};
-  std::array<uint32_t, kSlotCount> drySequences_{};
-  std::array<uint32_t, kSlotCount> dryFrames_{};
-  std::array<uint32_t, kSlotCount> dryChannels_{};
+  static constexpr uint32_t kDelayFrames = kMaxFrames;
+  static constexpr uint32_t kBufferedFrames = kDelayFrames + kMaxFrames;
+  std::array<float, static_cast<size_t>(kBufferedFrames) * kMaxChannels> delayedSamples_{};
+  std::array<uint64_t, kSlotCount> slotFramePositions_{};
 };
 
 }  // namespace twilight::audio

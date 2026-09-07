@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { createDspFactoryScene, type DspFactorySceneTemplateId } from '../../../shared/dspGraph.ts'
 import type {
   DspAsset,
@@ -33,7 +33,7 @@ const snapshotA = ref<DspScene[] | null>(null)
 const busy = ref(false)
 const message = ref('')
 const assets = ref<DspAsset[]>([])
-const vst3Catalog = ref<Vst3CatalogState | null>(null)
+const vst3Catalog = shallowRef<Vst3CatalogState | null>(null)
 
 const scenes = computed(() => state.value?.scenes ?? [])
 const selectedScene = computed(
@@ -180,7 +180,7 @@ async function refreshDiagnostics(): Promise<void> {
 }
 
 async function saveScenes(): Promise<void> {
-  if (!state.value) return
+  if (!state.value || busy.value) return
   busy.value = true
   try {
     state.value.scenes.forEach((scene) => scene.graph.nodes.forEach(normalizeNodeEditorParams))
@@ -189,7 +189,6 @@ async function saveScenes(): Promise<void> {
       state.value.scenes,
       state.value.pinnedSceneId
     )
-    selectedSceneId.value = state.value.activeSceneId ?? selectedSceneId.value
     message.value = 'DSP 场景已保存并提交给音频引擎。'
     await refreshDiagnostics()
   } catch (error) {
@@ -202,7 +201,7 @@ async function saveScenes(): Promise<void> {
 }
 
 async function applySelectedScene(): Promise<void> {
-  if (!selectedScene.value || !state.value) return
+  if (!selectedScene.value || !state.value || busy.value) return
   const sceneId = selectedScene.value.id
   busy.value = true
   try {
@@ -455,7 +454,7 @@ onBeforeUnmount(() => {
       {{ message }}
     </p>
 
-    <div class="rack-layout">
+    <fieldset class="rack-layout" :disabled="busy" :inert="busy" :aria-busy="busy">
       <DspScenePane
         :scenes="scenes"
         :selected-scene-id="selectedSceneId"
@@ -504,7 +503,7 @@ onBeforeUnmount(() => {
         @scan-vst3="scanVst3"
         @recover-vst3="recoverVst3Module"
       />
-    </div>
+    </fieldset>
 
     <footer class="rack-footer">
       <span>图延迟 {{ activeGraphLatency }} frames</span
@@ -588,6 +587,8 @@ onBeforeUnmount(() => {
   color: var(--te-danger-soft-fg, #b91c1c);
 }
 :deep(.rack-layout) {
+  min-width: 0;
+  padding: 0;
   max-width: 1540px;
   min-height: 640px;
   margin: 0 auto;

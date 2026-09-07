@@ -18,7 +18,7 @@ const { themeContributions } = useExtensionRegistry()
 const pluginThemeOptions = computed(() =>
   themeContributions.value.map((theme) => ({
     value: getPluginThemeKey(theme),
-    label: `${theme.name} (${theme.pluginId})`
+    label: theme.name
   }))
 )
 const selectedPluginThemeKey = computed(() => {
@@ -65,8 +65,7 @@ async function setPluginTheme(event: Event): Promise<void> {
 <template>
   <div class="setting-item">
     <div class="setting-copy">
-      <strong>主题工作室 · Beta</strong>
-      <span>深度主题编辑（Beta）。P7 收口前以契约测试为准，完整像素证据包仍待入库。</span>
+      <strong>主题工作室</strong>
     </div>
     <button type="button" class="primary-button" @click="emit('openThemeStudio')">
       <i class="ph ph-swatches"></i>
@@ -76,8 +75,7 @@ async function setPluginTheme(event: Event): Promise<void> {
   <hr />
   <div class="setting-item">
     <div class="setting-copy">
-      <strong>主题模式</strong>
-      <span>跟随系统或固定为浅色、深色。</span>
+      <strong>深浅色</strong>
     </div>
     <div class="theme-segment">
       <button
@@ -95,8 +93,7 @@ async function setPluginTheme(event: Event): Promise<void> {
   <hr />
   <div class="setting-item">
     <div class="setting-copy">
-      <strong>界面动效</strong>
-      <span>完整模式提供更强的操作反馈；减少或关闭模式可降低视觉移动。</span>
+      <strong>界面动画</strong>
     </div>
     <select
       class="preview-select wide"
@@ -112,7 +109,6 @@ async function setPluginTheme(event: Event): Promise<void> {
   <div class="setting-item">
     <div class="setting-copy">
       <strong>插件主题</strong>
-      <span>从已启用主题插件中选择声明式主题样式。</span>
     </div>
     <select
       class="preview-select wide"

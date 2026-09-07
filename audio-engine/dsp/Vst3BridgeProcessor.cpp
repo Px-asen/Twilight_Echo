@@ -136,7 +136,7 @@ bool isSupportedChannelCount(int channelCount) {
 
 Vst3BridgeProcessor::Vst3BridgeProcessor(Vst3BridgeConfig config) : bridgeConfig_(std::move(config)) {
   liveInstanceCount_.fetch_add(1, std::memory_order_relaxed);
-  drySequences_.fill(UINT32_MAX);
+  slotFramePositions_.fill(UINT64_MAX);
 }
 
 Vst3BridgeProcessor::~Vst3BridgeProcessor() {
@@ -179,10 +179,9 @@ void Vst3BridgeProcessor::process(float* samples, size_t frameCount) {
 }
 
 void Vst3BridgeProcessor::reset() {
-  lastSubmittedFrames_ = 0;
-  drySequences_.fill(UINT32_MAX);
-  dryFrames_.fill(0);
-  dryChannels_.fill(0);
+  inputFramePosition_ = 0;
+  slotFramePositions_.fill(UINT64_MAX);
+  delayedSamples_.fill(0.0f);
 }
 
 bool Vst3BridgeProcessor::isActive() const {
@@ -216,7 +215,7 @@ std::string Vst3BridgeProcessor::bypassReason() const {
 uint32_t Vst3BridgeProcessor::latencyFrames() const noexcept {
 #ifdef _WIN32
   const auto* shared = static_cast<const SharedMemory*>(sharedMemory_);
-  return shared ? shared->pluginLatencyFrames + lastSubmittedFrames_ : 0;
+  return shared ? shared->pluginLatencyFrames + kDelayFrames : 0;
 #else
   return 0;
 #endif
@@ -374,11 +373,7 @@ bool Vst3BridgeProcessor::launchHost() {
       sharedMemory_ = shared;
       lastError_.clear();
       nextSequence_ = 0;
-      submittedBlockCount_ = 0;
-      lastSubmittedFrames_ = 0;
-      drySequences_.fill(UINT32_MAX);
-      dryFrames_.fill(0);
-      dryChannels_.fill(0);
+      reset();
       processCalls_.store(0, std::memory_order_relaxed);
       overrunCount_.store(0, std::memory_order_relaxed);
       active_.store(true, std::memory_order_release);
@@ -432,6 +427,26 @@ void Vst3BridgeProcessor::destroyHost() {
   active_.store(false, std::memory_order_release);
 }
 
+void Vst3BridgeProcessor::storeDelayedFrames(
+    uint64_t firstFrame, const float* samples, uint32_t frameCount) noexcept {
+  const size_t channels = static_cast<size_t>(format_.channelCount);
+  const size_t offset = firstFrame % kBufferedFrames;
+  const size_t firstCount = std::min<size_t>(frameCount, kBufferedFrames - offset);
+  std::memcpy(delayedSamples_.data() + offset * channels, samples, firstCount * channels * sizeof(float));
+  std::memcpy(delayedSamples_.data(), samples + firstCount * channels,
+      (frameCount - firstCount) * channels * sizeof(float));
+}
+
+void Vst3BridgeProcessor::readDelayedFrames(
+    uint64_t firstFrame, float* samples, uint32_t frameCount) noexcept {
+  const size_t channels = static_cast<size_t>(format_.channelCount);
+  const size_t offset = firstFrame % kBufferedFrames;
+  const size_t firstCount = std::min<size_t>(frameCount, kBufferedFrames - offset);
+  std::memcpy(samples, delayedSamples_.data() + offset * channels, firstCount * channels * sizeof(float));
+  std::memcpy(samples + firstCount * channels, delayedSamples_.data(),
+      (frameCount - firstCount) * channels * sizeof(float));
+}
+
 void Vst3BridgeProcessor::processBlock(float* samples, uint32_t frameCount) noexcept {
 #ifndef _WIN32
   (void)samples;
@@ -446,62 +461,51 @@ void Vst3BridgeProcessor::processBlock(float* samples, uint32_t frameCount) noex
     return;
   }
   const uint32_t channels = static_cast<uint32_t>(format_.channelCount);
-  const uint32_t sequence = nextSequence_++;
-  const bool hasExpectedOutput = submittedBlockCount_ >= kPipelineBlocks;
-  ++submittedBlockCount_;
   const size_t sampleCount = static_cast<size_t>(frameCount) * channels;
-  const uint32_t dryIndex = sequence % kSlotCount;
-  std::memcpy(dryBuffers_[dryIndex].data(), samples, sampleCount * sizeof(float));
-  drySequences_[dryIndex] = sequence;
-  dryFrames_[dryIndex] = frameCount;
-  dryChannels_[dryIndex] = channels;
-
-  auto& submitSlot = shared->slots[sequence % twilight::vst3::ipc::kSlotCount];
-  const LONG submitState = readAtomic(&submitSlot.state);
-  if (submitState == static_cast<LONG>(SlotState::OutputReady)) {
-    writeAtomic(&submitSlot.state, static_cast<LONG>(SlotState::Empty));
+  const uint64_t outputPosition = inputFramePosition_ > kDelayFrames ? inputFramePosition_ - kDelayFrames : 0;
+  for (uint32_t index = 0; index < kSlotCount; ++index) {
+    auto& slot = shared->slots[index];
+    if (readAtomic(&slot.state) != static_cast<LONG>(SlotState::OutputReady)) continue;
+    const uint64_t position = slotFramePositions_[index];
+    if (position != UINT64_MAX) {
+      const uint32_t consumed = static_cast<uint32_t>(std::min<uint64_t>(
+          slot.frames, outputPosition > position ? outputPosition - position : 0));
+      if (consumed > 0) overrunCount_.fetch_add(1, std::memory_order_relaxed);
+      if (consumed < slot.frames) {
+        storeDelayedFrames(position + consumed, slot.output + static_cast<size_t>(consumed) * channels,
+            slot.frames - consumed);
+      }
+    }
+    slotFramePositions_[index] = UINT64_MAX;
+    writeAtomic(&slot.state, static_cast<LONG>(SlotState::Empty));
   }
-  if (readAtomic(&submitSlot.state) == static_cast<LONG>(SlotState::Empty)) {
-    std::memcpy(submitSlot.input, samples, sampleCount * sizeof(float));
-    submitSlot.sequence = sequence;
-    submitSlot.frames = frameCount;
-    submitSlot.channels = channels;
+
+  storeDelayedFrames(inputFramePosition_, samples, frameCount);
+  bool submitted = false;
+  for (uint32_t index = 0; index < kSlotCount; ++index) {
+    auto& slot = shared->slots[index];
+    if (readAtomic(&slot.state) != static_cast<LONG>(SlotState::Empty)) continue;
+    std::memcpy(slot.input, samples, sampleCount * sizeof(float));
+    slot.sequence = nextSequence_++;
+    slot.frames = frameCount;
+    slot.channels = channels;
+    slotFramePositions_[index] = inputFramePosition_;
     MemoryBarrier();
-    writeAtomic(&submitSlot.state, static_cast<LONG>(SlotState::Ready));
+    writeAtomic(&slot.state, static_cast<LONG>(SlotState::Ready));
     SetEvent(inputEvent);
-    lastSubmittedFrames_ = frameCount;
-  } else {
-    overrunCount_.fetch_add(1, std::memory_order_relaxed);
+    submitted = true;
+    break;
   }
+  if (!submitted) overrunCount_.fetch_add(1, std::memory_order_relaxed);
 
-  if (hasExpectedOutput) {
-    const uint32_t expectedSequence = sequence - kPipelineBlocks;
-    const uint32_t expectedDryIndex = expectedSequence % kSlotCount;
-    auto& outputSlot = shared->slots[expectedSequence % twilight::vst3::ipc::kSlotCount];
-    bool copiedPluginOutput = false;
-    if (readAtomic(&outputSlot.state) == static_cast<LONG>(SlotState::OutputReady)) {
-      if (outputSlot.sequence == expectedSequence && outputSlot.frames == frameCount && outputSlot.channels == channels) {
-        std::memcpy(samples, outputSlot.output, sampleCount * sizeof(float));
-        copiedPluginOutput = true;
-      } else {
-        overrunCount_.fetch_add(1, std::memory_order_relaxed);
-      }
-      writeAtomic(&outputSlot.state, static_cast<LONG>(SlotState::Empty));
-    }
-    if (!copiedPluginOutput) {
-      overrunCount_.fetch_add(1, std::memory_order_relaxed);
-      if (drySequences_[expectedDryIndex] == expectedSequence && dryFrames_[expectedDryIndex] == frameCount &&
-          dryChannels_[expectedDryIndex] == channels) {
-        std::memcpy(samples, dryBuffers_[expectedDryIndex].data(), sampleCount * sizeof(float));
-      } else {
-        std::memset(samples, 0, sampleCount * sizeof(float));
-      }
-    }
-  } else {
-    // Preserve chronological order while priming the isolated host. The graph
-    // reports this deterministic one-block bridge latency to the engine.
-    std::memset(samples, 0, sampleCount * sizeof(float));
+  const uint32_t silenceFrames = inputFramePosition_ < kDelayFrames ?
+      static_cast<uint32_t>(std::min<uint64_t>(frameCount, kDelayFrames - inputFramePosition_)) : 0;
+  std::memset(samples, 0, static_cast<size_t>(silenceFrames) * channels * sizeof(float));
+  if (silenceFrames < frameCount) {
+    readDelayedFrames(inputFramePosition_ + silenceFrames - kDelayFrames,
+        samples + static_cast<size_t>(silenceFrames) * channels, frameCount - silenceFrames);
   }
+  inputFramePosition_ += frameCount;
   processCalls_.fetch_add(1, std::memory_order_relaxed);
 #endif
 }

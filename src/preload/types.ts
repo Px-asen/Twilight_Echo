@@ -445,13 +445,8 @@ export interface ProviderDownloadTaskSnapshot {
   updatedAt: string
 }
 
-export interface TwilightProviderStreamingSection {
-  id: string
-  title: string
-  icon: string
-  method: string
-  args?: unknown[]
-}
+export type TwilightProviderStreamingSection =
+  import('../shared/providerHome').ProviderStreamingSection
 
 export interface TwilightProviderUiMetadata {
   icon: string
@@ -472,6 +467,8 @@ export interface TwilightProviderUiMetadata {
     icon: string
     method: string
   }>
+  streamingHome?: import('../shared/providerHome').ProviderHomePresentation
+  streamingDiscovery?: import('../shared/providerHome').ProviderDiscoveryPresentation
   streamingSections?: TwilightProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean

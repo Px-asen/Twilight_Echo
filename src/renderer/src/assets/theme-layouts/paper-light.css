@@ -1,1085 +1,127 @@
-/* Layout identity for builtin:paper-light. All rules scoped to html[data-te-preset-layout='paper-light']. */
-/*
- * 「杂志编辑部」Editorial Print — Kinfolk / broadsheet typography.
- * Whitespace + 1px ink rules replace fill, blur and shadow. Sidebar becomes a
- * table of contents with counters; home surfaces become a front page with a
- * display masthead and asymmetric column grids; covers turn into square plates
- * with caption-style copy; the playing page reads like a magazine spread; the
- * player bar collapses into a thin ruled footer.
- */
-
 html[data-te-preset-layout='paper-light'] {
-  --pl-ink: var(--te-neutral-900);
-  --pl-muted: var(--te-neutral-500);
-  --pl-accent: var(--te-primary-500);
-  --pl-serif: var(--te-font-display, var(--te-font-sans));
-  --pl-rule: color-mix(in oklab, var(--te-neutral-900) 20%, transparent);
-  --pl-rule-soft: color-mix(in oklab, var(--te-neutral-900) 11%, transparent);
-  --pl-rule-strong: color-mix(in oklab, var(--te-neutral-900) 78%, transparent);
-  --pl-paper: var(--te-app-bg);
+  --sf-shell-line: color-mix(in srgb, var(--te-neutral-900) 13%, transparent);
 }
 
-/* ============================================================= */
-/* 1 · App shell & chrome                                        */
-/* ============================================================= */
-
-html[data-te-preset-layout='paper-light'] .title-bar {
-  box-shadow: inset 0 -1px 0 var(--pl-rule);
+html[data-te-preset-layout='paper-light'] .title-bar.drag-region {
+  min-height: 54px;
+  border-bottom: 1px solid var(--sf-shell-line);
+  background: var(--te-app-bg);
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-/* Sidebar → contents page: flat paper, ruled entries, counter numerals */
+html[data-te-preset-layout='paper-light']
+  .title-bar
+  :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
+  border-radius: 4px;
+}
+
 html[data-te-preset-layout='paper-light'] .side-menu {
+  border-right: 1px solid var(--sf-shell-line);
   border-radius: 0;
-  border-right: 1px solid var(--pl-rule);
+  background: var(--te-navigation-bg);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .navigation-brand {
-  height: 62px;
-  gap: 12px;
-  border-bottom: 1px solid var(--pl-rule-strong);
-  font-family: var(--pl-serif);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  height: 64px;
+  border-bottom: 1px solid var(--sf-shell-line);
+  font-family: 'Space Grotesk', var(--te-font-sans);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .navigation-brand img {
-  border-radius: 0;
+  border-radius: 4px;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .menu-items {
-  padding: 14px 0 14px 0;
-  counter-reset: pl-toc;
-  max-width: none;
+  padding: 18px 12px;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .menu-nav {
-  gap: 0;
+  gap: 4px;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .menu-item {
-  height: 42px;
-  width: 100%;
-  margin-left: 0;
-  padding: 0 14px 0 18px;
-  gap: 12px;
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule-soft);
-  background: transparent;
-  counter-increment: pl-toc;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-nav .menu-item:first-child {
-  border-top: 1px solid var(--pl-rule-soft);
-}
-
-/* Repurpose ::before (default active bar) as the printed index numeral */
-html[data-te-preset-layout='paper-light'] .side-menu .menu-items .menu-item::before {
-  content: counter(pl-toc, decimal-leading-zero);
-  position: static;
-  width: auto;
-  top: auto;
-  bottom: auto;
-  left: auto;
-  flex: 0 0 24px;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  opacity: 1;
-  animation: none;
-  color: var(--pl-muted);
-  font-family: var(--pl-serif);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-item .item-icon {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-item .item-label {
-  font-size: 13.5px;
-  letter-spacing: 0.02em;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-item:hover {
+  border-radius: 4px;
   background: transparent;
   transform: none;
 }
 
-html[data-te-preset-layout='paper-light'] .side-menu .menu-item:hover .item-label {
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  text-decoration-thickness: 1px;
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item:hover {
+  background: var(--te-navigation-hover);
+  transform: none;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active {
-  background: transparent;
-  font-weight: 600;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-items .menu-item.active::before {
-  color: var(--pl-accent);
-  font-weight: 700;
-}
-
-html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active .item-label {
   color: var(--te-navigation-active-text);
+  background: var(--te-navigation-active);
 }
 
-html[data-te-preset-layout='paper-light'] .side-menu .menu-separator {
-  height: 1px;
-  margin: 14px 0;
-  background: var(--pl-rule-strong);
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active::before {
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  border-radius: 0;
+  background: var(--te-navigation-indicator);
+  box-shadow: none;
+  animation: none;
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu.open .menu-nav .menu-item {
   animation: none;
 }
 
-/* Streaming sidebar gets the same contents-page treatment */
-html[data-te-preset-layout='paper-light'] .streaming-page .streaming-sidebar {
-  border-radius: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-right: 1px solid var(--pl-rule);
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item .item-label {
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
-html[data-te-preset-layout='paper-light'] .streaming-page .streaming-nav {
-  counter-reset: pl-stoc;
+html[data-te-preset-layout='paper-light'] .side-menu .menu-separator {
+  margin: 14px 8px;
+  background: var(--sf-shell-line);
 }
 
-html[data-te-preset-layout='paper-light'] .streaming-page .streaming-nav .streaming-menu-item {
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule-soft);
-  background: transparent;
-  counter-increment: pl-stoc;
+html[data-te-preset-layout='paper-light'] .main-content {
+  background: var(--te-app-bg);
 }
 
-html[data-te-preset-layout='paper-light']
-  .streaming-page
-  .streaming-nav
-  .streaming-menu-item::before {
-  content: counter(pl-stoc, decimal-leading-zero);
-  position: static;
-  left: auto;
-  top: auto;
-  bottom: auto;
-  width: auto;
-  flex: 0 0 22px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--pl-muted);
-  font-family: var(--pl-serif);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-
-html[data-te-preset-layout='paper-light']
-  .streaming-page
-  .streaming-nav
-  .streaming-menu-item.active::before {
-  color: var(--pl-accent);
-  font-weight: 700;
-}
-
-html[data-te-preset-layout='paper-light']
-  .streaming-page
-  .streaming-nav
-  .streaming-menu-item
-  .streaming-menu-icon {
-  display: none;
-}
-
-/* ============================================================= */
-/* 2 · Local dashboard — the front page                          */
-/* ============================================================= */
-
-html[data-te-preset-layout='paper-light'] .home .home-sky {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .home-inner {
-  max-width: 1180px;
-  gap: clamp(2.6rem, 4.4vw, 3.8rem);
-  counter-reset: pl-sec;
-}
-
-/* Masthead: double newspaper rule + oversized serif display */
-html[data-te-preset-layout='paper-light'] .home .hd {
-  position: relative;
-  align-items: flex-end;
-  padding-top: 1.35rem;
-  border-top: 3px double var(--pl-rule-strong);
-}
-
-/* Date chip reads as the printed kicker line */
-html[data-te-preset-layout='paper-light'] .home .hd-chip {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: var(--pl-muted);
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-}
-
-html[data-te-preset-layout='paper-light'] .home .hd-greeting {
-  font-family: var(--pl-serif);
-  font-size: clamp(2.3rem, 5vw, 4.3rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.04;
-  white-space: normal;
-}
-
-/* Standfirst under the display head */
-html[data-te-preset-layout='paper-light'] .home .hd-mood {
-  font-family: var(--pl-serif);
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-  color: var(--pl-muted);
-}
-
-html[data-te-preset-layout='paper-light'] .home .hd-shuffle {
-  min-width: 0;
-  padding: 0.7rem 1rem;
-  border: 1px solid var(--pl-rule-strong);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .hd-shuffle:hover {
-  border-color: var(--pl-accent);
-  box-shadow: none;
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .hd-shuffle-icon {
+html[data-te-preset-layout='paper-light'] .streaming-sidebar {
+  border-right: 1px solid var(--sf-shell-line);
   border-radius: 0;
   box-shadow: none;
 }
 
-/* Every card surface becomes ruled whitespace */
-html[data-te-preset-layout='paper-light'] .home .stat-tile,
-html[data-te-preset-layout='paper-light'] .home .signal-card,
-html[data-te-preset-layout='paper-light'] .home .chart-card,
-html[data-te-preset-layout='paper-light'] .home .cal-card,
-html[data-te-preset-layout='paper-light'] .home .track-card,
-html[data-te-preset-layout='paper-light'] .home .album-tile {
-  border: 1px solid var(--pl-rule);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .stat-tile:not(.is-static):hover,
-html[data-te-preset-layout='paper-light'] .home .signal-card:hover,
-html[data-te-preset-layout='paper-light'] .home .track-card:hover,
-html[data-te-preset-layout='paper-light'] .home .album-tile:hover {
-  transform: none;
-  box-shadow: none;
-  border-color: var(--pl-rule-strong);
-}
-
-/* Hero (now-card): lead article, square illustration plate, no photo backdrop */
-html[data-te-preset-layout='paper-light'] .home .now-card {
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule);
-  background: transparent;
-  box-shadow: none;
-  overflow: visible;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-card .feature-backdrop,
-html[data-te-preset-layout='paper-light'] .home .now-halo {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-card::after {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-layout {
-  padding: clamp(1.4rem, 2.6vw, 2.4rem) 0 clamp(1.6rem, 3vw, 2.6rem);
-  align-items: flex-start;
-  flex-direction: row-reverse;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-eyebrow {
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--pl-accent);
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-title {
-  font-family: var(--pl-serif);
-  font-size: clamp(1.9rem, 3.8vw, 3.2rem);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-
-/* Byline + meta chips become a ruled caption row */
-html[data-te-preset-layout='paper-light'] .home .now-artist {
-  font-family: var(--pl-serif);
-  letter-spacing: 0.04em;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-chips {
-  padding-top: 0.7rem;
-  border-top: 1px solid var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-chip {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-/* The halo novelty goes; the cover becomes the full square plate */
-html[data-te-preset-layout='paper-light'] .home .now-art {
-  width: clamp(180px, 24vw, 320px);
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-cover {
-  border: 1px solid var(--pl-rule-strong);
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-}
-
-html[data-te-preset-layout='paper-light'] .home .now-rail,
-html[data-te-preset-layout='paper-light'] .home .now-rail span {
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home .round-btn,
-html[data-te-preset-layout='paper-light'] .home .pill-primary,
-html[data-te-preset-layout='paper-light'] .home .pill-ghost,
-html[data-te-preset-layout='paper-light'] .home .empty-cta {
-  border-radius: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .round-btn:hover,
-html[data-te-preset-layout='paper-light'] .home .pill-primary:hover,
-html[data-te-preset-layout='paper-light'] .home .pill-ghost:hover,
-html[data-te-preset-layout='paper-light'] .home .empty-cta:hover {
-  transform: none;
-  box-shadow: none;
-}
-
-/* Stat band: ruled numerals, no tinted icon medallions */
-html[data-te-preset-layout='paper-light'] .home .stat-copy strong {
-  font-family: var(--pl-serif);
-  font-weight: 600;
-}
-
-html[data-te-preset-layout='paper-light'] .home .stat-copy small {
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-}
-
-html[data-te-preset-layout='paper-light'] .home .stat-icon,
-html[data-te-preset-layout='paper-light'] .home .sec-icon,
-html[data-te-preset-layout='paper-light'] .home .signal-icon {
-  border-radius: 0;
-  background: transparent;
-  border: 1px solid var(--pl-rule);
-}
-
-/* Section heads: folio numeral + heavy top rule, plain underlined link */
-html[data-te-preset-layout='paper-light'] .home .sec .sec-head {
-  align-items: baseline;
-  margin: 0 0 0.2rem;
-  padding-top: 1rem;
-  border-top: 2px solid var(--pl-rule-strong);
-  counter-increment: pl-sec;
-}
-
-/* Folio numeral replaces the tinted section icon */
-html[data-te-preset-layout='paper-light'] .home .sec .sec-icon {
-  border: 0;
-  width: auto;
-  height: auto;
-}
-
-html[data-te-preset-layout='paper-light'] .home .sec .sec-icon i {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .sec .sec-icon::before {
-  content: counter(pl-sec, decimal-leading-zero);
-  color: var(--pl-accent);
-  font-family: var(--pl-serif);
-  font-size: clamp(1.1rem, 1.6vw, 1.4rem);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  line-height: 1;
-}
-
-html[data-te-preset-layout='paper-light'] .home .sec-copy h3 {
-  font-family: var(--pl-serif);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-html[data-te-preset-layout='paper-light'] .home .sec-link {
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  text-decoration-color: var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .home .sec-link:hover {
-  background: transparent;
-  color: var(--pl-accent);
-  text-decoration-color: currentColor;
-}
-
-/* Recently added: asymmetric plate grid, captions under square plates */
-html[data-te-preset-layout='paper-light'] .home .recent-grid {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(128px, 15vw, 176px), 1fr));
-  gap: clamp(1rem, 2vw, 1.6rem) clamp(0.9rem, 1.6vw, 1.4rem);
-}
-
-html[data-te-preset-layout='paper-light'] .home .track-cover,
-html[data-te-preset-layout='paper-light'] .home .album-art,
-html[data-te-preset-layout='paper-light'] .home .row-cover,
-html[data-te-preset-layout='paper-light'] .home .champion-cover {
-  border: 1px solid var(--pl-rule);
-  border-radius: 0;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .track-card:hover .track-cover,
-html[data-te-preset-layout='paper-light'] .home .album-tile:hover .album-art {
-  transform: none;
-  border-color: var(--pl-rule-strong);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .track-card:hover .track-cover img,
-html[data-te-preset-layout='paper-light'] .home .album-tile:hover .album-art img,
-html[data-te-preset-layout='paper-light'] .home .chart-champion:hover .champion-cover img {
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .track-card:hover .track-text strong,
-html[data-te-preset-layout='paper-light'] .home .album-tile:hover .album-name {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
-}
-
-/* Captions under square plates */
-html[data-te-preset-layout='paper-light'] .home .track-text strong,
-html[data-te-preset-layout='paper-light'] .home .album-name {
-  color: var(--te-text-title, var(--pl-ink));
-  font-family: var(--pl-serif);
-}
-
-html[data-te-preset-layout='paper-light'] .home .track-text small,
-html[data-te-preset-layout='paper-light'] .home .album-sub {
-  color: var(--pl-muted);
-}
-
-html[data-te-preset-layout='paper-light'] .home .format-badge,
-html[data-te-preset-layout='paper-light'] .home .champion-badge,
-html[data-te-preset-layout='paper-light'] .home .track-play,
-html[data-te-preset-layout='paper-light'] .home .album-play {
-  border-radius: 0;
-  box-shadow: none;
-}
-
-/* Footprint: asymmetric editorial columns, ruled chart rows */
-html[data-te-preset-layout='paper-light'] .home .footprint-grid {
-  grid-template-columns: minmax(0, 1.62fr) minmax(min(100%, 280px), 0.58fr);
-}
-
-html[data-te-preset-layout='paper-light'] .home .album-grid {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(130px, 15vw, 180px), 1fr));
-}
-
-html[data-te-preset-layout='paper-light'] .home .chart-row {
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule-soft);
-}
-
-html[data-te-preset-layout='paper-light'] .home .chart-row:hover,
-html[data-te-preset-layout='paper-light'] .home .chart-champion:hover {
-  background: transparent;
-}
-
-html[data-te-preset-layout='paper-light'] .home .chart-row:hover .row-title {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
-}
-
-html[data-te-preset-layout='paper-light'] .home .row-rank {
-  color: var(--pl-accent);
-  font-family: var(--pl-serif);
-}
-
-html[data-te-preset-layout='paper-light'] .home .row-bar,
-html[data-te-preset-layout='paper-light'] .home .row-bar-fill {
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home .champion-copy strong,
-html[data-te-preset-layout='paper-light'] .home .row-title {
-  font-family: var(--pl-serif);
-}
-
-html[data-te-preset-layout='paper-light'] .home .cal-cell,
-html[data-te-preset-layout='paper-light'] .home .cal-nav-btn {
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home .cal-cell:hover:not(.is-blank) {
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .empty-card {
-  border: 1px solid var(--pl-rule);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home .empty-bubble,
-html[data-te-preset-layout='paper-light'] .home .empty-ripple {
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home .empty-card h2 {
-  font-family: var(--pl-serif);
-}
-
-/* ============================================================= */
-/* 3 · Streaming home — daily edition                            */
-/* ============================================================= */
-
-html[data-te-preset-layout='paper-light'] .home-view .hero {
-  border: 0;
-  border-radius: 0;
-  border-top: 3px double var(--pl-rule-strong);
-  border-bottom: 1px solid var(--pl-rule);
-  background: transparent;
-  box-shadow: none;
-  overflow: visible;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-ambient {
-  display: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-inner {
-  min-height: clamp(240px, 26vw, 300px);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-copy {
-  padding-left: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-kicker-day {
-  border: 1px solid var(--pl-rule-strong);
-  border-radius: 0;
-  background: transparent;
-  color: var(--te-text-title, var(--pl-ink));
-  font-family: var(--pl-serif);
-  font-weight: 600;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-title {
-  font-family: var(--pl-serif);
-  font-size: clamp(2.6rem, 5.4vw, 4.4rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-title-en {
-  letter-spacing: 0.52em;
-  font-weight: 600;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-desc {
-  padding-top: 0.8rem;
-  border-top: 1px solid var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-play {
-  border-radius: 0;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-play:hover {
-  transform: none;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-open {
-  border: 0;
-  border-radius: 0;
-  padding: 0 4px;
-  text-decoration: underline;
-  text-underline-offset: 5px;
-  text-decoration-color: var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-open:hover {
-  background: transparent;
-  text-decoration-color: currentColor;
-}
-
-/* Collage → pinned print plates: square, unrotated, hairline-framed */
-html[data-te-preset-layout='paper-light'] .home-view .hero-collage-card {
-  border: 1px solid var(--pl-rule-strong);
-  border-radius: 0;
-  box-shadow: none;
-  animation: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-collage-card-0 {
-  transform: translateY(-54%);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-collage-card-1,
-html[data-te-preset-layout='paper-light'] .home-view .hero-collage-card-2 {
-  transform: none;
-}
-
-/* Duo tiles: two ruled columns, flat plates */
-html[data-te-preset-layout='paper-light'] .home-view .duo-card {
-  border: 1px solid var(--pl-rule);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .duo-card::before {
-  opacity: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .duo-card:hover {
-  transform: none;
-  border-color: var(--pl-rule-strong);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .duo-stack-cover {
-  border-radius: 0;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .duo-card:hover .duo-stack-cover {
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .duo-name {
-  font-family: var(--pl-serif);
-}
-
-/* Section heads + chart rows: ruled lists with folio numerals */
-html[data-te-preset-layout='paper-light'] .home-view .section-head {
-  padding-top: 0.9rem;
-  border-top: 2px solid var(--pl-rule-strong);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .section-head-copy h3 {
-  font-family: var(--pl-serif);
-  font-weight: 600;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .section-more {
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  text-decoration-color: var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .section-more:hover {
-  transform: none;
-  text-decoration-color: currentColor;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .chart-grid {
-  gap: 0 clamp(1.4rem, 3vw, 2.6rem);
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .chart-row {
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule-soft);
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .chart-index {
-  color: var(--pl-accent);
-  font-family: var(--pl-serif);
-  font-variant-numeric: tabular-nums;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .chart-cover {
-  border-radius: 0;
-  border: 1px solid var(--pl-rule);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .chart-title {
-  font-family: var(--pl-serif);
-}
-
-/* Playlist shelf: square plates, caption names, quiet hover */
-html[data-te-preset-layout='paper-light'] .home-view .shelf-grid {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(128px, 14vw, 168px), 1fr));
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .shelf-cover {
-  border-radius: 0;
-  border: 1px solid var(--pl-rule);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .shelf-tile:hover .shelf-cover {
-  transform: none;
-  border-color: var(--pl-rule-strong);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .shelf-tile:hover .shelf-cover img {
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .shelf-tile:hover .shelf-name {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-html[data-te-preset-layout='paper-light'] .home-view .hero-invite {
-  border-radius: 0;
-  box-shadow: none;
-}
-
-/* ============================================================= */
-/* 4 · Playing page — the magazine spread                        */
-/* ============================================================= */
-
-/* Flip the spread: prose (lyrics) on the left page, plate on the right */
-html[data-te-preset-layout='paper-light'] .playing-music .layout:not(.layout--single) {
-  grid-template-columns: minmax(0, 1.25fr) minmax(min(100%, 260px), 0.75fr);
-  gap: clamp(2rem, 5vw, 4.5rem);
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .layout .cover-column {
-  order: 2;
-  align-self: start;
-  padding-top: clamp(0.5rem, 3vh, 2.5rem);
-  transform: none;
-  gap: 1.1rem;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .layout .lyrics-column {
-  order: 1;
-  padding-left: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .layout--single .cover-column {
-  order: initial;
-  align-self: center;
-  padding-top: 0;
-}
-
-/* Square illustration plate with a hairline frame */
-html[data-te-preset-layout='paper-light'] .playing-music .cover-frame {
-  border-radius: 0;
-  border: 1px solid var(--te-playback-control-border);
-  box-shadow: none;
-  background: transparent;
-}
-
-/* Caption block: display serif headline over ruled meta lines */
-html[data-te-preset-layout='paper-light'] .playing-music .track-title {
-  font-family: var(--pl-serif);
-  font-size: clamp(1.5rem, 2.6vw, 2.4rem);
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  line-height: 1.14;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .track-artist {
-  margin-top: 0.85rem;
-  padding-top: 0.7rem;
-  border-top: 1px solid var(--te-playback-control-border);
-  font-family: var(--pl-serif);
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .track-album {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid color-mix(in oklab, var(--te-playback-control-border) 55%, transparent);
-  font-size: 12.5px;
-  letter-spacing: 0.06em;
-}
-
-/* Lyrics: a book column — left aligned, serif, loose leading */
-html[data-te-preset-layout='paper-light'] .playing-music .lyrics-head {
-  justify-content: flex-start;
-  padding-bottom: 0.9rem;
-  border-bottom: 1px solid var(--te-playback-control-border);
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .time-chip {
-  border-radius: 0;
-  background: transparent;
-  font-family: var(--pl-serif);
-  letter-spacing: 0.12em;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .lyrics-list {
-  max-width: min(100%, 38em);
-  margin: 0;
-  align-items: stretch;
-  gap: 0.55rem;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row {
-  width: 100%;
-  align-items: flex-start;
-  text-align: left;
-  border-radius: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row .lyric-text,
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row .lyric-translation,
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row .lyric-romanization {
-  text-align: left;
-  font-family: var(--pl-serif);
-  line-height: 1.85;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row.active {
-  background: transparent;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .playing-music .lyric-row.active .lyric-text {
-  text-decoration: underline;
-  text-decoration-color: color-mix(in oklab, var(--te-playback-accent) 55%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 7px;
-}
-
-/* ============================================================= */
-/* 5 · Player bar — the ruled footer                             */
-/* ============================================================= */
-
-html[data-te-preset-layout='paper-light'] .player-bar-shell {
-  bottom: 0;
-  left: 0;
-  right: 0;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar-shell.menu-open {
-  left: var(--te-menu-width);
-  right: 0;
+html[data-te-preset-layout='paper-light'] .streaming-menu-item {
+  border-radius: 4px;
 }
 
 html[data-te-preset-layout='paper-light'] .player-bar {
-  height: 58px;
-  max-width: none;
-  margin: 0;
-  padding: 0 clamp(14px, 2.4vw, 30px);
-  border: 0;
-  border-top: 1px solid var(--pl-rule-strong);
+  border-top: 1px solid var(--sf-shell-line);
   border-radius: 0;
-  background: var(--te-card-bg);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 340px), 1.4fr) minmax(0, 1fr);
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-slot,
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-slot img.player-cover,
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover,
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-placeholder {
-  width: 38px;
-  height: 38px;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-slot {
-  border: 1px solid var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-slot:hover img.player-cover,
-html[data-te-preset-layout='paper-light'] .player-bar .player-cover-slot:hover .player-cover {
-  transform: none;
-  box-shadow: none;
-  filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .player-title {
-  font-family: var(--pl-serif);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .player-artist {
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 10.5px;
-}
-
-/* Controls: bare glyphs, one inked play mark */
-html[data-te-preset-layout='paper-light'] .player-bar .player-center {
-  flex-direction: row;
-  align-items: center;
-  gap: 14px;
-  transform: none;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .ctrl-btn {
-  border-radius: 0;
-  color: var(--te-chrome-text);
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .ctrl-btn:hover {
-  background: transparent;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .btn-play {
-  width: 36px;
-  height: 36px;
-  padding: 8px;
-  border-radius: 2px;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .progress-area {
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto;
-  gap: 12px;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .time-label {
-  color: var(--pl-muted);
-  font-family: var(--pl-serif);
-  font-variant-numeric: tabular-nums;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .progress-track {
-  height: 2px;
-  border-radius: 0;
-  background: var(--pl-rule);
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .progress-fill {
-  border-radius: 0;
-  background: var(--te-player-progress-fill, var(--te-playback-accent, var(--pl-accent)));
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .icon-btn {
-  border-radius: 0;
-  background: transparent;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar .icon-btn:hover {
-  background: transparent;
-  color: var(--pl-accent);
-}
-
-/* Drawers rising from the footer: paper panels with ruled frames */
-html[data-te-preset-layout='paper-light'] .player-bar-shell .playlist-panel,
-html[data-te-preset-layout='paper-light'] .player-bar-shell .volume-drawer,
-html[data-te-preset-layout='paper-light'] .player-bar-shell .hifi-overlay {
-  border-radius: 0;
-  border: 1px solid var(--pl-rule-strong);
-  background: var(--te-card-bg);
+  background: var(--te-app-bg);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-html[data-te-preset-layout='paper-light'] .player-bar-shell .playlist-item {
-  border-radius: 0;
-  border-bottom: 1px solid var(--pl-rule-soft);
+html[data-te-preset-layout='paper-light'] .player-bar :is(.album-cover, .album-cover img) {
+  border-radius: 3px;
 }
 
-html[data-te-preset-layout='paper-light'] .player-bar-shell .playlist-cover,
-html[data-te-preset-layout='paper-light'] .player-bar-shell .playlist-cover-placeholder {
-  border-radius: 0;
-}
-
-/* ============================================================= */
-/* 6 · Quiet motion                                              */
-/* ============================================================= */
-
-html[data-te-preset-layout='paper-light'] .home .now-halo.live,
-html[data-te-preset-layout='paper-light'] .home .empty-ripple,
-html[data-te-preset-layout='paper-light'] .home-view .hero-collage-card,
 html[data-te-preset-layout='paper-light']
-  .side-menu
-  .menu-items
-  .menu-nav
-  .menu-item.active::before {
-  animation: none;
+  .player-bar
+  :is(.song-title, .time-display, .volume-value) {
+  font-family: 'Space Grotesk', var(--te-font-sans);
+  letter-spacing: 0;
 }
 
-html[data-te-preset-layout='paper-light'][data-te-effects-mode='reduced']
-  .home-view
-  .hero-collage-card,
-html[data-te-preset-layout='paper-light'][data-te-effects-mode='reduced'] .home-flow > section,
-html[data-te-preset-layout='paper-light'][data-te-effects-mode='reduced'] .home-view .sk-shimmer,
-html[data-te-preset-layout='paper-light'][data-te-effects-mode='reduced']
-  .player-bar-shell
-  .playing-bars
-  i,
-html[data-te-preset-layout='paper-light'][data-te-effects-mode='reduced'] .home .eq i {
-  animation: none;
+html[data-te-preset-layout='paper-light'] .playing-music .cover-image {
+  border-radius: 3px;
+  box-shadow: none;
 }

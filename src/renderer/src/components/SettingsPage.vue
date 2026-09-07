@@ -1469,9 +1469,14 @@ html[data-theme='dark'] .settings-preview-page .settings-search-box,
 html[data-theme='dark'] .settings-preview-page .settings-nav-search,
 html[data-theme='dark'] .settings-preview-page .read-only-pill {
   border-color: var(--te-card-border);
-  background: var(--te-card-bg);
+  background: var(--te-settings-control-bg);
   color: rgba(226, 232, 240, 0.9);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme='dark'] .settings-preview-page .folder-chip,
+html[data-theme='dark'] .settings-preview-page .path-control input {
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .settings-preview-page .settings-nav-results,
@@ -1679,7 +1684,7 @@ html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .dashed-button,
 html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
   border-color: var(--te-card-border);
-  background: var(--te-card-bg);
+  background: var(--te-settings-control-bg);
   color: rgba(203, 213, 225, 0.9);
   box-shadow: none;
 }

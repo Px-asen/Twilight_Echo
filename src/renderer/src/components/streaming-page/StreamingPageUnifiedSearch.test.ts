@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { stripTypeScriptTypes } from 'node:module'
+import { runInNewContext } from 'node:vm'
 import { compileStyle } from '@vue/compiler-sfc'
 import type { LocalLibraryRemoveResult } from '../../../../shared/localLibrary.ts'
 import type { Track } from '../../types/music.ts'
+import { appendUniqueTracks } from './streamingPageModel.ts'
+import { getTrackSource } from '../../utils/logicalTrackModel.ts'
 
 const source = readFileSync(new URL('../StreamingPage.vue', import.meta.url), 'utf8')
 const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url), 'utf8')
 const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import.meta.url), 'utf8')
+const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
 const providerSwitcherSource = readFileSync(
   new URL('./StreamingProviderSwitcher.vue', import.meta.url),
   'utf8'
@@ -161,17 +166,22 @@ test('recommendations load declared provider sections and fence stale source res
   assert.match(source, /selectProvider\(surfaceProviders\[0\]\.id, false\)/)
 })
 
-test('streaming home and discovery expose the shared provider switcher', () => {
-  assert.match(providerSwitcherSource, /<select/)
-  assert.match(providerSwitcherSource, /emit\('change', providerId\)/)
-  assert.match(providerSwitcherSource, /v-if="options\.length > 1"/)
-  assert.match(providerSwitcherSource, /class="provider-switcher-control is-static"/)
-  assert.match(providerSwitcherSource, /inset:\s*0/)
-  assert.match(providerSwitcherSource, /opacity:\s*0/)
-  assert.match(homeSource, /StreamingProviderSwitcher/)
-  assert.match(discoverySource, /StreamingProviderSwitcher/)
-  assert.match(source, /:provider-options="homeProviderOptions"/)
-  assert.match(source, /:provider-options="discoveryProviderOptions"/)
+test('streaming provider switcher replaces the avatar in the content header', () => {
+  assert.doesNotMatch(providerSwitcherSource, /<select/)
+  assert.match(providerSwitcherSource, /class="provider-switcher-trigger"/)
+  assert.match(providerSwitcherSource, /role="listbox"/)
+  assert.match(providerSwitcherSource, /class="provider-switcher-option"/)
+  assert.match(providerSwitcherSource, /options\.length < 2/)
+  assert.doesNotMatch(providerSwitcherSource, /class="provider-switcher-label"/)
+  assert.doesNotMatch(providerSwitcherSource, /class="provider-switcher-name"/)
+  assert.match(headerSource, /<StreamingProviderSwitcher/)
+  assert.match(headerSource, /class="streaming-header-provider-switcher"/)
+  assert.match(headerSource, /emit\('select-provider', \$event\)/)
+  assert.doesNotMatch(headerSource, /streaming-avatar-btn/)
+  assert.doesNotMatch(homeSource, /StreamingProviderSwitcher/)
+  assert.doesNotMatch(discoverySource, /StreamingProviderSwitcher/)
+  assert.match(source, /const headerProviderOptions = computed\(/)
+  assert.match(source, /:provider-options="headerProviderOptions"/)
   assert.match(source, /@select-provider="selectProvider"/)
 })
 
@@ -179,7 +189,7 @@ test('private FM and radar use a session-fenced queue stream in shuffle mode', (
   assert.match(source, /const PERSONALIZED_STREAM_QUEUE_THRESHOLD = 6/)
   assert.match(source, /async function loadMorePersonalizedStream/)
   assert.match(source, /session: PersonalizedStreamSession \| null = null/)
-  assert.match(source, /let additions = appendUniqueTracks\(current, incoming\)/)
+  assert.match(source, /let additions = appendUniqueTracks\(existing, incoming\)/)
   assert.match(source, /key === 'radar' &&\s*additions\.length === 0/)
   assert.match(source, /providerStore\.callProvider<Track\[]>\(providerId,\s*'fetchPersonalFm'\)/)
   assert.match(source, /if \(session\) appendPersonalizedStreamTracks\(session, additions\)/)
@@ -339,6 +349,125 @@ test('local dashboard top tracks resolve logical stats to playable local variant
   assert.doesNotMatch(dashboardSource, /recentStats: \[stat\]/)
   assert.doesNotMatch(dashboardSource, /Object\.entries\(listeningStats\.value\.tracks\)/)
   assert.doesNotMatch(dashboardSource, /track: byId\.get\(id\) \?\? stat\.track/)
+})
+
+function createFmHarness() {
+  const current = createTrack('kugou:current', 'kugou')
+  const incoming = createTrack('kugou:next', 'kugou')
+  const requests: string[] = []
+  const appended: Track[][] = []
+  const scope = {
+    personalizedStreamLoading: { fm: false },
+    personalizedStreamRetryAfter: { fm: 0 },
+    currentTrack: { value: current },
+    activeProvider: { value: 'qq' },
+    recommendationTracks: { value: { fm: [createTrack('qq:visible', 'qq')] } },
+    recommendationRequestId: 1,
+    currentDetail: { value: null },
+    playbackStore: { queue: { value: [current] } },
+    providerStore: {
+      getProvider: () => ({ supportedMethods: ['fetchPersonalFm'] }),
+      callProvider: async (id: string) => {
+        requests.push(id)
+        return [current, incoming]
+      }
+    },
+    appendPersonalizedStreamTracks: (_session: unknown, tracks: Track[]) => appended.push(tracks),
+    appendUniqueTracks,
+    getTrackSource,
+    PERSONALIZED_STREAM_RETRY_COOLDOWN_MS: 15000
+  }
+  const functionSource = source.slice(
+    source.indexOf('async function loadMorePersonalizedStream('),
+    source.indexOf('\ntype SidebarItem =')
+  )
+  const load = runInNewContext(
+    `${stripTypeScriptTypes(functionSource)}\nloadMorePersonalizedStream`,
+    scope
+  ) as (key: string, session: unknown) => Promise<void>
+  return { load, scope, requests, appended, current, incoming }
+}
+
+test('guest home skips private daily recommendations while retaining public chart sections', async () => {
+  const definitions = [
+    {
+      key: 'daily',
+      title: '每日推荐',
+      method: 'fetchRecommendSongs',
+      args: ['daily'],
+      requiresLogin: true
+    },
+    { key: 'hot', title: '热歌榜', method: 'fetchRecommendSongs', args: ['hot'] }
+  ]
+  const calls: unknown[][] = []
+  const scope = {
+    activeProvider: { value: 'qq' },
+    activeLoggedIn: { value: false },
+    activeProviderInfo: { value: { ui: { streamingHome: { requiresLogin: false } } } },
+    providerSupportsHome: () => true,
+    recommendationProviderId: { value: '' },
+    recommendationRequestId: 0,
+    homeSectionDefinitions: { value: [] },
+    recommendationTracks: { value: {} as Record<string, Track[]> },
+    recommendationErrors: { value: {} },
+    recommendPlaylists: { value: [] },
+    recsLoading: { value: false },
+    recsError: { value: '' },
+    getHomeSectionDefinitions: () => definitions,
+    friendlyStreamingError: (_error: unknown, fallback: string) => fallback,
+    providerStore: {
+      getProvider: () => ({ supportedMethods: ['fetchRecommendSongs'] }),
+      callProvider: async (_id: string, _method: string, args: unknown[]) => {
+        calls.push(args)
+        return [createTrack('qq:hot', 'qq')]
+      }
+    }
+  }
+  const functionSource = source.slice(
+    source.indexOf('async function loadRecommendations('),
+    source.indexOf('\nconst recSections =')
+  )
+  const load = runInNewContext(
+    `${stripTypeScriptTypes(functionSource)}\nloadRecommendations`,
+    scope
+  ) as () => Promise<void>
+  await load()
+  assert.deepEqual(calls, [['hot']])
+  assert.equal(scope.recommendationTracks.value.daily.length, 0)
+  assert.equal(scope.recommendationTracks.value.hot.length, 1)
+  assert.equal(scope.recsError.value, '')
+})
+
+test('FM continues from its playing provider after browsing another homepage', async () => {
+  const harness = createFmHarness()
+  const visible = harness.scope.recommendationTracks.value
+  await harness.load('fm', { key: 'fm', id: 1 })
+  assert.deepEqual(harness.requests, ['kugou'])
+  assert.equal(harness.scope.recommendationTracks.value, visible)
+  assert.deepEqual(harness.appended[0], [harness.incoming])
+  assert.equal(harness.scope.personalizedStreamLoading.fm, false)
+})
+
+test('a repeated FM batch backs off without appending duplicate queue tracks', async () => {
+  const harness = createFmHarness()
+  harness.scope.playbackStore.queue.value = [harness.current, harness.incoming]
+  await harness.load('fm', { key: 'fm', id: 1 })
+  assert.equal(harness.appended.length, 0)
+  assert.ok(harness.scope.personalizedStreamRetryAfter.fm > Date.now())
+})
+
+test('FM completion cannot overwrite a homepage refreshed during the request', async () => {
+  const harness = createFmHarness()
+  harness.scope.activeProvider.value = 'kugou'
+  const refreshed = { fm: [createTrack('kugou:refreshed', 'kugou')] }
+  harness.scope.providerStore.callProvider = async () => {
+    harness.scope.recommendationRequestId += 1
+    harness.scope.recommendationTracks.value = refreshed
+    return [harness.incoming]
+  }
+  await harness.load('fm', { key: 'fm', id: 1 })
+  assert.equal(harness.scope.recommendationTracks.value, refreshed)
+  assert.deepEqual(harness.appended[0], [harness.incoming])
 })
 
 function createTrack(id: string, source: string): Track {

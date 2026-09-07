@@ -9,6 +9,9 @@ const ArchiveDashboard = defineAsyncComponent(
 const NightHarborDashboard = defineAsyncComponent(
   () => import('@renderer/components/local-dashboard/NightHarborDashboard.vue')
 )
+const SoundFieldDashboard = defineAsyncComponent(
+  () => import('@renderer/components/local-dashboard/SoundFieldDashboard.vue')
+)
 const { presetLayout } = useThemeStore()
 
 const emit = defineEmits<{
@@ -18,17 +21,29 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <component
-    :is="
-      presetLayout === 'aurora-reference'
-        ? ArchiveDashboard
-        : presetLayout === 'obsidian-glass'
-          ? NightHarborDashboard
-          : LocalDashboard
-    "
-    @select-view="
-      (category: string, filter: string | null) => emit('select-view', category, filter)
-    "
-    @open-library-settings="emit('open-library-settings')"
-  />
+  <div class="local-home-layout">
+    <component
+      :is="
+        presetLayout === 'aurora-reference'
+          ? ArchiveDashboard
+          : presetLayout === 'obsidian-glass'
+            ? NightHarborDashboard
+            : presetLayout === 'paper-light'
+              ? SoundFieldDashboard
+              : LocalDashboard
+      "
+      @select-view="
+        (category: string, filter: string | null) => emit('select-view', category, filter)
+      "
+      @open-library-settings="emit('open-library-settings')"
+    />
+  </div>
 </template>
+
+<style scoped>
+.local-home-layout {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+</style>

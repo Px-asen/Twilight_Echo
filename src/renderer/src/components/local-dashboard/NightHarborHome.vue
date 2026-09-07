@@ -4,7 +4,7 @@ import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
 
 const props = defineProps<{
-  summary: { tracks: number; albums: number; artists: number; hours: number }
+  summary: { tracks: number; albums: number; artists: number; hours: number; minutes: number }
   hero: Track | null
   recent: Track[]
   added: Track[]
@@ -49,9 +49,6 @@ const heroLabel = computed(() => {
   if (heroIsCurrent.value) return '已暂停'
   return props.recent.some((track) => track.id === props.hero?.id) ? '继续聆听' : '从这首开始'
 })
-const dateLabel = computed(() =>
-  now.value.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
-)
 const greeting = computed(() => {
   const hour = now.value.getHours()
   if (hour < 5) return '夜深了，留一盏灯给音乐。'
@@ -84,13 +81,6 @@ function openActivity(): void {
 <template>
   <main class="night-harbor dashboard-wrapper">
     <div class="nh-page">
-      <header class="nh-masthead">
-        <div class="nh-wordmark">
-          <i class="ph ph-vinyl-record" aria-hidden="true"></i
-          ><span>NIGHT HARBOR<span class="nh-wordmark-sub">私人唱片厅</span></span>
-        </div>
-        <span class="nh-date">{{ dateLabel }}</span>
-      </header>
       <section class="nh-intro" aria-labelledby="nh-title">
         <div>
           <p class="nh-eyebrow">TWILIGHT ECHO / PERSONAL COLLECTION</p>
@@ -205,7 +195,10 @@ function openActivity(): void {
             </button>
             <div>
               <span><i class="ph ph-hourglass-simple" aria-hidden="true"></i>音乐时长</span
-              ><strong>{{ summary.hours.toLocaleString('zh-CN') }}<small>小时</small></strong>
+              ><strong
+                >{{ (summary.hours || summary.minutes).toLocaleString('zh-CN')
+                }}<small>{{ summary.hours ? '小时' : '分钟' }}</small></strong
+              >
             </div>
           </div>
           <button v-if="summary.tracks" type="button" class="nh-shuffle" @click="emit('shuffle')">
