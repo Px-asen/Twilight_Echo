@@ -342,6 +342,8 @@ test('phase five ships seven contrasting read-only presets with token, mode, and
   assert.equal(resolveThemeProfileModes(obsidian).player?.layout, 'full-cover')
   assert.equal(resolveThemeProfileModes(obsidian).navigation?.style, 'rail')
   assert.equal(resolveThemeProfileModes(obsidian).visibility?.playerDuration, false)
+  const aurora = BUILT_IN_THEME_PRESETS.find((preset) => preset.id.endsWith('aurora-reference'))!
+  assert.equal(resolveThemeProfileModes(aurora).navigation?.logo, 'hide')
 })
 
 test('derived profiles retain a preset source and reset through the preset base', () => {

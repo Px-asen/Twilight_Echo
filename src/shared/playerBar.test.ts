@@ -8,6 +8,7 @@ import {
   PLAYER_BAR_VISIBILITIES,
   clonePlayerBarSettings,
   normalizePlayerBarMode,
+  normalizePlayerBarModeSource,
   normalizePlayerBarPageMode,
   normalizePlayerBarPageVisibility,
   normalizePlayerBarSettings,
@@ -22,6 +23,7 @@ import { DEFAULT_PLAYER_BAR_LAYOUT } from './playerBarLayout.ts'
 test('player bar defaults keep the existing standard shape', () => {
   assert.deepEqual(DEFAULT_PLAYER_BAR_SETTINGS, {
     mode: 'standard',
+    modeSource: 'theme',
     playingPageMode: 'inherit',
     visibility: 'visible',
     playingPageVisibility: 'inherit',
@@ -34,6 +36,16 @@ test('player bar defaults keep the existing standard shape', () => {
   // Deep-equal but not the same object, so editing a settings copy in place
   // cannot rewrite the shared default layout.
   assert.notEqual(DEFAULT_PLAYER_BAR_SETTINGS.layout, DEFAULT_PLAYER_BAR_LAYOUT)
+})
+
+test('mode source normalization defaults to theme and preserves explicit user choices', () => {
+  assert.equal(normalizePlayerBarModeSource('user'), 'user')
+  assert.equal(normalizePlayerBarModeSource('theme'), 'theme')
+  assert.equal(normalizePlayerBarModeSource(undefined), 'theme')
+  assert.equal(
+    normalizePlayerBarSettings({ mode: 'compact', modeSource: 'user' }).modeSource,
+    'user'
+  )
 })
 
 test('mode normalization falls back to standard for anything unrecognized', () => {

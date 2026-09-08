@@ -1,4 +1,5 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { applyExplicitThemePreferences } from '@renderer/extensions/themeProfilePriority'
+import { computed, nextTick, ref, shallowRef, type ComputedRef, type Ref } from 'vue'
 import {
   DEFAULT_THEME_TONE_SCHEDULE,
   THEME_MANAGED_DATA_ATTRIBUTES,
@@ -38,6 +39,7 @@ import {
   type ThemePerformanceOperation,
   type ThemePerformanceSnapshot
 } from '../utils/themePerformance'
+import { isThemeLibrarySnapshotNewer } from '../utils/themeRuntimeRevision'
 import type { AppBackgroundColorPair, AppBackgroundPage, AppSettings } from '../types/settings'
 import {
   APP_FONT_SYSTEM,
@@ -56,6 +58,7 @@ import {
   type SurfaceMaterial
 } from '../../../shared/liquidGlass.ts'
 
+const effectiveVariables = shallowRef<Record<string, string>>({})
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
 const SETTINGS_ACCENT_COLORS: Readonly<Record<string, string>> = Object.freeze({
@@ -278,15 +281,27 @@ export async function bootstrapThemeRuntime(startupSnapshot?: AppStartupSnapshot
 }
 
 function acceptBootstrap(bootstrap: ThemeBootstrap): void {
-  snapshot.value = bootstrap.library
+  acceptThemeSnapshot(bootstrap.library)
   loaded.value = true
+}
+
+function acceptThemeSnapshot(next: ThemeLibrarySnapshot): boolean {
+  if (!isThemeLibrarySnapshotNewer(snapshot.value, next)) return false
+  snapshot.value = next
+  return true
 }
 
 function setupThemeListeners(): void {
   if (listenersSetup || !window.api?.themes) return
   listenersSetup = true
   window.api.themes.onChanged((next) => {
-    snapshot.value = next
+    const previousActiveTheme = snapshot.value?.data.activeTheme
+    if (!acceptThemeSnapshot(next)) return
+    if (!themeSelectionsEqual(previousActiveTheme, next.data.activeTheme)) {
+      previewProfile.value = null
+      previewSelection.value = null
+      previewTone.value = null
+    }
     queueMicrotask(() => void applyActiveTheme(true))
   })
   window.api.themes.onSystemToneChanged((tone) => {
@@ -324,6 +339,21 @@ function getSelectedProfile(selection: ThemeSelection | undefined): ThemeProfile
   return library.profiles.find((profile) => profile.id === profileId) ?? null
 }
 
+function themeSelectionsEqual(
+  first: ThemeSelection | undefined,
+  second: ThemeSelection | undefined
+): boolean {
+  if (!first || !second || first.kind !== second.kind) return false
+  if (first.kind === 'builtin' && second.kind === 'builtin') return first.id === second.id
+  if (first.kind === 'user' && second.kind === 'user') return first.id === second.id
+  return (
+    first.kind === 'plugin' &&
+    second.kind === 'plugin' &&
+    first.pluginId === second.pluginId &&
+    first.themeId === second.themeId
+  )
+}
+
 function resolvePluginTheme(
   contributions: ThemeContribution[],
   selection: Extract<ThemeSelection, { kind: 'plugin' }>
@@ -333,6 +363,7 @@ function resolvePluginTheme(
 }
 
 interface ThemeRuntimeState {
+  variables: Record<string, string>
   css: string
   dataAttributes: Record<`data-te-${string}`, string>
   activeTheme: string
@@ -403,8 +434,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
         if (previewSelection.value) throw new Error('当前插件主题不可用')
         return {
           css: '',
+          variables: {},
           dataAttributes: {
             ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
+            'data-te-preset-layout': presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
             'data-te-surface-material': surfaceMaterial,
             'data-te-liquid-glass-coverage': liquidGlass.coverage,
             'data-te-home-liquid-glass': liquidGlass.homeCards.enabled ? 'on' : 'off',
@@ -443,23 +476,24 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       applyProfileModeVariables(modes, tone, resolvedTokens, variables)
     }
   }
+  const themedVariables = { ...variables }
   applyAppBackgroundVariables(tone, variables)
   applySettingsAccentColor(tone, variables)
-  // Settings-owned, like the accent color: an explicit global font outranks the
-  // theme's own faces (including a profile's uploaded font asset). `system`
-  // contributes nothing, so themed typography survives the default.
   Object.assign(variables, appFontCssVariables(uiFontFamily))
+  applyExplicitThemePreferences(selectedProfile, tone, themedVariables, variables)
   applyLiquidGlassVariables(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
     .join('\n')
   return {
+    variables,
     css: [assetStylesheet, root ? `:root {\n${root}\n}` : '', stylesheet]
       .filter(Boolean)
       .join('\n\n'),
     dataAttributes: {
       ...themeModesToDataAttributes(modes),
       ...themeShellLayoutToDataAttributes(shellLayout),
+      'data-te-preset-layout': resolvePresetLayout(selection, selectedProfile),
       // Settings-owned, so it wins over anything a theme profile declares.
       'data-te-surface-material': surfaceMaterial,
       'data-te-liquid-glass-coverage': liquidGlass.coverage,
@@ -822,7 +856,7 @@ export async function applyActiveTheme(
     document.documentElement.style.colorScheme = state.tone === 'dark' ? 'dark' : 'light'
     applyLiquidGlassRuntimeVariables(state.tone)
     document.documentElement.dataset.activeTheme = state.activeTheme
-    document.documentElement.dataset.tePresetLayout = state.presetLayout
+    effectiveVariables.value = state.variables
     if (operation === 'apply') {
       persistThemeRuntimeCache({
         css: state.css,
@@ -849,8 +883,10 @@ function activeThemeKey(selection: ThemeSelection | undefined): string {
 
 export function useThemeStore(): {
   snapshot: Ref<ThemeLibrarySnapshot | null>
+  effectiveVariables: Ref<Record<string, string>>
   profiles: ComputedRef<ThemeProfileV2[]>
   activeTheme: ComputedRef<ThemeSelection>
+  presetLayout: ComputedRef<string>
   activeProfile: ComputedRef<ThemeProfileV2 | null>
   previewProfile: Ref<ThemeProfileV2 | null>
   previewSelection: Ref<ThemeSelection | null>
@@ -884,6 +920,10 @@ export function useThemeStore(): {
     return selection.kind === 'user'
       ? (profiles.value.find((profile) => profile.id === selection.id) ?? null)
       : null
+  })
+  const presetLayout = computed(() => {
+    const selection = previewSelection.value ?? activeTheme.value
+    return resolvePresetLayout(selection, getSelectedProfile(selection))
   })
 
   async function load(): Promise<void> {
@@ -945,7 +985,7 @@ export function useThemeStore(): {
     error.value = ''
     try {
       const next = await operation(snapshot.value?.revision ?? 0)
-      snapshot.value = next
+      acceptThemeSnapshot(next)
       await applyActiveTheme(true)
       return next
     } catch (cause) {
@@ -971,9 +1011,24 @@ export function useThemeStore(): {
   }
 
   async function setActive(selection: ThemeSelection): Promise<ThemeLibrarySnapshot> {
-    previewProfile.value = null
-    previewSelection.value = null
-    return await runSave((revision) => window.api.themes.setActive(selection, revision))
+    saving.value = true
+    error.value = ''
+    try {
+      const plain = JSON.parse(JSON.stringify(selection)) as ThemeSelection
+      const next = await window.api.themes.setActive(plain, snapshot.value?.revision ?? 0)
+      acceptThemeSnapshot(next)
+      previewProfile.value = null
+      previewSelection.value = null
+      await nextTick()
+      await applyActiveTheme(true)
+      return next
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : '主题应用失败'
+      error.value = message
+      throw cause
+    } finally {
+      saving.value = false
+    }
   }
 
   async function setWindowInheritance(
@@ -987,7 +1042,7 @@ export function useThemeStore(): {
   async function importTheme(): Promise<ThemeLibrarySnapshot | null> {
     try {
       const next = await window.api.themes.importTheme(snapshot.value?.revision ?? 0)
-      if (next) snapshot.value = next
+      if (next) acceptThemeSnapshot(next)
       return next
     } catch (cause) {
       await restorePersistedTheme()
@@ -1033,8 +1088,10 @@ export function useThemeStore(): {
 
   return {
     snapshot,
+    effectiveVariables,
     profiles,
     activeTheme,
+    presetLayout,
     activeProfile,
     previewProfile,
     previewSelection,

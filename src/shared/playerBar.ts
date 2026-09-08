@@ -28,6 +28,7 @@ import {
 } from './playerBarLayout.ts'
 
 export type PlayerBarMode = 'standard' | 'mini' | 'compact'
+export type PlayerBarModeSource = 'theme' | 'user'
 
 /** Playing-page shape; `inherit` follows the global `mode`. */
 export type PlayerBarPageMode = PlayerBarMode | 'inherit'
@@ -54,6 +55,7 @@ export const PLAYER_BAR_VISIBILITIES: readonly PlayerBarVisibility[] = [
 export interface PlayerBarSettings {
   /** Shape used everywhere except the now-playing page. */
   mode: PlayerBarMode
+  modeSource: PlayerBarModeSource
   /** Shape used on the now-playing page. */
   playingPageMode: PlayerBarPageMode
   /** Visibility used everywhere except the now-playing page. */
@@ -80,6 +82,7 @@ export const PLAYER_BAR_BOUNDS: Readonly<Record<'revealThresholdPx' | 'hideDelay
 
 export const DEFAULT_PLAYER_BAR_SETTINGS: PlayerBarSettings = {
   mode: 'standard',
+  modeSource: 'theme',
   playingPageMode: 'inherit',
   visibility: 'visible',
   playingPageVisibility: 'inherit',
@@ -97,6 +100,10 @@ function clamp(value: unknown, bound: Bound, fallback: number): number {
 
 export function normalizePlayerBarMode(value: unknown): PlayerBarMode {
   return value === 'mini' || value === 'compact' ? value : 'standard'
+}
+
+export function normalizePlayerBarModeSource(value: unknown): PlayerBarModeSource {
+  return value === 'user' ? 'user' : 'theme'
 }
 
 export function normalizePlayerBarPageMode(value: unknown): PlayerBarPageMode {
@@ -130,6 +137,7 @@ export function normalizePlayerBarSettings(raw: unknown): PlayerBarSettings {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   return {
     mode: normalizePlayerBarMode(value.mode),
+    modeSource: normalizePlayerBarModeSource(value.modeSource),
     playingPageMode: normalizePlayerBarPageMode(value.playingPageMode),
     visibility: normalizePlayerBarVisibility(value.visibility),
     playingPageVisibility: resolvePlayingPageVisibility(value),

@@ -1,4 +1,5 @@
 #include "Vst3ModuleProbe.h"
+#include "Vst3SharedProtocol.h"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -17,7 +18,7 @@
 namespace twilight::vst3 {
 namespace {
 
-constexpr int32_t kMaximumScannedParameters = 2048;
+constexpr int32_t kMaximumScannedParameters = static_cast<int32_t>(ipc::kMaxParameters);
 
 struct LayoutProbe {
   const char* name;

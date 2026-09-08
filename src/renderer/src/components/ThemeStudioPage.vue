@@ -1,16 +1,18 @@
 <script setup lang="ts">
+import ThemeAppearanceControl from '@renderer/components/theme-studio/ThemeAppearanceControl.vue'
 import {
   useThemeStudioEditor,
   type BuiltInThemePresetId,
   type ThemeStudioDomain
-} from './theme-studio/useThemeStudioEditor'
-import { useBackHandlerWhileMounted } from '../app/useBackStack'
-import EqualizerPage from './EqualizerPage.vue'
-import LocalDashboard from './LocalDashboard.vue'
-import PlayerBar from './PlayerBar.vue'
-import PlayingMusic from './PlayingMusic.vue'
-import SideMenu from './SideMenu.vue'
-import TitleBar from './TitleBar.vue'
+} from '@renderer/components/theme-studio/useThemeStudioEditor'
+import { useBackHandlerWhileMounted } from '@renderer/app/useBackStack'
+import SongList from '@renderer/components/SongList.vue'
+import EqualizerPage from '@renderer/components/EqualizerPage.vue'
+import LocalHome from '@renderer/components/local-dashboard/LocalHome.vue'
+import PlayerBar from '@renderer/components/PlayerBar.vue'
+import PlayingMusic from '@renderer/components/PlayingMusic.vue'
+import SideMenu from '@renderer/components/SideMenu.vue'
+import TitleBar from '@renderer/components/TitleBar.vue'
 
 const props = defineProps<{ initialDomain?: ThemeStudioDomain }>()
 const emit = defineEmits<{ back: [] }>()
@@ -22,6 +24,7 @@ const {
   activeDomain,
   activeKey,
   activeModes,
+  appearanceGroups,
   applyAccentPalette,
   applyBackgroundPalette,
   applySelected,
@@ -38,6 +41,7 @@ const {
   domain,
   domains,
   draft,
+  editorPaneRef,
   duplicateSelected,
   exportTheme,
   filteredStudioHits,
@@ -57,7 +61,6 @@ const {
   localError,
   notice,
   persistedHistory,
-  personalizationBackgroundBindings,
   playerLayouts,
   presetPreviewStyle,
   previewCanvasStyle,
@@ -67,7 +70,6 @@ const {
   previewViewportRef,
   previewViewportStyle,
   profiles,
-  rangeNumber,
   redo,
   removeOverride,
   resetAll,
@@ -83,8 +85,9 @@ const {
   setPlayerLayout,
   setTone,
   sourceFor,
+  tokenHint,
+  tokenUnavailable,
   studioSearchQuery,
-  supportsColorPicker,
   themeContributions,
   themeStore,
   toggleWindowInheritance,
@@ -99,7 +102,6 @@ const {
   updateLibraryMode,
   updateNavigationMode,
   updatePlayerMode,
-  updateRange,
   updateScheduleTime,
   updateToken,
   updateTypographyMode,
@@ -109,7 +111,6 @@ const {
   updateWindowText,
   valueFor,
   valueForId,
-  visibleDefinitions,
   visibilityOptions,
   visibilityValue,
   windowDefaultValue
@@ -122,21 +123,23 @@ const {
 // App 层按页面旗标直接关闭，本页因此不注册 App 层基础层。
 useBackHandlerWhileMounted(closeStudio)
 void previewViewportRef.value
+void editorPaneRef.value
 </script>
 
 <template>
   <div class="theme-studio-page" data-te-surface="theme-studio">
     <header class="theme-studio-header">
       <div>
-        <h1>主题工作室 · Beta</h1>
-        <span>{{
-          isDirty ? '有未应用的修改' : '深度定制已可用；像素黄金矩阵与性能证据仍在收口 (P7)'
-        }}</span>
+        <h1>主题工作室</h1>
+        <span role="status"
+          >{{ themeStore.saving.value ? '正在保存' : isDirty ? '有未保存的修改' : '正在预览' }} ·
+          {{ tone === 'dark' ? '深色配色' : '浅色配色' }}</span
+        >
       </div>
       <label class="theme-profile-picker">
-        <span>配置档</span>
-        <select :value="selectedKey" aria-label="当前主题配置档" @change="selectThemeKey">
-          <optgroup label="内置预设">
+        <span>主题</span>
+        <select :value="selectedKey" aria-label="当前主题" @change="selectThemeKey">
+          <optgroup label="内置主题">
             <option
               v-for="preset in BUILT_IN_THEME_PRESETS"
               :key="preset.id"
@@ -166,21 +169,23 @@ void previewViewportRef.value
         </select>
       </label>
       <div class="theme-studio-actions">
-        <div class="studio-segment" aria-label="主题变体">
+        <div class="studio-segment" aria-label="配色模式">
           <button
             type="button"
-            title="浅色变体"
-            aria-label="浅色变体"
+            title="浅色配色"
+            aria-label="浅色配色"
             :class="{ active: tone === 'pureWhite' }"
+            :aria-pressed="tone === 'pureWhite'"
             @click="setTone('pureWhite')"
           >
             <i class="ph ph-sun"></i>
           </button>
           <button
             type="button"
-            title="深色变体"
-            aria-label="深色变体"
+            title="深色配色"
+            aria-label="深色配色"
             :class="{ active: tone === 'dark' }"
+            :aria-pressed="tone === 'dark'"
             @click="setTone('dark')"
           >
             <i class="ph ph-moon"></i>
@@ -189,8 +194,8 @@ void previewViewportRef.value
         <button
           type="button"
           class="studio-icon-button"
-          title="恢复当前视觉域"
-          aria-label="恢复当前视觉域"
+          title="重置本分类"
+          aria-label="重置本分类"
           :disabled="!draft || domain === 'presets'"
           @click="resetGroup"
         >
@@ -199,8 +204,8 @@ void previewViewportRef.value
         <button
           type="button"
           class="studio-icon-button"
-          title="恢复完整默认值"
-          aria-label="恢复完整默认值"
+          title="重置整个主题"
+          aria-label="重置整个主题"
           :disabled="!draft"
           @click="resetAll"
         >
@@ -251,73 +256,60 @@ void previewViewportRef.value
           @click="applySelected"
         >
           <i :class="themeStore.saving.value ? 'pi pi-spin pi-spinner' : 'ph ph-check'"></i
-          ><span>应用</span>
+          ><span>{{ draft ? '保存并应用' : '应用主题' }}</span>
         </button>
       </div>
     </header>
+    <p v-if="localError || themeStore.error.value" class="studio-message error" role="alert">
+      {{ localError || themeStore.error.value }}
+    </p>
 
     <div class="theme-studio-workspace">
-      <aside class="theme-library-pane" aria-label="视觉域">
+      <aside class="theme-library-pane" aria-label="外观分类">
         <div class="pane-heading">
-          <strong>视觉域</strong>
+          <strong>外观分类</strong>
         </div>
         <label class="studio-search">
           <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
           <input
             v-model="studioSearchQuery"
             type="search"
-            placeholder="搜索设置、令牌或模式"
+            placeholder="搜索颜色、圆角、字体…"
             aria-label="搜索主题设置"
           />
         </label>
-        <div v-if="filteredStudioHits.length" class="studio-search-hits" role="listbox">
+        <div v-if="filteredStudioHits.length" class="studio-search-hits" aria-label="搜索结果">
           <button
             v-for="hit in filteredStudioHits"
             :key="`${hit.kind}:${hit.id}`"
             type="button"
-            role="option"
             @click="jumpToSearchHit(hit)"
           >
             <strong>{{ hit.title }}</strong>
-            <small>{{ hit.kind }} · {{ hit.domain }}</small>
+            <small>{{ domains.find((item) => item.id === hit.domain)?.label }}</small>
           </button>
         </div>
+        <p v-else-if="studioSearchQuery.trim()" class="studio-control-hint" role="status">
+          没有找到相关设置
+        </p>
         <nav class="theme-domain-list">
           <button
             v-for="item in domains"
             :key="item.id"
             type="button"
             :class="{ active: domain === item.id }"
+            :aria-current="domain === item.id ? 'page' : undefined"
             @click="domain = item.id"
           >
             <i :class="item.icon"></i><span>{{ item.label }}</span>
           </button>
         </nav>
-
-        <div class="window-inheritance">
-          <label>
-            <span>迷你播放器</span>
-            <input
-              type="checkbox"
-              :checked="themeStore.snapshot.value?.data.windowInheritance.miniPlayer"
-              @change="toggleWindowInheritance('miniPlayer')"
-            />
-          </label>
-          <label>
-            <span>桌面歌词</span>
-            <input
-              type="checkbox"
-              :checked="themeStore.snapshot.value?.data.windowInheritance.desktopLyrics"
-              @change="toggleWindowInheritance('desktopLyrics')"
-            />
-          </label>
-        </div>
       </aside>
 
       <main class="theme-preview-pane">
         <div class="preview-toolbar">
           <div>
-            <strong>实时应用视图</strong><span>{{ activeDomain.label }}</span>
+            <strong>实时预览</strong><span>{{ activeDomain.label }}</span>
           </div>
           <div class="studio-segment preview-surface-switcher" aria-label="预览页面">
             <button
@@ -328,7 +320,10 @@ void previewViewportRef.value
               :aria-pressed="previewSurface === surface.id"
               @click="previewSurface = surface.id"
             >
-              <i :class="surface.icon"></i><span>{{ surface.label }}</span>
+              <i :class="surface.icon"></i
+              ><span>{{
+                domain === 'library' && surface.id === 'dashboard' ? '歌曲列表' : surface.label
+              }}</span>
             </button>
           </div>
         </div>
@@ -356,7 +351,13 @@ void previewViewportRef.value
               class="main-content live-preview-app"
               :class="{ 'menu-open': previewNavigationOpen }"
             >
-              <LocalDashboard />
+              <SongList
+                v-if="domain === 'library'"
+                category="allSongs"
+                :filter="null"
+                :has-player="true"
+                transition-name="page-down"
+              /><LocalHome v-else />
             </div>
             <PlayingMusic v-else-if="previewSurface === 'player'" />
             <EqualizerPage v-else />
@@ -370,7 +371,7 @@ void previewViewportRef.value
         </section>
       </main>
 
-      <aside class="theme-editor-pane" aria-label="主题编辑器">
+      <aside ref="editorPaneRef" class="theme-editor-pane" aria-label="主题编辑器">
         <div class="pane-heading">
           <strong>{{ activeDomain.label }}</strong>
           <div>
@@ -399,7 +400,7 @@ void previewViewportRef.value
 
         <section v-if="domain === 'presets'" class="preset-gallery-section">
           <div class="control-section-heading">
-            <span>内置预设</span><small>预览后确认应用</small>
+            <span>内置主题</span>
           </div>
           <div class="preset-gallery" aria-label="内置主题预设">
             <article
@@ -434,8 +435,8 @@ void previewViewportRef.value
                 <span v-if="activeKey === `preset:${preset.id}`">当前使用</span>
                 <button
                   type="button"
-                  title="从预设派生"
-                  aria-label="从预设派生"
+                  :title="'自定义' + preset.name"
+                  :aria-label="'自定义' + preset.name"
                   @click="derivePreset(preset)"
                 >
                   <i class="ph ph-copy"></i>
@@ -476,8 +477,8 @@ void previewViewportRef.value
                   <small>
                     {{
                       profile.source?.kind === 'builtin-preset'
-                        ? `派生自 ${getBuiltInThemePreset(profile.source.presetId)?.name ?? '内置预设'}`
-                        : profile.description || '个人配置档'
+                        ? `基于 ${getBuiltInThemePreset(profile.source.presetId)?.name ?? '内置主题'}`
+                        : profile.description || '个人主题'
                     }}
                   </small>
                 </span>
@@ -492,7 +493,7 @@ void previewViewportRef.value
 
           <section v-if="draft" class="profile-history-section">
             <div class="control-section-heading">
-              <span>版本历史</span><small>最多保留 8 个版本</small>
+              <span>之前保存的版本</span><small>最近 8 次</small>
             </div>
             <div v-if="persistedHistory.length" class="profile-history-list">
               <div v-for="entry in persistedHistory" :key="entry.savedAt">
@@ -523,17 +524,22 @@ void previewViewportRef.value
           @change="changeName"
         />
         <div v-else-if="domain !== 'presets'" class="read-only-theme">
-          <i class="ph ph-lock"></i><span>创建副本后编辑</span>
+          <div>
+            <strong>{{ selectedPluginTheme ? '插件主题' : '内置主题' }}</strong>
+          </div>
+          <button type="button" class="studio-command primary" @click="duplicateSelected">
+            开始自定义
+          </button>
         </div>
 
         <section v-if="domain === 'personalization'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>个性化运行模式</span
-            ><small>配置档 · {{ tone === 'dark' ? '深色' : '浅色' }}</small>
+            <span>配色与背景</span><small>主题 · {{ tone === 'dark' ? '深色' : '浅色' }}</small>
           </div>
           <label class="studio-setting-row">
-            <span>强调色来源<small>封面模式复用已缓存主色</small></span>
+            <span>主题色</span>
             <select
+              data-studio-setting="appearance.accentSource"
               :value="activeModes.appearance?.accentSource"
               :disabled="!draft"
               @change="updateAppearanceMode('accentSource', $event)"
@@ -543,8 +549,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>背景处理<small>失败时保留实色背景</small></span>
+            <span>背景样式</span>
             <select
+              data-studio-setting="appearance.backgroundTreatment"
               :value="activeModes.appearance?.backgroundTreatment"
               :disabled="!draft"
               @change="updateAppearanceMode('backgroundTreatment', $event)"
@@ -556,8 +563,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>日夜调度<small>切换只重解析当前变体</small></span>
+            <span>自动切换深浅色</span>
             <select
+              data-studio-setting="appearance.toneScheduling"
               :value="activeModes.appearance?.toneScheduling"
               :disabled="!draft"
               @change="updateAppearanceMode('toneScheduling', $event)"
@@ -588,20 +596,22 @@ void previewViewportRef.value
             </label>
           </div>
           <label class="studio-setting-row">
-            <span>对比度保护<small>普通文本 4.5:1，大文本 3:1</small></span>
+            <span>文字可读性</span>
             <select
+              data-studio-setting="appearance.contrastGuard"
               :value="activeModes.appearance?.contrastGuard"
               :disabled="!draft"
               @change="updateAppearanceMode('contrastGuard', $event)"
             >
               <option value="off">关闭</option>
-              <option value="warn">仅预警</option>
-              <option value="enforce">安全回退</option>
+              <option value="warn">提示文字不清晰</option>
+              <option value="enforce">自动提高可读性</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>特效模式<small>关闭模糊/玻璃/封面滤镜，不覆盖系统动效偏好</small></span>
+            <span>背景特效</span>
             <select
+              data-studio-setting="appearance.effectsMode"
               :value="activeModes.appearance?.effectsMode"
               :disabled="!draft"
               @change="updateAppearanceMode('effectsMode', $event)"
@@ -612,7 +622,11 @@ void previewViewportRef.value
           </label>
         </section>
 
-        <section v-if="domain === 'personalization'" class="palette-editor">
+        <section
+          v-if="domain === 'personalization'"
+          class="palette-editor"
+          data-studio-setting="palettes"
+        >
           <div class="control-section-heading">
             <span>精选强调色</span><small>{{ accentPalette.length }} 色</small>
           </div>
@@ -649,11 +663,12 @@ void previewViewportRef.value
 
         <section v-if="domain === 'navigation'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>图标与导航模式</span><small>静态宿主变体</small>
+            <span>图标与侧边栏</span>
           </div>
           <label class="studio-setting-row">
-            <span>图标族<small>语义槽保持不变</small></span>
+            <span>图标样式</span>
             <select
+              data-studio-setting="icons.family"
               :value="activeModes.icons?.family"
               :disabled="!draft"
               @change="updateIconFamily"
@@ -664,8 +679,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>导航布局<small>菜单结构不由主题修改</small></span>
+            <span>侧边栏样式</span>
             <select
+              data-studio-setting="navigation.style"
               :value="activeModes.navigation?.style"
               :disabled="!draft"
               @change="updateNavigationMode('style', $event)"
@@ -676,8 +692,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>导航图标大小<small>点击区域保持固定</small></span>
+            <span>侧边栏图标大小</span>
             <select
+              data-studio-setting="navigation.iconScale"
               :value="activeModes.navigation?.iconScale"
               :disabled="!draft"
               @change="updateNavigationMode('iconScale', $event)"
@@ -688,25 +705,25 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>内置标识<small>仅控制宿主品牌标识</small></span>
-            <select
-              :value="activeModes.navigation?.logo"
+            <span>显示播放器标志</span>
+            <input
+              data-studio-setting="navigation.logo"
+              type="checkbox"
+              :checked="activeModes.navigation?.logo === 'show'"
               :disabled="!draft"
               @change="updateNavigationMode('logo', $event)"
-            >
-              <option value="hide">隐藏</option>
-              <option value="show">显示</option>
-            </select>
+            />
           </label>
         </section>
 
         <section v-if="domain === 'library'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>媒体库模式</span><small>不改变数据流</small>
+            <span>歌曲列表</span>
           </div>
           <label class="studio-setting-row">
-            <span>信息密度<small>虚拟列表步长保持稳定</small></span>
+            <span>歌曲列表间距</span>
             <select
+              data-studio-setting="library.density"
               :value="activeModes.library?.density"
               :disabled="!draft"
               @change="updateLibraryMode('density', $event)"
@@ -716,8 +733,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>选中样式<small>填充或描边</small></span>
+            <span>歌曲选中样式</span>
             <select
+              data-studio-setting="library.selection"
               :value="activeModes.library?.selection"
               :disabled="!draft"
               @change="updateLibraryMode('selection', $event)"
@@ -727,23 +745,27 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>标题区叠层<small>强度由下方令牌控制</small></span>
-            <select
-              :value="activeModes.library?.titleOverlay"
+            <span>显示标题底色</span>
+            <input
+              data-studio-setting="library.titleOverlay"
+              type="checkbox"
+              :checked="activeModes.library?.titleOverlay === 'on'"
               :disabled="!draft"
               @change="updateLibraryMode('titleOverlay', $event)"
-            >
-              <option value="off">关闭</option>
-              <option value="on">开启</option>
-            </select>
+            />
           </label>
         </section>
 
         <section v-if="domain === 'player'" class="studio-control-section player-layout-section">
           <div class="control-section-heading">
-            <span>播放器布局</span><small>宿主缩略图</small>
+            <span>播放器布局</span>
           </div>
-          <div class="layout-gallery" aria-label="播放器布局">
+          <div
+            class="layout-gallery"
+            aria-label="播放器布局"
+            data-studio-setting="player.layout"
+            tabindex="-1"
+          >
             <button
               v-for="layout in playerLayouts"
               :key="layout.id"
@@ -764,22 +786,24 @@ void previewViewportRef.value
 
         <section v-if="domain === 'player'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>控制区与封面</span><small>静态呈现</small>
+            <span>播放按钮与封面</span>
           </div>
           <label class="studio-setting-row">
-            <span>控制区<small>业务按钮保持不变</small></span>
+            <span>播放按钮样式</span>
             <select
+              data-studio-setting="player.controls"
               :value="activeModes.player?.controls"
               :disabled="!draft"
               @change="updatePlayerMode('controls', $event)"
             >
               <option value="standard">标准</option>
-              <option value="pro">Pro</option>
+              <option value="pro">增强</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>标题对齐<small>与布局正交</small></span>
+            <span>歌曲标题对齐</span>
             <select
+              data-studio-setting="player.titleAlign"
               :value="activeModes.player?.titleAlign"
               :disabled="!draft"
               @change="updatePlayerMode('titleAlign', $event)"
@@ -789,8 +813,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>进度样式<small>原生 range 行为不变</small></span>
+            <span>播放进度条样式</span>
             <select
+              data-studio-setting="player.progress"
               :value="activeModes.player?.progress"
               :disabled="!draft"
               @change="updatePlayerMode('progress', $event)"
@@ -798,12 +823,13 @@ void previewViewportRef.value
               <option value="line">直线无滑块</option>
               <option value="ring">空心圆</option>
               <option value="solid">实心圆</option>
-              <option value="spectrum">频谱轨道</option>
+              <option value="spectrum">频谱</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>封面过渡<small>遵循减少动态效果</small></span>
+            <span>切歌时的封面动画</span>
             <select
+              data-studio-setting="artwork.transition"
               :value="activeModes.artwork?.transition"
               :disabled="!draft"
               @change="updateArtworkMode('transition', $event)"
@@ -814,37 +840,38 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>封面阴影<small>只影响视觉层</small></span>
-            <select
-              :value="activeModes.artwork?.shadow"
+            <span>显示封面阴影</span>
+            <input
+              data-studio-setting="artwork.shadow"
+              type="checkbox"
+              :checked="activeModes.artwork?.shadow === 'on'"
               :disabled="!draft"
               @change="updateArtworkMode('shadow', $event)"
-            >
-              <option value="on">开启</option>
-              <option value="off">关闭</option>
-            </select>
+            />
           </label>
         </section>
 
         <section v-if="domain === 'player'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>均衡器视觉</span><small>不修改 DSP 参数</small>
+            <span>均衡器外观</span>
           </div>
           <label class="studio-setting-row">
-            <span>面板材质<small>中性、着色或玻璃</small></span>
+            <span>均衡器背景</span>
             <select
+              data-studio-setting="equalizer.panel"
               :value="activeModes.equalizer?.panel"
               :disabled="!draft"
               @change="updateEqualizerMode('panel', $event)"
             >
-              <option value="neutral">中性</option>
-              <option value="tinted">着色</option>
+              <option value="neutral">素色</option>
+              <option value="tinted">主题色</option>
               <option value="glass">玻璃</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>滑块<small>空心环或实心圆</small></span>
+            <span>均衡器滑块形状</span>
             <select
+              data-studio-setting="equalizer.slider"
               :value="activeModes.equalizer?.slider"
               :disabled="!draft"
               @change="updateEqualizerMode('slider', $event)"
@@ -854,8 +881,9 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>旋钮指示<small>线形或圆点</small></span>
+            <span>旋钮标记</span>
             <select
+              data-studio-setting="equalizer.knob"
               :value="activeModes.equalizer?.knob"
               :disabled="!draft"
               @change="updateEqualizerMode('knob', $event)"
@@ -865,20 +893,22 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>频谱<small>柱形、线形或面积</small></span>
+            <span>频谱样式</span>
             <select
+              data-studio-setting="equalizer.spectrum"
               :value="activeModes.equalizer?.spectrum"
               :disabled="!draft"
               @change="updateEqualizerMode('spectrum', $event)"
             >
               <option value="bars">柱形</option>
               <option value="line">线形</option>
-              <option value="area">面积</option>
+              <option value="area">填充曲线</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>按钮<small>柔和、描边或填充</small></span>
+            <span>均衡器按钮样式</span>
             <select
+              data-studio-setting="equalizer.button"
               :value="activeModes.equalizer?.button"
               :disabled="!draft"
               @change="updateEqualizerMode('button', $event)"
@@ -890,8 +920,13 @@ void previewViewportRef.value
           </label>
         </section>
 
-        <section v-if="domain === 'player'" class="studio-control-section">
-          <div class="control-section-heading"><span>可见性</span><small>白名单槽位</small></div>
+        <section
+          v-if="domain === 'player'"
+          class="studio-control-section"
+          data-studio-setting="visibility"
+          tabindex="-1"
+        >
+          <div class="control-section-heading"><span>显示哪些内容</span></div>
           <div class="visibility-grid">
             <label v-for="option in visibilityOptions" :key="option.id">
               <span>{{ option.label }}</span>
@@ -906,10 +941,11 @@ void previewViewportRef.value
         </section>
 
         <section v-if="domain === 'typography'" class="studio-control-section">
-          <div class="control-section-heading"><span>字体行为</span><small>配置档</small></div>
+          <div class="control-section-heading"><span>文字样式</span></div>
           <label class="studio-setting-row">
-            <span>标题大写<small>不改写原始元数据</small></span>
+            <span>英文标题大小写</span>
             <select
+              data-studio-setting="typography.titleCase"
               :value="activeModes.typography?.titleCase"
               :disabled="!draft"
               @change="updateTypographyMode('titleCase', $event)"
@@ -919,24 +955,26 @@ void previewViewportRef.value
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>歌词强调高亮<small>当前行使用强调色</small></span>
+            <span>歌词使用主题色</span>
             <select
+              data-studio-setting="typography.lyricAccent"
               :value="activeModes.typography?.lyricAccent"
               :disabled="!draft"
               @change="updateTypographyMode('lyricAccent', $event)"
             >
               <option value="off">关闭</option>
-              <option value="accent">强调色</option>
+              <option value="accent">开启</option>
             </select>
           </label>
           <label class="studio-setting-row">
-            <span>自适应标题颜色<small>按信息层级应用强调色</small></span>
+            <span>主题色文字</span>
             <select
+              data-studio-setting="typography.titleColor"
               :value="activeModes.typography?.titleColor"
               :disabled="!draft"
               @change="updateTypographyMode('titleColor', $event)"
             >
-              <option value="off">禁用</option>
+              <option value="off">关闭</option>
               <option value="track">曲目标题</option>
               <option value="artist-album">艺术家与专辑</option>
             </select>
@@ -945,12 +983,21 @@ void previewViewportRef.value
 
         <section v-if="domain === 'typography'" class="font-library-editor">
           <div class="asset-editor-heading">
-            <span>字体风格库</span>
-            <button type="button" :disabled="!draft" @click="importAsset('font')">
-              <i class="ph ph-file-woff"></i><span>导入 WOFF2</span>
+            <span>选择字体</span>
+            <button
+              type="button"
+              title="添加 WOFF2 字体文件"
+              :disabled="!draft"
+              @click="importAsset('font')"
+            >
+              <i class="ph ph-file-plus"></i><span>添加字体</span>
             </button>
           </div>
-          <label v-for="binding in fontBindings" :key="binding.key">
+          <label
+            v-for="binding in fontBindings"
+            :key="binding.key"
+            :data-studio-setting="binding.tokenId"
+          >
             <span
               >{{ binding.label }}<small>{{ fontSource(binding) }}</small></span
             >
@@ -959,17 +1006,17 @@ void previewViewportRef.value
               :disabled="!draft"
               @change="updateFontSlot(binding, $event)"
             >
-              <option value="custom">自定义令牌</option>
+              <option value="custom" disabled>当前字体</option>
               <optgroup label="内置字体">
                 <option
                   v-for="font in BUILT_IN_THEME_FONTS"
                   :key="font.id"
                   :value="`builtin:${font.id}`"
                 >
-                  {{ font.label }} · {{ font.category }}
+                  {{ font.label }}
                 </option>
               </optgroup>
-              <optgroup v-if="fontAssets.length" label="本地资源">
+              <optgroup v-if="fontAssets.length" label="已添加的字体">
                 <option v-for="asset in fontAssets" :key="asset.id" :value="`asset:${asset.id}`">
                   {{ asset.path }}
                 </option>
@@ -981,10 +1028,25 @@ void previewViewportRef.value
         <div v-if="domain === 'windows'" class="window-default-grid">
           <section class="studio-control-section">
             <div class="control-section-heading">
-              <span>迷你播放器</span><small>继承开启时生效</small>
+              <span>迷你播放器</span>
             </div>
+            <label class="studio-setting-row studio-follow-theme">
+              <span
+                >跟随当前主题<small>{{
+                  themeStore.snapshot.value?.data.windowInheritance.miniPlayer
+                    ? '已开启'
+                    : '正在使用小窗自己的外观'
+                }}</small></span
+              >
+              <input
+                type="checkbox"
+                :checked="themeStore.snapshot.value?.data.windowInheritance.miniPlayer"
+                :disabled="themeStore.saving.value"
+                @change="toggleWindowInheritance('miniPlayer')"
+              />
+            </label>
             <label class="studio-setting-row">
-              <span>表面颜色<small>无封面时也保留</small></span>
+              <span>背景颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('miniPlayer', 'surfaceColor'))"
@@ -993,7 +1055,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>强调色<small>控件与进度</small></span>
+              <span>按钮与进度条颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('miniPlayer', 'accentColor'))"
@@ -1002,7 +1064,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>主要文字<small>覆盖自动取色</small></span>
+              <span>文字颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('miniPlayer', 'primaryTextColor'))"
@@ -1011,17 +1073,30 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>字体<small>本地字体栈</small></span>
-              <input
-                type="text"
+              <span>字体</span>
+              <select
                 :value="String(windowDefaultValue('miniPlayer', 'fontFamily'))"
                 :disabled="!draft"
                 @change="updateWindowText('miniPlayer', 'fontFamily', $event)"
-              />
+              >
+                <option
+                  v-if="
+                    !BUILT_IN_THEME_FONTS.some(
+                      (font) => font.value === windowDefaultValue('miniPlayer', 'fontFamily')
+                    )
+                  "
+                  :value="String(windowDefaultValue('miniPlayer', 'fontFamily'))"
+                >
+                  当前主题字体
+                </option>
+                <option v-for="font in BUILT_IN_THEME_FONTS" :key="font.id" :value="font.value">
+                  {{ font.label }}
+                </option>
+              </select>
             </label>
             <label class="studio-setting-row window-range-row">
               <span
-                >表面透明度<small
+                >背景不透明度<small
                   >{{ windowDefaultValue('miniPlayer', 'surfaceOpacity') }}%</small
                 ></span
               >
@@ -1061,7 +1136,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>边框颜色<small>独立窗口轮廓</small></span>
+              <span>边框颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('miniPlayer', 'borderColor'))"
@@ -1070,7 +1145,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>阴影颜色<small>窗口层次</small></span>
+              <span>阴影颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('miniPlayer', 'shadowColor'))"
@@ -1097,10 +1172,25 @@ void previewViewportRef.value
 
           <section class="studio-control-section">
             <div class="control-section-heading">
-              <span>桌面歌词</span><small>文字与窗口材质</small>
+              <span>桌面歌词</span>
             </div>
+            <label class="studio-setting-row studio-follow-theme">
+              <span
+                >跟随当前主题<small>{{
+                  themeStore.snapshot.value?.data.windowInheritance.desktopLyrics
+                    ? '已开启'
+                    : '正在使用桌面歌词自己的外观'
+                }}</small></span
+              >
+              <input
+                type="checkbox"
+                :checked="themeStore.snapshot.value?.data.windowInheritance.desktopLyrics"
+                :disabled="themeStore.saving.value"
+                @change="toggleWindowInheritance('desktopLyrics')"
+              />
+            </label>
             <label class="studio-setting-row">
-              <span>文字颜色<small>未激活歌词</small></span>
+              <span>其他歌词颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('desktopLyrics', 'color'))"
@@ -1109,7 +1199,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>高亮颜色<small>当前歌词</small></span>
+              <span>当前歌词颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('desktopLyrics', 'highlightColor'))"
@@ -1118,7 +1208,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>背景颜色<small>桌面歌词窗口</small></span>
+              <span>背景颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('desktopLyrics', 'backgroundColor'))"
@@ -1127,13 +1217,34 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>字体<small>系统或内置字体 ID</small></span>
-              <input
-                type="text"
+              <span>字体</span>
+              <select
                 :value="String(windowDefaultValue('desktopLyrics', 'fontFamily'))"
                 :disabled="!draft"
                 @change="updateWindowText('desktopLyrics', 'fontFamily', $event)"
-              />
+              >
+                <option
+                  v-if="
+                    ![
+                      'follow',
+                      'system',
+                      'MiSans',
+                      'Microsoft YaHei UI',
+                      'lxgw',
+                      'sarasa'
+                    ].includes(String(windowDefaultValue('desktopLyrics', 'fontFamily')))
+                  "
+                  :value="String(windowDefaultValue('desktopLyrics', 'fontFamily'))"
+                >
+                  当前主题字体
+                </option>
+                <option value="follow">跟随播放器</option>
+                <option value="system">系统字体</option>
+                <option value="MiSans">MiSans</option>
+                <option value="Microsoft YaHei UI">微软雅黑</option>
+                <option value="lxgw">霞鹜文楷</option>
+                <option value="sarasa">更纱黑体</option>
+              </select>
             </label>
             <label class="studio-setting-row window-range-row">
               <span
@@ -1150,7 +1261,7 @@ void previewViewportRef.value
             </label>
             <label class="studio-setting-row window-range-row">
               <span
-                >背景透明度<small
+                >背景不透明度<small
                   >{{ windowDefaultValue('desktopLyrics', 'backgroundOpacity') }}%</small
                 ></span
               >
@@ -1164,7 +1275,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>文字阴影<small>关闭后保留阴影参数</small></span>
+              <span>显示文字阴影</span>
               <input
                 type="checkbox"
                 :checked="Boolean(windowDefaultValue('desktopLyrics', 'shadow'))"
@@ -1173,7 +1284,7 @@ void previewViewportRef.value
               />
             </label>
             <label class="studio-setting-row">
-              <span>阴影颜色<small>文字边缘</small></span>
+              <span>阴影颜色</span>
               <input
                 type="color"
                 :value="String(windowDefaultValue('desktopLyrics', 'shadowColor'))"
@@ -1199,19 +1310,19 @@ void previewViewportRef.value
           </section>
         </div>
 
-        <section v-if="domain === 'personalization' || domain === 'advanced'" class="asset-editor">
+        <section
+          v-if="
+            domain === 'personalization' && activeModes.appearance?.backgroundTreatment === 'image'
+          "
+          class="asset-editor"
+        >
           <div class="asset-editor-heading">
-            <span>本地背景资源</span>
+            <span>背景图片</span>
             <button type="button" :disabled="!draft" @click="importAsset('image')">
               <i class="ph ph-image-square"></i><span>导入图片</span>
             </button>
           </div>
-          <label
-            v-for="binding in domain === 'personalization'
-              ? personalizationBackgroundBindings
-              : backgroundBindings"
-            :key="binding.key"
-          >
+          <label v-for="binding in backgroundBindings" :key="binding.key">
             <span
               >{{ binding.label }}<small>{{ assetSource(binding.key) }}</small></span
             >
@@ -1220,7 +1331,9 @@ void previewViewportRef.value
               :disabled="!draft"
               @change="updateAssetBinding(binding.key, $event)"
             >
-              <option value="">不使用资源</option>
+              <option value="">
+                {{ binding.key === 'appBackground' ? '未选择图片' : '跟随全局背景' }}
+              </option>
               <option v-for="asset in imageAssets" :key="asset.id" :value="asset.id">
                 {{ asset.path }}
               </option>
@@ -1228,91 +1341,31 @@ void previewViewportRef.value
           </label>
         </section>
 
-        <section v-if="domain === 'personalization' || domain === 'advanced'" class="asset-editor">
-          <div class="asset-editor-heading">
-            <span>本地字体资源</span>
-            <button type="button" :disabled="!draft" @click="importAsset('font')">
-              <i class="ph ph-file-woff"></i><span>导入 WOFF2</span>
-            </button>
-          </div>
-          <label v-for="binding in fontBindings" :key="binding.key">
-            <span
-              >{{ binding.label }}<small>{{ assetSource(binding.key) }}</small></span
-            >
-            <select
-              :value="draft?.assetBindings?.[binding.key] ?? ''"
-              :disabled="!draft"
-              @change="updateAssetBinding(binding.key, $event)"
-            >
-              <option value="">使用令牌字体</option>
-              <option v-for="asset in fontAssets" :key="asset.id" :value="asset.id">
-                {{ asset.path }}
-              </option>
-            </select>
-          </label>
-        </section>
-
-        <div v-if="domain !== 'presets'" class="token-editor-list" :class="{ disabled: !draft }">
-          <div
-            v-for="definition in visibleDefinitions"
-            :key="definition.id"
-            class="token-editor-row"
+        <div v-if="domain !== 'presets'" :key="domain" class="studio-appearance-list">
+          <details
+            v-for="(group, index) in appearanceGroups"
+            :key="group.name"
+            class="studio-appearance-group"
+            :open="index === 0 || Boolean(studioSearchQuery.trim())"
           >
-            <div>
-              <span
-                ><strong>{{ definition.label }}</strong
-                ><small>{{ definition.surface }}</small></span
-              >
-              <span class="token-source">{{ sourceFor(definition) }}</span>
-            </div>
-            <div class="token-control">
-              <template v-if="definition.min != null && definition.max != null">
-                <input
-                  type="range"
-                  :min="definition.min"
-                  :max="definition.max"
-                  :step="definition.step || 1"
-                  :value="rangeNumber(definition)"
-                  :disabled="!draft"
-                  @input="updateRange(definition, $event)"
-                />
-                <code>{{ valueFor(definition) }}</code>
-              </template>
-              <template
-                v-else-if="definition.kind === 'color' && supportsColorPicker(valueFor(definition))"
-              >
-                <input
-                  type="color"
-                  :value="valueFor(definition)"
-                  :disabled="!draft"
-                  @input="updateToken(definition, ($event.target as HTMLInputElement).value)"
-                />
-                <input
-                  type="text"
-                  :value="valueFor(definition)"
-                  :disabled="!draft"
-                  @change="updateToken(definition, ($event.target as HTMLInputElement).value)"
-                />
-              </template>
-              <input
-                v-else
-                type="text"
-                :value="valueFor(definition)"
-                :disabled="!draft"
-                @change="updateToken(definition, ($event.target as HTMLInputElement).value)"
-              />
-              <button
-                type="button"
-                class="studio-icon-button"
-                title="恢复默认"
-                aria-label="恢复默认"
-                :disabled="!draft || !draft.overrides[tone][definition.id]"
-                @click="removeOverride(definition)"
-              >
-                <i class="ph ph-arrow-u-up-left"></i>
-              </button>
-            </div>
-          </div>
+            <summary>
+              <i class="ph ph-caret-right" aria-hidden="true"></i><strong>{{ group.name }}</strong
+              ><span>{{ group.items.length }} 项</span>
+            </summary>
+            <ThemeAppearanceControl
+              v-for="definition in group.items"
+              :key="definition.id"
+              :definition="definition"
+              :value="valueFor(definition)"
+              :source="sourceFor(definition)"
+              :disabled="!draft"
+              :unavailable="tokenUnavailable(definition)"
+              :modified="draft?.overrides[tone][definition.id] != null"
+              :hint="tokenHint(definition)"
+              @change="updateToken(definition, $event)"
+              @reset="removeOverride(definition)"
+            />
+          </details>
         </div>
 
         <section
@@ -1320,10 +1373,9 @@ void previewViewportRef.value
           class="contrast-warning"
           role="status"
         >
-          <div><i class="ph ph-warning"></i><strong>对比度预警</strong></div>
+          <div><i class="ph ph-warning"></i><strong>部分文字可能不易看清</strong></div>
           <p v-for="warning in contrastWarnings" :key="warning.label">
-            {{ warning.label }}：{{ warning.ratio.toFixed(2) }}:1，最低
-            {{ warning.minimum.toFixed(1) }}:1
+            {{ warning.label }}的颜色太接近
           </p>
         </section>
 
@@ -1336,10 +1388,7 @@ void previewViewportRef.value
           <p v-for="note in selectedPluginTheme.compatibilityNotes" :key="note">{{ note }}</p>
         </section>
 
-        <p v-if="localError || themeStore.error.value" class="studio-message error">
-          {{ localError || themeStore.error.value }}
-        </p>
-        <p v-else-if="notice" class="studio-message">{{ notice }}</p>
+        <p v-if="notice" class="studio-message" role="status">{{ notice }}</p>
       </aside>
     </div>
   </div>

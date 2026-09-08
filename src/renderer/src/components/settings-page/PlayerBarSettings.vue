@@ -24,8 +24,11 @@ const { settings, updateSettings } = useSettingsStore()
 const playerBarOpen = ref(false)
 
 function setPlayerBarMode(mode: PlayerBarMode): void {
-  if (settings.value.playerBar.mode === mode) return
-  void updateSettings({ playerBar: { ...settings.value.playerBar, mode } })
+  if (settings.value.playerBar.mode === mode && settings.value.playerBar.modeSource === 'user')
+    return
+  void updateSettings({
+    playerBar: { ...settings.value.playerBar, mode, modeSource: 'user' }
+  })
 }
 
 function setPlayerBarPlayingPageMode(value: string): void {

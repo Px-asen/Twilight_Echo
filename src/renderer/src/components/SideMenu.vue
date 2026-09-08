@@ -227,15 +227,15 @@ function handleImportClick(): void {
 }
 
 :global(html[data-te-navigation-style='expanded']) {
-  --te-menu-width: clamp(180px, 18vw, 216px);
+  --te-menu-width: clamp(180px, 18vw, 216px) !important;
 }
 
 :global(html[data-te-navigation-style='compact']) {
-  --te-menu-width: 164px;
+  --te-menu-width: 164px !important;
 }
 
 :global(html[data-te-navigation-style='rail']) {
-  --te-menu-width: 72px;
+  --te-menu-width: 72px !important;
 }
 
 .navigation-brand {

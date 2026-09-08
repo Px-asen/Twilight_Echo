@@ -8,6 +8,7 @@
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AppSettings } from '../shared/appSettings.ts'
 import type { TrackData } from '../shared/track.ts'
+export type { RemoteRendererRequest } from '../shared/remoteControl.ts'
 export type {
   AudioOutputId,
   PlayMode,
@@ -444,13 +445,8 @@ export interface ProviderDownloadTaskSnapshot {
   updatedAt: string
 }
 
-export interface TwilightProviderStreamingSection {
-  id: string
-  title: string
-  icon: string
-  method: string
-  args?: unknown[]
-}
+export type TwilightProviderStreamingSection =
+  import('../shared/providerHome').ProviderStreamingSection
 
 export interface TwilightProviderUiMetadata {
   icon: string
@@ -471,6 +467,8 @@ export interface TwilightProviderUiMetadata {
     icon: string
     method: string
   }>
+  streamingHome?: import('../shared/providerHome').ProviderHomePresentation
+  streamingDiscovery?: import('../shared/providerHome').ProviderDiscoveryPresentation
   streamingSections?: TwilightProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean

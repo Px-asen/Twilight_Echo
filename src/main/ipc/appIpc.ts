@@ -5,6 +5,7 @@ import { resolvePlaybackSessionSave } from '../app/window.ts'
 import { createSettingsSnapshot } from '../core/settings.ts'
 import { runtime } from '../core/runtime.ts'
 import { loadThemeLibrary } from '../themes/themeLibrary.ts'
+import { synchronizeThemePlayerBarDefault } from './themes.ts'
 import { TWILIGHT_DEFAULT_THEME } from '../../shared/theme.ts'
 import type { AppStartupSnapshot } from '../../shared/appStartup.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
@@ -42,9 +43,11 @@ function normalizeRendererClosePersistenceOutcome(value: unknown): RendererClose
 export function registerAppIpc(ipcMain: IpcMain): void {
   ipcMain.handle('app:getStartupSnapshot', async (event): Promise<AppStartupSnapshot> => {
     assertTrustedIpcSender(event, 'app startup IPC')
+    const library = await loadThemeLibrary()
+    await synchronizeThemePlayerBarDefault(library)
     const [settings, themeBootstrap] = await Promise.all([
       Promise.resolve(createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)),
-      loadThemeLibrary().then((library) => ({ library, defaultTheme: TWILIGHT_DEFAULT_THEME }))
+      Promise.resolve({ library, defaultTheme: TWILIGHT_DEFAULT_THEME })
     ])
     return {
       settings,

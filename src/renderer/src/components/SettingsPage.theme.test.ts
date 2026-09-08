@@ -105,10 +105,23 @@ test('liquid glass settings expose unified and independent targets', () => {
   assert.match(liquidGlassSettingsSource, /navigationEnabled: current\.navigationEnabled/)
 })
 
-test('dark settings folder controls and switches avoid light fixed-color surfaces', () => {
+test('dark settings inner surfaces follow the settings control surface', () => {
   assert.match(
     pageSource,
-    /html\[data-theme='dark'\] \.settings-preview-page \.dashed-button,[\s\S]*?html\[data-theme='dark'\] \.settings-preview-page \.folder-empty-hint\s*\{[\s\S]*?background:\s*var\(--te-card-bg\)/
+    /html\[data-theme='dark'\] \.settings-preview-page \.folder-chip,[\s\S]*?html\[data-theme='dark'\] \.settings-preview-page \.path-control input,[\s\S]*?background:\s*var\(--te-settings-control-bg\)/
+  )
+  assert.match(
+    pageSource,
+    /html\[data-theme='dark'\] \.settings-preview-page \.dashed-button,[\s\S]*?html\[data-theme='dark'\] \.settings-preview-page \.folder-empty-hint\s*\{[\s\S]*?background:\s*var\(--te-settings-control-bg\)/
+  )
+  assert.match(
+    pageSource,
+    /html\[data-theme='dark'\] \.settings-preview-page \.folder-chip,[\s\S]*?html\[data-theme='dark'\] \.settings-preview-page \.path-control input\s*\{\s*box-shadow:\s*none/
+  )
+  assert.match(baseStyles, /html\[data-theme='dark'\] \.import-dialog \.folder-list/)
+  assert.doesNotMatch(
+    baseStyles,
+    /html\[data-theme='dark'\] \.folder-list,\s*html\[data-theme='dark'\] \.folder-item/
   )
   assert.match(
     baseStyles,

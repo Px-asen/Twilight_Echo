@@ -52,7 +52,7 @@ Electron main 侧有五个构建入口，均在 `electron.vite.config.ts` 中声
 
 `audioAnalysisService` 使用独立 `utilityProcess` worker pool 执行 BPM/loudness 完整文件解码。其有界优先级队列使用 aging 防止低优先级任务饥饿，并为等待任务设置 deadline；队列满时更高有效优先级可驱逐最差等待项。并发上限、取消、watchdog 和 worker 重启均与实时 `audioEngineService` 隔离，离线分析不得进入播放 RPC 队列。BPM/loudness manager 在 cache commit 期间收到取消时会按精确值条件回滚，且不得广播 completed 事件。
 
-`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。大扫描通过有界批次传输 identity 与解析结果，进度按时间/文件数节流；单文件解析和扫描 worker 均有 watchdog，worker 重启后跳过当前阻塞路径并在下次扫描重试。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
+`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。大扫描通过有界批次传输 identity 与解析结果，进度按时间/文件数节流；元数据通过可随机定位的文件 tokenizer 读取，跳过音频载荷但保留尾部标签与封面；无 CUE 的目录复用枚举阶段的 dependency signature，避免逐曲同步重读目录。单文件解析和扫描 worker 均有 watchdog；暂停期间停用 worker watchdog。完整 identity 快照扫描在 worker 重启后保留主进程已收到的结果批次及 identity 快照，仅解析尚未完成的文件，进度累计已完成文件数；当前阻塞路径跳过并在下次扫描重试，watch 局部扫描仍重新核对变化路径。恢复检查点仅在当前扫描任务内有效，不跨应用重启持久化。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
 
 主进程负责窗口生命周期、单实例锁、IPC 注册、设置持久化、本地库扫描、桌面歌词、快捷键托盘、Discord RPC、NCM API 启动和音频引擎编排。
 
@@ -66,6 +66,11 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
 - `providers/mediaProvider.ts`：统一 provider 抽象。
 - 流媒体主页以 `ui.streamingSections` 显式准入并校验 provider 实际注册的
   `supportedMethods`；发现歌单以标准 playlist discovery 方法准入。两个页面仅在有多个可用音源时显示可交互切换器，切源会重置筛选并废弃旧请求。
+  声明 `ui.streamingHome` 的插件使用 `streaming-page/ProviderMusicHome.vue` 的品牌首页，
+  按 API 分区展示新歌、榜单或私人 FM，支持公开浏览、局部错误和保留内容刷新。
+  酷狗的推荐发现仅使用上游可用分类（含 Hi-Res）和 `hasMore` 翻页，不显示未支持的排序或虚构总数。
+  QQ 每日推荐使用登录后的“每日30首”；首页分区可单独要求登录，公开榜单不受影响。
+  `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
 - `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
 
 ## 音频链路
@@ -83,6 +88,18 @@ Renderer -> preload API -> main IPC -> audioEngineManager
 `TWILIGHT_AUDIO_SERVICE=0` 仅用于开发调试，会让主进程直接加载引擎。生产路径应使用可重启的音频服务进程，避免 native 崩溃拖垮 app。
 
 DSD / passthrough 路径会绕过不安全的 DSP。WASAPI 与 CoreAudio 没有平台级 native DSD 通道，DSD 通过 DoP 或 PCM fallback；ALSA `hw:` 可支持 native DSD。macOS 和 Linux 音频后端仍未完成发布级验证。
+
+DSP Rack 保存前通过 `utils/dspSceneDraft.ts` 将响应式场景深拷贝为可跨 IPC 克隆的数据，包含 VST3 参数、预设引用和场景规则。“应用”通过一次 `setDspScenes` 同时提交当前草稿和选中场景的 pin，避免保存后再次应用导致音频链连续重建。提交期间禁用编辑区，防止异步返回的快照覆盖新的输入；失败保留草稿，DSD 转 PCM 仍需用户确认。场景副本与 A 快照隔离嵌套参数和 VST3 状态引用。VST3 参数每页渲染 32 项，编辑只更新对应 ID，折叠的原始配置不序列化完整参数表。
+
+VST3 扫描与运行时支持最多 2048 个参数。隔离宿主共享内存协议 v2 为参数 JSON 预留 128 KiB 加终止字节，覆盖完整参数集的 uint32 ID 与双精度归一化值；旧版 8 KiB 容量会使 WORMHOLE 等大参数集插件在启动前被旁路。协议布局变更后必须同时重建并 stage MinGW 音频引擎与 MSVC VST3 helpers，再重启应用。`test:dsp-graph` 包含 Windows 原生桥回归，验证完整参数载荷跨进程传输、处理后音频返回以及超限载荷拒绝，不依赖真实音频设备或第三方插件。
+
+VST3 音频桥按绝对帧位置回填预分配的环形缓冲，宿主按提交序号处理，允许 WASAPI 回调长度变化。桥接延迟固定为 4096 帧（48 kHz 时约 85 ms），并与插件自身延迟一起报告；仅启动/重置时填充延迟，超时保留同一时间位置的干声，不因相邻块长度不同丢弃效果音频或补静音。音频回调不等待宿主、不分配内存。原生回归覆盖交替块长度、缓冲回绕和重置后的逐样本顺序。
+
+主题工作室应用主题时以主进程返回的主题库快照为提交点：先更新活动主题状态并结束预览，再等待 Vue 响应式视图刷新，最后同步重绘运行时 CSS、布局属性和启动缓存。主题变更事件按严格递增的库 revision 接受，避免保存广播晚到时把刚应用的主题覆盖回旧主题。关闭页面只复用一个预览清理任务，避免关闭钩子与应用操作并发后把当前窗口恢复成旧主题。
+
+主题工作室按外观区域提供颜色与不透明度、逐色渐变、阴影预设和滤镜滑块；参数按歌词、封面、按钮等区域折叠分组，原始 CSS 值由单项代码图标展开。显示名称与搜索结果复用 `themeVisualControls.ts` 的用语映射，搜索保留原始名称与 ID 别名；点击结果清除搜索过滤、展开目标分组并聚焦控件。“更多外观”只列出其他分类未覆盖的项目。字体选择与导入集中在“字体与歌词”，小窗字体使用选项列表；“跟随当前主题”位于各小窗设置顶部。选择强调色色板会切回固定颜色，选择背景色板会切回实色背景。封面取色、渐变背景等有前置条件的控件按模式启用，不依赖提示文案判断是否可编辑。媒体库分类预览实际 `SongList`，页面背景的显式覆盖通过 `--te-library-custom-bg` 接入，未覆盖时保留全局壁纸；列表底色和阴影直接使用主题值。
+
+运行时以全局外观设置作为默认值，用户主题在当前深浅色中显式保存的覆盖值、字体资源绑定、背景模式与封面取色优先；内置主题及用户主题未自定义的项目仍沿用全局设置。恢复单项或分类默认后重新继承全局设置。播放栏形态按主题提供默认值：`builtin:aurora-reference` 及其派生主题默认为紧凑，标准主题默认为标准；用户在设置页或首启向导主动选择形态后保留用户选择。暮光档案隐藏侧边栏品牌标识，普通材质播放栏使用不透明的播放页底色；液态玻璃仍由外观设置管理。
 
 ## 本地库与搜索数据流
 
@@ -118,6 +135,9 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 - 播放进度和频谱同步要节流。桌面歌词由 `useDesktopLyricsPublisher.ts` 发布标准化 session 与最多 4 Hz 的 clock；歌词窗口在本地外推时钟、按下一句边界唤醒，并将逐字填充交给 WAAPI 遮罩时间轴，快照只用于漂移校正、暂停和 seek，禁止逐帧 IPC、逐帧 CSS 变量写入和 Vue 重渲染。独立窗口外观设置（单双行、横竖排、对齐、描边、配色、翻译与音译）都通过 `src/shared/desktopLyrics.ts` 的版本化契约持久化和实时同步；插件启动时的主题对账只在活动主题实际回退时更新独立窗口默认值，不能覆盖用户已保存的桌面歌词配置。
 - 正在播放页按播放时间定位歌词时使用二分查找，不在每个播放 tick 从歌词首行线性扫描。
 - 封面主题色提取使用小型 LRU/promise 缓存；切歌时必须防止旧封面异步结果覆盖当前曲目颜色。
+- 本地主页由 `components/local-dashboard/LocalHome.vue` 根据主题运行时的 `presetLayout` 选择布局。「暮光档案」（`builtin:aurora-reference`）与其派生主题使用唱片客厅主页；`builtin:obsidian-glass` 使用 `NightHarborDashboard.vue` 的夜港唱片厅布局：黑胶播放台、曲库统计、最近轮换与唱片架；`builtin:paper-light` 使用下述声场主页；其他主题使用 `LocalDashboard.vue`。`LocalHome.vue` 使用稳定的外层容器承接页面过渡，避免异步主页切换时残留入场透明样式；主题预览与取消同步切换布局。`archiveLibrary.ts` 按音乐库数组版本物化统计和曲目位置索引，只保留最新 30 首，夜港主页只 materialize 当前可见的最近曲目与最多 4 张专辑，时长在小时不足 1 时显示分钟；最近播放复用统一曲目解析器，播放队列最多取相邻 200 首，禁止在播放 tick 中重建音乐库索引。夜港样式使用主题 token，亮色为纸白/珊瑚红/青绿，暗色为墨色/珊瑚红/灰绿，并为中小窗口提供播放台折行、曲目单列和唱片架双列布局。
+- 第四套「声场 Sound Field」沿用 `builtin:paper-light` 标识，由 `SoundFieldDashboard.vue` 接入独立 `SoundFieldHome.vue`：左侧纵向播放控制台、右侧专辑画廊与分页曲目目录、底部曲库统计。冷白/石墨底色与信号红强调通过主题 token 提供明暗两套配色；小于 820px 的内容区域改为顶部横向播放台，小于 540px 的专辑画廊改为双列。最近记录复用统一解析器，音乐库索引按数组版本物化，最多准备 8 张专辑，每页仅渲染 4 张专辑和 5 首曲目；播放、上下首、随机播放和 seek 复用播放器 store，未加载当前曲目时禁用 seek。主题预览、取消及派生主题均通过现有 `presetLayout` 路由同步布局；运行时背景和强调色继续遵循用户的全局外观设置。
+- 第二套「暮光档案」的本地歌曲列表由 `assets/theme-layouts/aurora-library.css` 提供无外框、细分隔线布局；深浅色默认关闭曲目标题底色，标题按文字宽度收缩，强调色用于播放与选中状态。专辑和时长列使用稳定宽度，按列表容器宽度在 720px 以下收起专辑列、480px 以下收起音质副行；保持既有虚拟滚动行高和多选逻辑，主题工作室的显式底色设置仍生效。
 - provider 或文件系统慢操作必须后台化，不能阻塞首屏曲库渲染。
 
 ## 插件边界
@@ -271,3 +291,19 @@ Prettier 配置：单引号、无分号、`printWidth: 100`、无 trailing comma
 测试使用 Node 内置 `node --test`，TS 测试通过 `--experimental-strip-types` 运行。新增测试应与被测文件 co-locate，命名为 `*.test.ts`、`*.test.mjs` 或 `*.test.cjs`。
 
 renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层深度相对路径。主进程、preload、renderer 的类型边界要显式维护，不要让 renderer 直接依赖 main 内部实现。
+
+歌单详情提供页内返回入口：流媒体复用详情栈恢复上一层，本地分类返回集合，聚合歌单返回网格。再次点击当前流媒体栏目会清除详情和搜索。全局 Esc 优先关闭已注册浮层，没有浮层且焦点不在输入控件时返回上一层（长按和输入法组合事件不触发返回）。网易云歌单删除或取消收藏放在右键／更多操作菜单中，继续使用原有确认流程。底栏常用工具图标使用继承按钮颜色的 SVG，避免图标字体加载或字形渲染影响操作入口。
+
+## 局域网远程控制
+
+远程控制默认关闭。完整控制面由 `src/main/remote/httpServer.ts` 提供，PIN 配对后才会暴露带 Bearer token 的状态、SSE、浏览与命令接口；投送模式的 `mediaOnly` bind 仍只服务 capability-token 媒体，绝不开放远控 UI/API。
+
+`GET /api/browse` 接受受限的 `view`（`library`、`playlists`、`queue`）、`query`、`offset`、`limit`（1–100）与可选 `playlistId`，返回分页且经 renderer 生成的展示数据。曲目与歌单 ID 是短生命周期 opaque token，LAN 端不会获得主机路径、真实媒体 URL 或 provider 凭据。远控播放/入队只接受这些 token；不能传入路径或 URL。
+
+主进程通过受信任的 `remote:request` / `remote:rendererResponse` IPC 向已就绪 renderer 请求每页数据或实际播放动作，并以 5 秒 timeout 明确失败，不会静默确认。队列页面和播放状态共享 `queueRevision`；`jumpQueue`、`removeQueue` 必须回传该 revision，陈旧索引返回 `409 queue_changed`。播放模式 API 使用 `sequence`、`loop`、`single`、`shuffle`，renderer 映射到内部 `sequential`、`listLoop`、`repeat`、`shuffle`。
+
+网页位于 `resources/remote/`，采用暖纸白与墨绿的响应式听音室布局：桌面双栏，手机提供正在播放、音乐库、队列导航及浏览时的迷你控制条。音乐库与歌单支持搜索、每页 40 条、点播和入队；队列支持跳转和移除。歌单曲目复用 `getPlaylistTracksById`，包括已保存的 provider 曲目快照，不额外开放在线平台全站搜索或任意 URL 点播。
+
+`remotePlaybackPublisher` 在曲目封面变化时复用现有封面解析，只有不超过 256 KiB 的 PNG/JPEG/WebP data URL 可以发布；不传递本机协议句柄或原始远端地址，缺失或超限封面显示网页内置唱片插画。不变封面不随播放 tick 重复发送。网页配对凭据保留在当前浏览器，断开配对会清除本机保存；仅适用于可信局域网，不应将 HTTP 端口映射到公网。
+
+远控改动至少运行 `pnpm run test:radio-remote` 和 `pnpm run typecheck`。该测试集包含真实 localhost HTTP 认证/分页/并发/错误/mediaOnly 检查、preload 请求回执测试、曲目与歌单选择测试、状态发布测试及网页 DOM 行为测试。

@@ -11,7 +11,9 @@ import {
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
 const PlayerBar = defineAsyncComponent(() => import('./components/PlayerBar.vue'))
-const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDashboard.vue'))
+const LocalDashboard = defineAsyncComponent(
+  () => import('@renderer/components/local-dashboard/LocalHome.vue')
+)
 const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const AggregatePlaylistPage = defineAsyncComponent(
   () => import('./components/aggregate-playlist/AggregatePlaylistPage.vue')
@@ -44,6 +46,7 @@ import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
 import { useBackStack } from './app/useBackStack'
+import { hasDismissLayer } from '@renderer/app/useDismissLayer'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
@@ -186,8 +189,20 @@ function handleTitleBack(): void {
 }
 
 function onGlobalBackKeydown(event: KeyboardEvent): void {
-  // Browser-style back on Alt+Left. Plain ArrowLeft keeps its existing
-  // meanings (text fields, sliders) and Escape stays with overlay dismissal.
+  if (event.defaultPrevented || event.repeat || event.isComposing) return
+  if (event.key === 'Escape') {
+    if (hasDismissLayer()) return
+    const target = event.target
+    if (
+      target instanceof HTMLElement &&
+      target.closest(
+        'input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"]'
+      )
+    )
+      return
+    if (backStack.goBack()) event.preventDefault()
+    return
+  }
   if (
     event.key === 'ArrowLeft' &&
     event.altKey &&
@@ -305,6 +320,7 @@ const {
   currentTrack,
   currentTime,
   duration,
+  playbackRate,
   isPlaying,
   isLoading,
   volume,
@@ -386,6 +402,7 @@ useMiniPlayerSync({
   isLoading,
   currentTime,
   duration,
+  playbackRate,
   volume,
   playMode,
   favoriteAvailable: favoriteButtonVisible,

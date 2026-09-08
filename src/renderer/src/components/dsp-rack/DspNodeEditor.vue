@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import Vst3ParameterEditor from '@renderer/components/dsp-rack/Vst3ParameterEditor.vue'
 import type {
   DspAsset,
   DspAssetKind,
@@ -24,7 +25,6 @@ import {
   channelStripRows,
   convolverRoutingMode,
   convolverRoutingValue,
-  isReadOnlyVst3Parameter,
   layoutForNode,
   matrixChannelCount,
   matrixValue,
@@ -47,10 +47,7 @@ import {
   setNodeLayout,
   setNumberParam,
   setStringParam,
-  setVst3Parameter,
-  stringParam,
-  vst3ParameterStep,
-  vst3ParameterValue
+  stringParam
 } from '@renderer/utils/dspNodeParams'
 
 const scene = defineModel<DspScene | null>('scene')
@@ -79,9 +76,7 @@ const selectedVst3Entry = computed(() => {
     ? (props.vst3Catalog?.entries.find((entry) => entry.id === catalogId) ?? null)
     : null
 })
-const visibleVst3Parameters = computed(() =>
-  (selectedVst3Entry.value?.parameters ?? []).filter((parameter) => (parameter.flags & 16) === 0)
-)
+const rawConfigExpanded = ref(false)
 const vst3StateAssets = computed(() =>
   props.assets.filter((asset) => asset.kind === 'vst3Preset' || asset.kind === 'vst3State')
 )
@@ -1159,50 +1154,11 @@ function selectVst3State(assetId: string): void {
               </button>
             </div>
           </div>
-          <div v-if="selectedVst3Entry" class="vst3-parameter-grid">
-            <template v-for="parameter in visibleVst3Parameters" :key="parameter.id">
-              <label v-if="parameter.stepCount === 1" class="switch-field">
-                <input
-                  type="checkbox"
-                  :checked="
-                    vst3ParameterValue(node, parameter.id, parameter.defaultNormalizedValue) >= 0.5
-                  "
-                  :disabled="isReadOnlyVst3Parameter(parameter.flags)"
-                  @change="
-                    setVst3Parameter(
-                      node,
-                      parameter.id,
-                      ($event.target as HTMLInputElement).checked ? 1 : 0
-                    )
-                  "
-                />
-                {{ parameter.title }}
-              </label>
-              <label v-else class="vst3-parameter-field">
-                <span
-                  >{{ parameter.title
-                  }}<small v-if="parameter.unit">{{ parameter.unit }}</small></span
-                >
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  :step="vst3ParameterStep(parameter.stepCount)"
-                  :value="vst3ParameterValue(node, parameter.id, parameter.defaultNormalizedValue)"
-                  :disabled="isReadOnlyVst3Parameter(parameter.flags)"
-                  @input="
-                    setVst3Parameter(node, parameter.id, ($event.target as HTMLInputElement).value)
-                  "
-                />
-                <output>{{
-                  formatMetric(
-                    vst3ParameterValue(node, parameter.id, parameter.defaultNormalizedValue),
-                    3
-                  )
-                }}</output>
-              </label>
-            </template>
-          </div>
+          <Vst3ParameterEditor
+            v-if="selectedVst3Entry"
+            :node="node"
+            :parameters="selectedVst3Entry.parameters"
+          />
         </template>
 
         <template v-else-if="node.type === 'nativePlugin'">
@@ -1213,9 +1169,12 @@ function selectVst3State(assetId: string): void {
           /></label>
         </template>
       </section>
-      <details class="raw-config">
+      <details
+        class="raw-config"
+        @toggle="rawConfigExpanded = ($event.target as HTMLDetailsElement).open"
+      >
         <summary>Raw configuration</summary>
-        <pre>{{ JSON.stringify(node.params, null, 2) }}</pre>
+        <pre v-if="rawConfigExpanded">{{ JSON.stringify(node.params, null, 2) }}</pre>
       </details>
 
       <section class="rule-editor">

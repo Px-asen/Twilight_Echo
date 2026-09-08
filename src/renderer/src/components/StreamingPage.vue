@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
+import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
 import type { Track } from '../types/music'
 import {
@@ -94,14 +95,15 @@ import { friendlyStreamingError } from './streaming-page/friendlyStreamingError.
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import type { ProviderDownloadQuality, ProviderDownloadTaskSnapshot } from '../../../preload/types'
 
-interface RecSection {
+interface RecSection extends ProviderHomeSectionPresentation {
   key: string
   title: string
   tracks: Track[]
   icon: string
+  error?: string
 }
 
-interface HomeSectionDefinition {
+interface HomeSectionDefinition extends ProviderHomeSectionPresentation {
   key: string
   title: string
   icon: string
@@ -250,6 +252,7 @@ let detailLoadToken = 0
 
 const homeSectionDefinitions = ref<HomeSectionDefinition[]>([])
 const recommendationTracks = shallowRef<Record<string, Track[]>>({})
+const recommendationErrors = shallowRef<Record<string, string>>({})
 const recommendPlaylists = shallowRef<MediaProviderPlaylistSummary[]>([])
 const recommendationProviderId = ref('')
 let recommendationRequestId = 0
@@ -402,6 +405,9 @@ function getHomeSectionDefinitions(providerId: string): HomeSectionDefinition[] 
       title: section.title,
       icon: section.icon,
       method: section.method,
+      requiresLogin: section.requiresLogin,
+      eyebrow: section.eyebrow,
+      description: section.description,
       args: section.args ?? []
     }))
     .slice(0, 3)
@@ -409,7 +415,9 @@ function getHomeSectionDefinitions(providerId: string): HomeSectionDefinition[] 
 
 async function loadRecommendations(force = false): Promise<void> {
   const providerId = activeProvider.value
-  if (!providerSupportsHome(providerId) || !activeLoggedIn.value) return
+  if (!providerSupportsHome(providerId)) return
+  if (!activeLoggedIn.value && activeProviderInfo.value?.ui?.streamingHome?.requiresLogin !== false)
+    return
   if (!force && recommendationProviderId.value === providerId) return
 
   const requestId = ++recommendationRequestId
@@ -423,7 +431,9 @@ async function loadRecommendations(force = false): Promise<void> {
     const [sectionResults, playlistsResult] = await Promise.all([
       Promise.allSettled(
         definitions.map((section) =>
-          providerStore.callProvider<Track[]>(providerId, section.method, section.args)
+          section.requiresLogin && !activeLoggedIn.value
+            ? Promise.resolve<Track[]>([])
+            : providerStore.callProvider<Track[]>(providerId, section.method, section.args)
         )
       ),
       supportsPlaylists
@@ -438,12 +448,14 @@ async function loadRecommendations(force = false): Promise<void> {
     if (requestId !== recommendationRequestId || providerId !== activeProvider.value) return
 
     const nextTracks: Record<string, Track[]> = {}
+    const nextErrors: Record<string, string> = {}
     let firstFailure: unknown = null
     sectionResults.forEach((result, index) => {
       const section = definitions[index]
       if (result.status === 'fulfilled') nextTracks[section.key] = result.value
       else {
         nextTracks[section.key] = []
+        nextErrors[section.key] = friendlyStreamingError(result.reason, '此分区暂时不可用')
         firstFailure ??= result.reason
       }
     })
@@ -456,8 +468,12 @@ async function loadRecommendations(force = false): Promise<void> {
     recommendationProviderId.value = providerId
     homeSectionDefinitions.value = definitions
     recommendationTracks.value = nextTracks
+    recommendationErrors.value = nextErrors
     recommendPlaylists.value =
       playlistsResult.status === 'fulfilled' ? [...playlistsResult.value] : []
+    if (playlistsResult.status === 'rejected') {
+      recsError.value = friendlyStreamingError(playlistsResult.reason, '推荐歌单暂时不可用')
+    }
   } catch (e) {
     if (requestId !== recommendationRequestId || providerId !== activeProvider.value) return
     recsError.value = friendlyStreamingError(e, '加载推荐失败')
@@ -470,6 +486,10 @@ const recSections = computed<RecSection[]>(() =>
   homeSectionDefinitions.value.map((section) => ({
     key: section.key,
     title: section.title,
+    requiresLogin: section.requiresLogin,
+    eyebrow: section.eyebrow,
+    description: section.description,
+    error: recommendationErrors.value[section.key],
     tracks: recommendationTracks.value[section.key] ?? [],
     icon: section.icon
   }))
@@ -489,22 +509,26 @@ async function loadMorePersonalizedStream(
   session: PersonalizedStreamSession | null = null
 ): Promise<void> {
   if (personalizedStreamLoading[key] || Date.now() < personalizedStreamRetryAfter[key]) return
-  const providerId = activeProvider.value
+  const providerId =
+    session && currentTrack.value ? getTrackSource(currentTrack.value) : activeProvider.value
   const providerInfo = providerStore.getProvider(providerId)
   const method = key === 'fm' ? 'fetchPersonalFm' : 'fetchPrivateContent'
   if (!providerInfo?.supportedMethods.includes(method)) return
+  const homeRequestId = recommendationRequestId
   personalizedStreamLoading[key] = true
   try {
-    const current = recommendationTracks.value[key] ?? []
+    const current =
+      providerId === activeProvider.value ? (recommendationTracks.value[key] ?? []) : []
+    const existing = session ? playbackStore.queue.value : current
     const incoming = await providerStore.callProvider<Track[]>(providerId, method)
-    let additions = appendUniqueTracks(current, incoming)
+    let additions = appendUniqueTracks(existing, incoming)
     if (
       key === 'radar' &&
       additions.length === 0 &&
       providerInfo.supportedMethods.includes('fetchPersonalFm')
     ) {
       additions = appendUniqueTracks(
-        current,
+        existing,
         await providerStore.callProvider<Track[]>(providerId, 'fetchPersonalFm')
       )
     }
@@ -513,7 +537,11 @@ async function loadMorePersonalizedStream(
       return
     }
 
-    const merged = [...current, ...additions]
+    const merged = [...current, ...appendUniqueTracks(current, additions)]
+    if (providerId !== activeProvider.value || homeRequestId !== recommendationRequestId) {
+      if (session) appendPersonalizedStreamTracks(session, additions)
+      return
+    }
     recommendationTracks.value = { ...recommendationTracks.value, [key]: merged }
 
     const detail = currentDetail.value
@@ -948,6 +976,13 @@ const showActiveLikedPanel = computed(
     Boolean(activeExternalState.value?.likedPlaylist)
 )
 
+const headerProviderOptions = computed(() => {
+  if (currentDetail.value || isSearching.value) return []
+  if (activeTab.value === 'home') return homeProviderOptions.value
+  if (activeTab.value === 'discover') return discoveryProviderOptions.value
+  return []
+})
+
 const headerTitle = computed(() => {
   if (isExternalActive.value && currentDetail.value?.type === 'playlist')
     return currentDetail.value.playlist.name
@@ -1194,6 +1229,9 @@ function selectTab(key: StreamingTab): void {
     const newIndex = getStreamingTabIndex(visibleTabs.value, key)
     streamingTransitionName.value = newIndex > oldIndex ? 'stream-page-down' : 'stream-page-up'
     resetDetail({ animate: false })
+  } else {
+    resetDetail()
+    clearSearch()
   }
   activeTab.value = key
 }
@@ -3032,6 +3070,9 @@ watch(activeProvider, async (provider, oldProvider) => {
   recommendationProviderId.value = ''
   homeSectionDefinitions.value = []
   recommendationTracks.value = {}
+  recommendationErrors.value = {}
+  recsError.value = ''
+  recsLoading.value = false
   recommendPlaylists.value = []
   if (activeTab.value === 'home' && !providerSupportsHome(provider)) {
     const fallback = homeProviderOptions.value[0]?.id
@@ -3074,7 +3115,7 @@ watch(activeTab, async (tab) => {
       if (fallback) fallbackProvider.value = fallback
       return
     }
-    if (activeLoggedIn.value) await loadRecommendations()
+    await loadRecommendations()
     return
   }
   if (tab === 'discover') {
@@ -3103,6 +3144,19 @@ watch(activeTab, async (tab) => {
   ) {
     await refreshCloudSongs().catch(() => undefined)
   }
+})
+
+watch(activeLoggedIn, async () => {
+  if (!isExternalActive.value) return
+  recommendationRequestId += 1
+  recommendationProviderId.value = ''
+  homeSectionDefinitions.value = []
+  recommendationTracks.value = {}
+  recommendationErrors.value = {}
+  recsLoading.value = false
+  recsError.value = ''
+  recommendPlaylists.value = []
+  if (activeTab.value === 'home') await loadRecommendations(true)
 })
 
 watch(
@@ -3140,7 +3194,7 @@ async function refreshStreamingSurface(): Promise<void> {
     await refreshExternalProviderState(activeProvider.value)
   }
 
-  if (activeTab.value === 'home' && activeLoggedIn.value) {
+  if (activeTab.value === 'home') {
     await loadRecommendations()
   } else if (activeTab.value === 'discover') {
     await discovery.ensureLoaded()
@@ -3212,11 +3266,12 @@ onMounted(async () => {
         :show-unified-search="showUnifiedSearch"
         :search-query="searchQuery"
         :search-loading="searchLoading"
-        :logged-in="activeLoggedIn"
-        :profile="activeProfile"
+        :provider-id="activeProvider"
+        :provider-options="headerProviderOptions"
         @update:search-query="searchQuery = $event"
+        @back="goBack"
         @clear-search="clearSearch"
-        @login="emit('login', activeProvider)"
+        @select-provider="selectProvider"
       />
 
       <!-- Search Type Tabs + Source Selector -->
@@ -3288,9 +3343,10 @@ onMounted(async () => {
               activeProviderAvailable &&
               providerSupportsHome(activeProvider)
             "
-            :provider-id="activeProvider"
             :provider-label="activeProviderLabel"
-            :provider-options="homeProviderOptions"
+            :presentation="activeProviderInfo?.ui?.streamingHome"
+            :provider-color="activeProviderInfo?.ui?.color"
+            :supports-discovery="providerSupportsDiscovery(activeProvider)"
             :is-logged-in="activeLoggedIn"
             :recs-loading="recsLoading"
             :recs-error="recsError"
@@ -3302,7 +3358,7 @@ onMounted(async () => {
             @open-playlist="openPlaylist"
             @play-track="playHomeTrack"
             @request-login="emit('login', activeProvider)"
-            @select-provider="selectProvider"
+            @open-discovery="selectTab('discover')"
           />
 
           <StreamingDiscovery
@@ -3312,10 +3368,9 @@ onMounted(async () => {
               activeProviderAvailable &&
               providerSupportsDiscovery(activeProvider)
             "
-            :provider-id="activeProvider"
             :provider-label="activeProviderLabel"
-            :provider-options="discoveryProviderOptions"
             :supports-categories="activeProviderSupportsCategories"
+            :supports-sort="activeProviderInfo?.ui?.streamingDiscovery?.supportsSort"
             :supports-high-quality="activeProviderSupportsHighQuality"
             :catalogue="discovery.catalogue.value"
             :catalogue-loading="discovery.catalogueLoading.value"
@@ -3339,7 +3394,6 @@ onMounted(async () => {
             @load-more="discovery.loadMore"
             @open-playlist="openPlaylist"
             @retry="discovery.retry"
-            @select-provider="selectProvider"
           />
 
           <StreamingPlaceholder

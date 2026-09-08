@@ -1,5 +1,5 @@
 export const OFFICIAL_PLUGIN_INDEX_URL =
-  'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
+  'https://raw.githubusercontent.com/Px-asen/Twilight-Echo-plugins/main/plugins.json'
 
 export interface PluginVerificationLike {
   level: 'official' | 'publisher-signed' | 'index-declared' | 'unverified'

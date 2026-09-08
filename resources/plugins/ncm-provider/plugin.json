@@ -3,7 +3,7 @@
   "name": "网易云音乐源",
   "version": "1.0.0",
   "description": "Twilight Echo 官方维护的基础流媒体供应商。提供网易云音乐曲库搜索、歌单解析、歌词与封面抓取功能。",
-  "author": "Px_asen",
+  "author": "Px-asen",
   "license": "Apache-2.0",
   "type": ["provider"],
   "main": "index.mjs",

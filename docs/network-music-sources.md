@@ -1,6 +1,6 @@
 # 多协议网络音乐源施工文档（Network Music Sources）
 
-> 关联 issue：[#20](https://github.com/asenyarzc-cpu/Twilight_Echo/issues/20)
+> 关联 issue：[#20](https://github.com/Px-asen/Twilight_Echo/issues/20)
 > 状态：已合并到 `1.1.3`。本文档保留协议边界、限制和后续验证要求。
 > 实施进度：M1–M6 已全部落地（WebDAV/FTP/FTPS/SFTP/SCP/SMB/DLNA 浏览、虚拟媒体库、元数据/封面、书签/缓存管理、统一搜索并入网络媒体库）；
 > NFS 已实现（Linux `mount -t nfs`，运行时需 root）；系统命令类和 DLNA 仍需按 `docs/network-music-sources-verification.md` 做真机验证。

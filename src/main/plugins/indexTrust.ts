@@ -10,7 +10,7 @@ import type {
 } from './types.ts'
 
 export const OFFICIAL_PLUGIN_INDEX_URL =
-  'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
+  'https://raw.githubusercontent.com/Px-asen/Twilight-Echo-plugins/main/plugins.json'
 
 const TRUST_REGISTRY_SCHEMA_VERSION = 1
 const MAX_TRUSTED_PUBLISHER_REGISTRY_BYTES = 512 * 1024

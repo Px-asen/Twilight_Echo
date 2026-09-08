@@ -50,6 +50,7 @@ test('Windows packaging strips copied native binaries while unsigned releases st
   assert.match(audioStaging, /readStagedAudioRuntimeObservation/)
   assert.match(audioStaging, /stagedVst3Files/)
   assert.match(packageBuild, /TWILIGHT_PACKAGE_STRIP: '1'/)
+  assert.match(packageBuild, /prepareSmtcMsvc/)
   assert.match(packageBuild, /prepareVst3Msvc/)
   assert.match(packageBuild, /preparePackagedAudioStaging/)
   assert.match(packageBuild, /targetsWindows/)
@@ -57,6 +58,7 @@ test('Windows packaging strips copied native binaries while unsigned releases st
   assert.match(releaseBuild, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/)
   assert.match(releaseBuild, /TWILIGHT_RELEASE_BUILD: '1'/)
   assert.match(releaseBuild, /TWILIGHT_PACKAGED_AUDIO_PRESTRIPPED: '1'/)
+  assert.match(releaseBuild, /prepareSmtcMsvc/)
   assert.match(releaseBuild, /prepareVst3Msvc/)
   assert.match(releaseBuild, /preparePackagedAudioStaging/)
   assert.doesNotMatch(releaseBuild, /--require-signature/)
@@ -67,7 +69,7 @@ test('Windows packaging strips copied native binaries while unsigned releases st
   assert.match(releaseBuild, /\.sha256/)
   assert.ok(lifecycle.indexOf("app.setName('TwilightEcho')") < lifecycle.indexOf('app.whenReady()'))
   assert.ok(
-    lifecycle.indexOf("electronApp.setAppUserModelId('com.TwilightEcho.music')") <
+    lifecycle.indexOf('electronApp.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)') <
       lifecycle.indexOf('app.whenReady()')
   )
 })
@@ -114,7 +116,7 @@ test('update checks download GitHub release installers without electron-updater'
   const projectUrls = read('src/shared/projectUrls.ts')
   const updater = read('src/main/ipc/appIpc.ts')
   const service = read('src/main/app/appUpdateService.ts')
-  assert.match(projectUrls, /export const GITHUB_OWNER = 'asenyarzc-cpu'/)
+  assert.match(projectUrls, /export const GITHUB_OWNER = 'Px-asen'/)
   assert.match(projectUrls, /export const GITHUB_REPO = 'Twilight_Echo'/)
   assert.match(
     projectUrls,
