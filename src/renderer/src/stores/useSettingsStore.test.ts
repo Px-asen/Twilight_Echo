@@ -144,6 +144,15 @@ test('manual tone scheduling follows the app preference, not a stale DOM attribu
   assert.doesNotMatch(functionBody, /return resolveTone\(\)/)
 })
 
+test('reopening settings cannot restore the startup theme snapshot', () => {
+  const themeSource = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+
+  assert.match(
+    themeSource,
+    /export async function bootstrapThemeRuntime\(startupSnapshot\?: AppStartupSnapshot\): Promise<void> \{\s*if \(bootstrapPromise\) return bootstrapPromise\s*if \(loaded\.value\) return/
+  )
+})
+
 test('background image import accepts ArrayBuffer views from Electron IPC', () => {
   const source = readFileSync(
     new URL('../../../main/library/coverCache.ts', import.meta.url),

@@ -52,6 +52,10 @@ export interface DesktopLyricsClockSnapshot {
 
 export interface DesktopLyricsSettingsV3 {
   version: 3
+  placement?: 'desktop' | 'taskbar'
+  taskbarWidth?: number
+  taskbarOffset?: number
+  taskbarFontSize?: number
   enabled: boolean
   windowWidth: number
   windowHeight: number
@@ -98,6 +102,10 @@ export interface DesktopLyricsSlot {
 
 export const DEFAULT_DESKTOP_LYRICS_SETTINGS: DesktopLyricsSettingsV3 = {
   version: DESKTOP_LYRICS_SETTINGS_VERSION,
+  placement: 'desktop',
+  taskbarWidth: 320,
+  taskbarOffset: 8,
+  taskbarFontSize: 18,
   enabled: false,
   windowWidth: 960,
   windowHeight: 196,
@@ -193,6 +201,10 @@ export function normalizeDesktopLyricsSettings(
     vertical && Number(source.windowWidth) >= 480 && Number(source.windowHeight) <= 320
   return {
     version: DESKTOP_LYRICS_SETTINGS_VERSION,
+    placement: source.placement === 'taskbar' ? 'taskbar' : 'desktop',
+    taskbarWidth: clamp(source.taskbarWidth, 160, 800, 320),
+    taskbarOffset: clamp(source.taskbarOffset, 0, 100, 8),
+    taskbarFontSize: clamp(source.taskbarFontSize, 12, 28, 18),
     enabled: value.enabled === true,
     windowWidth: clamp(
       verticalWindowWasHorizontal ? undefined : source.windowWidth,

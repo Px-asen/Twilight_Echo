@@ -361,7 +361,7 @@ onUnmounted(() => {
                 style="
                   background: #ef4444;
                   color: #fff;
-                  font-size: 10px;
+                  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
                   padding: 2px 6px;
                   border-radius: 100px;
                   margin-left: 4px;
@@ -446,7 +446,7 @@ onUnmounted(() => {
             border: 1px solid var(--te-danger-soft-fg);
             border-radius: 12px;
             color: var(--te-danger-soft-fg);
-            font-size: 13px;
+            font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
             display: flex;
             align-items: center;
             gap: 8px;
@@ -464,7 +464,7 @@ onUnmounted(() => {
             border: 1px solid var(--te-warning-soft-fg, #c2410c);
             border-radius: 12px;
             color: var(--te-warning-soft-fg, #c2410c);
-            font-size: 13px;
+            font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
             display: flex;
             align-items: center;
             gap: 8px;
@@ -487,12 +487,17 @@ onUnmounted(() => {
               text-align: center;
               padding: 60px 20px;
               color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
+              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
             "
           >
             <i
               class="pi pi-inbox"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+              style="
+                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
+                display: block;
+                margin-bottom: 16px;
+                opacity: 0.3;
+              "
             ></i>
             <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
             <button
@@ -545,7 +550,14 @@ onUnmounted(() => {
               </div>
               <div class="plugin-desc">
                 {{ plugin.description }}
-                <div v-if="plugin.error" style="margin-top: 8px; color: #ef4444; font-size: 12px">
+                <div
+                  v-if="plugin.error"
+                  style="
+                    margin-top: 8px;
+                    color: #ef4444;
+                    font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+                  "
+                >
                   <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
                 </div>
               </div>
@@ -637,7 +649,12 @@ onUnmounted(() => {
             </span>
           </div>
 
-          <div class="page-title" style="font-size: 18px; margin-bottom: 16px">可用插件</div>
+          <div
+            class="page-title"
+            style="font-size: calc(var(--te-font-size-body, 14px) * 18 / 14); margin-bottom: 16px"
+          >
+            可用插件
+          </div>
 
           <!-- Empty state -->
           <div
@@ -646,12 +663,17 @@ onUnmounted(() => {
               text-align: center;
               padding: 60px 20px;
               color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
+              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
             "
           >
             <i
               class="pi pi-search"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+              style="
+                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
+                display: block;
+                margin-bottom: 16px;
+                opacity: 0.3;
+              "
             ></i>
             {{ searchText ? '没有匹配的插件' : '插件市场暂无可用插件' }}
           </div>
@@ -727,7 +749,7 @@ onUnmounted(() => {
                 <span
                   v-else-if="entry.installState === 'installed'"
                   style="
-                    font-size: 13px;
+                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
                     font-weight: 600;
                     color: var(--te-neutral-400);
                     display: flex;
@@ -749,7 +771,11 @@ onUnmounted(() => {
                 </button>
                 <span
                   v-else-if="entry.installState === 'incompatible'"
-                  style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400)"
+                  style="
+                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+                    font-weight: 600;
+                    color: var(--te-neutral-400);
+                  "
                 >
                   不兼容
                 </span>
@@ -777,12 +803,17 @@ onUnmounted(() => {
               text-align: center;
               padding: 60px 20px;
               color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
+              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
             "
           >
             <i
               class="pi pi-check-circle"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+              style="
+                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
+                display: block;
+                margin-bottom: 16px;
+                opacity: 0.3;
+              "
             ></i>
             所有插件均为最新版本
           </div>
@@ -800,7 +831,13 @@ onUnmounted(() => {
                 align-items: center;
               "
             >
-              <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600)">
+              <div
+                style="
+                  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+                  font-weight: 600;
+                  color: var(--te-primary-600);
+                "
+              >
                 有 {{ updateEntries.length }} 个插件可以更新。
               </div>
               <button class="btn btn-primary" @click="updateAll">全部更新</button>
@@ -823,24 +860,46 @@ onUnmounted(() => {
                     class="plugin-icon"
                     :class="getIconInfo(entry.id, entry.type).cls"
                     :style="getIconInfo(entry.id, entry.type).style"
-                    style="width: 48px; height: 48px; font-size: 20px"
+                    style="
+                      width: 48px;
+                      height: 48px;
+                      font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
+                    "
                   >
                     <i :class="getIconInfo(entry.id, entry.type).icon"></i>
                   </div>
                   <div class="plugin-info" style="margin-left: 16px">
                     <div class="plugin-title-row">
-                      <div class="plugin-name" style="font-size: 16px">{{ entry.name }}</div>
+                      <div
+                        class="plugin-name"
+                        style="font-size: calc(var(--te-font-size-body, 14px) * 16 / 14)"
+                      >
+                        {{ entry.name }}
+                      </div>
                     </div>
                     <div class="plugin-author">
                       {{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }}
-                      <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px"></i>
+                      <i
+                        class="pi pi-arrow-right"
+                        style="
+                          font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
+                          margin: 0 4px;
+                        "
+                      ></i>
                       <span style="color: var(--te-primary-600); font-weight: 600"
                         >v{{ entry.version }}</span
                       >
                     </div>
                   </div>
                 </div>
-                <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500)">
+                <div
+                  style="
+                    flex: 1;
+                    margin: 0 32px;
+                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+                    color: var(--te-neutral-500);
+                  "
+                >
                   {{ entry.description }}
                 </div>
                 <button
@@ -905,7 +964,7 @@ onUnmounted(() => {
 }
 
 .sidebar-header h1 {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 700;
   margin: 0;
   display: flex;
@@ -917,7 +976,7 @@ onUnmounted(() => {
 .sidebar-header h1 i,
 .sidebar-header h1 .puzzle-icon {
   color: var(--te-neutral-900, #111827);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
 }
 
 .nav-menu {
@@ -940,11 +999,11 @@ onUnmounted(() => {
     background-color 0.2s var(--te-ease-soft),
     color 0.2s var(--te-ease-soft);
   font-weight: 500;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .nav-item i {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   opacity: 0.7;
 }
 
@@ -971,7 +1030,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   color: var(--te-neutral-600, #4b5563);
 }
@@ -1050,7 +1109,7 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   outline: none;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   width: 100%;
   color: var(--te-neutral-800, #1f2937);
 }
@@ -1067,7 +1126,7 @@ onUnmounted(() => {
 .btn {
   padding: 8px 16px;
   border-radius: 100px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -1106,7 +1165,7 @@ onUnmounted(() => {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   font-weight: 700;
   color: var(--te-neutral-900, #111827);
   margin-bottom: 24px;
@@ -1116,7 +1175,7 @@ onUnmounted(() => {
 }
 
 .badge {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   background: rgba(0, 0, 0, 0.06);
   color: var(--te-neutral-600, #4b5563);
@@ -1137,7 +1196,7 @@ onUnmounted(() => {
   gap: 10px;
   margin: -16px 0 24px;
   color: var(--te-neutral-500, #6b7280);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
 }
 
@@ -1186,7 +1245,7 @@ onUnmounted(() => {
   position: absolute;
   top: 16px;
   right: 16px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   color: var(--te-neutral-400, #9ca3af);
   text-transform: uppercase;
@@ -1206,7 +1265,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   flex-shrink: 0;
 }
 
@@ -1241,7 +1300,7 @@ onUnmounted(() => {
 }
 
 .plugin-name {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   font-weight: 700;
   color: var(--te-neutral-900, #111827);
   white-space: nowrap;
@@ -1250,7 +1309,7 @@ onUnmounted(() => {
 }
 
 .plugin-version {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: var(--te-neutral-400, #9ca3af);
   background: rgba(0, 0, 0, 0.04);
   padding: 2px 6px;
@@ -1258,7 +1317,7 @@ onUnmounted(() => {
 }
 
 .plugin-author {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-neutral-500, #6b7280);
   display: flex;
   align-items: center;
@@ -1270,7 +1329,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
 }
 
@@ -1281,7 +1340,7 @@ onUnmounted(() => {
 
 .signature-evidence {
   color: var(--te-neutral-400, #9ca3af);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0;
 }
 
@@ -1308,7 +1367,7 @@ onUnmounted(() => {
 }
 
 .tag {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1335,7 +1394,7 @@ onUnmounted(() => {
 }
 
 .plugin-desc {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-600, #4b5563);
   line-height: 1.5;
   flex: 1;
@@ -1357,7 +1416,7 @@ onUnmounted(() => {
 }
 
 .switch-label {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   color: var(--te-neutral-500, #6b7280);
 }
@@ -1409,13 +1468,13 @@ onUnmounted(() => {
 
 .banner-text h2 {
   margin: 0 0 8px 0;
-  font-size: 28px;
+  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
   font-weight: 800;
 }
 
 .banner-text p {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   opacity: 0.9;
   max-width: 300px;
   line-height: 1.5;

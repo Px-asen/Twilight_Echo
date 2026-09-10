@@ -396,6 +396,7 @@ std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int sourceSampleR
   carrier.channelCount = channelCount;
   carrier.bitDepth = 24;
   carrier.sampleFormat = AudioSampleFormat::Int24Interleaved;
+  carrier.dopEncoded = true;
 
   const bool is48kFamily = sourceSampleRate > 0 && sourceSampleRate % 48000 == 0;
   const bool is441kFamily = sourceSampleRate <= 0 || sourceSampleRate % 44100 == 0;

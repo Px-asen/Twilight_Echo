@@ -1,4 +1,6 @@
 ﻿<script setup lang="ts">
+import { contextMenuPosition } from '../../../shared/contextMenuPosition.ts'
+
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
@@ -34,6 +36,7 @@ import StreamingLibrary from './StreamingLibrary.vue'
 import NcmCloudPanel from './NcmCloudPanel.vue'
 import StreamingSearch from './StreamingSearch.vue'
 import StreamingDetailStage from './streaming-page/StreamingDetailStage.vue'
+import { useStreamingTrackView } from '@renderer/components/streaming-page/useStreamingTrackView'
 import StreamingContentHeader from './streaming-page/StreamingContentHeader.vue'
 import StreamingSearchControls from './streaming-page/StreamingSearchControls.vue'
 import StreamingPlaceholder from './streaming-page/StreamingPlaceholder.vue'
@@ -237,6 +240,12 @@ function beginDetailTransition(): void {
 // shallowRef + whole-array replacement only: liked songs / playlists can hold
 // thousands of tracks and deep reactivity over them is pure overhead.
 const detailTracks = shallowRef<Track[]>([])
+const {
+  query: detailQuery,
+  sort: detailSort,
+  direction: detailSortDirection,
+  tracks: visibleDetailTracks
+} = useStreamingTrackView(detailTracks, () => currentDetail.value)
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = ref<MediaProviderAlbumSummary[]>([])
 const artistPlaylists = ref<MediaProviderPlaylistSummary[]>([])
@@ -983,7 +992,16 @@ const headerProviderOptions = computed(() => {
   return []
 })
 
+const isExternalHome = computed(
+  () =>
+    isExternalActive.value &&
+    activeTab.value === 'home' &&
+    !currentDetail.value &&
+    !isSearching.value
+)
+
 const headerTitle = computed(() => {
+  if (isExternalHome.value) return '主页'
   if (isExternalActive.value && currentDetail.value?.type === 'playlist')
     return currentDetail.value.playlist.name
   if (isExternalActive.value) return activeProviderLabel.value
@@ -997,6 +1015,7 @@ const headerTitle = computed(() => {
   return currentView.value?.label ?? '流媒体'
 })
 const headerSubtitle = computed(() => {
+  if (isExternalHome.value) return timeGreeting.value
   if (isExternalActive.value)
     return activeLoggedIn.value ? '已登录账号的音乐库' : '登录后展示全部音乐库'
   return timeGreeting.value
@@ -1690,6 +1709,35 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
   }
 }
 
+async function openTrackAlbum(track: Track): Promise<void> {
+  if (!track.albumId) {
+    pushNotice({ kind: 'info', message: '这首歌曲没有可用的专辑详情标识' })
+    return
+  }
+  const providerId = track.source || activeProvider.value
+  if (providerId !== activeProvider.value) {
+    selectProvider(providerId, false)
+    await nextTick()
+  }
+  await openAlbum({
+    id: track.albumId,
+    name: track.album,
+    cover: track.cover,
+    coverSource: track.coverSource,
+    trackCount: 0
+  })
+}
+
+function openTrackArtist(track: Track): void {
+  const artist = track.artists?.[0]
+  void openRequestedArtist({
+    key: Date.now(),
+    providerId: track.source || activeProvider.value,
+    artistName: artist?.name || track.artist.split(' / ')[0],
+    artistId: artist?.id
+  })
+}
+
 async function openAlbum(album: MediaProviderAlbumSummary): Promise<void> {
   beginDetailTransition()
   pushDetail({ type: 'album', album })
@@ -2087,8 +2135,13 @@ useBackHandler(
 
 const streamingListTracks = computed(() => {
   if (isSearching.value && !currentDetail.value) return searchResults.value
-  return detailTracks.value
+  return visibleDetailTracks.value
 })
+
+const detailTrackIds = computed(() => new Set(detailTracks.value.map((track) => track.id)))
+const canLocateDetailTrack = computed(
+  () => !!currentTrack.value && detailTrackIds.value.has(currentTrack.value.id)
+)
 
 const multiSelectEnabled = computed(
   () =>
@@ -2103,6 +2156,9 @@ const multiSelect = useTrackMultiSelect({
     activeTab,
     searchQuery,
     searchType,
+    detailQuery,
+    detailSort,
+    detailSortDirection,
     isSearching,
     () => detailTracks.value.length
   ],
@@ -2207,12 +2263,16 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
     const menu = document.querySelector('.streaming-context-menu') as HTMLElement | null
     if (!menu) return
     const rect = menu.getBoundingClientRect()
-    if (rect.right > window.innerWidth) {
-      streamingContextMenuX.value = Math.max(8, event.clientX - rect.width)
-    }
-    if (rect.bottom > window.innerHeight) {
-      streamingContextMenuY.value = Math.max(8, event.clientY - rect.height)
-    }
+    const position = contextMenuPosition(
+      event.clientX,
+      event.clientY,
+      rect.width,
+      rect.height,
+      window.innerWidth,
+      window.innerHeight
+    )
+    streamingContextMenuX.value = position.x
+    streamingContextMenuY.value = position.y
   })
 }
 
@@ -2222,6 +2282,14 @@ async function handleContextPlayTrack(): Promise<void> {
   const list = currentDetail.value ? await resolveDetailPlaybackQueue() : streamingListTracks.value
   playStreamingTrack(track, list)
   closeStreamingContextMenu()
+}
+
+function handleContextPlayNext(): void {
+  const track = streamingContextMenuTrack.value
+  closeStreamingContextMenu()
+  if (!track) return
+  playbackStore.playNextTrack(track)
+  pushNotice({ kind: 'success', message: `下一首播放：${track.title}` })
 }
 
 async function handleContextFavorite(): Promise<void> {
@@ -2416,11 +2484,15 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
     isExternalActive.value ||
     !likedTracksHasMore.value
   ) {
-    return detailTracks.value
+    return visibleDetailTracks.value
   }
 
+  if (likedTracksLoadingMore.value) return visibleDetailTracks.value
+  const token = detailLoadToken
+  likedTracksLoadingMore.value = true
   try {
     const tracks = await fetchLikedTracks()
+    if (!isActiveDetailLoad(token) || currentDetail.value?.type !== 'liked') return []
     if (tracks.length > 0) {
       detailTracks.value = tracks
       likedCount.value = tracks.length
@@ -2429,13 +2501,17 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
       likedTracksHasMore.value = false
       likedTracksLoadMoreError.value = ''
       syncLikedIds(tracks)
-      return tracks
+      return visibleDetailTracks.value
     }
   } catch (error) {
-    likedTracksLoadMoreError.value = friendlyStreamingError(error, '加载完整收藏列表失败')
+    if (isActiveDetailLoad(token)) {
+      likedTracksLoadMoreError.value = friendlyStreamingError(error, '加载完整收藏列表失败')
+    }
+  } finally {
+    if (isActiveDetailLoad(token)) likedTracksLoadingMore.value = false
   }
 
-  return detailTracks.value
+  return visibleDetailTracks.value
 }
 
 async function playAllDetailTracks(): Promise<void> {
@@ -3288,7 +3364,7 @@ onMounted(async () => {
       <Transition
         :name="streamingTransitionName"
         mode="out-in"
-        @after-enter="restoreStreamingScrollPosition"
+        @enter="restoreStreamingScrollPosition"
       >
         <div
           v-if="showUnifiedSearch && isSearching && !currentDetail"
@@ -3468,7 +3544,14 @@ onMounted(async () => {
                 :intro="detailHeaderInfo.intro"
                 :icon="detailHeaderInfo.icon"
                 :track-count-label="detailTrackCountLabel"
-                :tracks="detailTracks"
+                :tracks="visibleDetailTracks"
+                v-model:query="detailQuery"
+                v-model:sort="detailSort"
+                v-model:direction="detailSortDirection"
+                :total-tracks="detailTracks.length"
+                :can-locate="canLocateDetailTrack"
+                :refreshing="detailLoading"
+                @refresh="retryCurrentView"
                 :current-track-id="currentTrack?.id ?? null"
                 :track-activation-mode="settingsStore.settings.value.trackActivationMode"
                 :is-external="isExternalActive"
@@ -3483,6 +3566,8 @@ onMounted(async () => {
                 :is-liking="isDetailTrackLiking"
                 :format-time="formatTime"
                 :liked-footer="detailLikedFooter"
+                @open-artist="openTrackArtist"
+                @open-album="openTrackAlbum"
                 @play-all="playAllDetailTracks"
                 @shuffle-play="shufflePlayDetailTracks"
                 @play-track="playDetailTrack"
@@ -3492,6 +3577,7 @@ onMounted(async () => {
                 @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
                 @batch-delete="handleStreamingBatchDelete"
                 @clear-selection="clearSelection"
+                @load-all-liked="resolveDetailPlaybackQueue"
                 @load-more-liked="loadMoreLikedTracks"
                 @track-context-menu="onStreamingTrackContextMenu"
               />
@@ -3623,6 +3709,7 @@ onMounted(async () => {
       :aggregate-playlists="aggregatePlaylistOptions"
       :show-aggregate-submenu="showStreamingAggregateSubmenu"
       @play="handleContextPlayTrack"
+      @play-next="handleContextPlayNext"
       @favorite="handleContextFavorite"
       @like="handleContextLikeTrack"
       @create-playlist="handleContextCreatePlaylist"
@@ -3706,14 +3793,14 @@ onMounted(async () => {
 
 .provider-download-panel-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
 
 .provider-download-empty {
   padding: 32px 20px;
   text-align: center;
   color: var(--te-muted, rgba(255, 255, 255, 0.5));
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 
 .provider-download-list {
@@ -3739,19 +3826,19 @@ onMounted(async () => {
 }
 
 .provider-download-item-info strong {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .provider-download-item-info span {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-muted, rgba(255, 255, 255, 0.5));
 }
 
 .provider-download-item-info small {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: var(--te-muted, rgba(255, 255, 255, 0.4));
 }
 
@@ -3802,7 +3889,7 @@ onMounted(async () => {
   border-radius: 9px;
   background: var(--te-danger, #ef4444);
   color: #fff;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 700;
   display: flex;
   align-items: center;

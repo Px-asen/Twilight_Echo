@@ -211,7 +211,7 @@ const stageHint = computed(
   place-items: center;
   border-radius: 999px;
   color: var(--te-card-bg);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
   background: linear-gradient(
     135deg,
     var(--te-primary-500),
@@ -303,7 +303,7 @@ const stageHint = computed(
   position: relative;
   z-index: 1;
   margin-top: 42px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   letter-spacing: 0.32em;
   color: var(--tls-ink-soft);
@@ -329,7 +329,7 @@ const stageHint = computed(
   align-items: baseline;
   gap: 2px;
   margin: 12px 0 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   color: var(--tls-ink-soft);
   animation: tls-rise 0.62s var(--te-ease-out-quint) 0.24s both;

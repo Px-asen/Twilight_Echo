@@ -1,6 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseWindowsFontFamilies } from './fontRegistry.ts'
+import { parseWindowsFontFamilies, listInstalledFontFamilies } from './fontRegistry.ts'
+
+test(
+  'Windows font registry uses Unicode names without replacement characters',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const fonts = await listInstalledFontFamilies()
+    assert.ok(fonts.length > 0)
+    assert.ok(fonts.every((font) => !font.includes('\ufffd')))
+  }
+)
 
 const REGISTRY_SAMPLE = [
   'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts',

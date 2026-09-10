@@ -1,3 +1,4 @@
+import { DEFAULT_DOWNLOAD_PREFERENCES } from '../../../shared/downloadPreferences.ts'
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
@@ -108,6 +109,8 @@ const fallbackSettings: AppSettings = {
     previous: 'CommandOrControl+Alt+Left',
     next: 'CommandOrControl+Alt+Right',
     playPause: 'CommandOrControl+Alt+Space',
+    volumeUp: 'CommandOrControl+Alt+Up',
+    volumeDown: 'CommandOrControl+Alt+Down',
     toggleDesktopLyrics: 'CommandOrControl+Alt+D',
     toggleDesktopLyricsLock: 'CommandOrControl+Alt+L'
   },
@@ -145,6 +148,7 @@ const fallbackSettings: AppSettings = {
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
+  downloadPreferences: { ...DEFAULT_DOWNLOAD_PREFERENCES },
   downloadFolder: '',
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,

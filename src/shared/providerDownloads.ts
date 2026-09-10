@@ -32,6 +32,8 @@ export interface ProviderDownloadTaskSnapshot {
   track: ProviderDownloadTrackInput
   requestedQuality: ProviderDownloadQuality
   actualQuality: ProviderDownloadQuality | null
+  qualityVerified?: boolean
+  warning?: string | null
   status: ProviderDownloadTaskStatus
   progress: number
   queuePosition: number | null

@@ -672,6 +672,12 @@ function normalizeTrack(song) {
     title,
     artist,
     album,
+    albumId:
+      song.al?.id != null
+        ? String(song.al.id)
+        : song.album?.id != null
+          ? String(song.album.id)
+          : undefined,
     filePath: `ncm:${songId}`,
     fileName: `${artist} - ${title}`,
     duration: formatDuration(song.dt ?? song.duration),

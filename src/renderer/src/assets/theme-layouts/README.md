@@ -1,10 +1,17 @@
 # Theme layout sheets
 
-Each built-in preset owns one stylesheet here that restructures the five core surfaces
-(app shell, local dashboard, streaming home, playing page, player bar) so the preset reads
+Each built-in preset owns one stylesheet here that restructures the four core surfaces
+(app shell, local dashboard, streaming home, playing page) so the preset reads
 as a distinct application rather than a recolor of the default.
 
+Player bars and their attached panels use the shared standard / mini / compact component styles.
+Preset sheets must not override them. Their tokens come from the default theme for the current tone;
+preset player modes, typography treatments, and visibility flags apply to the playing page only. Presets 2, 3, and 4 default to compact.
+
 ## Contract
+
+Presets 3 (`obsidian-glass`) and 4 (`paper-light`) use a title bar without a bottom divider,
+including the liquid glass background's inset shadow.
 
 - Every rule **must** be scoped under `html[data-te-preset-layout='<key>']`. The attribute is
   written by `applyActiveTheme` in `src/renderer/src/stores/useThemeStore.ts` and resolves

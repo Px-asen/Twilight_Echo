@@ -20,10 +20,13 @@ html[data-te-preset-layout='obsidian-glass'] {
   --og-radius: 2px;
 }
 
-/* ── App shell: title bar hairline, flush square chrome ───────────────────*/
-
 html[data-te-preset-layout='obsidian-glass'] .title-bar.drag-region {
-  box-shadow: inset 0 -1px 0 var(--og-hairline) !important;
+  border-bottom: 0;
+  box-shadow: none !important;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .title-bar .title-bar-background {
+  box-shadow: none !important;
 }
 
 html[data-te-preset-layout='obsidian-glass'] .title-bar .control-btn,
@@ -536,7 +539,7 @@ html[data-te-preset-layout='obsidian-glass'] .home-view .hero-kicker-day {
   min-width: 34px;
   height: 34px;
   border-radius: 0;
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
 }
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .hero-title {
@@ -549,13 +552,13 @@ html[data-te-preset-layout='obsidian-glass'] .home-view .hero-title {
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .hero-title-en {
   margin-top: 4px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.5em;
   color: var(--og-accent);
 }
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .hero-desc {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .hero-play,
@@ -565,7 +568,7 @@ html[data-te-preset-layout='obsidian-glass'] .home-view .invite-cta,
 html[data-te-preset-layout='obsidian-glass'] .home-view .home-error-retry {
   height: 34px;
   border-radius: var(--og-radius);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -632,7 +635,7 @@ html[data-te-preset-layout='obsidian-glass'] .home-view .chart-row:hover {
 }
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .chart-index {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   letter-spacing: 0.04em;
 }
 
@@ -644,7 +647,7 @@ html[data-te-preset-layout='obsidian-glass'] .home-view .chart-cover {
 }
 
 html[data-te-preset-layout='obsidian-glass'] .home-view .chart-duration {
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
 }
@@ -794,304 +797,6 @@ html[data-te-preset-layout='obsidian-glass'] .song-list .search-box {
   border-radius: var(--og-radius);
 }
 
-/* ── Playing page (full-cover + pro): edge-anchored control band ─────────*/
-
-html[data-te-preset-layout='obsidian-glass'] .playing-music .visualizer-toggle-button {
-  border-radius: var(--og-radius);
-}
-
-html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
-  .playing-music
-  .cover-meta {
-  left: 0;
-  right: 0;
-  bottom: var(--og-bar-h);
-  width: auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 16px;
-  row-gap: 2px;
-  padding: 10px clamp(16px, 3vw, 30px);
-  border-radius: 0;
-  border-top: 1px solid var(--og-hairline);
-  background: color-mix(in oklab, var(--te-player-bg) 82%, transparent);
-  backdrop-filter: blur(14px);
-  text-align: left;
-}
-
-html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
-  .playing-music
-  .cover-meta
-  .track-title {
-  margin: 0;
-  font-size: clamp(14px, 1.5vw, 19px);
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-}
-
-html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
-  .playing-music
-  .cover-meta
-  .track-artist {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: color-mix(in oklab, var(--te-neutral-900) 66%, transparent);
-}
-
-html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
-  .playing-music
-  .cover-meta
-  .track-album {
-  margin: 0;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  color: color-mix(in oklab, var(--te-neutral-900) 45%, transparent);
-}
-
-/* Lyrics: flush right-edge console panel, hairline left rule */
-html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
-  .playing-music
-  .lyrics-column {
-  top: 40px;
-  right: 0;
-  bottom: calc(var(--og-bar-h) + 46px);
-  width: min(44vw, 560px);
-  padding: 18px clamp(16px, 2.4vw, 28px);
-  border: 0;
-  border-left: 1px solid var(--og-hairline);
-  border-radius: 0;
-  background: color-mix(in oklab, var(--te-player-bg) 58%, transparent);
-  backdrop-filter: blur(26px);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .playing-music .lyric-row {
-  border-radius: var(--og-radius);
-}
-
-/* ── Player bar: full-width flat console strip ────────────────────────────*/
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell {
-  left: 0;
-  right: 0;
-  bottom: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell.menu-open {
-  left: var(--te-menu-width);
-  right: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar {
-  height: var(--og-bar-h);
-  max-width: none;
-  width: 100%;
-  margin: 0;
-  padding: 0 clamp(10px, 1.6vw, 22px);
-  grid-template-columns: minmax(0, 320px) minmax(0, 1fr) minmax(0, 320px);
-  column-gap: 14px;
-  border: 0;
-  border-top: 1px solid var(--og-hairline-strong);
-  border-radius: 0;
-  background: color-mix(in oklab, var(--te-player-bg) 94%, transparent);
-  box-shadow: none;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-}
-
-/* Left cluster: small square artwork, precise typography */
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot img.player-cover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-placeholder {
-  width: 40px;
-  height: 40px;
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot:hover .player-cover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot:hover img.player-cover {
-  transform: none;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-title {
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-artist {
-  margin-top: 1px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--og-ink-mute);
-}
-
-/* Center: transport + inline precise time readout on a single row */
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-center {
-  position: static;
-  flex-direction: row;
-  justify-content: center;
-  gap: 16px;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-controls {
-  gap: 8px;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .ctrl-btn,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .icon-btn {
-  border: 1px solid transparent;
-  border-radius: var(--og-radius);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .ctrl-btn:hover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .icon-btn:hover {
-  border-color: var(--og-hairline);
-  background: color-mix(in oklab, var(--te-neutral-900) 7%, transparent);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .btn-play {
-  border: 1px solid var(--og-accent-line);
-  border-radius: var(--og-radius);
-  background: var(--og-accent-soft);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .btn-play:hover {
-  background: color-mix(in oklab, var(--te-primary-500) 20%, transparent);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-area {
-  display: inline-flex;
-  width: auto;
-  align-items: center;
-  gap: 3px;
-  margin: 0;
-}
-
-/* Small, exact, monospaced-digit time readout (re-shown as console data) */
-html[data-te-preset-layout='obsidian-glass'] .player-bar .time-label {
-  display: inline-block;
-  min-width: 0;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
-  color: var(--og-ink-mute);
-}
-
-html[data-te-preset-layout='obsidian-glass']
-  .player-bar
-  .progress-area
-  .time-label:first-child::after {
-  content: '/';
-  margin: 0 2px 0 6px;
-  opacity: 0.45;
-}
-
-/* Progress: a 2px full-width line along the very top edge of the bar */
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider-wrap {
-  display: flex;
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -1px;
-  height: 10px;
-  margin: 0;
-  min-width: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-track {
-  top: 0;
-  height: 2px;
-  transform: none;
-  border-radius: 0;
-  background: color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-fill {
-  border-radius: 0;
-  background: var(--og-accent);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .ab-loop-range {
-  top: 0;
-  height: 4px;
-  transform: none;
-  border-radius: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider {
-  height: 100%;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider::-webkit-slider-thumb {
-  width: 8px;
-  height: 8px;
-  border-radius: 0;
-  opacity: 0;
-}
-
-html[data-te-preset-layout='obsidian-glass']
-  .player-bar
-  .progress-slider:hover::-webkit-slider-thumb {
-  opacity: 1;
-}
-
-/* Resume offer floats above the flat bar instead of stacking inside it */
-html[data-te-preset-layout='obsidian-glass'] .player-bar .resume-offer {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  margin: 0;
-  border: 1px solid var(--og-hairline);
-  border-radius: var(--og-radius);
-  background: var(--og-panel);
-}
-
-/* Drawers and panels attached to the bar: flat, hairline, square */
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-panel,
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .volume-drawer {
-  border-radius: var(--og-radius);
-  border: 1px solid var(--og-hairline);
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-item {
-  border-radius: 0;
-  box-shadow: inset 0 -1px 0 var(--og-hairline);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-cover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-cover-placeholder {
-  border-radius: var(--og-radius);
-}
-
-/* ── Reduced effects: strip blur; no continuous animation exists here ─────*/
-
-html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced'] .player-bar,
-html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced']
-  .playing-music
-  .cover-meta,
-html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced']
-  .playing-music
-  .lyrics-column {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
 html[data-te-preset-layout='obsidian-glass'] {
   --nh-border: color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
   --nh-border-strong: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
@@ -1101,7 +806,7 @@ html[data-te-preset-layout='obsidian-glass'] {
 
 html[data-te-preset-layout='obsidian-glass'] .title-bar.drag-region {
   min-height: var(--te-titlebar-height);
-  border-bottom: 1px solid var(--nh-border);
+  border-bottom: 0;
   background: color-mix(in srgb, var(--te-app-bg) 82%, transparent);
   box-shadow: none !important;
   backdrop-filter: blur(22px) saturate(130%);
@@ -1239,29 +944,4 @@ html[data-te-preset-layout='obsidian-glass'] .night-harbor {
     color-mix(in srgb, var(--te-primary-500) 4%, transparent),
     transparent 36%
   );
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar {
-  border-top: 1px solid var(--nh-border-strong);
-  background: color-mix(in srgb, var(--te-player-bg) 90%, var(--te-primary-500));
-  box-shadow: 0 -18px 48px color-mix(in srgb, var(--te-neutral-50) 24%, transparent);
-  backdrop-filter: blur(24px) saturate(135%);
-  -webkit-backdrop-filter: blur(24px) saturate(135%);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover,
-html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-placeholder {
-  border-radius: 7px;
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--te-neutral-50) 28%, transparent);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .btn-play {
-  border-radius: 50%;
-  background: var(--te-primary-500);
-  color: var(--te-neutral-50);
-  box-shadow: 0 0 22px color-mix(in srgb, var(--te-primary-500) 30%, transparent);
-}
-
-html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-fill {
-  background: linear-gradient(90deg, var(--te-primary-500), var(--te-primary-300));
 }

@@ -68,42 +68,83 @@ useFocusTrap(dialogRef, () => props.show)
 
 <template>
   <Teleport to="body">
-    <div v-if="show" class="create-aggregate-overlay" @click.self="close()">
-      <div
-        ref="dialogRef"
-        class="create-aggregate-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="新建聚合歌单"
-        @click.stop
-      >
-        <h3 class="create-aggregate-title">新建聚合歌单{{ trackLabel }}</h3>
-        <AnimatedInput
-          v-model="name"
-          type="text"
-          class="create-aggregate-input"
-          placeholder="聚合歌单名称"
-          aria-label="聚合歌单名称"
-          animate
-          @keydown.enter="confirm()"
-        />
-        <p v-if="error" class="create-aggregate-error" role="alert">{{ error }}</p>
-        <div class="create-aggregate-actions">
-          <button type="button" class="create-aggregate-btn" @click="close()">取消</button>
-          <button
-            type="button"
-            class="create-aggregate-btn create-aggregate-btn-primary"
-            @click="confirm()"
-          >
-            创建
-          </button>
+    <Transition name="aggregate-dialog">
+      <div v-if="show" class="create-aggregate-overlay" @click.self="close()">
+        <div
+          ref="dialogRef"
+          class="create-aggregate-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="新建聚合歌单"
+          @click.stop
+        >
+          <h3 class="create-aggregate-title">新建聚合歌单{{ trackLabel }}</h3>
+          <AnimatedInput
+            v-model="name"
+            type="text"
+            class="create-aggregate-input"
+            placeholder="聚合歌单名称"
+            aria-label="聚合歌单名称"
+            animate
+            @keydown.enter="confirm()"
+          />
+          <p v-if="error" class="create-aggregate-error" role="alert">{{ error }}</p>
+          <div class="create-aggregate-actions">
+            <button type="button" class="create-aggregate-btn" @click="close()">取消</button>
+            <button
+              type="button"
+              class="create-aggregate-btn create-aggregate-btn-primary"
+              @click="confirm()"
+            >
+              创建
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
 <style scoped>
+.aggregate-dialog-enter-active,
+.aggregate-dialog-leave-active {
+  transition: opacity var(--te-motion-panel) var(--te-ease-soft);
+}
+
+.aggregate-dialog-enter-active .create-aggregate-dialog,
+.aggregate-dialog-leave-active .create-aggregate-dialog {
+  transition: transform var(--te-motion-panel) var(--te-ease-soft);
+}
+
+.aggregate-dialog-leave-active,
+.aggregate-dialog-leave-active .create-aggregate-dialog {
+  transition-duration: var(--te-motion-hover);
+  pointer-events: none;
+}
+
+.aggregate-dialog-enter-from,
+.aggregate-dialog-leave-to {
+  opacity: 0;
+}
+
+.aggregate-dialog-enter-from .create-aggregate-dialog,
+.aggregate-dialog-leave-to .create-aggregate-dialog {
+  transform: scale(0.97);
+}
+
+html[data-te-motion='reduced'] .create-aggregate-overlay {
+  transition: opacity 120ms var(--te-ease-soft) !important;
+}
+
+html[data-te-motion='reduced'] .create-aggregate-dialog,
+html[data-te-motion='off'] .create-aggregate-dialog {
+  transform: none !important;
+}
+
+html[data-te-motion='off'] .create-aggregate-overlay {
+  opacity: 1 !important;
+}
+
 .create-aggregate-overlay {
   position: fixed;
   inset: 0;
@@ -129,7 +170,7 @@ useFocusTrap(dialogRef, () => props.show)
 
 .create-aggregate-title {
   margin: 0 0 16px;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   font-weight: 700;
 }
 
@@ -139,7 +180,7 @@ useFocusTrap(dialogRef, () => props.show)
 
 .create-aggregate-error {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   color: var(--te-danger-soft-fg);
 }
@@ -159,7 +200,7 @@ useFocusTrap(dialogRef, () => props.show)
   background: transparent;
   color: var(--te-neutral-900);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:

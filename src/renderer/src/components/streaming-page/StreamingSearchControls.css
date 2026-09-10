@@ -15,7 +15,7 @@
 .search-tab-pill {
   padding: 6px 16px;
   border-radius: 16px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 500;
   color: var(--te-neutral-700);
   background-color: rgba(255, 255, 255, 0.42);
@@ -55,7 +55,7 @@
   gap: 6px;
   padding: 6px 12px;
   border-radius: 16px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-700);
   background: var(--te-card-bg);
@@ -100,7 +100,7 @@
   gap: 8px;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-700);
   cursor: pointer;
@@ -137,7 +137,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   color: rgba(64, 73, 108, 0.68);
   background: var(--te-subtle-bg);
@@ -232,7 +232,7 @@
   border-radius: 999px;
   background: var(--bar-paper-raised);
   color: var(--bar-ink-soft);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   box-shadow: none;
 }

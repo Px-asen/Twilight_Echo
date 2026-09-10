@@ -515,3 +515,17 @@
 .dl-root[data-motion='off'] *::after {
   transition-duration: 0.01ms !important;
 }
+
+.dl-root.is-taskbar .dl-board {
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+}
+.dl-root.is-taskbar .dl-overlay,
+.dl-root.is-taskbar .dl-unlock-affordance {
+  display: none;
+}
+.dl-root.is-taskbar {
+  pointer-events: none;
+}

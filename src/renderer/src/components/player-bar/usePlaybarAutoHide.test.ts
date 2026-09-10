@@ -168,6 +168,64 @@ test('the pointer entering the bottom band reveals, leaving it hides after the d
   }
 })
 
+test('moving outside the bottom band does not restart the hide countdown', () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const harness = createHarness({ autoHide: ref(true), hideDelayMs: 500 })
+    harness.movePointer(200)
+    assert.equal(harness.revealed(), false)
+    harness.movePointer(790)
+    harness.movePointer(200)
+    for (let index = 0; index < 5; index++) {
+      mock.timers.tick(100)
+      harness.movePointer(200 + index)
+    }
+    assert.equal(harness.revealed(), false)
+    harness.dispose()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('returning to the bottom band cancels the pending hide', () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const harness = createHarness({ autoHide: ref(true), hideDelayMs: 500 })
+    harness.movePointer(790)
+    harness.movePointer(200)
+    mock.timers.tick(400)
+    harness.movePointer(790)
+    mock.timers.tick(1000)
+    assert.equal(harness.revealed(), true)
+    harness.movePointer(200)
+    mock.timers.tick(500)
+    assert.equal(harness.revealed(), false)
+    harness.dispose()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('pointer focus does not keep the bar open after the pointer leaves', () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const harness = createHarness({ autoHide: ref(true), hideDelayMs: 500 })
+    harness.movePointer(790)
+    harness.hook.onBarPointerEnter()
+    harness.hook.onBarFocusIn({ target: { matches: () => false } } as unknown as FocusEvent)
+    harness.hook.onBarPointerLeave()
+    harness.movePointer(200)
+    mock.timers.tick(500)
+    assert.equal(harness.revealed(), false)
+    harness.hook.onBarFocusIn({ target: { matches: () => true } } as unknown as FocusEvent)
+    mock.timers.tick(1000)
+    assert.equal(harness.revealed(), true)
+    harness.dispose()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
 test('pointer moves are ignored while the tab is hidden', () => {
   const autoHide = ref(true)
   const harness = createHarness({ autoHide })

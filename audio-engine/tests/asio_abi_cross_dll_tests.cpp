@@ -1,4 +1,5 @@
 #include "../output/asio/abi/AsioAbi.h"
+#include "../output/asio/windows/AsioPcmMode.h"
 
 #include <Windows.h>
 
@@ -351,6 +352,29 @@ int main() {
         "dsd-buffer-range fixture did not restore the PCM buffer range");
     dsdRangeDriver->Release();
     passed &= expect(liveDriverCount() == 0, "dsd-buffer-range fixture was not released");
+  }
+
+  for (int mode : {0, 4, 6, 7}) {
+    auto* modeDriver = createWithIoFormatMode(mode);
+    passed &= expect(modeDriver != nullptr, "PCM restoration fixture was not created");
+    if (!modeDriver) continue;
+    passed &= expect(twilight::audio::asio_windows::ensureAsioPcmMode(*modeDriver),
+        "Fresh PCM driver should not require a mode switch");
+    AsioIoFormat dsd{};
+    dsd.formatType = kAsioIoFormatDsd;
+    passed &= expect(modeDriver->future(kFutureSetIoFormat, &dsd) == kAsioOk,
+        "PCM restoration fixture did not enter DSD mode");
+    const bool restored = mode == 4
+        ? twilight::audio::asio_windows::restoreAsioPcmMode(*modeDriver)
+        : twilight::audio::asio_windows::ensureAsioPcmMode(*modeDriver);
+    passed &= expect(restored == (mode == 0 || mode == 4),
+        "PCM restore must reject invalid or unchanged DSD mode despite a success return code");
+    AsioChannelInfo channel{};
+    passed &= expect(modeDriver->getChannelInfo(&channel) == kAsioOk,
+        "PCM restoration fixture channel query failed");
+    if (restored) passed &= expect(channel.type == kAsioSampleFloat32Lsb,
+        "Restored stream still exposes DSD channel bytes");
+    modeDriver->Release();
   }
 
   FreeLibrary(module);

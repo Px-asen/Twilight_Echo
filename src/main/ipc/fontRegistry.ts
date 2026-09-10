@@ -85,11 +85,17 @@ export async function listInstalledFontFamilies(): Promise<string[]> {
   const outputs = await Promise.all(
     [FONT_REGISTRY_KEY, USER_FONT_REGISTRY_KEY].map(async (key) => {
       try {
-        const { stdout } = await execFileAsync('reg', ['query', key, '/s'], {
-          timeout: REGISTRY_TIMEOUT_MS,
-          windowsHide: true,
-          maxBuffer: 4 * 1024 * 1024
-        })
+        const script = `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $key = Get-Item -LiteralPath 'Registry::${key}' -ErrorAction Stop; foreach ($name in $key.GetValueNames()) { '    ' + $name + '    REG_SZ    ' + $key.GetValue($name) }`
+        const { stdout } = await execFileAsync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', script],
+          {
+            encoding: 'utf8',
+            timeout: REGISTRY_TIMEOUT_MS,
+            windowsHide: true,
+            maxBuffer: 4 * 1024 * 1024
+          }
+        )
         return stdout
       } catch {
         // A missing per-user key is normal, and a font list is never worth

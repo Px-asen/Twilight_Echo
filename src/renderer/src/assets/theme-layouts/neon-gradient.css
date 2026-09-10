@@ -109,12 +109,12 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.a
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-icon {
   width: 28px;
   height: 28px;
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
 }
 
 /* 文字小号大写灯牌字 */
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-label {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -134,7 +134,7 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-separator {
 html[data-te-preset-layout='neon-gradient'] .side-menu .scanning-text {
   text-align: center;
   padding: 8px 4px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.08em;
 }
 
@@ -630,144 +630,12 @@ html[data-te-preset-layout='neon-gradient'] .playing-music .lyrics-head .time-ch
   letter-spacing: 0.12em;
 }
 
-/* ═══════════ 5. 播放栏：居中街机操控台 ═══════════ */
-
-html[data-te-preset-layout='neon-gradient'] .player-bar-shell .player-bar {
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  height: 80px;
-  max-width: min(1020px, calc(100vw - 24px));
-  border: 0;
-  border-radius: 0;
-  clip-path: polygon(26px 0, calc(100% - 26px) 0, 100% 100%, 0 100%);
-  background:
-    linear-gradient(90deg, var(--te-primary-500), var(--te-accent-cyan)) top center /
-      calc(100% - 52px) 2px no-repeat,
-    linear-gradient(100deg, var(--ng-tint-a), var(--ng-tint-b)),
-    color-mix(in srgb, var(--te-card-bg) 94%, transparent);
-  box-shadow:
-    inset 0 0 0 1px var(--ng-line),
-    inset 0 0 60px color-mix(in srgb, var(--te-primary-500) 6%, transparent);
-  filter: drop-shadow(0 -4px 26px var(--ng-glow-a));
-}
-
-/* 左翼：倾斜切角的信息面板 */
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-left {
-  padding: 8px 20px 8px 14px;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
-  background: color-mix(in srgb, var(--te-primary-500) 7%, transparent);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-left .player-title {
-  font-family: var(--te-font-display);
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 14px var(--ng-glow-a);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-left .player-cover-slot {
-  border-radius: 0;
-  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
-  box-shadow: inset 0 0 0 1px var(--ng-line);
-}
-
-/* 右翼：镜像斜切面板 */
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-right {
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 8px 14px 8px 20px;
-  clip-path: polygon(16px 0, 100% 0, 100% 100%, 0 100%);
-  background: color-mix(in srgb, var(--te-accent-cyan) 6%, transparent);
-}
-
-/* 控制簇放大居中；播放键最大并带渐变描边环 */
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-center .player-controls {
-  gap: 18px;
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .ctrl-btn {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--ng-line);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .ctrl-btn:hover {
-  background: linear-gradient(120deg, var(--ng-tint-a), var(--ng-tint-b));
-  box-shadow: inset 0 0 0 1px var(--ng-line-cyan);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play {
-  width: 58px;
-  height: 58px;
-  border-radius: 50%;
-  background: var(--ng-grad);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--te-card-bg) 85%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--te-accent-cyan) 60%, transparent),
-    0 0 26px var(--ng-glow-a);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play:hover {
-  background: var(--ng-grad);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--te-card-bg) 85%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--te-accent-cyan) 78%, transparent),
-    0 0 40px var(--ng-glow-a);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play.is-playing {
-  animation: ng-play-pulse 3.2s ease-in-out infinite;
-}
-
-/* 进度条（若用户开启波形位）：加粗渐变 + 光晕，兼容 spectrum 分段 */
-html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .progress-track {
-  height: 12px;
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px var(--ng-line);
-  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .progress-fill {
-  border-radius: 2px;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 3px,
-      color-mix(in srgb, var(--te-card-bg) 72%, transparent) 3px 6px
-    ),
-    var(--ng-grad);
-  box-shadow: 0 0 14px var(--ng-glow-a);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .time-label {
-  font-style: italic;
-  letter-spacing: 0.06em;
-}
-
-/* 队列抽屉 / HiFi 面板同语言 */
-html[data-te-preset-layout='neon-gradient'] .player-bar-shell .playlist-panel {
-  border-radius: 0;
-  clip-path: var(--ng-clip-card);
-  border: 1px solid var(--ng-line);
-}
-
-html[data-te-preset-layout='neon-gradient'] .player-bar-shell .hifi-overlay {
-  border-left: 1px solid var(--ng-line-cyan);
-}
-
 /* ═══════════ 6. 动效克制：reduced 模式关掉持续发光动画 ═══════════ */
 
 html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
   .playing-music
   .cover-column
-  .cover-frame,
-html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
-  .player-bar
-  .player-controls
-  .btn-play.is-playing {
+  .cover-frame {
   animation: none;
 }
 
@@ -778,15 +646,5 @@ html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
   }
   50% {
     filter: brightness(1.06);
-  }
-}
-
-@keyframes ng-play-pulse {
-  0%,
-  100% {
-    filter: brightness(1) saturate(1);
-  }
-  50% {
-    filter: brightness(1.12) saturate(1.15);
   }
 }

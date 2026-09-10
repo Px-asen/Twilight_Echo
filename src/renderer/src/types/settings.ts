@@ -74,17 +74,8 @@ export type {
   LyricsFocusLineCount
 } from '../../../shared/lyricsAppearance.ts'
 
-export type PlayerShortcutAction =
-  | 'previous'
-  | 'next'
-  | 'playPause'
-  | 'play'
-  | 'pause'
-  | 'toggleDesktopLyrics'
-  | 'toggleDesktopLyricsLock'
-  | { action: 'seek'; positionSeconds: number }
-  | { action: 'setVolume'; volume: number }
-  | { action: 'jumpQueue'; index: number }
+import type { PlayerShortcutAction } from '../../../shared/playerShortcuts.ts'
+export type { PlayerShortcutAction } from '../../../shared/playerShortcuts.ts'
 
 export type { DsdRouteSettings } from '../../../shared/audioProcessingOptions.ts'
 

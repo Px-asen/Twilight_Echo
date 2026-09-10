@@ -614,7 +614,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   background: color-mix(in srgb, var(--home-ink) 92%, transparent);
   color: var(--te-card-bg);
   font-family: var(--te-font-display);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
   font-weight: 800;
   letter-spacing: 0.02em;
 }
@@ -623,13 +623,13 @@ function playPersonalizedStream(section: RecSection | null): void {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--home-ink);
 }
 
 .hero-kicker-sub {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
   letter-spacing: 0.08em;
   color: var(--home-ink-soft);
@@ -657,7 +657,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .hero-desc {
   max-width: 400px;
   margin-top: 18px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   line-height: 1.7;
   font-weight: 500;
   color: var(--home-ink-soft);
@@ -680,7 +680,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   background: var(--home-ink);
   color: var(--te-card-bg);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 14px 30px color-mix(in srgb, var(--home-ink) 26%, transparent);
@@ -691,7 +691,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .hero-play i {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .hero-play:hover {
@@ -716,7 +716,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   background: transparent;
   color: var(--home-ink);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -726,7 +726,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .hero-open i {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   transition: transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
@@ -852,7 +852,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .hero-collage-placeholder i {
-  font-size: 34px;
+  font-size: calc(var(--te-font-size-body, 14px) * 34 / 14);
 }
 
 .collage-enter-active,
@@ -993,7 +993,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .duo-stack-empty {
   display: grid;
   place-items: center;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   color: var(--te-primary-500);
   background: linear-gradient(135deg, var(--home-primary-tint), var(--home-cyan-tint));
 }
@@ -1013,13 +1013,13 @@ function playPersonalizedStream(section: RecSection | null): void {
 
 .duo-name {
   font-family: var(--te-font-display);
-  font-size: 19px;
+  font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
   font-weight: 800;
   color: var(--home-ink);
 }
 
 .duo-sub {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--home-ink-soft);
@@ -1039,7 +1039,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--home-ink) 14%, transparent);
   color: var(--home-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   background: color-mix(in srgb, var(--te-card-bg) 72%, transparent);
   transition:
     transform var(--te-motion-return) var(--te-ease-out-quint),
@@ -1066,7 +1066,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 
 .section-head-copy h3 {
   font-family: var(--te-font-display);
-  font-size: 21px;
+  font-size: calc(var(--te-font-size-body, 14px) * 21 / 14);
   font-weight: 800;
   letter-spacing: -0.005em;
   color: var(--home-ink);
@@ -1074,7 +1074,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 
 .section-head-copy p {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   color: var(--home-ink-soft);
 }
@@ -1089,7 +1089,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   background: var(--te-card-bg);
   color: var(--home-ink-soft);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1099,7 +1099,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .section-more i {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .section-more:hover {
@@ -1141,7 +1141,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 
 .chart-index {
   font-family: var(--te-font-display);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -1179,7 +1179,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   place-items: center;
   width: 100%;
   height: 100%;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   color: var(--home-ink-soft);
 }
 
@@ -1190,7 +1190,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   place-items: center;
   color: #fff;
   background: color-mix(in srgb, var(--te-neutral-900) 44%, transparent);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   opacity: 0;
   transition: opacity var(--te-motion-hover);
 }
@@ -1247,7 +1247,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .chart-title {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 650;
   color: var(--home-ink);
   white-space: nowrap;
@@ -1260,7 +1260,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .chart-artist {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   color: var(--home-ink-soft);
   white-space: nowrap;
@@ -1269,7 +1269,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .chart-duration {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--home-ink-soft) 78%, transparent);
@@ -1331,7 +1331,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   place-items: center;
   width: 100%;
   height: 100%;
-  font-size: 26px;
+  font-size: calc(var(--te-font-size-body, 14px) * 26 / 14);
   color: var(--te-primary-500);
   background: linear-gradient(135deg, var(--home-primary-tint), var(--home-cyan-tint));
 }
@@ -1358,7 +1358,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   bottom: 10px;
   padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   color: #fff;
   background: color-mix(in srgb, var(--te-neutral-900) 46%, transparent);
@@ -1386,7 +1386,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-neutral-900);
   background: color-mix(in srgb, #ffffff 92%, transparent);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--te-neutral-900) 30%, transparent);
@@ -1405,7 +1405,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 
 .shelf-name {
   margin-top: 10px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.4;
   font-weight: 600;
   color: var(--home-ink);
@@ -1425,7 +1425,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border: 1px dashed color-mix(in srgb, var(--home-ink) 16%, transparent);
   border-radius: var(--home-radius-lg);
   color: var(--home-ink-soft);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
 }
 
@@ -1506,7 +1506,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 }
 
 .invite-note-icon {
-  font-size: 30px;
+  font-size: calc(var(--te-font-size-body, 14px) * 30 / 14);
   color: var(--te-primary-500);
 }
 
@@ -1514,7 +1514,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   position: relative;
   z-index: 1;
   margin-top: 26px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   letter-spacing: 0.32em;
   color: var(--home-ink-soft);
@@ -1536,7 +1536,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   z-index: 1;
   max-width: 440px;
   margin-top: 14px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   line-height: 1.75;
   font-weight: 500;
   color: var(--home-ink-soft);
@@ -1555,7 +1555,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   background: var(--home-ink);
   color: var(--te-card-bg);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 16px 34px color-mix(in srgb, var(--home-ink) 26%, transparent);
@@ -1672,7 +1672,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   width: 58px;
   height: 58px;
   border-radius: 18px;
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   color: var(--te-warning-500);
   background: color-mix(in srgb, var(--te-warning-500) 12%, transparent);
 }
@@ -1680,7 +1680,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .home-error-title {
   margin-top: 18px;
   font-family: var(--te-font-display);
-  font-size: 19px;
+  font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
   font-weight: 800;
   color: var(--home-ink);
 }
@@ -1688,7 +1688,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .home-error-hint {
   max-width: 380px;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.6;
   color: var(--home-ink-soft);
 }
@@ -1704,7 +1704,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   background: transparent;
   color: var(--home-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1786,7 +1786,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   }
 
   .hero-desc {
-    font-size: 13px;
+    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   }
 
   .hero-actions {
@@ -1798,7 +1798,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   .hero-open {
     height: 42px;
     padding-inline: 18px;
-    font-size: 13px;
+    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   }
 
   .duo-card {
@@ -1825,11 +1825,11 @@ function playPersonalizedStream(section: RecSection | null): void {
   }
 
   .duo-name {
-    font-size: 17px;
+    font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   }
 
   .duo-sub {
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 
   .shelf-grid,
@@ -1840,13 +1840,13 @@ function playPersonalizedStream(section: RecSection | null): void {
 
   .shelf-name {
     margin-top: 8px;
-    font-size: 12px;
+    font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   }
 
   .shelf-count {
     left: 8px;
     bottom: 8px;
-    font-size: 10px;
+    font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
     padding: 2px 7px;
   }
 
@@ -1855,7 +1855,7 @@ function playPersonalizedStream(section: RecSection | null): void {
     bottom: 8px;
     width: 30px;
     height: 30px;
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 
   .chart-row {
@@ -1870,23 +1870,23 @@ function playPersonalizedStream(section: RecSection | null): void {
   }
 
   .chart-title {
-    font-size: 13px;
+    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   }
 
   .chart-artist {
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 
   .chart-duration {
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 
   .section-head-copy h3 {
-    font-size: 18px;
+    font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   }
 
   .section-head-copy p {
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 }
 

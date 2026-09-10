@@ -1,5 +1,8 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useHoldReorder } from '@renderer/composables/useHoldReorder'
+import { useLocalPlaylistOrder } from '@renderer/components/song-list/useLocalPlaylistOrder'
+import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
@@ -573,10 +576,40 @@ watch(
   () => settingsStore.settings.value.genreSeparators,
   () => refreshLibraryIndex()
 )
+const playlistOrderNotice = ref('')
+const localPlaylistEntries = computed(() =>
+  localPlaylists.value.map((playlist) => ({ ...playlist, id: playlist.id ?? playlist.name }))
+)
+const localPlaylistOrder = useLocalPlaylistOrder(
+  localPlaylistEntries,
+  () => 'library',
+  (message) => {
+    playlistOrderNotice.value = message
+  }
+)
+const localPlaylistReorder = useHoldReorder((from, to) => {
+  localPlaylistOrder.move(from, to, filteredGridItems.value as Array<GridItem & { id: string }>)
+})
+watch(() => [props.category, props.filter], localPlaylistReorder.cancel)
+function localPlaylistKeydown(event: KeyboardEvent, playlist: GridItem): void {
+  if (event.target !== event.currentTarget) return
+  if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+    event.preventDefault()
+    const entries = filteredGridItems.value
+    const index = entries.findIndex((entry) => entry.id === playlist.id)
+    const target = entries[index + (event.key === 'ArrowUp' ? -1 : 1)]
+    if (playlist.id && target?.id)
+      localPlaylistOrder.move(playlist.id, target.id, entries as Array<GridItem & { id: string }>)
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    emit('selectView', 'playlists', `playlist:${playlist.name}`)
+  }
+}
+
 const currentGridItems = computed<GridItem[]>(() => {
   if (isCollectionGrid.value) return collectionGridItems.value
   if (props.category === 'genres') return genres.value
-  if (props.category === 'playlists') return localPlaylists.value
+  if (props.category === 'playlists') return localPlaylistOrder.playlists.value
   if (props.category === 'folders') return folders.value
   return []
 })
@@ -1326,6 +1359,17 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
   const separatorIndex = track.id.indexOf(':')
   return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }
+function openRowArtist(track: Track): void {
+  selectedTrack.value = track
+  handleViewArtist()
+}
+
+function openRowAlbum(track: Track): void {
+  selectedTrack.value = track
+  handleViewAlbum()
+}
+
+const infoTrack = shallowRef<Track | null>(null)
 </script>
 
 <template>
@@ -1336,6 +1380,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
     :style="{ height: '100vh' }"
     @scroll="onSongListScroll"
   >
+    <TrackInfoDialog v-if="infoTrack" :track="infoTrack" @close="infoTrack = null" />
     <Transition
       :name="localTransitionName"
       mode="out-in"
@@ -1433,7 +1478,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-hint">请清除搜索内容后重试</p>
           </div>
           <div v-else class="collection-grid-layout" :class="{ 'has-az-index': isCollectionGrid }">
-            <div class="card-grid">
+            <p v-if="category === 'playlists'" class="playlist-order-notice" role="status">
+              {{ playlistOrderNotice || '长按歌单拖动排序，顺序保存在当前设备。' }}
+            </p>
+            <div class="card-grid" data-reorder-group @click.capture="localPlaylistReorder.click">
               <div
                 v-if="gridPaddingTop > 0"
                 class="grid-virtual-spacer"
@@ -1533,6 +1581,19 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   :key="playlist.id"
                   class="playlist-card"
                   data-te-interactive
+                  :data-reorder-id="playlist.id"
+                  :class="{
+                    'is-dragging': localPlaylistReorder.active.value === playlist.id,
+                    'is-drop-target':
+                      localPlaylistReorder.over.value === playlist.id &&
+                      localPlaylistReorder.active.value !== playlist.id
+                  }"
+                  role="button"
+                  tabindex="0"
+                  title="长按拖动排序；Alt + ↑ / ↓ 调整顺序"
+                  @pointerdown="playlist.id && localPlaylistReorder.start($event, playlist.id)"
+                  @dragstart.prevent
+                  @keydown="localPlaylistKeydown($event, playlist)"
                   @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
                 >
                   <CoverImg
@@ -1549,7 +1610,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   >
                     <i
                       :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'"
-                      style="font-size: 32px; color: #ccc"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 32 / 14); color: #ccc"
                     ></i>
                   </div>
                   <div class="playlist-name">{{ playlist.name }}</div>
@@ -1564,7 +1625,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     title="删除歌单"
                     @click="handleDeletePlaylist(playlist.id || '', $event)"
                   >
-                    <i class="pi pi-trash" style="font-size: 12px"></i>
+                    <i
+                      class="pi pi-trash"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 12 / 14)"
+                    ></i>
                   </div>
                 </div>
               </template>
@@ -1702,7 +1766,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <span v-if="excludedTracks.length > 0" class="library-tools-badge">{{
                     excludedTracks.length
                   }}</span>
-                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                  <i
+                    class="pi pi-chevron-down"
+                    style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"
+                  ></i>
                 </button>
                 <div v-if="libraryToolsMenuOpen" class="library-tools-menu" role="menu">
                   <button
@@ -1735,9 +1802,15 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @click="recentSourceMenuOpen = !recentSourceMenuOpen"
                   @blur="closeRecentSourceMenuDelayed"
                 >
-                  <i class="pi pi-bolt" style="font-size: 13px"></i>
+                  <i
+                    class="pi pi-bolt"
+                    style="font-size: calc(var(--te-font-size-body, 14px) * 13 / 14)"
+                  ></i>
                   <span>{{ activeRecentSourceLabel }}</span>
-                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                  <i
+                    class="pi pi-chevron-down"
+                    style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"
+                  ></i>
                 </button>
                 <div v-if="recentSourceMenuOpen" class="recent-source-menu">
                   <div
@@ -1747,12 +1820,19 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :class="{ active: recentSource === opt.id }"
                     @mousedown.prevent="selectRecentSource(opt.id)"
                   >
-                    <i class="pi" :class="opt.icon" style="font-size: 13px"></i>
+                    <i
+                      class="pi"
+                      :class="opt.icon"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 13 / 14)"
+                    ></i>
                     <span>{{ opt.label }}</span>
                     <i
                       v-if="recentSource === opt.id"
                       class="pi pi-check"
-                      style="font-size: 12px; margin-left: auto"
+                      style="
+                        font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+                        margin-left: auto;
+                      "
                     ></i>
                   </div>
                 </div>
@@ -1781,7 +1861,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   >
                     {{ activeLibraryFilterCount }}
                   </span>
-                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                  <i
+                    class="pi pi-chevron-down"
+                    style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"
+                  ></i>
                 </button>
                 <div
                   v-if="libraryFilterPanelOpen"
@@ -2178,7 +2261,14 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   </td>
                   <td class="col-info">
                     <div class="track-title-row">
-                      <div class="track-title">{{ track.title }}</div>
+                      <button
+                        type="button"
+                        class="track-title metadata-link"
+                        @click.stop="infoTrack = track"
+                        @dblclick.stop
+                      >
+                        {{ track.title }}
+                      </button>
                       <div class="track-badges">
                         <span
                           v-if="getLogicalTrackSource(track) !== 'local'"
@@ -2197,9 +2287,25 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         </span>
                       </div>
                     </div>
-                    <div class="track-artist">{{ track.artist }}</div>
+                    <button
+                      type="button"
+                      class="track-artist metadata-link"
+                      @click.stop="openRowArtist(track)"
+                      @dblclick.stop
+                    >
+                      {{ track.artist }}
+                    </button>
                   </td>
-                  <td class="col-album">{{ track.album }}</td>
+                  <td class="col-album">
+                    <button
+                      type="button"
+                      class="metadata-link"
+                      @click.stop="openRowAlbum(track)"
+                      @dblclick.stop
+                    >
+                      {{ track.album }}
+                    </button>
+                  </td>
                   <td class="col-duration">
                     <span class="duration-time">{{ formatDuration(track.duration) }}</span>
                     <span v-if="trackQualityLabel(track)" class="duration-quality">
@@ -2354,7 +2460,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       data-te-interactive
                       @click="handleContextCreatePlaylist"
                     >
-                      <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
+                      <i
+                        class="pi pi-plus"
+                        style="
+                          font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+                          margin-right: 6px;
+                        "
+                      ></i>
                       <span>创建新歌单</span>
                     </div>
                     <div v-if="localPlaylists.length === 0" class="menu-item disabled">
@@ -2386,7 +2498,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       data-te-interactive
                       @click="handleCreateAggregatePlaylistFromMenu"
                     >
-                      <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
+                      <i
+                        class="pi pi-plus"
+                        style="
+                          font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+                          margin-right: 6px;
+                        "
+                      ></i>
                       <span>新建聚合歌单…</span>
                     </div>
                     <div v-if="aggregatePlaylists.length === 0" class="menu-item disabled">

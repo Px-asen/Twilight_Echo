@@ -38,6 +38,8 @@ class AsioHelperProcess final {
   bool alive() const noexcept;
   DWORD processId() const noexcept;
   SharedMemory* shared() const noexcept;
+  bool waitForCallbacks(DWORD timeoutMs) const noexcept;
+  void wakeCallbacks() const noexcept;
   FailureReason failureReason() const noexcept;
   std::string lastFailure() const;
   const std::wstring& executablePath() const noexcept;
@@ -50,6 +52,7 @@ class AsioHelperProcess final {
   HANDLE mapping_ = nullptr;
   HANDLE requestEvent_ = nullptr;
   HANDLE responseEvent_ = nullptr;
+  HANDLE callbackEvent_ = nullptr;
   HANDLE job_ = nullptr;
   HANDLE process_ = nullptr;
   SharedMemory* shared_ = nullptr;

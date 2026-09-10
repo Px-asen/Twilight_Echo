@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ref,
+  provide,
   computed,
   onMounted,
   onBeforeUnmount,
@@ -38,6 +39,7 @@ import type { OnboardingFinishResult } from './components/onboarding/OnboardingW
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
+import { isPlaybackSpace } from '@renderer/app/playbackKeyboard'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useThemeStore, applyActiveTheme, bootstrapThemeRuntime } from './stores/useThemeStore'
@@ -67,6 +69,10 @@ import AppNoticeHost from './components/AppNoticeHost.vue'
 import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 import { resolvePlayerBarPresentation } from '../../shared/playerBar.ts'
 import type { AppBackgroundPage } from './types/settings'
+import {
+  soundFieldPlaybackKey,
+  usesSoundFieldSidebar
+} from '@renderer/components/local-dashboard/soundFieldPlayback'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -189,6 +195,11 @@ function handleTitleBack(): void {
 }
 
 function onGlobalBackKeydown(event: KeyboardEvent): void {
+  if (isPlaybackSpace(event)) {
+    event.preventDefault()
+    togglePlay()
+    return
+  }
   if (event.defaultPrevented || event.repeat || event.isComposing) return
   if (event.key === 'Escape') {
     if (hasDismissLayer()) return
@@ -435,6 +446,32 @@ const sidebarPages = computed(() =>
 const localSidebarItems = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
 )
+const soundFieldSidebarVisible = ref(false)
+const playerBarRef = ref<{
+  openQueue: () => void
+  openAudio: () => void
+  openMiniPlayer: () => void
+} | null>(null)
+const soundFieldSidebarActive = computed(() =>
+  usesSoundFieldSidebar(
+    soundFieldSidebarVisible.value,
+    localViewVisible.value,
+    activeCategory.value,
+    showStreamingPage.value,
+    showPlayingPage.value
+  )
+)
+provide(soundFieldPlaybackKey, {
+  sidebarVisible: soundFieldSidebarVisible,
+  favoriteAvailable: favoriteButtonVisible,
+  favoriteLiked: favoriteButtonLiked,
+  favoriteLoading: favoriteButtonLoading,
+  toggleFavorite,
+  openQueue: () => playerBarRef.value?.openQueue(),
+  openAudio: () => playerBarRef.value?.openAudio(),
+  openMiniPlayer: () => playerBarRef.value?.openMiniPlayer(),
+  openLyrics: () => showPlaying()
+})
 const hasPlayerBar = computed(
   () =>
     !showOnboarding.value &&
@@ -950,12 +987,13 @@ useLiquidGlassEnvironment({
     >
       <PlayerBar
         v-if="hasPlayerBar"
+        ref="playerBarRef"
         :glass="showPlayingPage"
         :visualizer-visible="showPlayingPage"
         :menu-open="sidebarMenuOpen"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
-        :hidden-bar="playerBarPresentation.hidden"
+        :hidden-bar="playerBarPresentation.hidden || soundFieldSidebarActive"
         @exit-playing-page="handleExitPlayingPage"
         @click-cover="handleCoverClick"
         @open-settings="openPlaybackSettings"
@@ -1167,7 +1205,7 @@ html[data-te-shell-layout='custom']
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
-  transition: padding-left 0.32s var(--te-ease-soft);
+  transition: padding-left var(--te-motion-panel) var(--te-ease-soft);
   overflow: hidden;
   position: relative;
   z-index: 1;

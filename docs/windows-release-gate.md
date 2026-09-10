@@ -41,7 +41,8 @@ second npm lockfile:
 - `nanoid@3.3.18` fixes `GHSA-28wg-ghj8-5hjv` / `GHSA-2v37-7h3g-55p8` (infinite loop in generators, via vue → postcss).
 - `ip-address@10.5.0` fixes `GHSA-mwp4-54f8-5fhr` / `GHSA-4xrf-jv44-h6hh` / `GHSA-22jq-vg5j-6vgg` (SSRF and trust-boundary bypass, via socks → pac-proxy-agent).
 
-`extract-zip@2.0.1` has no patched upstream release (`GHSA-jmr9-qjv8-65gv`, symlink path
+`extract-zip@2.0.1` has no patched upstream release (`GHSA-jmr9-qjv8-65gv` and
+`GHSA-7pqw-9j4j-h8q3`, symlink path
 traversal). `patches/extract-zip@2.0.1.patch` refuses every symlink entry instead; theme archives,
 plugin packages, and DSP profiles never ship symlinks. The advisory is registered under
 `auditConfig.ignoreGhsas` and must be removed again once upstream publishes `>=2.0.2`.

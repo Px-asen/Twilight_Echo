@@ -20,6 +20,7 @@ import {
 } from '../../../shared/dspGraph.ts'
 import type { Track } from '../types/music'
 import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
+import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
 import CoverImg from './CoverImg.vue'
 
 const emit = defineEmits<{
@@ -63,12 +64,7 @@ onBeforeUnmount(() => {
 })
 
 const greeting = computed(() => {
-  const hour = now.value.getHours()
-  if (hour < 5) return '夜深了'
-  if (hour < 11) return '早上好'
-  if (hour < 14) return '中午好'
-  if (hour < 18) return '下午好'
-  return '晚上好'
+  return resolveTimeGreeting(now.value.getHours())
 })
 
 const dateKicker = computed(() => {

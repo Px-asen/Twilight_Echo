@@ -148,7 +148,7 @@ const emit = defineEmits<{
   padding: 6px 10px;
   background: transparent;
   color: var(--te-neutral-600);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   cursor: pointer;
 }
@@ -170,12 +170,12 @@ const emit = defineEmits<{
 }
 .frequency-response-source {
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .frequency-response-error {
   max-width: 360px;
   color: var(--te-danger-soft-fg);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .frequency-response-import {
   background: var(--te-primary-500);
@@ -218,7 +218,7 @@ const emit = defineEmits<{
   min-height: 25px;
   border-radius: 4px;
   padding: 5px 9px;
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -234,7 +234,7 @@ const emit = defineEmits<{
 .parametric-toolbar-card .frequency-response-error {
   overflow: hidden;
   max-width: min(30vw, 320px);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -339,11 +339,27 @@ test('phase five ships seven contrasting read-only presets with token, mode, and
     assert.equal(normalizeThemeProfile(preset), null)
   }
   const obsidian = BUILT_IN_THEME_PRESETS.find((preset) => preset.id.endsWith('obsidian-glass'))!
-  assert.equal(resolveThemeProfileModes(obsidian).player?.layout, 'full-cover')
+  assert.deepEqual(
+    resolveThemeProfileModes(obsidian).player,
+    resolveThemeProfileModes(BUILT_IN_THEME_PRESETS[0]).player
+  )
+  assert.deepEqual(
+    resolveThemeProfileModes(obsidian).typography,
+    resolveThemeProfileModes(BUILT_IN_THEME_PRESETS[0]).typography
+  )
   assert.equal(resolveThemeProfileModes(obsidian).navigation?.style, 'rail')
-  assert.equal(resolveThemeProfileModes(obsidian).visibility?.playerDuration, false)
+  assert.deepEqual(
+    resolveThemeProfileModes(obsidian).visibility,
+    resolveThemeProfileModes(BUILT_IN_THEME_PRESETS[0]).visibility
+  )
   const aurora = BUILT_IN_THEME_PRESETS.find((preset) => preset.id.endsWith('aurora-reference'))!
   assert.equal(resolveThemeProfileModes(aurora).navigation?.logo, 'hide')
+  const paperLight = BUILT_IN_THEME_PRESETS.find((preset) => preset.id.endsWith('paper-light'))!
+  for (const tone of ['pureWhite', 'dark'] as const) {
+    const backdrop = paperLight.overrides[tone]
+    assert.match(String(backdrop['playback.backdrop.filter']), /blur\(/)
+    assert.match(String(backdrop['playback.backdrop.scrim']), /rgba\([^)]*, 0\.[678]/)
+  }
 })
 
 test('derived profiles retain a preset source and reset through the preset base', () => {

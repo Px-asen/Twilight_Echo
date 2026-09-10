@@ -5,10 +5,12 @@ import { pathToFileURL } from 'url'
 import { fetch as undiciFetch } from 'undici'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
+import { createRemoteCoverCache } from '../cache/remoteCoverCache.ts'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { readCachedProtocolFile } from '../cache/protocolAssetCache'
 import { kwinHasInputMethodConfigured } from '../imeBackend'
 import {
+  getCoverCacheDir,
   getCoverCacheContentType,
   isCoverCacheFileName,
   readCoverCacheFileBytes,
@@ -310,6 +312,9 @@ export function startApp(): void {
       protocol.handle(
         'twilight-media',
         createRemoteMediaRequestHandler({
+          imageCache: createRemoteCoverCache(() =>
+            runtime.appSettings.cachePolicy.cover ? getCoverCacheDir() : null
+          ),
           fetch: async (source, init) => {
             const upstream = await undiciFetch(source, {
               method: init.method,

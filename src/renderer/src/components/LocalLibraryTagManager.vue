@@ -408,14 +408,14 @@ onMounted(() => {
 }
 .tag-manager-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
 }
 .tag-manager-header p,
 .tag-help,
 .tag-manager-live,
 .duplicate-group header span {
   color: var(--te-neutral-600, #657084);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .tag-manager-header p {
   margin: 4px 0 0;
@@ -465,7 +465,7 @@ onMounted(() => {
 .tag-form-grid label {
   display: grid;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
 }
 .tag-form-grid input {
@@ -487,7 +487,7 @@ onMounted(() => {
 .tag-field-error {
   margin: 0;
   color: #b42318;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .tag-actions {
   margin-top: 8px;
@@ -495,7 +495,7 @@ onMounted(() => {
 .tag-actions p {
   margin: 0;
   color: var(--te-neutral-600, #657084);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .tag-primary-button,
 .tag-secondary-button {
@@ -531,7 +531,7 @@ onMounted(() => {
   padding: 12px;
 }
 .duplicate-group header strong {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .duplicate-group ul,
 .tag-operation-details ul {
@@ -551,14 +551,14 @@ onMounted(() => {
 .tag-operation-details small {
   overflow: hidden;
   color: var(--te-neutral-600, #657084);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .duplicate-suggestion {
   margin: 10px 0 0;
   color: #875a00;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .tag-operation-details {
   margin-top: 16px;

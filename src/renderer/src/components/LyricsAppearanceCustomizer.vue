@@ -818,20 +818,20 @@ html[data-theme='dark'] .lyrics-customizer {
 }
 .customizer-kicker {
   color: var(--te-primary-400);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .customizer-header h2 {
   margin: 5px 0 4px;
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
 }
 .customizer-header p {
   margin: 0;
   max-width: 430px;
   color: var(--te-neutral-500);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.6;
 }
 .icon-button {
@@ -851,7 +851,7 @@ html[data-theme='dark'] .lyrics-customizer {
   padding: 9px 24px;
   border-block: 1px solid var(--te-card-border);
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .customizer-status span {
   display: flex;
@@ -900,11 +900,11 @@ html[data-theme='dark'] .lyrics-customizer {
   white-space: nowrap;
 }
 .style-tabs strong {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .style-tabs span {
   margin-top: 3px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 /*
  * Every value in this shorthand has to be a real colour. The previous revision
@@ -937,7 +937,7 @@ html[data-theme='dark'] .lyrics-customizer {
 }
 .preview-label {
   color: color-mix(in srgb, var(--customizer-tone-light) 46%, transparent);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -986,7 +986,7 @@ html[data-theme='dark'] .lyrics-customizer {
 }
 .control-section h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 .section-heading {
   display: flex;
@@ -1003,7 +1003,7 @@ html[data-theme='dark'] .lyrics-customizer {
 .field-warning {
   margin: 0;
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.6;
 }
 .field-warning {
@@ -1027,7 +1027,7 @@ html[data-theme='dark'] .lyrics-customizer {
   color: var(--te-neutral-900);
   background: var(--te-card-bg);
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .preset-chip[aria-pressed='true'] {
   border-color: var(--te-primary-400);
@@ -1036,7 +1036,7 @@ html[data-theme='dark'] .lyrics-customizer {
 }
 .preset-chip .pi-trash {
   opacity: 0.55;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .preset-chip .pi-trash:hover {
   opacity: 1;
@@ -1063,7 +1063,7 @@ html[data-theme='dark'] .lyrics-customizer {
   color: var(--te-neutral-900);
   background: var(--te-card-bg);
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   white-space: nowrap;
 }
 .preset-save button:disabled {
@@ -1091,7 +1091,7 @@ html[data-theme='dark'] .lyrics-customizer {
   color: var(--te-neutral-900);
   background: var(--te-card-bg);
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   text-align: left;
 }
 .font-menu {
@@ -1127,7 +1127,7 @@ html[data-theme='dark'] .lyrics-customizer {
   margin: 8px 0 4px;
   padding: 0 8px;
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1139,7 +1139,7 @@ html[data-theme='dark'] .lyrics-customizer {
   color: var(--te-neutral-900);
   background: transparent;
   cursor: pointer;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   text-align: left;
 }
 .font-option:hover {
@@ -1153,7 +1153,7 @@ html[data-theme='dark'] .lyrics-customizer {
   gap: 8px;
   min-width: 0;
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .control-field select,
 .control-field input {
@@ -1227,7 +1227,7 @@ html[data-theme='dark'] .lyrics-customizer {
 }
 .color-field code {
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .switch-row {
   display: flex;

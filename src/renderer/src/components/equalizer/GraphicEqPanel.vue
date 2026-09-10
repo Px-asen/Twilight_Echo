@@ -106,7 +106,7 @@ const emit = defineEmits<{
   flex: 1;
 }
 .slider-gain {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   color: var(--te-primary-500);
   background: var(--te-card-bg);
@@ -115,7 +115,7 @@ const emit = defineEmits<{
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 .slider-freq {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   color: var(--te-neutral-500);
 }

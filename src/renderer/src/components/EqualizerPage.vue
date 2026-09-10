@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { mergeEqualizerPatch } from '@renderer/utils/equalizerSettingsPatch'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useBackHandler } from '../app/useBackStack.ts'
@@ -392,17 +393,7 @@ async function syncActiveSceneEq(nextSettings: AudioProcessingSettings): Promise
 }
 
 async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): Promise<void> {
-  const eqTouched =
-    patch.eqEnabled === true ||
-    patch.eqMode !== undefined ||
-    patch.eqPreamp !== undefined ||
-    patch.eqBands !== undefined
-  const nextSettings = normalizeAudioProcessing({
-    ...audioProcessing.value,
-    ...patch,
-    dspEnabled: patch.dspEnabled ?? (audioProcessing.value.dspEnabled || eqTouched),
-    eqEnabled: patch.eqEnabled ?? true
-  })
+  const nextSettings = normalizeAudioProcessing(mergeEqualizerPatch(audioProcessing.value, patch))
   // Auto gain compensation follows band/mode edits in the same engine update
   // so the compensated preamp reaches the DSP scene without a second apply.
   if (autoPreampEnabled.value && patch.eqPreamp === undefined) {
@@ -1163,7 +1154,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   border: 1px solid var(--te-glass-border);
   padding: 8px 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-700);
   cursor: pointer;
@@ -1231,7 +1222,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 }
 
 .preset-menu-title {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   color: var(--te-neutral-400);
   text-transform: uppercase;
@@ -1244,7 +1235,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   border: none;
   padding: 8px;
   text-align: left;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-700);
   border-radius: 8px;
@@ -1260,7 +1251,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 }
 
 .preset-empty {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-neutral-400);
   padding: 4px 8px;
 }
@@ -1278,7 +1269,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   outline: none;
   transition:
     background-color 0.2s var(--te-ease-soft),
@@ -1297,7 +1288,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   border: none;
   border-radius: 8px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
@@ -1389,10 +1380,10 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 }
 .nav-info span {
   font-weight: 700;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 .nav-info small {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
   opacity: 0.7;
 }
@@ -1432,14 +1423,14 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   align-items: center;
 }
 .eq-title h1 {
-  font-size: 28px;
+  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
   font-weight: 800;
   letter-spacing: -0.5px;
   margin-bottom: 6px;
 }
 .eq-title p {
   color: var(--te-neutral-500);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 500;
 }
 
@@ -1453,7 +1444,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
   border: 1px solid var(--te-card-border);
   font-weight: 700;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: var(--te-primary-500);
   cursor: pointer;
   transition: color 0.2s;
@@ -1514,7 +1505,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 .parametric-eyebrow,
 .parametric-toolbar-label,
 .parametric-context-status {
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0.12em;
@@ -1532,7 +1523,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 
 .parametric-page-title h1 {
   margin: 0 0 2px;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   font-weight: 760;
   line-height: 1.15;
   letter-spacing: -0.02em;
@@ -1541,7 +1532,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 .parametric-page-title p {
   overflow: hidden;
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1580,7 +1571,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   border-radius: 10px;
   border: 1px solid var(--te-card-border);
   background: var(--te-card-bg);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   color: var(--te-neutral-500);
   cursor: pointer;
@@ -1615,7 +1606,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   gap: 8px;
 }
 .param-group label {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   color: var(--te-neutral-500);
 }
@@ -1626,7 +1617,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   padding: 12px 16px;
   border-radius: 12px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 600;
   color: var(--te-neutral-900);
   outline: none;
@@ -1651,7 +1642,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   height: 400px;
 }
 .square-card i {
-  font-size: 48px;
+  font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
   color: var(--te-primary-500);
   background: #fff; /* keep-white: icon circle */
   width: 100px;
@@ -1664,7 +1655,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   margin-bottom: 24px;
 }
 .square-card h2 {
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   font-weight: 800;
   margin-bottom: 12px;
 }
@@ -1696,7 +1687,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   }
 
   .parametric-page-title h1 {
-    font-size: 15px;
+    font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   }
 
   .parametric-page-title p {

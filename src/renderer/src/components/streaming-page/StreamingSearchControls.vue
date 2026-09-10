@@ -121,10 +121,13 @@ function onSourceMenuFocusOut(event: FocusEvent): void {
           v-if="activeSourceOption?.icon"
           class="pi"
           :class="activeSourceOption.icon"
-          style="font-size: 13px"
+          style="font-size: calc(var(--te-font-size-body, 14px) * 13 / 14)"
         ></i>
         <span>{{ activeSourceOption?.label ?? '音源' }}</span>
-        <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+        <i
+          class="pi pi-chevron-down"
+          style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"
+        ></i>
       </button>
       <div v-if="sourceMenuOpen" class="search-source-menu" role="listbox" aria-label="音源">
         <div
@@ -140,12 +143,17 @@ function onSourceMenuFocusOut(event: FocusEvent): void {
           @keydown.enter.prevent="selectSearchSource(source.id)"
           @keydown.space.prevent="selectSearchSource(source.id)"
         >
-          <i v-if="source.icon" class="pi" :class="source.icon" style="font-size: 13px"></i>
+          <i
+            v-if="source.icon"
+            class="pi"
+            :class="source.icon"
+            style="font-size: calc(var(--te-font-size-body, 14px) * 13 / 14)"
+          ></i>
           <span>{{ source.label }}</span>
           <i
             v-if="searchSource === source.id"
             class="pi pi-check"
-            style="font-size: 12px; margin-left: auto"
+            style="font-size: calc(var(--te-font-size-body, 14px) * 12 / 14); margin-left: auto"
           ></i>
         </div>
       </div>

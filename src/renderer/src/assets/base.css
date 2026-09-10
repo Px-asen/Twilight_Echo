@@ -410,7 +410,7 @@ html[data-te-motion='full']
     :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
       [aria-disabled='true']
     ):where(:not(.lyric-row)):hover {
-    translate: 0 var(--te-motion-hover-translate);
+    translate: none;
   }
 }
 
@@ -3021,16 +3021,16 @@ html.te-theme-tone-transition
 }
 
 html[data-te-title-case='uppercase']
-  :is(.track-title, .player-title, .preview-heading h2, .preview-song-row strong) {
+  :is(.track-title, .preview-heading h2, .preview-song-row strong) {
   text-transform: uppercase;
 }
 
-html[data-te-title-color='track'] :is(.playing-music .track-title, .player-title) {
+html[data-te-title-color='track'] :is(.playing-music .track-title) {
   color: var(--te-primary-300) !important;
 }
 
 html[data-te-title-color='artist-album']
-  :is(.playing-music .track-artist, .playing-music .track-album, .player-artist) {
+  :is(.playing-music .track-artist, .playing-music .track-album) {
   color: var(--te-primary-300) !important;
 }
 
@@ -3106,7 +3106,6 @@ html[data-te-effects-mode='reduced']
     .surface-card,
     .surface-card::before,
     .side-menu,
-    .player-bar,
     .title-bar,
     .theme-studio-page,
     .settings-page,
@@ -3712,4 +3711,26 @@ html[data-te-liquid-glass-coverage='expanded']
 .detail-back-button:focus-visible {
   outline: 2px solid var(--te-primary-500);
   outline-offset: 3px;
+}
+
+.metadata-link {
+  display: block;
+  width: fit-content;
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metadata-link:hover,
+.metadata-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

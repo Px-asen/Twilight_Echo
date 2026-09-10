@@ -91,7 +91,7 @@ defineProps<{
   box-shadow: -28px 32px 0 color-mix(in srgb, var(--te-primary-500) 26%, transparent);
 }
 .sf-artwork-fallback > i {
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   color: var(--te-primary-500);
 }
 .sf-artwork-fallback > span:not(.sf-artwork-form) {

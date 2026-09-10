@@ -248,15 +248,20 @@ function delay(ms: number): Promise<void> {
 
 /** celebrate=true 时先停留在成功动画上，再进入流媒体 */
 async function syncSuccessfulLogin(providerId: string, celebrate = false): Promise<void> {
+  const revision = loginRevision
   await refreshAccounts()
   if (providerId === 'ncm') {
     await ncmStore.checkLogin()
   }
   if (celebrate) await delay(SUCCESS_LINGER_MS)
+  if (revision !== loginRevision || activeProviderId.value !== providerId) return
   emit('loginSuccess')
 }
 
 function openAccount(providerId: string): void {
+  loginRevision += 1
+  stopPolling()
+  lastKeyGenTime.value = 0
   activeProviderId.value = providerId
   confirmLogout.value = false
   if (providerStore.getProvider(providerId)?.ui?.authType === 'settings') {
@@ -285,6 +290,9 @@ function clearAccountLoginFeedback(): void {
 
 function setLoginMethod(method: LoginMethod): void {
   if (loginMethod.value === method) return
+  loginRevision += 1
+  stopPolling()
+  lastKeyGenTime.value = 0
   loginMethod.value = method
   clearAccountLoginFeedback()
   if (method === 'qr') {
@@ -376,9 +384,19 @@ function isQrStatus(code: number, type: 'waiting' | 'scanned' | 'expired' | 'suc
 
 function startPolling(providerId: string, key: string): void {
   stopPolling()
+  const generation = pollGeneration
+  let checking = false
   pollTimer = setInterval(async () => {
-    if (document.hidden) return
+    if (document.hidden || checking) return
+    checking = true
     const result = await checkQrScan(providerId, key)
+    checking = false
+    if (
+      generation !== pollGeneration ||
+      activeProviderId.value !== providerId ||
+      qrKey.value !== key
+    )
+      return
     if (isQrStatus(result.code, 'expired')) {
       pageState.value = 'qr_expired'
       stopPolling()
@@ -426,7 +444,11 @@ const qrVisibilityPolling = createVisibilityPollingController({
   }
 })
 
+let loginRevision = 0
+let pollGeneration = 0
+
 function stopPolling(): void {
+  pollGeneration += 1
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
@@ -438,6 +460,8 @@ async function startQrLogin(): Promise<void> {
   if (!providerId) return
   const now = Date.now()
   if (now - lastKeyGenTime.value < QR_KEY_COOLDOWN) return
+  stopPolling()
+  const revision = ++loginRevision
   lastKeyGenTime.value = now
 
   pageState.value = 'qr_loading'
@@ -449,15 +473,18 @@ async function startQrLogin(): Promise<void> {
   try {
     const providerName = activeCard.value?.name ?? providerId
     const qr = await providerStore.getQrLogin(providerId)
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
     if (!qr?.key) throw new Error(`获取 ${providerName} 登录信息失败`)
     qrKey.value = qr.key
     authUrl.value = activeUi.value?.showBrowserButton ? qr.qrContent || '' : ''
-    qrImage.value =
+    const image =
       qr.imageDataUrl ||
       (await QRCode.toDataURL(qr.qrContent || qr.key, {
         margin: 1,
         width: 220
       }))
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
+    qrImage.value = image
     // Auto-open browser for OAuth-type providers
     if (activeUi.value?.showBrowserButton && authUrl.value) {
       window.open(authUrl.value, '_blank')
@@ -465,6 +492,7 @@ async function startQrLogin(): Promise<void> {
     pageState.value = 'qr_ready'
     startPolling(providerId, qrKey.value)
   } catch (error) {
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
     pageState.value = 'error'
     errorMsg.value = error instanceof Error ? error.message : String(error)
   }
@@ -483,6 +511,7 @@ function openAuthUrl(): void {
 
 async function handleExtraAction(method: string): Promise<void> {
   if (!activeProviderId.value) return
+  const revision = ++loginRevision
   stopPolling()
   pageState.value = 'qr_loading'
   qrImage.value = ''
@@ -491,9 +520,11 @@ async function handleExtraAction(method: string): Promise<void> {
   try {
     const providerId = activeProviderId.value
     await providerStore.callProvider(providerId, method)
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
     pageState.value = 'login_success'
     await syncSuccessfulLogin(providerId, true)
   } catch (error) {
+    if (revision !== loginRevision) return
     pageState.value = 'error'
     errorMsg.value = error instanceof Error ? error.message : String(error)
   }
@@ -557,6 +588,7 @@ async function handleAccountLogin(): Promise<void> {
   stopPolling()
   clearAccountLoginFeedback()
   accountLoginBusy.value = true
+  const revision = ++loginRevision
   try {
     const providerId = activeProviderId.value
     if (loginMethod.value === 'captcha') {
@@ -577,9 +609,11 @@ async function handleAccountLogin(): Promise<void> {
         accountPassword.value
       ])
     }
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
     pageState.value = 'login_success'
     await syncSuccessfulLogin(providerId, true)
   } catch (error) {
+    if (revision !== loginRevision) return
     accountLoginMessage.value = normalizeLoginError(error)
     applyLoginCooldownFromMessage(accountLoginMessage.value)
   } finally {
@@ -615,6 +649,8 @@ async function copyUid(): Promise<void> {
 }
 
 function backToAccounts(): void {
+  loginRevision += 1
+  lastKeyGenTime.value = 0
   stopPolling()
   activeProviderId.value = null
   pageState.value = 'account_list'
@@ -662,6 +698,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  loginRevision += 1
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   stopPolling()
   if (cooldownTimer) clearInterval(cooldownTimer)
@@ -1354,7 +1391,7 @@ onUnmounted(() => {
   gap: 10px;
   margin: 0;
   font-family: var(--te-font-display);
-  font-size: 23px;
+  font-size: calc(var(--te-font-size-body, 14px) * 23 / 14);
   font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--lp-text);
@@ -1368,18 +1405,18 @@ onUnmounted(() => {
   border-radius: 11px;
   background: var(--lp-tint);
   color: var(--te-primary-500);
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 
 .stage-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--lp-muted);
 }
 
 .stage-muted {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.6;
   color: var(--lp-muted);
 }
@@ -1395,7 +1432,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--lp-inset);
   color: var(--lp-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1470,7 +1507,7 @@ onUnmounted(() => {
   border-radius: 15px;
   background: var(--lp-tint);
   color: var(--te-primary-500);
-  font-size: 21px;
+  font-size: calc(var(--te-font-size-body, 14px) * 21 / 14);
 }
 
 .provider-copy {
@@ -1484,7 +1521,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -1495,7 +1532,7 @@ onUnmounted(() => {
   height: 19px;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   font-style: normal;
 }
@@ -1516,7 +1553,7 @@ onUnmounted(() => {
 }
 
 .provider-desc {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--lp-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1560,7 +1597,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: transparent;
   color: var(--lp-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1696,7 +1733,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--lp-surface) 86%, transparent);
   backdrop-filter: blur(6px);
   color: var(--lp-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition: color var(--te-motion-hover) var(--te-ease-soft);
@@ -1711,7 +1748,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   color: var(--lp-text);
 }
@@ -1790,7 +1827,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: transparent;
   color: var(--lp-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1807,7 +1844,7 @@ onUnmounted(() => {
 
 .field-label {
   margin-top: 7px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   color: var(--lp-muted);
 }
@@ -1833,7 +1870,7 @@ onUnmounted(() => {
   border-radius: 13px;
   background: var(--lp-inset);
   color: var(--lp-text);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   outline: none;
   transition:
     border-color var(--te-motion-hover) var(--te-ease-soft),
@@ -1867,7 +1904,7 @@ onUnmounted(() => {
   border-radius: 13px;
   background: var(--lp-tint);
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   cursor: pointer;
   transition: background var(--te-motion-hover) var(--te-ease-soft);
@@ -1890,7 +1927,7 @@ onUnmounted(() => {
 .form-message {
   margin: 2px 0 0;
   min-height: 18px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.6;
   text-align: center;
   color: var(--lp-muted);
@@ -1909,7 +1946,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
   color: white;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -1947,7 +1984,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--lp-inset);
   color: var(--lp-text);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1971,7 +2008,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--te-danger-soft-bg);
   color: var(--te-danger-soft-fg);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -2089,7 +2126,7 @@ onUnmounted(() => {
 .id-avatar-fallback {
   background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-300));
   color: white;
-  font-size: 38px;
+  font-size: calc(var(--te-font-size-body, 14px) * 38 / 14);
   font-weight: 700;
   font-family: var(--te-font-display);
 }
@@ -2106,7 +2143,7 @@ onUnmounted(() => {
 .id-name {
   margin: 0;
   font-family: var(--te-font-display);
-  font-size: 25px;
+  font-size: calc(var(--te-font-size-body, 14px) * 25 / 14);
   font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--lp-text);
@@ -2122,7 +2159,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--lp-tint);
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
 }
 
@@ -2130,7 +2167,7 @@ onUnmounted(() => {
   margin: 12px 0 0;
   padding: 0 36px;
   max-width: 400px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.7;
   text-align: center;
   color: var(--lp-muted);
@@ -2158,7 +2195,7 @@ onUnmounted(() => {
 }
 
 .id-stat strong {
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   font-weight: 700;
   font-family: var(--te-font-display);
   color: var(--lp-text);
@@ -2166,7 +2203,7 @@ onUnmounted(() => {
 }
 
 .id-stat span {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
   color: var(--lp-muted);
 }
@@ -2267,7 +2304,7 @@ onUnmounted(() => {
 .error-text {
   margin: 0;
   max-width: 340px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.7;
   color: var(--te-danger-soft-fg);
 }

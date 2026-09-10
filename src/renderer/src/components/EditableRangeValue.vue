@@ -125,7 +125,7 @@ watch(
   border-radius: 6px;
   background: transparent;
   color: var(--te-neutral-700);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 650;
   line-height: 1;
   transition:

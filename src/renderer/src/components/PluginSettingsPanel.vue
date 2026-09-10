@@ -710,13 +710,13 @@ onUnmounted(() => {
 
 .plugin-group-head strong {
   color: var(--te-neutral-900);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 
 .plugin-group-head span,
 .plugin-native-note {
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.5;
 }
 
@@ -738,7 +738,7 @@ onUnmounted(() => {
 
 .plugin-kicker {
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 900;
 }
 
@@ -754,7 +754,7 @@ onUnmounted(() => {
 .market-card p {
   margin: 6px 0 0;
   color: var(--te-neutral-600);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.5;
 }
 
@@ -782,7 +782,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--te-subtle-bg);
   color: var(--te-neutral-600);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 800;
 }
 
@@ -791,7 +791,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 800;
 }
 
@@ -850,7 +850,7 @@ onUnmounted(() => {
 .plugin-permissions {
   margin-top: 10px;
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .plugin-tags span,
@@ -861,7 +861,7 @@ onUnmounted(() => {
   padding: 4px 8px;
   background: var(--te-subtle-bg);
   color: var(--te-neutral-600);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 900;
 }
 
@@ -918,7 +918,7 @@ onUnmounted(() => {
   margin-top: 12px;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .plugin-native-note {
@@ -938,7 +938,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .plugin-native-params strong {
@@ -988,7 +988,7 @@ onUnmounted(() => {
   padding: 14px;
   background: #0f172a;
   color: #dbeafe;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.5;
   white-space: pre-wrap;
 }

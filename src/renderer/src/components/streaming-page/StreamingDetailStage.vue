@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
+import { computed, shallowRef, nextTick, watch } from 'vue'
+import StreamingTrackToolbar from '@renderer/components/streaming-page/StreamingTrackToolbar.vue'
+import type {
+  StreamingTrackSort,
+  StreamingSortDirection
+} from '@renderer/components/streaming-page/streamingTrackView'
 import type { Track } from '../../types/music'
 import CoverImg from '../CoverImg.vue'
 import { useProgressiveList } from './useProgressiveList.ts'
@@ -27,6 +33,12 @@ const props = withDefaults(
     icon?: string
     trackCountLabel: string
     tracks: Track[]
+    query?: string
+    sort?: StreamingTrackSort
+    direction?: StreamingSortDirection
+    totalTracks?: number
+    refreshing?: boolean
+    canLocate?: boolean
     currentTrackId?: string | null
     trackActivationMode?: 'singleClick' | 'doubleClick'
     isExternal?: boolean
@@ -56,6 +68,10 @@ const props = withDefaults(
     } | null
   }>(),
   {
+    query: '',
+    sort: 'default',
+    direction: 'asc',
+    totalTracks: undefined,
     cover: null,
     coverSource: null,
     description: '',
@@ -81,6 +97,12 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
+  'update:query': [value: string]
+  'update:sort': [value: StreamingTrackSort]
+  'update:direction': [value: StreamingSortDirection]
+  refresh: []
+  openArtist: [track: Track]
+  openAlbum: [track: Track]
   playAll: []
   shufflePlay: []
   playTrack: [track: Track, index: number, event?: MouseEvent]
@@ -91,6 +113,7 @@ const emit = defineEmits<{
   batchAddToPlaylist: []
   batchDelete: []
   clearSelection: []
+  loadAllLiked: []
   loadMoreLiked: []
   trackContextMenu: [track: Track, index: number, event: MouseEvent]
 }>()
@@ -151,8 +174,22 @@ const {
   visibleStart,
   paddingTop,
   totalHeight,
-  listRef
+  listRef,
+  scrollToIndex
 } = useProgressiveList(() => props.tracks)
+
+watch(
+  () => [props.query, props.sort, props.direction],
+  () => scrollToIndex(0),
+  { flush: 'post' }
+)
+
+async function locateCurrentTrack(): Promise<void> {
+  emit('update:query', '')
+  await nextTick()
+  const index = props.tracks.findIndex((track) => track.id === props.currentTrackId)
+  if (index >= 0) scrollToIndex(index)
+}
 
 function trackIndex(offset: number): number {
   return visibleStart.value + offset
@@ -189,9 +226,11 @@ function shuffleAndPlay(): void {
   if (!canPlay.value) return
   emit('shufflePlay')
 }
+const infoTrack = shallowRef<Track | null>(null)
 </script>
 
 <template>
+  <TrackInfoDialog v-if="infoTrack" :track="infoTrack" @close="infoTrack = null" />
   <section class="detail-stage" :data-kind="kind">
     <header class="stage-hero">
       <div class="stage-cover-frame">
@@ -265,12 +304,43 @@ function shuffleAndPlay(): void {
       </div>
     </header>
 
+    <StreamingTrackToolbar
+      v-if="showPlayActions && !showFollow"
+      :query="query"
+      :sort="sort"
+      :direction="direction"
+      :count="tracks.length"
+      :total="totalTracks ?? tracks.length"
+      :refreshing="refreshing"
+      :can-locate="canLocate ?? false"
+      @update:query="emit('update:query', $event)"
+      @update:sort="emit('update:sort', $event)"
+      @update:direction="emit('update:direction', $event)"
+      @refresh="emit('refresh')"
+      @locate="locateCurrentTrack"
+    />
+    <div v-if="likedFooter?.hasMore" class="stage-footer" role="status">
+      <span class="stage-footer-msg">
+        搜索与排序范围：已加载 {{ likedFooter.loaded }} / {{ likedFooter.total ?? '—' }} 首
+      </span>
+      <button
+        type="button"
+        class="stage-mini-btn"
+        :disabled="likedFooter.loadingMore"
+        @click="emit('loadAllLiked')"
+      >
+        {{ likedFooter.loadingMore ? '正在加载' : '加载全部' }}
+      </button>
+      <span v-if="likedFooter.loadMoreError" class="stage-footer-msg">{{
+        likedFooter.loadMoreError
+      }}</span>
+    </div>
     <div
       v-if="!loading && tracks.length === 0 && showPlayActions && !showFollow"
       class="stage-empty"
     >
       <i class="pi pi-wave-pulse" aria-hidden="true"></i>
-      <p>{{ emptyMessage }}</p>
+      <p>{{ query ? '没有匹配的歌曲，试试其他关键词' : emptyMessage }}</p>
     </div>
 
     <!-- Loading skeleton -->
@@ -394,8 +464,24 @@ function shuffleAndPlay(): void {
               <i class="pi pi-wave-pulse"></i>
             </div>
             <div class="row-copy">
-              <div class="row-title" :title="track.title">{{ track.title }}</div>
-              <div class="row-artist" :title="track.artist">{{ track.artist || '未知艺人' }}</div>
+              <button
+                type="button"
+                class="row-title metadata-link"
+                :title="track.title"
+                @click.stop="infoTrack = track"
+                @dblclick.stop
+              >
+                {{ track.title }}
+              </button>
+              <button
+                type="button"
+                class="row-artist metadata-link"
+                :title="track.artist"
+                @click.stop="emit('openArtist', track)"
+                @dblclick.stop
+              >
+                {{ track.artist || '未知艺人' }}
+              </button>
             </div>
           </div>
 
@@ -420,7 +506,14 @@ function shuffleAndPlay(): void {
           </div>
 
           <div class="col-album" :title="track.album || ''">
-            {{ track.album || '—' }}
+            <button
+              type="button"
+              class="metadata-link"
+              @click.stop="emit('openAlbum', track)"
+              @dblclick.stop
+            >
+              {{ track.album || '—' }}
+            </button>
           </div>
 
           <div class="col-time">

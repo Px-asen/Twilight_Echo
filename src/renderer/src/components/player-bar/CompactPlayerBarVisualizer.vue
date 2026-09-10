@@ -74,16 +74,16 @@ const skylineBands = computed(() =>
   opacity: 0.3;
 }
 
-:global(html[data-theme='dark']) .compact-visualizer,
-:global(.player-bar-glass) .compact-visualizer {
+html[data-theme='dark'] .compact-visualizer,
+.player-bar-glass .compact-visualizer {
   background: transparent;
 }
 
-:global(html[data-te-motion='reduced']) .compact-visualizer__band {
+html[data-te-motion='reduced'] .compact-visualizer__band {
   transition-duration: var(--te-motion-hover, 100ms);
 }
 
-:global(html[data-te-motion='off']) .compact-visualizer__band {
+html[data-te-motion='off'] .compact-visualizer__band {
   display: none;
 }
 

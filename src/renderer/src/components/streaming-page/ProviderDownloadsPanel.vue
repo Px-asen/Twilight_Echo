@@ -62,7 +62,7 @@ function formatFileSize(bytes: number): string {
                     {{ downloadStatusLabel(task) }}
                   </span>
                   <small v-if="task.actualQuality" class="provider-download-tag">
-                    {{ task.actualQuality }}
+                    {{ task.actualQuality }}{{ task.qualityVerified ? ' · 已核验' : ' · 音源报告' }}
                   </small>
                   <small v-if="task.fileSize" class="provider-download-tag">
                     {{ formatFileSize(task.fileSize) }}
@@ -81,6 +81,15 @@ function formatFileSize(bytes: number): string {
                     :style="{ transform: `scaleX(${Math.max(0, Math.min(1, task.progress))})` }"
                   ></div>
                 </div>
+                <small
+                  v-if="task.actualQuality && task.actualQuality !== task.requestedQuality"
+                  class="provider-download-error"
+                >
+                  请求 {{ task.requestedQuality }}，实际下载为 {{ task.actualQuality }}
+                </small>
+                <small v-if="task.warning" class="provider-download-warning">{{
+                  task.warning
+                }}</small>
                 <small v-if="task.error" class="provider-download-error">{{ task.error }}</small>
                 <small
                   v-if="task.targetPath && task.status === 'completed'"
@@ -165,7 +174,7 @@ function formatFileSize(bytes: number): string {
 
 .provider-download-panel-header h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body) * 15 / 14);
   font-weight: var(--te-text-title);
   color: var(--te-settings-text);
 }
@@ -195,7 +204,7 @@ function formatFileSize(bytes: number): string {
   padding: 32px 20px;
   text-align: center;
   color: var(--te-settings-text-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body) * 13 / 14);
 }
 
 .provider-download-list {
@@ -223,7 +232,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-title {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body) * 13 / 14);
   font-weight: var(--te-text-strong);
   color: var(--te-settings-text);
   overflow: hidden;
@@ -232,7 +241,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-artist {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body) * 12 / 14);
   color: var(--te-settings-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -249,7 +258,7 @@ function formatFileSize(bytes: number): string {
 .provider-download-badge {
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body) * 11 / 14);
   font-weight: var(--te-text-strong);
   background: var(--te-hover-bg);
   color: var(--te-settings-text-muted);
@@ -277,7 +286,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-tag {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body) * 11 / 14);
   color: var(--te-settings-text-muted);
 }
 .provider-download-progress {
@@ -298,14 +307,20 @@ function formatFileSize(bytes: number): string {
   transition: transform var(--te-motion-panel) var(--te-ease-soft);
 }
 
+.provider-download-warning {
+  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  color: var(--te-settings-text-muted);
+  word-break: break-word;
+}
+
 .provider-download-error {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body) * 11 / 14);
   color: var(--te-danger-soft-fg);
   word-break: break-word;
 }
 
 .provider-download-path {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body) * 11 / 14);
   color: var(--te-settings-text-muted);
   word-break: break-all;
   font-family: monospace;
@@ -326,7 +341,7 @@ function formatFileSize(bytes: number): string {
   border-radius: 999px;
   background: var(--te-subtle-bg);
   color: var(--te-settings-text);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body) * 12 / 14);
   font-weight: var(--te-text-strong);
   cursor: pointer;
   transition:
@@ -379,7 +394,7 @@ function formatFileSize(bytes: number): string {
   border-radius: 9px;
   background: var(--te-danger-soft-fg);
   color: var(--te-card-bg);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body) * 10 / 14);
   font-weight: 700;
   display: flex;
   align-items: center;

@@ -168,7 +168,7 @@ useFocusTrap(addDialogRef, () => props.showAdd)
 
 .ncm-playlist-dialog h3 {
   margin: 0 0 14px;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 800;
   color: var(--te-neutral-900, #0f172a);
 }
@@ -179,7 +179,7 @@ useFocusTrap(addDialogRef, () => props.showAdd)
   border: 1px solid var(--te-card-border, rgba(148, 163, 184, 0.35));
   border-radius: 12px;
   padding: 12px 14px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   background: var(--te-subtle-bg, #f8fafc);
   color: var(--te-neutral-900, #0f172a);
   --ai-placeholder: var(--te-neutral-500, #64748b);
@@ -187,13 +187,13 @@ useFocusTrap(addDialogRef, () => props.showAdd)
 
 .ncm-playlist-dialog-hint {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-500, #64748b);
 }
 
 .ncm-playlist-dialog-error {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: #e11d48;
 }
 
@@ -210,7 +210,7 @@ useFocusTrap(addDialogRef, () => props.showAdd)
   color: var(--te-neutral-700, #334155);
   border-radius: 999px;
   padding: 9px 16px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   cursor: pointer;
 }
@@ -275,14 +275,14 @@ useFocusTrap(addDialogRef, () => props.showAdd)
 }
 
 .ncm-playlist-picker-item strong {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ncm-playlist-picker-item small {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-neutral-500, #64748b);
 }
 

@@ -140,23 +140,26 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div v-if="isScanning" class="progress-section">
-              <div class="progress-info">
-                <span>正在扫描...</span>
-                <span>{{ progress.current }} / {{ progress.total }}</span>
-              </div>
-              <div class="progress-bar-bg">
-                <div
-                  class="progress-bar-fill"
-                  :style="{
-                    transform: `scaleX(${progress.total > 0 ? progress.current / progress.total : 0})`
-                  }"
-                ></div>
-              </div>
-            </div>
-
-            <div v-if="scanStatus === 'empty' && !isScanning" class="empty-result">
-              <span>未找到音乐文件。请确认文件夹中包含支持的音频格式，或添加其他文件夹。</span>
+            <div class="scan-status-slot">
+              <Transition name="scan-status">
+                <div v-if="isScanning" key="scanning" class="progress-section">
+                  <div class="progress-info">
+                    <span>正在扫描...</span>
+                    <span>{{ progress.current }} / {{ progress.total }}</span>
+                  </div>
+                  <div class="progress-bar-bg">
+                    <div
+                      class="progress-bar-fill"
+                      :style="{
+                        transform: `scaleX(${progress.total > 0 ? progress.current / progress.total : 0})`
+                      }"
+                    ></div>
+                  </div>
+                </div>
+                <div v-else-if="scanStatus === 'empty'" key="empty" class="empty-result">
+                  <span>未找到音乐文件。请确认文件夹中包含支持的音频格式，或添加其他文件夹。</span>
+                </div>
+              </Transition>
             </div>
           </div>
 
@@ -175,6 +178,34 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.scan-status-slot {
+  display: grid;
+}
+
+.scan-status-slot > div {
+  grid-area: 1 / 1;
+}
+
+.scan-status-enter-active,
+.scan-status-leave-active {
+  transition: opacity var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.scan-status-enter-from,
+.scan-status-leave-to {
+  opacity: 0;
+}
+
+html[data-te-motion='reduced'] .scan-status-enter-active,
+html[data-te-motion='reduced'] .scan-status-leave-active {
+  transition: opacity 120ms var(--te-ease-soft) !important;
+}
+
+html[data-te-motion='off'] .scan-status-enter-from,
+html[data-te-motion='off'] .scan-status-leave-to {
+  opacity: 1 !important;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -219,7 +250,7 @@ onUnmounted(() => {
 
 .dialog-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 600;
   color: #1a1a1a;
 }
@@ -229,7 +260,7 @@ onUnmounted(() => {
   border: none;
   cursor: pointer;
   color: #999;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   padding: 4px;
 }
 
@@ -246,7 +277,7 @@ onUnmounted(() => {
 }
 
 .section-title {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 700;
   color: var(--te-neutral-900);
 }
@@ -257,7 +288,7 @@ onUnmounted(() => {
   border: 1px solid #c2e0ff;
   padding: 4px 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -282,7 +313,7 @@ onUnmounted(() => {
   padding: 32px;
   text-align: center;
   color: #999;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 
 .folder-item {
@@ -299,7 +330,7 @@ onUnmounted(() => {
 
 .folder-path {
   flex: 1;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #333;
   white-space: nowrap;
   overflow: hidden;
@@ -327,7 +358,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #666;
   cursor: pointer;
 }
@@ -342,7 +373,7 @@ onUnmounted(() => {
 .progress-info {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-primary-500);
   margin-bottom: 8px;
 }
@@ -369,7 +400,7 @@ onUnmounted(() => {
   background: var(--te-warning-soft-bg);
   border: 1px solid rgba(255, 180, 80, 0.24);
   border-radius: 14px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #b8780d;
   text-align: center;
 }
@@ -386,7 +417,7 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.62);
   padding: 8px 16px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
   color: #666;
 }
@@ -396,7 +427,7 @@ onUnmounted(() => {
   border: none;
   padding: 8px 24px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
   color: #fff;
   font-weight: 500;

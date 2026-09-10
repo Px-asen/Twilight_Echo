@@ -19,14 +19,14 @@
 }
 
 .placeholder-title {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 700;
   color: var(--te-neutral-900);
   margin: 0;
 }
 
 .placeholder-hint {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #bbb;
   margin: 0;
 }
@@ -44,7 +44,7 @@
     radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.32), transparent 26%),
     linear-gradient(135deg, var(--te-neutral-900), rgba(52, 61, 87, 0.9));
   color: #fff;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 800;
   cursor: pointer;
   box-shadow:

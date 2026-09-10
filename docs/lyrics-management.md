@@ -35,3 +35,11 @@ edited original lyrics as a separate LRC file from the Lyrics manager.
 The persistence file uses the shared versioned-data envelope and compare-and-
 swap revisions. A stale renderer write is rejected instead of replacing a
 newer document.
+
+### 任务栏歌词浮层（2026-09-10）
+
+桌面歌词新增 `placement: desktop | taskbar`，继续走既有桌面歌词会话和设置通道。任务栏模式在主屏显示单行透明浮层，强制置顶、鼠标穿透，保留原桌面模式的字体/横竖排/翻译设置；返回桌面模式时恢复这些设置。任务栏专用宽度、水平位置和字号可单独调整。横向任务栏使用显示器工作区与屏幕边界计算位置，自动隐藏或垂直任务栏时落在屏幕底部。此实现不是 Explorer 内嵌控件，不自动识别或避让任务栏应用图标；用户可调整位置。显示器缩放/工作区变化后重新计算。
+
+下载可同时保存音源提供的 `.lrc`、翻译 `.translated.lrc`，以及逐字 `.word.lrc` / `.yrc` / `.ttml` 文件。无可用歌词时提示用户，不改变音频下载结果。
+
+FluentFlyout 通过标准 Windows SMTC 读取媒体会话，沿用项目现有原生 SMTC 功能。是否在第三方工具中正确显示封面、时间线和控制按钮需要在 Windows 安装包与该工具共同运行时验收；不能由组件预览替代。参考：[FluentFlyout 官方 FAQ](https://fluentflyout.com/faq/)。

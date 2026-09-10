@@ -11,6 +11,14 @@ import {
   resolveAppFontStack
 } from './appFont.ts'
 
+test('installed font names survive normalization and use the CJK fallback stack', () => {
+  assert.equal(normalizeAppFontFamily('local:霞鹜文楷'), 'local:霞鹜文楷')
+  assert.match(resolveAppFontStack('local:霞鹜文楷')!, /^"霞鹜文楷",/)
+  assert.match(resolveAppFontStack('local:Arial')!, /MiSans/)
+  assert.equal(normalizeAppFontFamily('local:x"; color: red'), 'system')
+  assert.equal(normalizeAppFontFamily('local:   '), 'system')
+})
+
 test('the default global font contributes no override, so themed typography survives', () => {
   assert.equal(resolveAppFontStack(APP_FONT_SYSTEM), null)
   assert.deepEqual(appFontCssVariables(APP_FONT_SYSTEM), {})

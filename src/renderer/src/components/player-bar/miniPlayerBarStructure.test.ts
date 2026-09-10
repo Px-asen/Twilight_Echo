@@ -147,7 +147,7 @@ test('App.vue resolves the shape through the shared policy rather than inline lo
   assert.match(app, /onPlayingPage:\s*showPlayingPage\.value/)
   assert.match(app, /:mode="playerBarPresentation\.mode"/)
   assert.match(app, /:auto-hide="playerBarPresentation\.autoHide"/)
-  assert.match(app, /:hidden-bar="playerBarPresentation\.hidden"/)
+  assert.match(app, /:hidden-bar="playerBarPresentation\.hidden \|\| soundFieldSidebarActive"/)
 })
 
 test('the mini shape drops cover and the standard inline progress row', () => {

@@ -174,7 +174,8 @@ bool AsioHelperProcess::launch(std::string* error) {
 
   requestEvent_ = CreateEventW(nullptr, FALSE, FALSE, requestEventName.c_str());
   responseEvent_ = CreateEventW(nullptr, FALSE, FALSE, responseEventName.c_str());
-  if (!requestEvent_ || !responseEvent_) {
+  callbackEvent_ = CreateEventW(nullptr, FALSE, FALSE, (mappingName + L"_callbacks").c_str());
+  if (!requestEvent_ || !responseEvent_ || !callbackEvent_) {
     const std::string detail = "Unable to create ASIO helper control events: " + windowsError(GetLastError());
     publishFailure(FailureReason::LaunchFailed, detail);
     if (error) *error = failureMessage(FailureReason::LaunchFailed, detail);
@@ -410,6 +411,15 @@ SharedMemory* AsioHelperProcess::shared() const noexcept {
   return shared_;
 }
 
+bool AsioHelperProcess::waitForCallbacks(DWORD timeoutMs) const noexcept {
+  HANDLE waits[] = {callbackEvent_, process_};
+  return WaitForMultipleObjects(2, waits, FALSE, timeoutMs) == WAIT_OBJECT_0;
+}
+
+void AsioHelperProcess::wakeCallbacks() const noexcept {
+  if (callbackEvent_) SetEvent(callbackEvent_);
+}
+
 FailureReason AsioHelperProcess::failureReason() const noexcept {
   return failureReason_.load(std::memory_order_acquire);
 }
@@ -440,6 +450,7 @@ void AsioHelperProcess::publishFailure(FailureReason reason, const std::string& 
 void AsioHelperProcess::releaseHandles() {
   if (process_) CloseHandle(process_);
   if (job_) CloseHandle(job_);
+  if (callbackEvent_) CloseHandle(callbackEvent_);
   if (responseEvent_) CloseHandle(responseEvent_);
   if (requestEvent_) CloseHandle(requestEvent_);
   if (shared_) UnmapViewOfFile(shared_);
@@ -447,6 +458,7 @@ void AsioHelperProcess::releaseHandles() {
   process_ = nullptr;
   job_ = nullptr;
   responseEvent_ = nullptr;
+  callbackEvent_ = nullptr;
   requestEvent_ = nullptr;
   shared_ = nullptr;
   mapping_ = nullptr;

@@ -31,6 +31,7 @@ struct AudioFormat {
   int channelCount = 0;
   int bitDepth = 0;
   AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved;
+  bool dopEncoded = false;
 };
 
 struct PcmBlock {

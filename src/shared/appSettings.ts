@@ -117,6 +117,8 @@ export interface AudioEqPreset {
 }
 
 export interface GlobalShortcutSettings {
+  volumeUp: string
+  volumeDown: string
   previous: string
   next: string
   playPause: string
@@ -167,6 +169,7 @@ export interface AppSettings {
   lyricsPresets: LyricsPresetConfig
   libraryFolders: string[]
   /** Destination for provider downloads. Empty falls back to the first music library folder. */
+  downloadPreferences: import('./downloadPreferences.ts').DownloadPreferences
   downloadFolder: string
   genreSeparators: string
   watchLibrary: boolean

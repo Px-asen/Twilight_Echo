@@ -35,7 +35,7 @@
   background: var(--stage-paper-raised);
   color: var(--stage-ink-soft);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -51,7 +51,7 @@
   border-radius: 999px;
   background: var(--stage-accent-soft);
   color: var(--stage-accent-ink);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -82,7 +82,7 @@
 .stage-empty-hint {
   margin: 0;
   color: var(--stage-ink-faint);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
 }
 
@@ -140,14 +140,14 @@
   align-items: center;
   justify-content: center;
   color: var(--stage-ink-faint);
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   background: var(--stage-cover-fallback-bg);
 }
 
 .stage-person-name {
   width: 100%;
   color: var(--stage-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   line-height: 1.35;
   text-align: center;
@@ -209,13 +209,13 @@
   align-items: center;
   justify-content: center;
   color: var(--stage-ink-faint);
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   background: var(--stage-cover-fallback-bg);
 }
 
 .stage-collection-name {
   color: var(--stage-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   line-height: 1.35;
   display: -webkit-box;
@@ -226,7 +226,7 @@
 
 .stage-collection-meta {
   color: var(--stage-ink-faint);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
 }
 

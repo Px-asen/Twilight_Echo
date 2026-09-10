@@ -69,17 +69,26 @@ function emitPage(first: number): void {
 <template>
   <div class="search-view">
     <div v-if="searchLoading && searchOffset === 0" class="streaming-placeholder">
-      <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+      <i
+        class="pi pi-spin pi-spinner"
+        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #999"
+      ></i>
       <p class="placeholder-title">正在搜索</p>
     </div>
     <div v-else-if="searchError" class="streaming-placeholder">
-      <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+      <i
+        class="pi pi-exclamation-triangle"
+        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #e74c3c"
+      ></i>
       <p class="placeholder-title">搜索失败</p>
       <p class="placeholder-hint">{{ searchError }}</p>
       <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
     </div>
     <div v-else-if="searchTotal === 0 && !searchLoading" class="streaming-placeholder">
-      <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
+      <i
+        class="pi pi-search"
+        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #ccc"
+      ></i>
       <p class="placeholder-title">无搜索结果</p>
       <p class="placeholder-hint">换个关键词试试吧</p>
     </div>
@@ -142,12 +151,21 @@ function emitPage(first: number): void {
                 <td class="col-cover">
                   <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
                   <div v-else class="cover-placeholder">
-                    <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                    <i
+                      class="pi pi-wave-pulse"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 18 / 14); color: #bbb"
+                    ></i>
                   </div>
                 </td>
                 <td class="col-index">
                   <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                    <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                    <i
+                      class="pi pi-volume-up"
+                      style="
+                        font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+                        color: #1a73e8;
+                      "
+                    ></i>
                   </span>
                   <span v-else>{{ index + 1 + searchOffset }}</span>
                 </td>
@@ -169,12 +187,12 @@ function emitPage(first: number): void {
                     <i
                       v-if="likingTracks.has(track.ncmSongId ?? 0)"
                       class="pi pi-spin pi-spinner"
-                      style="font-size: 14px"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
                     ></i>
                     <i
                       v-else
                       :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
-                      style="font-size: 14px"
+                      style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
                     ></i>
                   </button>
                 </td>
@@ -224,7 +242,10 @@ function emitPage(first: number): void {
               alt=""
             />
             <div v-else class="playlist-grid-cover-placeholder">
-              <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+              <i
+                class="pi pi-list"
+                style="font-size: calc(var(--te-font-size-body, 14px) * 28 / 14); color: #bbb"
+              ></i>
             </div>
             <div class="playlist-grid-name">{{ playlist.name }}</div>
             <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
@@ -270,7 +291,10 @@ function emitPage(first: number): void {
               alt=""
             />
             <div v-else class="playlist-grid-cover-placeholder artist-cover">
-              <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+              <i
+                class="pi pi-user"
+                style="font-size: calc(var(--te-font-size-body, 14px) * 28 / 14); color: #bbb"
+              ></i>
             </div>
             <div class="playlist-grid-name">{{ artist.name }}</div>
             <div class="playlist-grid-count">{{ artist.musicSize ?? 0 }} 首单曲</div>
@@ -324,14 +348,14 @@ function emitPage(first: number): void {
 }
 
 .placeholder-title {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 600;
   color: var(--te-neutral-900);
   margin-top: 16px;
 }
 
 .placeholder-hint {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: #999;
   margin-top: 8px;
   margin-bottom: 24px;
@@ -367,7 +391,7 @@ function emitPage(first: number): void {
   padding: 0 12px;
   text-align: left;
   color: rgba(82, 90, 122, 0.54);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   letter-spacing: 0;
   background: #fbfcff;
@@ -387,7 +411,7 @@ function emitPage(first: number): void {
 }
 
 .selection-count {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-800, #333);
   white-space: nowrap;
@@ -408,7 +432,7 @@ function emitPage(first: number): void {
   border: none;
   border-radius: 8px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   cursor: pointer;
   color: var(--te-neutral-800, #333);
@@ -441,7 +465,7 @@ function emitPage(first: number): void {
 
 .track-row td {
   padding: 10px 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: rgba(54, 62, 96, 0.74);
   border-bottom: 1px solid #f0f2f7;
   vertical-align: middle;
@@ -486,7 +510,7 @@ function emitPage(first: number): void {
 
 .col-cover-header {
   color: #888;
-  font-size: 10px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
   text-align: left;
   padding-left: 12px !important;
 }
@@ -494,7 +518,7 @@ function emitPage(first: number): void {
 .col-index {
   width: 40px;
   color: rgba(82, 90, 122, 0.58) !important;
-  font-size: 13px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14) !important;
 }
 
 .col-info {
@@ -503,7 +527,7 @@ function emitPage(first: number): void {
 }
 
 .track-title {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 800;
   color: #222744;
 }
@@ -514,7 +538,7 @@ function emitPage(first: number): void {
 
 .track-artist {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: rgba(82, 90, 122, 0.58);
 }
 
@@ -565,13 +589,13 @@ function emitPage(first: number): void {
 .col-album {
   width: 180px;
   color: rgba(82, 90, 122, 0.58) !important;
-  font-size: 13px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14) !important;
 }
 
 .col-duration {
   width: 80px;
   color: rgba(82, 90, 122, 0.58) !important;
-  font-size: 12px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14) !important;
 }
 
 .playing-indicator {
@@ -602,12 +626,12 @@ function emitPage(first: number): void {
 
   .playlist-grid-name {
     margin-top: 9px;
-    font-size: 12.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   }
 
   .playlist-grid-count {
     margin-top: 3px;
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 }
 
@@ -623,12 +647,12 @@ function emitPage(first: number): void {
 
   .playlist-grid-name {
     margin-top: 7px;
-    font-size: 11.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   }
 
   .playlist-grid-count {
     margin-top: 2px;
-    font-size: 10.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   }
 }
 
@@ -669,7 +693,7 @@ function emitPage(first: number): void {
 
 .playlist-grid-name {
   margin-top: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 800;
   color: #242946;
   display: -webkit-box;
@@ -681,7 +705,7 @@ function emitPage(first: number): void {
 
 .playlist-grid-count {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: rgba(82, 90, 122, 0.62);
   font-weight: 750;
 }
@@ -710,7 +734,7 @@ function emitPage(first: number): void {
   border-radius: 8px;
   background: var(--te-card-bg);
   color: rgba(52, 61, 87, 0.86);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(86, 70, 160, 0.08);
@@ -735,7 +759,7 @@ function emitPage(first: number): void {
   min-width: 72px;
   text-align: center;
   color: rgba(80, 88, 116, 0.64);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }

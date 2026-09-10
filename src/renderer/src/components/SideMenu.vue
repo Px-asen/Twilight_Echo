@@ -212,8 +212,8 @@ function handleImportClick(): void {
   transform-origin: left center;
   will-change: transform;
   transition:
-    transform 0.32s var(--te-ease-soft),
-    box-shadow 0.32s;
+    transform var(--te-motion-panel) var(--te-ease-soft),
+    box-shadow var(--te-motion-panel);
   font-family: var(--te-font-sans);
 }
 
@@ -246,7 +246,7 @@ function handleImportClick(): void {
   padding: 12px 16px;
   border-bottom: 1px solid var(--te-navigation-border);
   color: var(--te-navigation-text);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -321,7 +321,7 @@ function handleImportClick(): void {
 .menu-item:hover {
   background: var(--te-navigation-hover);
   color: var(--te-navigation-hover-text);
-  transform: translateX(3px);
+  transform: none;
 }
 
 .menu-item.active {
@@ -362,18 +362,18 @@ function handleImportClick(): void {
   justify-content: center;
   flex-shrink: 0;
   color: var(--te-navigation-icon);
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.21429);
   transition:
     color 0.2s,
     transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 :global(html[data-te-navigation-icon-scale='sm'] .item-icon) {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
 }
 
 :global(html[data-te-navigation-icon-scale='lg'] .item-icon) {
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.42857);
 }
 
 .menu-item:hover .item-icon {
@@ -388,7 +388,7 @@ function handleImportClick(): void {
 }
 
 .item-label {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   font-weight: 500;
   color: currentColor;
   opacity: 0;
@@ -410,7 +410,7 @@ function handleImportClick(): void {
 }
 
 :global(html[data-te-navigation-style='compact'] .item-label) {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
 }
 
 :global(html[data-te-navigation-style='rail'] .menu-items) {
@@ -472,7 +472,7 @@ function handleImportClick(): void {
   display: block;
   padding: 8px 16px;
   color: var(--te-navigation-icon);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   font-weight: 500;
 }
 

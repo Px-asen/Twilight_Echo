@@ -54,6 +54,8 @@ export function buildPlayerShortcutDefinitions(): {
 }[] {
   const bindings = runtime.appSettings.globalShortcutBindings
   return [
+    { accelerator: bindings.volumeUp, action: 'volumeUp', label: '增加音量' },
+    { accelerator: bindings.volumeDown, action: 'volumeDown', label: '降低音量' },
     { accelerator: bindings.previous, action: 'previous', label: '上一首' },
     { accelerator: bindings.next, action: 'next', label: '下一首' },
     { accelerator: bindings.playPause, action: 'playPause', label: '播放 / 暂停' },

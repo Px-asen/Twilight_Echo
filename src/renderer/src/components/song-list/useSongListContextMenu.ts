@@ -1,3 +1,4 @@
+import { contextMenuPosition } from '../../../../shared/contextMenuPosition.ts'
 import {
   computed,
   getCurrentInstance,
@@ -107,12 +108,16 @@ export function useSongListContextMenu({
       const menu = document.querySelector('.context-menu') as HTMLElement
       if (menu) {
         const rect = menu.getBoundingClientRect()
-        if (rect.right > window.innerWidth) {
-          menuX.value -= rect.width
-        }
-        if (rect.bottom > window.innerHeight) {
-          menuY.value -= rect.height
-        }
+        const position = contextMenuPosition(
+          event.clientX,
+          event.clientY,
+          rect.width,
+          rect.height,
+          window.innerWidth,
+          window.innerHeight
+        )
+        menuX.value = position.x
+        menuY.value = position.y
       }
     })
   }

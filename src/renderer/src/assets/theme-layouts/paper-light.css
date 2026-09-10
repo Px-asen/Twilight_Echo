@@ -4,11 +4,15 @@ html[data-te-preset-layout='paper-light'] {
 
 html[data-te-preset-layout='paper-light'] .title-bar.drag-region {
   min-height: 54px;
-  border-bottom: 1px solid var(--sf-shell-line);
+  border-bottom: 0;
   background: var(--te-app-bg);
   box-shadow: none !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='paper-light'] .title-bar .title-bar-background {
+  box-shadow: none !important;
 }
 
 html[data-te-preset-layout='paper-light']
@@ -30,7 +34,7 @@ html[data-te-preset-layout='paper-light'] .side-menu .navigation-brand {
   height: 64px;
   border-bottom: 1px solid var(--sf-shell-line);
   font-family: 'Space Grotesk', var(--te-font-sans);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
 }
 
@@ -78,7 +82,7 @@ html[data-te-preset-layout='paper-light'] .side-menu.open .menu-nav .menu-item {
 }
 
 html[data-te-preset-layout='paper-light'] .side-menu .menu-item .item-label {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   letter-spacing: 0;
 }
 
@@ -101,27 +105,65 @@ html[data-te-preset-layout='paper-light'] .streaming-menu-item {
   border-radius: 4px;
 }
 
-html[data-te-preset-layout='paper-light'] .player-bar {
-  border-top: 1px solid var(--sf-shell-line);
-  border-radius: 0;
-  background: var(--te-app-bg);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-te-preset-layout='paper-light'] .player-bar :is(.album-cover, .album-cover img) {
-  border-radius: 3px;
-}
-
-html[data-te-preset-layout='paper-light']
-  .player-bar
-  :is(.song-title, .time-display, .volume-value) {
-  font-family: 'Space Grotesk', var(--te-font-sans);
-  letter-spacing: 0;
-}
-
 html[data-te-preset-layout='paper-light'] .playing-music .cover-image {
   border-radius: 3px;
   box-shadow: none;
+}
+
+/* Keep the Sound Field navigation on the same floating console surface as
+   Night Harbor while retaining its own paper-light tokens. */
+html[data-te-preset-layout='paper-light'] .side-menu {
+  top: 22px;
+  bottom: 22px;
+  border: 1px solid var(--sf-shell-line);
+  border-left: 0;
+  border-radius: 0 26px 26px 0;
+  background: color-mix(in srgb, var(--te-navigation-bg) 82%, var(--te-primary-500));
+  box-shadow: 12px 22px 58px color-mix(in srgb, var(--te-neutral-50) 32%, transparent);
+  backdrop-filter: blur(26px) saturate(140%);
+  -webkit-backdrop-filter: blur(26px) saturate(140%);
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-items {
+  gap: 12px;
+  padding: 22px 13px;
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-nav {
+  gap: 5px;
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item {
+  height: 45px;
+  padding: 0 14px;
+  border-radius: 13px;
+  transition:
+    background var(--te-motion-hover),
+    color var(--te-motion-hover),
+    transform var(--te-motion-return) var(--te-ease-out-quint);
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item:hover {
+  transform: translateX(3px);
+  background: var(--te-navigation-hover);
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active {
+  background: var(--te-navigation-active);
+  box-shadow: inset 0 0 0 1px var(--sf-shell-line);
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active::before {
+  top: 9px;
+  bottom: 9px;
+  left: 5px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--te-navigation-indicator);
+  box-shadow: 0 0 18px var(--te-primary-500);
+}
+
+html[data-te-preset-layout='paper-light'] .side-menu .menu-separator {
+  margin: 10px 18px;
+  background: var(--sf-shell-line);
 }

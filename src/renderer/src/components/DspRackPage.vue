@@ -556,14 +556,14 @@ onBeforeUnmount(() => {
 }
 :deep(.rack-header h1) {
   margin: 4px 0 0;
-  font-size: 28px;
+  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(.eyebrow) {
   margin: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -579,7 +579,7 @@ onBeforeUnmount(() => {
   border: 1px solid color-mix(in srgb, var(--te-success-soft-fg, #16a34a) 28%, transparent);
   border-radius: 12px;
   color: var(--te-success-soft-fg, #16a34a);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 :deep(.rack-message.error) {
   background: var(--te-danger-soft-bg, #fef2f2);
@@ -626,11 +626,11 @@ onBeforeUnmount(() => {
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(h2) {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   font-weight: 600;
 }
 :deep(h3) {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   color: var(--te-settings-text-muted, #8a8f98);
 }
@@ -697,7 +697,7 @@ onBeforeUnmount(() => {
 }
 :deep(.scene-toolbar label),
 :deep(.switch-field) {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
   display: inline-flex;
   align-items: center;
@@ -798,7 +798,7 @@ onBeforeUnmount(() => {
   background: var(--te-warning-soft-bg, #fff7ed);
   color: var(--te-warning-soft-fg, #d97706);
   border-radius: 12px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 :deep(.graph-heading) {
   justify-content: space-between;
@@ -811,7 +811,7 @@ onBeforeUnmount(() => {
 }
 :deep(.graph-heading span) {
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 :deep(.node-add) {
   gap: 6px;
@@ -834,7 +834,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 5px;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
 }
 :deep(.output-stage .switch-field) {
@@ -879,11 +879,11 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 :deep(.graph-node strong) {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(.graph-node small) {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
   margin-top: 2px;
 }
@@ -894,7 +894,7 @@ onBeforeUnmount(() => {
 :deep(.v1-note) {
   margin: 13px 0 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.55;
 }
 :deep(.node-controls) {
@@ -929,12 +929,12 @@ onBeforeUnmount(() => {
   min-width: 42px;
   padding: 5px 4px;
   text-align: center;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 :deep(.matrix-axis),
 :deep(.matrix-corner) {
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 700;
   text-align: center;
 }
@@ -954,7 +954,7 @@ onBeforeUnmount(() => {
 :deep(.channel-strip-row strong) {
   align-self: center;
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 :deep(.channel-strip-row label),
 :deep(.crossover-grid label) {
@@ -962,7 +962,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 :deep(.channel-strip-row .switch-field) {
   padding-bottom: 7px;
@@ -989,7 +989,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 :deep(.band-grid .switch-field) {
   display: inline-flex;
@@ -1028,11 +1028,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 :deep(.vst3-catalog-entry strong) {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 :deep(.vst3-catalog-entry small) {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   opacity: 0.85;
 }
 :deep(.vst3-parameter-field) {
@@ -1042,7 +1042,7 @@ onBeforeUnmount(() => {
   align-items: center;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 :deep(.vst3-parameter-field span) {
   overflow: hidden;
@@ -1066,7 +1066,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
   padding-top: 12px;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 :deep(.raw-config pre) {
   max-height: 150px;
@@ -1086,7 +1086,7 @@ onBeforeUnmount(() => {
 :deep(.rule-editor > label) {
   display: grid;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
   margin-bottom: 10px;
 }
@@ -1100,7 +1100,7 @@ onBeforeUnmount(() => {
   height: 155px;
   resize: vertical;
   font-family: Consolas, monospace;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.45;
 }
 :deep(.apply-params) {
@@ -1126,7 +1126,7 @@ onBeforeUnmount(() => {
 :deep(.rate-fields label) {
   display: grid;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-settings-text-muted, #8a8f98);
 }
 :deep(.diagnostic-panel) {
@@ -1143,7 +1143,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 :deep(.diagnostic-panel dt) {
   color: var(--te-settings-text-muted, #8a8f98);
@@ -1167,7 +1167,7 @@ onBeforeUnmount(() => {
 :deep(.empty-detail) {
   padding-top: 36px;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   text-align: center;
 }
 :deep(.rack-footer) {
@@ -1175,7 +1175,7 @@ onBeforeUnmount(() => {
   gap: 18px;
   margin: 12px auto 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 @media (max-width: 1080px) {
   .dsp-rack-page {
@@ -1217,7 +1217,7 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
   }
   :deep(.rack-header h1) {
-    font-size: 22px;
+    font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   }
   :deep(.output-stage) {
     grid-template-columns: 1fr 1fr;

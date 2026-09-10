@@ -1,7 +1,63 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '@renderer/types/music'
 import SoundFieldArtwork from '@renderer/components/local-dashboard/SoundFieldArtwork.vue'
+import { soundFieldPlaybackKey } from '@renderer/components/local-dashboard/soundFieldPlayback'
+import { usePlayerStore } from '@renderer/stores/usePlayerStore'
+import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
+
+const playback = inject(soundFieldPlaybackKey, null)
+const { volume, setVolume, playMode, setPlayMode, queue } = usePlayerStore()
+const surface = ref<HTMLElement | null>(null)
+const lastVolume = ref(1)
+const now = ref(new Date())
+let resizeObserver: ResizeObserver | null = null
+let clockTimer: ReturnType<typeof setInterval> | undefined
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    now.value = new Date()
+  }, 60_000)
+  if (!surface.value || !playback) return
+  resizeObserver = new ResizeObserver(([entry]) => {
+    playback.sidebarVisible.value = entry.contentRect.width > 820
+  })
+  resizeObserver.observe(surface.value)
+})
+
+onBeforeUnmount(() => {
+  clearInterval(clockTimer)
+  resizeObserver?.disconnect()
+  if (playback) playback.sidebarVisible.value = false
+})
+
+function toggleMute(): void {
+  if (volume.value > 0) {
+    lastVolume.value = volume.value
+    setVolume(0)
+  } else {
+    setVolume(lastVolume.value)
+  }
+}
+
+function cycleRepeat(): void {
+  setPlayMode(
+    playMode.value === 'listLoop'
+      ? 'repeat'
+      : playMode.value === 'repeat'
+        ? 'sequential'
+        : 'listLoop'
+  )
+}
+
+const repeatLabel = computed(() =>
+  playMode.value === 'repeat'
+    ? '单曲循环，点击切换为顺序播放'
+    : playMode.value === 'listLoop'
+      ? '列表循环，点击切换为单曲循环'
+      : '启用列表循环'
+)
+const greeting = computed(() => resolveTimeGreeting(now.value.getHours()))
 
 const props = defineProps<{
   summary: { tracks: number; albums: number; artists: number; totalSeconds: number }
@@ -109,7 +165,7 @@ function seekFromInput(event: Event): void {
 </script>
 
 <template>
-  <main class="sound-field dashboard-wrapper">
+  <main ref="surface" class="sound-field dashboard-wrapper">
     <div class="sf-layout">
       <section class="sf-session" aria-label="当前聆听">
         <div class="sf-session-top">
@@ -130,11 +186,28 @@ function seekFromInput(event: Event): void {
               :title="featured?.title || '声'"
               eager
             />
-            <span class="sf-cover-corner" aria-hidden="true"></span>
           </div>
           <div class="sf-session-copy">
-            <p class="sf-kicker">{{ featured ? 'NOW IN FOCUS' : 'YOUR FIRST SESSION' }}</p>
-            <h2 :title="featured?.title">{{ featured?.title || '下一首，属于你。' }}</h2>
+            <p class="sf-kicker">{{ featured ? '此刻，耳边' : '从这里开始' }}</p>
+            <div class="sf-title-row">
+              <h2 :title="featured?.title">{{ featured?.title || '下一首，属于你。' }}</h2>
+              <button
+                v-if="playback && featuredIsCurrent && playback.favoriteAvailable.value"
+                type="button"
+                class="sf-icon-button sf-favorite"
+                :class="{ 'is-active': playback.favoriteLiked.value }"
+                :aria-label="playback.favoriteLiked.value ? '取消收藏' : '收藏当前歌曲'"
+                :title="playback.favoriteLiked.value ? '取消收藏' : '收藏当前歌曲'"
+                :aria-pressed="playback.favoriteLiked.value"
+                :disabled="playback.favoriteLoading.value"
+                @click="playback.toggleFavorite()"
+              >
+                <i
+                  :class="playback.favoriteLiked.value ? 'ph-fill ph-heart' : 'ph ph-heart'"
+                  aria-hidden="true"
+                ></i>
+              </button>
+            </div>
             <p class="sf-current-artist" :title="featured?.artist">
               {{ featured?.artist || '从一首喜欢的音乐开始' }}
             </p>
@@ -175,6 +248,17 @@ function seekFromInput(event: Event): void {
                 <button
                   type="button"
                   class="sf-icon-button"
+                  :class="{ 'is-active': playMode === 'shuffle' }"
+                  :aria-pressed="playMode === 'shuffle'"
+                  aria-label="随机播放"
+                  title="随机播放"
+                  @click="setPlayMode(playMode === 'shuffle' ? 'sequential' : 'shuffle')"
+                >
+                  <i class="ph ph-shuffle" aria-hidden="true"></i>
+                </button>
+                <button
+                  type="button"
+                  class="sf-icon-button"
                   title="上一首"
                   aria-label="上一首"
                   :disabled="!featuredIsCurrent"
@@ -204,6 +288,64 @@ function seekFromInput(event: Event): void {
                 >
                   <i class="ph ph-skip-forward" aria-hidden="true"></i>
                 </button>
+                <button
+                  type="button"
+                  class="sf-icon-button"
+                  :class="{ 'is-active': playMode === 'listLoop' || playMode === 'repeat' }"
+                  :aria-pressed="playMode === 'listLoop' || playMode === 'repeat'"
+                  :aria-label="repeatLabel"
+                  :title="repeatLabel"
+                  @click="cycleRepeat"
+                >
+                  <i
+                    :class="playMode === 'repeat' ? 'ph ph-repeat-once' : 'ph ph-repeat'"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+              </div>
+              <div v-if="playback && featuredIsCurrent" class="sf-player-tools">
+                <div class="sf-volume">
+                  <button
+                    type="button"
+                    class="sf-icon-button"
+                    :aria-label="volume > 0 ? '静音' : '取消静音'"
+                    :title="volume > 0 ? '静音' : '取消静音'"
+                    :aria-pressed="volume === 0"
+                    @click="toggleMute"
+                  >
+                    <i
+                      :class="volume > 0 ? 'ph ph-speaker-high' : 'ph ph-speaker-slash'"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :value="volume"
+                    aria-label="音量"
+                    :aria-valuetext="Math.round(volume * 100) + '%'"
+                    @input="setVolume(Number(($event.target as HTMLInputElement).value))"
+                  />
+                  <span>{{ Math.round(volume * 100) }}%</span>
+                </div>
+                <div class="sf-utility-buttons">
+                  <button type="button" @click="playback.openQueue()">
+                    <i class="ph ph-queue" aria-hidden="true"></i>队列
+                    <span>{{ queue.length }}</span>
+                  </button>
+                  <button type="button" @click="playback.openLyrics()">
+                    <i class="ph ph-subtitles" aria-hidden="true"></i>歌词
+                  </button>
+                  <button
+                    type="button"
+                    title="音频输出、DSP 与更多播放设置"
+                    @click="playback.openAudio()"
+                  >
+                    <i class="ph ph-sliders" aria-hidden="true"></i>音频
+                  </button>
+                </div>
               </div>
             </div>
             <button
@@ -217,22 +359,27 @@ function seekFromInput(event: Event): void {
           </div>
         </div>
         <div class="sf-session-bottom">
-          <span class="sf-session-caption"
-            >A LITTLE LESS NOISE.<br /><strong>A LITTLE MORE MUSIC.</strong></span
+          <span class="sf-session-caption">留一点时间，<strong>给音乐。</strong></span>
+          <button
+            v-if="playback && featuredIsCurrent"
+            type="button"
+            class="sf-icon-button"
+            title="打开迷你播放器"
+            aria-label="打开迷你播放器"
+            @click="playback.openMiniPlayer()"
           >
-          <i class="ph ph-headphones" aria-hidden="true"></i>
+            <i class="ph ph-picture-in-picture" aria-hidden="true"></i>
+          </button>
+          <i v-else class="ph ph-headphones" aria-hidden="true"></i>
         </div>
       </section>
 
       <div class="sf-content">
         <header class="sf-masthead">
           <div class="sf-title-group">
-            <p class="sf-kicker">TWILIGHT ECHO / PERSONAL AUDIO</p>
-            <h1>
-              声场<span class="sf-title-mark" aria-hidden="true"
-                ><i class="ph ph-asterisk"></i></span
-              ><span class="sf-title-en">Sound<br />Field</span>
-            </h1>
+            <p class="sf-kicker">YOUR PERSONAL SOUND SPACE</p>
+            <h1>{{ greeting }}</h1>
+            <p class="sf-intro">在熟悉的旋律里，找到今天的节奏。</p>
           </div>
           <button v-if="summary.tracks" type="button" class="sf-shuffle" @click="emit('shuffle')">
             <i class="ph ph-shuffle" aria-hidden="true"></i><span>随心播放</span>
@@ -245,9 +392,8 @@ function seekFromInput(event: Event): void {
         <section class="sf-albums" aria-labelledby="sf-albums-title">
           <div class="sf-section-head">
             <div class="sf-section-title">
-              <span class="sf-index">01</span>
-              <h2 id="sf-albums-title">专辑选辑</h2>
-              <span class="sf-section-en">THE ALBUM EDIT</span>
+              <h2 id="sf-albums-title">从一张专辑开始</h2>
+              <span class="sf-section-en">ALBUM PICKS</span>
             </div>
             <div class="sf-section-actions">
               <div v-if="albumPageCount > 1" class="sf-pagination">
@@ -298,12 +444,11 @@ function seekFromInput(event: Event): void {
                   ><i class="ph ph-arrow-up-right"></i
                 ></span>
               </div>
-              <div class="sf-album-meta">
-                <span>{{ String(currentAlbumPage * 4 + index + 1).padStart(2, '0') }}</span
-                ><span>{{ album.trackCount }} TRACKS</span>
-              </div>
               <strong :title="album.name">{{ album.name }}</strong
-              ><small :title="album.artist">{{ album.artist }}</small>
+              ><small :title="album.artist"
+                ><span>{{ album.artist }}</span
+                ><span class="sf-album-count">{{ album.trackCount }} 首</span></small
+              >
             </button>
           </div>
           <div v-else class="sf-empty-albums">
@@ -321,9 +466,7 @@ function seekFromInput(event: Event): void {
         <section class="sf-activity" aria-labelledby="sf-activity-title">
           <div class="sf-section-head">
             <div class="sf-section-title">
-              <span class="sf-index">02</span>
               <h2 id="sf-activity-title">聆听轨迹</h2>
-              <span class="sf-section-en">ON REPEAT</span>
             </div>
             <button type="button" class="sf-text-link" @click="openActivity">
               查看全部<i class="ph ph-arrow-up-right" aria-hidden="true"></i>
@@ -356,7 +499,9 @@ function seekFromInput(event: Event): void {
                 新近入库<span>{{ added.length }}</span>
               </button>
             </div>
-            <span class="sf-list-caption">YOUR DAILY ROTATION</span>
+            <span class="sf-list-caption">{{
+              activity === 'recent' ? '再听一次，依然喜欢' : '新发现，慢慢听'
+            }}</span>
           </div>
           <div
             id="sf-track-panel"

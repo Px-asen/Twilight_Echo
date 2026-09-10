@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
 
           <div
             style="
-              font-size: 12px;
+              font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
               font-weight: 700;
               color: var(--te-neutral-500);
               display: flex;
@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 .opra-info h3 {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -176,12 +176,12 @@ onBeforeUnmount(() => {
 .opra-info h3 span.badge {
   background: var(--te-success-soft-bg);
   color: var(--te-success-soft-fg);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   padding: 2px 8px;
   border-radius: 6px;
 }
 .opra-info p {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-500);
   margin-top: 6px;
   font-weight: 500;
@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .opra-action-btn i {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   transition: transform 0.4s var(--te-ease-soft);
 }
 .opra-action-btn:hover {
@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--te-card-border);
   background: var(--te-card-bg);
   font-family: inherit;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: var(--te-neutral-900);
   outline: none;
   transition:
@@ -340,19 +340,19 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .result-brand {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 800;
   color: var(--te-neutral-500);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .result-model {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   font-weight: 800;
   color: var(--te-neutral-900);
 }
 .result-author {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   color: rgba(15, 23, 42, 0.4);
   margin-top: 4px;
@@ -376,7 +376,7 @@ onBeforeUnmount(() => {
 }
 
 .opra-attribution {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   color: var(--te-neutral-500);
   margin-top: 4px;

@@ -16,7 +16,7 @@
 namespace twilight::audio::asio_helper {
 
 constexpr uint32_t kProtocolMagic = 0x48414554u;
-constexpr uint32_t kProtocolVersion = 2;
+constexpr uint32_t kProtocolVersion = 3;
 constexpr uint32_t kMaxDevices = 64;
 constexpr uint32_t kMaxChannels = 32;
 constexpr uint32_t kMaxFrames = 32768;
@@ -69,6 +69,7 @@ struct AudioFormatRecord {
   int32_t channelCount = 0;
   int32_t bitDepth = 0;
   int32_t sampleFormat = static_cast<int32_t>(AudioSampleFormat::Float32Interleaved);
+  uint32_t dopEncoded = 0;
 };
 
 struct ChannelFormatRecord {
@@ -272,7 +273,8 @@ inline AudioFormatRecord encodeAudioFormat(const AudioFormat& format) {
       .sampleRate = format.sampleRate,
       .channelCount = format.channelCount,
       .bitDepth = format.bitDepth,
-      .sampleFormat = static_cast<int32_t>(format.sampleFormat)};
+      .sampleFormat = static_cast<int32_t>(format.sampleFormat),
+      .dopEncoded = format.dopEncoded ? 1u : 0u};
 }
 
 inline bool validSampleFormat(int32_t value) noexcept {
@@ -285,6 +287,7 @@ inline AudioFormat decodeAudioFormat(const AudioFormatRecord& record) {
   format.sampleRate = record.sampleRate;
   format.channelCount = record.channelCount;
   format.bitDepth = record.bitDepth;
+  format.dopEncoded = record.dopEncoded != 0;
   if (validSampleFormat(record.sampleFormat)) {
     format.sampleFormat = static_cast<AudioSampleFormat>(record.sampleFormat);
   }

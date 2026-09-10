@@ -89,8 +89,8 @@ const emit = defineEmits<{
   transform: translate3d(-100%, 0, 0);
   will-change: transform;
   transition:
-    transform 0.32s var(--te-ease-soft),
-    box-shadow 0.32s;
+    transform var(--te-motion-panel) var(--te-ease-soft),
+    box-shadow var(--te-motion-panel);
 }
 
 .streaming-sidebar.open {
@@ -114,7 +114,7 @@ const emit = defineEmits<{
 }
 
 .streaming-sidebar-title {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   font-weight: 800;
   color: #6b7280;
   text-transform: none;
@@ -169,7 +169,7 @@ const emit = defineEmits<{
 }
 
 .streaming-menu-icon {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
   width: 17px;
   height: 17px;
   display: flex;
@@ -181,7 +181,7 @@ const emit = defineEmits<{
 }
 
 .streaming-menu-label {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   font-weight: 700;
   color: currentColor;
   opacity: 0;
@@ -264,11 +264,11 @@ const emit = defineEmits<{
   .streaming-menu-icon {
     width: 17px;
     height: 17px;
-    font-size: 16px;
+    font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
   }
 
   .streaming-menu-label {
-    font-size: 14px;
+    font-size: calc(var(--te-font-size-body, 14px) * 1);
   }
 }
 </style>

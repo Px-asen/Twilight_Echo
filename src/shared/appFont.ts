@@ -6,7 +6,8 @@
  * choice, so it overrides whatever the theme declares, the same way the
  * settings accent color and surface material outrank a theme profile.
  */
-export type AppFontFamily = 'system' | 'inter' | 'lxgw' | 'sarasa' | 'comic'
+type BuiltinAppFontFamily = 'system' | 'inter' | 'lxgw' | 'sarasa' | 'comic'
+export type AppFontFamily = BuiltinAppFontFamily | `local:${string}`
 
 export const APP_FONT_SYSTEM = 'system' as const
 
@@ -26,7 +27,9 @@ export const APP_FONT_FAMILIES: readonly AppFontFamily[] = [
 const FALLBACK_STACK =
   "'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif"
 
-export const APP_FONT_FAMILY_STACKS: Readonly<Record<Exclude<AppFontFamily, 'system'>, string>> = {
+export const APP_FONT_FAMILY_STACKS: Readonly<
+  Record<Exclude<BuiltinAppFontFamily, 'system'>, string>
+> = {
   inter: `'Inter', 'Plus Jakarta Sans', 'Roboto', ${FALLBACK_STACK}`,
   lxgw: `'LXGW WenKai', 'LXGW WenKai GB', '霞鹜文楷', 'KaiTi', 'STKaiti', ${FALLBACK_STACK}`,
   sarasa: `'Sarasa Gothic SC', 'Sarasa Gothic', '更纱黑体 SC', ${FALLBACK_STACK}`,
@@ -45,6 +48,16 @@ export const APP_FONT_VARIABLES = [
 ] as const
 
 export function normalizeAppFontFamily(value: unknown): AppFontFamily {
+  if (
+    typeof value === 'string' &&
+    /^local:[^"'\\;{}]{1,96}$/.test(value) &&
+    [...value].every(
+      (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127
+    )
+  ) {
+    const name = value.slice(6).trim()
+    if (name) return `local:${name}`
+  }
   return typeof value === 'string' && APP_FONT_FAMILIES.includes(value as AppFontFamily)
     ? (value as AppFontFamily)
     : APP_FONT_SYSTEM
@@ -54,7 +67,8 @@ export function normalizeAppFontFamily(value: unknown): AppFontFamily {
 export function resolveAppFontStack(value: unknown): string | null {
   const family = normalizeAppFontFamily(value)
   if (family === APP_FONT_SYSTEM) return null
-  return APP_FONT_FAMILY_STACKS[family]
+  if (family.startsWith('local:')) return `"${family.slice(6)}", ${FALLBACK_STACK}`
+  return APP_FONT_FAMILY_STACKS[family as Exclude<BuiltinAppFontFamily, 'system'>]
 }
 
 /**

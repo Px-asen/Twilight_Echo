@@ -143,48 +143,59 @@ function onDrop(destinationId: string): void {
         >
       </section>
 
-      <div class="node-list" aria-label="DSP graph nodes">
-        <article
-          v-for="node in scene.graph.nodes"
-          :key="node.id"
-          draggable="true"
-          class="graph-node"
-          data-te-interactive
-          :class="{ selected: node.id === selectedNodeId, bypassed: !node.enabled }"
-          @dragstart="draggedNodeId = node.id"
-          @dragover.prevent
-          @drop="onDrop(node.id)"
-          @click="emit('selectNode', node.id)"
-        >
-          <i class="pi pi-bars drag-handle" aria-hidden="true"></i>
-          <i
-            :class="nodeCatalog.find((item) => item.type === node.type)?.icon ?? 'pi pi-circle'"
-          ></i>
-          <div>
-            <strong>{{ nodeLabel(node.type) }}</strong
-            ><small>{{ node.id }}</small>
-          </div>
-          <button
-            type="button"
-            class="icon-button small"
-            :title="node.enabled ? '旁路节点' : '启用节点'"
-            @click.stop="node.enabled = !node.enabled"
+      <TransitionGroup name="dsp-node" tag="div" class="node-list" aria-label="DSP graph nodes">
+        <div v-for="node in scene.graph.nodes" :key="node.id" class="dsp-node-slot">
+          <article
+            draggable="true"
+            class="graph-node"
+            data-te-interactive
+            :class="{ selected: node.id === selectedNodeId, bypassed: !node.enabled }"
+            @dragstart="draggedNodeId = node.id"
+            @dragover.prevent
+            @drop="onDrop(node.id)"
+            @click="emit('selectNode', node.id)"
           >
-            <i :class="node.enabled ? 'pi pi-eye' : 'pi pi-eye-slash'"></i>
-          </button>
-          <button
-            type="button"
-            class="icon-button small danger"
-            title="移除节点"
-            @click.stop="emit('removeNode', node.id)"
-          >
-            <i class="pi pi-times"></i>
-          </button>
-        </article>
-      </div>
+            <i class="pi pi-bars drag-handle" aria-hidden="true"></i>
+            <i
+              :class="nodeCatalog.find((item) => item.type === node.type)?.icon ?? 'pi pi-circle'"
+            ></i>
+            <div>
+              <strong>{{ nodeLabel(node.type) }}</strong
+              ><small>{{ node.id }}</small>
+            </div>
+            <button
+              type="button"
+              class="icon-button small"
+              :title="node.enabled ? '旁路节点' : '启用节点'"
+              @click.stop="node.enabled = !node.enabled"
+            >
+              <i :class="node.enabled ? 'pi pi-eye' : 'pi pi-eye-slash'"></i>
+            </button>
+            <button
+              type="button"
+              class="icon-button small danger"
+              title="移除节点"
+              @click.stop="emit('removeNode', node.id)"
+            >
+              <i class="pi pi-times"></i>
+            </button>
+          </article>
+        </div>
+      </TransitionGroup>
       <p class="v1-note">
         ABI v1 原生插件固定在图末端、输出安全保护之前；仅 ABI v2 节点可参与此排序。
       </p>
     </template>
   </section>
 </template>
+
+<style scoped>
+.dsp-node-move {
+  transition: transform var(--te-motion-hover) var(--te-ease-soft);
+}
+
+html[data-te-motion='reduced'] .dsp-node-slot {
+  transform: none !important;
+  transition: none !important;
+}
+</style>

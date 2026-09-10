@@ -21,11 +21,15 @@ const DEFAULT_BINDINGS: GlobalShortcutSettings = {
   previous: 'CommandOrControl+Alt+Left',
   next: 'CommandOrControl+Alt+Right',
   playPause: 'CommandOrControl+Alt+Space',
+  volumeUp: 'CommandOrControl+Alt+Up',
+  volumeDown: 'CommandOrControl+Alt+Down',
   toggleDesktopLyrics: 'CommandOrControl+Alt+D',
   toggleDesktopLyricsLock: 'CommandOrControl+Alt+L'
 }
 
 const EDITABLE_BINDINGS: { key: BindingKey; label: string }[] = [
+  { key: 'volumeUp', label: '增加音量' },
+  { key: 'volumeDown', label: '降低音量' },
   { key: 'previous', label: '上一首' },
   { key: 'next', label: '下一首' },
   { key: 'playPause', label: '播放 / 暂停' },
@@ -58,6 +62,8 @@ const conflictBinding = ref<BindingKey | null>(null)
 const conflictWith = ref<BindingKey | null>(null)
 
 const bindingValues = computed<Record<BindingKey, string>>(() => ({
+  volumeUp: props.shortcutBindings.volumeUp,
+  volumeDown: props.shortcutBindings.volumeDown,
   previous: props.shortcutBindings.previous,
   next: props.shortcutBindings.next,
   playPause: props.shortcutBindings.playPause,
@@ -364,14 +370,14 @@ function onRecorderBlur(key: BindingKey): void {
 .shortcut-panel-head h3 {
   margin: 0;
   color: var(--te-settings-text);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
 }
 
 .shortcut-panel-hint {
   flex: 1 1 auto;
   color: var(--te-settings-text-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.5;
 }
 
@@ -383,7 +389,7 @@ function onRecorderBlur(key: BindingKey): void {
   background: var(--te-card-bg);
   color: var(--te-settings-text-muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.4;
 }
 
@@ -435,7 +441,7 @@ function onRecorderBlur(key: BindingKey): void {
   overflow: hidden;
   min-width: 0;
   color: var(--te-settings-text);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -453,7 +459,7 @@ function onRecorderBlur(key: BindingKey): void {
   background: transparent;
   color: var(--te-settings-text-muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .shortcut-revert:hover {
@@ -475,7 +481,7 @@ function onRecorderBlur(key: BindingKey): void {
   color: var(--te-settings-text);
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 650;
 }
 
@@ -490,7 +496,7 @@ function onRecorderBlur(key: BindingKey): void {
   background: rgba(var(--te-primary-rgb), 0.08);
   color: var(--te-settings-text-muted);
   font-family: inherit;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
 }
 
@@ -501,13 +507,13 @@ function onRecorderBlur(key: BindingKey): void {
 .shortcut-key.static {
   color: var(--te-settings-text-muted);
   cursor: default;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .shortcut-note {
   margin: 10px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.5;
 }
 
