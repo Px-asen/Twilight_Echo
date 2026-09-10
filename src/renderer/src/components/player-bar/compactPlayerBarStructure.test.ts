@@ -135,19 +135,17 @@ test('compact auto-hide keeps the lyrics visualizer while hiding its controls', 
     /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][\s\S]{0,360}\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact-visualizer\s*\{[^}]*\}/
   )
   assert.ok(retainedStage, 'auto-hide needs a retained compact visualizer stage')
-  assert.match(retainedStage[0], /transform:\s*none/)
+  assert.match(
+    retainedStage[0],
+    /transform:\s*translateY\(calc\(100% - var\(--te-compact-visualizer-height, 138px\)\)\)/
+  )
   assert.match(retainedStage[0], /opacity:\s*1/)
   assert.match(retainedStage[0], /pointer-events:\s*none/)
 
-  const bottomStage = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][\s\S]{0,700}\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact\.player-bar-compact-visualizer\.player-bar-compact-visualizer\s*\{[^}]*\}/
-  )
-  assert.ok(bottomStage, 'auto-hide visualizer needs a bottom-anchored stage')
-  assert.match(bottomStage[0], /height:\s*var\(--te-compact-visualizer-height, 138px\)/)
-  assert.match(bottomStage[0], /padding-top:\s*0/)
+  assert.doesNotMatch(retainedStage[0], /(?:height|padding-top):/)
 
   const hiddenControls = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][\s\S]{0,500}>\s*:not\(\.compact-visualizer\)\s*\{[^}]*\}/
+    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][^{]*>\s*:not\(\.compact-visualizer\)\s*\{[^}]*\}/
   )
   assert.ok(hiddenControls, 'auto-hide must remove compact controls without removing the stage')
   assert.match(hiddenControls[0], /opacity:\s*0/)

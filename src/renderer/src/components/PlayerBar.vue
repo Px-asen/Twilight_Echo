@@ -1442,7 +1442,9 @@ const shellDataAttrs = computed(() => ({
 // even when the pointer is nowhere near the bottom edge.
 watch(
   () => [currentTrack.value?.id, isPlaying.value],
-  () => flashReveal()
+  () => {
+    if (!showCompactVisualizer.value) flashReveal()
+  }
 )
 
 const geometryAnimating = ref(false)

@@ -43,13 +43,14 @@ export interface PlaybarAutoHide {
   flashReveal: () => void
   onBarPointerEnter: () => void
   onBarPointerLeave: () => void
-  onBarFocusIn: () => void
+  onBarFocusIn: (event?: FocusEvent) => void
   onBarFocusOut: (event: FocusEvent) => void
 }
 
 export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAutoHide {
   const revealed = ref(true)
   const pointerInside = ref(false)
+  let pointerNearBottom = false
   const focusInside = ref(false)
   let hideTimer: ReturnType<typeof setTimeout> | null = null
   let listening = false
@@ -62,12 +63,11 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
   }
 
   function holdsOpen(): boolean {
-    return options.keepOpen.value || pointerInside.value || focusInside.value
+    return options.keepOpen.value || pointerNearBottom || pointerInside.value || focusInside.value
   }
 
   function scheduleHide(): void {
-    clearHideTimer()
-    if (!options.autoHide.value || holdsOpen()) return
+    if (!options.autoHide.value || holdsOpen() || hideTimer !== null || !revealed.value) return
     const delay = Math.max(0, options.hideDelayMs.value)
     hideTimer = setTimeout(() => {
       hideTimer = null
@@ -83,7 +83,12 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
 
   const pointerCoalescer = createFrameCoalescer<number>((pointerY) => {
     if (!options.autoHide.value) return
-    if (shouldRevealForPointer(pointerY, window.innerHeight, options.revealThresholdPx.value)) {
+    pointerNearBottom = shouldRevealForPointer(
+      pointerY,
+      window.innerHeight,
+      options.revealThresholdPx.value
+    )
+    if (pointerNearBottom) {
       reveal()
       return
     }
@@ -101,11 +106,15 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
   function onPointerLeaveDocument(): void {
     if (!options.autoHide.value) return
     pointerInside.value = false
+    pointerNearBottom = false
     scheduleHide()
   }
 
   function onWindowBlur(): void {
     if (!options.autoHide.value) return
+    pointerInside.value = false
+    pointerNearBottom = false
+    focusInside.value = false
     scheduleHide()
   }
 
@@ -129,6 +138,9 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
   watch(
     options.autoHide,
     (active) => {
+      pointerNearBottom = false
+      pointerInside.value = false
+      focusInside.value = false
       if (active) {
         startListening()
         // Start hidden so enabling the setting reads as "the bar tucked away",
@@ -169,9 +181,11 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
     scheduleHide()
   }
 
-  function onBarFocusIn(): void {
-    focusInside.value = true
-    if (options.autoHide.value) reveal()
+  function onBarFocusIn(event?: FocusEvent): void {
+    focusInside.value = event
+      ? (event.target as HTMLElement | null)?.matches(':focus-visible') === true
+      : true
+    if (options.autoHide.value && focusInside.value) reveal()
   }
 
   function onBarFocusOut(event: FocusEvent): void {

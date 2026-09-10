@@ -13,6 +13,7 @@ const scopedStyleFiles = [
   './equalizer/GraphicEqPanel.vue',
   './LocalDashboard.css',
   './player-bar/PlayerBar.css',
+  './player-bar/CompactPlayerBarVisualizer.vue',
   './PlayingMusic.vue',
   './SideMenu.vue',
   './StreamingHome.vue',

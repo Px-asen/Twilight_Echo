@@ -4729,6 +4729,10 @@ html[data-theme='dark']
   padding-top: var(--te-compact-visualizer-height, 138px);
   background: transparent;
   background-image: none;
+  pointer-events: none;
+  transition:
+    transform var(--te-motion-hover) var(--te-ease-soft),
+    opacity var(--te-motion-hover) var(--te-ease-soft);
 }
 
 /* Auto-hide removes the compact controls but keeps the lyrics-page visualizer
@@ -4736,19 +4740,17 @@ html[data-theme='dark']
    use this override, so it can still remove the visualizer altogether. */
 .player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
   .player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer {
-  transform: none;
+  transform: translateY(calc(100% - var(--te-compact-visualizer-height, 138px)));
   opacity: 1;
   pointer-events: none;
 }
 
-/* The retained visualizer is the only part of an auto-hidden compact bar that
-   remains visible. Collapse the former lyrics-page control deck around it so
-   its bottom edge is the window bottom instead of floating above the shell's
-   old 216px stage. The repeated classes out-specify the expanded-stage rule. */
-.player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer.player-bar-compact-visualizer {
-  height: var(--te-compact-visualizer-height, 138px);
-  padding-top: 0;
+.player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer
+  > :not(.compact-visualizer) {
+  pointer-events: auto;
+  transition:
+    opacity var(--te-motion-hover) var(--te-ease-soft),
+    visibility 0s;
 }
 
 .player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
@@ -4757,6 +4759,26 @@ html[data-theme='dark']
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+  transition:
+    opacity var(--te-motion-hover) var(--te-ease-soft),
+    visibility 0s var(--te-motion-hover);
+}
+
+html[data-te-motion='reduced']
+  .player-bar.player-bar-compact.player-bar-compact-visualizer
+  > :not(.compact-visualizer) {
+  transition:
+    opacity 120ms var(--te-ease-soft),
+    visibility 0s !important;
+}
+
+html[data-te-motion='reduced']
+  .player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
+  .player-bar.player-bar-compact.player-bar-compact-visualizer
+  > :not(.compact-visualizer) {
+  transition:
+    opacity 120ms var(--te-ease-soft),
+    visibility 0s 120ms !important;
 }
 
 /* Without the stage, compact is just the normal 72px transport strip. The
