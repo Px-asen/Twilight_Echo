@@ -1,6 +1,7 @@
 const { existsSync } = require('node:fs')
 const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
+const { assertWindowsExecutableIcon } = require('./verify-windows-app-branding.cjs')
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'win32') return
@@ -74,4 +75,5 @@ exports.default = async function afterPack(context) {
         .join('\n')
     )
   }
+  assertWindowsExecutableIcon(exePath, iconPath)
 }

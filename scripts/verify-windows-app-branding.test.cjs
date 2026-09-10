@@ -68,3 +68,40 @@ test('Windows metadata reader sends PowerShell a valid hashtable script', () => 
   assert.doesNotMatch(script, /@\{;/)
   assert.doesNotMatch(script, /;;/)
 })
+
+test('EXE icon verification rejects old resources and accepts every current ICO size', () => {
+  const { NtExecutable, NtExecutableResource, Resource, Data } = require('resedit')
+  const { assertWindowsExecutableIcon } = require('./verify-windows-app-branding.cjs')
+  const root = path.resolve(__dirname, '..')
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-icon-check-'))
+  try {
+    const executablePath = path.join(directory, 'fixture.exe')
+    const executable = NtExecutable.createEmpty(false, false)
+    const resources = NtExecutableResource.from(executable)
+    const iconPath = path.join(root, 'build', 'icon.ico')
+    const icons = Data.IconFile.from(fs.readFileSync(iconPath)).icons.map((item) => item.data)
+    Resource.IconGroupEntry.replaceIconsForResource(resources.entries, 1, 1033, icons)
+    resources.outputResource(executable)
+    fs.writeFileSync(executablePath, Buffer.from(executable.generate()))
+    assert.doesNotThrow(() => assertWindowsExecutableIcon(executablePath, iconPath))
+    Resource.IconGroupEntry.replaceIconsForResource(resources.entries, 1, 1033, icons.slice(0, 1))
+    resources.outputResource(executable)
+    fs.writeFileSync(executablePath, Buffer.from(executable.generate()))
+    assert.throws(() => assertWindowsExecutableIcon(executablePath, iconPath), /icon sizes differ/)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('installer refreshes existing shortcut icons without losing app identity', () => {
+  const root = path.resolve(__dirname, '..')
+  const builder = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8')
+  const hook = fs.readFileSync(path.join(root, 'scripts', 'installer.nsh'), 'utf8')
+  assert.match(builder, /include: scripts\/installer\.nsh/)
+  assert.match(hook, /app-icon-\$\{VERSION\}\.ico/)
+  for (const link of ['newStartMenuLink', 'newDesktopLink']) {
+    assert.ok(hook.includes('${if} ${FileExists} "$' + link + '"'))
+    assert.ok(hook.includes('WinShell::SetLnkAUMI "$' + link + '" "${APP_ID}"'))
+  }
+  assert.match(hook, /SHChangeNotify/)
+})

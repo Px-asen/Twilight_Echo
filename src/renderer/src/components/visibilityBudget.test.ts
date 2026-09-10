@@ -25,7 +25,7 @@ test('hidden documents pause iframe animation frames and QR polling', () => {
     iframe,
     /document\.addEventListener\('visibilitychange', \(\) =>\s*visibilityAnimationController\.onVisibilityChange\(\)\s*\)/
   )
-  assert.match(login, /if \(document\.hidden\) return/)
+  assert.match(login, /if \(document\.hidden \|\| checking\) return/)
   assert.match(
     login,
     /document\.addEventListener\('visibilitychange', onDocumentVisibilityChange\)/
