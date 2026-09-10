@@ -140,23 +140,26 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div v-if="isScanning" class="progress-section">
-              <div class="progress-info">
-                <span>正在扫描...</span>
-                <span>{{ progress.current }} / {{ progress.total }}</span>
-              </div>
-              <div class="progress-bar-bg">
-                <div
-                  class="progress-bar-fill"
-                  :style="{
-                    transform: `scaleX(${progress.total > 0 ? progress.current / progress.total : 0})`
-                  }"
-                ></div>
-              </div>
-            </div>
-
-            <div v-if="scanStatus === 'empty' && !isScanning" class="empty-result">
-              <span>未找到音乐文件。请确认文件夹中包含支持的音频格式，或添加其他文件夹。</span>
+            <div class="scan-status-slot">
+              <Transition name="scan-status">
+                <div v-if="isScanning" key="scanning" class="progress-section">
+                  <div class="progress-info">
+                    <span>正在扫描...</span>
+                    <span>{{ progress.current }} / {{ progress.total }}</span>
+                  </div>
+                  <div class="progress-bar-bg">
+                    <div
+                      class="progress-bar-fill"
+                      :style="{
+                        transform: `scaleX(${progress.total > 0 ? progress.current / progress.total : 0})`
+                      }"
+                    ></div>
+                  </div>
+                </div>
+                <div v-else-if="scanStatus === 'empty'" key="empty" class="empty-result">
+                  <span>未找到音乐文件。请确认文件夹中包含支持的音频格式，或添加其他文件夹。</span>
+                </div>
+              </Transition>
             </div>
           </div>
 
@@ -175,6 +178,34 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.scan-status-slot {
+  display: grid;
+}
+
+.scan-status-slot > div {
+  grid-area: 1 / 1;
+}
+
+.scan-status-enter-active,
+.scan-status-leave-active {
+  transition: opacity var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.scan-status-enter-from,
+.scan-status-leave-to {
+  opacity: 0;
+}
+
+html[data-te-motion='reduced'] .scan-status-enter-active,
+html[data-te-motion='reduced'] .scan-status-leave-active {
+  transition: opacity 120ms var(--te-ease-soft) !important;
+}
+
+html[data-te-motion='off'] .scan-status-enter-from,
+html[data-te-motion='off'] .scan-status-leave-to {
+  opacity: 1 !important;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

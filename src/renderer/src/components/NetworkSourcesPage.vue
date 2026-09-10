@@ -684,83 +684,85 @@ onMounted(() => {
         ><button type="button" class="text-button" @click="clearNetworkCache">清理缓存</button>
       </div>
 
-      <form v-if="showCreateForm" class="network-create-form" @submit.prevent="createProfile">
-        <div class="network-form-heading">
-          <span class="network-subheading">添加网络源</span>
-          <p>填写连接信息后保存并测试；凭据仅用于该来源连接。</p>
-        </div>
-        <div class="network-form-grid">
-          <label
-            >名称<input
-              v-model.trim="form.name"
-              type="text"
-              required
-              maxlength="64"
-              placeholder="我的 NAS"
-          /></label>
-          <label
-            >协议<select v-model="form.protocol">
-              <option value="webdav">WebDAV</option>
-              <option value="ftp">FTP</option>
-              <option value="ftps">FTPS（显式 TLS）</option>
-              <option value="sftp">SFTP</option>
-              <option value="scp">SCP（SFTP 传输）</option>
-              <option value="smb">SMB（系统挂载）</option>
-              <option value="dlna">DLNA（媒体服务器浏览）</option>
-              <option value="nfs">NFS（Linux，需 root）</option>
-            </select></label
-          >
-          <label
-            >地址<input
-              v-model.trim="form.host"
-              type="text"
-              required
-              maxlength="253"
-              placeholder="nas.local 或 192.168.1.10"
-          /></label>
-          <label
-            >端口（可选）<input
-              v-model.trim="form.port"
-              type="number"
-              min="1"
-              max="65535"
-              placeholder="默认 80/443"
-          /></label>
-          <label
-            >根路径<input v-model.trim="form.rootPath" type="text" required placeholder="/music"
-          /></label>
-          <label
-            >认证方式<select v-model="form.authKind">
-              <option value="anonymous">匿名</option>
-              <option value="password">用户名 + 密码</option>
-              <option value="privateKey">SSH 私钥</option>
-            </select></label
-          >
-          <label v-if="form.authKind === 'password'"
-            >用户名<input v-model.trim="form.username" type="text" autocomplete="username"
-          /></label>
-          <label v-if="form.authKind === 'password'"
-            >密码<input v-model="form.password" type="password" autocomplete="current-password"
-          /></label>
-          <label v-if="form.authKind === 'privateKey'"
-            >私钥路径<input
-              v-model.trim="form.keyPath"
-              type="text"
-              placeholder="C:\Users\me\.ssh\id_ed25519"
-          /></label>
-          <label v-if="form.authKind === 'privateKey'"
-            >私钥口令（可选，仅支持 ssh-agent / 无口令密钥）<input
-              v-model="form.passphrase"
-              type="password"
-              autocomplete="off"
-          /></label>
-        </div>
-        <div class="network-form-actions">
-          <button type="submit" class="brand-soft-button" :disabled="creating || loading">
-            <i class="pi pi-check"></i>{{ creating ? '保存中…' : '保存并测试' }}
-          </button>
-        </div>
-      </form>
+      <Transition name="network-form">
+        <form v-if="showCreateForm" class="network-create-form" @submit.prevent="createProfile">
+          <div class="network-form-heading">
+            <span class="network-subheading">添加网络源</span>
+            <p>填写连接信息后保存并测试；凭据仅用于该来源连接。</p>
+          </div>
+          <div class="network-form-grid">
+            <label
+              >名称<input
+                v-model.trim="form.name"
+                type="text"
+                required
+                maxlength="64"
+                placeholder="我的 NAS"
+            /></label>
+            <label
+              >协议<select v-model="form.protocol">
+                <option value="webdav">WebDAV</option>
+                <option value="ftp">FTP</option>
+                <option value="ftps">FTPS（显式 TLS）</option>
+                <option value="sftp">SFTP</option>
+                <option value="scp">SCP（SFTP 传输）</option>
+                <option value="smb">SMB（系统挂载）</option>
+                <option value="dlna">DLNA（媒体服务器浏览）</option>
+                <option value="nfs">NFS（Linux，需 root）</option>
+              </select></label
+            >
+            <label
+              >地址<input
+                v-model.trim="form.host"
+                type="text"
+                required
+                maxlength="253"
+                placeholder="nas.local 或 192.168.1.10"
+            /></label>
+            <label
+              >端口（可选）<input
+                v-model.trim="form.port"
+                type="number"
+                min="1"
+                max="65535"
+                placeholder="默认 80/443"
+            /></label>
+            <label
+              >根路径<input v-model.trim="form.rootPath" type="text" required placeholder="/music"
+            /></label>
+            <label
+              >认证方式<select v-model="form.authKind">
+                <option value="anonymous">匿名</option>
+                <option value="password">用户名 + 密码</option>
+                <option value="privateKey">SSH 私钥</option>
+              </select></label
+            >
+            <label v-if="form.authKind === 'password'"
+              >用户名<input v-model.trim="form.username" type="text" autocomplete="username"
+            /></label>
+            <label v-if="form.authKind === 'password'"
+              >密码<input v-model="form.password" type="password" autocomplete="current-password"
+            /></label>
+            <label v-if="form.authKind === 'privateKey'"
+              >私钥路径<input
+                v-model.trim="form.keyPath"
+                type="text"
+                placeholder="C:\Users\me\.ssh\id_ed25519"
+            /></label>
+            <label v-if="form.authKind === 'privateKey'"
+              >私钥口令（可选，仅支持 ssh-agent / 无口令密钥）<input
+                v-model="form.passphrase"
+                type="password"
+                autocomplete="off"
+            /></label>
+          </div>
+          <div class="network-form-actions">
+            <button type="submit" class="brand-soft-button" :disabled="creating || loading">
+              <i class="pi pi-check"></i>{{ creating ? '保存中…' : '保存并测试' }}
+            </button>
+          </div>
+        </form>
+      </Transition>
 
       <div v-if="loading" class="network-loading">加载中…</div>
       <div v-else-if="profiles.length > 0" class="network-profile-list">
@@ -801,6 +803,33 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.network-form-enter-active,
+.network-form-leave-active {
+  transition:
+    opacity var(--te-motion-hover) var(--te-ease-soft),
+    transform var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.network-form-enter-from,
+.network-form-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.network-form-leave-active {
+  pointer-events: none;
+}
+
+html[data-te-motion='reduced'] .network-create-form {
+  transform: none !important;
+  transition: opacity 120ms var(--te-ease-soft) !important;
+}
+
+html[data-te-motion='off'] .network-create-form {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
 .network-sources-page {
   box-sizing: border-box;
   width: 100%;
