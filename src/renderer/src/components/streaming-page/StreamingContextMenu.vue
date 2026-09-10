@@ -22,6 +22,7 @@ defineProps<{
 
 const emit = defineEmits<{
   play: []
+  playNext: []
   favorite: []
   like: []
   createPlaylist: []
@@ -57,6 +58,17 @@ const emit = defineEmits<{
       >
         <i class="pi pi-play"></i>
         <span>播放</span>
+      </div>
+      <div
+        class="menu-item"
+        role="menuitem"
+        tabindex="0"
+        data-te-interactive
+        @click="emit('playNext')"
+        @keydown.enter.prevent="emit('playNext')"
+        @keydown.space.prevent="emit('playNext')"
+      >
+        <i class="pi pi-step-forward"></i><span>下一首播放</span>
       </div>
       <div
         class="menu-item"
@@ -258,7 +270,7 @@ const emit = defineEmits<{
   position: relative;
   padding: 10px 12px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-800, #1e293b);
   cursor: pointer;
   transition:
@@ -283,7 +295,7 @@ const emit = defineEmits<{
 
 .streaming-context-menu .menu-item i {
   margin-right: 10px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: var(--te-neutral-500, #64748b);
 }
 
@@ -295,7 +307,7 @@ const emit = defineEmits<{
 .streaming-context-menu .submenu-icon {
   margin-left: auto;
   margin-right: 0 !important;
-  font-size: 10px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
   color: #94a3b8 !important;
 }
 

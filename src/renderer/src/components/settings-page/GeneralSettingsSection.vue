@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import DownloadSettingsFields from '@renderer/components/settings-page/DownloadSettingsFields.vue'
 import IntegrationsSettingsSection from './IntegrationsSettingsSection.vue'
 import BackupAndResetSettingsSection from './BackupAndResetSettingsSection.vue'
 import NetworkProxySettingsSection from './NetworkProxySettingsSection.vue'
@@ -151,6 +152,7 @@ const emit = defineEmits<{
             </button>
           </div>
         </div>
+        <DownloadSettingsFields />
         <hr />
         <div class="setting-item">
           <div class="setting-copy">
@@ -336,7 +338,10 @@ const emit = defineEmits<{
         <div class="setting-item">
           <div class="setting-copy">
             <strong>原生媒体控制 (SMTC)</strong>
-            <span>响应键盘多媒体按键，并在系统锁屏界面显示播放控制。</span>
+            <span
+              >响应键盘多媒体按键，在系统媒体面板及 FluentFlyout
+              等兼容工具中显示歌曲、封面和播放控制。</span
+            >
           </div>
           <span
             class="toggle-switch"

@@ -325,20 +325,20 @@ function progressLabel(task: NcmCloudTransferTask): string {
 }
 .cloud-kicker {
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 800;
   letter-spacing: 0.08em;
 }
 .cloud-header h2 {
   margin: 4px 0 5px;
   color: var(--te-neutral-900);
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
 }
 .cloud-header p,
 .queue-heading p {
   margin: 0;
   color: var(--te-neutral-500);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .cloud-header-actions,
 .transfer-actions,
@@ -362,7 +362,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
   min-height: 40px;
   padding: 0 16px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 750;
 }
 .cloud-button.primary {
@@ -401,7 +401,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .recent-transfers h3 {
   margin: 0 0 4px;
   color: var(--te-neutral-900);
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
 .transfer-row,
 .recent-transfer {
@@ -436,7 +436,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .recent-transfer strong {
   overflow: hidden;
   color: var(--te-neutral-900);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -444,7 +444,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .recent-transfer small,
 .progress-copy small {
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .progress-track {
   width: min(420px, 100%);
@@ -493,7 +493,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .cloud-state > i {
   margin-bottom: 14px;
   color: var(--te-primary-500);
-  font-size: 34px;
+  font-size: calc(var(--te-font-size-body, 14px) * 34 / 14);
 }
 .cloud-state strong {
   color: var(--te-neutral-900);
@@ -501,7 +501,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .cloud-state p {
   max-width: 520px;
   margin: 8px 0 18px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .error-state > i {
   color: #fb7185;
@@ -516,11 +516,11 @@ function progressLabel(task: NcmCloudTransferTask): string {
 }
 .song-toolbar strong {
   color: var(--te-neutral-900);
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 .song-toolbar span {
   color: var(--te-neutral-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .cloud-song-list {
   display: flex;
@@ -594,12 +594,12 @@ function progressLabel(task: NcmCloudTransferTask): string {
 }
 .song-main strong {
   color: var(--te-neutral-900);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 .song-main small,
 .song-meta small {
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .song-file {
   opacity: 0.72;

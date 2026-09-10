@@ -443,7 +443,7 @@ function emitPage(nextOffset: number): void {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   letter-spacing: 0.16em;
   color: var(--disc-ink-soft);
@@ -485,7 +485,7 @@ function emitPage(nextOffset: number): void {
 
 .disc-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--disc-ink-soft);
   font-variant-numeric: tabular-nums;
@@ -514,7 +514,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: transparent;
   color: var(--disc-ink-soft);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -541,7 +541,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--disc-card);
   color: var(--disc-ink-soft);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 750;
   cursor: pointer;
   transition:
@@ -582,7 +582,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--disc-card);
   color: color-mix(in srgb, var(--disc-ink) 82%, transparent);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -610,7 +610,7 @@ function emitPage(nextOffset: number): void {
 }
 
 .disc-chip-caret {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
 }
 
@@ -649,7 +649,7 @@ function emitPage(nextOffset: number): void {
   align-items: center;
   gap: 10px;
   color: var(--disc-ink-soft);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
 }
 
@@ -662,7 +662,7 @@ function emitPage(nextOffset: number): void {
 
 .disc-atlas-name {
   margin: 0;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 800;
   letter-spacing: 0.12em;
   color: var(--disc-ink-soft);
@@ -684,7 +684,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--te-hover-bg);
   color: color-mix(in srgb, var(--disc-ink) 78%, transparent);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -739,20 +739,20 @@ function emitPage(nextOffset: number): void {
     color-mix(in srgb, var(--te-accent-cyan) 14%, transparent)
   );
   color: var(--disc-accent);
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
 }
 
 .disc-state-title {
   margin: 0;
   font-family: var(--te-font-display);
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 800;
   color: var(--disc-ink);
 }
 
 .disc-state-hint {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--disc-ink-soft);
 }
@@ -768,7 +768,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--disc-ink);
   color: var(--disc-card);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 750;
   cursor: pointer;
   box-shadow: 0 14px 30px color-mix(in srgb, var(--disc-ink) 24%, transparent);
@@ -796,7 +796,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--disc-card);
   color: var(--disc-ink);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   cursor: pointer;
   transition: background var(--te-motion-hover);
@@ -833,11 +833,11 @@ function emitPage(nextOffset: number): void {
   }
 
   .disc-card-name {
-    font-size: 12.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   }
 
   .disc-card-meta {
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 }
 
@@ -848,17 +848,17 @@ function emitPage(nextOffset: number): void {
   }
 
   .disc-card-name {
-    font-size: 11.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   }
 
   .disc-card-meta {
-    font-size: 10.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   }
 
   .disc-card-plays {
     left: 6px;
     bottom: 6px;
-    font-size: 9.5px;
+    font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
     padding: 2px 7px;
   }
 
@@ -867,7 +867,7 @@ function emitPage(nextOffset: number): void {
     bottom: 6px;
     width: 28px;
     height: 28px;
-    font-size: 11px;
+    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   }
 }
 
@@ -926,7 +926,7 @@ function emitPage(nextOffset: number): void {
     color-mix(in srgb, var(--te-accent-cyan) 18%, var(--disc-card))
   );
   color: var(--disc-accent);
-  font-size: 40px;
+  font-size: calc(var(--te-font-size-body, 14px) * 40 / 14);
 }
 
 .disc-feature-scrim {
@@ -956,7 +956,7 @@ function emitPage(nextOffset: number): void {
   background: rgba(9, 11, 20, 0.44);
   backdrop-filter: blur(8px);
   color: rgba(255, 255, 255, 0.9);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 800;
   letter-spacing: 0.14em;
 }
@@ -987,7 +987,7 @@ function emitPage(nextOffset: number): void {
   gap: 14px;
   margin: 0;
   color: rgba(255, 255, 255, 0.78);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -1004,7 +1004,7 @@ function emitPage(nextOffset: number): void {
 }
 
 .disc-feature-meta-item .pi {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   opacity: 0.85;
 }
 
@@ -1020,7 +1020,7 @@ function emitPage(nextOffset: number): void {
   background: rgba(9, 11, 20, 0.4);
   backdrop-filter: blur(8px);
   color: #fff;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   opacity: 0;
   transform: translateY(6px);
   transition:
@@ -1095,7 +1095,7 @@ function emitPage(nextOffset: number): void {
     color-mix(in srgb, var(--te-accent-cyan) 12%, var(--disc-card))
   );
   color: var(--disc-accent);
-  font-size: 26px;
+  font-size: calc(var(--te-font-size-body, 14px) * 26 / 14);
 }
 
 .disc-card-plays {
@@ -1110,13 +1110,13 @@ function emitPage(nextOffset: number): void {
   background: rgba(9, 11, 20, 0.5);
   backdrop-filter: blur(6px);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
 
 .disc-card-plays .pi {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .disc-card-go {
@@ -1131,7 +1131,7 @@ function emitPage(nextOffset: number): void {
   background: rgba(9, 11, 20, 0.46);
   backdrop-filter: blur(6px);
   color: #fff;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   opacity: 0;
   transform: translateY(6px);
   transition:
@@ -1146,7 +1146,7 @@ function emitPage(nextOffset: number): void {
 
 .disc-card-name {
   margin: 8px 2px 0;
-  font-size: 13.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13.5 / 14);
   font-weight: 750;
   line-height: 1.4;
   color: var(--disc-ink);
@@ -1159,7 +1159,7 @@ function emitPage(nextOffset: number): void {
 
 .disc-card-meta {
   margin: 0 2px;
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   font-weight: 650;
   color: var(--disc-ink-soft);
   white-space: nowrap;
@@ -1237,7 +1237,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 50%;
   background: var(--disc-card);
   color: var(--disc-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   cursor: pointer;
   transition:
     background var(--te-motion-hover),
@@ -1261,7 +1261,7 @@ function emitPage(nextOffset: number): void {
   min-width: 118px;
   text-align: center;
   color: var(--disc-ink-soft);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -1282,7 +1282,7 @@ function emitPage(nextOffset: number): void {
   border-radius: 999px;
   background: var(--disc-card);
   color: var(--disc-ink);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 750;
   cursor: pointer;
   box-shadow: var(--disc-shadow);

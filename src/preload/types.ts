@@ -244,16 +244,8 @@ export interface AudioEngineServiceReadyEvent {
 }
 export type AudioEngineServiceReadyCallback = (event: AudioEngineServiceReadyEvent) => void
 
-export type PlayerShortcutAction =
-  | 'previous'
-  | 'next'
-  | 'playPause'
-  | 'play'
-  | 'pause'
-  | 'toggleDesktopLyrics'
-  | { action: 'seek'; positionSeconds: number }
-  | { action: 'setVolume'; volume: number }
-  | { action: 'jumpQueue'; index: number }
+import type { PlayerShortcutAction } from '../shared/playerShortcuts.ts'
+export type { PlayerShortcutAction } from '../shared/playerShortcuts.ts'
 export interface PlayerShortcutStatus {
   accelerator: string
   action: PlayerShortcutAction

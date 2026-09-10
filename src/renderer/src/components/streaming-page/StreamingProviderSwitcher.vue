@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
 
 .provider-switcher-trigger > .pi {
   color: var(--provider-color, var(--te-primary-500));
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
 }
 
 .provider-switcher-menu {
@@ -196,7 +196,7 @@ onBeforeUnmount(() => {
 .provider-switcher-option > .pi:first-child {
   flex-shrink: 0;
   color: var(--provider-color, var(--te-primary-500));
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .provider-switcher-option-name {
@@ -210,6 +210,6 @@ onBeforeUnmount(() => {
 .provider-switcher-option-check {
   flex-shrink: 0;
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 </style>

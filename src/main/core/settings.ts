@@ -1,3 +1,7 @@
+import {
+  DEFAULT_DOWNLOAD_PREFERENCES,
+  normalizeDownloadPreferences
+} from '../../shared/downloadPreferences.ts'
 import { app } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { release } from 'node:os'
@@ -106,6 +110,8 @@ export const DEFAULT_GLOBAL_SHORTCUT_BINDINGS: GlobalShortcutSettings = {
   previous: 'CommandOrControl+Alt+Left',
   next: 'CommandOrControl+Alt+Right',
   playPause: 'CommandOrControl+Alt+Space',
+  volumeUp: 'CommandOrControl+Alt+Up',
+  volumeDown: 'CommandOrControl+Alt+Down',
   toggleDesktopLyrics: 'CommandOrControl+Alt+D',
   toggleDesktopLyricsLock: 'CommandOrControl+Alt+L'
 }
@@ -147,6 +153,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
+  downloadPreferences: { ...DEFAULT_DOWNLOAD_PREFERENCES },
   downloadFolder: '',
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
@@ -364,6 +371,14 @@ export function normalizeShortcutAccelerator(value: unknown, fallback: string): 
 export function normalizeGlobalShortcutBindings(raw: unknown): GlobalShortcutSettings {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   return {
+    volumeUp: normalizeShortcutAccelerator(
+      value.volumeUp,
+      DEFAULT_GLOBAL_SHORTCUT_BINDINGS.volumeUp
+    ),
+    volumeDown: normalizeShortcutAccelerator(
+      value.volumeDown,
+      DEFAULT_GLOBAL_SHORTCUT_BINDINGS.volumeDown
+    ),
     previous: normalizeShortcutAccelerator(
       value.previous,
       DEFAULT_GLOBAL_SHORTCUT_BINDINGS.previous
@@ -720,6 +735,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     lyricsAppearance: normalizeLyricsAppearance(settings.lyricsAppearance, rawSettings),
     lyricsPresets: normalizeLyricsPresetConfig(settings.lyricsPresets),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
+    downloadPreferences: normalizeDownloadPreferences(settings.downloadPreferences),
     downloadFolder:
       typeof settings.downloadFolder === 'string' && settings.downloadFolder.trim()
         ? resolve(settings.downloadFolder.trim())

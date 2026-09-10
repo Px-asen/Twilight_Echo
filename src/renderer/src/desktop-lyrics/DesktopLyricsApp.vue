@@ -118,6 +118,7 @@ function clearActiveLineTimer(): void {
 }
 
 function scheduleToolbarShow(): void {
+  if (settings.value.placement === 'taskbar') return
   clearToolbarTimer()
   if (!hovering.value) return
   toolbarTimer = setTimeout(() => {
@@ -464,6 +465,7 @@ onBeforeUnmount(() => {
     ref="rootElement"
     class="dl-root"
     :class="{
+      'is-taskbar': settings.placement === 'taskbar',
       'is-hovering': hovering,
       'is-dragging': dragging,
       'is-hidden': pausedHidden,

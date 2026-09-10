@@ -1,6 +1,12 @@
+import { prepareDownloadedMetadata, saveDownloadedLyrics } from './downloadMetadata.ts'
+import {
+  normalizeDownloadPreferences,
+  downloadTrackName,
+  type DownloadPreferences
+} from '../../shared/downloadPreferences.ts'
 import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { access, mkdir, rename, rm } from 'node:fs/promises'
+import { createWriteStream, constants } from 'node:fs'
+import { access, copyFile, mkdir, rm, stat } from 'node:fs/promises'
 import { basename, extname, join, parse } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
@@ -68,6 +74,7 @@ interface RemoteDownloadFile {
 }
 
 interface ProviderDownloadManagerOptions {
+  getPreferences?: () => DownloadPreferences
   pluginManager: TwilightPluginManager
   getLibraryFolders: () => string[]
   /**
@@ -223,10 +230,12 @@ export class ProviderDownloadManager {
         task.providerJobId
       ])
     )
+    const preferences = normalizeDownloadPreferences(this.options.getPreferences?.())
     const targetPath = await availableTargetPath(
       targetRoot,
       file.fileName || remote.fileName,
-      task.track
+      task.track,
+      preferences
     )
     assertWithinRoot(targetRoot, targetPath)
     const partPath = `${targetPath}.${task.id}.part`
@@ -279,8 +288,25 @@ export class ProviderDownloadManager {
       if (expectedSize != null && received !== expectedSize) {
         throw new Error(`下载文件大小不匹配：预期 ${expectedSize} 字节，实际 ${received} 字节`)
       }
+      const metadata = await prepareDownloadedMetadata({
+        partPath,
+        targetPath,
+        track: task.track,
+        preferences,
+        signal,
+        getLyrics: () =>
+          this.options.pluginManager.callProvider(task.providerId, 'getLyrics', [task.track])
+      })
+      signal.throwIfAborted()
       await flushFileToDisk(partPath)
-      await rename(partPath, targetPath)
+      await copyFile(partPath, targetPath, constants.COPYFILE_EXCL)
+      await rm(partPath, { force: true })
+      const lyricWarning = await saveDownloadedLyrics(targetPath, metadata.lyrics)
+      this.patch(taskId, {
+        actualQuality: metadata.actualQuality ?? task.actualQuality,
+        qualityVerified: metadata.actualQuality !== null,
+        warning: [metadata.warning, lyricWarning].filter(Boolean).join('；') || null
+      })
       if (await this.isInsideAuthorizedLibrary(targetPath)) {
         this.options
           .libraryIndexCoordinator()
@@ -289,7 +315,7 @@ export class ProviderDownloadManager {
       this.patch(taskId, {
         status: 'completed',
         progress: 1,
-        fileSize: received,
+        fileSize: (await stat(targetPath)).size,
         targetPath,
         error: null
       })
@@ -445,15 +471,19 @@ function clampProgress(value: number): number {
 async function availableTargetPath(
   root: string,
   remoteFileName: string | null | undefined,
-  track: ProviderDownloadCreateInput['track']
+  track: ProviderDownloadCreateInput['track'],
+  preferences: DownloadPreferences
 ): Promise<string> {
   const remoteBase = remoteFileName ? basename(remoteFileName) : ''
   const extension = AUDIO_EXTENSIONS.has(extname(remoteBase).toLowerCase())
     ? extname(remoteBase).toLowerCase()
     : '.m4a'
-  const preferred = remoteBase
-    ? `${sanitizeSegment(parse(remoteBase).name)}${extension}`
-    : `${sanitizeSegment(`${track.artist} - ${track.title}`)}${extension}`
+  const configuredName = downloadTrackName(track, preferences.naming)
+  const preferred = configuredName
+    ? `${sanitizeSegment(configuredName)}${extension}`
+    : remoteBase
+      ? `${sanitizeSegment(parse(remoteBase).name)}${extension}`
+      : `${sanitizeSegment(`${track.artist} - ${track.title}`)}${extension}`
   for (let index = 0; index < 10_000; index += 1) {
     const suffix = index === 0 ? '' : ` (${index})`
     const candidate = join(root, `${parse(preferred).name}${suffix}${extension}`)

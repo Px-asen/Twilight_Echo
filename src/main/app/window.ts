@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell, screen } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
@@ -155,13 +155,10 @@ export function createWindow(): void {
   }
 
   runtime.mainWindow = new BrowserWindow({
-    width: 1495,
-    height: 883,
-    // Keep the responsive playback layout usable when the frameless window is resized.
-    // These bounds were dropped by the 1.1.4 merge and allow the content columns
-    // to collapse into an unusable state on the next manual resize.
-    minWidth: 1298,
-    minHeight: 692,
+    width: Math.min(1495, screen.getPrimaryDisplay().workAreaSize.width),
+    height: Math.min(883, screen.getPrimaryDisplay().workAreaSize.height),
+    minWidth: Math.min(760, screen.getPrimaryDisplay().workAreaSize.width),
+    minHeight: Math.min(692, screen.getPrimaryDisplay().workAreaSize.height),
     show: false,
     frame: false,
     transparent: transparent && !acrylic,

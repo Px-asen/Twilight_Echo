@@ -170,7 +170,7 @@ html[data-te-motion='off'] .create-aggregate-overlay {
 
 .create-aggregate-title {
   margin: 0 0 16px;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   font-weight: 700;
 }
 
@@ -180,7 +180,7 @@ html[data-te-motion='off'] .create-aggregate-overlay {
 
 .create-aggregate-error {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   color: var(--te-danger-soft-fg);
 }
@@ -200,7 +200,7 @@ html[data-te-motion='off'] .create-aggregate-overlay {
   background: transparent;
   color: var(--te-neutral-900);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:

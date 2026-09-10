@@ -102,6 +102,7 @@ export function setupPluginIpc(): void {
   runtime.providerDownloadManager = new ProviderDownloadManager({
     pluginManager: runtime.pluginManager,
     getLibraryFolders: () => runtime.appSettings.libraryFolders,
+    getPreferences: () => runtime.appSettings.downloadPreferences,
     resolveDownloadRoot: () => resolveConfiguredDownloadRoot(runtime.appSettings.downloadFolder),
     libraryIndexCoordinator: () => runtime.localLibraryIndexCoordinator,
     onChanged: (tasks) => {

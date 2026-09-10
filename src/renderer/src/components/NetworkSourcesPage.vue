@@ -871,14 +871,14 @@ html[data-te-motion='off'] .network-create-form {
 .network-empty p {
   margin: 5px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.55;
 }
 .network-kicker,
 .network-subheading {
   display: block;
   color: var(--te-primary-500, var(--brand-600));
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 800;
   letter-spacing: 0.12em;
 }
@@ -908,7 +908,7 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
 }
 .network-view-toggle button.active {
@@ -922,7 +922,7 @@ html[data-te-motion='off'] .network-create-form {
   margin-bottom: 14px;
   border-radius: 12px;
   padding: 10px 13px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 650;
 }
 .network-inline-error {
@@ -968,7 +968,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-browser-context h2,
 .network-section-heading h2 {
   margin-top: 5px;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
 }
 .network-breadcrumbs,
 .network-bookmarks {
@@ -992,7 +992,7 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 650;
 }
 .network-crumb:hover,
@@ -1013,7 +1013,7 @@ html[data-te-motion='off'] .network-create-form {
   white-space: nowrap;
 }
 .network-bookmark-chip i {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 .network-directory-actions {
   align-items: flex-end;
@@ -1030,7 +1030,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-browsing {
   margin: -8px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .network-entry-surface {
   border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.09));
@@ -1085,7 +1085,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-entry-meta {
   overflow: hidden;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1103,7 +1103,7 @@ html[data-te-motion='off'] .network-create-form {
   color: inherit;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .pill-action:hover {
   border-color: color-mix(in srgb, var(--te-primary-500) 36%, transparent);
@@ -1147,7 +1147,7 @@ html[data-te-motion='off'] .network-create-form {
   padding: 0 12px;
   background: color-mix(in srgb, var(--te-card-bg, #fff) 64%, transparent);
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .network-cache-row span {
   display: inline-flex;
@@ -1161,7 +1161,7 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
 }
 .text-button:hover {
@@ -1193,7 +1193,7 @@ html[data-te-motion='off'] .network-create-form {
   flex-direction: column;
   gap: 6px;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
 }
 .network-form-grid input,
@@ -1266,7 +1266,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-profile-info small {
   overflow: hidden;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1275,7 +1275,7 @@ html[data-te-motion='off'] .network-create-form {
   padding: 2px 6px;
   background: color-mix(in srgb, var(--te-primary-500) 9%, transparent);
   color: var(--te-primary-500, var(--brand-600));
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -1294,7 +1294,7 @@ html[data-te-motion='off'] .network-create-form {
 }
 .network-empty h3 {
   color: inherit;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
 .network-empty p {
   max-width: 430px;
@@ -1308,7 +1308,7 @@ html[data-te-motion='off'] .network-create-form {
   border-radius: 13px;
   background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--te-primary-500, var(--brand-600));
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
 }
 .network-profiles-empty {
   min-height: 260px;
@@ -1366,7 +1366,7 @@ html[data-te-motion='off'] .network-create-form {
 }
 @media (max-width: 460px) {
   .network-heading-copy h1 {
-    font-size: 25px;
+    font-size: calc(var(--te-font-size-body, 14px) * 25 / 14);
   }
   .network-view-toggle {
     width: 100%;

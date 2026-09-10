@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useHoldReorder } from '@renderer/composables/useHoldReorder'
+import { usePlaylistLibraryView } from '@renderer/components/streaming-page/usePlaylistLibraryView'
 import { useEscapeToClose, useFocusTrap } from '@renderer/app/useDismissLayer'
 import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
 import {
@@ -34,6 +36,28 @@ const props = defineProps<{
   availableProviders?: ProviderOption[]
   activeProvider?: string
 }>()
+
+const {
+  category: playlistCategory,
+  limit: playlistLimit,
+  storageError: playlistOrderError,
+  filtered: filteredPlaylists,
+  visible: visiblePlaylists,
+  counts: playlistCounts,
+  move: movePlaylist,
+  step: stepPlaylist
+} = usePlaylistLibraryView(
+  () => props.userPlaylistEntries,
+  () =>
+    `${props.activeProvider ?? props.providerLabel ?? 'ncm'}:${props.profile?.userId ?? 'guest'}`,
+  () => new Set((props.pinnedPlaylistIds ?? []).map(String))
+)
+
+const playlistReorder = useHoldReorder(movePlaylist)
+watch(
+  () => [props.activeProvider, props.profile?.userId, playlistCategory.value],
+  playlistReorder.cancel
+)
 
 const emit = defineEmits<{
   openUserList: [type: 'follows' | 'followers']
@@ -111,6 +135,11 @@ function isPlaylistPinning(playlist: MediaProviderPlaylistSummary): boolean {
 
 function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylistSummary): void {
   if (event.target !== event.currentTarget) return
+  if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+    event.preventDefault()
+    stepPlaylist(String(playlist.id), event.key === 'ArrowUp' ? -1 : 1)
+    return
+  }
   if (event.key !== 'Enter' && event.key !== ' ') return
   event.preventDefault()
   emit('openPlaylist', playlist)
@@ -313,7 +342,7 @@ useFocusTrap(menuElement, menuOpen)
     <section class="playlist-section">
       <div class="section-header">
         <div>
-          <h2>我的收藏夹</h2>
+          <h2>我的歌单</h2>
           <p>{{ userPlaylistEntries.length }} 个在线列表</p>
         </div>
         <button
@@ -328,7 +357,28 @@ useFocusTrap(menuElement, menuOpen)
         </button>
       </div>
 
-      <div v-if="libraryLoaded && userPlaylistEntries.length === 0" class="empty-state">
+      <div class="playlist-organization">
+        <div class="playlist-filters" role="group" aria-label="歌单分类">
+          <button
+            v-for="tab in [
+              { id: 'all', label: '全部' },
+              { id: 'owned', label: '我创建的' },
+              { id: 'saved', label: '我收藏的' }
+            ] as const"
+            :key="tab.id"
+            type="button"
+            :aria-pressed="playlistCategory === tab.id"
+            @click="playlistCategory = tab.id"
+          >
+            {{ tab.label }} <span>{{ playlistCounts[tab.id] }}</span>
+          </button>
+        </div>
+      </div>
+      <p class="playlist-order-hint">长按歌单拖动排序；置顶优先。键盘可用 Alt + ↑ / ↓ 调整。</p>
+      <p v-if="playlistOrderError" role="status" class="playlist-order-hint">
+        {{ playlistOrderError }}
+      </p>
+      <div v-if="libraryLoaded && filteredPlaylists.length === 0" class="empty-state">
         <span class="empty-icon">
           <i class="pi pi-list"></i>
         </span>
@@ -342,11 +392,20 @@ useFocusTrap(menuElement, menuOpen)
         </p>
       </div>
 
-      <div v-else class="playlist-grid">
+      <div v-else class="playlist-grid" data-reorder-group @click.capture="playlistReorder.click">
         <article
-          v-for="playlist in userPlaylistEntries"
+          v-for="playlist in visiblePlaylists"
           :key="playlist.id"
           class="playlist-item"
+          :class="{
+            'is-dragging': playlistReorder.active.value === String(playlist.id),
+            'is-drop-target':
+              playlistReorder.over.value === String(playlist.id) &&
+              playlistReorder.active.value !== String(playlist.id)
+          }"
+          :data-reorder-id="String(playlist.id)"
+          @pointerdown="playlistReorder.start($event, String(playlist.id))"
+          @dragstart.prevent
           role="button"
           tabindex="0"
           @click="emit('openPlaylist', playlist)"
@@ -406,6 +465,14 @@ useFocusTrap(menuElement, menuOpen)
           </div>
         </article>
       </div>
+      <button
+        v-if="visiblePlaylists.length < filteredPlaylists.length"
+        type="button"
+        class="playlist-load-more"
+        @click="playlistLimit += 48"
+      >
+        显示更多歌单 · 还有 {{ filteredPlaylists.length - visiblePlaylists.length }} 个
+      </button>
     </section>
   </div>
   <Teleport to="body">
@@ -436,6 +503,71 @@ useFocusTrap(menuElement, menuOpen)
 </template>
 
 <style scoped>
+.playlist-organization {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0;
+}
+.playlist-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border);
+  border-radius: 12px;
+}
+.playlist-filters button,
+.playlist-load-more {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--te-neutral-500);
+  font: inherit;
+  cursor: pointer;
+}
+.playlist-filters button[aria-pressed='true'] {
+  background: rgba(var(--te-primary-rgb), 0.12);
+  color: var(--te-primary-500);
+}
+.playlist-filters span {
+  margin-left: 6px;
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+}
+.playlist-order-hint {
+  color: var(--te-neutral-500);
+  font-size: 0.85em;
+  margin-bottom: 16px;
+}
+.playlist-item.is-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+  outline: 2px solid var(--te-primary-500);
+}
+.playlist-item.is-drop-target {
+  box-shadow: inset 0 3px var(--te-primary-500);
+  background: var(--te-hover-bg);
+}
+.playlist-item[data-reorder-id] {
+  user-select: none;
+  touch-action: pan-y;
+}
+.playlist-load-more {
+  border: 1px solid var(--te-card-border);
+  display: flex;
+  margin: 24px auto 0;
+}
+.playlist-filters button:focus-visible,
+.playlist-load-more:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
+}
+
 .library-view {
   min-height: 100%;
   padding-bottom: 40px;
@@ -516,7 +648,7 @@ useFocusTrap(menuElement, menuOpen)
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 32px;
+  font-size: calc(var(--te-font-size-body, 14px) * 2.28571);
 }
 .profile-avatar-placeholder {
   color: #c2703d;
@@ -528,7 +660,7 @@ useFocusTrap(menuElement, menuOpen)
   min-width: 0;
 }
 .profile-info h3 {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   color: var(--te-neutral-500, #64748b);
   font-weight: 600;
   margin: 0 0 4px 0;
@@ -559,7 +691,7 @@ useFocusTrap(menuElement, menuOpen)
   border: 1px solid rgba(15, 23, 42, 0.1);
   background: var(--te-subtle-bg);
   color: var(--te-neutral-700, #334155);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -574,7 +706,7 @@ useFocusTrap(menuElement, menuOpen)
   color: var(--te-primary-500, #6366f1);
 }
 .provider-switch-btn i:first-child {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
 }
 .provider-switch-name {
   max-width: 120px;
@@ -583,7 +715,7 @@ useFocusTrap(menuElement, menuOpen)
   white-space: nowrap;
 }
 .provider-switch-caret {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.71429);
   transition: transform 0.2s;
 }
 .provider-switch-btn.active .provider-switch-caret {
@@ -612,7 +744,7 @@ useFocusTrap(menuElement, menuOpen)
   background: transparent;
   border-radius: 10px;
   color: var(--te-neutral-700, #334155);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -632,13 +764,13 @@ useFocusTrap(menuElement, menuOpen)
   min-width: 0;
 }
 .provider-menu-check {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
 }
 .provider-menu-health {
   display: block;
   margin-top: 2px;
   color: var(--te-neutral-500, #64748b);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.78571);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -653,7 +785,7 @@ useFocusTrap(menuElement, menuOpen)
   }
 }
 .profile-info h1 {
-  font-size: 28px;
+  font-size: calc(var(--te-font-size-body, 14px) * 2);
   font-weight: 800;
   color: #2a2118;
   margin: 0 0 4px 0;
@@ -663,7 +795,7 @@ useFocusTrap(menuElement, menuOpen)
   text-overflow: ellipsis;
 }
 .profile-info p {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   color: #a08a72;
   margin: 0 0 16px 0;
   white-space: nowrap;
@@ -680,7 +812,7 @@ useFocusTrap(menuElement, menuOpen)
   padding: 7px 16px;
   border-radius: 12px;
   border: 1px solid rgba(194, 112, 61, 0.1);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   font-weight: 700;
   color: #2a2118;
   display: flex;
@@ -731,21 +863,21 @@ useFocusTrap(menuElement, menuOpen)
   display: inline-block;
   background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 6px;
   margin-bottom: 12px;
 }
 .favorites-info h2 {
-  font-size: 26px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.85714);
   font-weight: 800;
   color: var(--te-neutral-900, #1e293b);
   margin: 0 0 6px 0;
   letter-spacing: -0.5px;
 }
 .favorites-info p {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   color: var(--te-neutral-500, #64748b);
   font-weight: 500;
   margin: 0 0 24px 0;
@@ -757,7 +889,7 @@ useFocusTrap(menuElement, menuOpen)
   border: none;
   padding: 12px 32px;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -793,7 +925,7 @@ useFocusTrap(menuElement, menuOpen)
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 40px;
+  font-size: calc(var(--te-font-size-body, 14px) * 40 / 14);
 }
 .liked-card-cover-placeholder {
   color: var(--te-favorite-500, #ef4444);
@@ -872,14 +1004,14 @@ useFocusTrap(menuElement, menuOpen)
 
 .feature-info h3 {
   overflow-wrap: anywhere;
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.42857);
   font-weight: 800;
   color: var(--te-neutral-900, #1e293b);
   margin: 0 0 4px 0;
 }
 .feature-info p {
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   color: var(--te-neutral-500, #64748b);
   font-weight: 500;
   margin: 0;
@@ -898,7 +1030,7 @@ useFocusTrap(menuElement, menuOpen)
     transform 0.3s var(--te-ease-soft),
     color 0.3s var(--te-ease-soft);
   color: var(--te-neutral-500, #64748b);
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
 }
 
 .feature-card:hover .enter-btn {
@@ -931,7 +1063,7 @@ useFocusTrap(menuElement, menuOpen)
   color: var(--te-primary-600, #4f46e5);
   border-radius: 999px;
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -980,14 +1112,14 @@ useFocusTrap(menuElement, menuOpen)
 }
 
 .section-header h2 {
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.57143);
   font-weight: 800;
   color: var(--te-neutral-900, #1e293b);
   margin: 0 0 4px 0;
 }
 
 .section-header p {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1);
   color: var(--te-neutral-500, #64748b);
   font-weight: 500;
   margin: 0;
@@ -1011,11 +1143,11 @@ useFocusTrap(menuElement, menuOpen)
   }
 
   .profile-info h1 {
-    font-size: 24px;
+    font-size: calc(var(--te-font-size-body, 14px) * 1.71429);
   }
 
   .favorites-info h2 {
-    font-size: 22px;
+    font-size: calc(var(--te-font-size-body, 14px) * 1.57143);
   }
 }
 
@@ -1053,7 +1185,7 @@ useFocusTrap(menuElement, menuOpen)
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 30px;
+  font-size: calc(var(--te-font-size-body, 14px) * 2.14286);
 }
 .playlist-cover-placeholder {
   background: #f3f0ff;
@@ -1070,7 +1202,7 @@ useFocusTrap(menuElement, menuOpen)
 }
 
 .playlist-item-title {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
   font-weight: 700;
   color: var(--te-neutral-900, #1e293b);
   margin: 0 0 4px 0;
@@ -1080,7 +1212,7 @@ useFocusTrap(menuElement, menuOpen)
 }
 
 .playlist-item-count {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   color: var(--te-neutral-500, #64748b);
   font-weight: 500;
 }
@@ -1160,19 +1292,19 @@ useFocusTrap(menuElement, menuOpen)
   border-radius: 12px;
   color: var(--te-primary-500, #6366f1);
   background: #f3f0ff;
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.42857);
 }
 
 .empty-text {
   margin: 14px 0 0;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
   font-weight: 700;
   color: var(--te-neutral-900, #1e293b);
 }
 
 .empty-hint {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
   font-weight: 500;
   color: var(--te-neutral-500, #64748b);
 }
@@ -1375,11 +1507,11 @@ useFocusTrap(menuElement, menuOpen)
   }
 
   .playlist-item-title {
-    font-size: 14px;
+    font-size: calc(var(--te-font-size-body, 14px) * 1);
   }
 
   .playlist-item-count {
-    font-size: 12px;
+    font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   }
 
   .playlist-item-cover {

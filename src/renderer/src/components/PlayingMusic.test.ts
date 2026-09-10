@@ -520,7 +520,7 @@ test('phase four layouts only rearrange the existing cover and lyrics instances'
   assert.doesNotMatch(source, /usePlaybackQueueStore/)
 })
 
-test('player visibility selectors target stable controls and remove hidden buttons from layout', () => {
+test('player bar keeps stable controls independent of theme visibility rules', () => {
   const component = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
   const style = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
 
@@ -533,10 +533,7 @@ test('player visibility selectors target stable controls and remove hidden butto
   ]) {
     assert.match(component, new RegExp(className))
   }
-  assert.match(style, /data-te-visible-previous-button='false'[\s\S]*display: none/)
-  assert.match(style, /data-te-visible-next-button='false'/)
-  assert.match(style, /data-te-visible-player-track-menu='false'/)
-  assert.match(style, /data-te-visible-player-waveform='false'/)
+  assert.doesNotMatch(style, /data-te-visible-(?:player|previous-button|next-button)/)
 })
 
 test('player volume control opens the volume drawer without toggling mute', () => {

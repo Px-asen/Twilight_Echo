@@ -15,9 +15,12 @@ const streamingCss = readFileSync(
 )
 
 test('local sidebar opening follows the streaming navigation timing', () => {
-  assert.match(sideMenu, /transform 0\.32s var\(--te-ease-soft\),\s*box-shadow 0\.32s;/)
+  assert.match(
+    sideMenu,
+    /transform var\(--te-motion-panel\) var\(--te-ease-soft\),\s*box-shadow var\(--te-motion-panel\);/
+  )
   assert.doesNotMatch(sideMenu, /side-menu-item-in/)
-  assert.match(app, /transition: padding-left 0\.32s var\(--te-ease-soft\);/)
+  assert.match(app, /transition: padding-left var\(--te-motion-panel\) var\(--te-ease-soft\);/)
   assert.match(
     app,
     /transform 0\.48s cubic-bezier\(0\.16, 1, 0\.3, 1\),\s*filter 0\.42s cubic-bezier\(0\.16, 1, 0\.3, 1\)/
@@ -28,7 +31,7 @@ test('local sidebar opening follows the streaming navigation timing', () => {
     /transform 0\.3s cubic-bezier\(0\.4, 0, 0\.2, 1\),\s*filter 0\.28s cubic-bezier\(0\.4, 0, 0\.2, 1\)/
   )
   assert.match(app, /translate3d\(0, -40px, 0\) scale\(0\.99\)/)
-  assert.match(playerBarCss, /transition: left 0\.32s var\(--te-ease-soft\);/)
+  assert.match(playerBarCss, /transition: left var\(--te-motion-panel\) var\(--te-ease-soft\);/)
 })
 
 /**
@@ -51,12 +54,12 @@ test('side-menu clearance animates the inset, never a transform', () => {
   for (const [name, source, property] of surfaces) {
     assert.match(
       source,
-      new RegExp(`transition: ${property} 0\\.32s var\\(--te-ease-soft\\);`),
+      new RegExp(`transition: ${property} var\\(--te-motion-panel\\) var\\(--te-ease-soft\\);`),
       `${name} must animate ${property} to keep its right edge pinned`
     )
     assert.doesNotMatch(
       source,
-      /transition: transform 0\.32s var\(--te-ease-soft\);/,
+      /transition: transform var\(--te-motion-panel\) var\(--te-ease-soft\);/,
       `${name} must not animate transform for the clearance — it moves the right edge too`
     )
   }

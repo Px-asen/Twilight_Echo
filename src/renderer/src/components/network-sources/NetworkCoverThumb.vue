@@ -36,6 +36,6 @@ onMounted(async () => {
   border-radius: 6px;
   background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 </style>

@@ -1022,7 +1022,7 @@ async function toggleLyricVisibility(
 }
 
 .lyric-manager-heading h2 {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 650;
 }
 
@@ -1031,7 +1031,7 @@ async function toggleLyricVisibility(
   max-width: 280px;
   overflow: hidden;
   color: var(--d-muted, rgba(255, 255, 255, 0.5));
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1042,7 +1042,7 @@ async function toggleLyricVisibility(
   border-radius: 999px;
   padding: 3px 7px;
   color: var(--d-muted, rgba(255, 255, 255, 0.5));
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .lyric-status.pending {
@@ -1066,7 +1066,7 @@ async function toggleLyricVisibility(
   gap: 5px;
   min-width: 0;
   color: var(--d-muted, rgba(255, 255, 255, 0.58));
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .lyric-manager select,
@@ -1106,7 +1106,7 @@ async function toggleLyricVisibility(
   background: var(--d-well, rgba(0, 0, 0, 0.2));
   color: var(--d-ink, rgba(255, 255, 255, 0.86));
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   cursor: pointer;
 }
 
@@ -1165,7 +1165,7 @@ async function toggleLyricVisibility(
   overflow: hidden;
   max-width: 100%;
   color: var(--d-muted, rgba(255, 255, 255, 0.5));
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1230,14 +1230,14 @@ async function toggleLyricVisibility(
 }
 
 .lyric-disclosure-title {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 650;
 }
 
 .lyric-disclosure-meta {
   flex: 0 0 auto;
   color: var(--d-muted);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .lyric-disclosure-meta i {
@@ -1281,13 +1281,13 @@ async function toggleLyricVisibility(
 
 .lyric-voice-heading strong {
   color: var(--d-ink);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 650;
 }
 
 .lyric-voice-heading span {
   color: var(--d-muted);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .lyric-voice-heading button,
@@ -1307,7 +1307,7 @@ async function toggleLyricVisibility(
   gap: 5px;
   min-width: 0;
   color: var(--d-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .lyric-voice-lane-field .lyric-segment-control button {
@@ -1330,7 +1330,7 @@ async function toggleLyricVisibility(
   padding: 3px 7px;
   border-bottom: 1px solid var(--d-line);
   color: var(--d-muted);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   cursor: pointer;
 }
 
@@ -1385,12 +1385,12 @@ async function toggleLyricVisibility(
 
 .lyric-manager-error {
   color: #ef8f86;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .lyric-manager-notice {
   color: #7bdca0;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .lyric-manager-actions {

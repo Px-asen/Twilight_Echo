@@ -1370,7 +1370,7 @@ onBeforeUnmount(() => {
 .plugin-settings-notice {
   margin: 0;
   color: var(--te-settings-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.6;
 }
 
@@ -1383,7 +1383,7 @@ onBeforeUnmount(() => {
 
 .plugin-settings-field > span {
   color: var(--te-settings-text);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
 }
 

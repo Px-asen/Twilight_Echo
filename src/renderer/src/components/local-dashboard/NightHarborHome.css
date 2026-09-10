@@ -55,7 +55,7 @@
   margin: 0;
   color: var(--nh-muted);
   font-family: 'Space Grotesk', var(--te-font-sans);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 500;
   letter-spacing: 0.18em;
   line-height: 1.5;
@@ -73,13 +73,6 @@
   color: var(--nh-accent);
 }
 
-.nh-greeting {
-  margin: 0;
-  color: var(--nh-muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
 .nh-library-link {
   display: inline-flex;
   flex-shrink: 0;
@@ -90,12 +83,12 @@
   border: 0;
   background: transparent;
   color: var(--nh-muted);
-  font-size: 11px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14) !important;
 }
 
 .nh-library-link i {
   color: var(--nh-ink);
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
 }
 
 .nh-stage {
@@ -127,7 +120,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 21px 26px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .nh-deck-head > span:first-child {
@@ -152,7 +145,7 @@
 .nh-deck-edition {
   color: var(--nh-muted);
   font-family: 'Space Grotesk', var(--te-font-sans);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   letter-spacing: 0.15em;
 }
 
@@ -230,7 +223,7 @@
 }
 
 .nh-vinyl-label i {
-  font-size: 19px;
+  font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
 }
 
 .nh-vinyl-label > span {
@@ -306,7 +299,7 @@
   overflow: hidden;
   margin: 13px 0 8px;
   color: var(--te-neutral-700);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -317,7 +310,7 @@
   gap: 6px;
   margin: 0;
   color: var(--nh-muted);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .nh-album-name > span {
@@ -345,12 +338,12 @@
   border-radius: 6px;
   background: var(--nh-accent);
   color: var(--nh-paper);
-  font-size: 11px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14) !important;
   font-weight: 600 !important;
 }
 
 .nh-play i {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
 
 .nh-format {
@@ -371,7 +364,7 @@
   margin: 0 26px;
   border-top: 1px solid var(--nh-line);
   color: var(--nh-muted);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-variant-numeric: tabular-nums;
 }
 
@@ -458,12 +451,12 @@
   width: 100%;
   margin-top: 9px;
   color: var(--nh-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .nh-library-total i {
   color: var(--nh-accent);
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
 }
 
 .nh-library-details {
@@ -481,7 +474,7 @@
   border: 0;
   background: transparent;
   color: var(--nh-muted);
-  font-size: 11px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14) !important;
 }
 
 .nh-library-details :is(span, strong) {
@@ -498,7 +491,7 @@
 
 .nh-library-details strong :is(i, small) {
   color: var(--nh-muted);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
 }
 
 .nh-shuffle {
@@ -526,7 +519,7 @@
 }
 
 .nh-shuffle > strong {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 500;
   letter-spacing: -0.03em;
 }
@@ -538,12 +531,12 @@
   gap: 12px;
   width: 100%;
   color: var(--te-neutral-700);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
 }
 
 .nh-shuffle-bottom i {
   color: var(--nh-accent);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
 }
 
 .nh-shuffle-orbit {
@@ -581,7 +574,7 @@
 
 .nh-section-head h2 {
   margin: 7px 0 0;
-  font-size: 19px;
+  font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
   font-weight: 500;
   letter-spacing: -0.025em;
 }
@@ -604,7 +597,7 @@
   border: 0;
   background: transparent;
   color: var(--nh-muted);
-  font-size: 10px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
 }
 
 .nh-tabs button[aria-pressed='true'] {
@@ -631,7 +624,7 @@
   border-radius: 50%;
   background: transparent;
   color: var(--nh-ink);
-  font-size: 17px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14) !important;
 }
 
 .nh-tracks {
@@ -659,7 +652,7 @@
   flex: 0 0 17px;
   color: var(--nh-muted);
   font-family: 'Space Grotesk', var(--te-font-sans);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .nh-track > .archive-artwork {
@@ -687,19 +680,19 @@
 }
 
 .nh-track-copy > strong {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
 }
 
 .nh-track-copy > small {
   color: var(--nh-muted);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .nh-track-duration {
   color: var(--nh-muted);
   font-family: 'Space Grotesk', var(--te-font-sans);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-variant-numeric: tabular-nums;
 }
 
@@ -710,7 +703,7 @@
   height: 28px;
   border: 1px solid var(--nh-line);
   border-radius: 50%;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .nh-track.is-current {
@@ -766,7 +759,7 @@
   border-radius: 50%;
   background: var(--nh-accent);
   color: var(--nh-paper);
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
 }
 
 .nh-album-index {
@@ -783,14 +776,14 @@
 
 .nh-album > strong {
   margin-top: 11px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
 }
 
 .nh-album > small {
   margin-top: 7px;
   color: var(--nh-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .nh-empty-activity {
@@ -805,18 +798,18 @@
 
 .nh-empty-activity > i {
   color: var(--nh-accent);
-  font-size: 34px;
+  font-size: calc(var(--te-font-size-body, 14px) * 34 / 14);
 }
 
 .nh-empty-activity strong {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
 }
 
 .nh-empty-activity p {
   margin: 9px 0 0;
   color: var(--nh-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.7;
 }
 
@@ -843,12 +836,12 @@
 .nh-colophon > span:nth-child(2) {
   margin-left: auto;
   font-family: var(--te-font-sans);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .nh-colophon > i {
   color: var(--nh-accent);
-  font-size: 21px;
+  font-size: calc(var(--te-font-size-body, 14px) * 21 / 14);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -902,11 +895,11 @@
   }
 
   .nh-deck-script {
-    font-size: 18px;
+    font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   }
 
   .nh-shuffle > strong {
-    font-size: 16px;
+    font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   }
 
   .nh-shuffle-bottom {
@@ -942,7 +935,7 @@
   }
 
   .nh-shuffle > strong {
-    font-size: 21px;
+    font-size: calc(var(--te-font-size-body, 14px) * 21 / 14);
   }
 
   .nh-vinyl {
@@ -1070,7 +1063,7 @@
   }
 
   .nh-deck-copy h2 {
-    font-size: 28px;
+    font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
   }
 
   .nh-deck-actions {
@@ -1086,18 +1079,18 @@
   }
 
   .nh-shuffle > strong {
-    font-size: 18px;
+    font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   }
 
   .nh-shuffle-bottom {
     align-items: flex-start;
     flex-direction: column;
-    font-size: 10px;
+    font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
     line-height: 1.8;
   }
 
   .nh-section-head h2 {
-    font-size: 17px;
+    font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   }
 
   .nh-shelf .nh-library-link {

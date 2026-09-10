@@ -1,3 +1,4 @@
+import { taskbarLyricsBounds } from '../../shared/taskbarLyricsLayout.ts'
 import { BrowserWindow, ipcMain, powerMonitor, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -23,6 +24,7 @@ let desktopLyricsInteractionActive = false
 let desktopLyricsPausedHidden = false
 let desktopLyricsHoverCheckTimer: ReturnType<typeof setInterval> | null = null
 let desktopLyricsPointerInside = false
+let appliedTaskbarPlacement = false
 
 const DESKTOP_LYRICS_HOVER_CHECK_INTERVAL_MS = 120
 
@@ -45,6 +47,7 @@ function isDesktopLyricsSender(
 }
 
 function persistDesktopLyricsPosition(win: BrowserWindow): void {
+  if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return
   if (win.isDestroyed()) return
   const [windowX, windowY] = win.getPosition()
   runtime.appSettings.desktopLyrics = {
@@ -55,7 +58,19 @@ function persistDesktopLyricsPosition(win: BrowserWindow): void {
   writeAppSettings(runtime.appSettings)
 }
 
+function currentTaskbarBounds() {
+  const display = screen.getPrimaryDisplay()
+  const settings = runtime.appSettings.desktopLyrics
+  return taskbarLyricsBounds(
+    display.bounds,
+    display.workArea,
+    settings.taskbarWidth ?? 320,
+    settings.taskbarOffset ?? 8
+  )
+}
+
 function windowPosition(): { x: number; y: number } {
+  if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return currentTaskbarBounds()
   const settings = runtime.appSettings.desktopLyrics
   const requested = {
     x: Math.round(settings.windowX),
@@ -86,6 +101,19 @@ export function getEffectiveDesktopLyricsSettings(): DesktopLyricsSettingsV3 {
   const settings = runtime.appSettings.desktopLyrics
   return {
     ...settings,
+    ...(settings.placement === 'taskbar'
+      ? {
+          windowWidth: currentTaskbarBounds().width,
+          windowHeight: currentTaskbarBounds().height,
+          fontSize: settings.taskbarFontSize ?? 18,
+          writingMode: 'horizontal' as const,
+          displayMode: 'single' as const,
+          translationVisible: false,
+          romanizationVisible: false,
+          alwaysOnTop: true,
+          locked: true
+        }
+      : {}),
     resolvedFontFamily: resolveDesktopLyricsFontFamily(
       settings.fontFamily,
       runtime.appSettings.lyricsAppearance.styles.active
@@ -98,7 +126,16 @@ export function getEffectiveDesktopLyricsSettings(): DesktopLyricsSettingsV3 {
 function applyWindowSettings(): void {
   const win = runtime.desktopLyricsWindow
   if (!win || win.isDestroyed()) return
-  const settings = runtime.appSettings.desktopLyrics
+  const settings = getEffectiveDesktopLyricsSettings()
+  if (settings.placement === 'taskbar') {
+    appliedTaskbarPlacement = true
+    win.setBounds(currentTaskbarBounds())
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.setIgnoreMouseEvents(true)
+    clearDesktopLyricsHoverTracking()
+    desktopLyricsInteractionActive = false
+    return
+  }
   win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
   const ignoreMouseEvents =
     desktopLyricsPausedHidden || (settings.locked && !desktopLyricsInteractionActive)
@@ -107,6 +144,11 @@ function applyWindowSettings(): void {
   const bounds = win.getBounds()
   if (bounds.width !== settings.windowWidth || bounds.height !== settings.windowHeight) {
     win.setSize(settings.windowWidth, settings.windowHeight)
+  }
+  if (appliedTaskbarPlacement) {
+    appliedTaskbarPlacement = false
+    const restored = windowPosition()
+    win.setPosition(restored.x, restored.y)
   }
   const current = win.getPosition()
   const constrained = clampToCurrentDisplay(win, current[0], current[1])
@@ -174,7 +216,8 @@ function syncDesktopLyricsHoverTracking(): void {
     !win.isDestroyed() &&
     win.isVisible() &&
     !desktopLyricsPausedHidden &&
-    runtime.appSettings.desktopLyrics.locked
+    runtime.appSettings.desktopLyrics.locked &&
+    runtime.appSettings.desktopLyrics.placement !== 'taskbar'
   )
   if (!shouldTrack) {
     clearDesktopLyricsHoverTracking()
@@ -219,6 +262,7 @@ function setDesktopLyricsPausedHidden(hidden: boolean): void {
 }
 
 function clampToCurrentDisplay(win: BrowserWindow, x: number, y: number): { x: number; y: number } {
+  if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return currentTaskbarBounds()
   const size = win.getBounds()
   const area = screen.getDisplayMatching({ ...size, x, y }).workArea
   return {
@@ -483,6 +527,9 @@ export function requestDesktopLyricsResync(): void {
 export function setupDesktopLyricsIpc(): void {
   if (!resumeBound) {
     resumeBound = true
+    screen.on('display-metrics-changed', () => {
+      if (runtime.appSettings.desktopLyrics.placement === 'taskbar') notifySettingsChanged()
+    })
     powerMonitor.on('resume', requestDesktopLyricsResync)
   }
 
@@ -588,6 +635,7 @@ export function setupDesktopLyricsIpc(): void {
 
   ipcMain.on('desktopLyrics:ready', (event) => {
     if (!shouldAcceptIpcEvent(event, 'desktop lyrics IPC') || !isDesktopLyricsSender(event)) return
+    applyWindowSettings()
     runtime.desktopLyricsWindow?.showInactive()
     syncDesktopLyricsHoverTracking()
     publishDesktopLyricsHoverIntent(desktopLyricsPointerInside)

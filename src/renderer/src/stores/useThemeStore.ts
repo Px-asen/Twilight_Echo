@@ -1,4 +1,5 @@
 import { applyExplicitThemePreferences } from '@renderer/extensions/themeProfilePriority'
+import { sharedPlayerBarStylesheet } from '../../../shared/themePlayerBar.ts'
 import { computed, nextTick, ref, shallowRef, type ComputedRef, type Ref } from 'vue'
 import {
   DEFAULT_THEME_TONE_SCHEDULE,
@@ -253,6 +254,7 @@ function applyBootstrapThemeMode(
 
 export async function bootstrapThemeRuntime(startupSnapshot?: AppStartupSnapshot): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise
+  if (loaded.value) return
   bootstrapPromise = (async () => {
     if (!window.api?.themes || !window.api?.settings) return
     const startup = startupSnapshot ?? (await getStartupSnapshot())
@@ -487,7 +489,12 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     .join('\n')
   return {
     variables,
-    css: [assetStylesheet, root ? `:root {\n${root}\n}` : '', stylesheet]
+    css: [
+      assetStylesheet,
+      root ? `:root {\n${root}\n}` : '',
+      stylesheet,
+      sharedPlayerBarStylesheet(tone)
+    ]
       .filter(Boolean)
       .join('\n\n'),
     dataAttributes: {

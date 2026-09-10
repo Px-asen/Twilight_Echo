@@ -724,6 +724,18 @@ function dismissAllFloatingPanels(): void {
 
 useEscapeToClose(floatingPanelOpen, dismissAllFloatingPanels)
 
+defineExpose({
+  openMiniPlayer,
+  openQueue: () => {
+    dismissFloatingPanels()
+    playlistOpen.value = true
+  },
+  openAudio: () => {
+    dismissFloatingPanels()
+    moreOpen.value = true
+  }
+})
+
 /** The settings preview always shows the bar, whatever the live state resolves to. */
 const fullyHidden = computed(() => props.hiddenBar && !props.preview)
 // Fully hidden wins, so the pointer listeners never arm for a bar that has no
@@ -1754,7 +1766,10 @@ onBeforeUnmount(() => {
               alt=""
             />
             <div v-else class="player-cover-placeholder">
-              <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+              <i
+                class="pi pi-wave-pulse"
+                style="font-size: calc(var(--te-font-size-body, 14px) * 18 / 14); color: #bbb"
+              ></i>
             </div>
           </div>
 
@@ -2077,119 +2092,124 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- HiFi 右侧覆盖面板 -->
-    <Transition name="hifi-overlay">
-      <div
-        v-if="moreOpen"
-        class="hifi-overlay"
-        :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
-      >
-        <HiFiSidebar
-          :glass="glass"
-          :accent-color="playButtonColor"
-          :exclusive-mode="exclusiveMode"
-          :exclusive-available="exclusiveAvailable"
-          :audio-output="audioOutput"
-          :audio-output-options="audioOutputOptions"
-          :audio-device="audioDevice"
-          :audio-device-options="audioOutputDeviceOptions"
-          :audio-processing="audioProcessing"
-          :audio-output-config="audioOutputConfig"
-          :dsp-output-stage="dspOutputStage"
-          :dsp-stereo-image="dspStereoImage"
-          :dsp-active="playbackInfo?.dspActive === true"
-          :actual-sample-rate="outputInfo?.actualSampleRate || playbackInfo?.actualSampleRate || 0"
-          :status-chips="audioStatusChips"
-          :non-perfect-reason="nonPerfectReason"
-          :perfect-reason-code="perfectReasonCode"
-          :perfect-reason-explain="perfectReasonDetail?.explain || ''"
-          :perfect-reason-fix="perfectReasonDetail?.fix || ''"
-          :perfect-reason-engine-detail="perfectReasonEngineDetail"
-          :volume="volume"
-          :gapless-active="playbackInfo?.gaplessActive === true"
-          :preload-ready="playbackInfo?.preloadReady === true"
-          :gapless-blocked-reason="playbackInfo?.gaplessBlockedReason || ''"
-          :loudnorm-status="loudnormStatus"
-          :output-chain-text="outputChainText"
-          :output-latency-text="outputLatencyText"
-          :output-diagnostics-text="outputDiagnosticsText"
-          :native-dsd-runtime-reason-text="nativeDsdRuntimeReasonText"
-          :current-track="currentTrack"
-          :desktop-lyrics-on="desktopLyricsOn"
-          :lyrics-reloading="lyricsReloading"
-          :original-layer-selection="originalLayerSelection"
-          :translation-layer-selection="translationLayerSelection"
-          :show-translation="showTranslation"
-          :lyric-controls-pending="lyricsReloading || lyricControlsPending"
-          :player-bar-buttons="playerBarButtons"
-          :is-live-stream="isLiveStream"
-          :playback-rate="playbackRate"
-          :playback-rate-label="playbackRateLabel"
-          :playback-rate-title="playbackRateTitle"
-          :ab-loop-a="abLoopA"
-          :ab-loop-b="abLoopB"
-          :ab-loop-title="abLoopTitle"
-          :sleep-timer-select-value="sleepTimerSelectValue"
-          :sleep-timer-status="sleepTimerStatus"
-          :sleep-timer-default-minutes="settings.sleepTimer.defaultMinutes"
-          :cast-target-name="castTargetName"
-          :cast-devices="castDevices"
-          :cast-busy="castBusy"
-          :cast-error="castError"
-          :can-cast-current-track="canCastCurrentTrack"
-          :bookmarks="currentTrackBookmarks"
-          :renaming-bookmark-id="renamingBookmarkId"
-          :rename-draft="renameDraft"
-          :format-time="formatTime"
-          @open-settings="openPlaybackSettings"
-          @open-dsp="openDspSettings"
-          @open-equalizer="openEqualizerPage"
-          @set-unity-volume="setUnityVolume"
-          @toggle-exclusive="toggleExclusiveMode"
-          @toggle-dsp="toggleDspEnabled"
-          @toggle-eq="toggleEqEnabled"
-          @toggle-gapless="toggleGapless"
-          @toggle-crossfeed="toggleCrossfeed"
-          @toggle-clip-guard="onToggleClipGuard"
-          @toggle-convolver="onToggleConvolver"
-          @toggle-desktop-lyrics="toggleDesktopLyrics"
-          @set-replay-gain-mode="onSetReplayGainMode"
-          @set-crossfeed-strength="onSetCrossfeedStrength"
-          @set-crossfade-seconds="onSetCrossfadeSeconds"
-          @set-replay-gain-preamp="onSetReplayGainPreamp"
-          @set-preferred-buffer-size="onSetPreferredBufferSize"
-          @set-routing-mode="onSetRoutingMode"
-          @set-pcm-to-dsd-mode="onSetPcmToDsdMode"
-          @set-dsd-output-mode="onSetDsdOutputMode"
-          @set-dsd-rate-policy="onSetDsdRatePolicy"
-          @set-output-stage="setOutputStage"
-          @set-stereo-image="setStereoImage"
-          @set-audio-output="onSetAudioOutput"
-          @set-audio-device="onSetAudioDevice"
-          @refresh-devices="onRefreshDevices"
-          @select-impulse-response="selectImpulseResponse"
-          @clear-impulse-response="clearImpulseResponse"
-          @reload-lyrics="onReloadLyrics"
-          @set-lyric-layer-selection="setLyricLayerSelection"
-          @toggle-translation-visibility="toggleTranslationVisibility"
-          @run-extension="runPlayerBarExtension"
-          @cycle-playback-rate="cyclePlaybackRate"
-          @toggle-ab-loop="toggleAbLoopAtCurrentTime"
-          @clear-ab-loop="clearAbLoop"
-          @sleep-timer-select="onSleepTimerSelectValue"
-          @refresh-cast-devices="refreshCastDevices"
-          @cast-to-device="onCastToDevice"
-          @stop-cast="onStopCast"
-          @add-bookmark="onAddBookmark"
-          @jump-bookmark="jumpToBookmark"
-          @start-rename-bookmark="startRenameBookmark"
-          @commit-rename-bookmark="commitRenameBookmark"
-          @update-rename-draft="renameDraft = $event"
-          @cancel-rename-bookmark="cancelRenameBookmark"
-          @delete-bookmark="deleteBookmark"
-          @lyrics-customizing="lyricsCustomizerActive = $event"
-        />
-      </div>
-    </Transition>
+    <Teleport to="body">
+      <Transition name="hifi-overlay">
+        <div
+          v-if="moreOpen"
+          class="hifi-overlay"
+          @pointerdown.stop
+          :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
+        >
+          <HiFiSidebar
+            :glass="glass"
+            :accent-color="playButtonColor"
+            :exclusive-mode="exclusiveMode"
+            :exclusive-available="exclusiveAvailable"
+            :audio-output="audioOutput"
+            :audio-output-options="audioOutputOptions"
+            :audio-device="audioDevice"
+            :audio-device-options="audioOutputDeviceOptions"
+            :audio-processing="audioProcessing"
+            :audio-output-config="audioOutputConfig"
+            :dsp-output-stage="dspOutputStage"
+            :dsp-stereo-image="dspStereoImage"
+            :dsp-active="playbackInfo?.dspActive === true"
+            :actual-sample-rate="
+              outputInfo?.actualSampleRate || playbackInfo?.actualSampleRate || 0
+            "
+            :status-chips="audioStatusChips"
+            :non-perfect-reason="nonPerfectReason"
+            :perfect-reason-code="perfectReasonCode"
+            :perfect-reason-explain="perfectReasonDetail?.explain || ''"
+            :perfect-reason-fix="perfectReasonDetail?.fix || ''"
+            :perfect-reason-engine-detail="perfectReasonEngineDetail"
+            :volume="volume"
+            :gapless-active="playbackInfo?.gaplessActive === true"
+            :preload-ready="playbackInfo?.preloadReady === true"
+            :gapless-blocked-reason="playbackInfo?.gaplessBlockedReason || ''"
+            :loudnorm-status="loudnormStatus"
+            :output-chain-text="outputChainText"
+            :output-latency-text="outputLatencyText"
+            :output-diagnostics-text="outputDiagnosticsText"
+            :native-dsd-runtime-reason-text="nativeDsdRuntimeReasonText"
+            :current-track="currentTrack"
+            :desktop-lyrics-on="desktopLyricsOn"
+            :lyrics-reloading="lyricsReloading"
+            :original-layer-selection="originalLayerSelection"
+            :translation-layer-selection="translationLayerSelection"
+            :show-translation="showTranslation"
+            :lyric-controls-pending="lyricsReloading || lyricControlsPending"
+            :player-bar-buttons="playerBarButtons"
+            :is-live-stream="isLiveStream"
+            :playback-rate="playbackRate"
+            :playback-rate-label="playbackRateLabel"
+            :playback-rate-title="playbackRateTitle"
+            :ab-loop-a="abLoopA"
+            :ab-loop-b="abLoopB"
+            :ab-loop-title="abLoopTitle"
+            :sleep-timer-select-value="sleepTimerSelectValue"
+            :sleep-timer-status="sleepTimerStatus"
+            :sleep-timer-default-minutes="settings.sleepTimer.defaultMinutes"
+            :cast-target-name="castTargetName"
+            :cast-devices="castDevices"
+            :cast-busy="castBusy"
+            :cast-error="castError"
+            :can-cast-current-track="canCastCurrentTrack"
+            :bookmarks="currentTrackBookmarks"
+            :renaming-bookmark-id="renamingBookmarkId"
+            :rename-draft="renameDraft"
+            :format-time="formatTime"
+            @open-settings="openPlaybackSettings"
+            @open-dsp="openDspSettings"
+            @open-equalizer="openEqualizerPage"
+            @set-unity-volume="setUnityVolume"
+            @toggle-exclusive="toggleExclusiveMode"
+            @toggle-dsp="toggleDspEnabled"
+            @toggle-eq="toggleEqEnabled"
+            @toggle-gapless="toggleGapless"
+            @toggle-crossfeed="toggleCrossfeed"
+            @toggle-clip-guard="onToggleClipGuard"
+            @toggle-convolver="onToggleConvolver"
+            @toggle-desktop-lyrics="toggleDesktopLyrics"
+            @set-replay-gain-mode="onSetReplayGainMode"
+            @set-crossfeed-strength="onSetCrossfeedStrength"
+            @set-crossfade-seconds="onSetCrossfadeSeconds"
+            @set-replay-gain-preamp="onSetReplayGainPreamp"
+            @set-preferred-buffer-size="onSetPreferredBufferSize"
+            @set-routing-mode="onSetRoutingMode"
+            @set-pcm-to-dsd-mode="onSetPcmToDsdMode"
+            @set-dsd-output-mode="onSetDsdOutputMode"
+            @set-dsd-rate-policy="onSetDsdRatePolicy"
+            @set-output-stage="setOutputStage"
+            @set-stereo-image="setStereoImage"
+            @set-audio-output="onSetAudioOutput"
+            @set-audio-device="onSetAudioDevice"
+            @refresh-devices="onRefreshDevices"
+            @select-impulse-response="selectImpulseResponse"
+            @clear-impulse-response="clearImpulseResponse"
+            @reload-lyrics="onReloadLyrics"
+            @set-lyric-layer-selection="setLyricLayerSelection"
+            @toggle-translation-visibility="toggleTranslationVisibility"
+            @run-extension="runPlayerBarExtension"
+            @cycle-playback-rate="cyclePlaybackRate"
+            @toggle-ab-loop="toggleAbLoopAtCurrentTime"
+            @clear-ab-loop="clearAbLoop"
+            @sleep-timer-select="onSleepTimerSelectValue"
+            @refresh-cast-devices="refreshCastDevices"
+            @cast-to-device="onCastToDevice"
+            @stop-cast="onStopCast"
+            @add-bookmark="onAddBookmark"
+            @jump-bookmark="jumpToBookmark"
+            @start-rename-bookmark="startRenameBookmark"
+            @commit-rename-bookmark="commitRenameBookmark"
+            @update-rename-draft="renameDraft = $event"
+            @cancel-rename-bookmark="cancelRenameBookmark"
+            @delete-bookmark="deleteBookmark"
+            @lyrics-customizing="lyricsCustomizerActive = $event"
+          />
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

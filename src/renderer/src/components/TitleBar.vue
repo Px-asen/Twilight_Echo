@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useBackStack } from '../app/useBackStack'
 import { useNcmStore } from '../stores/useNcmStore'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
@@ -30,6 +30,21 @@ defineEmits<{
 const { isLoggedIn, profile } = useNcmStore()
 const { canGoBack, backHint } = useBackStack()
 const avatarLoadFailed = ref(false)
+const titleBar = ref<HTMLElement | null>(null)
+let titleObserver: ResizeObserver | undefined
+onMounted(() => {
+  const updateInset = (): void => {
+    if (titleBar.value)
+      document.documentElement.style.setProperty(
+        '--te-titlebar-inset',
+        `${titleBar.value.getBoundingClientRect().bottom}px`
+      )
+  }
+  titleObserver = new ResizeObserver(updateInset)
+  if (titleBar.value) titleObserver.observe(titleBar.value)
+  updateInset()
+})
+onBeforeUnmount(() => titleObserver?.disconnect())
 
 function setPressOrigin(event: PointerEvent): void {
   const button =
@@ -56,6 +71,7 @@ function close(): void {
 <template>
   <div
     class="title-bar drag-region"
+    ref="titleBar"
     :class="{
       'title-bar-glass': glass,
       'title-bar-liquid': liquidMaterial,
@@ -256,7 +272,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .back-btn:hover {
@@ -313,7 +329,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   transition: background 0.15s;
   padding: 0;
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .settings-btn:hover {
@@ -333,7 +349,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   transition: background 0.15s;
   padding: 0;
   flex-shrink: 0;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 
 .plugins-btn:hover {
@@ -353,7 +369,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   transition: background 0.15s;
   padding: 0;
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .login-btn:hover {
@@ -400,7 +416,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   border: none;
   background: transparent;
   color: var(--te-shell-control-text);
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   cursor: pointer;
   transition:
     background 0.15s,

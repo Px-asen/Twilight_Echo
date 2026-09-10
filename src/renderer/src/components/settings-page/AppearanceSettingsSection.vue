@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { useLyricsFontPicker } from '@renderer/composables/useLyricsFontPicker'
 import MiniPlayerSettingsSection from './MiniPlayerSettingsSection.vue'
 import ThemeControlsSettings from './ThemeControlsSettings.vue'
 import BackgroundEditorSettings from './BackgroundEditorSettings.vue'
@@ -17,6 +19,8 @@ const emit = defineEmits<{
 }>()
 
 const { settings, updateSettings } = useSettingsStore()
+const { installed, load: loadFonts } = useLyricsFontPicker()
+onMounted(loadFonts)
 
 function setFontFamily(event: Event): void {
   const fontFamily = normalizeAppFontFamily((event.target as HTMLSelectElement).value)
@@ -68,6 +72,11 @@ function toggleSetting(key: BooleanSettingKey): void {
           <option v-for="option in fontFamilyOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>
+          <optgroup label="系统已安装字体">
+            <option v-for="family in installed" :key="family" :value="`local:${family}`">
+              {{ family }}
+            </option>
+          </optgroup>
         </select>
       </div>
       <hr />

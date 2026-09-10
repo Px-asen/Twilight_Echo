@@ -180,6 +180,64 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
       </div>
     </div>
 
+    <div class="setting-card lyrics-placement-controls">
+      <label class="check-field">
+        <span>显示位置</span>
+        <select
+          class="preview-select"
+          :value="draft.placement ?? 'desktop'"
+          @change="
+            update(
+              'placement',
+              ($event.target as HTMLSelectElement).value as 'desktop' | 'taskbar',
+              true
+            )
+          "
+        >
+          <option value="desktop">桌面悬浮</option>
+          <option value="taskbar">任务栏歌词</option>
+        </select>
+      </label>
+      <template v-if="draft.placement === 'taskbar'">
+        <p>
+          单行歌词浮层显示在主屏任务栏区域，鼠标可穿透。调整位置避开应用图标；自动隐藏任务栏时显示在屏幕底部。
+        </p>
+        <label
+          >横向位置
+          <input
+            type="range"
+            min="0"
+            max="100"
+            :value="draft.taskbarOffset ?? 8"
+            @input="update('taskbarOffset', numberValue($event))"
+          />
+          {{ draft.taskbarOffset ?? 8 }}%</label
+        >
+        <label
+          >显示宽度
+          <input
+            type="range"
+            min="160"
+            max="800"
+            step="10"
+            :value="draft.taskbarWidth ?? 320"
+            @input="update('taskbarWidth', numberValue($event))"
+          />
+          {{ draft.taskbarWidth ?? 320 }}px</label
+        >
+        <label
+          >任务栏字号
+          <input
+            type="range"
+            min="12"
+            max="28"
+            :value="draft.taskbarFontSize ?? 18"
+            @input="update('taskbarFontSize', numberValue($event))"
+          />
+          {{ draft.taskbarFontSize ?? 18 }}px</label
+        >
+      </template>
+    </div>
     <div class="setting-card desktop-lyrics-style-card">
       <div class="style-control-grid">
         <label class="field">
@@ -478,6 +536,28 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
 </template>
 
 <style scoped>
+.lyrics-placement-controls {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.lyrics-placement-controls p {
+  font-size: 0.85em;
+  opacity: 0.7;
+  line-height: 1.6;
+}
+.lyrics-placement-controls label {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.lyrics-placement-controls input[type='range'] {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--te-primary-500);
+}
+
 .settings-section {
   display: grid;
   gap: 18px;

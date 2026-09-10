@@ -873,7 +873,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 
 .stage-brand strong {
   color: var(--eq-text);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 750;
   letter-spacing: 0.16em;
   white-space: nowrap;
@@ -907,7 +907,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   border-radius: 6px;
   color: var(--eq-text-muted);
   background: transparent;
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 650;
   letter-spacing: 0.06em;
 }
@@ -1249,14 +1249,14 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 .band-tooltip strong {
   grid-column: 1 / -1;
   color: var(--eq-text);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 700;
   letter-spacing: 0.06em;
 }
 
 .band-tooltip span {
   font-family: var(--eq-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1406,7 +1406,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   border-radius: 5px;
   color: var(--te-warning-500);
   background: var(--eq-tooltip-bg);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 650;
 }
 
@@ -1446,7 +1446,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 
 .inspector-identity strong {
   color: color-mix(in srgb, var(--band-color) 82%, var(--eq-text));
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 700;
 }
 
@@ -1458,7 +1458,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   border: 1px solid color-mix(in srgb, var(--band-color) 62%, transparent);
   border-radius: 4px;
   color: var(--band-color);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
@@ -1475,7 +1475,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   color: var(--eq-meter);
   background: transparent;
   cursor: pointer;
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
 }
 
 .band-power.bypassed {
@@ -1502,7 +1502,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   background: transparent;
   cursor: pointer;
   font-family: var(--eq-mono);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 
 .filter-strip button:hover {
@@ -1565,7 +1565,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   color: var(--eq-text-subtle);
   background: transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1;
 }
 
@@ -1623,7 +1623,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   color: var(--eq-text);
   background: transparent;
   font-family: var(--eq-mono);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 620;
   font-variant-numeric: tabular-nums;
   text-align: right;

@@ -75,23 +75,6 @@ function count(value: number | undefined): string {
     :style="{ '--provider-accent': providerColor || 'var(--te-primary-500)' }"
     :aria-busy="recsLoading"
   >
-    <header class="music-masthead">
-      <div>
-        <p class="music-eyebrow"><span class="music-dot"></span> {{ providerLabel }} / 发现音乐</p>
-        <h1>{{ presentation?.subtitle || '今天，从一首好歌开始。' }}</h1>
-      </div>
-      <button
-        class="music-refresh"
-        type="button"
-        :disabled="recsLoading"
-        @click="emit('loadRecommendations')"
-        aria-label="刷新首页推荐"
-      >
-        <i class="pi pi-refresh" :class="{ 'pi-spin': recsLoading }"></i>
-        {{ recsLoading ? '更新中' : '刷新推荐' }}
-      </button>
-    </header>
-
     <div v-if="locked" class="music-state">
       <i class="pi pi-headphones"></i>
       <h2>你的音乐，在这里继续</h2>

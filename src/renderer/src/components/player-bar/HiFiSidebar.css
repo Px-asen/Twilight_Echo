@@ -155,7 +155,7 @@ html[data-theme='dark'] .deck .deck-display {
 
 .deck-display-now {
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 600;
   letter-spacing: 0.3em;
   color: var(--d-accent);
@@ -165,7 +165,7 @@ html[data-theme='dark'] .deck .deck-display {
 
 .deck-display-track {
   font-family: var(--d-mono);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.04em;
   color: var(--d-muted);
   white-space: nowrap;
@@ -210,7 +210,7 @@ html[data-theme='dark'] .deck .deck-rate-num {
 
 .deck-rate-unit {
   font-family: var(--d-mono);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   letter-spacing: 0.18em;
   color: var(--d-muted);
 }
@@ -225,7 +225,7 @@ html[data-theme='dark'] .deck .deck-rate-num {
 
 .deck-format-plate {
   font-family: var(--d-mono);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   letter-spacing: 0.22em;
   padding: 4px 10px 3px;
@@ -237,7 +237,7 @@ html[data-theme='dark'] .deck .deck-rate-num {
 
 .deck-tier {
   font-family: var(--d-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
   font-weight: 600;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -254,7 +254,7 @@ html[data-theme='dark'] .deck .deck-rate-num {
 
 .deck-display-sub {
   font-family: var(--d-mono);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.08em;
   color: var(--d-muted);
   font-variant-numeric: tabular-nums;
@@ -304,11 +304,11 @@ html[data-theme='dark'] .deck .deck-rate-num {
 }
 
 .deck-rail-btn i {
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 
 .deck-rail-btn span {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.06em;
 }
 
@@ -422,7 +422,7 @@ html[data-theme='dark'] .deck .deck-card {
   align-items: baseline;
   gap: 8px;
   font-family: var(--d-mono);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   letter-spacing: 0.18em;
   color: var(--d-ink);
@@ -430,14 +430,14 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-card-label em {
   font-style: normal;
-  font-size: 9.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
   font-weight: 500;
   color: var(--d-accent);
   letter-spacing: 0.1em;
 }
 
 .deck-card-hint {
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   color: var(--d-muted);
   letter-spacing: 0.04em;
   white-space: nowrap;
@@ -466,7 +466,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-node strong {
   font-family: var(--d-mono);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 700;
   letter-spacing: 0.16em;
 }
@@ -540,7 +540,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-chip {
   font-family: var(--d-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -567,7 +567,7 @@ html[data-theme='dark'] .deck .deck-card {
 .deck-readout {
   margin: 0;
   font-family: var(--d-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   line-height: 1.55;
   letter-spacing: 0.02em;
   color: var(--d-muted);
@@ -580,7 +580,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-note {
   margin: 0;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.55;
   color: var(--d-muted);
 }
@@ -605,14 +605,14 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-note.fix > .pi {
   flex: none;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 /* The engine's raw one-line cause: monospace evidence under the human copy,
    muted so it reads as supporting detail rather than a second verdict. */
 .deck-note.engine-detail {
   font-family: var(--d-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -640,7 +640,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-unity-copy strong {
   font-family: var(--d-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   font-weight: 700;
   letter-spacing: 0.14em;
   color: var(--d-warn);
@@ -648,7 +648,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-unity-copy em {
   font-style: normal;
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   line-height: 1.45;
   color: var(--d-muted);
 }
@@ -681,7 +681,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-meter strong {
   font-family: var(--d-mono);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--d-ink);
@@ -715,14 +715,14 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 .deck-spec span {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.1em;
   color: var(--d-muted);
 }
 
 .deck-spec strong {
   font-family: var(--d-mono);
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   font-weight: 600;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
@@ -743,7 +743,7 @@ html[data-theme='dark'] .deck .deck-card {
   gap: 6px;
   min-width: 0;
   color: var(--d-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   white-space: nowrap;
 }
 
@@ -803,12 +803,12 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 .deck-toggle i {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   flex-shrink: 0;
 }
 
 .deck-toggle-name {
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -818,7 +818,7 @@ html[data-theme='dark'] .deck .deck-card {
 .deck-toggle em {
   font-style: normal;
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 700;
   letter-spacing: 0.14em;
   margin-left: auto;
@@ -901,7 +901,7 @@ html[data-theme='dark'] .deck .deck-card {
   border: 1px solid var(--d-line-strong);
   background: var(--d-card);
   color: var(--d-ink);
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   font-weight: 500;
   letter-spacing: 0.03em;
   transition:
@@ -935,7 +935,7 @@ html[data-theme='dark'] .deck .deck-card {
   border: 0;
   background: transparent;
   color: var(--d-accent);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   letter-spacing: 0.04em;
   padding: 2px 4px;
   border-radius: 6px;
@@ -963,7 +963,7 @@ html[data-theme='dark'] .deck .deck-card {
   border-radius: 9px;
   background: transparent;
   color: var(--d-muted);
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   font-weight: 500;
   letter-spacing: 0.02em;
   transition:
@@ -1011,7 +1011,7 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 .deck-device > i {
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   color: var(--d-muted);
   flex-shrink: 0;
 }
@@ -1025,7 +1025,7 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 .deck-device-copy strong {
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1034,7 +1034,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-device-copy span {
   font-family: var(--d-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
   letter-spacing: 0.03em;
   color: var(--d-muted);
   white-space: nowrap;
@@ -1045,7 +1045,7 @@ html[data-theme='dark'] .deck .deck-card {
 .deck-device em {
   font-style: normal;
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--d-accent);
@@ -1086,7 +1086,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-field > span {
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 600;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -1106,7 +1106,7 @@ html[data-theme='dark'] .deck .deck-card {
   background-repeat: no-repeat;
   background-position: right 10px center;
   color: var(--d-ink);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-family: inherit;
   transition: border-color 0.18s ease;
 }
@@ -1152,7 +1152,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-control-head span {
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 600;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -1161,7 +1161,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-control-head strong {
   font-family: var(--d-mono);
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   font-weight: 600;
   color: var(--d-accent);
   font-variant-numeric: tabular-nums;
@@ -1254,12 +1254,12 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-master-copy strong {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 650;
 }
 
 .deck-master-copy span {
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   color: var(--d-muted);
 }
 
@@ -1291,7 +1291,7 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-module-copy strong {
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   font-weight: 600;
 }
 
@@ -1301,7 +1301,7 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-module-copy span {
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   color: var(--d-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1324,7 +1324,7 @@ html[data-theme='dark'] .deck .deck-select {
   border: 1px solid var(--d-line-strong);
   background: var(--d-well);
   color: var(--d-muted);
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   transition:
     background-color 0.18s var(--te-ease-soft),
     border-color 0.18s var(--te-ease-soft),
@@ -1371,7 +1371,7 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-action > i {
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   color: var(--d-muted);
   flex-shrink: 0;
   transition: color 0.18s ease;
@@ -1385,7 +1385,7 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-action strong {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1394,7 +1394,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-action em {
   font-style: normal;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   color: var(--d-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1475,14 +1475,14 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-cast-item > i {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
   color: var(--d-muted);
 }
 
 .deck-cast-name {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
@@ -1491,7 +1491,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-cast-meta {
   font-family: var(--d-mono);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   letter-spacing: 0.08em;
   color: var(--d-muted);
   flex-shrink: 0;
@@ -1526,7 +1526,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-bookmark-time {
   font-family: var(--d-mono);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   color: var(--d-accent);
   font-variant-numeric: tabular-nums;
@@ -1536,14 +1536,14 @@ html[data-theme='dark'] .deck .deck-select {
 .deck-bookmark-label {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .deck-bookmark-kind {
-  font-size: 9.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
   color: var(--d-success);
   border: 1px solid rgba(32, 198, 94, 0.28);
   background: var(--d-success-soft);
@@ -1559,7 +1559,7 @@ html[data-theme='dark'] .deck .deck-select {
   border-radius: 8px;
   background: var(--d-card);
   color: var(--d-ink);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-family: inherit;
   padding: 5px 8px;
   outline: none;
@@ -1589,12 +1589,12 @@ html[data-theme='dark'] .deck .deck-select {
 }
 
 .deck-extension strong {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
 }
 
 .deck-extension span {
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   color: var(--d-muted);
 }
 

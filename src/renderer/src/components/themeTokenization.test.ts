@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import {
   THEME_MODE_DEFINITIONS,
@@ -37,12 +37,12 @@ const equalizerSurfaces = [
 const dspRack = readFileSync(new URL('./DspRackPage.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
-const auroraReferenceLayout = readFileSync(
-  new URL('../assets/theme-layouts/aurora-reference.css', import.meta.url),
-  'utf8'
-)
 const obsidianGlassLayout = readFileSync(
   new URL('../assets/theme-layouts/obsidian-glass.css', import.meta.url),
+  'utf8'
+)
+const paperLightLayout = readFileSync(
+  new URL('../assets/theme-layouts/paper-light.css', import.meta.url),
   'utf8'
 )
 const settingsPage = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
@@ -77,6 +77,10 @@ const virtualScroll = readFileSync(
 const localDashboard = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
 const nightHarborHome = readFileSync(
   new URL('./local-dashboard/NightHarborHome.vue', import.meta.url),
+  'utf8'
+)
+const soundFieldHome = readFileSync(
+  new URL('./local-dashboard/SoundFieldHome.vue', import.meta.url),
   'utf8'
 )
 const nightHarborHomeStyle = readFileSync(
@@ -167,7 +171,8 @@ const pluginThemeContract = JSON.parse(
 
 test('every registered playback token is wired into a real playback or DSP surface', () => {
   const playbackVariables = THEME_TOKEN_DEFINITIONS.filter(
-    (definition) => definition.group === 'playback'
+    (definition) =>
+      definition.group === 'playback' && definition.id !== 'playback.progress.thumbSize'
   ).map((definition) => definition.cssVariable)
   const playbackSurfaces = [
     playingMusic,
@@ -305,6 +310,12 @@ test('phase three icon, navigation, and library modes use static host-owned pres
   assert.match(obsidianGlassLayout, /streaming-sidebar-inner/)
   assert.match(obsidianGlassLayout, /streaming-menu-label[\s\S]*display: none/)
   assert.match(obsidianGlassLayout, /\.title-bar-start\s*\{\s*transform: translateY\(-4px\)/)
+  assert.match(paperLightLayout, /\.side-menu\s*\{[\s\S]*border-radius: 0 26px 26px 0/)
+  assert.match(paperLightLayout, /\.side-menu \.menu-item\s*\{[\s\S]*border-radius: 13px/)
+  assert.match(
+    paperLightLayout,
+    /\.side-menu \.menu-item\.active::before\s*\{[\s\S]*box-shadow: 0 0 18px/
+  )
   assert.match(studioStyle, /inset: var\(--te-titlebar-height, 32px\) 0 0/)
   assert.match(sideMenu, /data-te-navigation-icon-scale='lg'/)
   assert.match(studioSurfaces, /updateIconFamily/)
@@ -325,6 +336,34 @@ test('phase three icon, navigation, and library modes use static host-owned pres
   assert.doesNotMatch(virtualScroll, /data-te-library-density/)
 })
 
+test('local dashboard theme homepages share the dashboard greeting', () => {
+  for (const label of [
+    'TWILIGHT ECHO / PERSONAL COLLECTION',
+    'Night Harbor',
+    'SIDE A',
+    'TWILIGHT\\s*<br />RECORDS',
+    'ORIGINAL SOUND / YOUR COLLECTION',
+    'On the turntable',
+    'THE COLLECTION',
+    'LET IT PLAY',
+    'MAKE IT YOURS',
+    'IN ROTATION',
+    'THE RECORD SHELF',
+    'TAKE YOUR TIME',
+    'TRACKS'
+  ]) {
+    assert.doesNotMatch(nightHarborHome, new RegExp(label))
+  }
+  assert.match(nightHarborHome, /<h1 id="nh-title">\{\{ greeting \}\}<\/h1>/)
+  assert.doesNotMatch(nightHarborHome, /class="nh-greeting"/)
+  assert.match(nightHarborHome, /<p class="nh-eyebrow"><span>01<\/span><\/p>/)
+  assert.match(soundFieldHome, /<h1>\{\{ greeting \}\}<\/h1>/)
+  assert.doesNotMatch(soundFieldHome, /Sound Field|class="sf-title-en"/)
+  for (const home of [nightHarborHome, soundFieldHome]) {
+    assert.match(home, /resolveTimeGreeting\(now\.value\.getHours\(\)\)/)
+  }
+})
+
 test('phase four player layouts, controls, equalizer modes, and visibility stay host-owned', () => {
   for (const layout of ['standard', 'full-cover', 'lyrics-focus', 'split', 'minimal']) {
     assert.match(studioEditor, new RegExp(`id: '${layout}'`))
@@ -337,26 +376,18 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(playingMusic, /data-te-player-layout='split'/)
   assert.match(playingMusic, /data-te-player-layout='minimal'/)
   assert.match(playingMusic, /data-te-visible-player-artwork='false'/)
-  assert.match(playerBar, /data-te-player-controls='pro'/)
-  assert.match(playerBar, /data-te-player-progress='spectrum'/)
-  assert.match(playerBar, /data-te-visible-player-track-menu='false'/)
+  assert.doesNotMatch(playerBar, /data-te-player-(controls|progress|layout|title-align)/)
+  assert.doesNotMatch(playerBar, /data-te-visible-(player|previous-button|next-button)/)
+  assert.match(themeStore, /sharedPlayerBarStylesheet\(tone\)/)
+  assert.doesNotMatch(
+    baseStyle,
+    /html\[data-te-title-(?:case|color)=[^\]]+\][^{]*\.player-(?:title|artist)/
+  )
   assert.match(equalizerSurfaces, /data-te-equalizer-panel='glass'/)
   assert.match(equalizerSurfaces, /data-te-equalizer-spectrum='bars'/)
   assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
   assert.match(dspRack, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
-  assert.match(
-    auroraReferenceLayout,
-    /\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*background: var\(--te-player-bg\)/
-  )
-  assert.match(
-    auroraReferenceLayout,
-    /\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*backdrop-filter: none/
-  )
-  assert.match(
-    auroraReferenceLayout,
-    /\[data-theme='dark'\][\s\S]*\.player-bar-shell\s+\.player-bar:not\(\.player-bar-liquid\)[\s\S]*background: var\(--te-player-bg\) !important/
-  )
 })
 
 test('phase five presets, recovery, window inheritance, and contextual entries stay declarative', () => {
@@ -497,4 +528,15 @@ test('phase seven coalesces previews, records p95, and owns the full Electron ma
   assert.match(studioEditor, /visibleDefinitions/)
   assert.match(studio, /updateAppearanceMode\('effectsMode'/)
   assert.match(baseStyle, /data-te-effects-mode='reduced'/)
+})
+
+test('preset layouts leave all three shared player bar shapes intact', () => {
+  const directory = new URL('../assets/theme-layouts/', import.meta.url)
+  for (const file of readdirSync(directory).filter((name) => name.endsWith('.css'))) {
+    assert.doesNotMatch(
+      readFileSync(new URL(file, directory), 'utf8'),
+      /\.player-bar(?:\b|-)/,
+      file
+    )
+  }
 })

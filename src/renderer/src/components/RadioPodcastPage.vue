@@ -567,7 +567,7 @@ function formatDuration(seconds: number): string {
   color: inherit;
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 650;
   transition:
     border-color 0.18s ease,
@@ -590,7 +590,7 @@ button:disabled {
 .section-kicker {
   display: block;
   color: var(--te-primary-500);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 800;
   letter-spacing: 0.14em;
   line-height: 1.2;
@@ -607,7 +607,7 @@ button:disabled {
 .episode-empty p {
   margin: 0;
   color: var(--te-settings-text-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.55;
 }
 
@@ -640,7 +640,7 @@ button.primary {
   border-radius: 12px;
   background: var(--te-danger-soft-bg);
   color: var(--te-danger-soft-fg);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
 }
 
@@ -689,7 +689,7 @@ button.primary {
   line-height: 1.18;
 }
 .card-heading h2 {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
 }
 .card-icon,
 .station-icon,
@@ -708,7 +708,7 @@ button.primary {
   display: grid;
   gap: 6px;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
 }
 .tool-card label.checkbox {
@@ -778,7 +778,7 @@ button.primary {
 .subscription-list strong,
 .episode-list strong {
   display: block;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   line-height: 1.35;
 }
 .directory-results small,
@@ -789,12 +789,12 @@ button.primary {
   gap: 5px 8px;
   margin-top: 3px;
   color: var(--te-settings-text-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .directory-results button {
   min-height: 30px;
   padding-inline: 9px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .station-collection {
@@ -814,7 +814,7 @@ button.primary {
 }
 .collection-heading h2 {
   margin-top: 5px;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
 }
 .collection-count,
 .library-heading > span {
@@ -823,7 +823,7 @@ button.primary {
   padding: 6px 9px;
   background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--te-primary-500);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 750;
 }
 .station-grid {
@@ -867,7 +867,7 @@ button.primary {
   overflow: hidden;
   margin-top: 4px;
   color: var(--te-settings-text-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -890,7 +890,7 @@ button.primary {
   padding: 2px 7px;
   background: color-mix(in srgb, var(--te-primary-500) 11%, transparent);
   color: var(--te-primary-500);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   font-weight: 750;
 }
 .badge.http {
@@ -920,7 +920,7 @@ button.primary {
 .collection-empty h3,
 .episode-empty h2 {
   margin-bottom: 6px;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 
 .podcast-workspace {
@@ -962,7 +962,7 @@ button.primary {
 }
 .library-heading h2 {
   margin-top: 5px;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 .subscription-list li {
   display: flex;
@@ -996,11 +996,11 @@ button.primary {
 .subscription-list .linkish {
   min-height: 28px;
   padding-inline: 8px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .empty {
   color: var(--te-settings-text-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .episode-panel {
   padding: clamp(18px, 3vw, 28px);
@@ -1011,12 +1011,12 @@ button.primary {
 }
 .episode-header h2 {
   margin-top: 5px;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
 }
 .episode-header p {
   margin: 4px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 .episode-list li {
   display: grid;

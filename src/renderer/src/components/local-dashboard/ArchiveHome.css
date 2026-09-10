@@ -66,7 +66,7 @@
   align-items: center;
   gap: 9px;
   color: var(--archive-muted);
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   font-weight: 500;
   letter-spacing: 0.19em;
 }
@@ -82,7 +82,7 @@
   margin-left: 10px;
   padding-left: 18px;
   border-left: 1px solid var(--archive-line);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   letter-spacing: 0.06em;
 }
 .archive-masthead h1 {
@@ -98,7 +98,7 @@
 }
 .archive-greeting {
   color: var(--archive-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.7;
   letter-spacing: 0.06em;
 }
@@ -112,14 +112,14 @@
   border: 1px solid var(--archive-line);
   border-radius: 999px;
   background: transparent;
-  font-size: 12px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14) !important;
 }
 .archive-shuffle > i:first-child {
   color: var(--te-primary-500);
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
 }
 .archive-shuffle > i:last-child {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   margin-left: 8px;
 }
 .archive-stats {
@@ -141,7 +141,7 @@
   text-align: left;
 }
 .archive-stats > * > i:first-child {
-  font-size: 30px;
+  font-size: calc(var(--te-font-size-body, 14px) * 30 / 14);
   font-weight: 400;
   color: var(--te-neutral-700);
 }
@@ -157,13 +157,13 @@
 .archive-stats small {
   display: block;
   margin-top: 5px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   color: var(--archive-muted);
 }
 .archive-stat-arrow {
   margin-left: auto;
   color: var(--archive-muted);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   opacity: 0;
 }
 .archive-stat-caption {
@@ -202,7 +202,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 21px;
+  font-size: calc(var(--te-font-size-body, 14px) * 21 / 14);
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1.2;
@@ -223,7 +223,7 @@
   background: none;
   border: 0;
   color: color-mix(in srgb, var(--archive-on-stage) 72%, transparent);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.8;
   white-space: nowrap;
 }
@@ -248,7 +248,7 @@
 .archive-page-count {
   padding-right: 13px;
   font-family: var(--te-font-rounded);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
@@ -264,7 +264,7 @@
   border: 1px solid color-mix(in srgb, var(--archive-on-stage) 38%, transparent);
   border-radius: 50%;
   color: inherit;
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
 }
 .archive-paging button:disabled {
   opacity: 0.35;
@@ -304,7 +304,7 @@
 .archive-record strong {
   display: block;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -313,7 +313,7 @@
 .archive-record small {
   display: block;
   margin-top: 5px;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   color: color-mix(in srgb, var(--archive-on-stage) 73%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -345,7 +345,7 @@
   background: var(--archive-on-stage);
   color: var(--archive-stage);
   border-radius: 50%;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   opacity: 0;
   transform: translateY(4px);
   transition:
@@ -365,7 +365,7 @@
   margin-top: 22px;
   padding: 15px 0;
   border-top: 1px solid var(--archive-stage-line);
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 .archive-rotation-footer > span {
   display: flex;
@@ -375,7 +375,7 @@
   letter-spacing: 0.04em;
 }
 .archive-rotation-footer > span i {
-  font-size: 15px;
+  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
 }
 .archive-rotation-footer button {
   display: flex;
@@ -385,7 +385,7 @@
   color: inherit;
   border: 0;
   background: none;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .archive-shelf-empty {
   display: flex;
@@ -412,13 +412,13 @@
   opacity: 0.6;
 }
 .archive-shelf-empty h3 {
-  font-size: 19px;
+  font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
   font-weight: 500;
   line-height: 1.5;
 }
 .archive-shelf-empty p {
   margin-top: 10px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   opacity: 0.78;
   line-height: 1.8;
 }
@@ -432,7 +432,7 @@
   border-radius: 999px;
   background: var(--archive-on-stage);
   color: var(--archive-stage);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .archive-discover {
   display: grid;
@@ -452,7 +452,7 @@
   margin-bottom: 17px;
 }
 .archive-section-head h2 {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -469,7 +469,7 @@
   color: var(--archive-muted);
   border: 0;
   background: none;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 .archive-resume {
   display: flex;
@@ -531,7 +531,7 @@
   margin-top: 10px;
   font-family: var(--te-font-display);
   font-weight: 500;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   letter-spacing: -0.02em;
   line-height: 1.3;
   overflow: hidden;
@@ -545,7 +545,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--archive-muted);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .archive-resume-meta {
   display: block;
@@ -564,10 +564,10 @@
   padding: 9px 13px;
   background: var(--te-primary-500);
   color: var(--te-neutral-50);
-  font-size: 10px !important;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
 }
 .archive-resume-play i {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 .archive-albums {
   display: grid;
@@ -599,7 +599,7 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.5;
   font-weight: 500;
 }
@@ -609,13 +609,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-top: 5px;
-  font-size: 9px;
+  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   color: var(--archive-muted);
 }
 .archive-album > i {
   margin-left: auto;
   color: var(--archive-muted);
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .archive-resume-empty,
 .archive-albums-empty {
@@ -630,12 +630,12 @@
 }
 .archive-resume-empty > i,
 .archive-albums-empty > i {
-  font-size: 30px;
+  font-size: calc(var(--te-font-size-body, 14px) * 30 / 14);
   color: var(--te-primary-500);
 }
 .archive-resume-empty p,
 .archive-albums-empty p {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--archive-muted);
 }
 .archive-resume-empty > span {
@@ -647,7 +647,7 @@
   color: var(--te-primary-500);
   border: 0;
   background: none;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 .archive-colophon {
   display: flex;
@@ -670,7 +670,7 @@
 }
 .archive-colophon > i {
   color: var(--te-primary-500);
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
 }
 @media (hover: hover) and (pointer: fine) {
   .archive-record:hover .archive-record-play {
@@ -727,7 +727,7 @@
     width: 115px;
   }
   .archive-resume-copy h3 {
-    font-size: 20px;
+    font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
   }
   .archive-stats > * {
     gap: 12px;
@@ -761,7 +761,7 @@
     padding: 15px 11px;
   }
   .archive-stats > * > i:first-child {
-    font-size: 24px;
+    font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   }
   .archive-stat-caption,
   .archive-stat-arrow {
@@ -774,7 +774,7 @@
     gap: 23px;
   }
   .archive-section-name h2 {
-    font-size: 18px;
+    font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   }
   .archive-tabs {
     gap: 17px;
@@ -826,7 +826,7 @@
     flex-basis: 100%;
   }
   .archive-rotation-footer > span {
-    font-size: 9px;
+    font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
   }
   .archive-shelf-empty {
     flex-direction: column;
@@ -841,7 +841,7 @@
     font-size: 65px;
   }
   .archive-shelf-empty h3 {
-    font-size: 16px;
+    font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   }
   .archive-resume {
     gap: 25px;
@@ -851,7 +851,7 @@
     width: 95px;
   }
   .archive-resume-copy h3 {
-    font-size: 19px;
+    font-size: calc(var(--te-font-size-body, 14px) * 19 / 14);
   }
   .archive-albums {
     grid-template-columns: minmax(0, 1fr);

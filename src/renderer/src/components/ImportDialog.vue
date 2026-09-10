@@ -250,7 +250,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 
 .dialog-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 600;
   color: #1a1a1a;
 }
@@ -260,7 +260,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   border: none;
   cursor: pointer;
   color: #999;
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   padding: 4px;
 }
 
@@ -277,7 +277,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 }
 
 .section-title {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 700;
   color: var(--te-neutral-900);
 }
@@ -288,7 +288,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   border: 1px solid #c2e0ff;
   padding: 4px 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -313,7 +313,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   padding: 32px;
   text-align: center;
   color: #999;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 
 .folder-item {
@@ -330,7 +330,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 
 .folder-path {
   flex: 1;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #333;
   white-space: nowrap;
   overflow: hidden;
@@ -358,7 +358,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #666;
   cursor: pointer;
 }
@@ -373,7 +373,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 .progress-info {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-primary-500);
   margin-bottom: 8px;
 }
@@ -400,7 +400,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   background: var(--te-warning-soft-bg);
   border: 1px solid rgba(255, 180, 80, 0.24);
   border-radius: 14px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: #b8780d;
   text-align: center;
 }
@@ -417,7 +417,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   border: 1px solid rgba(255, 255, 255, 0.62);
   padding: 8px 16px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
   color: #666;
 }
@@ -427,7 +427,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   border: none;
   padding: 8px 24px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
   color: #fff;
   font-weight: 500;

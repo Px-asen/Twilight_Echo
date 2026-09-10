@@ -1,3 +1,4 @@
+import { dispatchPlayerShortcut } from '@renderer/stores/player/playerShortcutController'
 import {
   shallowRef,
   ref,
@@ -3164,55 +3165,33 @@ function jumpQueue(index: number): void {
 async function handlePlayerShortcutAction(
   action: import('../types/settings').PlayerShortcutAction
 ): Promise<void> {
-  if (typeof action === 'string') {
-    if (action === 'previous') {
-      previous()
-      return
-    }
-    if (action === 'next') {
-      next()
-      return
-    }
-    if (action === 'play') {
-      if (!isPlaying.value) await togglePlayState()
-      return
-    }
-    if (action === 'pause') {
-      if (isPlaying.value) await togglePlayState()
-      return
-    }
-    if (action === 'toggleDesktopLyrics') {
+  await dispatchPlayerShortcut(action, {
+    previous,
+    next,
+    isPlaying: () => isPlaying.value,
+    togglePlay: togglePlayState,
+    toggleLyrics: async () => {
       const enabled = await window.api.desktopLyrics.setEnabled(
         !appSettings.value.desktopLyrics.enabled
       )
       await updateSettings({ desktopLyrics: { ...appSettings.value.desktopLyrics, enabled } })
-      return
-    }
-    if (action === 'toggleDesktopLyricsLock') {
+    },
+    toggleLyricsLock: async () => {
       await updateSettings({
         desktopLyrics: {
           ...appSettings.value.desktopLyrics,
           locked: !appSettings.value.desktopLyrics.locked
         }
       })
-      return
-    }
-    // playPause
-    await togglePlayState()
-    return
-  }
-  if (action.action === 'seek') {
-    seekPlayback(action.positionSeconds)
-    return
-  }
-  if (action.action === 'setVolume') {
-    volume.value = Math.min(1, Math.max(0, action.volume))
-    muted.value = false
-    return
-  }
-  if (action.action === 'jumpQueue') {
-    jumpQueue(action.index)
-  }
+    },
+    seek: seekPlayback,
+    getVolume: () => (muted.value ? 0 : volume.value),
+    setVolume: (value) => {
+      volume.value = value
+      muted.value = false
+    },
+    jumpQueue
+  })
 }
 
 async function togglePlayState(): Promise<void> {

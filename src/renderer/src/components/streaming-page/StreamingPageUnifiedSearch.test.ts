@@ -12,6 +12,7 @@ import { getTrackSource } from '../../utils/logicalTrackModel.ts'
 const source = readFileSync(new URL('../StreamingPage.vue', import.meta.url), 'utf8')
 const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url), 'utf8')
 const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import.meta.url), 'utf8')
+const providerHomeSource = readFileSync(new URL('./ProviderMusicHome.vue', import.meta.url), 'utf8')
 const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
 const providerSwitcherSource = readFileSync(
   new URL('./StreamingProviderSwitcher.vue', import.meta.url),
@@ -183,6 +184,24 @@ test('streaming provider switcher replaces the avatar in the content header', ()
   assert.match(source, /const headerProviderOptions = computed\(/)
   assert.match(source, /:provider-options="headerProviderOptions"/)
   assert.match(source, /@select-provider="selectProvider"/)
+})
+
+test('external provider home uses the shared home title and time greeting', () => {
+  assert.match(
+    source,
+    /const isExternalHome = computed\([\s\S]*activeTab\.value === 'home'[\s\S]*!isSearching\.value/
+  )
+  assert.match(source, /if \(isExternalHome\.value\) return '主页'/)
+  assert.match(
+    source,
+    /const headerSubtitle = computed\(\(\) => \{\s*if \(isExternalHome\.value\) return timeGreeting\.value/
+  )
+})
+
+test('external provider home removes the redundant provider masthead', () => {
+  assert.doesNotMatch(providerHomeSource, /class="music-masthead"/)
+  assert.doesNotMatch(providerHomeSource, /class="music-refresh"/)
+  assert.match(providerHomeSource, /class="music-hero"/)
 })
 
 test('private FM and radar use a session-fenced queue stream in shuffle mode', () => {

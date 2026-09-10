@@ -502,7 +502,7 @@ body.te-no-blur .onb-card {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   letter-spacing: 0.32em;
   text-transform: uppercase;
@@ -583,7 +583,7 @@ body.te-no-blur .onb-card {
 
 .onb-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   color: var(--onb-faint);
 }
 
@@ -694,7 +694,7 @@ html[data-theme='dark'] .onb-card::before {
 }
 
 .onb-card-icon {
-  font-size: 46px;
+  font-size: calc(var(--te-font-size-body, 14px) * 46 / 14);
   line-height: 1;
   color: var(--onb-accent);
   filter: drop-shadow(0 4px 14px rgba(var(--onb-accent-rgb), 0.35));
@@ -703,12 +703,12 @@ html[data-theme='dark'] .onb-card::before {
 
 .onb-card-title {
   font-family: var(--onb-display);
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   font-weight: 600;
 }
 
 .onb-card-desc {
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   line-height: 1.55;
   color: var(--onb-muted);
 }
@@ -725,7 +725,7 @@ html[data-theme='dark'] .onb-card::before {
   border-radius: 50%;
   background: var(--onb-accent);
   color: var(--onb-on-accent);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   box-shadow: 0 4px 12px rgba(var(--onb-accent-rgb), 0.4);
   animation: onb-check-pop 420ms var(--te-ease-spring) backwards;
 }
@@ -763,7 +763,7 @@ html[data-theme='dark'] .onb-card::before {
   background: var(--onb-card);
   color: inherit;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   cursor: pointer;
   transition:
     transform var(--te-motion-hover) var(--te-ease-soft),
@@ -786,7 +786,7 @@ html[data-theme='dark'] .onb-card::before {
 }
 
 .onb-theme-chip i {
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   color: var(--onb-accent);
   transition: transform var(--te-motion-panel) var(--te-ease-spring);
 }
@@ -889,7 +889,7 @@ html[data-theme='dark'] .onb-card::before {
 
 .onb-swatch i {
   color: #ffffff;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   animation: onb-check-pop var(--te-motion-panel) var(--te-ease-spring) backwards;
 }
 
@@ -935,7 +935,7 @@ html[data-theme='dark'] .onb-card::before {
 }
 
 .onb-bg-swatch i {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: var(--onb-accent);
   animation: onb-check-pop var(--te-motion-panel) var(--te-ease-spring) backwards;
 }
@@ -961,7 +961,7 @@ html[data-theme='dark'] .onb-card::before {
   border-radius: 50%;
   background: transparent;
   color: var(--onb-faint);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   cursor: pointer;
   transition:
     color var(--te-motion-hover) ease,
@@ -1005,7 +1005,7 @@ body.te-no-blur .onb-segmented {
   background: transparent;
   color: var(--onb-muted);
   font-family: inherit;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -1079,7 +1079,7 @@ body.te-no-blur .onb-segmented {
 
 .onb-device-icon {
   flex: 0 0 auto;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   color: var(--onb-accent);
 }
 
@@ -1092,7 +1092,7 @@ body.te-no-blur .onb-segmented {
 }
 
 .onb-device-copy strong {
-  font-size: 13.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13.5 / 14);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1100,7 +1100,7 @@ body.te-no-blur .onb-segmented {
 }
 
 .onb-device-copy small {
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   color: var(--onb-muted);
 }
 
@@ -1110,7 +1110,7 @@ body.te-no-blur .onb-segmented {
   border-radius: 999px;
   background: rgba(var(--onb-accent-rgb), 0.12);
   color: var(--onb-accent);
-  font-size: 10.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -1125,7 +1125,7 @@ body.te-no-blur .onb-segmented {
   border-radius: 50%;
   background: var(--onb-accent);
   color: var(--onb-on-accent);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   animation: onb-check-pop var(--te-motion-panel) var(--te-ease-spring) backwards;
 }
 
@@ -1142,7 +1142,7 @@ body.te-no-blur .onb-segmented {
 
 .onb-player-shape-cards .onb-card-icon,
 .onb-close-behavior-cards .onb-card-icon {
-  font-size: 36px;
+  font-size: calc(var(--te-font-size-body, 14px) * 36 / 14);
 }
 
 .onb-visibility-panel {
@@ -1189,7 +1189,7 @@ body.te-no-blur .onb-segmented {
   background: transparent;
   color: var(--onb-muted);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   cursor: pointer;
   transition:
     color var(--te-motion-hover) ease,
@@ -1212,7 +1212,7 @@ body.te-no-blur .onb-segmented {
 
 .onb-segmented.is-small > button {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 
 .onb-proxy-inputs {
@@ -1230,7 +1230,7 @@ body.te-no-blur .onb-segmented {
   background: rgba(var(--onb-accent-rgb), 0.04);
   color: var(--onb-text);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   outline: none;
   transition: border-color var(--te-motion-hover) var(--te-ease-soft);
 }
@@ -1260,12 +1260,12 @@ body.te-no-blur .onb-segmented {
   border: 1px solid var(--onb-card-border);
   border-radius: 999px;
   background: var(--onb-card);
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   color: var(--onb-muted);
 }
 
 .onb-scan-status i {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   color: var(--onb-accent);
   animation: onb-spin 3.2s linear infinite;
 }
@@ -1299,7 +1299,7 @@ body.te-no-blur .onb-segmented {
 
 .onb-feature-state {
   padding-left: 6px;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: var(--onb-accent);
 }
 
@@ -1335,7 +1335,7 @@ body.te-no-blur .onb-panel {
   background: rgba(var(--onb-accent-rgb), 0.05);
   color: var(--onb-accent);
   font-family: inherit;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 600;
   cursor: pointer;
   transition:
@@ -1355,7 +1355,7 @@ body.te-no-blur .onb-panel {
 }
 
 .onb-folder-add i {
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
 }
 
 .onb-folder-row {
@@ -1364,7 +1364,7 @@ body.te-no-blur .onb-panel {
   gap: 10px;
   padding: 9px 12px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   animation: onb-rise var(--te-motion-panel) var(--te-ease-out-quint) backwards;
   transition: background var(--te-motion-hover) var(--te-ease-soft);
 }
@@ -1375,7 +1375,7 @@ body.te-no-blur .onb-panel {
 
 .onb-folder-row i {
   flex: 0 0 auto;
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   color: var(--onb-accent);
 }
 
@@ -1400,7 +1400,7 @@ body.te-no-blur .onb-panel {
   border-radius: 50%;
   background: transparent;
   color: var(--onb-faint);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
   transition:
     color var(--te-motion-hover) ease,
@@ -1465,12 +1465,12 @@ body.te-no-blur .onb-panel {
 }
 
 .onb-toggle-copy strong {
-  font-size: 13.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13.5 / 14);
   font-weight: 600;
 }
 
 .onb-toggle-copy span {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   line-height: 1.5;
   color: var(--onb-muted);
 }
@@ -1590,32 +1590,32 @@ body.te-no-blur .onb-panel {
 
 .onb-notes i:nth-child(1) {
   left: 12%;
-  font-size: 22px;
+  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
   animation-delay: 0s;
 }
 .onb-notes i:nth-child(2) {
   left: 26%;
-  font-size: 30px;
+  font-size: calc(var(--te-font-size-body, 14px) * 30 / 14);
   animation-delay: 2.4s;
 }
 .onb-notes i:nth-child(3) {
   left: 48%;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   animation-delay: 4.8s;
 }
 .onb-notes i:nth-child(4) {
   left: 64%;
-  font-size: 26px;
+  font-size: calc(var(--te-font-size-body, 14px) * 26 / 14);
   animation-delay: 1.2s;
 }
 .onb-notes i:nth-child(5) {
   left: 78%;
-  font-size: 20px;
+  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
   animation-delay: 3.6s;
 }
 .onb-notes i:nth-child(6) {
   left: 90%;
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   animation-delay: 6s;
 }
 
@@ -1652,7 +1652,7 @@ body.te-no-blur .onb-panel {
   border: 1px solid var(--onb-card-border);
   border-radius: 999px;
   background: var(--onb-card);
-  font-size: 12.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   color: var(--onb-muted);
   animation: onb-rise var(--te-motion-settle, 500ms) var(--te-ease-out-expo) backwards;
   transition:
@@ -1681,7 +1681,7 @@ body.te-no-blur .onb-panel {
 }
 
 .onb-feature i {
-  font-size: 17px;
+  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   color: var(--onb-accent);
 }
 
@@ -1712,7 +1712,7 @@ body.te-no-blur .onb-panel {
 
 .onb-key-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
   letter-spacing: 0.08em;
   color: var(--onb-faint);
   user-select: none;
@@ -1752,7 +1752,7 @@ body.te-no-blur .onb-panel {
   background: transparent;
   color: var(--onb-faint);
   font-family: inherit;
-  font-size: 13.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13.5 / 14);
   cursor: pointer;
   transition:
     color var(--te-motion-hover) ease,
@@ -1775,7 +1775,7 @@ body.te-no-blur .onb-panel {
   background: linear-gradient(135deg, var(--onb-accent) 0%, rgba(var(--onb-accent-rgb), 0.82) 100%);
   color: var(--onb-on-accent);
   font-family: inherit;
-  font-size: 14.5px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14.5 / 14);
   font-weight: 600;
   cursor: pointer;
   overflow: hidden;
@@ -1836,7 +1836,7 @@ body.te-no-blur .onb-panel {
 }
 
 .onb-btn-primary i {
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   transition: transform var(--te-motion-hover) var(--te-ease-soft);
 }
 

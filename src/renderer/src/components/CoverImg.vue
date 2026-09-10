@@ -24,7 +24,6 @@
 import { computed, ref, watch } from 'vue'
 import {
   clearLocalCoverDataCache,
-  clearRemoteCoverGrantCache,
   invalidateRemoteCoverGrant,
   resolveCover
 } from '../utils/coverLoader.ts'
@@ -85,6 +84,7 @@ watch(
 )
 
 async function onImageError(event: Event): Promise<void> {
+  const id = requestId
   const source =
     (typeof props.coverSource === 'string' && props.coverSource.trim()) ||
     (typeof props.cover === 'string' && /^https?:\/\//i.test(props.cover.trim())
@@ -92,9 +92,8 @@ async function onImageError(event: Event): Promise<void> {
       : '')
   if (source) {
     invalidateRemoteCoverGrant(source)
-    clearRemoteCoverGrantCache()
-    clearLocalCoverDataCache()
     const next = await resolveCover(null, source)
+    if (id !== requestId) return
     if (next && next !== displayCover.value) {
       displayCover.value = next
       remountNonce.value += 1
@@ -105,6 +104,7 @@ async function onImageError(event: Event): Promise<void> {
   if (typeof props.cover === 'string' && /^cover:/i.test(props.cover)) {
     clearLocalCoverDataCache()
     const next = await resolveCover(props.cover, null)
+    if (id !== requestId) return
     if (next && next !== displayCover.value) {
       displayCover.value = next
       remountNonce.value += 1

@@ -998,13 +998,13 @@ html[data-te-preset-layout='zen-minimal'] .playing-music .track-title {
 }
 
 html[data-te-preset-layout='zen-minimal'] .playing-music .track-artist {
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 400;
   letter-spacing: 0.08em;
 }
 
 html[data-te-preset-layout='zen-minimal'] .playing-music .track-album {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 400;
   letter-spacing: 0.06em;
 }
@@ -1058,157 +1058,6 @@ html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.active {
 html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-text {
   line-height: 2;
   letter-spacing: 0.03em;
-}
-
-/* ── 播放栏：消失的边界 ─────────────────────────────────────────────────── */
-
-html[data-te-preset-layout='zen-minimal'] .player-bar-shell {
-  left: 0;
-  right: 0;
-  bottom: 0;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar-shell.menu-open {
-  left: var(--te-menu-width);
-  right: 0;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar-shell .player-bar {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  height: 64px;
-  padding: 0 clamp(14px, 4vw, 44px) 8px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-}
-
-/* 左侧：小封面、轻文字 */
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot {
-  width: 38px;
-  height: 38px;
-  border-radius: 2px;
-  background: transparent;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot .player-cover {
-  width: 38px;
-  height: 38px;
-  border-radius: 2px;
-  box-shadow: none;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot:hover .player-cover {
-  transform: none;
-  box-shadow: none;
-  filter: none;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-title {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-artist {
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.05em;
-  color: color-mix(in oklab, var(--te-chrome-text, var(--te-neutral-900)) 55%, transparent);
-}
-
-/* 中央控制：无底色纯图标 */
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-controls {
-  gap: clamp(10px, 2vw, 18px);
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .ctrl-btn:hover {
-  background: transparent;
-}
-
-/* 进度：一条 1px 发丝线贴窗口最底缘 */
-html[data-te-preset-layout='zen-minimal'] .player-bar .player-center {
-  position: static;
-  transform: none;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .progress-area {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: auto;
-  gap: 0;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .progress-slider-wrap {
-  height: 12px;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .progress-slider {
-  height: 12px;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .progress-track {
-  top: auto;
-  bottom: 0;
-  height: 1px;
-  transform: none;
-  border-radius: 0;
-  background: color-mix(in oklab, var(--te-neutral-900) 16%, transparent);
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .progress-fill {
-  border-radius: 0;
-  background: var(--te-primary-500);
-}
-
-/* 时间标签：静默，悬浮播放栏时浮现在两角 */
-html[data-te-preset-layout='zen-minimal'] .player-bar .time-label {
-  position: absolute;
-  bottom: 8px;
-  min-width: 0;
-  opacity: 0;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: color-mix(in oklab, var(--te-chrome-text, var(--te-neutral-900)) 55%, transparent);
-  transition: opacity 0.25s ease;
-  pointer-events: none;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .time-label:first-child {
-  left: clamp(10px, 2vw, 22px);
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .time-label:last-child {
-  right: clamp(10px, 2vw, 22px);
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar:hover .time-label {
-  opacity: 1;
-}
-
-/* 右侧杂项：低灰度，悬浮播放栏时恢复 */
-html[data-te-preset-layout='zen-minimal'] .player-bar .icon-btn,
-html[data-te-preset-layout='zen-minimal'] .player-bar .mode-btn-right {
-  opacity: 0.4;
-  transition: opacity 0.25s ease;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar:hover .icon-btn,
-html[data-te-preset-layout='zen-minimal'] .player-bar:hover .mode-btn-right {
-  opacity: 1;
-}
-
-html[data-te-preset-layout='zen-minimal'] .player-bar .icon-btn:hover,
-html[data-te-preset-layout='zen-minimal'] .player-bar .mode-btn-right:hover {
-  background: transparent;
 }
 
 /* ── 动效：reduced 档位（本预设默认）关掉持续动画 ─────────────────────── */

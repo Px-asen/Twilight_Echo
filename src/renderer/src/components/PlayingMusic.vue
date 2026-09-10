@@ -1160,7 +1160,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 .track-title {
   margin: 0;
   font-family: var(--te-font-display);
-  font-size: 32px;
+  font-size: calc(var(--te-font-size-body, 14px) * 32 / 14);
   font-weight: 400;
   line-height: 1.22;
   color: var(--te-playback-track-title, #fff);
@@ -1173,7 +1173,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 .track-artist {
   margin: 10px 0 0;
   font-family: var(--te-font-rounded);
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 700;
   color: var(--te-playback-track-artist, rgba(255, 255, 255, 0.78));
   white-space: nowrap;
@@ -1184,7 +1184,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 .track-album {
   margin: 4px 0 0;
   font-family: var(--te-font-rounded);
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   font-weight: 500;
   color: var(--te-playback-track-album, rgba(255, 255, 255, 0.48));
   white-space: nowrap;
@@ -1212,7 +1212,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   min-height: 120px;
   font-family: var(--te-lyric-font-family, inherit);
   color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   letter-spacing: 0.08em;
 }
 
@@ -1232,7 +1232,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   border: 1px solid var(--te-playback-control-border, rgba(255, 255, 255, 0.1));
   background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
   color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1596,11 +1596,11 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   align-items: center;
   gap: 14px;
   color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 
 .empty-state i {
-  font-size: 42px;
+  font-size: calc(var(--te-font-size-body, 14px) * 42 / 14);
   color: rgba(255, 255, 255, 0.16);
 }
 
@@ -1686,11 +1686,11 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   }
 
   .track-title {
-    font-size: 28px;
+    font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
   }
 
   .track-artist {
-    font-size: 16px;
+    font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   }
 
   .lyrics-list {
@@ -1720,7 +1720,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   justify-content: center;
   cursor: pointer;
   color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
-  font-size: 16px;
+  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   transition:
     background var(--te-motion-hover) ease,
     border-color var(--te-motion-hover) ease,
@@ -1885,7 +1885,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 }
 
 :global(html[data-te-player-layout='lyrics-focus'] .playing-music .track-title) {
-  font-size: 24px;
+  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
 }
 
 :global(html[data-te-player-layout='lyrics-focus'] .playing-music .lyrics-list) {

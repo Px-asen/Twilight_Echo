@@ -226,14 +226,14 @@ useFocusTrap(dialogRef, () => props.open)
 
 .queue-playlist-dialog h3 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
   font-weight: 800;
   color: var(--te-neutral-900, #0f172a);
 }
 
 .queue-playlist-target {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-500, #64748b);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -246,7 +246,7 @@ useFocusTrap(dialogRef, () => props.open)
 
 .queue-playlist-section h4 {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--te-neutral-500, #64748b);
@@ -296,14 +296,14 @@ useFocusTrap(dialogRef, () => props.open)
 }
 
 .queue-playlist-item strong {
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .queue-playlist-item small {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-neutral-500, #64748b);
 }
 
@@ -319,7 +319,7 @@ useFocusTrap(dialogRef, () => props.open)
 
 .queue-playlist-hint {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   color: var(--te-neutral-500, #64748b);
 }
 
@@ -328,7 +328,7 @@ useFocusTrap(dialogRef, () => props.open)
   align-items: center;
   gap: 8px;
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: var(--te-danger-soft-fg, #b91c1c);
 }
 
@@ -336,7 +336,7 @@ useFocusTrap(dialogRef, () => props.open)
   border: 0;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   color: var(--te-primary-500, #6366f1);
   cursor: pointer;
@@ -354,7 +354,7 @@ useFocusTrap(dialogRef, () => props.open)
 }
 
 .queue-playlist-create-label {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 700;
   color: var(--te-neutral-500, #64748b);
 }
@@ -365,7 +365,7 @@ useFocusTrap(dialogRef, () => props.open)
   padding: 10px 12px;
   border: 1px solid var(--te-card-border, rgba(148, 163, 184, 0.35));
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   background: var(--te-card-bg, #fff);
   color: var(--te-neutral-900, #0f172a);
   --ai-placeholder: var(--te-neutral-500, #64748b);
@@ -389,7 +389,7 @@ useFocusTrap(dialogRef, () => props.open)
   border-radius: 999px;
   background: var(--te-subtle-bg, #f8fafc);
   color: var(--te-neutral-700, #334155);
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 700;
   cursor: pointer;
 }

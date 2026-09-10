@@ -22,10 +22,10 @@ test('main-process startup creates the window before deferred runtime work', asy
 })
 test('main window keeps the responsive layout minimum size', async () => {
   const source = await readFile(new URL('./window.ts', import.meta.url), 'utf8')
-  assert.match(source, /width:\s*1495/)
-  assert.match(source, /height:\s*883/)
-  assert.match(source, /minWidth:\s*1298/)
-  assert.match(source, /minHeight:\s*692/)
+  assert.match(source, /width:\s*Math\.min\(1495, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
+  assert.match(source, /height:\s*Math\.min\(883, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
+  assert.match(source, /minWidth:\s*Math\.min\(760, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
+  assert.match(source, /minHeight:\s*Math\.min\(692, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
 })
 
 test('windows main window wires taskbar thumbnail buttons separately from native SMTC', async () => {

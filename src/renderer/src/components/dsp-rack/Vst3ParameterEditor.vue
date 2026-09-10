@@ -88,6 +88,6 @@ watch([() => props.node.id, () => props.parameters], () => {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 </style>

@@ -14,17 +14,8 @@ export type {
 export type { PlayerBarMode, PlayerBarPageMode, PlayerBarSettings } from '../../shared/playerBar.ts'
 
 /** Global shortcuts are string-only; remote control may send structured seek/volume/queue commands. */
-export type PlayerShortcutAction =
-  | 'previous'
-  | 'next'
-  | 'playPause'
-  | 'play'
-  | 'pause'
-  | 'toggleDesktopLyrics'
-  | 'toggleDesktopLyricsLock'
-  | { action: 'seek'; positionSeconds: number }
-  | { action: 'setVolume'; volume: number }
-  | { action: 'jumpQueue'; index: number }
+import type { PlayerShortcutAction } from '../../shared/playerShortcuts.ts'
+export type { PlayerShortcutAction } from '../../shared/playerShortcuts.ts'
 
 /** Accelerator-bound actions only (excludes structured remote payloads). */
 export type PlayerShortcutKeyAction = Extract<PlayerShortcutAction, string>
@@ -82,6 +73,8 @@ export const PLAYER_SHORTCUTS: {
   action: PlayerShortcutKeyAction
   label: string
 }[] = [
+  { accelerator: 'CommandOrControl+Alt+Up', action: 'volumeUp', label: '增加音量' },
+  { accelerator: 'CommandOrControl+Alt+Down', action: 'volumeDown', label: '降低音量' },
   { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },
   { accelerator: 'CommandOrControl+Alt+Right', action: 'next', label: '下一首' },
   { accelerator: 'CommandOrControl+Alt+Space', action: 'playPause', label: '播放 / 暂停' },

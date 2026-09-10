@@ -15,6 +15,10 @@ export interface RemoteMediaGrantServiceOptions {
 }
 
 export interface RemoteMediaRequestHandlerOptions {
+  imageCache?: {
+    read: (source: string) => Promise<Response | null>
+    write: (source: string, type: string, bytes: Uint8Array) => Promise<void>
+  }
   grants?: RemoteMediaGrantService
   fetch: (source: string, init: RequestInit) => Promise<Response>
 }
@@ -99,6 +103,12 @@ export function createRemoteMediaRequestHandler(
       return failedRemoteMediaResponse(416, 'Requested range is not supported')
     }
 
+    const cacheable = grant.kind === 'image' && request.method === 'GET' && !range
+    if (cacheable && options.imageCache) {
+      const cached = await options.imageCache.read(grant.source)
+      if (cached) return cached
+    }
+
     let upstream: Response
     try {
       upstream = await fetchRemoteMediaWithRedirects(options.fetch, grant.source, {
@@ -122,11 +132,32 @@ export function createRemoteMediaRequestHandler(
       return failedRemoteMediaResponse(413, 'Remote media response is too large')
     }
 
-    return new Response(limitResponseBody(upstream.body, maximumBytes), {
+    const response = new Response(limitResponseBody(upstream.body, maximumBytes), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: filteredResponseHeaders(upstream.headers)
     })
+    if (
+      cacheable &&
+      options.imageCache &&
+      upstream.status === 200 &&
+      !/no-store|no-cache|private|max-age\s*=\s*0(?:\D|$)/i.test(
+        upstream.headers.get('cache-control') ?? ''
+      )
+    ) {
+      try {
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        await options.imageCache.write(
+          grant.source,
+          upstream.headers.get('content-type') ?? '',
+          bytes
+        )
+        return new Response(bytes, { status: response.status, headers: response.headers })
+      } catch {
+        return failedRemoteMediaResponse(502, 'Remote image response failed')
+      }
+    }
+    return response
   }
 }
 

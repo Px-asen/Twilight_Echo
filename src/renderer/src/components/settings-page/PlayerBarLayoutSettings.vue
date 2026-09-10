@@ -276,13 +276,13 @@ const chromeNote: Record<PlayerBarMode, string> = {
 }
 
 .playbar-layout-region-head span {
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: color-mix(in srgb, currentColor 55%, transparent);
 }
 
 .playbar-layout-empty {
   margin: 0;
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: color-mix(in srgb, currentColor 50%, transparent);
 }
 
@@ -307,7 +307,7 @@ const chromeNote: Record<PlayerBarMode, string> = {
 
 .playbar-layout-item > i {
   flex: 0 0 auto;
-  font-size: 13px;
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   opacity: 0.7;
 }
 
@@ -319,7 +319,7 @@ const chromeNote: Record<PlayerBarMode, string> = {
 }
 
 .playbar-layout-item-label {
-  font-size: 12px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -327,7 +327,7 @@ const chromeNote: Record<PlayerBarMode, string> = {
 }
 
 .playbar-layout-item-hint {
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
   color: color-mix(in srgb, currentColor 50%, transparent);
 }
 
@@ -350,7 +350,7 @@ const chromeNote: Record<PlayerBarMode, string> = {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 10px;
+  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
 }
 
 .playbar-layout-item-tools button:hover:not(:disabled) {
@@ -369,7 +369,7 @@ const chromeNote: Record<PlayerBarMode, string> = {
 
 .playbar-layout-note {
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   line-height: 1.6;
   color: color-mix(in srgb, currentColor 55%, transparent);
 }

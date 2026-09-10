@@ -330,7 +330,7 @@ const emit = defineEmits<{
   flex-wrap: wrap;
   gap: 8px 14px;
   color: var(--te-neutral-600);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .response-legend-item {
   appearance: none;
@@ -475,7 +475,7 @@ svg {
   flex-direction: column;
   justify-content: space-between;
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   font-family: var(--te-font-sans);
   text-align: right;
@@ -493,7 +493,7 @@ svg {
   width: 100%;
   height: 16px;
   color: var(--te-neutral-500);
-  font-size: 11px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 600;
   font-family: var(--te-font-sans);
 }

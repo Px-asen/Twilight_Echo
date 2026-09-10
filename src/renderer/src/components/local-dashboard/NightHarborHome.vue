@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
+import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
 
 const props = defineProps<{
   summary: { tracks: number; albums: number; artists: number; hours: number; minutes: number }
@@ -50,11 +51,7 @@ const heroLabel = computed(() => {
   return props.recent.some((track) => track.id === props.hero?.id) ? '继续聆听' : '从这首开始'
 })
 const greeting = computed(() => {
-  const hour = now.value.getHours()
-  if (hour < 5) return '夜深了，留一盏灯给音乐。'
-  if (hour < 11) return '早上好，让喜欢的旋律先醒来。'
-  if (hour < 18) return '给忙碌按下暂停，把时间留给音乐。'
-  return '晚上好，把世界调轻，把音乐调响。'
+  return resolveTimeGreeting(now.value.getHours())
 })
 let clockTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
@@ -83,9 +80,7 @@ function openActivity(): void {
     <div class="nh-page">
       <section class="nh-intro" aria-labelledby="nh-title">
         <div>
-          <p class="nh-eyebrow">TWILIGHT ECHO / PERSONAL COLLECTION</p>
-          <h1 id="nh-title">夜港<span>。</span><small>Night Harbor</small></h1>
-          <p class="nh-greeting">{{ greeting }}</p>
+          <h1 id="nh-title">{{ greeting }}</h1>
         </div>
         <button
           class="nh-library-link"
@@ -101,14 +96,12 @@ function openActivity(): void {
             <span
               ><span class="nh-status-dot" :class="{ 'is-playing': heroIsPlaying }"></span
               >{{ hero ? heroLabel : '等待第一张唱片' }}</span
-            ><span class="nh-deck-edition" aria-hidden="true">SIDE A <span>/</span> VOL. 03</span>
+            >
           </div>
           <div class="nh-deck-body">
             <div class="nh-art-stage" aria-hidden="true">
               <div class="nh-vinyl">
-                <span class="nh-vinyl-label"
-                  ><i class="ph ph-waveform"></i><span>TWILIGHT<br />RECORDS</span></span
-                >
+                <span class="nh-vinyl-label"><i class="ph ph-waveform"></i></span>
               </div>
               <ArchiveArtwork
                 class="nh-sleeve"
@@ -117,10 +110,8 @@ function openActivity(): void {
                 :identity="hero?.id"
                 :title="hero?.title || '夜'"
               />
-              <span class="nh-art-caption">ORIGINAL SOUND / YOUR COLLECTION</span>
             </div>
             <div class="nh-deck-copy">
-              <p class="nh-deck-script">On the turntable.</p>
               <h2 :title="hero?.title">{{ hero?.title || '你的第一张唱片' }}</h2>
               <p class="nh-artist" :title="hero?.artist">
                 {{ hero?.artist || '一间安静的房间，等一个喜欢的声音。' }}
@@ -163,13 +154,12 @@ function openActivity(): void {
               <span>{{ formatTime(duration) }}</span>
             </template>
             <template v-else
-              ><i class="ph ph-headphones" aria-hidden="true"></i><span>放下一切，听完这一首。</span
-              ><span class="nh-deck-foot-note">TAKE YOUR TIME</span></template
+              ><i class="ph ph-headphones" aria-hidden="true"></i
+              ><span>放下一切，听完这一首。</span></template
             >
           </div>
         </section>
         <aside class="nh-library" aria-label="音乐库一览">
-          <p class="nh-eyebrow">THE COLLECTION</p>
           <button
             type="button"
             class="nh-library-total"
@@ -202,13 +192,13 @@ function openActivity(): void {
             </div>
           </div>
           <button v-if="summary.tracks" type="button" class="nh-shuffle" @click="emit('shuffle')">
-            <span class="nh-eyebrow">LET IT PLAY</span><strong>不如，随心一首。</strong
+            <strong>不如，随心一首。</strong
             ><span class="nh-shuffle-bottom"
               >下一首惊喜，交给偶然。<i class="ph ph-shuffle" aria-hidden="true"></i
             ></span>
           </button>
           <button v-else type="button" class="nh-shuffle" @click="emit('open-library-settings')">
-            <span class="nh-eyebrow">MAKE IT YOURS</span><strong>让音乐住进来。</strong
+            <strong>让音乐住进来。</strong
             ><span class="nh-shuffle-bottom"
               >添加本地音乐文件夹<i class="ph ph-plus" aria-hidden="true"></i
             ></span>
@@ -218,7 +208,7 @@ function openActivity(): void {
       <section class="nh-rotation" aria-labelledby="nh-rotation-title">
         <header class="nh-section-head">
           <div>
-            <p class="nh-eyebrow"><span>01</span> IN ROTATION</p>
+            <p class="nh-eyebrow"><span>01</span></p>
             <h2 id="nh-rotation-title">最近轮换</h2>
           </div>
           <div class="nh-activity-controls">
@@ -298,7 +288,7 @@ function openActivity(): void {
       <section v-if="visibleAlbums.length" class="nh-shelf" aria-labelledby="nh-shelf-title">
         <header class="nh-section-head">
           <div>
-            <p class="nh-eyebrow"><span>02</span> THE RECORD SHELF</p>
+            <p class="nh-eyebrow"><span>02</span></p>
             <h2 id="nh-shelf-title">我的唱片架</h2>
           </div>
           <button
@@ -327,8 +317,7 @@ function openActivity(): void {
                 ><i class="ph ph-arrow-up-right"></i></span
             ></span>
             <span class="nh-album-index"
-              >{{ String(index + 1).padStart(2, '0')
-              }}<span>{{ album.trackCount }} TRACKS</span></span
+              >{{ String(index + 1).padStart(2, '0') }}<span>{{ album.trackCount }} 首</span></span
             >
             <strong :title="album.name">{{ album.name }}</strong
             ><small>{{ album.artist }}</small>
@@ -336,8 +325,7 @@ function openActivity(): void {
         </div>
       </section>
       <footer class="nh-colophon">
-        <span>TWILIGHT ECHO<span>/</span>NIGHT HARBOR</span><span>好音乐，不必急着听完。</span
-        ><i class="ph ph-waveform" aria-hidden="true"></i>
+        <span>好音乐，不必急着听完。</span><i class="ph ph-waveform" aria-hidden="true"></i>
       </footer>
     </div>
   </main>
