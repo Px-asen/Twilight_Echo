@@ -4,6 +4,61 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
+test('installed extract-zip rejects a symlink followed by a same-name file', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-zip-patch-'))
+  try {
+    const local = []
+    const central = []
+    let offset = 0
+    for (const [mode, content] of [
+      [0o120777, '../outside.txt'],
+      [0o100644, 'overwritten']
+    ]) {
+      const name = Buffer.from('escape')
+      const data = Buffer.from(content)
+      const crc = require('buffer-crc32').unsigned(data)
+      const header = Buffer.alloc(30)
+      header.writeUInt32LE(0x04034b50, 0)
+      header.writeUInt16LE(20, 4)
+      header.writeUInt32LE(crc, 14)
+      header.writeUInt32LE(data.length, 18)
+      header.writeUInt32LE(data.length, 22)
+      header.writeUInt16LE(name.length, 26)
+      local.push(header, name, data)
+      const record = Buffer.alloc(46)
+      record.writeUInt32LE(0x02014b50, 0)
+      record.writeUInt16LE(0x0314, 4)
+      record.writeUInt16LE(20, 6)
+      record.writeUInt32LE(crc, 16)
+      record.writeUInt32LE(data.length, 20)
+      record.writeUInt32LE(data.length, 24)
+      record.writeUInt16LE(name.length, 28)
+      record.writeUInt32LE((mode << 16) >>> 0, 38)
+      record.writeUInt32LE(offset, 42)
+      central.push(record, name)
+      offset += header.length + name.length + data.length
+    }
+    const directory = Buffer.concat(central)
+    const end = Buffer.alloc(22)
+    end.writeUInt32LE(0x06054b50, 0)
+    end.writeUInt16LE(2, 8)
+    end.writeUInt16LE(2, 10)
+    end.writeUInt32LE(directory.length, 12)
+    end.writeUInt32LE(offset, 16)
+    const archive = path.join(root, 'attack.zip')
+    fs.writeFileSync(archive, Buffer.concat([...local, directory, end]))
+    const outside = path.join(root, 'outside.txt')
+    fs.writeFileSync(outside, 'original')
+    await assert.rejects(require('extract-zip')(archive, { dir: path.join(root, 'target') }), {
+      message: /Refusing to extract symlink entry/
+    })
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'original')
+    assert.equal(fs.existsSync(path.join(root, 'target', 'escape')), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 const {
   assertLocalVirtualStore,
   assertSingleLockfile,
