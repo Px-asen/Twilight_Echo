@@ -355,6 +355,7 @@ void AsioHelperHost::startWorker() {
 
 void AsioHelperHost::stopWorker() {
   workerRunning_.store(false, std::memory_order_release);
+  process_.wakeCallbacks();
   if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id()) worker_.join();
 }
 
@@ -444,7 +445,7 @@ void AsioHelperHost::workerLoop() {
       dispatchHelperFailure(asio_helper::FailureReason::CallbackStalled, detail);
       break;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    process_.waitForCallbacks(100);
   }
   workerRunning_.store(false, std::memory_order_release);
 }

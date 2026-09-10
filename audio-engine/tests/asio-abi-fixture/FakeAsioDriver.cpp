@@ -26,7 +26,9 @@ enum class IoFormatMode : int {
   // Models drivers whose valid buffer-size range changes once the DSD I/O
   // format is active (observed in the field: createBuffers rejects PCM-mode
   // sizes with ASE_InvalidParameter after the DSD switch).
-  DsdBufferSizeRange
+  DsdBufferSizeRange,
+  RejectPcmWithInvalidFormat,
+  IgnorePcmRestore
 };
 
 class FakeAsioDriver final : public AsioDriver {
@@ -225,6 +227,13 @@ class FakeAsioDriver final : public AsioDriver {
         return kAsioOk;
       case kFutureSetIoFormat:
         if (!isSupportedIoFormat(format->formatType)) return -1;
+        if (format->formatType == kAsioIoFormatPcm && ioFormat_ == kAsioIoFormatDsd) {
+          if (ioFormatMode_ == IoFormatMode::RejectPcmWithInvalidFormat) {
+            format->formatType = kAsioIoFormatInvalid;
+            return kAsioOk;
+          }
+          if (ioFormatMode_ == IoFormatMode::IgnorePcmRestore) return kAsioOk;
+        }
         if (format->formatType == kAsioIoFormatDsd && ioFormatMode_ == IoFormatMode::ReportPcmAfterDsdSet) {
           return kAsioOk;
         }
@@ -301,6 +310,10 @@ extern "C" __declspec(dllexport) twilight::audio::asio_abi::AsioDriver* Twilight
       return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::GetIoFormatUnsupported);
     case static_cast<int>(IoFormatMode::DsdBufferSizeRange):
       return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::DsdBufferSizeRange);
+    case static_cast<int>(IoFormatMode::RejectPcmWithInvalidFormat):
+      return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::RejectPcmWithInvalidFormat);
+    case static_cast<int>(IoFormatMode::IgnorePcmRestore):
+      return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::IgnorePcmRestore);
     default:
       return twilight::audio::asio_abi::createFakeDriver();
   }

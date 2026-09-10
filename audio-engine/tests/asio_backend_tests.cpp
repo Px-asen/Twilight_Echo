@@ -39,6 +39,12 @@ AudioFormat sourceFormat(
   return format;
 }
 
+AudioFormat dopFormat(int rate, int depth, int channels, AudioSampleFormat sampleFormat) {
+  AudioFormat format = sourceFormat(rate, depth, channels, sampleFormat);
+  format.dopEncoded = true;
+  return format;
+}
+
 std::unique_ptr<MockAsioHost> makeHost() {
   auto host = std::make_unique<MockAsioHost>();
   host->devices.push_back(makeMockAsioDevice("asio:mock", {44100, 48000, 96000}, 2));
@@ -830,7 +836,7 @@ void testDopCarrierProfile() {
   auto* rawHost = host.get();
   AsioBackend backend(std::move(host));
   std::string error;
-  assert(backend.open("asio:dop", sourceFormat(352800, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+  assert(backend.open("asio:dop", dopFormat(352800, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
   assert(rawHost->lastOpenConfig.format.sampleRate == 352800);
   assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
 
@@ -876,7 +882,7 @@ void testDopRuntimeFactsProvenWithoutExplicitCapability() {
 
   AsioBackend backend(std::move(host));
   std::string error;
-  assert(backend.open("asio:dop-unproven", sourceFormat(352800, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+  assert(backend.open("asio:dop-unproven", dopFormat(352800, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
   assert(backend.dopRuntimeFacts().state == DopRuntimeFactState::Candidate);
   assert(!backend.dopRuntimeFacts().explicitlyCapable);
 
@@ -893,7 +899,7 @@ void testDopCarrierUsesInt32AsioContainer() {
   device.dopCapable = false;
   host->devices.push_back(device);
   auto* rawHost = host.get();
-  rawHost->actualFormatOverride = sourceFormat(352800, 32, 2, AudioSampleFormat::Int32Interleaved);
+  rawHost->actualFormatOverride = dopFormat(352800, 32, 2, AudioSampleFormat::Int32Interleaved);
   rawHost->channelFormats = {
       AudioSampleFormat::Int32Interleaved,
       AudioSampleFormat::Int32Interleaved,
@@ -903,7 +909,7 @@ void testDopCarrierUsesInt32AsioContainer() {
   std::string error;
   assert(backend.open(
       "asio:dop-int32",
-      sourceFormat(352800, 24, 2, AudioSampleFormat::Int24Interleaved),
+      dopFormat(352800, 24, 2, AudioSampleFormat::Int24Interleaved),
       &error));
   assert(backend.outputFormat().sampleFormat == AudioSampleFormat::Int24In32Interleaved);
   assert(backend.outputFormat().bitDepth == 24);
@@ -965,7 +971,7 @@ void testDopRuntimeFactsMismatchWhenActualFormatDiffers() {
 
   AsioBackend backend(std::move(host));
   std::string error;
-  assert(backend.open("asio:dop-mismatch", sourceFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+  assert(backend.open("asio:dop-mismatch", dopFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
 
   const DopRuntimeFacts facts = backend.dopRuntimeFacts();
@@ -993,7 +999,7 @@ void testDopMarkerEvidence() {
 
     AsioBackend backend(std::move(host));
     std::string error;
-    assert(backend.open("asio:dop-marker", sourceFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+    assert(backend.open("asio:dop-marker", dopFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
     assert(backend.startTyped(
         [validMarkers](PcmBlock& block) {
           for (size_t frame = 0; frame < block.frames; ++frame) {
@@ -1036,7 +1042,7 @@ void testDopMarkerMismatchDemotesRuntimeFacts() {
 
     auto backend = std::make_unique<AsioBackend>(std::move(host));
     std::string error;
-    assert(backend->open("asio:dop-demote", sourceFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+    assert(backend->open("asio:dop-demote", dopFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
     assert(backend->startTyped(
         [validMarkers](PcmBlock& block) {
           for (size_t frame = 0; frame < block.frames; ++frame) {
@@ -2244,7 +2250,70 @@ void testRealAsioSmokeOptIn() {
 
 }  // namespace
 
+void testPcmCarrierDoesNotAcquireDopEvidence() {
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:pcm", {48000, 192000}, 2, AudioSampleFormat::Int32Interleaved);
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::Int32Interleaved, AudioSampleFormat::Int32Interleaved};
+  AsioBackend backend(std::move(host));
+  std::string error;
+  for (int rate : {192000, 48000, 192000}) {
+    assert(backend.open("asio:pcm", sourceFormat(rate, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+    assert(backend.startTyped([](PcmBlock& block) {
+      auto* samples = reinterpret_cast<int32_t*>(block.data);
+      for (size_t frame = 0; frame < block.frames; ++frame) {
+        samples[frame * 2] = 0x12345600;
+        samples[frame * 2 + 1] = static_cast<int32_t>(0xedcbaa00u);
+      }
+      return block.frames;
+    }, nullptr, nullptr, &error));
+    rawHost->triggerBufferSwitch(0);
+    assert(readInt32(rawHost->channelBuffers[0].buffers[0]) == 0x12345600);
+    assert(readInt32(rawHost->channelBuffers[1].buffers[0]) == static_cast<int32_t>(0xedcbaa00u));
+    assert(backend.outputInfo().diagnostics.dopRuntimeEvidence.empty());
+    assert(backend.outputInfo().capabilityReason.empty());
+    assert(backend.dopRuntimeFacts().state == DopRuntimeFactState::Unsupported);
+    backend.close();
+  }
+}
+
+void testAsioCapabilityProbeDoesNotChangeDeviceMode() {
+  const auto path = std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "output/asio/windows/AsioDriverSession.cpp";
+  const auto body = extractFunctionBody(readTextFile(path), "bool AsioDriverSession::probe(");
+  assert(body.find("kFutureSetIoFormat") == std::string::npos);
+  assert(body.find("->setSampleRate(") == std::string::npos);
+}
+
+void testAsioRightAligned24BitWrites() {
+  AsioChannelFormat format;
+  format.logicalFormat = AudioSampleFormat::Int24In32Interleaved;
+  format.validBits = 24;
+  format.validBitsAreMostSignificant = false;
+  const uint32_t source[] = {0x12345600, 0xedcbaa00, 0x7fffff00, 0x80000000};
+  uint32_t output[] = {0xdeadbeef, 0xdeadbeef};
+  asio::writeInterleavedTypedChannelToPlanar(
+      reinterpret_cast<const uint8_t*>(source), 2, 2, 0, format,
+      reinterpret_cast<uint8_t*>(output));
+  assert(output[0] == 0x00123456 && output[1] == 0x007fffff);
+  asio::writeInterleavedTypedChannelToPlanar(
+      reinterpret_cast<const uint8_t*>(source), 2, 2, 1, format,
+      reinterpret_cast<uint8_t*>(output));
+  assert((output[0] & 0xffffff) == 0xedcbaa && (output[1] & 0xffffff) == 0x800000);
+  const float floats[] = {0.5f, -0.5f, 1.0f, -1.0f};
+  asio::writePackedChannelFromFloatScratch(floats, 2, 2, 0, ChannelRoutingMode::Auto,
+      format, reinterpret_cast<uint8_t*>(output));
+  assert(output[0] == 0x00400000 && output[1] == 0x007fffff);
+  asio::writePackedChannelFromFloatScratch(floats, 2, 2, 1, ChannelRoutingMode::Auto,
+      format, reinterpret_cast<uint8_t*>(output));
+  assert((output[0] & 0xffffff) == 0xc00000 && (output[1] & 0xffffff) == 0x800000);
+}
+
 int main() {
+  testAsioRightAligned24BitWrites();
+  testPcmCarrierDoesNotAcquireDopEvidence();
+  testAsioCapabilityProbeDoesNotChangeDeviceMode();
   testAsioBooleanSemantics();
   testAsioErrorSuccessSemantics();
   testAsioDriverSessionUsesAsioErrorSuccessSemantics();

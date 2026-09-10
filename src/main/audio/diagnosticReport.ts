@@ -225,7 +225,29 @@ export function renderAudioDiagnosticMarkdown(
   }
   lines.push('')
 
-  renderPlaybackSection(locale, snapshot.playback, lines)
+  renderPlaybackSection(
+    locale,
+    isRecord(snapshot.diagnosis) && snapshot.diagnosis.sourceFormat
+      ? { ...(isRecord(snapshot.playback) ? snapshot.playback : {}), ...snapshot.diagnosis }
+      : snapshot.playback,
+    lines
+  )
+  const playback = isRecord(snapshot.playback) ? snapshot.playback : {}
+  const diagnosis = isRecord(snapshot.diagnosis) ? snapshot.diagnosis : {}
+  const output = isRecord(playback.outputInfo) ? playback.outputInfo : {}
+  const diagnostics = diagnosis.diagnostics ?? output.diagnostics ?? playback.diagnostics
+  const underruns = readNumber(diagnostics, 'sessionUnderrunCount')
+  const drops = readNumber(diagnostics, 'sessionBufferDropCount')
+  if (underruns > 0 || drops > 0) {
+    lines.push(locale === 'zh-CN' ? '## 播放稳定性' : '## Playback stability', '')
+    lines.push(`- sessionUnderrunCount: ${underruns}`, `- sessionBufferDropCount: ${drops}`, '')
+    lines.push(
+      locale === 'zh-CN'
+        ? '已记录缓冲欠载或回调超时。请对比相同音源在不同输出后端、采样率和缓冲设置下的计数增长；逐位直通状态不能用于判断播放是否流畅。'
+        : 'Buffer underruns or callback deadline misses were recorded. Compare counter growth with the same source across output backends, sample rates and buffer settings. Bit-perfect status does not establish playback stability.',
+      ''
+    )
+  }
 
   if (reasons.length > 0) {
     lines.push(`## ${t('diagnostics.export.reasonsHeading')}`, '')

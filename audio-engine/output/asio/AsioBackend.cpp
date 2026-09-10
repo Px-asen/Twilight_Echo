@@ -277,7 +277,7 @@ DopRuntimeFacts buildAsioDopRuntimeFacts(
     bool actualObserved,
     bool actualChannelFormatsMatch) {
   DopRuntimeFacts facts;
-  if (!isDopCarrierFormat(candidateFormat)) return facts;
+  if (!candidateFormat.dopEncoded || !isDopCarrierFormat(candidateFormat)) return facts;
 
   facts.candidateFormat = candidateFormat;
   facts.explicitlyCapable =
@@ -917,7 +917,7 @@ OutputInfo AsioBackend::outputInfo() const {
   info.diagnostics.lifetimeBufferDropCount += pendingBufferDrops;
   info.diagnostics.dsdShortReadCount += pendingDsdShortReads_.load(std::memory_order_relaxed);
   info.diagnostics.dsdIdleFrameCount += pendingDsdIdleFrames_.load(std::memory_order_relaxed);
-  if (isDopCarrierFormat(openConfig_.format)) {
+  if (openConfig_.format.dopEncoded && isDopCarrierFormat(openConfig_.format)) {
     const int markerState = dopMarkerState_.load(std::memory_order_acquire);
     if (markerState == 1) {
       info.diagnostics.dopRuntimeEvidence =
@@ -1586,7 +1586,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         const size_t renderedFrames = std::min(rendered, renderFrames);
-        if (isDopCarrierFormat(outputFormat) &&
+        if (renderOpenFormatSession_.dopEncoded && isDopCarrierFormat(outputFormat) &&
             dopMarkerState_.load(std::memory_order_relaxed) == 0 && renderedFrames >= 2) {
           dopMarkerFramesVerified_.store(renderedFrames, std::memory_order_relaxed);
           dopMarkerState_.store(

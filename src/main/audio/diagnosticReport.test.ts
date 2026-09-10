@@ -255,3 +255,21 @@ test('malformed diagnosis shapes degrade instead of throwing', () => {
     assert.doesNotThrow(() => renderAudioDiagnosticMarkdown('zh-CN', buildReport({ diagnosis })))
   }
 })
+
+test('legacy raw snapshots render actual diagnosis format and underruns independently of bit-perfect reasons', () => {
+  const report = buildReport({
+    playback: {
+      codec: 'flac',
+      outputInfo: { diagnostics: { sessionUnderrunCount: 1842, sessionBufferDropCount: 0 } }
+    },
+    diagnosis: {
+      sourceFormat: { sampleRate: 44100, bitDepth: 24 },
+      actualOutput: { backend: 'asio', sampleRate: 192000, format: 'float32' }
+    }
+  })
+  const markdown = renderAudioDiagnosticMarkdown('zh-CN', report)
+  assert.match(markdown, /44.1 kHz/)
+  assert.match(markdown, /192 kHz/)
+  assert.match(markdown, /sessionUnderrunCount: 1842/)
+  assert.match(markdown, /播放稳定性/)
+})

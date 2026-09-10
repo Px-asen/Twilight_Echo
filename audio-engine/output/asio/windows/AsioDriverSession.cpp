@@ -1,4 +1,5 @@
 #include "AsioDriverSession.h"
+#include "AsioPcmMode.h"
 
 #include "../AsioRenderUtils.h"
 
@@ -77,7 +78,7 @@ std::optional<AsioChannelFormat> channelFormatFor(
       format.logicalFormat = AudioSampleFormat::Int24In32Interleaved;
       format.containerBits = 32;
       format.validBits = 24;
-      format.validBitsAreMostSignificant = true;
+      format.validBitsAreMostSignificant = false;
       break;
     case asio_abi::kAsioSampleInt32Lsb:
       format.logicalFormat = AudioSampleFormat::Int32Interleaved;
@@ -392,11 +393,7 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
     bool restored = true;
     std::string detail;
     if (ioFormatRestoreRequired) {
-      asio_abi::AsioIoFormat restoreIoFormat = originalIoFormat;
-      if (!originalIoFormatKnown) restoreIoFormat.formatType = asio_abi::kAsioIoFormatPcm;
-      const auto restoreFormatResult = driver->future(asio_abi::kFutureSetIoFormat, &restoreIoFormat);
-      traceNativeDsdResult(driver, "restore-io-format", restoreFormatResult, std::nullopt, &restoreIoFormat);
-      if (!asio_abi::asioErrorIsSuccess(restoreFormatResult)) {
+      if (!restoreAsioPcmMode(*driver)) {
         restored = false;
         detail = "ASIO driver failed to restore the retained PCM I/O format";
       }
@@ -526,6 +523,10 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
           return outcome;
         }
         state->initialized = true;
+        if (!isDsdSampleFormat(config.format.sampleFormat) && !ensureAsioPcmMode(*state->driver)) {
+          outcome.error = "ASIO driver could not restore PCM I/O format before PCM playback";
+          return outcome;
+        }
 
         int32_t inputChannels = 0;
         int32_t outputChannels = 0;
@@ -680,6 +681,10 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
             outcome.error = "ASIO driver did not switch to a Native DSD sample type";
             return outcome;
           }
+          if (!nativeDsdRequested && isDsdSampleFormat(format->logicalFormat)) {
+            outcome.error = "ASIO driver retained a Native DSD sample type for a PCM request";
+            return outcome;
+          }
           if (nativeDsdRequested && firstNativeDsdChannelFormat.has_value() &&
               !asio::channelFormatsMatch(*firstNativeDsdChannelFormat, *format)) {
             state->nativeDsdNegotiation = "channel-format-mismatch";
@@ -789,8 +794,7 @@ bool AsioDriverSession::probe(AsioDeviceInfo* info, std::string* error) {
           return outcome;
         }
 
-        // Everything below only reads, or writes a value we restore before
-        // returning. A probe must leave the driver exactly as it found it.
+        // Capability enumeration must not switch the device's live I/O mode.
         double originalRate = 0;
         const bool originalRateKnown =
             asio_abi::asioErrorIsSuccess(driver->getSampleRate(&originalRate)) && originalRate > 0;
@@ -863,25 +867,13 @@ bool AsioDriverSession::probe(AsioDeviceInfo* info, std::string* error) {
         // when it omits GetIoFormat.
         asio_abi::AsioIoFormat dsdIoFormat{};
         dsdIoFormat.formatType = asio_abi::kAsioIoFormatDsd;
-        if (asio_abi::asioErrorIsSuccess(driver->future(asio_abi::kFutureCanDoIoFormat, &dsdIoFormat))) {
+        if (asio_abi::asioErrorIsSuccess(driver->future(asio_abi::kFutureCanDoIoFormat, &dsdIoFormat)) &&
+            dsdIoFormat.formatType == asio_abi::kAsioIoFormatDsd) {
           outcome.info.nativeDsdCapable = true;
-          // Most drivers only accept DSD semantic rates while a DSD I/O format
-          // is active, so switch first and restore below. Probing these rates
-          // against a PCM-mode driver reports nothing and would understate the
-          // device.
-          asio_abi::AsioIoFormat probeIoFormat{};
-          probeIoFormat.formatType = asio_abi::kAsioIoFormatDsd;
-          const bool dsdModeEntered =
-              asio_abi::asioErrorIsSuccess(driver->future(asio_abi::kFutureSetIoFormat, &probeIoFormat));
           for (int rate : asioDsdSemanticRateProbeSet()) {
             if (asio_abi::asioErrorIsSuccess(driver->canSampleRate(static_cast<double>(rate)))) {
               outcome.info.nativeDsdSampleRates.push_back(rate);
             }
-          }
-          if (dsdModeEntered) {
-            asio_abi::AsioIoFormat restoreIoFormat{};
-            restoreIoFormat.formatType = asio_abi::kAsioIoFormatPcm;
-            driver->future(asio_abi::kFutureSetIoFormat, &restoreIoFormat);
           }
           outcome.info.nativeDsdSampleFormats = {
               AudioSampleFormat::DsdInt8Msb1,
@@ -910,7 +902,6 @@ bool AsioDriverSession::probe(AsioDeviceInfo* info, std::string* error) {
               AudioSampleFormat::Int32Interleaved};
         }
 
-        if (originalRateKnown) driver->setSampleRate(originalRate);
         driver->Release();
         outcome.info.capabilityProbed = true;
         outcome.ok = outcome.info.outputChannels > 0 || !outcome.info.supportedSampleRates.empty();

@@ -249,7 +249,7 @@ inline bool isSupportedChannelFormat(const AsioChannelFormat& format) {
              !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
     case AudioSampleFormat::Int24In32Interleaved:
       return format.containerBits == 32 && format.validBits == 24 &&
-             format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+             format.dsdPacking == AsioDsdPacking::None;
     case AudioSampleFormat::Int32Interleaved:
       return format.containerBits == 32 && format.validBits == 32 &&
              !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
@@ -379,6 +379,11 @@ inline void writePackedChannelFromFloatScratch(
   if (!output || !isSupportedChannelFormat(format)) return;
   writePackedChannelFromFloatScratch(
       input, frameCount, sourceChannels, outputChannel, routingMode, format.logicalFormat, output);
+  if (format.logicalFormat == AudioSampleFormat::Int24In32Interleaved &&
+      !format.validBitsAreMostSignificant) {
+    auto* samples = reinterpret_cast<uint32_t*>(output);
+    for (size_t frame = 0; frame < frameCount; ++frame) samples[frame] >>= 8;
+  }
 }
 
 inline bool canCopyInterleavedTypedChannelToPlanar(
@@ -454,6 +459,8 @@ inline bool canCopyInterleavedTypedChannelToPlanar(
     int sourceChannels,
     int channel) {
   return isSupportedChannelFormat(format) &&
+         (format.logicalFormat != AudioSampleFormat::Int24In32Interleaved ||
+          format.validBitsAreMostSignificant) &&
          canCopyInterleavedTypedChannelToPlanar(
              frameCount, sourceChannels, channel, bytesPerSample(format));
 }
@@ -466,6 +473,16 @@ inline void writeInterleavedTypedChannelToPlanar(
     const AsioChannelFormat& format,
     uint8_t* output) {
   if (!output || !isSupportedChannelFormat(format)) return;
+  if (format.logicalFormat == AudioSampleFormat::Int24In32Interleaved &&
+      !format.validBitsAreMostSignificant) {
+    if (!input || sourceChannels <= 0 || channel < 0 || channel >= sourceChannels) return;
+    auto* destination = reinterpret_cast<uint32_t*>(output);
+    const auto* source = reinterpret_cast<const uint32_t*>(input);
+    for (size_t frame = 0; frame < frameCount; ++frame) {
+      destination[frame] = source[frame * static_cast<size_t>(sourceChannels) + channel] >> 8;
+    }
+    return;
+  }
   writeInterleavedTypedChannelToPlanar(
       input, frameCount, sourceChannels, channel, bytesPerSample(format), output);
 }

@@ -122,6 +122,21 @@ class FixtureHost final : public IAsioHost {
           std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
         if (bufferSwitch_) bufferSwitch_(bufferIndex);
+        if (mode_ == "verify-pcm" && eventCallback_) {
+          float first = 0;
+          std::memcpy(&first, buffers_[0][bufferIndex].data(), sizeof(first));
+          if (first != 0) {
+            bool exact = true;
+            for (size_t channel = 0; channel < 2; ++channel) {
+              for (size_t frame = 0; frame < kFrames; ++frame) {
+                float sample = 0;
+                std::memcpy(&sample, buffers_[channel][bufferIndex].data() + frame * sizeof(float), sizeof(sample));
+                exact &= sample == (channel == 0 ? 0.25f : -0.5f);
+              }
+            }
+            eventCallback_(AsioHostEvent::Xrun, exact ? "pcm-verified" : "pcm-corrupted");
+          }
+        }
         bufferIndex = 1 - bufferIndex;
         ++callbackCount;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));

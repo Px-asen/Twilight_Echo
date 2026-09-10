@@ -18,10 +18,12 @@ class Server final {
   Server(
       SharedMemory* shared,
       HANDLE responseEvent,
+      HANDLE callbackEvent,
       std::unique_ptr<IAsioHost> host,
       AsioHelperServerOptions options)
       : shared_(shared),
         responseEvent_(responseEvent),
+        callbackEvent_(callbackEvent),
         host_(std::move(host)),
         options_(std::move(options)) {}
 
@@ -316,6 +318,7 @@ class Server final {
       exchangeAtomic(&shared_->callbackWriteSequence, write + 1);
     }
     incrementAtomic(&shared_->callbackHeartbeat);
+    SetEvent(callbackEvent_);
   }
 
   void publishHostEvent(AsioHostEvent event, const std::string& message) {
@@ -328,10 +331,12 @@ class Server final {
     copyText(record.message, sizeof(record.message), message);
     MemoryBarrier();
     exchangeAtomic(&shared_->hostEventWriteSequence, write + 1);
+    SetEvent(callbackEvent_);
   }
 
   SharedMemory* shared_ = nullptr;
   HANDLE responseEvent_ = nullptr;
+  HANDLE callbackEvent_ = nullptr;
   std::unique_ptr<IAsioHost> host_;
   AsioHelperServerOptions options_;
   AsioOpenConfig openConfig_;
@@ -379,15 +384,17 @@ int runAsioHelperServer(
   }
   HANDLE requestEvent = OpenEventW(SYNCHRONIZE, FALSE, requestEventName.c_str());
   HANDLE responseEvent = OpenEventW(EVENT_MODIFY_STATE, FALSE, responseEventName.c_str());
-  if (!requestEvent || !responseEvent) {
+  HANDLE callbackEvent = OpenEventW(EVENT_MODIFY_STATE, FALSE, (mappingName + L"_callbacks").c_str());
+  if (!requestEvent || !responseEvent || !callbackEvent) {
     publishStartupFailure(shared, FailureReason::ProtocolError, "ASIO helper could not open control events");
     if (responseEvent) CloseHandle(responseEvent);
     if (requestEvent) CloseHandle(requestEvent);
+    if (callbackEvent) CloseHandle(callbackEvent);
     cleanup();
     return 2;
   }
 
-  Server server(shared, responseEvent, std::move(host), std::move(options));
+  Server server(shared, responseEvent, callbackEvent, std::move(host), std::move(options));
   exchangeAtomic(&shared->failureReason, static_cast<LONG>(FailureReason::None));
   exchangeAtomic(&shared->helperState, static_cast<LONG>(HelperState::Ready));
   int32_t handledSequence = 0;
@@ -408,6 +415,7 @@ int runAsioHelperServer(
   }
   exchangeAtomic(&shared->helperState, static_cast<LONG>(HelperState::Stopped));
   CloseHandle(responseEvent);
+  CloseHandle(callbackEvent);
   CloseHandle(requestEvent);
   cleanup();
   return 0;

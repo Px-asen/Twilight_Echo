@@ -74,6 +74,10 @@ void testNormalRoundTrip(const std::wstring& helperPath) {
   AsioHelperProcess process(helperPath);
   std::string error;
   assert(process.launch(&error));
+  assert(!process.waitForCallbacks(0));
+  process.wakeCallbacks();
+  assert(process.waitForCallbacks(1000));
+  assert(!process.waitForCallbacks(0));
 
   Response response;
   assert(process.request(Command::EnumerateDevices, &response, 2s, &error));
@@ -85,6 +89,7 @@ void testNormalRoundTrip(const std::wstring& helperPath) {
   assert(response.channelCount == 2);
   assert(response.bufferSizeFrames == 64);
   assert(process.request(Command::Start, &response, 2s, &error));
+  assert(process.waitForCallbacks(2000));
 
   auto* shared = process.shared();
   assert(shared);
@@ -412,6 +417,10 @@ void testParentDeathKillsHelper(
 }
 
 void testProtocolReasonCodes() {
+  auto format = openConfig().format;
+  format.dopEncoded = true;
+  assert(twilight::audio::asio_helper::decodeAudioFormat(
+      twilight::audio::asio_helper::encodeAudioFormat(format)).dopEncoded);
   using twilight::audio::asio_helper::failureReasonCode;
   assert(std::string(failureReasonCode(FailureReason::LaunchFailed)) ==
          "asio_helper_launch_failed");
@@ -429,12 +438,41 @@ void testProtocolReasonCodes() {
          "asio_helper_format_restore_failed");
 }
 
+void testPcmBytesReachDriverAcrossReopen(const std::wstring& helperPath) {
+  setMode(L"verify-pcm");
+  AsioHelperHost host(helperPath);
+  for (int rate : {192000, 48000, 192000}) {
+    std::string error;
+    AsioOpenResult result;
+    auto config = openConfig();
+    config.format.sampleRate = rate;
+    assert(host.open(config, &result, &error));
+    std::atomic<int> verified{0};
+    std::atomic<bool> corrupted{false};
+    assert(host.createBuffers([&](long index) {
+      for (long channel = 0; channel < 2; ++channel) {
+        auto* samples = static_cast<float*>(host.outputBuffer(channel, index));
+        for (size_t frame = 0; frame < 64; ++frame) samples[frame] = channel == 0 ? 0.25f : -0.5f;
+      }
+      host.commitOutputBuffer(index, 64);
+    }, [&](AsioHostEvent, const std::string& message) {
+      if (message == "pcm-verified") verified.fetch_add(1);
+      else corrupted.store(true);
+    }, &error));
+    assert(host.start(&error));
+    assert(waitUntil([&] { return verified.load() >= 3 || corrupted.load(); }, 2s));
+    assert(!corrupted.load() && verified.load() >= 3);
+    host.close();
+  }
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
   assert(argc == 3);
   testProtocolReasonCodes();
   testNormalRoundTrip(argv[1]);
+  testPcmBytesReachDriverAcrossReopen(argv[1]);
   testControlTimeout(argv[1]);
   testAbnormalExit(argv[1]);
   testExternalKill(argv[1]);
