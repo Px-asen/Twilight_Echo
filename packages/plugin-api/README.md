@@ -40,5 +40,10 @@ Provider registrations may expose optional `health` metadata through
 health, including `methodStats.getPlaybackUrl`, so streaming UI can distinguish
 login, API, playback URL, network, disabled-provider, and plugin failure states.
 
+The Qishui provider may use the optional host-owned `twilight.qishuiAuth` bridge
+for its QR login flow. It exposes only QR DTOs, the upstream poll response, and
+the resulting session cookie; it does not expose Electron, arbitrary URLs, or
+JavaScript execution to plugins.
+
 Provider `Track` objects may include optional `bpm?: number` metadata in beats
 per minute. Omit it when the source does not provide a trustworthy tempo value.

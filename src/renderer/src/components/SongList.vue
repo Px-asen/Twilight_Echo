@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
+import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import { useLocalPlaylistOrder } from '@renderer/components/song-list/useLocalPlaylistOrder'
 import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
@@ -2327,11 +2328,12 @@ const infoTrack = shallowRef<Track | null>(null)
 
             <!-- Context Menu -->
             <Teleport to="body">
-              <div
+              <NativeContextMenu
                 v-if="showContextMenu"
                 class="context-menu"
                 :style="{ top: menuY + 'px', left: menuX + 'px' }"
                 @click.stop
+                @close="closeContextMenu"
               >
                 <div
                   v-if="canPlayNextSelectedTrack && contextActionCount <= 1"
@@ -2454,7 +2456,7 @@ const infoTrack = shallowRef<Track | null>(null)
                   <span>加入到歌单{{ contextActionLabel }}</span>
                   <i class="pi pi-chevron-right submenu-icon"></i>
 
-                  <div v-if="showPlaylistSubmenu" class="submenu">
+                  <div class="submenu">
                     <div
                       class="menu-item create-playlist-menu-item"
                       data-te-interactive
@@ -2492,7 +2494,7 @@ const infoTrack = shallowRef<Track | null>(null)
                   <span>添加到聚合歌单{{ contextActionLabel }}</span>
                   <i class="pi pi-chevron-right submenu-icon"></i>
 
-                  <div v-if="showAggregateSubmenu" class="submenu">
+                  <div class="submenu">
                     <div
                       class="menu-item create-playlist-menu-item"
                       data-te-interactive
@@ -2525,7 +2527,7 @@ const infoTrack = shallowRef<Track | null>(null)
                   <i class="ph ph-palette"></i>
                   <span>定制此区域外观</span>
                 </div>
-              </div>
+              </NativeContextMenu>
             </Teleport>
           </div>
         </template>

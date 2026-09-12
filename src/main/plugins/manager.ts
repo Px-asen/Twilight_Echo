@@ -60,6 +60,7 @@ import {
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
 import { normalizeThemeContribution, normalizeUiContribution } from './themeContribution.ts'
+import { QISHUI_PLUGIN_ID, QishuiAuthBridge } from './qishuiAuthBridge.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -201,6 +202,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly providerHealth = new Map<string, ProviderHealthRecord>()
   private readonly stopOperations = new Map<string, Promise<void>>()
   private readonly internalNcmRequests = new Map<string, AbortController>()
+  private readonly qishuiAuth = new QishuiAuthBridge()
   private readonly loggedThemeCompatibilityNotes = new Set<string>()
   /**
    * Every state-changing lifecycle action for one plugin shares this queue.
@@ -915,6 +917,9 @@ export class TwilightPluginManager extends EventEmitter {
         descriptor.id,
         `Plugin host exited before its internal API completed (exit code: ${code}).`
       )
+      if (descriptor.id === QISHUI_PLUGIN_ID) {
+        void this.qishuiAuth.clear(descriptor.paths.versionRoot).catch(() => undefined)
+      }
       this.running.delete(descriptor.id)
       if (
         this.state[descriptor.id]?.enabled &&
@@ -998,6 +1003,9 @@ export class TwilightPluginManager extends EventEmitter {
       })
       running.process.kill()
     })
+    if (id === QISHUI_PLUGIN_ID) {
+      await this.qishuiAuth.clear(running.descriptor.paths.versionRoot).catch(() => undefined)
+    }
     if (this.running.get(id) === running) this.running.delete(id)
   }
 
@@ -1123,6 +1131,14 @@ export class TwilightPluginManager extends EventEmitter {
           requestId: message.requestId,
           ok: true,
           value: await this.handleInternalApiCall(id, message, signal)
+        }
+      }
+      if (message.namespace === 'auth') {
+        return {
+          kind: 'api-result',
+          requestId: message.requestId,
+          ok: true,
+          value: await this.handleQishuiAuthApiCall(id, message)
         }
       }
       if (message.namespace !== 'player') throw new Error('未知 API 命名空间')
@@ -1291,6 +1307,32 @@ export class TwilightPluginManager extends EventEmitter {
       return this.ncm.cacheSong(songId, url, typeof fileName === 'string' ? fileName : undefined)
     }
     throw new Error('未知内部 API')
+  }
+
+  private async handleQishuiAuthApiCall(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'api-call' }>
+  ): Promise<unknown> {
+    if (pluginId !== QISHUI_PLUGIN_ID) {
+      throw new Error('汽水音乐安全登录 API 仅允许汽水音乐插件访问')
+    }
+    this.requirePermission(pluginId, 'network', 'twilight.qishuiAuth')
+    const running = this.running.get(pluginId)
+    if (!running) throw new Error('插件未运行')
+    const versionRoot = running.descriptor.paths.versionRoot
+    if (message.method === 'qishuiGetQrLogin') {
+      return this.qishuiAuth.getQrLogin(versionRoot)
+    }
+    if (message.method === 'qishuiCheckQrLogin') {
+      const key = message.args[0]
+      if (typeof key !== 'string') throw new Error('汽水二维码密钥必须是字符串')
+      return this.qishuiAuth.checkQrLogin(versionRoot, key)
+    }
+    if (message.method === 'qishuiClear') {
+      await this.qishuiAuth.clear(versionRoot)
+      return null
+    }
+    throw new Error('未知汽水音乐安全登录 API')
   }
 
   private registerExtensionFromPlugin(

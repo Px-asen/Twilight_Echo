@@ -70,6 +70,8 @@
     "bpmAnalysis:clearCache",
     "bpmAnalysis:getCacheSize",
     "bpmAnalysis:request",
+    "contextMenu:close",
+    "contextMenu:popup",
     "cover:cache",
     "cover:get",
     "cover:grantRemote",
@@ -323,6 +325,8 @@
     "bpmAnalysis:clearCache",
     "bpmAnalysis:getCacheSize",
     "bpmAnalysis:request",
+    "contextMenu:close",
+    "contextMenu:popup",
     "cover:cache",
     "cover:get",
     "cover:grantRemote",
@@ -751,7 +755,9 @@
     "trayPlayer.navigate",
     "trayPlayer.onState",
     "window.close",
+    "window.closeContextMenu",
     "window.minimize",
+    "window.popupContextMenu",
     "window.toggleMaximize"
   ]
 }

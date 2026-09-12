@@ -109,7 +109,11 @@ test('Windows packages use maximum compression', () => {
   assert.match(builder, /^compression:\s*maximum\s*$/m)
   assert.match(builder, /^electronLanguages:\s*\n\s+- zh-CN\s*\n\s+- zh-TW\s*\n\s+- en-US\s*$/m)
   assert.doesNotMatch(builder, /^\s+- node_modules\/\*\*\s*$/m)
-  assert.doesNotMatch(builder, /^\s+include:\s*build\/installer\.nsh\s*$/m)
+  assert.match(builder, /^\s+include:\s*scripts\/installer\.nsh\s*$/m)
+  assert.doesNotMatch(
+    read('scripts/installer.nsh'),
+    /SetCompressor|SetCompress|RequestExecutionLevel/
+  )
 })
 
 test('update checks download GitHub release installers without electron-updater', () => {

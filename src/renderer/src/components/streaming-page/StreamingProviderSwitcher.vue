@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { StreamingProviderOption } from '../../utils/streamingNavigation'
 
 const props = defineProps<{
@@ -13,38 +13,82 @@ const emit = defineEmits<{
 
 const providerMenuOpen = ref(false)
 const switcherRef = ref<HTMLElement | null>(null)
+const menuRef = ref<HTMLElement | null>(null)
+const menuId = useId()
+const menuStyle = ref({ left: '0px', top: '0px', maxHeight: '320px' })
 const activeOption = computed(
   () => props.options.find((option) => option.id === props.modelValue) ?? props.options[0] ?? null
 )
 
 function toggleProviderMenu(): void {
   if (props.options.length < 2) return
-  providerMenuOpen.value = !providerMenuOpen.value
+  const menu = menuRef.value
+  const rect = switcherRef.value?.getBoundingClientRect()
+  if (!menu || !rect) return
+  if (menu.matches(':popover-open')) {
+    closeMenu()
+    return
+  }
+  positionMenu()
+  menu.showPopover()
+  providerMenuOpen.value = true
+}
+
+function positionMenu(): void {
+  const rect = switcherRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const below = Math.max(0, window.innerHeight - rect.bottom - 16)
+  const above = Math.max(0, rect.top - 16)
+  const upward = below < 200 && above > below
+  const height = Math.min(320, upward ? above : below)
+  menuStyle.value = {
+    left: `${Math.max(8, Math.min(rect.right - 220, window.innerWidth - 228))}px`,
+    top: `${upward ? Math.max(8, rect.top - height - 8) : rect.bottom + 8}px`,
+    maxHeight: `${height}px`
+  }
+}
+
+function closeMenu(): void {
+  menuRef.value?.hidePopover()
+  providerMenuOpen.value = false
+}
+
+function onViewportChange(event: Event): void {
+  if (event.target instanceof Node && menuRef.value?.contains(event.target)) return
+  if (providerMenuOpen.value) positionMenu()
+}
+
+function onToggle(event: Event): void {
+  providerMenuOpen.value = (event as ToggleEvent).newState === 'open'
 }
 
 function selectProvider(providerId: string): void {
   if (providerId !== props.modelValue) emit('change', providerId)
-  providerMenuOpen.value = false
+  closeMenu()
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
   if (!providerMenuOpen.value) return
   const target = event.target
   if (target instanceof Node && switcherRef.value?.contains(target)) return
-  providerMenuOpen.value = false
+  closeMenu()
 }
 
 function onMenuFocusOut(event: FocusEvent): void {
   const next = event.relatedTarget as Node | null
-  if (!next || !switcherRef.value?.contains(next)) providerMenuOpen.value = false
+  if (next && !switcherRef.value?.contains(next)) closeMenu()
 }
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown)
+  window.addEventListener('scroll', onViewportChange, true)
+  window.addEventListener('resize', onViewportChange)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
+  window.removeEventListener('scroll', onViewportChange, true)
+  window.removeEventListener('resize', onViewportChange)
 })
 </script>
 
@@ -55,7 +99,7 @@ onBeforeUnmount(() => {
     class="provider-switcher"
     :class="{ open: providerMenuOpen }"
     @focusout="onMenuFocusOut"
-    @keydown.esc.prevent="providerMenuOpen = false"
+    @keydown.esc.prevent="closeMenu"
   >
     <button
       type="button"
@@ -73,6 +117,7 @@ onBeforeUnmount(() => {
       "
       :aria-haspopup="options.length > 1 ? 'listbox' : undefined"
       :aria-expanded="options.length > 1 ? providerMenuOpen : undefined"
+      :aria-controls="menuId"
       :disabled="options.length < 2"
       @click="toggleProviderMenu"
     >
@@ -80,8 +125,12 @@ onBeforeUnmount(() => {
     </button>
 
     <div
-      v-if="providerMenuOpen"
+      :id="menuId"
+      ref="menuRef"
       class="provider-switcher-menu"
+      popover="auto"
+      :style="menuStyle"
+      @toggle="onToggle"
       role="listbox"
       aria-label="选择音源"
     >
@@ -155,11 +204,14 @@ onBeforeUnmount(() => {
 }
 
 .provider-switcher-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(220px, calc(100vw - 16px));
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 10;
-  min-width: 184px;
   padding: 6px;
   border: 1px solid var(--te-card-border);
   border-radius: 14px;

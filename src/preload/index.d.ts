@@ -28,6 +28,7 @@ import type {
   DesktopLyricsTransportAction
 } from '../shared/desktopLyrics.ts'
 import type { TrackData } from '../shared/track.ts'
+import type { NativeContextMenuRequest } from '../shared/nativeContextMenu.ts'
 import type {
   DspAsset,
   DspAssetKind,
@@ -822,6 +823,8 @@ interface WindowAPI {
     ) => () => void
   }
   window: {
+    popupContextMenu: (request: NativeContextMenuRequest) => Promise<string | null>
+    closeContextMenu: (requestId: string) => Promise<void>
     minimize: () => void
     toggleMaximize: () => void
     close: () => void

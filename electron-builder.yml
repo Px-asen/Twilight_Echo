@@ -58,6 +58,7 @@ win:
   # by the generated SHA-256 companion file and the fail-closed artifact checks.
   signAndEditExecutable: false
 nsis:
+  include: scripts/installer.nsh
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}

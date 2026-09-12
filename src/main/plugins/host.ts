@@ -2,6 +2,7 @@ import { pathToFileURL } from 'url'
 import { deletePluginSetting, getPluginSetting, setPluginSetting } from './settingsStore'
 import { initProxy } from './proxyBootstrap'
 import { redactSensitiveText } from '../security/secureStorage.ts'
+import { QISHUI_PLUGIN_ID } from './qishuiAuthBridge.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -103,6 +104,11 @@ interface TwilightPluginContext {
         variables?: Record<string, string>
         stylesheet?: string
       }) => Promise<void>
+    }
+    qishuiAuth?: {
+      getQrLogin: () => Promise<unknown>
+      checkQrLogin: (key: string) => Promise<unknown>
+      clear: () => Promise<void>
     }
     internal?: {
       ncm?: {
@@ -346,6 +352,14 @@ function createContext(
     }
   }
 
+  if (pluginId === QISHUI_PLUGIN_ID) {
+    twilight.qishuiAuth = {
+      getQrLogin: () => callQishuiAuthApi('qishuiGetQrLogin', []),
+      checkQrLogin: (key) => callQishuiAuthApi('qishuiCheckQrLogin', [key]),
+      clear: () => callQishuiAuthApi('qishuiClear', []).then(() => undefined)
+    }
+  }
+
   return {
     apiVersion,
     storagePath,
@@ -415,6 +429,13 @@ function callInternalNcmApi(
   signal?: AbortSignal
 ): Promise<unknown> {
   return callApi('internal', method, args, signal)
+}
+
+function callQishuiAuthApi(
+  method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
+  args: unknown[]
+): Promise<unknown> {
+  return callApi('auth', method, args)
 }
 
 function callApi(

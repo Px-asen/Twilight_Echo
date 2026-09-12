@@ -42,6 +42,10 @@ Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite �
 
 ## 运行架构
 
+本地歌曲、流媒体歌曲及在线音乐库歌单的右键菜单由 Electron `Menu.popup` 展示，允许超出应用窗口，并由系统处理屏幕边界、子菜单与长列表滚动。renderer 的 `NativeContextMenu.vue` 从隐藏的声明式菜单项生成纯 DTO，保留原有点击动作；只经 `window.api.window.popupContextMenu` / `closeContextMenu` 调用 preload。主进程在 `ipc/nativeContextMenuIpc.ts` 校验来源、菜单规模和字段，只返回选中项 ID，不接受 renderer 提供的 Electron role、回调、脚本或文件路径。每个窗口最多保留一个菜单，组件卸载会取消对应请求。
+
+首页音源切换不依赖登录态；音乐库未登录时在页头显示切换入口。音源选择器使用浏览器顶层 popover，保留主题样式，按视口空间限制高度并独立滚动，不受资料卡片的裁剪影响。验证命令：`pnpm run test:native-menus`。
+
 Electron main 侧有五个构建入口，均在 `electron.vite.config.ts` 中声明：
 
 - `index` -> `src/main/index.ts` -> `src/main/app/lifecycle.ts`

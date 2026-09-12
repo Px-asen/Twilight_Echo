@@ -100,6 +100,8 @@ test('every custom renderer click target declares motion coverage', async () => 
       const attributes = match.groups?.attributes ?? ''
       if (NATIVE_INTERACTIVE_TAGS.has(tag)) continue
       if (attributes.includes('@click.self')) continue
+      if (attributes.includes('data-reorder-group') && attributes.includes('@click.capture='))
+        continue
       if (
         attributes.includes('@click.stop') &&
         PASSIVE_CLICK_STOP_CLASSES.some((className) => attributes.includes(className))

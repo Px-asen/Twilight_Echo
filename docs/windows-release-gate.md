@@ -365,3 +365,5 @@ Release candidates that only run `test:no-real-device` (or equivalent software g
 real-device smoke and product honesty surfaces as **`not-run`**. Controlled-pump CTest is not
 hardware smoke and must not be substituted for WASAPI Exclusive / ASIO / DoP / Native DSD /
 SACD ISO / CoreAudio Hog / ALSA `hw:` evidence.
+
+Windows branding checks compare every embedded EXE icon size against `build/icon.ico`, and verify the packaged window icon matches. NSIS updates existing desktop and Start Menu links to `resources/app-icon-${VERSION}.ico` while retaining the application identity; a new version uses a new icon cache key. Deleted shortcuts are not recreated by the custom hook. Already pinned taskbar entries may require unpinning and pinning again after an upgrade.

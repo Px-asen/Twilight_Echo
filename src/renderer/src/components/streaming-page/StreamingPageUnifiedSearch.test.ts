@@ -167,6 +167,28 @@ test('recommendations load declared provider sections and fence stale source res
   assert.match(source, /selectProvider\(surfaceProviders\[0\]\.id, false\)/)
 })
 
+test('logged-out home and library retain source options independently of search visibility', () => {
+  const definition = source.match(
+    /const headerProviderOptions = computed\(\(\) => \{([\s\S]*?)\n}\)/
+  )
+  assert.ok(definition)
+  const context = {
+    currentDetail: { value: null },
+    isSearching: { value: false },
+    activeTab: { value: 'home' },
+    activeLoggedIn: { value: false },
+    homeProviderOptions: { value: [{ id: 'home' }] },
+    discoveryProviderOptions: { value: [{ id: 'discover' }] },
+    libraryProviderOptions: { value: [{ id: 'library' }] }
+  }
+  const read = (): unknown => runInNewContext(`(() => {${definition[1]}})()`, context)
+  assert.equal(read(), context.homeProviderOptions.value)
+  context.activeTab.value = 'library'
+  assert.equal(read(), context.libraryProviderOptions.value)
+  context.activeLoggedIn.value = true
+  assert.equal((read() as unknown[]).length, 0)
+})
+
 test('streaming provider switcher replaces the avatar in the content header', () => {
   assert.doesNotMatch(providerSwitcherSource, /<select/)
   assert.match(providerSwitcherSource, /class="provider-switcher-trigger"/)
@@ -245,7 +267,7 @@ test('streaming page supports multi-select batch favorite and delete on track li
   assert.match(source, /createNcmPlaylist/)
   assert.match(source, /removeNcmTracksFromPlaylist/)
   assert.match(source, /onStreamingTrackContextMenu/)
-  assert.match(source, /streaming-context-menu/)
+  assert.match(source, /<StreamingContextMenu/)
   assert.match(source, /添加到歌单/)
   assert.match(source, /onSearchTrackClickWithSelect/)
   const detailClickHandler = source.match(
