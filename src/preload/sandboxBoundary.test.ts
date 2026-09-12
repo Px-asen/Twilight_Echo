@@ -8,6 +8,15 @@ import test from 'node:test'
 // leaves window.api undefined and blanks the renderer.
 const ALLOWED_SANDBOX_NODE_BUILTINS = new Set(['events', 'timers', 'url'])
 
+test('native context menus expose DTO requests through the sandboxed system bridge', () => {
+  const source = readFileSync(new URL('./domains/systemApi.ts', import.meta.url), 'utf8')
+  assert.match(source, /ipcRenderer\.invoke\('contextMenu:popup', request\)/)
+  assert.match(source, /ipcRenderer\.invoke\('contextMenu:close', requestId\)/)
+  assert.doesNotMatch(source, /Menu\.buildFromTemplate|\.popup\(/)
+  const declarations = readFileSync(new URL('./index.d.ts', import.meta.url), 'utf8')
+  assert.match(declarations, /popupContextMenu: \(request: NativeContextMenuRequest\)/)
+})
+
 const COMMON_NODE_BUILTINS = new Set([
   'assert',
   'buffer',

@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import { usePlaylistLibraryView } from '@renderer/components/streaming-page/usePlaylistLibraryView'
-import { useEscapeToClose, useFocusTrap } from '@renderer/app/useDismissLayer'
-import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
+import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
+import type {
+  MediaProviderPlaylistSummary,
+  MediaProviderProfile
+} from '@renderer/providers/mediaProvider'
 import {
   buildProviderHealthPresentation,
   type ProviderHealthInput
-} from '../utils/providerHealthPresentation'
+} from '@renderer/utils/providerHealthPresentation'
 
 interface ProviderOption {
   id: string
@@ -77,6 +80,10 @@ const emit = defineEmits<{
 // toggle button appears once a second provider (e.g. ytmusic) is loaded and
 // disappears when it is gone.
 const providerMenuOpen = ref(false)
+const providerMenuId = useId()
+const providerMenuElement = ref<HTMLElement | null>(null)
+const providerTrigger = ref<HTMLButtonElement | null>(null)
+const providerMenuStyle = ref({ left: '0px', top: '0px', width: '240px', maxHeight: '320px' })
 
 const providerOptions = computed<ProviderOption[]>(() => props.availableProviders ?? [])
 const canSwitchProvider = computed(() => providerOptions.value.length > 1)
@@ -91,15 +98,73 @@ const activeProviderIcon = computed(() => {
   return active?.icon ?? 'pi pi-music'
 })
 
-function onProviderMenuBlur(): void {
-  // Defer so a menu-item click can register before the menu closes.
-  setTimeout(() => {
-    providerMenuOpen.value = false
-  }, 120)
+function closeProviderMenu(): void {
+  providerMenuElement.value?.hidePopover()
+  providerMenuOpen.value = false
 }
 
+function toggleProviderMenu(): void {
+  const menu = providerMenuElement.value
+  const trigger = providerTrigger.value
+  if (!menu || !trigger) return
+  if (menu.matches(':popover-open')) {
+    closeProviderMenu()
+    return
+  }
+  positionProviderMenu()
+  menu.showPopover()
+  providerMenuOpen.value = true
+}
+
+function positionProviderMenu(): void {
+  const rect = providerTrigger.value?.getBoundingClientRect()
+  if (!rect) return
+  const below = Math.max(0, window.innerHeight - rect.bottom - 14)
+  const above = Math.max(0, rect.top - 14)
+  const openAbove = below < 240 && above > below
+  const maxHeight = Math.min(320, openAbove ? above : below)
+  const width = Math.min(240, window.innerWidth - 16)
+  providerMenuStyle.value = {
+    left: `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`,
+    top: `${openAbove ? Math.max(8, rect.top - maxHeight - 6) : rect.bottom + 6}px`,
+    width: `${width}px`,
+    maxHeight: `${maxHeight}px`
+  }
+}
+
+function onProviderMenuToggle(event: Event): void {
+  providerMenuOpen.value = (event as ToggleEvent).newState === 'open'
+}
+
+function onProviderViewportChange(event: Event): void {
+  if (event.target instanceof Node && providerMenuElement.value?.contains(event.target)) return
+  if (providerMenuOpen.value) positionProviderMenu()
+}
+
+function onProviderFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget
+  if (
+    next instanceof Node &&
+    next !== providerTrigger.value &&
+    !providerMenuElement.value?.contains(next)
+  ) {
+    closeProviderMenu()
+  }
+}
+
+watch(() => props.activeProvider, closeProviderMenu)
+onMounted(() => {
+  window.addEventListener('scroll', onProviderViewportChange, true)
+  window.addEventListener('resize', onProviderViewportChange)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onProviderViewportChange, true)
+  window.removeEventListener('resize', onProviderViewportChange)
+})
+
 function selectProvider(id: string): void {
-  providerMenuOpen.value = false
+  closeProviderMenu()
+  providerTrigger.value?.focus()
   emit('switchProvider', id)
 }
 
@@ -157,9 +222,6 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   return playlist.owned === false ? '取消收藏歌单' : '删除歌单'
 }
 const menuPlaylist = ref<MediaProviderPlaylistSummary | null>(null)
-const menuPosition = ref({ x: 0, y: 0 })
-const menuElement = ref<HTMLElement | null>(null)
-const menuOpen = computed(() => menuPlaylist.value !== null)
 function closePlaylistMenu(): void {
   menuPlaylist.value = null
 }
@@ -167,17 +229,6 @@ function openPlaylistMenu(event: MouseEvent, playlist: MediaProviderPlaylistSumm
   if (!canDeletePlaylist()) return
   const trigger = event.currentTarget as HTMLElement
   trigger.focus()
-  const rect = trigger.getBoundingClientRect()
-  menuPosition.value = {
-    x: Math.max(
-      8,
-      Math.min(event.type === 'contextmenu' ? event.clientX : rect.left, window.innerWidth - 208)
-    ),
-    y: Math.max(
-      8,
-      Math.min(event.type === 'contextmenu' ? event.clientY : rect.bottom, window.innerHeight - 64)
-    )
-  }
   menuPlaylist.value = playlist
 }
 function deleteMenuPlaylist(): void {
@@ -185,8 +236,6 @@ function deleteMenuPlaylist(): void {
   closePlaylistMenu()
   if (playlist && !isPlaylistDeleting(playlist)) emit('deletePlaylist', playlist)
 }
-useEscapeToClose(menuOpen, closePlaylistMenu)
-useFocusTrap(menuElement, menuOpen)
 </script>
 
 <template>
@@ -208,18 +257,31 @@ useFocusTrap(menuElement, menuOpen)
             <h3>{{ providerLabel || '在线音源' }}个人音乐库</h3>
             <div v-if="canSwitchProvider" class="provider-switcher">
               <button
+                ref="providerTrigger"
                 type="button"
                 class="provider-switch-btn"
                 :class="{ active: providerMenuOpen }"
                 :title="`切换音源（当前：${activeProviderName}）`"
-                @click="providerMenuOpen = !providerMenuOpen"
-                @blur="onProviderMenuBlur"
+                :aria-expanded="providerMenuOpen"
+                :aria-controls="providerMenuId"
+                @click="toggleProviderMenu"
+                @focusout="onProviderFocusOut"
               >
                 <i :class="activeProviderIcon"></i>
                 <span class="provider-switch-name">{{ activeProviderName }}</span>
                 <i class="pi pi-chevron-down provider-switch-caret"></i>
               </button>
-              <div v-if="providerMenuOpen" class="provider-menu">
+              <div
+                :id="providerMenuId"
+                ref="providerMenuElement"
+                class="provider-menu"
+                popover="auto"
+                role="group"
+                aria-label="选择音源"
+                :style="providerMenuStyle"
+                @toggle="onProviderMenuToggle"
+                @focusout="onProviderFocusOut"
+              >
                 <button
                   v-for="provider in providerOptions"
                   :key="provider.id"
@@ -227,7 +289,8 @@ useFocusTrap(menuElement, menuOpen)
                   class="provider-menu-item"
                   :class="{ active: provider.id === activeProvider }"
                   :title="providerMenuHealthDetail(provider)"
-                  @mousedown.prevent="selectProvider(provider.id)"
+                  :aria-pressed="provider.id === activeProvider"
+                  @click="selectProvider(provider.id)"
                 >
                   <i :class="provider.icon"></i>
                   <span>
@@ -476,29 +539,17 @@ useFocusTrap(menuElement, menuOpen)
     </section>
   </div>
   <Teleport to="body">
-    <div
-      v-if="menuPlaylist"
-      class="playlist-menu-backdrop"
-      @pointerdown.self="closePlaylistMenu"
-      @contextmenu.prevent.self="closePlaylistMenu"
-    >
-      <div
-        ref="menuElement"
-        class="playlist-action-menu"
-        role="menu"
-        :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }"
+    <NativeContextMenu v-if="menuPlaylist" @close="closePlaylistMenu">
+      <button
+        type="button"
+        role="menuitem"
+        :disabled="isPlaylistDeleting(menuPlaylist)"
+        @click="deleteMenuPlaylist"
       >
-        <button
-          type="button"
-          role="menuitem"
-          :disabled="isPlaylistDeleting(menuPlaylist)"
-          @click="deleteMenuPlaylist"
-        >
-          <i class="pi pi-trash" aria-hidden="true"></i>
-          {{ deletePlaylistLabel(menuPlaylist) }}
-        </button>
-      </div>
-    </div>
+        <i class="pi pi-trash" aria-hidden="true"></i>
+        {{ deletePlaylistLabel(menuPlaylist) }}
+      </button>
+    </NativeContextMenu>
   </Teleport>
 </template>
 
@@ -722,10 +773,12 @@ useFocusTrap(menuElement, menuOpen)
   transform: rotate(180deg);
 }
 .provider-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  min-width: 180px;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--te-card-bg);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;

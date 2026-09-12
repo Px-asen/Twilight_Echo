@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { MediaProviderPlaylistSummary } from '../../providers/mediaProvider'
+import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import type { ProviderDownloadQuality } from '../../../../shared/providerDownloads.ts'
 
 defineProps<{
@@ -41,11 +42,12 @@ const emit = defineEmits<{
 
 <template>
   <Teleport to="body">
-    <div
+    <NativeContextMenu
       v-if="show"
       class="streaming-context-menu"
       :style="{ top: `${y}px`, left: `${x}px` }"
       @click.stop
+      @close="emit('close')"
     >
       <div
         class="menu-item"
@@ -104,7 +106,7 @@ const emit = defineEmits<{
         <i class="pi pi-plus"></i>
         <span>添加到歌单{{ actionLabel }}</span>
         <i class="pi pi-chevron-right submenu-icon"></i>
-        <div v-if="showPlaylistSubmenu" class="submenu">
+        <div class="submenu">
           <div
             class="menu-item create-playlist-menu-item"
             role="menuitem"
@@ -153,7 +155,7 @@ const emit = defineEmits<{
         <i class="pi pi-sitemap"></i>
         <span>添加到聚合歌单{{ actionLabel }}</span>
         <i class="pi pi-chevron-right submenu-icon"></i>
-        <div v-if="showAggregateSubmenu" class="submenu">
+        <div class="submenu">
           <div
             class="menu-item create-playlist-menu-item"
             role="menuitem"
@@ -207,7 +209,7 @@ const emit = defineEmits<{
         <i class="pi pi-download"></i>
         <span>下载到本地{{ actionLabel }}</span>
         <i class="pi pi-chevron-right submenu-icon"></i>
-        <div v-if="showDownloadQualityMenu" class="submenu">
+        <div class="submenu">
           <div
             class="menu-item"
             role="menuitem"
@@ -246,7 +248,7 @@ const emit = defineEmits<{
           </div>
         </div>
       </div>
-    </div>
+    </NativeContextMenu>
   </Teleport>
 </template>
 

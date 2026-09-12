@@ -110,6 +110,12 @@ primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时�
 - 插件**不得**直接 import 宿主内部模块、Electron API 或 Node 内置模块之外的宿主实现细节。
 - 宿主能力一律经由 `twilight` API 对象访问；网关层是未来收紧权限的执法点。
 
+汽水音乐 provider 可使用可选的 `twilight.qishuiAuth` 宿主桥接完成二维码登录。
+该桥接只返回二维码 DTO、上游轮询 JSON 与登录会话 Cookie，并由主进程托管动态安全参数和
+隐藏验证窗口；插件不能通过它访问 Electron、执行任意 JavaScript 或请求任意地址。只有
+`com.twilightecho.provider.qishui` 可调用该桥接，未提供桥接的旧宿主仍可使用 provider
+自己的兼容回退流程。
+
 Provider 方法和 UI command handler 的最后一个参数是宿主追加的 request context；这是 API v1
 的向后兼容追加，旧 handler 可以忽略。context 的 `signal: AbortSignal` 会在超时、停用、卸载、
 宿主 error/exit 或应用退出时 abort。Provider 的 `likeTrack`、`followArtist`、`followUser` 还会收到

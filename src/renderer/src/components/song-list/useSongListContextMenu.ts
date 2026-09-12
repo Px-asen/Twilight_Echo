@@ -1,8 +1,6 @@
-import { contextMenuPosition } from '../../../../shared/contextMenuPosition.ts'
 import {
   computed,
   getCurrentInstance,
-  nextTick,
   onMounted,
   onUnmounted,
   ref,
@@ -103,23 +101,6 @@ export function useSongListContextMenu({
     showContextMenu.value = true
     showPlaylistSubmenu.value = false
     showAggregateSubmenu.value = false
-
-    nextTick(() => {
-      const menu = document.querySelector('.context-menu') as HTMLElement
-      if (menu) {
-        const rect = menu.getBoundingClientRect()
-        const position = contextMenuPosition(
-          event.clientX,
-          event.clientY,
-          rect.width,
-          rect.height,
-          window.innerWidth,
-          window.innerHeight
-        )
-        menuX.value = position.x
-        menuY.value = position.y
-      }
-    })
   }
 
   function closeContextMenu(): void {

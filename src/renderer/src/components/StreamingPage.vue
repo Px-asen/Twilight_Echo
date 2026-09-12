@@ -1,6 +1,4 @@
 ﻿<script setup lang="ts">
-import { contextMenuPosition } from '../../../shared/contextMenuPosition.ts'
-
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
@@ -989,6 +987,7 @@ const headerProviderOptions = computed(() => {
   if (currentDetail.value || isSearching.value) return []
   if (activeTab.value === 'home') return homeProviderOptions.value
   if (activeTab.value === 'discover') return discoveryProviderOptions.value
+  if (activeTab.value === 'library' && !activeLoggedIn.value) return libraryProviderOptions.value
   return []
 })
 
@@ -2259,21 +2258,6 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
   showStreamingPlaylistSubmenu.value = false
   showStreamingAggregateSubmenu.value = false
   showStreamingContextMenu.value = true
-  void nextTick(() => {
-    const menu = document.querySelector('.streaming-context-menu') as HTMLElement | null
-    if (!menu) return
-    const rect = menu.getBoundingClientRect()
-    const position = contextMenuPosition(
-      event.clientX,
-      event.clientY,
-      rect.width,
-      rect.height,
-      window.innerWidth,
-      window.innerHeight
-    )
-    streamingContextMenuX.value = position.x
-    streamingContextMenuY.value = position.y
-  })
 }
 
 async function handleContextPlayTrack(): Promise<void> {

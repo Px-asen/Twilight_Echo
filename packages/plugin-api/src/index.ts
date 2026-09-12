@@ -839,6 +839,12 @@ export interface TwilightThemesApi {
   register(theme: TwilightThemeContribution): Promise<void>
 }
 
+export interface TwilightQishuiAuthApi {
+  getQrLogin(): Promise<QrLoginRequest | null>
+  checkQrLogin(key: string): Promise<{ json: unknown; cookie?: string }>
+  clear(): Promise<void>
+}
+
 export interface NativeDspParameterInfo {
   id: string
   name: string
@@ -882,6 +888,8 @@ export interface TwilightApi {
   providers: TwilightProvidersApi
   ui: TwilightUiApi
   themes: TwilightThemesApi
+  /** Optional host-owned secure QR flow for the Qishui provider. */
+  qishuiAuth?: TwilightQishuiAuthApi
 }
 
 export type Activate = (context: TwilightPluginContext) => void | Promise<void>

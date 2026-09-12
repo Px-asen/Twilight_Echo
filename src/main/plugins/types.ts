@@ -478,7 +478,7 @@ export type PluginHostResponse =
   | {
       kind: 'api-call'
       requestId: string
-      namespace: 'player' | 'providers' | 'extensions' | 'internal'
+      namespace: 'player' | 'providers' | 'extensions' | 'internal' | 'auth'
       method:
         | 'getPlaybackInfo'
         | 'play'
@@ -494,6 +494,9 @@ export type PluginHostResponse =
         | 'ncmOfficialLogin'
         | 'ncmGetCachedSong'
         | 'ncmCacheSong'
+        | 'qishuiGetQrLogin'
+        | 'qishuiCheckQrLogin'
+        | 'qishuiClear'
       args: unknown[]
     }
   | {

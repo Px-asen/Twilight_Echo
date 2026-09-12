@@ -1,5 +1,6 @@
 import { collectClosePersistenceOutcome } from '../closePersistence.ts'
 import { ipcRenderer } from 'electron'
+import type { NativeContextMenuRequest } from '../types'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../../shared/ncmCloud.ts'
 import type {
   NcmCloudDownloadRequest,
@@ -45,6 +46,10 @@ export const systemApi = {
       ipcRenderer.invoke('systemMedia:getNativeStatus')
   },
   window: {
+    popupContextMenu: (request: NativeContextMenuRequest): Promise<string | null> =>
+      ipcRenderer.invoke('contextMenu:popup', request),
+    closeContextMenu: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke('contextMenu:close', requestId),
     minimize: (): void => ipcRenderer.send('window:minimize'),
     toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
     close: (): void => ipcRenderer.send('window:close')
