@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import type { NcmCloudSelectedFile, NcmCloudTransferProgress } from '../../../shared/ncmCloud.ts'
 import type { Track } from '../types/music'
-import { useMediaProviders } from '../providers'
+import { syncPluginProviders, useMediaProviders } from '@renderer/providers'
 
 export interface NcmProfile {
   userId: number
@@ -440,6 +440,7 @@ export function useNcmStore(): NcmStore {
 
   async function checkLogin(): Promise<boolean> {
     try {
+      await syncPluginProviders()
       const state = await callNcmProvider<NcmLoginState>('checkLogin')
       return applyLoginState(state)
     } catch {

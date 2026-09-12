@@ -70,6 +70,50 @@ function parseRequest(path) {
   return new URL(path, 'http://twilight.local')
 }
 
+test('login checks preserve credentials across failures and provider restarts', async () => {
+  const settings = new Map([['cookie', 'MUSIC_U=restart-test;']])
+  const failures = [
+    { code: 502 },
+    { code: 503 },
+    { code: 460 },
+    { code: 301 },
+    { data: { code: 200, profile: null } },
+    {},
+    { code: -1, message: 'connection unavailable' }
+  ]
+  try {
+    for (const response of failures) {
+      const provider = await activateProvider(async () => response, settings)
+      assert.deepEqual(await provider.checkLogin(), { loggedIn: false, profile: null })
+      assert.equal(settings.get('cookie'), 'MUSIC_U=restart-test;')
+      ncmProvider.deactivate()
+    }
+    const provider = await activateProvider(async (path, cookie) => {
+      assert.equal(cookie, 'MUSIC_U=restart-test;')
+      if (path.startsWith('/login/status')) {
+        return {
+          data: {
+            code: 200,
+            profile: { userId: 42, nickname: 'restored', avatarUrl: '' }
+          }
+        }
+      }
+      return { code: 200 }
+    }, settings)
+    assert.equal((await provider.checkLogin()).loggedIn, true)
+    await provider.logout()
+    assert.equal(settings.has('cookie'), false)
+    ncmProvider.deactivate()
+    const signedOut = await activateProvider(
+      async () => assert.fail('no cookie after logout'),
+      settings
+    )
+    assert.deepEqual(await signedOut.checkLogin(), { loggedIn: false, profile: null })
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('personal FM requests a 30-track roaming batch', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

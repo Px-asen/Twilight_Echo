@@ -190,6 +190,8 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - 网易云音乐是 Twilight Echo 自带基础 `MediaProvider` 插件：插件 ID 为
   `com.twilightecho.provider.ncm`，provider 前缀固定为 `ncm`，随软件分发并默认启用；
   用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。
+  启动恢复登录须等待音源注册完成；登录检查失败或未返回用户资料时保留加密 Cookie，
+  供后续检查重试，仅显式退出登录时删除凭据。
 - 第三方音源插件使用同一 Provider API。Bilibili 收藏夹音频插件作为外部插件仓库
   或私有插件索引分发，插件 ID 为 `com.twilightecho.provider.bilibili`，provider 前缀
   固定为 `bili`；仅在用户安装、启用并扫码登录后，流媒体 UI 才展示其视频收藏夹。
