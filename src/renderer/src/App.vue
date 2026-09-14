@@ -30,6 +30,9 @@ const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vu
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
 const CommandPalette = defineAsyncComponent(() => import('@renderer/components/CommandPalette.vue'))
+const QueueWorkspaceDialog = defineAsyncComponent(
+  () => import('@renderer/components/player-bar/QueueWorkspaceDialog.vue')
+)
 const PluginExtensionPage = defineAsyncComponent(
   () => import('./components/PluginExtensionPage.vue')
 )
@@ -356,6 +359,11 @@ const {
   restorePlaybackSession,
   createPlaybackSession,
   rehydrateCurrentTrackFromLibrary,
+  queueWorkspace,
+  queueSessions,
+  canUndoQueue,
+  queueUndoLabel,
+  undoQueue,
   visualizerActive
 } = usePlayerStore()
 useDesktopLyricsPublisher()
@@ -647,6 +655,7 @@ onMounted(async () => {
         await flushPlaylistsForExit()
         await flushSoftwareVolumePersist()
         await playbackSessionPersistence.savePlaybackSessionForQuit()
+        await queueWorkspace.flush()
       })
       playbackSessionPersistence.startAutosaveWatchers()
     })
@@ -1035,6 +1044,16 @@ useLiquidGlassEnvironment({
   <Transition name="onboarding-page">
     <OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" />
   </Transition>
+  <QueueWorkspaceDialog
+    v-if="queueSessions.open.value"
+    :workspace="queueWorkspace"
+    :controller="queueSessions"
+    :queue-length="queue.length"
+    :can-undo="canUndoQueue"
+    :undo-label="queueUndoLabel"
+    :undo="undoQueue"
+    @close="queueSessions.open.value = false"
+  />
   <AppNoticeHost />
 </template>
 

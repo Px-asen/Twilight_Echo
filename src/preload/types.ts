@@ -13,6 +13,7 @@ export type {
   AudioDeviceProfilesSnapshot
 } from '../shared/audioDeviceProfiles.ts'
 import type { TrackData } from '../shared/track.ts'
+export type { QueueWorkspaceDocument } from '../shared/queueWorkspace.ts'
 export type {
   NativeContextMenuItem,
   NativeContextMenuRequest

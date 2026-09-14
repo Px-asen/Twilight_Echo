@@ -78,7 +78,9 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
   `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
 - `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
 
-统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词与设备档案；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。队列撤销与命名会话入口待 A 完成后登记。
+统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词、设备档案，以及队列撤销、清空、保存/管理会话和实际播放顺序；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。
+
+队列操作由 `stores/player/queueCommandController.ts` 维护稳定队列项 ID、revision 和有界撤销栈，`playbackSelectionController.ts` 保证重复曲目按具体队列项选择。命名会话的 CRUD、来源重解析与恢复分别由 `queueWorkspaceStore.ts`、`queueSessionSources.ts` / `queueSessionRestore.ts` 和 `queueSessionController.ts` 负责；恢复默认暂停，单独提供“恢复并播放”。`playbackHistoryController.ts` 仅在实际播放成功后记录顺序，最近 200 次开始与累计统计分开持久化。共享 DTO `src/shared/queueWorkspace.ts` 经 preload data API 和 `main/ipc/queueWorkspaceIpc.ts` 写入版本化 `queue-workspace.json`；最多 20 个会话、每个 20,000 项、合计 40,000 项和 32 MiB。详细行为与失败处理见 [队列虚拟化](./playback-queue-virtualization.md) 和 [歌单生命周期](./playlist-lifecycle.md#named-queue-sessions)。
 
 Renderer TS 测试通过 `scripts/register-renderer-aliases.mjs` 为 Node `--test` 解析 `@renderer/`，与应用构建使用同一模块位置，不引入额外测试框架。命令面板的键盘、组合输入、失败重试、关闭失效及 20,000 条结果的有界渲染由隐藏 Electron 行为测试覆盖。
 

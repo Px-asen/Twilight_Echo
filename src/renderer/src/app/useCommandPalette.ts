@@ -21,6 +21,15 @@ export function useCommandPalette(navigation: ReturnType<typeof useAppNavigation
       loading: player.isLoading.value,
       lyricsVisible: settings.settings.value.desktopLyrics.enabled,
       togglePlay: player.togglePlay,
+      queue: {
+        length: player.queue.value.length,
+        canUndo: player.canUndoQueue.value,
+        undoLabel: player.queueUndoLabel.value,
+        undo: player.undoQueue,
+        clear: player.clearQueue,
+        showSessions: () => player.queueSessions.show(),
+        showHistory: () => player.queueSessions.show('history')
+      },
       showLyrics: async () => {
         const enabled = await window.api.desktopLyrics.setEnabled(true)
         await settings.updateSettings({

@@ -1,4 +1,6 @@
 import { ipcRenderer } from 'electron'
+import { isQueueWorkspaceDocument } from '../../shared/queueWorkspace.ts'
+import type { QueueWorkspaceDocument } from '../types'
 import type { OnlineLyricsSearchResult } from '../../shared/lyricsManagement.ts'
 import { isLyricsManagementDocument } from '../../shared/lyricsManagement.ts'
 import { playbackSessionCueRangesAreValid } from '../../shared/cue.ts'
@@ -36,6 +38,17 @@ function isPlaybackSession(value: unknown): value is PlaybackSession {
 }
 
 export const dataApi = {
+  loadQueueWorkspace: (): Promise<VersionedDataEnvelope<QueueWorkspaceDocument> | null> =>
+    ipcRenderer.invoke('data:loadQueueWorkspace'),
+  saveQueueWorkspace: (
+    document: QueueWorkspaceDocument,
+    expectedRevision: number
+  ): Promise<VersionedDataEnvelope<QueueWorkspaceDocument>> =>
+    invokeVersionedDataWrite(
+      'data:saveQueueWorkspace',
+      [document, expectedRevision],
+      isQueueWorkspaceDocument
+    ),
   saveMusicLibrary: (data: LocalLibrarySnapshotInput): Promise<LocalMusicLibraryDocument> =>
     ipcRenderer.invoke('data:saveMusicLibrary', data),
   loadMusicLibrary: (): Promise<LocalMusicLibraryDocument | unknown[]> =>

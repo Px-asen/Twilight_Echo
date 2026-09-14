@@ -114,49 +114,70 @@ export function createPlaybackSessionController(options: PlaybackSessionControll
   }
 
   function restorePlaybackSession(session: PlaybackSession): void {
-    const track = options.hydratePlaybackTrack(cloneTrackForPlaybackSession(session.track))
-    const position =
-      session.mode === 'trackAndPosition' ? clampCuePlaybackPosition(track, session.position) : 0
-
-    options.resetPlaybackRuntimeStateForRestore()
-    options.clearCrossfadeTimer()
     if (session.playMode) {
       options.setPlayModeInternal(session.playMode, { persist: false })
     }
-    options.currentTrack.value = { ...track }
 
     const savedQueue =
       Array.isArray(session.queue) && session.queue.length > 0
         ? session.queue.map(cloneTrackForPlaybackSession)
-        : [track]
+        : [cloneTrackForPlaybackSession(session.track)]
+    const queue = toPlaybackQueueSnapshots(savedQueue)
     const rawIndex = session.queueIndex
-    const savedIndex =
+    let savedIndex = session.track.queueEntryId
+      ? queue.findIndex(
+          (item) => item.queueEntryId === session.track.queueEntryId && item.id === session.track.id
+        )
+      : -1
+    if (
+      savedIndex === -1 &&
       typeof rawIndex === 'number' &&
-      Number.isFinite(rawIndex) &&
+      Number.isInteger(rawIndex) &&
       rawIndex >= 0 &&
-      rawIndex < savedQueue.length
-        ? rawIndex
+      rawIndex < queue.length &&
+      queue[rawIndex].id === session.track.id
+    ) {
+      savedIndex = rawIndex
+    }
+    if (savedIndex === -1) savedIndex = queue.findIndex((item) => item.id === session.track.id)
+    const sameSelection =
+      savedIndex >= 0 &&
+      (!session.track.queueEntryId || queue[savedIndex].queueEntryId === session.track.queueEntryId)
+    if (savedIndex === -1) savedIndex = 0
+    const track = queue[savedIndex]
+    const position =
+      sameSelection && session.mode === 'trackAndPosition'
+        ? clampCuePlaybackPosition(track, session.position)
         : 0
-    options.queue.value = toPlaybackQueueSnapshots(savedQueue)
-    options.originalQueue.value = [...options.queue.value]
+    options.queue.value = queue
+    options.originalQueue.value = [...queue]
     options.queueIndex.value = savedIndex
-
-    options.duration.value = cueDuration(track)
-    options.isPlaying.value = false
-    options.isLoading.value = false
-    options.setRestoredPlaybackPending(true)
-    options.setRestoredPlaybackPosition(position)
-    options.setPendingLoadStartTime(0)
-    options.setAutoAdvanceInFlight(false)
-    options.setAdvancingFromEndedTrackId('')
-    options.setCurrentTimeImmediate(position)
+    prepareQueueSelection(track, position)
     options.clearSleepTimerIntervals()
     const sleepTimer = getRestorableSleepTimerState(session.sleepTimer)
     if (sleepTimer) {
       options.getSleepTimerController().applyAuthoritativeState(sleepTimer)
       void window.api.sleepTimer?.configure(sleepTimer).catch(() => {})
     }
-    options.loadLyricsForTrack(track)
+  }
+
+  function prepareQueueSelection(track: Track | null, position = 0): void {
+    options.resetPlaybackRuntimeStateForRestore()
+    options.clearCrossfadeTimer()
+    const hydrated = track
+      ? options.hydratePlaybackTrack(cloneTrackForPlaybackSession(track))
+      : null
+    options.currentTrack.value = hydrated
+    options.duration.value = hydrated ? cueDuration(hydrated) : 0
+    options.isPlaying.value = false
+    options.isLoading.value = false
+    options.setRestoredPlaybackPending(!!hydrated)
+    options.setRestoredPlaybackPosition(position)
+    options.setPendingLoadStartTime(0)
+    options.setAutoAdvanceInFlight(false)
+    options.setAdvancingFromEndedTrackId('')
+    options.setCurrentTimeImmediate(position)
+    if (hydrated) options.loadLyricsForTrack(hydrated)
   }
 
   function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null {
@@ -236,6 +257,7 @@ export function createPlaybackSessionController(options: PlaybackSessionControll
     clearPersistedSelectedTrackSession,
     persistPlaybackSessionAfterQueueMutation,
     restorePlaybackSession,
+    prepareQueueSelection,
     createPlaybackSession,
     removeUnavailableTracks
   }

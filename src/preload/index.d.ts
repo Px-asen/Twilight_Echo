@@ -1048,6 +1048,15 @@ interface WindowAPI {
     ) => Promise<
       VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument>
     >
+    loadQueueWorkspace: () => Promise<VersionedDataEnvelope<
+      import('../shared/queueWorkspace.ts').QueueWorkspaceDocument
+    > | null>
+    saveQueueWorkspace: (
+      document: import('../shared/queueWorkspace.ts').QueueWorkspaceDocument,
+      expectedRevision: number
+    ) => Promise<
+      VersionedDataEnvelope<import('../shared/queueWorkspace.ts').QueueWorkspaceDocument>
+    >
     savePlaybackSession: (
       session: PlaybackSession,
       expectedRevision: number

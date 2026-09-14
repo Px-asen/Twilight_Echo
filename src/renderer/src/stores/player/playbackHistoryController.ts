@@ -1,5 +1,6 @@
 import { ref, type Ref } from 'vue'
 import type { Track } from '../../types/music'
+import type { PlayMode } from '@renderer/types/settings'
 import { parsePodcastTrackId } from '../../../../shared/podcastSubscriptions.ts'
 
 export interface PlaybackResumeOffer {
@@ -37,6 +38,7 @@ export interface PlaybackHistoryControllerOptions {
   getPlaybackBookmarks: () => PlaybackBookmarksService
   getPodcastStore: () => PodcastProgressService
   now: () => number
+  recordActualPlayback?: (track: Track, playMode: PlayMode) => void
 }
 
 export function createPlaybackHistoryController(options: PlaybackHistoryControllerOptions) {
@@ -46,6 +48,19 @@ export function createPlaybackHistoryController(options: PlaybackHistoryControll
   let lastPodcastProgressWriteAt = 0
   let lastPodcastProgressTrackId = ''
   let lastPodcastProgressSeconds = -1
+  let lastPlaybackEntry = ''
+
+  function beginPlaybackAttempt(): void {
+    lastPlaybackEntry = ''
+  }
+
+  function recordPlaybackStart(track: Track, playMode: PlayMode, restart = false): void {
+    if (disposed) return
+    const identity = `${track.queueEntryId ?? ''}\u0000${track.id}`
+    if (identity === lastPlaybackEntry && !restart) return
+    lastPlaybackEntry = identity
+    options.recordActualPlayback?.(track, playMode)
+  }
 
   function isActive(expectedGeneration: number): boolean {
     return !disposed && generation === expectedGeneration
@@ -187,6 +202,8 @@ export function createPlaybackHistoryController(options: PlaybackHistoryControll
 
   return {
     resumeOffer,
+    beginPlaybackAttempt,
+    recordPlaybackStart,
     maybeRecordResumeBookmark,
     dismissResumeOffer,
     acceptResumeOffer,

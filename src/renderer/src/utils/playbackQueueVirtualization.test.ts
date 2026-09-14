@@ -113,10 +113,14 @@ test('player drawer iterates only the virtual queue window and wires current-ite
 
 test('player queue state uses shallow snapshots and revision-fenced native synchronization', () => {
   const source = readFileSync(new URL('../stores/usePlayerStore.ts', import.meta.url), 'utf8')
+  const selectionSource = readFileSync(
+    new URL('../stores/player/playbackSelectionController.ts', import.meta.url),
+    'utf8'
+  )
 
   assert.match(source, /const queue = shallowRef<Track\[\]>\(\[\]\)/)
   assert.match(source, /const originalQueue = shallowRef<Track\[\]>\(\[\]\)/)
-  assert.match(source, /toPlaybackQueueSnapshots\(trackList\)/)
+  assert.match(selectionSource, /toPlaybackQueueSnapshots\(trackList\)/)
   assert.match(source, /const nativeQueueRevisionFence = new NativeQueueRevisionFence\(\)/)
   assert.match(source, /const snapshot = captureNativeQueueState\(revision\)/)
   assert.match(source, /if \(!nativeQueueRevisionFence\.isCurrent\(snapshot\.revision\)\) return/)

@@ -152,6 +152,10 @@ const {
   clearQueue,
   reorderQueue,
   saveQueueAsPlaylist,
+  canUndoQueue,
+  queueUndoLabel,
+  undoQueue,
+  queueSessions,
   toggleExclusiveMode,
   formatTime,
   setUnityVolume,
@@ -1523,6 +1527,23 @@ onBeforeUnmount(() => {
             <span class="playlist-heading-subtitle">{{ queueSummaryText }}</span>
           </div>
           <div class="playlist-tools" aria-label="队列操作">
+            <button
+              class="playlist-tool-btn"
+              type="button"
+              :disabled="!canUndoQueue"
+              :title="`撤销${queueUndoLabel}`"
+              @click="undoQueue()"
+            >
+              撤销
+            </button>
+            <button
+              class="playlist-tool-btn"
+              type="button"
+              title="保存、恢复会话与查看播放顺序"
+              @click="queueSessions.show()"
+            >
+              会话
+            </button>
             <button
               class="playlist-tool-btn"
               type="button"

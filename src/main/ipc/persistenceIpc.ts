@@ -1,4 +1,9 @@
 import { app, type IpcMain } from 'electron'
+import { createQueueWorkspaceHandlers, MAX_QUEUE_WORKSPACE_BYTES } from './queueWorkspaceIpc.ts'
+import {
+  isQueueWorkspaceDocument,
+  type QueueWorkspaceDocument
+} from '../../shared/queueWorkspace.ts'
 import { join } from 'path'
 import { readFileSync, existsSync, statSync } from 'fs'
 import { writeFile } from 'fs/promises'
@@ -46,6 +51,21 @@ export function registerPersistenceIpc(ipcMain: IpcMain): void {
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
   const LYRICS_MANAGEMENT_FILE = join(userDataPath, 'lyrics-management.json')
   const PLAYBACK_BOOKMARKS_FILE = join(userDataPath, 'playback-bookmarks.json')
+  const queueWorkspacePath = join(userDataPath, 'queue-workspace.json')
+  const queueWorkspaceStore = new VersionedDataStore<QueueWorkspaceDocument>({
+    filePath: queueWorkspacePath,
+    label: 'queue workspace',
+    maxBytes: MAX_QUEUE_WORKSPACE_BYTES,
+    isData: isQueueWorkspaceDocument,
+    isLegacy: isQueueWorkspaceDocument,
+    onRecovery: (result) =>
+      reportPersistentDataRecovery('Queue workspace', queueWorkspacePath, result)
+  })
+  const queueWorkspaceHandlers = createQueueWorkspaceHandlers(queueWorkspaceStore, (event) =>
+    assertTrustedIpcSender(event as Electron.IpcMainInvokeEvent, 'queue workspace IPC')
+  )
+  ipcMain.handle('data:loadQueueWorkspace', queueWorkspaceHandlers.load)
+  ipcMain.handle('data:saveQueueWorkspace', queueWorkspaceHandlers.save)
 
   const playbackSessionStore = new VersionedDataStore<PlaybackSession | null>({
     filePath: PLAYBACK_SESSION_FILE,

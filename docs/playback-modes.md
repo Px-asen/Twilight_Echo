@@ -43,3 +43,9 @@ recover instead of capping auto-advance at the queue length.
 This preserves native compatibility while keeping settings, playback-session
 restoration, preload, and mini-player state on the same mode contract. `heart` is
 intentionally excluded from persisted settings and saved playback sessions.
+
+Named queue sessions preserve both the current shuffle cycle and its original order. A saved heart
+queue becomes a sequential snapshot of the entries already generated. Actual playback order is
+recorded independently of the saved mode: the last 200 starts include the mode active at each
+start, duplicate queue occurrences and repeat boundaries. Manual queue edits end heart or
+personalized refill ownership, and changing a playback mode invalidates older queue undo records.

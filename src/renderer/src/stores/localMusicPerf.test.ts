@@ -1739,7 +1739,6 @@ test('a scan result collected before exclusion commit cannot re-add the removed 
   store.clearTracks()
 })
 
-// Wave 3 TODO 4: saveLibrary debounce (testable in bare Node via window.api mock)
 test('saveLibrary debounce: 10 scheduled saves yield 1 IPC write', async () => {
   const store = setupStore()
   store.isScanning.value = false
@@ -1802,7 +1801,6 @@ test('flushSaveLibrary clears timer without scheduling extra write', () => {
 // loadLibrary skip-repair is a main-process behavior — verified via grep, not runtime test
 test.skip('loadLibrary skips repairMissingLibraryCovers', () => {})
 
-// Wave 3 TODO 5: incremental reload — store handleLibraryChange is testable
 test('incremental remove: single file remove triggers removeTrack not full loadLibrary', async () => {
   const store = setupStore()
   await store.addTracks(generateMockTracks(10), { deferRebuild: true })

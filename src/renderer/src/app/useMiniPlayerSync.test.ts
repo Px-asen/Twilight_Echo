@@ -6,6 +6,10 @@ import {
   resolveCurrentLyricForMiniPlayer
 } from './useMiniPlayerSync.ts'
 import type { Track } from '../types/music.ts'
+import { ref, shallowRef } from 'vue'
+import { createQueueCommandController } from '@renderer/stores/player/queueCommandController.ts'
+import { toPlaybackQueueSnapshots } from '@renderer/utils/playbackQueueVirtualization.ts'
+import type { PlayMode } from '@renderer/types/settings'
 
 function makeTrack(overrides: Partial<Track> = {}): Track {
   return {
@@ -47,6 +51,47 @@ function makeSource(track: Track | null, currentTime: number) {
     queueLength: 1
   }
 }
+
+test('mini player snapshots follow queue clear and undo with the restored index and paused transport', (t) => {
+  const queue = shallowRef(toPlaybackQueueSnapshots([makeTrack(), makeTrack()]))
+  const originalQueue = shallowRef([...queue.value])
+  const currentTrack = shallowRef<Track | null>(queue.value[1])
+  const queueIndex = ref(1)
+  const isPlaying = ref(true)
+  const time = ref(35)
+  const commands = createQueueCommandController({
+    queue,
+    originalQueue,
+    currentTrack,
+    queueIndex,
+    playMode: ref<PlayMode>('sequential'),
+    getPosition: () => time.value,
+    prepareSelection: (track, position) => {
+      currentTrack.value = track
+      time.value = position
+      isPlaying.value = false
+    },
+    onMutation: () => {}
+  })
+  t.after(commands.dispose)
+  const snapshot = () =>
+    buildMiniPlayerStateSnapshot({
+      ...makeSource(currentTrack.value, time.value),
+      isPlaying: isPlaying.value,
+      queueIndex: queueIndex.value,
+      queueLength: queue.value.length
+    })
+  commands.replace([], -1)
+  assert.equal(snapshot().track, null)
+  assert.equal(snapshot().queueLength, 0)
+  assert.equal(snapshot().queueIndex, -1)
+  commands.undo()
+  assert.equal(snapshot().track?.id, 'ncm:1')
+  assert.equal(snapshot().queueLength, 2)
+  assert.equal(snapshot().queueIndex, 1)
+  assert.equal(snapshot().currentTime, 35)
+  assert.equal(snapshot().isPlaying, false)
+})
 
 test('mini player snapshot carries the lyric line active at the snapshot time', () => {
   const snapshot = buildMiniPlayerStateSnapshot(makeSource(makeTrack(), 3.5))

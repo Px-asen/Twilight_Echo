@@ -21,6 +21,15 @@ export function createCommandPaletteActions(controls: {
   lyricsVisible: boolean
   showLyrics: () => Promise<void>
   togglePlay: () => Promise<void>
+  queue: {
+    length: number
+    canUndo: boolean
+    undoLabel: string
+    undo: () => boolean
+    clear: () => void
+    showSessions: () => void
+    showHistory: () => void
+  }
 }): CommandPaletteAction[] {
   const { navigation } = controls
   const playbackReason = !controls.currentTrack
@@ -54,6 +63,49 @@ export function createCommandPaletteActions(controls: {
       terms: 'eq equalizer 均衡器 音效',
       group: '操作',
       run: navigation.openEqualizerPage
+    },
+    {
+      id: 'undo-queue',
+      title: '撤销队列操作',
+      description: controls.queue.undoLabel || '暂无可撤销操作',
+      terms: 'undo queue 撤销 删除 排序 清空',
+      group: '操作',
+      disabledReason: controls.queue.canUndo ? undefined : '暂无可撤销操作',
+      run: controls.queue.undo
+    },
+    {
+      id: 'save-queue-session',
+      title: '保存当前队列为会话',
+      description: `当前队列 ${controls.queue.length} 首`,
+      terms: 'save session 保存 队列 会话',
+      group: '操作',
+      disabledReason: controls.queue.length ? undefined : '队列为空',
+      run: controls.queue.showSessions
+    },
+    {
+      id: 'queue-sessions',
+      title: '管理队列会话',
+      description: '恢复、覆盖、重命名或删除已保存的会话',
+      terms: 'session restore queue 会话 队列 恢复',
+      group: '操作',
+      run: controls.queue.showSessions
+    },
+    {
+      id: 'playback-order',
+      title: '查看实际播放顺序',
+      description: '最近 200 次实际开始的播放',
+      terms: 'history order 历史 实际 播放 顺序',
+      group: '操作',
+      run: controls.queue.showHistory
+    },
+    {
+      id: 'clear-queue',
+      title: '清空播放队列',
+      description: '停止播放并清空队列，可撤销',
+      terms: 'clear queue 清空 队列',
+      group: '操作',
+      disabledReason: controls.queue.length ? undefined : '队列为空',
+      run: controls.queue.clear
     },
     {
       id: 'dsp',

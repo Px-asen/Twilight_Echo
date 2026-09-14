@@ -15,6 +15,21 @@ test('building and filtering commands is inert and unavailable actions explain w
     playing: false,
     loading: false,
     lyricsVisible: true,
+    queue: {
+      length: 0,
+      canUndo: false,
+      undoLabel: '',
+      undo: () => false,
+      clear: () => {
+        calls++
+      },
+      showSessions: () => {
+        calls++
+      },
+      showHistory: () => {
+        calls++
+      }
+    },
     togglePlay: async () => {
       calls += 1
     },
@@ -23,6 +38,11 @@ test('building and filtering commands is inert and unavailable actions explain w
     }
   })
   assert.equal(calls, 0)
+  assert.ok(actions.find((action) => action.id === 'save-queue-session')!.disabledReason)
+  assert.ok(actions.find((action) => action.id === 'undo-queue')!.disabledReason)
+  actions.find((action) => action.id === 'queue-sessions')!.run()
+  actions.find((action) => action.id === 'playback-order')!.run()
+  assert.equal(calls, 2)
   assert.equal(navigation.showSettingsPage.value, false)
   assert.match(actions.find((action) => action.id === 'now-playing')!.disabledReason!, /没有歌曲/)
   assert.match(actions.find((action) => action.id === 'lyrics')!.disabledReason!, /已显示/)
