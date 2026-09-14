@@ -3,6 +3,7 @@ import {
   normalizeDownloadPreferences
 } from '../../shared/downloadPreferences.ts'
 import { app } from 'electron'
+import { normalizeAudioDeviceProfileSettings } from '../../shared/audioDeviceProfiles.ts'
 import { execFileSync } from 'node:child_process'
 import { release } from 'node:os'
 import { stat, readdir } from 'fs/promises'
@@ -248,6 +249,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     }
   ],
   dspPinnedSceneId: null,
+  audioDeviceProfiles: normalizeAudioDeviceProfileSettings(),
   headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
   audioEqPresets: [],
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
@@ -660,6 +662,7 @@ export function normalizeSleepTimerSettings(raw: unknown): SleepTimerSettings {
 
 export function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
   const rawSettings = settings as Record<string, unknown>
+  const deviceProfiles = normalizeAudioDeviceProfileSettings(settings.audioDeviceProfiles)
   const audioProcessing = normalizeAudioProcessingSettings(settings.audioProcessing)
   const dspScenes = normalizeDspScenes(settings.dspScenes, audioProcessing)
   const rawCachePath =
@@ -763,11 +766,17 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
     playMode: normalizePlayMode(settings.playMode),
-    softwareVolume: clampNumber(settings.softwareVolume, 0, 1, DEFAULT_SOFTWARE_VOLUME),
+    softwareVolume: clampNumber(
+      settings.softwareVolume,
+      0,
+      deviceProfiles.volumeCeiling,
+      Math.min(DEFAULT_SOFTWARE_VOLUME, deviceProfiles.volumeCeiling)
+    ),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
     audioExclusiveMode: settings.audioExclusiveMode === true,
     audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
+    audioDeviceProfiles: deviceProfiles,
     audioProcessing,
     dspScenes,
     dspPinnedSceneId:

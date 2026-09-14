@@ -1010,7 +1010,10 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.match(loadAndPlay, /'error\.audio\.native_unavailable'/)
   assert.match(loadAndPlay, /'error\.audio\.native_fallback'/)
   assert.match(loadAndPlay, /playWithRendererAudio\(/)
-  assert.match(setVolume, /volume\.value = vol/)
+  assert.match(
+    setVolume,
+    /volume\.value = Math\.min\(vol, appSettings\.value\.audioDeviceProfiles\.volumeCeiling\)/
+  )
 })
 
 test('player store keeps default volume at 0.7, persists softwareVolume, and exposes setUnityVolume', () => {
@@ -1033,7 +1036,7 @@ test('player store keeps default volume at 0.7, persists softwareVolume, and exp
   assert.match(source, /watch\(\s*\(\) => appSettings\.value\.softwareVolume,/)
   assert.match(settingsSource, /softwareVolume: 0\.7/)
   assert.match(mainSettings, /softwareVolume: DEFAULT_SOFTWARE_VOLUME/)
-  assert.match(mainSettings, /softwareVolume: clampNumber\(settings\.softwareVolume/)
+  assert.match(mainSettings, /softwareVolume: clampNumber\(\s*settings\.softwareVolume/)
   assert.match(source, /function setUnityVolume\(\): void/)
   assert.match(setUnityVolume, /setVolume\(1\)/)
   assert.doesNotMatch(source, /const volume = ref\(1\)/)
@@ -1047,7 +1050,10 @@ test('player store exposes setOutputStage for HiFi sample-rate lock (graph.outpu
     'utf8'
   )
   const setOutputStage = extractInternalFunctionBody(controllerSource, 'setOutputStage')
-  const refresh = extractInternalFunctionBody(source, 'refreshAudioOutputState')
+  const refresh = extractInternalFunctionBody(
+    readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8'),
+    'refreshAudioOutputState'
+  )
 
   assert.match(source, /dspOutputStage/)
   assert.match(source, /DEFAULT_DSP_OUTPUT_STAGE/)
@@ -1605,7 +1611,7 @@ test('an unrecoverable audio service failure is deduped, labelled fatal, and ret
 })
 
 test('renderer audio device normalization derives tri-state capability fallbacks', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8')
   const normalizeSource = readFileSync(
     new URL('./player/audioOutputNormalize.ts', import.meta.url),
     'utf8'
@@ -1678,7 +1684,7 @@ test('dominant cover color extraction ignores stale async results', () => {
 })
 
 test('audio output refresh reruns when hotplug arrives during an in-flight request', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8')
   const helper = extractInternalFunctionBody(source, 'refreshAudioOutputState')
 
   assert.match(source, /let audioEngineStateRefreshQueued = false/)

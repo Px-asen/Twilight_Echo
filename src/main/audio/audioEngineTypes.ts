@@ -93,6 +93,7 @@ export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
 }
 
 export interface AudioEngineManagerDependencies {
+  persistDeviceProfiles?: (commit: import('./deviceProfiles.ts').DeviceProfileCommit) => void
   nativeBinding?: NativeAudioBinding | null
   scheduler?: Partial<AudioEngineScheduler>
   deviceOptionsProvider?: () => AudioDeviceOption[] | null

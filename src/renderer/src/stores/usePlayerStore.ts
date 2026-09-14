@@ -1,3 +1,4 @@
+import { createAudioOutputState } from '@renderer/stores/player/audioOutputState.ts'
 import { dispatchPlayerShortcut } from '@renderer/stores/player/playerShortcutController'
 import {
   shallowRef,
@@ -108,17 +109,9 @@ import { translate } from '../../../shared/i18n/translate.ts'
 import { currentLocale } from '../app/useLocale.ts'
 import type { LyricSource } from '../../../shared/lyricsManagement.ts'
 import { toNativePlayMode } from '../../../shared/playbackModes.ts'
-import { deviceOptionsForOutput } from '../../../shared/audioDeviceRouting.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { useAppNoticeStore, type AppNoticeKind } from './useAppNoticeStore'
 import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
-import {
-  DEFAULT_AUDIO_DEVICE_OPTION,
-  getFallbackAudioOutput,
-  getFallbackAudioOutputOptions,
-  normalizeAudioDeviceOptions,
-  normalizeAudioOutputOptions
-} from './player/audioOutputNormalize.ts'
 import {
   createInactiveVisualizationData,
   createVisualizationPolling,
@@ -154,15 +147,6 @@ export type PersonalizedStreamKey = 'fm' | 'radar'
 export interface PersonalizedStreamSession {
   id: number
   key: PersonalizedStreamKey
-}
-
-interface AudioOutputState {
-  output: AudioOutputId
-  device: string
-  exclusiveMode: boolean
-  exclusiveAvailable: boolean
-  outputOptions: AudioOutputOption[]
-  deviceOptions: AudioDeviceOption[]
 }
 
 export interface AudioEngineRecoveryNotice {
@@ -286,22 +270,9 @@ function setAudioEngineError(error: string | null, kind: AppNoticeKind = 'error'
   lastAudioEngineNotice = message
   pushNotice({ kind, message })
 }
-const exclusiveMode = ref(false)
 // Tracks whether the in-PlayingMusic audio visualizer surface is active.
 // App.vue reads this to hide the PlayerBar while the visualizer is open.
 const visualizerActive = ref(false)
-const audioOutput = ref<AudioOutputId>(getFallbackAudioOutput())
-const audioDevice = ref('auto')
-const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOptions())
-const audioDeviceOptions = ref<AudioDeviceOption[]>([DEFAULT_AUDIO_DEVICE_OPTION])
-/**
- * The output-device picker's list. `audioDeviceOptions` stays merged because the
- * DSD route picker targets a second backend and needs every entry; the main output
- * picker must only offer what the selected backend can open.
- */
-const audioOutputDeviceOptions = computed(() =>
-  deviceOptionsForOutput(audioOutput.value, audioDeviceOptions.value)
-)
 const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   directMode: false,
@@ -361,6 +332,22 @@ const audioOutputConfigApplyStatus = ref<OutputConfigApplyStatus>({
 const dspOutputStage = ref<DspOutputStageConfig>({ ...DEFAULT_DSP_OUTPUT_STAGE })
 /** Default-scene stereoField + channelStrip polarity (HiFi balance/phase). */
 const dspStereoImage = ref<DspStereoImageConfig>({ ...DEFAULT_DSP_STEREO_IMAGE })
+const {
+  exclusiveMode,
+  audioOutput,
+  audioDevice,
+  audioOutputOptions,
+  audioDeviceOptions,
+  audioOutputDeviceOptions,
+  applyAudioOutputState,
+  refreshAudioOutputState
+} = createAudioOutputState({
+  audioProcessing,
+  dspOutputStage,
+  dspStereoImage,
+  audioEngineReady,
+  setAudioEngineError
+})
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const loudnormStatus = ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>('idle')
 const loudnormStatusSource = ref<string | null>(null)
@@ -1031,65 +1018,6 @@ async function playWithRendererAudio(
   return isActiveLoad(loadToken, track)
 }
 
-function applyAudioOutputState(state: AudioOutputState): void {
-  exclusiveMode.value = state.exclusiveMode
-  audioOutput.value = state.output
-  audioDevice.value = state.device
-  audioOutputOptions.value = normalizeAudioOutputOptions(state.outputOptions, state.output)
-  audioDeviceOptions.value = normalizeAudioDeviceOptions(
-    state.deviceOptions,
-    state.device,
-    state.output
-  )
-}
-
-let audioEngineStateRequest: Promise<void> | null = null
-let audioEngineStateRefreshQueued = false
-
-async function refreshAudioOutputState(): Promise<void> {
-  if (audioEngineStateRequest) {
-    audioEngineStateRefreshQueued = true
-    return audioEngineStateRequest
-  }
-  const api = window.api?.audioEngine
-  if (!api) return
-
-  audioEngineStateRequest = (async () => {
-    audioEngineStateRefreshQueued = false
-    try {
-      const [outputState, processingSettings, sceneState] = await Promise.all([
-        api.getAudioOutputState(),
-        api.getAudioProcessing(),
-        api.getDspSceneState?.() ?? Promise.resolve(null)
-      ])
-      applyAudioOutputState(outputState)
-      audioProcessing.value = processingSettings
-      if (sceneState) {
-        const defaultScene = sceneState.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState.graph
-        if (graph?.outputStage) {
-          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
-        }
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      }
-      audioEngineReady.value = true
-      setAudioEngineError(null)
-    } catch (err) {
-      audioEngineReady.value = false
-      console.warn('[audio-engine] Failed to refresh audio output state:', err)
-    } finally {
-      audioEngineStateRequest = null
-    }
-  })()
-
-  await audioEngineStateRequest
-  if (audioEngineStateRefreshQueued) {
-    await refreshAudioOutputState()
-  }
-}
-
 async function persistAudioProcessingFallback(
   nextSettings: AudioProcessingSettings,
   reason: unknown
@@ -1664,7 +1592,10 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
 }
 
 async function persistSoftwareVolume(val: number): Promise<void> {
-  const next = clampSoftwareVolume(val)
+  const next = Math.min(
+    clampSoftwareVolume(val),
+    appSettings.value.audioDeviceProfiles.volumeCeiling
+  )
   const saved = clampSoftwareVolume(
     typeof appSettings.value?.softwareVolume === 'number'
       ? appSettings.value.softwareVolume
@@ -1691,6 +1622,14 @@ async function flushSoftwareVolumePersist(): Promise<void> {
 }
 
 watch(volume, (val) => {
+  const limited = Math.min(
+    clampSoftwareVolume(val),
+    appSettings.value.audioDeviceProfiles.volumeCeiling
+  )
+  if (limited !== val) {
+    volume.value = limited
+    return
+  }
   if (val > 0) {
     lastAudibleVolume.value = val
     muted.value = false
@@ -4142,7 +4081,7 @@ export function usePlayerStore(): {
   }
 
   function setVolume(vol: number): void {
-    volume.value = vol
+    volume.value = Math.min(vol, appSettings.value.audioDeviceProfiles.volumeCeiling)
   }
 
   /** Explicit user action for bit-perfect: software gain must be unity (1.0). Does not change default 0.7. */

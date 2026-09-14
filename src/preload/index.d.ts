@@ -21,6 +21,10 @@ import type {
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AudioEqPreset, AppSettings } from '../shared/appSettings.ts'
 import type {
+  AudioDeviceProfile,
+  AudioDeviceProfilesSnapshot
+} from '../shared/audioDeviceProfiles.ts'
+import type {
   DesktopLyricsBootstrap,
   DesktopLyricsClockSnapshot,
   DesktopLyricsSession,
@@ -721,6 +725,11 @@ interface AudioEngineAPI {
   setExclusiveMode: (enabled: boolean) => Promise<AudioOutputState>
   getExclusiveMode: () => Promise<boolean>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>
+  getDeviceProfiles: () => Promise<AudioDeviceProfilesSnapshot>
+  saveDeviceProfile: (profile: AudioDeviceProfile) => Promise<AudioDeviceProfilesSnapshot>
+  deleteDeviceProfile: (id: string) => Promise<AudioDeviceProfilesSnapshot>
+  applyDeviceProfile: (id: string) => Promise<AudioDeviceProfilesSnapshot>
+  onDeviceProfilesChanged: (callback: () => void) => () => void
   setAudioDevice: (device: string) => Promise<AudioOutputState>
   setOutputConfig: (config: OutputConfig) => Promise<OutputConfig>
   getOutputConfigApplyStatus: () => Promise<OutputConfigApplyStatus>

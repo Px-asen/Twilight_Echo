@@ -202,6 +202,7 @@ export interface AppSettings {
   audioDevice: string
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
+  audioDeviceProfiles: import('./audioDeviceProfiles.ts').AudioDeviceProfileSettings
   audioProcessing: AudioProcessingSettings
   dspScenes: DspScene[]
   dspPinnedSceneId: string | null

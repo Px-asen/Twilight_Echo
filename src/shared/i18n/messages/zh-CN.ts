@@ -422,6 +422,7 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   'error.audio.exclusive_switch_failed': '独占模式切换失败：{detail}',
   'error.audio.exclusive_config_failed': '独占模式配置应用失败：{detail}',
   'error.audio.device_switch_failed': '输出设备切换失败：{detail}',
+  'error.audio.device_profile_failed': '设备档案应用失败：{detail}',
   'error.audio.service_restarted_during_topology': '音频服务在输出拓扑更新期间重启',
   'error.audio.service_restarted_during_ack': '音频服务在读取输出拓扑确认时重启',
   'error.audio.direct_routing_failed': '直通声道路由应用失败：{detail}',

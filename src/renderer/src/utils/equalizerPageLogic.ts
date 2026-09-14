@@ -215,7 +215,7 @@ export function normalizeAudioProcessing(
     crossfeedDelayMs: clampNumber(settings?.crossfeedDelayMs, 0.05, 2, 0.35),
     crossfeedCutoffHz: clampNumber(settings?.crossfeedCutoffHz, 80, 4000, 700),
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0),
-    eqBands: eqBands.length > 0 ? eqBands : cloneBands(defaultEqBands)
+    eqBands
   }
 }
 

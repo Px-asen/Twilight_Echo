@@ -6,6 +6,7 @@
 
 - [开发者文档](./DEVELOPER_README.md)
 - [Agent 架构与维护指南](./agent-architecture-guide.md)
+- [用户体验功能实施顺序与交接](../plans/024-ux-feature-implementation.md)：设备档案优先，按 D → B → A → F → G → H → L → E 实施；含范围、验收及新窗口启动提示。
 - [高内聚低耦合维护执行方案](./architecture-maintainability-action-plan.md)
 - [音频引擎架构](./twilight-audio-engine-architecture.md)
 - [音频引擎 API](./audio-engine-api.md)

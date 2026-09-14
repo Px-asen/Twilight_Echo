@@ -2,14 +2,14 @@
 import { mergeEqualizerPatch } from '@renderer/utils/equalizerSettingsPatch'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useBackHandler } from '../app/useBackStack.ts'
-import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
-import ParametricEqWorkspace from './equalizer/ParametricEqWorkspace.vue'
-import OpraEqPanel from './equalizer/OpraEqPanel.vue'
-import FrequencyResponseChart from './equalizer/FrequencyResponseChart.vue'
-import FrequencyResponseToolbar from './equalizer/FrequencyResponseToolbar.vue'
-import GraphicEqPanel from './equalizer/GraphicEqPanel.vue'
+import { useBackHandler } from '@renderer/app/useBackStack.ts'
+import { useAudioOutputDspStore } from '@renderer/stores/useAudioOutputDspStore'
+import { usePlayerStore } from '@renderer/stores/usePlayerStore'
+import ParametricEqWorkspace from '@renderer/components/equalizer/ParametricEqWorkspace.vue'
+import OpraEqPanel from '@renderer/components/equalizer/OpraEqPanel.vue'
+import FrequencyResponseChart from '@renderer/components/equalizer/FrequencyResponseChart.vue'
+import FrequencyResponseToolbar from '@renderer/components/equalizer/FrequencyResponseToolbar.vue'
+import GraphicEqPanel from '@renderer/components/equalizer/GraphicEqPanel.vue'
 import {
   EQ_RESPONSE_DEFAULT_SAMPLE_RATE,
   computeAutoPreampDb,
@@ -31,7 +31,7 @@ import {
   patchBand,
   responseToPath,
   tabs
-} from '../utils/equalizerPageLogic'
+} from '@renderer/utils/equalizerPageLogic'
 import { computeFrequencyResponseComparison } from '../../../shared/frequencyResponse.ts'
 import type { ImportedFrequencyResponse } from '../../../shared/frequencyResponse.ts'
 import { createParametricBand, spectrumToPath } from '@renderer/utils/parametricEqInteraction'
@@ -43,7 +43,7 @@ import type {
   EqualizerFilterType,
   EqMode,
   HeadphoneCompensationSettings
-} from '../types/settings'
+} from '@renderer/types/settings'
 import type { DspSceneState } from '../../../shared/dspGraph.ts'
 
 type EqualizerTab = EqMode
@@ -71,6 +71,7 @@ const filterMenuOpen = ref(false)
 const selectedBandIndex = ref(0)
 const eqApplyFeedback = ref<EqApplyFeedback>('idle')
 const eqApplyError = ref('')
+const parametricWorkspaceRef = ref<InstanceType<typeof ParametricEqWorkspace> | null>(null)
 const spectrumVisible = ref(true)
 const spectrumPath = ref('')
 const opraQuery = ref('')
@@ -243,25 +244,22 @@ const responseFillPath = computed(() => {
   const zero = gainToY(0).toFixed(2)
   return `${responsePath.value} L100,${zero} L0,${zero} Z`
 })
-const parametricResponseFillPath = computed(() => {
-  if (!responsePath.value) return ''
-  return `${responsePath.value} L100,100 L0,100 Z`
-})
 
 // Preserve the source band index so interactive control points, colors, and
 // curves stay aligned even when inactive bands are omitted from processing.
 function computeBandResponsePaths(
   bands: readonly EqualizerBand[],
-  mode: EqMode
+  mode: EqMode,
+  includeBypassed = false
 ): { index: number; path: string }[] {
   const sampleRate = responseSampleRate.value
   const paths: { index: number; path: string }[] = []
   bands.forEach((band, index) => {
-    if (!isBandActive(band, mode)) return
+    if (!isBandActive(band, mode) && !(includeBypassed && band.enabled === false)) return
     paths.push({
       index,
       path: responseToPath(
-        computeBandResponse(band, {
+        computeBandResponse(includeBypassed ? { ...band, enabled: true } : band, {
           sampleRate,
           mode,
           pointCount: 97,
@@ -275,7 +273,7 @@ function computeBandResponsePaths(
 }
 
 const bandResponsePaths = computed(() =>
-  computeBandResponsePaths(audioProcessing.value.eqBands, audioProcessing.value.eqMode)
+  computeBandResponsePaths(audioProcessing.value.eqBands, audioProcessing.value.eqMode, true)
 )
 const headphoneBandResponsePaths = computed(() =>
   computeBandResponsePaths(displayEqBands.value, displayEqMode.value)
@@ -331,7 +329,8 @@ async function loadAppSettings(): Promise<void> {
       audioProcessing: normalizeAudioProcessing(settings.audioProcessing),
       audioEqPresets: settings.audioEqPresets.map((preset) => ({
         ...preset,
-        eqBands: normalizeAudioProcessing({ eqBands: preset.eqBands }).eqBands
+        eqBands: normalizeAudioProcessing({ eqMode: preset.eqMode, eqBands: preset.eqBands })
+          .eqBands
       }))
     }
     appSettings.value.headphoneCompensation = {
@@ -418,6 +417,8 @@ async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): P
 }
 
 async function updateEqBand(index: number, patch: Partial<EqualizerBand>): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   const bands = patchBand(audioProcessing.value.eqBands, index, patch, audioProcessing.value.eqMode)
   if (!bands[index]) return
   await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
@@ -468,9 +469,7 @@ function flushStagedEdit(): void {
   audioOutputDspStore.applyAudioProcessingState({
     ...audioProcessing.value,
     eqPreamp: preamp,
-    eqBands: bands,
-    eqEnabled: true,
-    dspEnabled: true
+    eqBands: bands
   })
   if (appSettings.value) {
     appSettings.value = { ...appSettings.value, audioProcessing: audioProcessing.value }
@@ -537,6 +536,9 @@ async function commitStagedBands(): Promise<void> {
 }
 
 async function addBand(frequency: number, gain: number): Promise<void> {
+  finishParametricEdits()
+  await commitChain
+  if (audioProcessing.value.eqBands.length >= 32) return
   const bands = [
     ...cloneBands(audioProcessing.value.eqBands),
     createParametricBand(frequency, gain)
@@ -546,6 +548,8 @@ async function addBand(frequency: number, gain: number): Promise<void> {
 }
 
 async function deleteBand(index = selectedBandIndex.value): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   const bands = cloneBands(audioProcessing.value.eqBands)
   if (!bands[index]) return
   bands.splice(index, 1)
@@ -736,6 +740,8 @@ async function disableOpraCompensation(): Promise<void> {
 }
 
 async function applyEqPreset(preset: AudioEqPreset): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   activeTab.value = preset.eqMode
   await updateAudioProcessing({
     eqMode: preset.eqMode,
@@ -746,6 +752,8 @@ async function applyEqPreset(preset: AudioEqPreset): Promise<void> {
 }
 
 async function saveEqPreset(): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   const name =
     presetName.value.trim() ||
     `自定义 ${new Date().toLocaleTimeString('zh-CN', {
@@ -778,7 +786,9 @@ function saveAsCurrentPreset(): void {
   void saveEqPreset()
 }
 
-function switchTab(tab: EqualizerTab): void {
+async function switchTab(tab: EqualizerTab): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   activeTab.value = tab
   presetMenuOpen.value = false
   filterMenuOpen.value = false
@@ -804,6 +814,8 @@ function openAdvancedSettings(index = selectedBandIndex.value): void {
 }
 
 async function resetEqualizer(): Promise<void> {
+  finishParametricEdits()
+  await commitChain
   await updateAudioProcessing({
     eqEnabled: false,
     eqMode: activeTab.value === 'parametric' ? 'parametric' : 'graphic',
@@ -827,6 +839,17 @@ function selectFilterForBand(index: number, filterType: EqualizerFilterType): vo
   void selectFilterType(filterType)
 }
 
+function finishParametricEdits(): void {
+  parametricWorkspaceRef.value?.finishInteraction()
+  if (pendingBandFrame !== 0) void commitStagedBands()
+}
+
+async function toggleParametricEq(): Promise<void> {
+  finishParametricEdits()
+  await commitChain
+  await updateAudioProcessing({ eqEnabled: !audioProcessing.value.eqEnabled })
+}
+
 function selectBand(index: number): void {
   selectedBandIndex.value = index
   filterMenuOpen.value = false
@@ -847,7 +870,12 @@ onBeforeUnmount(() => {
 // Keep the compensated preamp in sync when bands change through paths that
 // bypass updateAudioProcessing (preset apply on load, external scene edits).
 watch(autoPreampTargetDb, () => {
-  if (!autoPreampEnabled.value) return
+  if (
+    !autoPreampEnabled.value ||
+    eqApplyFeedback.value === 'editing' ||
+    eqApplyFeedback.value === 'applying'
+  )
+    return
   void applyAutoPreamp()
 })
 
@@ -861,9 +889,13 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 </script>
 
 <template>
-  <div class="eq-page" @keydown="onEqualizerKeydown">
+  <div
+    class="eq-page"
+    :class="{ 'is-parametric': activeTab === 'parametric' }"
+    @keydown="onEqualizerKeydown"
+  >
     <div class="eq-container">
-      <aside class="eq-sidebar">
+      <aside v-if="activeTab !== 'parametric'" class="eq-sidebar">
         <div
           v-for="tab in tabs"
           :key="tab.key"
@@ -887,7 +919,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 
       <main class="eq-content">
         <!-- Toolbar for Presets across Graphic and Parametric -->
-        <div class="eq-toolbar-modern">
+        <div v-if="activeTab !== 'parametric'" class="eq-toolbar-modern">
           <div class="preset-menu-anchor">
             <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">
               选择预设 <i class="pi pi-chevron-down"></i>
@@ -1049,37 +1081,13 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
         </div>
 
         <div v-else-if="activeTab === 'parametric'" class="tab-pane active parametric-pane">
-          <header class="parametric-page-header">
-            <div class="parametric-page-title">
-              <div>
-                <h1>参数均衡器</h1>
-                <p>精确控制中心频率、增益与品质因数，并实时写入当前处理场景。</p>
-              </div>
-            </div>
-            <div class="parametric-context-status" aria-label="参数均衡器工作模式">
-              <span class="context-status-dot"></span>
-              <span>32 频段 · 实时处理</span>
-            </div>
-          </header>
-
-          <FrequencyResponseToolbar
-            card
-            :response-view="responseView"
-            :imported-frequency-response="importedFrequencyResponse"
-            :importing="frequencyResponseImporting"
-            :error="frequencyResponseError"
-            @update:response-view="responseView = $event"
-            @import="importFrequencyResponse"
-            @clear="clearFrequencyResponse"
-          />
-
           <ParametricEqWorkspace
+            ref="parametricWorkspaceRef"
             :bands="audioProcessing.eqBands"
             :selected-index="selectedBandIndex"
             :filter-types="filterTypes"
             :response-view="responseView"
             :response-path="responsePath"
-            :response-fill-path="parametricResponseFillPath"
             :spectrum-path="spectrumPath"
             :spectrum-visible="spectrumVisible"
             :measured-source-path="measuredSourcePath"
@@ -1109,7 +1117,113 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             @filter="selectFilterForBand"
             @toggle-spectrum="spectrumVisible = !spectrumVisible"
             @toggle-headphone-curve="toggleHeadphoneCurve"
-          />
+          >
+            <template #commands>
+              <div class="instrument-mode-switch" aria-label="均衡器模式">
+                <button type="button" :aria-pressed="false" @click="switchTab('graphic')">
+                  图形
+                </button>
+                <button type="button" class="active" :aria-pressed="true">参数</button>
+              </div>
+              <div class="instrument-presets">
+                <div class="preset-menu-anchor">
+                  <button
+                    type="button"
+                    class="eq-command preset-menu-button"
+                    @click="togglePresetMenu"
+                  >
+                    选择预设 <i class="pi pi-chevron-down"></i>
+                  </button>
+                  <div v-if="presetMenuOpen" class="preset-menu">
+                    <div class="preset-menu-section">
+                      <span class="preset-menu-title">内置预设</span>
+                      <button
+                        v-for="preset in builtInEqPresets"
+                        :key="preset.id"
+                        type="button"
+                        class="preset-menu-item"
+                        @click="applyEqPreset(preset)"
+                      >
+                        {{ preset.name }}
+                      </button>
+                    </div>
+                    <div class="preset-menu-section">
+                      <span class="preset-menu-title">自定义预设</span>
+                      <button
+                        v-for="preset in userPresets"
+                        :key="preset.id"
+                        type="button"
+                        class="preset-menu-item"
+                        @click="applyEqPreset(preset)"
+                      >
+                        {{ preset.name }}
+                      </button>
+                      <span v-if="userPresets.length === 0" class="preset-empty"
+                        >暂无自定义预设</span
+                      >
+                    </div>
+                    <div class="preset-create">
+                      <input v-model="presetName" type="text" placeholder="新建预设名称" />
+                      <button
+                        type="button"
+                        :disabled="saving || !presetName.trim()"
+                        @click="saveEqPreset"
+                      >
+                        新建
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="instrument-power"
+                :class="{ active: audioProcessing.eqEnabled }"
+                :aria-pressed="audioProcessing.eqEnabled"
+                aria-label="启用均衡器"
+                @click="toggleParametricEq"
+              >
+                <i class="pi pi-power-off"></i
+                ><span>{{ audioProcessing.eqEnabled ? '已启用' : '已旁路' }}</span>
+              </button>
+              <details class="instrument-more">
+                <summary aria-label="均衡器更多操作" title="更多操作">
+                  <i class="pi pi-ellipsis-h"></i>
+                </summary>
+                <div class="instrument-more-menu">
+                  <button type="button" :disabled="saving" @click="saveAsCurrentPreset">
+                    另存为预设
+                  </button>
+                  <button type="button" @click="resetEqualizer">重置均衡器</button>
+                </div>
+              </details>
+            </template>
+            <template #footer>
+              <FrequencyResponseToolbar
+                compact
+                :response-view="responseView"
+                :imported-frequency-response="importedFrequencyResponse"
+                :importing="frequencyResponseImporting"
+                :error="frequencyResponseError"
+                @update:response-view="responseView = $event"
+                @import="importFrequencyResponse"
+                @clear="clearFrequencyResponse"
+              />
+              <button
+                type="button"
+                class="instrument-auto-preamp"
+                :class="{ active: autoPreampEnabled }"
+                :aria-pressed="autoPreampEnabled"
+                title="根据当前曲线自动下调前级，预留 0.5 dB 余量"
+                @click="toggleAutoPreamp"
+              >
+                <i :class="autoPreampEnabled ? 'pi pi-check-circle' : 'pi pi-circle'"></i>自动补偿
+              </button>
+              <span class="instrument-preamp" title="前置放大"
+                >{{ audioProcessing.eqPreamp.toFixed(1) }} <small>dB</small></span
+              >
+            </template>
+          </ParametricEqWorkspace>
         </div>
       </main>
     </div>
@@ -1803,5 +1917,191 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 
 :global(html[data-theme='pureWhite'] .parametric-page-title h1) {
   color: var(--te-neutral-900);
+}
+
+.eq-page.is-parametric .eq-container {
+  background: var(--te-app-bg);
+  backdrop-filter: none;
+}
+.eq-page.is-parametric .eq-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 48px 14px 14px;
+  gap: 0;
+  overflow-y: auto;
+}
+.eq-page.is-parametric .parametric-pane {
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+  animation: none;
+}
+.instrument-mode-switch {
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.instrument-mode-switch button,
+.instrument-power,
+.instrument-auto-preamp,
+.instrument-more button {
+  border: 0;
+  background: transparent;
+  color: var(--eq-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.instrument-mode-switch button {
+  padding: 5px 10px;
+  border-radius: 4px;
+}
+.instrument-mode-switch button.active {
+  background: var(--eq-control-bg);
+  color: var(--eq-text);
+}
+.instrument-presets {
+  display: flex;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+.instrument-presets .eq-command {
+  border: 0;
+  border-radius: 5px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--eq-text-muted);
+  box-shadow: none;
+  font-size: 11px;
+}
+.instrument-presets .preset-menu {
+  width: 280px;
+  max-width: calc(100vw - 48px);
+  background: var(--eq-panel-raised);
+  border-color: var(--eq-border);
+  box-shadow: 0 12px 32px var(--eq-shadow);
+  color: var(--eq-text);
+}
+.instrument-presets .preset-menu-item {
+  color: var(--eq-text);
+}
+.instrument-presets .preset-menu-title,
+.instrument-presets .preset-empty {
+  color: var(--eq-text-subtle);
+}
+.instrument-presets .preset-menu-item:hover {
+  color: var(--eq-response);
+  background: var(--eq-control-bg);
+}
+.instrument-presets .preset-create {
+  border-color: var(--eq-border-soft);
+}
+.instrument-presets .preset-create input {
+  background: var(--eq-control-bg);
+  color: var(--eq-text);
+  border-color: var(--eq-border);
+}
+.instrument-presets .preset-create button {
+  background: var(--eq-control-bg);
+  color: var(--eq-response);
+}
+.instrument-power {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+.instrument-power.active i {
+  color: var(--eq-response);
+}
+.instrument-more {
+  position: relative;
+  color: var(--eq-text-muted);
+}
+.instrument-more summary {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.instrument-more summary::-webkit-details-marker {
+  display: none;
+}
+.instrument-more-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: 150px;
+  padding: 5px;
+  border: 1px solid var(--eq-border);
+  border-radius: 8px;
+  background: var(--eq-panel-raised);
+  box-shadow: 0 10px 24px var(--eq-shadow);
+}
+.instrument-more-menu button {
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: 4px;
+}
+.instrument-more-menu button:hover {
+  background: var(--eq-control-bg);
+  color: var(--eq-response);
+}
+.instrument-auto-preamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0;
+  white-space: nowrap;
+}
+.instrument-auto-preamp.active i {
+  color: var(--eq-response);
+}
+.instrument-preamp {
+  color: var(--eq-text-muted);
+  font-family: var(--eq-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.instrument-preamp small {
+  font-size: 9px;
+  color: var(--eq-text-subtle);
+}
+.instrument-mode-switch button:focus-visible,
+.instrument-power:focus-visible,
+.instrument-auto-preamp:focus-visible,
+.instrument-more summary:focus-visible,
+.instrument-more button:focus-visible {
+  outline: 2px solid var(--eq-response);
+  outline-offset: 3px;
+}
+@media (max-width: 820px) {
+  .eq-page.is-parametric .eq-content {
+    padding-inline: 8px;
+    padding-bottom: 8px;
+  }
+  .eq-page.is-parametric .parametric-pane {
+    min-height: 560px;
+  }
+  .instrument-power span {
+    display: none;
+  }
+  .instrument-presets .preset-menu {
+    left: auto;
+    right: 0;
+  }
 }
 </style>

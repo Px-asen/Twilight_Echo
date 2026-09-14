@@ -59,6 +59,20 @@ export interface OutputRouterHost {
 }
 
 export class OutputRouter {
+  private configurationQueue: Promise<unknown> | null = null
+
+  serializeConfiguration<T>(operation: () => Promise<T>): Promise<T> {
+    const request = this.configurationQueue ? this.configurationQueue.then(operation) : operation()
+    const completion = request.then(
+      () => undefined,
+      () => undefined
+    )
+    this.configurationQueue = completion
+    void completion.then(() => {
+      if (this.configurationQueue === completion) this.configurationQueue = null
+    })
+    return request
+  }
   output: AudioOutputId
   device: string
   exclusiveMode: boolean
@@ -461,7 +475,7 @@ export class OutputRouter {
     return true
   }
 
-  private async runOutputRouteTransaction(options: {
+  async runOutputRouteTransaction(options: {
     context: string
     nextOutput: AudioOutputId
     nextDevice: string
@@ -471,6 +485,13 @@ export class OutputRouter {
     errorMessage: string
     cacheReason: string
     expectedActualDeviceId?: string
+    volumeCeiling?: number
+    applyProcessing?: () => Promise<void>
+    rollbackProcessing?: () => Promise<void>
+    commit?: () => void
+    rollbackCommit?: () => void
+    assertCurrent?: () => void
+    acceptsDsdRoute?: (info: PlaybackInfo) => boolean
   }): Promise<void> {
     const snapshot = {
       output: this.output,
@@ -500,6 +521,7 @@ export class OutputRouter {
     this.emitOutputRouteTransaction(options.context, 'mute')
 
     try {
+      options.assertCurrent?.()
       this.nativeOutputRouteSynced = false
       this.emitOutputRouteTransaction(options.context, 'open-target')
       await this.applyOutputRouteStepsOrThrow(
@@ -508,6 +530,14 @@ export class OutputRouter {
         options.nextDevice,
         targetEffectiveConfig
       )
+      this.output = options.nextOutput
+      this.device = options.nextDevice
+      this.exclusiveMode = options.nextExclusiveMode
+      this.outputConfig = options.nextConfig
+      if (options.applyProcessing) {
+        await options.applyProcessing()
+        this.emitOutputRouteTransaction(options.context, 'dsp-ready')
+      }
       if (snapshot.serviceGeneration !== this.outputConfigServiceGeneration) {
         throw audioEngineError(
           'audio.service_restarted_during_topology',
@@ -516,6 +546,9 @@ export class OutputRouter {
       }
       this.emitOutputRouteTransaction(options.context, 'verify-target-ready')
       const targetInfo = await this.readNativePlaybackInfoAsync()
+      if (options.applyProcessing && !targetInfo) {
+        throw new Error('设备档案未收到输出状态确认')
+      }
       if (snapshot.playbackInfo.state !== 'stopped') {
         const targetBackend = targetInfo?.outputInfo.actualBackend || targetInfo?.actualBackend
         const actualDevice =
@@ -537,10 +570,12 @@ export class OutputRouter {
             ? actualDeviceId === options.nextDevice
             : acceptedDeviceNames.has(actualDevice)
         }
+        const routeMatches =
+          (targetBackend === targetNativeBackendId && actualDeviceMatches) ||
+          (targetInfo && options.acceptsDsdRoute?.(targetInfo))
         if (
           !targetInfo ||
-          targetBackend !== targetNativeBackendId ||
-          !actualDeviceMatches ||
+          !routeMatches ||
           targetInfo.state !== snapshot.playbackInfo.state ||
           targetInfo.source !== snapshot.playbackInfo.source
         ) {
@@ -567,6 +602,11 @@ export class OutputRouter {
         )
       }
 
+      options.assertCurrent?.()
+      const targetVolume = Math.min(snapshot.volume, options.volumeCeiling ?? 1)
+      this.playbackInfo.volume = targetVolume
+      options.commit?.()
+
       this.output = options.nextOutput
       this.device = options.nextDevice
       this.exclusiveMode = options.nextExclusiveMode
@@ -578,16 +618,25 @@ export class OutputRouter {
       const unmuteSynced = await this.callNativeMaybeAsync(
         '输出切换事务恢复音量',
         'SetVolume',
-        snapshot.volume
+        targetVolume
       )
       if (!unmuteSynced) {
         throw nativeAudioError(options.errorCode, options.errorMessage, this.lastNativeError)
       }
-      this.playbackInfo.volume = snapshot.volume
+      options.assertCurrent?.()
+      this.playbackInfo.volume = targetVolume
+      if (snapshot.serviceGeneration !== this.outputConfigServiceGeneration) {
+        throw new Error('audio service restarted while restoring profile volume')
+      }
       this.emitOutputRouteTransaction(options.context, 'unmute')
       this.publishPlaybackInfo()
     } catch (error) {
-      const rollback = await this.rollbackOutputRouteTransaction(options.context, snapshot)
+      const rollback = await this.rollbackOutputRouteTransaction(
+        options.context,
+        snapshot,
+        options.rollbackProcessing,
+        options.rollbackCommit
+      )
       if (!rollback) {
         this.nativeOutputRouteSynced = false
         await this.callNativeMaybeAsync('输出切换事务安全停止', 'Stop')
@@ -601,7 +650,11 @@ export class OutputRouter {
         this.emitOutputRouteTransaction(options.context, 'safe-stop')
       }
       const detail = error instanceof Error ? error.message : String(error)
-      throw nativeAudioError(options.errorCode, options.errorMessage, detail)
+      throw nativeAudioError(
+        options.errorCode,
+        options.errorMessage,
+        rollback ? detail : `${detail}；旧配置恢复失败，播放已停止`
+      )
     }
   }
 
@@ -643,16 +696,28 @@ export class OutputRouter {
       playbackInfo: PlaybackInfo
       volume: number
       serviceGeneration: number
-    }
+    },
+    rollbackProcessing?: () => Promise<void>,
+    rollbackCommit?: () => void
   ): Promise<boolean> {
     this.emitOutputRouteTransaction(context, 'rollback')
+    this.output = snapshot.output
+    this.device = snapshot.device
+    this.exclusiveMode = snapshot.exclusiveMode
+    this.outputConfig = snapshot.outputConfig
+    this.playbackInfo = snapshot.playbackInfo
     try {
+      const muted = await this.callNativeMaybeAsync('输出回滚静音', 'SetVolume', 0)
+      rollbackCommit?.()
+      if (!muted) return false
+      if (snapshot.serviceGeneration !== this.outputConfigServiceGeneration) return false
       await this.applyOutputRouteStepsOrThrow(
         `${context} rollback`,
         snapshot.nativeBackendId,
         snapshot.device,
         snapshot.effectiveConfig
       )
+      await rollbackProcessing?.()
       if (snapshot.serviceGeneration !== this.outputConfigServiceGeneration) return false
       const unmuteSynced = await this.callNativeMaybeAsync(
         '输出切换事务回滚恢复音量',
@@ -914,7 +979,9 @@ export class OutputRouter {
     // and 'auto' then lets whichever driver enumerates first win. Promote it to
     // an explicit driver now that the catalog can be read.
     if (this.output === 'asio') {
-      this.autoDeviceRebindInFlight = this.promoteAutoAsioDevice(reason).finally(() => {
+      this.autoDeviceRebindInFlight = this.serializeConfiguration(() =>
+        this.promoteAutoAsioDevice(reason)
+      ).finally(() => {
         this.autoDeviceRebindInFlight = null
       })
       return
@@ -922,7 +989,9 @@ export class OutputRouter {
 
     // Always follow OS default while selection is `auto`. When idle, SetOutputDevice only
     // updates the preferred endpoint; when playing/paused the native path rebinds in place.
-    this.autoDeviceRebindInFlight = this.rebindAutoOutputDevice(reason).finally(() => {
+    this.autoDeviceRebindInFlight = this.serializeConfiguration(() =>
+      this.rebindAutoOutputDevice(reason)
+    ).finally(() => {
       this.autoDeviceRebindInFlight = null
     })
   }

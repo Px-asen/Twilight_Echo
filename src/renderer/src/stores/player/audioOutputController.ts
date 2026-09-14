@@ -53,7 +53,7 @@ export function createAudioOutputController(options: AudioOutputControllerOption
   async function refreshSceneGraphState(): Promise<void> {
     const sceneState = await options.getAudioEngineApi().getDspSceneState()
     const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-    const graph = defaultScene?.graph ?? sceneState?.graph
+    const graph = sceneState?.graph ?? defaultScene?.graph
     if (graph?.outputStage) {
       dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
     }
@@ -166,10 +166,10 @@ export function createAudioOutputController(options: AudioOutputControllerOption
     try {
       const state = await api.setOutputStage(partial)
       const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
-      if (defaultScene?.graph?.outputStage) {
-        dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
-      } else if (state?.graph?.outputStage) {
+      if (state?.graph?.outputStage) {
         dspOutputStage.value = mergeDspOutputStage(state.graph.outputStage, {})
+      } else if (defaultScene?.graph?.outputStage) {
+        dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
       }
       await options.refreshPlaybackInfo()
     } catch (err) {

@@ -80,6 +80,10 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
 
 ## 音频链路
 
+设备档案位于播放设置和 HiFi 输出页，支持从当前配置创建、命名、复制、编辑、删除及按稳定设备 ID 自动应用。版本化 `audioDeviceProfiles` 保存后端、独占、完整 buffer/routing、软件音量上限、SRC/DSD 策略和 DSP 场景引用；场景 graph 不复制进档案，设备 SRC 作为运行时 output-stage override 独立持久化。手工调整输出或 DSP 后清除“已应用档案”标记，保留实际设置和音量上限；编辑或删除已应用档案也不会突然改变播放。
+
+档案应用仅经 `audioEngineManager` 的 `DeviceProfiles` 与 `OutputRouter`：串行验证、静音、backend/device/config、DSP plugin chain、DSP revision ACK、输出状态 ACK、持久化，再恢复不超过档案上限的原音量。新的选择淘汰旧请求；失败回滚输出、DSP 和已保存选择，回滚失败则停止播放并显示原因。自动应用只响应重新出现且唯一匹配的稳定 ID，同名、缺失设备、冲突档案或已删除场景均有明确反馈。重启恢复档案选择与上限；服务崩溃后的恢复与配置事务串行，仍等待结构化 ready 且不自动续播。软件上限不是硬件音量或声压保证，也不会自动设置 Unity。对应软件回归位于 `audio/deviceProfiles.test.ts`；真实 DAC 切换未作为本轮验证证据。
+
 ASIO 隔离进程通过回调事件唤醒渲染线程，不依赖 `sleep(1ms)` 轮询；事件可以合并，待处理工作仍以共享内存队列为准。停止线程时主动唤醒，进程退出和回调停滞仍由现有 watchdog 处理。能力枚举只查询，不切换 DSD I/O 模式或设置采样率；PCM 模式下查不到 DSD 倍率时保留未知状态，实际 Native DSD 请求再协商。`AudioFormat.dopEncoded` 只由 DoP 载体构造设置，并经 ASIO helper 协议 v3 传递；普通高采样率 24-bit PCM 不验证 DoP 标记，也不产生 DoP 错误证据。
 
 引擎内部 `Int24In32Interleaved` 保持有效位高位对齐；ASIO `Int32LSB24` 的物理缓冲要求低位对齐，直通与浮点输出均在写入驱动缓冲时转换。完整 `Int32LSB` 承载 24-bit PCM/DoP 时仍保留高位对齐，不能混用两种驱动布局。低位布局与 [PortAudio 的 ASIO 输出转换](https://github.com/PortAudio/portaudio/blob/master/src/hostapi/asio/pa_asio.cpp)一致。
@@ -134,6 +138,7 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 - 主窗口前台空格切换播放/暂停，输入、可编辑区域、按钮、菜单和对话框保留自身键盘行为；全局音量增减默认使用 `CommandOrControl+Alt+Up/Down`，步进 5%，允许在快捷键设置中修改。跨进程快捷键载荷统一在 `src/shared/playerShortcuts.ts`。
 - 全局字体设置支持 `local:<字体名称>`，复用 main 字体枚举与既有字体 CSS 变量，保留 CJK 回退。Windows 字体注册表经 PowerShell 显式 UTF-8 输出，避免中文名称被按错误代码页解码。
 - 均衡器模式切换和参数编辑保留旁路状态；明确点击启用才开启 EQ。合并规则在 `equalizerSettingsPatch.ts`。
+- 参数 EQ 使用随浅色／深色主题切换的全画布工作区；频段面板在遮挡所选节点时上移，可用宽度小于 800px 时停靠在图下。关闭面板不会删除频段；删除最后一段后保留空画布，参数预设按自身模式恢复 0–32 个频段。频率、增益、Q 旋钮支持上下拖动、滚轮、方向键及数值输入，Shift 精调；频率和 Q 使用对数映射，普通拖动 180px 覆盖量程。拖动仅预览，结束手势或滚轮停止 140ms 后沿现有提交链写入；切换频段或执行命令前结束待提交编辑。自动增益补偿不在拖动预览期间单独触发引擎写入。频谱沿用播放器可视化数据，电平标示实际 Peak／RMS。
 - 登录页返回平台列表、切换账号/登录方式和销毁组件后，旧二维码生成/轮询结果不再改写当前页面或触发跳转。
 - 本地歌曲列表及流媒体歌单详情的歌曲标题打开信息，艺人/专辑链接与播放点击隔离；网易云曲目保留 provider 专辑 ID。缺少专辑身份时提示而不猜测同名专辑。
 - HiFi 面板 Teleport 到 body，并按顶栏实际高度避让；面板内部点击不会触发播放栏的外部点击关闭。菜单坐标使用 CSS viewport 坐标并限于视口边界。常用控件 hover 不移动命中区域；两种侧栏和播放栏避让复用 `--te-motion-panel`。

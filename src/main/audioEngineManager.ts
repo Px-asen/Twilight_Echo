@@ -58,6 +58,12 @@ import {
 } from './audio/nativeBinding.ts'
 import { DspOrchestrator } from './audio/dspOrchestrator.ts'
 import { OutputRouter } from './audio/outputRouter.ts'
+import { DeviceProfiles } from './audio/deviceProfiles.ts'
+import {
+  normalizeAudioDeviceProfileSettings,
+  type AudioDeviceProfile,
+  type AudioDeviceProfilesSnapshot
+} from '../shared/audioDeviceProfiles.ts'
 import { PlaybackController } from './audio/playbackController.ts'
 
 export type {
@@ -121,6 +127,7 @@ export class AudioEngineManager extends EventEmitter {
   private native: NativeAudioBinding | null
   private audioServiceBinding: AudioEngineServiceNativeBinding | null = null
   private readonly outputRouter: OutputRouter
+  private readonly deviceProfiles: DeviceProfiles
   private readonly dsp: DspOrchestrator
   private readonly playback: PlaybackController
   private scheduler: AudioEngineScheduler
@@ -188,6 +195,14 @@ export class AudioEngineManager extends EventEmitter {
           this.syncPlaybackOutputMirrorsFromOutputInfo(),
         emit: (event, payload) => {
           this.emit(event, payload)
+          if (
+            event === 'audio-device-options-changed' &&
+            /platform-device-change|audio-device-hotplug/.test(
+              String((payload as { reason?: string })?.reason)
+            )
+          ) {
+            this.deviceProfiles?.devicesChanged()
+          }
         }
       },
       config,
@@ -200,7 +215,10 @@ export class AudioEngineManager extends EventEmitter {
       this.exclusiveMode,
       this.outputConfig
     )
-    initialPlaybackInfo.volume = clampNumber(config.volume, 0, 1, 1)
+    initialPlaybackInfo.volume = Math.min(
+      clampNumber(config.volume, 0, 1, 1),
+      normalizeAudioDeviceProfileSettings(config.audioDeviceProfiles).volumeCeiling
+    )
     this.playback = new PlaybackController(
       {
         getNative: () => this.native,
@@ -275,6 +293,8 @@ export class AudioEngineManager extends EventEmitter {
     )
     this.dsp = new DspOrchestrator(
       {
+        callNativeMaybeAsync: (context, method, ...args) =>
+          this.callNativeMaybeAsync(context, method, ...args),
         getNative: () => this.native,
         getAudioServiceBinding: () => this.audioServiceBinding,
         getPlaybackInfo: () => this.playbackInfo,
@@ -300,6 +320,14 @@ export class AudioEngineManager extends EventEmitter {
       },
       config,
       dependencies
+    )
+    this.deviceProfiles = new DeviceProfiles(
+      this.outputRouter,
+      this.dsp,
+      () => this.playbackInfo,
+      dependencies.persistDeviceProfiles ?? (() => undefined),
+      () => this.emit('device-profiles-changed'),
+      config.audioDeviceProfiles
     )
     this.resetOutputInfoDefaults()
     this.updateOutputPerfect()
@@ -515,23 +543,25 @@ export class AudioEngineManager extends EventEmitter {
     const restoreSerial = ++this.audioServiceReadyRestoreSerial
     this.nativeOutputRouteSynced = false
     this.invalidateAudioDeviceOptionsCache('audio-service-ready')
-    void this.restoreAudioServiceReadyState().then((result) => {
-      if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
-      this.nativeOutputRouteSynced = result.outputRouteSynced
-      this.nativePlaybackActive = false
-      this.invalidateUpcomingTrackCache()
-      this.playbackInfo = {
-        ...this.playbackInfo,
-        state: 'stopped',
-        nativePlaybackActive: false
-      }
-      this.publishPlaybackInfo()
-      this.emit('audio-service-ready', {
-        manualResumeRequired: true,
-        outputRouteSynced: result.outputRouteSynced,
-        restoreErrors: result.errors
+    void this.outputRouter
+      .serializeConfiguration(() => this.restoreAudioServiceReadyState())
+      .then((result) => {
+        if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
+        this.nativeOutputRouteSynced = result.outputRouteSynced
+        this.nativePlaybackActive = false
+        this.invalidateUpcomingTrackCache()
+        this.playbackInfo = {
+          ...this.playbackInfo,
+          state: 'stopped',
+          nativePlaybackActive: false
+        }
+        this.publishPlaybackInfo()
+        this.emit('audio-service-ready', {
+          manualResumeRequired: true,
+          outputRouteSynced: result.outputRouteSynced,
+          restoreErrors: result.errors
+        })
       })
-    })
   }
 
   private async restoreAudioServiceReadyState(): Promise<{
@@ -881,11 +911,11 @@ export class AudioEngineManager extends EventEmitter {
     scenes: DspScene[],
     pinnedSceneId: string | null = this.dsp.dspPinnedSceneId
   ): Promise<DspSceneState> {
-    return this.dsp.setDspScenes(scenes, pinnedSceneId)
+    return this.changeAudioConfiguration(() => this.dsp.setDspScenes(scenes, pinnedSceneId))
   }
 
   async setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> {
-    return this.dsp.setOutputStage(partial)
+    return this.changeAudioConfiguration(() => this.dsp.setOutputStage(partial))
   }
 
   getOutputStage(): DspOutputStageConfig {
@@ -893,7 +923,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<DspSceneState> {
-    return this.dsp.setStereoImage(partial)
+    return this.changeAudioConfiguration(() => this.dsp.setStereoImage(partial))
   }
 
   getStereoImage(): DspStereoImageConfig {
@@ -904,7 +934,9 @@ export class AudioEngineManager extends EventEmitter {
     sceneId: string | null,
     confirmDsdPcmFallback = false
   ): Promise<DspSceneState> {
-    return this.dsp.applyDspScene(sceneId, confirmDsdPcmFallback)
+    return this.changeAudioConfiguration(() =>
+      this.dsp.applyDspScene(sceneId, confirmDsdPcmFallback)
+    )
   }
 
   async getDspGraphStatus(): Promise<DspGraphStatus> {
@@ -918,7 +950,7 @@ export class AudioEngineManager extends EventEmitter {
   async setAudioProcessing(
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
-    return this.dsp.setAudioProcessing(settings)
+    return this.changeAudioConfiguration(() => this.dsp.setAudioProcessing(settings))
   }
 
   getAudioProcessing(): AudioProcessingSettings {
@@ -926,11 +958,11 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
-    return this.dsp.loadImpulseResponse(path)
+    return this.changeAudioConfiguration(() => this.dsp.loadImpulseResponse(path))
   }
 
   async unloadImpulseResponse(): Promise<ConvolverInfo> {
-    return this.dsp.unloadImpulseResponse()
+    return this.changeAudioConfiguration(() => this.dsp.unloadImpulseResponse())
   }
 
   getConvolverInfo(): ConvolverInfo {
@@ -938,7 +970,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
-    return this.dsp.setEqBands(settings)
+    return this.changeAudioConfiguration(() => this.dsp.setEqBands(settings))
   }
 
   async setEqPreset(preset: {
@@ -946,11 +978,11 @@ export class AudioEngineManager extends EventEmitter {
     eqPreamp: number
     eqBands: EqualizerBand[]
   }): Promise<AudioProcessingSettings> {
-    return this.dsp.setEqPreset(preset)
+    return this.changeAudioConfiguration(() => this.dsp.setEqPreset(preset))
   }
 
   async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
-    return this.dsp.setCrossfeedStrength(strength)
+    return this.changeAudioConfiguration(() => this.dsp.setCrossfeedStrength(strength))
   }
 
   async setReplayGainMode(
@@ -959,7 +991,9 @@ export class AudioEngineManager extends EventEmitter {
     fallback = this.processing.replayGainFallback,
     clip = this.processing.replayGainClip
   ): Promise<AudioProcessingSettings> {
-    return this.dsp.setReplayGainMode(mode, preamp, fallback, clip)
+    return this.changeAudioConfiguration(() =>
+      this.dsp.setReplayGainMode(mode, preamp, fallback, clip)
+    )
   }
 
   setNativeDspPluginChain(chainJson: string): void {
@@ -991,7 +1025,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setExclusiveMode(enabled: boolean): Promise<AudioOutputState> {
-    return this.outputRouter.setExclusiveMode(enabled)
+    return this.changeAudioConfiguration(() => this.outputRouter.setExclusiveMode(enabled))
   }
 
   async getExclusiveMode(): Promise<boolean> {
@@ -999,15 +1033,15 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
-    return this.outputRouter.setAudioOutput(output, device)
+    return this.changeAudioConfiguration(() => this.outputRouter.setAudioOutput(output, device))
   }
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
-    return this.outputRouter.setAudioDevice(device)
+    return this.changeAudioConfiguration(() => this.outputRouter.setAudioDevice(device))
   }
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    return this.outputRouter.setOutputConfig(config)
+    return this.changeAudioConfiguration(() => this.outputRouter.setOutputConfig(config))
   }
 
   getOutputConfig(): OutputConfig {
@@ -1036,6 +1070,33 @@ export class AudioEngineManager extends EventEmitter {
 
   notifyAudioDeviceOptionsChanged(reason = 'platform-device-change'): void {
     this.outputRouter.notifyAudioDeviceOptionsChanged(reason)
+  }
+
+  private changeAudioConfiguration<T>(operation: () => Promise<T>): Promise<T> {
+    this.deviceProfiles.invalidatePending()
+    return this.outputRouter.serializeConfiguration(async () => {
+      const result = await operation()
+      this.deviceProfiles.customized()
+      return result
+    })
+  }
+
+  getDeviceProfiles(): AudioDeviceProfilesSnapshot {
+    return this.deviceProfiles.snapshot()
+  }
+
+  saveDeviceProfile(profile: AudioDeviceProfile): Promise<AudioDeviceProfilesSnapshot> {
+    this.deviceProfiles.invalidatePending()
+    return this.outputRouter.serializeConfiguration(async () => this.deviceProfiles.save(profile))
+  }
+
+  deleteDeviceProfile(id: string): Promise<AudioDeviceProfilesSnapshot> {
+    this.deviceProfiles.invalidatePending()
+    return this.outputRouter.serializeConfiguration(async () => this.deviceProfiles.remove(id))
+  }
+
+  applyDeviceProfile(id: string): Promise<AudioDeviceProfilesSnapshot> {
+    return this.deviceProfiles.apply(id)
   }
 
   private async restoreAudioServiceOutputRoute(
@@ -1098,7 +1159,9 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setVolume(volume: number): Promise<void> {
-    return this.playback.setVolume(volume)
+    return this.outputRouter.serializeConfiguration(() =>
+      this.playback.setVolume(Math.min(volume, this.deviceProfiles.settings.volumeCeiling))
+    )
   }
 
   async setPlaybackRate(rate: number): Promise<void> {

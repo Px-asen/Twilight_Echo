@@ -1,4 +1,12 @@
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import { stripTypeScriptTypes } from 'node:module'
+import {
+  cloneBands,
+  defaultAudioProcessing,
+  normalizeAudioProcessing,
+  patchBand
+} from '../utils/equalizerPageLogic.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -196,21 +204,16 @@ test('parametric editor exposes direct manipulation and throttled DSP commits', 
   assert.match(page, /runEqApply/)
 })
 
-test('parametric page keeps one Chinese heading without duplicate English labels', () => {
+test('parametric page puts mode, presets and power into the instrument with a compact footer', () => {
   assert.match(page, /class="tab-pane active parametric-pane"/)
-  assert.equal(page.match(/<header class="parametric-page-header">/g)?.length, 1)
-  assert.match(page, /<h1>参数均衡器<\/h1>/)
-  assert.match(page, />32 频段 · 实时处理</)
-  assert.doesNotMatch(page, />DSP \/ EQUALIZATION</)
-  assert.doesNotMatch(page, />32 BAND · REAL-TIME</)
-  assert.doesNotMatch(page, /class="parametric-toolbar-label">ANALYZER SOURCE/)
-  assert.match(page, /\.parametric-pane \{[\s\S]*?gap: 10px/)
-  assert.match(toolbar, /\.parametric-toolbar-card \{[\s\S]*?border-radius: 8px/)
-  assert.match(page, /@media \(max-width: 620px\)/)
-  assert.match(toolbar, /@media \(max-width: 620px\)/)
-  assert.match(page, /:global\(html\[data-theme='pureWhite'\] \.parametric-pane\)/)
-  assert.match(toolbar, /:global\(html\[data-theme='pureWhite'\] \.parametric-toolbar-card\)/)
-  assert.doesNotMatch(equalizerUi, /:global\(html:not\(\[data-theme='dark'\]\)\)/)
+  assert.match(page, /<template #commands>/)
+  assert.match(page, /<template #footer>/)
+  assert.match(page, /class="instrument-mode-switch"/)
+  assert.match(page, /class="instrument-power"/)
+  assert.match(page, /class="instrument-auto-preamp"/)
+  assert.match(page, /v-if="activeTab !== 'parametric'" class="eq-sidebar"/)
+  assert.doesNotMatch(page, /<header class="parametric-page-header">/)
+  assert.match(toolbar, /compact\?: boolean/)
 })
 
 test('parametric editor reuses native player visualization data and cleans up animation work', () => {
@@ -229,4 +232,63 @@ test('equalizer state writes go through the store action instead of detaching st
     page,
     /audioProcessing\.value\s*=\s*(appSettings\.value\.audioProcessing|settings|{)/
   )
+})
+
+test('staged pointer edits preserve both EQ and DSP bypass without applying to the engine', () => {
+  const declaration = page.match(/function flushStagedEdit\(\): void \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(declaration)
+  for (const enabled of [false, true]) {
+    let staged = defaultAudioProcessing
+    const current = { ...defaultAudioProcessing, eqEnabled: enabled, dspEnabled: enabled }
+    runInNewContext(`${stripTypeScriptTypes(declaration)}\nflushStagedEdit()`, {
+      pendingBandIndex: 0,
+      pendingBandPatch: { gain: 6 },
+      pendingPreamp: null,
+      audioProcessing: { value: current },
+      audioOutputDspStore: {
+        applyAudioProcessingState: (value: typeof current) => {
+          staged = value
+        }
+      },
+      appSettings: { value: null },
+      patchBand
+    })
+    assert.equal(staged.eqBands[0].gain, 6)
+    assert.equal(staged.eqEnabled, enabled)
+    assert.equal(staged.dspEnabled, enabled)
+  }
+})
+
+test('loading parametric presets preserves zero and thirty-two bands', async () => {
+  const declaration = page.match(
+    /async function loadAppSettings\(\): Promise<void> \{[\s\S]*?\n\}/
+  )?.[0]
+  assert.ok(declaration)
+  const appSettings: { value: { audioEqPresets: { eqBands: unknown[] }[] } | null } = {
+    value: null
+  }
+  const settings = {
+    audioProcessing: defaultAudioProcessing,
+    audioEqPresets: [0, 32].map((count) => ({
+      eqMode: 'parametric',
+      eqBands: Array.from({ length: count }, () => ({ ...defaultAudioProcessing.eqBands[0] }))
+    }))
+  }
+  await runInNewContext(`${stripTypeScriptTypes(declaration)}\nloadAppSettings()`, {
+    appSettings,
+    normalizeAudioProcessing,
+    cloneBands,
+    audioProcessing: { value: defaultAudioProcessing },
+    activeTab: { value: 'graphic' },
+    audioOutputDspStore: { applyAudioProcessingState: () => undefined },
+    applyActiveSceneEqToEditor: () => undefined,
+    window: {
+      api: {
+        settings: { get: async () => settings },
+        audioEngine: { getDspSceneState: async () => ({ scenes: [] }) }
+      }
+    }
+  })
+  assert.equal(appSettings.value?.audioEqPresets[0].eqBands.length, 0)
+  assert.equal(appSettings.value?.audioEqPresets[1].eqBands.length, 32)
 })

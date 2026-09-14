@@ -1,5 +1,6 @@
 import { IPC } from '../../shared/ipcChannels.ts'
 import { ipcRenderer } from 'electron'
+import type { AudioDeviceProfile, AudioDeviceProfilesSnapshot } from '../types'
 import type {
   AudioEngineConfigAppliedCallback,
   AudioEngineConfigAppliedEvent,
@@ -151,6 +152,19 @@ export function bindAudioEngineIpcEvents(): void {
 }
 
 export const audioEngineApi = {
+  getDeviceProfiles: (): Promise<AudioDeviceProfilesSnapshot> =>
+    ipcRenderer.invoke(IPC.audioEngine.getDeviceProfiles),
+  saveDeviceProfile: (profile: AudioDeviceProfile): Promise<AudioDeviceProfilesSnapshot> =>
+    ipcRenderer.invoke(IPC.audioEngine.saveDeviceProfile, profile),
+  deleteDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
+    ipcRenderer.invoke(IPC.audioEngine.deleteDeviceProfile, id),
+  applyDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
+    ipcRenderer.invoke(IPC.audioEngine.applyDeviceProfile, id),
+  onDeviceProfilesChanged: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on(IPC.audioEngine.deviceProfilesChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.audioEngine.deviceProfilesChanged, listener)
+  },
   audioEngine: {
     loadQueue: (items: AudioEngineQueueItem[], startIndex?: number): Promise<void> =>
       ipcRenderer.invoke(IPC.audioEngine.loadQueue, items, startIndex),

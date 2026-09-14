@@ -1,13 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
+import ParametricEqBandInspector from '@renderer/components/equalizer/ParametricEqBandInspector.vue'
 import {
   PARAMETRIC_EQ_MAX_BANDS,
-  PARAMETRIC_EQ_MAX_FREQUENCY,
-  PARAMETRIC_EQ_MAX_GAIN,
-  PARAMETRIC_EQ_MAX_Q,
-  PARAMETRIC_EQ_MIN_FREQUENCY,
-  PARAMETRIC_EQ_MIN_GAIN,
-  PARAMETRIC_EQ_MIN_Q,
   adjustQByWheel,
   clampEqValue,
   displayBandGain,
@@ -17,35 +12,24 @@ import {
   percentToFrequency,
   percentToGain
 } from '@renderer/utils/parametricEqInteraction'
-import type { EqualizerBand, EqualizerFilterType } from '../../types/settings'
-
-interface BandResponsePath {
-  index: number
-  path: string
-}
-
-interface FilterOption {
-  value: EqualizerFilterType
-  label: string
-  usesGain: boolean
-}
+import { createEqWheelCommit, nudgeEqParameter } from '@renderer/utils/parametricEqKnob'
+import { placeEqInspector, placeEqTooltip } from '@renderer/utils/parametricEqLayout'
+import type { EqualizerBand, EqualizerFilterType } from '@renderer/types/settings'
 
 type HeadphoneCurveKey = 'source' | 'target' | 'individual' | 'combined' | 'corrected'
-
 const props = defineProps<{
   bands: EqualizerBand[]
   selectedIndex: number
-  filterTypes: FilterOption[]
+  filterTypes: { value: EqualizerFilterType; label: string; usesGain: boolean }[]
   responseView: 'dsp' | 'headphone'
   responsePath: string
-  responseFillPath: string
   spectrumPath: string
   spectrumVisible: boolean
   measuredSourcePath: string
   targetResponsePath: string
   combinedFilterPath: string
   correctedAcousticPath: string
-  bandResponsePaths: BandResponsePath[]
+  bandResponsePaths: { index: number; path: string }[]
   showMeasuredSource: boolean
   showTargetResponse: boolean
   showIndividualFilters: boolean
@@ -58,7 +42,6 @@ const props = defineProps<{
   statusState: string
   error: string
 }>()
-
 const emit = defineEmits<{
   select: [index: number]
   add: [frequency: number, gain: number]
@@ -70,1697 +53,1231 @@ const emit = defineEmits<{
   'toggle-spectrum': []
   'toggle-headphone-curve': [curve: HeadphoneCurveKey]
 }>()
-
+const workspaceRef = ref<HTMLElement | null>(null)
 const surfaceRef = ref<HTMLElement | null>(null)
+const inspectorHost = ref<HTMLElement | null>(null)
+const inspectorRef = ref<InstanceType<typeof ParametricEqBandInspector> | null>(null)
 const hoveredIndex = ref<number | null>(null)
-const pointerPosition = ref<{ x: number; y: number } | null>(null)
-const drag = ref<{ index: number; pointerId: number; rect: DOMRect } | null>(null)
+const inspectorOpen = ref(true)
+const pointerPosition = shallowRef<{ x: number; y: number } | null>(null)
+const drag = shallowRef<{
+  index: number
+  pointerId: number
+  rect: DOMRect
+  changed: boolean
+} | null>(null)
+const frozenInspector = shallowRef<{ left: number; top: number } | null>(null)
+const geometry = shallowRef({
+  width: 1000,
+  height: 500,
+  left: 24,
+  top: 76,
+  panelWidth: 460,
+  panelHeight: 142
+})
+const compact = ref(false)
+const spectrumGradientId = `eq-spectrum-${useId()}`
+let resizeObserver: ResizeObserver | null = null
+let wheelQ: { index: number; value: number } | null = null
+const wheelCommit = createEqWheelCommit(() => {
+  wheelQ = null
+  emit('commit')
+})
 const bandColors = [
-  'var(--te-eq-band-blue, #3b82d6)',
-  'var(--te-eq-band-cyan, #1f9db4)',
-  'var(--te-eq-band-green, #2f9e6e)',
-  'var(--te-eq-band-yellow, #dfa008)',
-  'var(--te-eq-band-orange, #e8590c)',
-  'var(--te-eq-band-magenta, #d65d8f)',
-  'var(--te-eq-band-violet, #7671d8)',
-  'var(--te-eq-band-red, #d64545)'
+  'var(--te-eq-band-blue, #3b9edb)',
+  'var(--te-eq-band-cyan, #20b9c7)',
+  'var(--te-eq-band-green, #25ae81)',
+  'var(--te-eq-band-yellow, #d4b32d)',
+  'var(--te-eq-band-orange, #ec8545)',
+  'var(--te-eq-band-magenta, #d55dda)',
+  'var(--te-eq-band-violet, #9380e7)',
+  'var(--te-eq-band-red, #e45b67)'
 ]
 const frequencyTicks = [
   20, 30, 50, 70, 100, 200, 300, 500, 700, 1000, 2000, 3000, 5000, 7000, 10000, 20000
 ]
 const majorFrequencyTicks = new Set([20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000])
+const labeledFrequencies = frequencyTicks.filter((frequency) => majorFrequencyTicks.has(frequency))
 const gainTicks = [18, 12, 6, 0, -6, -12, -18]
-const filterGlyphs: Record<EqualizerFilterType, string> = {
-  peak: '⌁',
-  lowShelf: '╰',
-  highShelf: '╮',
-  bandPass: '∩',
-  lowPass: '╲',
-  highPass: '╱',
-  allPass: '∿',
-  notch: '∨'
-}
-
+const meterTicks = [0, -12, -24, -36, -48, -60]
 const selectedBand = computed(() => props.bands[props.selectedIndex] ?? null)
-const hoveredBand = computed(() =>
-  hoveredIndex.value === null ? null : (props.bands[hoveredIndex.value] ?? null)
+const activeBandCount = computed(() => props.bands.filter((band) => band.enabled !== false).length)
+const showInspector = computed(
+  () => inspectorOpen.value && selectedBand.value && props.responseView === 'dsp'
 )
-const tooltipBand = computed(() => hoveredBand.value ?? (drag.value ? selectedBand.value : null))
-const tooltipIndex = computed(() => hoveredIndex.value ?? (drag.value ? props.selectedIndex : null))
+const tooltipIndex = computed(() => drag.value?.index ?? hoveredIndex.value)
+const tooltipBand = computed(() =>
+  tooltipIndex.value === null ? null : props.bands[tooltipIndex.value]
+)
+const responseLayers = computed(() =>
+  props.bandResponsePaths.map((item) => ({
+    ...item,
+    fill: `${item.path} L100,50 L0,50 Z`,
+    bypassed: props.responseView === 'dsp' && props.bands[item.index]?.enabled === false
+  }))
+)
 const spectrumFillPath = computed(() =>
   props.spectrumPath ? `${props.spectrumPath} L100,100 L0,100 Z` : ''
 )
-const selectedResponsePath = computed(
-  () => props.bandResponsePaths.find((item) => item.index === props.selectedIndex)?.path ?? ''
+const headphoneControls = computed<{ key: HeadphoneCurveKey; label: string; visible: boolean }[]>(
+  () => [
+    { key: 'source', label: '源频响', visible: props.showMeasuredSource },
+    { key: 'target', label: '目标', visible: props.showTargetResponse },
+    { key: 'individual', label: '单滤波', visible: props.showIndividualFilters },
+    { key: 'combined', label: '合并滤波', visible: props.showCombinedFilter },
+    { key: 'corrected', label: '滤波结果', visible: props.showCorrectedResponse }
+  ]
 )
-const selectedResponseFillPath = computed(() =>
-  selectedResponsePath.value ? `${selectedResponsePath.value} L100,50 L0,50 Z` : ''
-)
-const activeBandCount = computed(() => props.bands.filter((band) => band.enabled !== false).length)
-const meterTicks = [0, -6, -12, -24, -36, -48, -60]
-const peakMeterLevel = computed(() => meterLevel(props.meterPeakDb))
-const rmsMeterLevel = computed(() => meterLevel(props.meterRmsDb))
-
-function meterLevel(db: number): number {
-  return clampEqValue(((clampEqValue(db, -60, 0) + 60) / 60) * 100, 0, 100)
-}
-
-function bandColor(index: number): string {
-  return bandColors[index % bandColors.length]
-}
-
-function bandFilterLabel(band: EqualizerBand): string {
-  return props.filterTypes.find((filter) => filter.value === band.filterType)?.label ?? '峰值'
-}
-
-function formatFrequency(frequency: number): string {
-  if (frequency >= 1000) return `${(frequency / 1000).toFixed(frequency >= 10000 ? 1 : 2)} kHz`
-  return `${Math.round(frequency)} Hz`
-}
-
-function formatGain(gain: number): string {
-  return `${gain >= 0 ? '+' : ''}${gain.toFixed(1)} dB`
-}
-
-function formatTickFrequency(frequency: number): string {
-  if (frequency >= 1000) return `${frequency / 1000}k`
-  return String(frequency)
-}
-
-function filterGlyph(filterType: EqualizerFilterType): string {
-  return filterGlyphs[filterType]
-}
-
-function knobProgress(value: number, min: number, max: number): string {
-  const ratio = (clampEqValue(value, min, max) - min) / (max - min)
-  return `${Math.round(ratio * 270 - 135)}deg`
-}
-
-function frequencyKnobProgress(frequency: number): string {
-  return `${Math.round((frequencyToPercent(frequency) / 100) * 270 - 135)}deg`
-}
-
-function nudgeNumeric(field: 'frequency' | 'gain' | 'q', direction: -1 | 1, fine = false): void {
+function currentInspectorPlacement() {
+  const bounds = geometry.value
   const band = selectedBand.value
-  if (!band) return
-  const next =
-    field === 'frequency'
-      ? clampEqValue(
-          band.frequency * (fine ? (direction > 0 ? 1.005 : 0.995) : direction > 0 ? 1.025 : 0.975),
-          PARAMETRIC_EQ_MIN_FREQUENCY,
-          PARAMETRIC_EQ_MAX_FREQUENCY
-        )
-      : field === 'gain'
-        ? clampEqValue(
-            band.gain + direction * (fine ? 0.1 : 0.5),
-            PARAMETRIC_EQ_MIN_GAIN,
-            PARAMETRIC_EQ_MAX_GAIN
-          )
-        : clampEqValue(
-            band.q * (fine ? (direction > 0 ? 1.01 : 0.99) : direction > 0 ? 1.08 : 0.92),
-            PARAMETRIC_EQ_MIN_Q,
-            PARAMETRIC_EQ_MAX_Q
-          )
-  emit('preview', props.selectedIndex, {
-    [field]: field === 'frequency' ? Math.round(next) : Math.round(next * 100) / 100
-  })
-  emit('commit')
+  return placeEqInspector(
+    bounds,
+    band
+      ? {
+          x: (frequencyToPercent(band.frequency) * bounds.width) / 100,
+          y: (gainToPercent(displayBandGain(band)) * bounds.height) / 100
+        }
+      : { x: 0, y: 0 },
+    { width: bounds.panelWidth, height: bounds.panelHeight }
+  )
 }
-
-function eventCoordinates(
-  event: PointerEvent | MouseEvent,
-  rect: DOMRect
-): {
-  x: number
-  y: number
-  frequency: number
-  gain: number
-} {
-  const x = Math.min(
-    100,
-    Math.max(0, ((event.clientX - rect.left) / Math.max(1, rect.width)) * 100)
-  )
-  const y = Math.min(
-    100,
-    Math.max(0, ((event.clientY - rect.top) / Math.max(1, rect.height)) * 100)
-  )
+const inspectorPosition = computed(() => {
+  const placement = frozenInspector.value ?? currentInspectorPlacement()
+  return {
+    left: `${geometry.value.left + placement.left}px`,
+    top: `${geometry.value.top + placement.top}px`
+  }
+})
+const tooltipStyle = computed(() => {
+  const band = tooltipBand.value
+  if (!band) return {}
+  const bounds = geometry.value
+  const placement = placeEqTooltip(bounds, {
+    x: (frequencyToPercent(band.frequency) * bounds.width) / 100,
+    y: (gainToPercent(displayBandGain(band)) * bounds.height) / 100
+  })
+  return {
+    left: `${placement.left}px`,
+    top: `${placement.top}px`,
+    width: `${placement.width}px`,
+    '--band-color': bandColor(tooltipIndex.value ?? 0)
+  }
+})
+function bandColor(index: number): string {
+  return `color-mix(in srgb, ${bandColors[index % bandColors.length]} 88%, var(--eq-text))`
+}
+function formatFrequency(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(2)} kHz` : `${Math.round(value)} Hz`
+}
+function formatGain(value: number): string {
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`
+}
+function meterLevel(value: number): number {
+  return clampEqValue((value + 60) / 60, 0, 1)
+}
+function measure(): void {
+  const root = workspaceRef.value
+  const surface = surfaceRef.value
+  if (!root || !surface) return
+  const rootRect = root.getBoundingClientRect()
+  const rect = surface.getBoundingClientRect()
+  const scale = rect.width / surface.clientWidth
+  const panel = inspectorHost.value
+  compact.value = root.clientWidth < 800
+  geometry.value = {
+    width: surface.clientWidth,
+    height: surface.clientHeight,
+    left: (rect.left - rootRect.left) / scale - root.clientLeft,
+    top: (rect.top - rootRect.top) / scale - root.clientTop,
+    panelWidth: panel?.offsetWidth || 460,
+    panelHeight: panel?.offsetHeight || 142
+  }
+}
+function freezeInspector(active: boolean): void {
+  if (!active) {
+    frozenInspector.value = null
+    return
+  }
+  if (!frozenInspector.value) frozenInspector.value = currentInspectorPlacement()
+}
+function eventCoordinates(event: MouseEvent, rect: DOMRect) {
+  const x = clampEqValue(((event.clientX - rect.left) / rect.width) * 100, 0, 100)
+  const y = clampEqValue(((event.clientY - rect.top) / rect.height) * 100, 0, 100)
   return { x, y, frequency: percentToFrequency(x), gain: percentToGain(y) }
 }
-
-function updatePointer(event: PointerEvent): void {
+function finishInteraction(): void {
+  wheelCommit.flush()
+  inspectorRef.value?.finishInteraction()
+}
+function selectBand(index: number): void {
+  finishInteraction()
+  emit('select', index)
+  inspectorOpen.value = true
+}
+function addBand(event: MouseEvent): void {
+  if (props.responseView !== 'dsp' || drag.value || props.bands.length >= PARAMETRIC_EQ_MAX_BANDS)
+    return
   const surface = surfaceRef.value
   if (!surface) return
+  finishInteraction()
   const point = eventCoordinates(event, surface.getBoundingClientRect())
+  emit('add', point.frequency, point.gain)
+  inspectorOpen.value = true
+}
+function beginDrag(index: number, event: PointerEvent): void {
+  if (props.responseView !== 'dsp' || event.button !== 0 || drag.value || !surfaceRef.value) return
+  selectBand(index)
+  const element = event.currentTarget as HTMLElement
+  element.focus({ preventScroll: true })
+  hoveredIndex.value = index
+  drag.value = {
+    index,
+    pointerId: event.pointerId,
+    rect: surfaceRef.value.getBoundingClientRect(),
+    changed: false
+  }
+  element.setPointerCapture(event.pointerId)
+  freezeInspector(true)
+}
+function updatePointer(event: PointerEvent): void {
+  if (!surfaceRef.value) return
+  const current = drag.value
+  const point = eventCoordinates(event, current?.rect ?? surfaceRef.value.getBoundingClientRect())
   pointerPosition.value = { x: point.x, y: point.y }
-  if (!drag.value || drag.value.pointerId !== event.pointerId) return
-  const band = props.bands[drag.value.index]
+  if (!current || current.pointerId !== event.pointerId) return
+  const band = props.bands[current.index]
   if (!band) return
-  emit('preview', drag.value.index, {
+  current.changed = true
+  emit('preview', current.index, {
     frequency: point.frequency,
     ...(filterUsesGain(band.filterType) ? { gain: point.gain } : {})
   })
 }
-
-function addBand(event: MouseEvent): void {
-  if (props.responseView !== 'dsp' || drag.value) return
-  if ((event.target as HTMLElement).closest('.parametric-band-handle')) return
-  if (hoveredIndex.value !== null) return
-  if (props.bands.length >= PARAMETRIC_EQ_MAX_BANDS) return
-  const surface = surfaceRef.value
-  if (!surface) return
-  const point = eventCoordinates(event, surface.getBoundingClientRect())
-  emit('add', point.frequency, point.gain)
-}
-
-function beginDrag(index: number, event: PointerEvent): void {
-  if (props.responseView !== 'dsp') return
-  const element = event.currentTarget as HTMLElement
-  const surface = surfaceRef.value
-  if (!surface) return
-  emit('select', index)
-  hoveredIndex.value = index
-  drag.value = { index, pointerId: event.pointerId, rect: surface.getBoundingClientRect() }
-  element.setPointerCapture(event.pointerId)
-}
-
 function endDrag(event: PointerEvent): void {
-  if (!drag.value || drag.value.pointerId !== event.pointerId) return
+  const current = drag.value
+  if (!current || current.pointerId !== event.pointerId) return
+  drag.value = null
   const element = event.currentTarget as HTMLElement
   if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId)
-  drag.value = null
-  emit('commit')
+  freezeInspector(false)
+  if (current.changed) emit('commit')
 }
-
 function adjustQ(index: number, event: WheelEvent): void {
   const band = props.bands[index]
-  if (!band) return
-  emit('select', index)
-  emit('preview', index, { q: adjustQByWheel(band.q, event.deltaY, event.shiftKey) })
-  emit('commit')
+  if (!band || event.deltaY === 0 || drag.value) return
+  if (index !== props.selectedIndex) selectBand(index)
+  inspectorOpen.value = true
+  const q = adjustQByWheel(
+    wheelQ?.index === index ? wheelQ.value : band.q,
+    event.deltaY,
+    event.shiftKey
+  )
+  wheelQ = { index, value: q }
+  emit('preview', index, { q })
+  wheelCommit.schedule()
 }
-
 function resetBandGain(index: number): void {
   const band = props.bands[index]
   if (!band || !filterUsesGain(band.filterType)) return
-  emit('select', index)
+  selectBand(index)
   emit('preview', index, { gain: 0 })
   emit('commit')
 }
-
 function handleBandKeydown(index: number, event: KeyboardEvent): void {
   const band = props.bands[index]
   if (!band) return
-  const frequencyDirection = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
-  const gainDirection = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0
-  if (frequencyDirection === 0 && gainDirection === 0) return
+  if (event.key === 'Escape') {
+    inspectorOpen.value = false
+    event.stopPropagation()
+    return
+  }
+  const field = event.key === 'ArrowLeft' || event.key === 'ArrowRight' ? 'frequency' : 'gain'
+  const direction =
+    event.key === 'ArrowRight' || event.key === 'ArrowUp'
+      ? 1
+      : event.key === 'ArrowLeft' || event.key === 'ArrowDown'
+        ? -1
+        : 0
+  if (!direction || (field === 'gain' && !filterUsesGain(band.filterType))) return
   event.preventDefault()
-  emit('select', index)
-  const frequency = clampEqValue(
-    band.frequency *
-      (event.shiftKey
-        ? frequencyDirection > 0
-          ? 1.005
-          : 0.995
-        : frequencyDirection > 0
-          ? 1.025
-          : 0.975),
-    PARAMETRIC_EQ_MIN_FREQUENCY,
-    PARAMETRIC_EQ_MAX_FREQUENCY
-  )
+  event.stopPropagation()
+  selectBand(index)
   emit('preview', index, {
-    ...(frequencyDirection !== 0 ? { frequency: Math.round(frequency) } : {}),
-    ...(gainDirection !== 0 && filterUsesGain(band.filterType)
-      ? {
-          gain: clampEqValue(
-            band.gain + gainDirection * (event.shiftKey ? 0.1 : 0.5),
-            PARAMETRIC_EQ_MIN_GAIN,
-            PARAMETRIC_EQ_MAX_GAIN
-          )
-        }
-      : {})
+    [field]: nudgeEqParameter(field, band[field], direction, event.shiftKey)
   })
   emit('commit')
 }
-
-function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
-  const band = selectedBand.value
-  if (!band) return
-  emit('preview', props.selectedIndex, {
-    [field]: Number((event.target as HTMLInputElement).value)
-  })
-  emit('commit')
+function closeInspector(): void {
+  inspectorOpen.value = false
+  surfaceRef.value
+    ?.querySelector<HTMLElement>('.parametric-band-handle.selected')
+    ?.focus({ preventScroll: true })
 }
+onMounted(() => {
+  resizeObserver = new ResizeObserver(measure)
+  if (workspaceRef.value) resizeObserver.observe(workspaceRef.value)
+  if (surfaceRef.value) resizeObserver.observe(surfaceRef.value)
+  measure()
+})
+watch(showInspector, () => {
+  void nextTick(measure)
+})
+watch(
+  () => props.responseView,
+  () => {
+    finishInteraction()
+    hoveredIndex.value = null
+  }
+)
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  finishInteraction()
+})
+defineExpose({ finishInteraction })
 </script>
 
 <template>
-  <section class="parametric-workspace" data-te-parametric-eq-workspace>
+  <section
+    ref="workspaceRef"
+    class="parametric-workspace"
+    :class="{ compact }"
+    aria-label="参数均衡器"
+    data-te-parametric-eq-workspace
+  >
     <header class="parametric-stage-header">
       <div class="stage-brand">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <small>{{ activeBandCount }} / {{ PARAMETRIC_EQ_MAX_BANDS }}</small>
-      </div>
-      <div class="stage-actions">
-        <div class="stage-status" :class="`is-${statusState}`" :title="error || status">
-          <span class="status-dot"></span>
-          <span>{{ status }}</span>
+        <span class="brand-symbol" aria-hidden="true">∿</span>
+        <div>
+          <strong>Twilight <em>EQ</em></strong
+          ><small>PARAMETRIC EQUALIZER</small>
         </div>
-        <button
-          v-if="responseView === 'dsp'"
-          type="button"
-          class="spectrum-toggle"
-          :class="{ active: spectrumVisible }"
-          :aria-pressed="spectrumVisible"
-          @click="emit('toggle-spectrum')"
-        >
-          <i class="pi pi-chart-line"></i>
-          ANALYZER
-        </button>
       </div>
+      <div class="stage-commands"><slot name="commands"></slot></div>
     </header>
-
-    <div
-      ref="surfaceRef"
-      class="parametric-graph-surface"
-      :class="{ disabled: !eqEnabled, dragging: drag }"
-      role="application"
-      aria-label="参数均衡器频响编辑区"
-      @pointermove="updatePointer"
-      @pointerleave="pointerPosition = null"
-      @click.self="addBand"
-    >
-      <div
-        v-for="frequency in frequencyTicks"
-        :key="`frequency-grid-${frequency}`"
-        class="frequency-grid-line"
-        :class="{ major: majorFrequencyTicks.has(frequency) }"
-        :style="{ left: frequencyToPercent(frequency) + '%' }"
-      ></div>
-      <div
-        v-for="gain in gainTicks"
-        :key="`gain-grid-${gain}`"
-        class="gain-grid-line"
-        :class="{ zero: gain === 0 }"
-        :style="{ top: gainToPercent(gain) + '%' }"
-      ></div>
-
-      <div class="gain-labels" aria-hidden="true">
-        <span v-for="gain in gainTicks" :key="gain" :style="{ top: gainToPercent(gain) + '%' }">
-          {{ gain > 0 ? '+' + gain : gain }}
-        </span>
+    <div class="parametric-graph-frame" :class="{ bypassed: !eqEnabled }">
+      <div class="graph-heading">
+        <span>{{ activeBandCount }} / {{ PARAMETRIC_EQ_MAX_BANDS }} 频段</span
+        ><span v-if="!eqEnabled" class="bypass-label">EQ 已旁路</span
+        ><span class="graph-range">±18 dB</span>
       </div>
-      <div class="frequency-labels" aria-hidden="true">
-        <span
-          v-for="frequency in frequencyTicks.filter((tick) => majorFrequencyTicks.has(tick))"
-          :key="frequency"
-          :style="{ left: frequencyToPercent(frequency) + '%' }"
-        >
-          {{ formatTickFrequency(frequency) }}
-        </span>
-      </div>
-
       <div
-        v-if="responseView === 'headphone'"
-        class="headphone-curve-controls"
-        aria-label="耳机频响曲线显示控制"
+        ref="surfaceRef"
+        class="parametric-graph-surface"
+        :class="{ dragging: drag }"
+        role="application"
+        aria-label="参数均衡器频响编辑区"
+        @pointermove="updatePointer"
+        @pointerleave="pointerPosition = null"
+        @click.self="addBand"
       >
-        <button
-          type="button"
-          class="curve-control source"
-          :class="{ muted: !showMeasuredSource }"
-          :aria-pressed="showMeasuredSource"
-          @click.stop="emit('toggle-headphone-curve', 'source')"
-        >
-          <i></i>源频响
-        </button>
-        <button
-          type="button"
-          class="curve-control target"
-          :class="{ muted: !showTargetResponse }"
-          :aria-pressed="showTargetResponse"
-          @click.stop="emit('toggle-headphone-curve', 'target')"
-        >
-          <i></i>目标
-        </button>
-        <button
-          type="button"
-          class="curve-control individual"
-          :class="{ muted: !showIndividualFilters }"
-          :aria-pressed="showIndividualFilters"
-          @click.stop="emit('toggle-headphone-curve', 'individual')"
-        >
-          <i></i>单滤波
-        </button>
-        <button
-          type="button"
-          class="curve-control combined"
-          :class="{ muted: !showCombinedFilter }"
-          :aria-pressed="showCombinedFilter"
-          @click.stop="emit('toggle-headphone-curve', 'combined')"
-        >
-          <i></i>合并滤波
-        </button>
-        <button
-          type="button"
-          class="curve-control corrected"
-          :class="{ muted: !showCorrectedResponse }"
-          :aria-pressed="showCorrectedResponse"
-          @click.stop="emit('toggle-headphone-curve', 'corrected')"
-        >
-          <i></i>滤波结果
-        </button>
-      </div>
-
-      <svg
-        class="parametric-plot"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <defs>
-          <linearGradient id="spectrumFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="var(--eq-spectrum)" stop-opacity="0.14" />
-            <stop offset="100%" stop-color="var(--eq-spectrum)" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-        <path
-          v-if="responseView === 'dsp' && spectrumVisible && spectrumFillPath"
-          class="live-spectrum-fill"
-          :d="spectrumFillPath"
-        />
-        <path
-          v-if="responseView === 'dsp' && spectrumVisible && spectrumPath"
-          class="live-spectrum-line"
-          :d="spectrumPath"
-          vector-effect="non-scaling-stroke"
-        />
-        <path
-          v-if="responseView === 'headphone' && showMeasuredSource && measuredSourcePath"
-          class="measured-source-line"
-          :d="measuredSourcePath"
-          vector-effect="non-scaling-stroke"
-        />
-        <path
-          v-if="responseView === 'headphone' && showTargetResponse && targetResponsePath"
-          class="target-response-line"
-          :d="targetResponsePath"
-          vector-effect="non-scaling-stroke"
-        />
-        <template v-if="responseView === 'headphone' && showIndividualFilters">
-          <path
-            v-for="item in bandResponsePaths"
-            :key="`headphone-band-${item.index}`"
-            class="individual-band-line headphone-filter"
-            :style="{ '--band-color': bandColor(item.index) }"
-            :d="item.path"
-            vector-effect="non-scaling-stroke"
-          />
-        </template>
-        <path
-          v-if="responseView === 'headphone' && showCombinedFilter && combinedFilterPath"
-          class="combined-filter-line"
-          :d="combinedFilterPath"
-          vector-effect="non-scaling-stroke"
-        />
-        <path
-          v-if="responseView === 'headphone' && showCorrectedResponse && correctedAcousticPath"
-          class="corrected-acoustic-line"
-          :d="correctedAcousticPath"
-          vector-effect="non-scaling-stroke"
-        />
-        <template v-if="responseView === 'dsp'">
-          <path
-            v-if="selectedResponseFillPath"
-            class="selected-band-fill"
-            :style="{ '--selected-band-color': bandColor(selectedIndex) }"
-            :d="selectedResponseFillPath"
-          />
-          <path
-            v-for="item in bandResponsePaths"
-            :key="item.index"
-            class="individual-band-line"
-            :class="{ selected: selectedIndex === item.index }"
-            :style="{ '--band-color': bandColor(item.index) }"
-            :d="item.path"
-            vector-effect="non-scaling-stroke"
-          />
-          <path class="composite-fill" :d="responseFillPath" />
-          <path
-            class="composite-response-line"
-            :d="responsePath"
-            vector-effect="non-scaling-stroke"
-          />
-        </template>
-      </svg>
-
-      <template v-if="responseView === 'dsp'">
         <div
-          v-if="selectedBand"
-          class="selected-band-focus"
-          :style="{
-            left: frequencyToPercent(selectedBand.frequency) + '%',
-            top: gainToPercent(displayBandGain(selectedBand)) + '%',
-            '--band-color': bandColor(selectedIndex),
-            '--focus-width': Math.max(38, Math.min(240, 150 / Math.sqrt(selectedBand.q))) + 'px'
-          }"
+          v-for="frequency in frequencyTicks"
+          :key="`f-${frequency}`"
+          class="frequency-grid-line"
+          :class="{ major: majorFrequencyTicks.has(frequency) }"
+          :style="{ left: frequencyToPercent(frequency) + '%' }"
+        ></div>
+        <div
+          v-for="gain in gainTicks"
+          :key="`g-${gain}`"
+          class="gain-grid-line"
+          :class="{ zero: gain === 0 }"
+          :style="{ top: gainToPercent(gain) + '%' }"
+        ></div>
+        <div class="gain-labels" aria-hidden="true">
+          <span
+            v-for="gain in gainTicks"
+            :key="gain"
+            :class="{ zero: gain === 0 }"
+            :style="{ top: gainToPercent(gain) + '%' }"
+            >{{ gain > 0 ? '+' + gain : gain }}</span
+          >
+        </div>
+        <div class="frequency-labels" aria-hidden="true">
+          <span
+            v-for="frequency in labeledFrequencies"
+            :key="frequency"
+            :style="{ left: frequencyToPercent(frequency) + '%' }"
+            >{{ frequency >= 1000 ? frequency / 1000 + 'k' : frequency }}</span
+          >
+        </div>
+        <div
+          v-if="responseView === 'headphone'"
+          class="headphone-curve-controls"
+          aria-label="耳机频响曲线显示控制"
+        >
+          <button
+            v-for="control in headphoneControls"
+            :key="control.key"
+            type="button"
+            class="curve-control"
+            :class="[control.key, { muted: !control.visible }]"
+            :aria-pressed="control.visible"
+            @click.stop="emit('toggle-headphone-curve', control.key)"
+          >
+            <i></i>{{ control.label }}
+          </button>
+        </div>
+        <svg
+          class="parametric-plot"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <defs>
+            <linearGradient :id="spectrumGradientId" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--eq-spectrum)" stop-opacity="0.26" />
+              <stop offset="100%" stop-color="var(--eq-spectrum)" stop-opacity="0.025" />
+            </linearGradient>
+          </defs>
+          <path
+            v-if="responseView === 'dsp' && spectrumVisible && spectrumFillPath"
+            class="live-spectrum-fill"
+            :d="spectrumFillPath"
+            :fill="`url(#${spectrumGradientId})`"
+          />
+          <path
+            v-if="responseView === 'dsp' && spectrumVisible && spectrumPath"
+            class="live-spectrum-line"
+            :d="spectrumPath"
+            vector-effect="non-scaling-stroke"
+          />
+          <template v-if="responseView === 'dsp'">
+            <template v-for="item in responseLayers" :key="item.index">
+              <path
+                v-if="!item.bypassed"
+                class="individual-band-fill"
+                :class="{ selected: selectedIndex === item.index }"
+                :style="{ '--band-color': bandColor(item.index) }"
+                :d="item.fill"
+              />
+              <path
+                class="individual-band-line"
+                :class="{ selected: selectedIndex === item.index, bypassed: item.bypassed }"
+                :style="{ '--band-color': bandColor(item.index) }"
+                :d="item.path"
+                vector-effect="non-scaling-stroke"
+              />
+            </template>
+            <path
+              class="composite-response-line"
+              :d="responsePath"
+              vector-effect="non-scaling-stroke"
+            />
+          </template>
+          <template v-else>
+            <path
+              v-if="showMeasuredSource && measuredSourcePath"
+              class="measured-source-line"
+              :d="measuredSourcePath"
+              vector-effect="non-scaling-stroke"
+            />
+            <path
+              v-if="showTargetResponse && targetResponsePath"
+              class="target-response-line"
+              :d="targetResponsePath"
+              vector-effect="non-scaling-stroke"
+            />
+            <template v-if="showIndividualFilters">
+              <path
+                v-for="item in bandResponsePaths"
+                :key="item.index"
+                class="individual-band-line headphone-filter"
+                :style="{ '--band-color': bandColor(item.index) }"
+                :d="item.path"
+                vector-effect="non-scaling-stroke"
+              />
+            </template>
+            <path
+              v-if="showCombinedFilter && combinedFilterPath"
+              class="combined-filter-line"
+              :d="combinedFilterPath"
+              vector-effect="non-scaling-stroke"
+            />
+            <path
+              v-if="showCorrectedResponse && correctedAcousticPath"
+              class="corrected-acoustic-line"
+              :d="correctedAcousticPath"
+              vector-effect="non-scaling-stroke"
+            />
+          </template>
+        </svg>
+        <template v-if="responseView === 'dsp'">
+          <button
+            v-for="(band, index) in bands"
+            :key="index"
+            type="button"
+            class="parametric-band-handle"
+            :class="{
+              selected: selectedIndex === index,
+              hovered: hoveredIndex === index,
+              bypassed: band.enabled === false,
+              dragging: drag?.index === index
+            }"
+            :style="{
+              left: frequencyToPercent(band.frequency) + '%',
+              top: gainToPercent(displayBandGain(band)) + '%',
+              '--band-color': bandColor(index)
+            }"
+            :aria-label="`频段 ${index + 1}，${formatFrequency(band.frequency)}，${formatGain(displayBandGain(band))}，Q ${band.q.toFixed(2)}`"
+            :aria-pressed="selectedIndex === index"
+            @click.stop="selectBand(index)"
+            @pointerenter="hoveredIndex = index"
+            @pointerleave="hoveredIndex = null"
+            @pointerdown.prevent.stop="beginDrag(index, $event)"
+            @pointermove.prevent.stop="updatePointer"
+            @pointerup.prevent.stop="endDrag"
+            @pointercancel.stop="endDrag"
+            @lostpointercapture="endDrag"
+            @wheel.prevent.stop="adjustQ(index, $event)"
+            @dblclick.prevent.stop="resetBandGain(index)"
+            @keydown="handleBandKeydown(index, $event)"
+          >
+            <span class="handle-index">{{ index + 1 }}</span>
+          </button>
+          <div v-if="bands.length === 0" class="graph-empty">
+            <strong>从一个频段开始</strong><span>单击画布添加 · 拖动节点调节频率与增益</span>
+          </div>
+        </template>
+        <div
+          v-if="tooltipBand && tooltipIndex !== null && responseView === 'dsp'"
+          class="band-tooltip"
+          :style="tooltipStyle"
+        >
+          <strong
+            ><i></i
+            >{{ filterTypes.find((filter) => filter.value === tooltipBand?.filterType)?.label
+            }}<small>频段 {{ tooltipIndex + 1 }}</small></strong
+          >
+          <div>
+            <span>{{ formatFrequency(tooltipBand.frequency) }}</span
+            ><span>{{ formatGain(displayBandGain(tooltipBand)) }}</span
+            ><span>Q {{ tooltipBand.q.toFixed(2) }}</span>
+          </div>
+        </div>
+        <div
+          v-if="pointerPosition && responseView === 'dsp' && !drag && hoveredIndex === null"
+          class="graph-crosshair"
+          :style="{ left: pointerPosition.x + '%', top: pointerPosition.y + '%' }"
           aria-hidden="true"
         ></div>
-        <button
-          v-for="(band, index) in bands"
-          :key="`${index}-${band.filterType}`"
-          type="button"
-          class="parametric-band-handle"
-          :class="{
-            selected: selectedIndex === index,
-            hovered: hoveredIndex === index,
-            bypassed: band.enabled === false,
-            dragging: drag?.index === index
-          }"
-          :style="{
-            left: frequencyToPercent(band.frequency) + '%',
-            top: gainToPercent(displayBandGain(band)) + '%',
-            '--band-color': bandColor(index)
-          }"
-          :aria-label="`频段 ${index + 1}，${formatFrequency(band.frequency)}，${formatGain(displayBandGain(band))}，Q ${band.q.toFixed(2)}`"
-          :aria-pressed="selectedIndex === index"
-          @click.stop="emit('select', index)"
-          @pointerenter="hoveredIndex = index"
-          @pointerleave="hoveredIndex = null"
-          @pointerdown.prevent.stop="beginDrag(index, $event)"
-          @pointermove.prevent.stop="updatePointer"
-          @pointerup.prevent.stop="endDrag"
-          @pointercancel.prevent.stop="endDrag"
-          @wheel.prevent.stop="adjustQ(index, $event)"
-          @dblclick.prevent.stop="resetBandGain(index)"
-          @keydown="handleBandKeydown(index, $event)"
-        >
-          <span class="handle-index">{{ index + 1 }}</span>
-        </button>
-      </template>
-
-      <div
-        v-if="tooltipBand && tooltipIndex !== null"
-        class="band-tooltip"
-        :style="{
-          left: frequencyToPercent(tooltipBand.frequency) + '%',
-          top: gainToPercent(displayBandGain(tooltipBand)) + '%',
-          '--band-color': bandColor(tooltipIndex)
-        }"
-      >
-        <strong>{{ bandFilterLabel(tooltipBand) }}</strong>
-        <span>{{ formatFrequency(tooltipBand.frequency) }}</span>
-        <span>{{ formatGain(displayBandGain(tooltipBand)) }}</span>
-        <span>Q {{ tooltipBand.q.toFixed(2) }}</span>
       </div>
-
-      <div
-        v-if="pointerPosition && responseView === 'dsp' && !drag"
-        class="graph-crosshair"
-        :style="{ left: pointerPosition.x + '%', top: pointerPosition.y + '%' }"
-        aria-hidden="true"
-      ></div>
-
-      <aside class="output-meter" aria-label="输出电平">
+      <aside class="output-meter" aria-label="输出峰值与均方根电平">
         <div class="meter-scale" aria-hidden="true">
           <span
             v-for="tick in meterTicks"
             :key="tick"
-            :style="{ top: 100 - meterLevel(tick) + '%' }"
+            :style="{ top: (1 - meterLevel(tick)) * 100 + '%' }"
+            >{{ tick }}</span
           >
-            {{ tick }}
-          </span>
         </div>
-        <div class="meter-channel" aria-label="左声道">
-          <i class="meter-peak" :style="{ transform: `scaleY(${peakMeterLevel / 100})` }"></i>
-          <i class="meter-rms" :style="{ transform: `scaleY(${rmsMeterLevel / 100})` }"></i>
-        </div>
-        <div class="meter-channel" aria-label="右声道">
+        <div
+          class="meter-channel"
+          aria-label="Peak 峰值"
+          :title="`Peak ${formatGain(meterPeakDb)}`"
+        >
           <i
             class="meter-peak"
-            :style="{ transform: `scaleY(${Math.max(0, peakMeterLevel - 2) / 100})` }"
-          ></i>
-          <i
-            class="meter-rms"
-            :style="{ transform: `scaleY(${Math.max(0, rmsMeterLevel - 3) / 100})` }"
+            :class="{ clipping: meterPeakDb >= -1 }"
+            :style="{ transform: `scaleY(${meterLevel(meterPeakDb)})` }"
           ></i>
         </div>
-        <div class="meter-labels" aria-hidden="true"><span>L</span><span>R</span></div>
+        <div class="meter-channel" aria-label="RMS 均方根" :title="`RMS ${formatGain(meterRmsDb)}`">
+          <i class="meter-rms" :style="{ transform: `scaleY(${meterLevel(meterRmsDb)})` }"></i>
+        </div>
+        <div class="meter-labels" aria-hidden="true"><span>Peak</span><span>RMS</span></div>
       </aside>
-
-      <div class="analyzer-footer" aria-hidden="true">
-        <template v-if="responseView === 'dsp'">
-          <span>拖拽移动节点</span>
-          <i></i>
-          <span>滚轮调节 Q</span>
-          <i></i>
-          <span>双击复位增益</span>
-          <em>单击空白添加频段</em>
-        </template>
-        <template v-else>
-          <span>R(f) = M(f) + H(f)</span>
-          <i></i>
-          <span>数字前级不计入声学预计</span>
-          <em>预计值，不代表校正后实测</em>
-        </template>
-      </div>
-
-      <div v-if="bands.length >= PARAMETRIC_EQ_MAX_BANDS" class="band-limit-notice">
-        已达到 {{ PARAMETRIC_EQ_MAX_BANDS }} 个频段上限
+      <div class="graph-hint">
+        <template v-if="responseView === 'dsp'"
+          >拖动节点 · 滚轮调 Q · 双击复位增益<span v-if="bands.length >= PARAMETRIC_EQ_MAX_BANDS"
+            >已达到 32 个频段上限</span
+          ><span v-else>单击空白添加频段</span></template
+        ><template v-else
+          >R(f) = M(f) + H(f)<span>数字前级不计入声学预计 · 预计值，非实测</span></template
+        >
       </div>
     </div>
-
     <div
-      v-if="selectedBand && responseView === 'dsp'"
+      v-if="showInspector && selectedBand"
+      ref="inspectorHost"
       class="floating-band-inspector"
-      :style="{ '--band-color': bandColor(selectedIndex) }"
+      :style="{ ...inspectorPosition, '--band-color': bandColor(selectedIndex) }"
     >
-      <div class="inspector-topbar">
-        <div class="inspector-identity">
-          <button
-            type="button"
-            class="band-power"
-            :class="{ bypassed: selectedBand.enabled === false }"
-            :aria-label="selectedBand.enabled === false ? '启用频段' : '旁路频段'"
-            @click="emit('toggle', selectedIndex)"
-          >
-            <i class="pi pi-power-off"></i>
-          </button>
-          <span class="selected-band-badge">{{ selectedIndex + 1 }}</span>
-          <div>
-            <small>BAND {{ String(selectedIndex + 1).padStart(2, '0') }}</small>
-            <strong>{{ bandFilterLabel(selectedBand) }}</strong>
-          </div>
-        </div>
-
-        <div class="filter-strip" aria-label="滤波器类型">
-          <button
-            v-for="filter in filterTypes"
-            :key="filter.value"
-            type="button"
-            :class="{ active: selectedBand.filterType === filter.value }"
-            :title="filter.label"
-            :aria-label="filter.label"
-            :aria-pressed="selectedBand.filterType === filter.value"
-            @click="emit('filter', selectedIndex, filter.value)"
-          >
-            {{ filterGlyph(filter.value) }}
-          </button>
-        </div>
-
-        <button
-          type="button"
-          class="delete-band"
-          aria-label="删除所选频段"
-          @click="emit('delete', selectedIndex)"
-        >
-          <i class="pi pi-times"></i>
-        </button>
-      </div>
-
-      <div class="precision-controls">
-        <label
-          class="precision-control"
-          :style="{ '--knob-angle': frequencyKnobProgress(selectedBand.frequency) }"
-        >
-          <span class="control-label">FREQUENCY</span>
-          <div class="knob-shell frequency-knob">
-            <button
-              type="button"
-              aria-label="降低频率"
-              @click="nudgeNumeric('frequency', -1, $event.shiftKey)"
-            >
-              −
-            </button>
-            <div class="knob-face"><span></span></div>
-            <button
-              type="button"
-              aria-label="提高频率"
-              @click="nudgeNumeric('frequency', 1, $event.shiftKey)"
-            >
-              +
-            </button>
-          </div>
-          <div class="precision-readout">
-            <input
-              type="number"
-              min="20"
-              max="20000"
-              step="1"
-              :value="Math.round(selectedBand.frequency)"
-              @change="updateNumeric('frequency', $event)"
-            />
-            <small>Hz</small>
-          </div>
-        </label>
-
-        <label
-          class="precision-control"
-          :class="{ disabled: !filterUsesGain(selectedBand.filterType) }"
-          :style="{
-            '--knob-angle': knobProgress(
-              selectedBand.gain,
-              PARAMETRIC_EQ_MIN_GAIN,
-              PARAMETRIC_EQ_MAX_GAIN
-            )
-          }"
-        >
-          <span class="control-label">GAIN</span>
-          <div class="knob-shell gain-knob">
-            <button
-              type="button"
-              aria-label="降低增益"
-              :disabled="!filterUsesGain(selectedBand.filterType)"
-              @click="nudgeNumeric('gain', -1, $event.shiftKey)"
-            >
-              −
-            </button>
-            <div class="knob-face"><span></span></div>
-            <button
-              type="button"
-              aria-label="提高增益"
-              :disabled="!filterUsesGain(selectedBand.filterType)"
-              @click="nudgeNumeric('gain', 1, $event.shiftKey)"
-            >
-              +
-            </button>
-          </div>
-          <div class="precision-readout">
-            <input
-              type="number"
-              min="-18"
-              max="18"
-              step="0.1"
-              :value="selectedBand.gain.toFixed(1)"
-              :disabled="!filterUsesGain(selectedBand.filterType)"
-              @change="updateNumeric('gain', $event)"
-            />
-            <small>dB</small>
-          </div>
-        </label>
-
-        <label
-          class="precision-control"
-          :style="{
-            '--knob-angle': knobProgress(selectedBand.q, PARAMETRIC_EQ_MIN_Q, PARAMETRIC_EQ_MAX_Q)
-          }"
-        >
-          <span class="control-label">Q / SLOPE</span>
-          <div class="knob-shell q-knob">
-            <button
-              type="button"
-              aria-label="降低 Q 值"
-              @click="nudgeNumeric('q', -1, $event.shiftKey)"
-            >
-              −
-            </button>
-            <div class="knob-face"><span></span></div>
-            <button
-              type="button"
-              aria-label="提高 Q 值"
-              @click="nudgeNumeric('q', 1, $event.shiftKey)"
-            >
-              +
-            </button>
-          </div>
-          <div class="precision-readout">
-            <input
-              type="number"
-              min="0.1"
-              max="20"
-              step="0.01"
-              :value="selectedBand.q.toFixed(2)"
-              @change="updateNumeric('q', $event)"
-            />
-            <small>Q</small>
-          </div>
-        </label>
-      </div>
+      <ParametricEqBandInspector
+        ref="inspectorRef"
+        :key="selectedIndex"
+        :band="selectedBand"
+        :index="selectedIndex"
+        :filter-types="filterTypes"
+        @preview="(index, patch) => emit('preview', index, patch)"
+        @commit="emit('commit')"
+        @toggle="emit('toggle', $event)"
+        @delete="emit('delete', $event)"
+        @filter="(index, type) => emit('filter', index, type)"
+        @close="closeInspector"
+        @interaction="freezeInspector"
+      />
     </div>
+    <footer class="analyzer-footer">
+      <button
+        v-if="responseView === 'dsp'"
+        type="button"
+        class="spectrum-toggle"
+        :class="{ active: spectrumVisible }"
+        :aria-pressed="spectrumVisible"
+        @click="emit('toggle-spectrum')"
+      >
+        <i class="pi pi-chart-line"></i><span>分析器</span
+        ><small>{{ spectrumVisible ? '开' : '关' }}</small>
+      </button>
+      <slot name="footer"></slot>
+      <div class="stage-status" :class="`is-${statusState}`" :title="error || status" role="status">
+        <span class="status-dot"></span><span>{{ status }}</span>
+      </div>
+    </footer>
+    <div v-if="error" class="eq-apply-error" role="alert">{{ error }}</div>
   </section>
 </template>
 
 <style scoped>
-/* ————————————————————————————————————————————————
-   Signal · flat instrument palette
-   Light: warm paper + ink + a single signal-orange accent.
-   Dark: neutral charcoal (no purple cast). No shadows, no gradients.
-———————————————————————————————————————————————— */
 .parametric-workspace {
-  --eq-surface: #f5f4f0;
-  --eq-surface-soft: #faf9f6;
-  --eq-panel: #efede8;
-  --eq-panel-raised: #fbfaf7;
-  --eq-text: #1e2022;
-  --eq-text-muted: rgba(30, 32, 34, 0.6);
-  --eq-text-subtle: rgba(30, 32, 34, 0.38);
-  --eq-border: rgba(30, 32, 34, 0.16);
-  --eq-border-soft: rgba(30, 32, 34, 0.08);
-  --eq-grid: rgba(30, 32, 34, 0.06);
-  --eq-grid-major: rgba(30, 32, 34, 0.11);
-  --eq-zero-axis: rgba(232, 80, 16, 0.42);
-  --eq-response: #22252a;
-  --eq-composite: #e85010;
-  --eq-accent: #e85010;
+  --eq-surface: #f4f3f0;
+  --eq-surface-end: #eae8ee;
+  --eq-panel: #e9e8e6;
+  --eq-panel-raised: #fdfcfa;
+  --eq-text: #29282e;
+  --eq-text-muted: color-mix(in srgb, var(--eq-text) 74%, transparent);
+  --eq-text-subtle: color-mix(in srgb, var(--eq-text) 68%, transparent);
+  --eq-border: color-mix(in srgb, var(--eq-text) 20%, transparent);
+  --eq-border-soft: color-mix(in srgb, var(--eq-text) 10%, transparent);
+  --eq-grid: color-mix(in srgb, var(--eq-text) 5%, transparent);
+  --eq-grid-major: color-mix(in srgb, var(--eq-text) 9%, transparent);
+  --eq-zero-axis: color-mix(in srgb, var(--eq-text) 24%, transparent);
+  --eq-response: #927000;
+  --eq-spectrum: #636572;
+  --eq-control-bg: color-mix(in srgb, var(--eq-text) 6%, transparent);
+  --eq-shadow: rgba(35, 27, 43, 0.2);
+  --eq-highlight: #ffffff;
+  --eq-knob-light: var(--eq-panel-raised);
+  --eq-knob-dark: #d4d3d6;
+  --eq-knob-track: color-mix(in srgb, var(--eq-text) 22%, transparent);
+  --eq-knob-edge: color-mix(in srgb, var(--eq-text) 32%, transparent);
+  --eq-meter: #419b66;
   --eq-source: var(--te-info-500);
-  --eq-target: var(--te-neutral-500);
-  --eq-filter-combined: var(--te-warning-500);
+  --eq-target: var(--eq-text-subtle);
+  --eq-filter-combined: var(--eq-response);
   --eq-corrected: var(--te-success-500);
-  --eq-spectrum: rgba(30, 32, 34, 0.38);
-  --eq-control-bg: rgba(30, 32, 34, 0.04);
-  --eq-tooltip-bg: #fbfaf7;
-  --eq-meter: #2f9e6e;
-  --eq-handle-on-color: #ffffff;
-  --eq-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --eq-color-scheme: light;
+  --eq-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--eq-border);
+  border-radius: 14px;
   color: var(--eq-text);
   background: var(--eq-surface);
-  border: 1px solid var(--eq-border);
-  border-radius: 12px;
-  overflow: hidden;
+  box-shadow: 0 10px 34px var(--eq-shadow);
+  container: eq-workspace / inline-size;
+  isolation: isolate;
 }
-
-/* —— Header —— */
 .parametric-stage-header {
-  min-height: 46px;
-  padding: 0 14px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 24px;
+  min-height: 54px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  border-radius: 14px 14px 0 0;
   border-bottom: 1px solid var(--eq-border-soft);
-  background: var(--eq-surface-soft);
+  background: linear-gradient(180deg, var(--eq-panel-raised), var(--eq-surface));
+  z-index: 40;
 }
-
-.stage-brand,
-.stage-actions,
-.inspector-identity,
-.knob-shell,
-.precision-readout {
+.stage-brand {
   display: flex;
   align-items: center;
-}
-
-.stage-brand {
-  min-width: 0;
-  gap: 9px;
-}
-
-.brand-mark {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 1px;
-  background: var(--eq-accent);
-}
-
-.stage-brand strong {
-  color: var(--eq-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 750;
-  letter-spacing: 0.16em;
-  white-space: nowrap;
-}
-
-.stage-brand strong em {
-  color: var(--eq-accent);
-  font-style: normal;
-}
-
-.stage-brand small {
-  color: var(--eq-text-subtle);
-  font-family: var(--eq-mono);
-  font-size: 7px;
-  letter-spacing: 0.1em;
-  white-space: nowrap;
-}
-
-.stage-actions {
   gap: 8px;
+  flex-shrink: 0;
 }
-
-.stage-status,
-.spectrum-toggle {
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border: 1px solid var(--eq-border-soft);
-  border-radius: 6px;
-  color: var(--eq-text-muted);
-  background: transparent;
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
+.brand-symbol {
+  font-size: 32px;
+  font-weight: 300;
+  color: var(--eq-response);
+}
+.stage-brand strong {
+  font-size: 18px;
+  font-weight: 550;
+  letter-spacing: -0.04em;
+}
+.stage-brand em {
+  color: var(--eq-response);
+  font-style: normal;
   font-weight: 650;
-  letter-spacing: 0.06em;
 }
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--eq-meter);
+.stage-brand small {
+  display: block;
+  margin-top: 2px;
+  font-size: 7px;
+  letter-spacing: 0.16em;
+  color: var(--eq-text-subtle);
 }
-
-.stage-status.is-applying .status-dot,
-.stage-status.is-editing .status-dot {
-  background: var(--eq-accent);
-  animation: statusPulse 0.9s ease-in-out infinite alternate;
+.stage-commands {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 12px;
 }
-
-.stage-status.is-failed .status-dot {
-  background: var(--te-danger-soft-fg);
+.parametric-graph-frame {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 300px;
+  padding: 38px 94px 60px 28px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 85%, var(--eq-surface-end), transparent 80%), var(--eq-surface);
 }
-
-.spectrum-toggle {
-  appearance: none;
-  cursor: pointer;
+.graph-heading {
+  position: absolute;
+  inset: 12px 68px auto 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--eq-text-subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
-
-.spectrum-toggle.active {
-  border-color: color-mix(in srgb, var(--eq-accent) 45%, transparent);
-  color: var(--eq-accent);
-  background: color-mix(in srgb, var(--eq-accent) 7%, transparent);
+.graph-range {
+  margin-left: auto;
+  color: var(--eq-response);
+  font-family: var(--eq-mono);
 }
-
-/* —— Graph surface —— */
+.bypass-label {
+  padding: 2px 6px;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 3px;
+}
 .parametric-graph-surface {
   position: relative;
-  height: clamp(420px, 56vh, 600px);
-  min-height: 380px;
-  overflow: hidden;
+  flex: 1;
+  min-width: 0;
   cursor: crosshair;
   touch-action: none;
   user-select: none;
-  background: var(--eq-surface);
 }
-
-.parametric-graph-surface.disabled .composite-response-line,
-.parametric-graph-surface.disabled .composite-fill,
-.parametric-graph-surface.disabled .individual-band-line {
-  opacity: 0.3;
-}
-
 .frequency-grid-line,
 .gain-grid-line {
   position: absolute;
-  z-index: 1;
   pointer-events: none;
+  background: var(--eq-grid);
 }
-
 .frequency-grid-line {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--eq-grid);
 }
-
 .frequency-grid-line.major {
   background: var(--eq-grid-major);
 }
-
 .gain-grid-line {
   left: 0;
   right: 0;
   height: 1px;
-  background: var(--eq-grid);
 }
-
 .gain-grid-line.zero {
-  z-index: 5;
   background: var(--eq-zero-axis);
 }
-
 .gain-labels span,
 .frequency-labels span {
   position: absolute;
-  z-index: 10;
-  color: var(--eq-text-subtle);
   font-family: var(--eq-mono);
-  font-size: 8px;
-  font-weight: 520;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
+  color: var(--eq-text-subtle);
   pointer-events: none;
 }
-
 .gain-labels span {
-  left: 8px;
+  left: calc(100% + 12px);
   transform: translateY(-50%);
 }
-
+.gain-labels span.zero {
+  color: var(--eq-response);
+}
 .frequency-labels span {
-  bottom: 32px;
+  top: calc(100% + 14px);
   transform: translateX(-50%);
 }
-
 .frequency-labels span:first-child {
   transform: none;
 }
-
 .frequency-labels span:last-child {
   transform: translateX(-100%);
 }
-
-/* —— Headphone curve controls —— */
-.headphone-curve-controls {
-  position: absolute;
-  z-index: 15;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  max-width: calc(100% - 78px);
-}
-
-.curve-control {
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 7px;
-  appearance: none;
-  border: 1px solid var(--eq-border-soft);
-  border-radius: 5px;
-  color: var(--eq-text-muted);
-  background: var(--eq-tooltip-bg);
-  cursor: pointer;
-  font-family: var(--eq-mono);
-  font-size: 8px;
-}
-
-.curve-control.muted {
-  opacity: 0.38;
-}
-
-.curve-control i {
-  width: 14px;
-  border-top: 2px solid var(--curve-color, var(--eq-text-muted));
-}
-
-.curve-control.source {
-  --curve-color: var(--eq-source);
-}
-
-.curve-control.target {
-  --curve-color: var(--eq-target);
-}
-
-.curve-control.target i {
-  border-top-style: dashed;
-}
-
-.curve-control.individual {
-  --curve-color: var(--te-eq-band-violet, #7671d8);
-}
-
-.curve-control.combined {
-  --curve-color: var(--eq-filter-combined);
-}
-
-.curve-control.corrected {
-  --curve-color: var(--eq-corrected);
-}
-
-/* —— Plot —— */
 .parametric-plot {
   position: absolute;
   inset: 0;
-  z-index: 4;
   width: 100%;
   height: 100%;
-  overflow: visible;
   pointer-events: none;
+  overflow: hidden;
 }
-
 .parametric-plot path {
-  fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-
-.live-spectrum-fill {
-  fill: url(#spectrumFill) !important;
-  stroke: none !important;
-}
-
 .live-spectrum-line {
+  fill: none;
   stroke: var(--eq-spectrum);
-  stroke-width: 0.9px;
-  opacity: 0.85;
+  stroke-width: 0.8px;
+  opacity: 0.64;
 }
-
-.selected-band-fill {
-  fill: var(--selected-band-color) !important;
-  stroke: none !important;
-  opacity: 0.13;
+.individual-band-fill {
+  fill: var(--band-color);
+  opacity: 0.16;
 }
-
+.individual-band-fill.selected {
+  opacity: 0.31;
+}
 .individual-band-line {
+  fill: none;
   stroke: var(--band-color);
-  stroke-width: 0.9px;
-  opacity: 0.3;
-  transition:
-    opacity 140ms ease,
-    stroke-width 140ms ease;
+  stroke-width: 1px;
+  opacity: 0.63;
 }
-
 .individual-band-line.selected {
-  stroke-width: 1.5px;
-  opacity: 0.95;
+  stroke-width: 1.4px;
+  opacity: 1;
 }
-
-.composite-fill {
-  fill: var(--eq-composite);
-  stroke: none;
-  opacity: 0.09;
+.individual-band-line.bypassed {
+  opacity: 0.28;
+  stroke-dasharray: 4 5;
 }
-
 .composite-response-line {
+  fill: none;
   stroke: var(--eq-response);
-  stroke-width: 1.6px;
-  opacity: 0.96;
+  stroke-width: 2px;
 }
-
+.bypassed .composite-response-line,
+.bypassed .individual-band-line {
+  opacity: 0.4;
+}
+.bypassed .individual-band-fill {
+  opacity: 0.075;
+}
 .measured-source-line {
+  fill: none;
   stroke: var(--eq-source);
-  stroke-width: 1.25px;
-  opacity: 0.88;
+  stroke-width: 1.4px;
 }
-
 .target-response-line {
+  fill: none;
   stroke: var(--eq-target);
-  stroke-width: 1.1px;
+  stroke-width: 1px;
   stroke-dasharray: 5 4;
 }
-
-.individual-band-line.headphone-filter {
-  opacity: 0.44;
-}
-
 .combined-filter-line {
+  fill: none;
   stroke: var(--eq-filter-combined);
-  stroke-width: 1.5px;
-  stroke-dasharray: 2.5 2;
+  stroke-width: 1.8px;
 }
-
 .corrected-acoustic-line {
+  fill: none;
   stroke: var(--eq-corrected);
-  stroke-width: 1.9px;
+  stroke-width: 1.8px;
 }
-
-/* —— Band handles —— */
-.selected-band-focus {
-  position: absolute;
-  z-index: 6;
-  width: var(--focus-width);
-  height: 42px;
-  transform: translate(-50%, -50%);
-  border: 1px solid color-mix(in srgb, var(--band-color) 26%, transparent);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--band-color) 5%, transparent);
-  pointer-events: none;
+.headphone-filter {
+  opacity: 0.6;
 }
-
 .parametric-band-handle {
   position: absolute;
-  z-index: 12;
-  width: 18px;
-  height: 18px;
+  z-index: 5;
   display: grid;
   place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
   padding: 0;
-  transform: translate(-50%, -50%);
-  appearance: none;
-  border: 1.5px solid var(--band-color);
+  border: 0;
   border-radius: 50%;
-  color: var(--band-color);
-  background: var(--eq-panel-raised);
-  cursor: grab;
-  transition:
-    scale 120ms var(--te-ease-soft),
-    opacity 120ms ease;
+  background: transparent;
+  transition: none;
   touch-action: none;
+  cursor: grab;
 }
-
-.handle-index {
-  font-size: 8px;
-  font-weight: 750;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.parametric-band-handle:hover,
-.parametric-band-handle.hovered,
-.parametric-band-handle.selected {
-  scale: 1.2;
-}
-
-.parametric-band-handle.selected {
-  color: var(--eq-handle-on-color);
+.parametric-band-handle::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 1.5px solid color-mix(in srgb, var(--band-color) 30%, var(--eq-highlight));
+  border-radius: 50%;
   background: var(--band-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--band-color) 12%, transparent);
 }
-
+.parametric-band-handle.selected::before,
+.parametric-band-handle.hovered::before {
+  inset: 6px;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--band-color) 22%, transparent),
+    0 0 12px color-mix(in srgb, var(--band-color) 36%, transparent);
+}
+.parametric-band-handle.selected::before {
+  background: color-mix(in srgb, var(--band-color) 62%, var(--eq-surface));
+}
+.parametric-band-handle.bypassed::before {
+  border-style: dashed;
+  background: var(--eq-surface);
+  opacity: 0.65;
+}
+.handle-index {
+  position: relative;
+  color: var(--eq-highlight);
+  font-family: var(--eq-mono);
+  font-size: 8px;
+  opacity: 0;
+}
+.selected .handle-index,
+.hovered .handle-index {
+  opacity: 1;
+}
 .parametric-band-handle.dragging {
   cursor: grabbing;
-  transition: none;
 }
-
-.parametric-band-handle.bypassed {
-  border-style: dashed;
-  opacity: 0.42;
+.parametric-band-handle:focus-visible {
+  outline: 2px solid var(--band-color);
+  outline-offset: 2px;
 }
-
-/* —— Tooltip & crosshair —— */
 .band-tooltip {
   position: absolute;
-  z-index: 20;
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  gap: 3px 12px;
-  min-width: max-content;
-  padding: 7px 10px 8px;
-  transform: translate(-50%, calc(-100% - 14px));
+  z-index: 35;
+  box-sizing: border-box;
+  padding: 9px 11px;
   border: 1px solid var(--eq-border);
-  border-top: 2px solid var(--band-color);
-  border-radius: 6px;
-  color: var(--eq-text-muted);
-  background: var(--eq-tooltip-bg);
+  border-radius: 8px;
+  background: var(--eq-panel-raised);
+  box-shadow: 0 4px 16px var(--eq-shadow);
   pointer-events: none;
 }
-
 .band-tooltip strong {
-  grid-column: 1 / -1;
-  color: var(--eq-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 550;
 }
-
-.band-tooltip span {
-  font-family: var(--eq-mono);
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-  font-variant-numeric: tabular-nums;
-}
-
-.graph-crosshair {
-  position: absolute;
-  z-index: 6;
+.band-tooltip strong i {
   width: 5px;
   height: 5px;
-  transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: var(--eq-text);
-  opacity: 0.5;
+  background: var(--band-color);
+}
+.band-tooltip small {
+  margin-left: auto;
+  color: var(--eq-text-subtle);
+  font-size: 9px;
+  font-weight: 400;
+}
+.band-tooltip div {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  gap: 8px;
+  font-family: var(--eq-mono);
+  color: var(--eq-text-muted);
+  font-size: 10px;
+}
+.graph-crosshair {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--eq-text-subtle);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
-
-.graph-crosshair::before,
-.graph-crosshair::after {
+.graph-empty {
   position: absolute;
-  content: '';
-  background: color-mix(in srgb, var(--eq-text) 14%, transparent);
+  top: 28%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  pointer-events: none;
 }
-
-.graph-crosshair::before {
-  top: -1200px;
-  left: 2px;
-  width: 1px;
-  height: 2400px;
+.graph-empty strong {
+  font-weight: 450;
+  font-size: 17px;
+  color: var(--eq-text-muted);
 }
-
-.graph-crosshair::after {
-  top: 2px;
-  left: -1200px;
-  width: 2400px;
-  height: 1px;
+.graph-empty span {
+  font-size: 11px;
+  color: var(--eq-text-subtle);
 }
-
-/* —— Output meter —— */
+.floating-band-inspector {
+  position: absolute;
+  z-index: 30;
+  width: 460px;
+  max-width: calc(100% - 24px);
+}
 .output-meter {
   position: absolute;
-  z-index: 16;
-  top: 10px;
-  right: 10px;
-  bottom: 36px;
-  width: 48px;
+  top: 38px;
+  right: 12px;
+  bottom: 60px;
+  width: 37px;
   display: grid;
-  grid-template-columns: 1fr 7px 7px;
+  grid-template-columns: 1fr 5px 5px;
   gap: 4px;
-  padding-bottom: 13px;
-  pointer-events: none;
 }
-
 .meter-scale {
   position: relative;
-  color: var(--eq-text-subtle);
   font-family: var(--eq-mono);
-  font-size: 7px;
+  font-size: 8px;
+  color: var(--eq-text-subtle);
 }
-
 .meter-scale span {
   position: absolute;
   right: 2px;
   transform: translateY(-50%);
 }
-
 .meter-channel {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--eq-border-soft);
-  border-radius: 2px;
   background: var(--eq-control-bg);
+  border-radius: 1px;
 }
-
 .meter-channel i {
   position: absolute;
-  right: 1px;
-  bottom: 1px;
-  left: 1px;
-  height: 100%;
-  display: block;
-  transform: scaleY(0);
-  transform-origin: 50% 100%;
-  will-change: transform;
-  transition: none;
+  inset: 0;
+  transform-origin: bottom;
 }
-
 .meter-peak {
   background: var(--eq-meter);
 }
-
-.meter-rms {
-  right: 3px !important;
-  left: 3px !important;
-  background: color-mix(in srgb, var(--eq-meter) 55%, transparent);
+.meter-peak.clipping {
+  background: var(--eq-response);
 }
-
+.meter-rms {
+  background: color-mix(in srgb, var(--eq-meter) 72%, var(--eq-surface));
+}
 .meter-labels {
   position: absolute;
+  top: calc(100% + 14px);
   right: 0;
-  bottom: 0;
   display: flex;
-  gap: 5px;
+  gap: 4px;
   color: var(--eq-text-subtle);
   font-family: var(--eq-mono);
-  font-size: 7px;
-}
-
-/* —— Footer hints —— */
-.analyzer-footer {
-  position: absolute;
-  z-index: 14;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border-top: 1px solid var(--eq-border-soft);
-  color: var(--eq-text-subtle);
-  background: var(--eq-surface-soft);
   font-size: 8px;
-  letter-spacing: 0.05em;
+}
+.graph-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 9px;
+  color: var(--eq-text-subtle);
   pointer-events: none;
 }
-
-.analyzer-footer i {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--eq-text-subtle);
-}
-
-.analyzer-footer em {
-  margin-left: 14px;
-  color: var(--eq-accent);
-  font-style: normal;
-}
-
-.band-limit-notice {
+.headphone-curve-controls {
   position: absolute;
-  right: 12px;
-  bottom: 34px;
-  z-index: 18;
-  padding: 4px 8px;
-  border: 1px solid var(--eq-border);
-  border-radius: 5px;
-  color: var(--te-warning-500);
-  background: var(--eq-tooltip-bg);
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-  font-weight: 650;
+  top: 8px;
+  left: 8px;
+  z-index: 15;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
-
-/* —— Inspector (docked flat strip) —— */
-.floating-band-inspector {
-  border-top: 1px solid var(--eq-border);
-  background: var(--eq-surface-soft);
-}
-
-.inspector-topbar {
-  min-height: 36px;
-  display: grid;
-  grid-template-columns: minmax(150px, auto) 1fr 30px;
+.curve-control {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 3px 6px 3px 10px;
-  border-bottom: 1px solid var(--eq-border-soft);
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 5px;
+  background: var(--eq-panel-raised);
+  color: var(--eq-text-muted);
+  font-size: 10px;
+  cursor: pointer;
 }
-
-.inspector-identity {
-  min-width: 0;
+.curve-control i {
+  width: 10px;
+  border-top: 2px solid var(--curve-color);
+}
+.curve-control.source {
+  --curve-color: var(--eq-source);
+}
+.curve-control.target {
+  --curve-color: var(--eq-target);
+}
+.curve-control.individual {
+  --curve-color: var(--te-primary-400);
+}
+.curve-control.combined {
+  --curve-color: var(--eq-filter-combined);
+}
+.curve-control.corrected {
+  --curve-color: var(--eq-corrected);
+}
+.curve-control.muted {
+  opacity: 0.45;
+}
+.analyzer-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-height: 42px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  border-top: 1px solid var(--eq-border-soft);
+  border-radius: 0 0 14px 14px;
+  background: var(--eq-panel);
+  z-index: 40;
+}
+.spectrum-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--eq-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.spectrum-toggle small {
+  color: var(--eq-text-subtle);
+  font-size: 9px;
+}
+.spectrum-toggle.active i,
+.spectrum-toggle.active small {
+  color: var(--eq-response);
+}
+.stage-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--eq-text-subtle);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--eq-meter);
+}
+.is-applying .status-dot,
+.is-editing .status-dot {
+  background: var(--eq-response);
+}
+.is-failed .status-dot {
+  background: var(--te-danger-soft-fg);
+}
+.eq-apply-error {
+  padding: 8px 14px;
+  color: var(--te-danger-soft-fg);
+  font-size: 11px;
+}
+.spectrum-toggle:focus-visible,
+.curve-control:focus-visible {
+  outline: 2px solid var(--eq-response);
+  outline-offset: 3px;
+}
+:global(html[data-theme='dark'] .parametric-workspace) {
+  --eq-surface: #19181d;
+  --eq-surface-end: #34303a;
+  --eq-panel: #211f26;
+  --eq-panel-raised: #35323c;
+  --eq-text: #eeeaf2;
+  --eq-text-muted: color-mix(in srgb, var(--eq-text) 76%, transparent);
+  --eq-text-subtle: color-mix(in srgb, var(--eq-text) 62%, transparent);
+  --eq-grid: color-mix(in srgb, var(--eq-text) 3%, transparent);
+  --eq-grid-major: color-mix(in srgb, var(--eq-text) 6%, transparent);
+  --eq-response: #f2d34f;
+  --eq-spectrum: #d4ccd9;
+  --eq-shadow: rgba(0, 0, 0, 0.38);
+  --eq-highlight: #f9f5ff;
+  --eq-knob-light: #44414b;
+  --eq-knob-dark: #25242b;
+  --eq-knob-edge: color-mix(in srgb, var(--eq-text) 30%, transparent);
+  --eq-meter: #9bc445;
+  --eq-color-scheme: dark;
+}
+.compact .parametric-stage-header {
+  gap: 12px;
+  padding-inline: 12px;
+  flex-wrap: wrap;
+  padding-block: 10px;
+}
+.compact .stage-brand strong {
+  font-size: 16px;
+}
+.compact .stage-brand small {
+  display: none;
+}
+.compact .stage-commands {
   gap: 8px;
 }
-
-.inspector-identity > div {
-  display: grid;
-  gap: 1px;
+.compact .parametric-graph-frame {
+  min-height: 270px;
+  padding: 32px 80px 54px 22px;
 }
-
-.inspector-identity small {
-  color: var(--eq-text-subtle);
-  font-family: var(--eq-mono);
-  font-size: 6px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+.compact .output-meter {
+  top: 32px;
+  bottom: 54px;
 }
-
-.inspector-identity strong {
-  color: color-mix(in srgb, var(--band-color) 82%, var(--eq-text));
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 700;
-}
-
-.selected-band-badge {
-  min-width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--band-color) 62%, transparent);
-  border-radius: 4px;
-  color: var(--band-color);
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.band-power {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  appearance: none;
-  border: 1px solid color-mix(in srgb, var(--eq-meter) 45%, transparent);
-  border-radius: 50%;
-  color: var(--eq-meter);
-  background: transparent;
-  cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-}
-
-.band-power.bypassed {
-  border-color: var(--eq-border);
-  color: var(--eq-text-subtle);
-}
-
-.filter-strip {
-  display: flex;
-  justify-content: center;
-  gap: 2px;
-}
-
-.filter-strip button,
-.delete-band {
-  width: 26px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--eq-text-subtle);
-  background: transparent;
-  cursor: pointer;
-  font-family: var(--eq-mono);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-}
-
-.filter-strip button:hover {
-  color: var(--eq-text);
-}
-
-.filter-strip button.active {
-  border-color: color-mix(in srgb, var(--band-color) 34%, transparent);
-  color: var(--band-color);
-  background: color-mix(in srgb, var(--band-color) 8%, transparent);
-}
-
-.delete-band:hover {
-  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 30%, transparent);
-  color: var(--te-danger-soft-fg);
-}
-
-/* —— Precision controls —— */
-.precision-controls {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  padding: 8px 12px 10px;
-}
-
-.precision-control {
-  min-width: 0;
-  display: grid;
-  justify-items: center;
-  gap: 3px;
-  padding: 0 12px;
-  border-right: 1px solid var(--eq-border-soft);
-}
-
-.precision-control:last-child {
-  border-right: 0;
-}
-
-.precision-control.disabled {
-  opacity: 0.34;
-}
-
-.control-label {
-  color: var(--eq-text-subtle);
-  font-size: 6px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-}
-
-.knob-shell {
-  gap: 7px;
-}
-
-.knob-shell button {
-  width: 17px;
-  height: 17px;
-  padding: 0;
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: 50%;
-  color: var(--eq-text-subtle);
-  background: transparent;
-  cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  line-height: 1;
-}
-
-.knob-shell button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--band-color) 30%, transparent);
-  color: var(--band-color);
-}
-
-.knob-face {
+.compact .floating-band-inspector {
   position: relative;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from -135deg,
-    var(--band-color) 0deg calc(var(--knob-angle) + 135deg),
-    var(--eq-border-soft) calc(var(--knob-angle) + 135deg) 270deg,
-    transparent 270deg 360deg
-  );
+  left: auto !important;
+  top: auto !important;
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 12px 14px;
 }
-
-.knob-face::after {
-  position: absolute;
-  inset: 3px;
-  content: '';
-  border: 1px solid var(--eq-border-soft);
-  border-radius: 50%;
-  background: var(--eq-panel-raised);
+.compact .analyzer-footer {
+  padding-block: 6px;
+  gap: 6px 12px;
 }
-
-.knob-face span {
-  position: absolute;
-  z-index: 1;
-  top: 7px;
-  left: 50%;
-  width: 2px;
-  height: 12px;
-  transform: translateX(-50%) rotate(var(--knob-angle));
-  transform-origin: 50% 12px;
-  border-radius: 1px;
-  background: var(--band-color);
+.compact .graph-hint span {
+  display: none;
 }
-
-.precision-readout {
-  justify-content: center;
-  gap: 3px;
-}
-
-.precision-readout input {
-  width: 56px;
-  padding: 0;
-  appearance: textfield;
-  border: 0;
-  outline: none;
-  color: var(--eq-text);
-  background: transparent;
-  font-family: var(--eq-mono);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 620;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.precision-readout input::-webkit-inner-spin-button,
-.precision-readout input::-webkit-outer-spin-button {
-  appearance: none;
-}
-
-.precision-readout small {
-  color: var(--eq-text-subtle);
-  font-size: 7px;
-}
-
-@keyframes statusPulse {
-  to {
-    opacity: 0.4;
-  }
-}
-
-/* —— Dark tone: neutral charcoal, ink-white response, same accent —— */
-:global(html[data-theme='dark'] .parametric-workspace) {
-  --eq-surface: #181a1d;
-  --eq-surface-soft: #1c1e22;
-  --eq-panel: #202329;
-  --eq-panel-raised: #22252b;
-  --eq-text: #e8e9e6;
-  --eq-text-muted: rgba(232, 233, 230, 0.6);
-  --eq-text-subtle: rgba(232, 233, 230, 0.36);
-  --eq-border: rgba(255, 255, 255, 0.13);
-  --eq-border-soft: rgba(255, 255, 255, 0.07);
-  --eq-grid: rgba(255, 255, 255, 0.05);
-  --eq-grid-major: rgba(255, 255, 255, 0.09);
-  --eq-zero-axis: rgba(255, 122, 31, 0.5);
-  --eq-response: #eceee9;
-  --eq-composite: #ff7a1f;
-  --eq-accent: #ff7a1f;
-  --eq-source: color-mix(in srgb, var(--te-info-500) 72%, var(--eq-text));
-  --eq-target: color-mix(in srgb, var(--te-neutral-500) 68%, var(--eq-text));
-  --eq-filter-combined: color-mix(in srgb, var(--te-warning-500) 76%, var(--eq-text));
-  --eq-corrected: color-mix(in srgb, var(--te-success-500) 72%, var(--eq-text));
-  --eq-spectrum: rgba(232, 233, 230, 0.4);
-  --eq-control-bg: rgba(255, 255, 255, 0.045);
-  --eq-tooltip-bg: #22252b;
-  --eq-meter: #3cb179;
-  --eq-handle-on-color: #ffffff;
-}
-
-/* —— pureWhite tone: cooler, pure-paper surfaces —— */
-:global(html[data-theme='pureWhite'] .parametric-workspace) {
-  --eq-surface: #f7f8fa;
-  --eq-surface-soft: #ffffff;
-  --eq-panel: #edf0f3;
-  --eq-panel-raised: #ffffff;
-  --eq-tooltip-bg: #ffffff;
-}
-
-:global(html[data-theme='pureWhite'] .parametric-graph-surface) {
-  background: var(--eq-surface);
-}
-
-:global(html[data-theme='pureWhite'] .knob-face) {
-  --eq-panel-raised: #ffffff;
-}
-
-:global(html[data-theme='pureWhite'] .output-meter) {
-  --eq-control-bg: color-mix(in srgb, var(--eq-text) 3%, transparent);
-}
-
-:global(html[data-theme='pureWhite'] .analyzer-footer) {
-  background: var(--eq-surface-soft);
-}
-
-:global(html[data-theme='pureWhite'] .floating-band-inspector) {
-  background: var(--eq-surface-soft);
-}
-
-@media (max-width: 900px) {
-  .stage-brand small {
+@container eq-workspace (max-width: 520px) {
+  .stage-brand {
     display: none;
   }
-
-  .output-meter {
-    width: 40px;
+  .parametric-graph-frame {
+    padding-right: 52px;
   }
-}
-
-@media (max-width: 620px) {
-  .parametric-graph-surface {
-    height: 400px;
-    min-height: 400px;
-  }
-
   .output-meter {
     display: none;
   }
-
-  .analyzer-footer em {
+  .frequency-labels span:nth-child(even) {
     display: none;
   }
-
-  .inspector-topbar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .filter-strip {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    padding-bottom: 2px;
-  }
-
-  .precision-controls {
-    padding-inline: 4px;
-  }
-
-  .precision-control {
-    padding-inline: 5px;
-  }
-
-  .knob-shell {
-    gap: 3px;
-  }
-
-  .knob-face {
-    width: 32px;
-    height: 32px;
+  .stage-status {
+    font-size: 9px;
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .parametric-band-handle,
-  .individual-band-line,
-  .meter-channel i,
-  .status-dot {
-    transition: none;
-    animation: none;
+  .parametric-workspace *,
+  .parametric-workspace *::before {
+    animation: none !important;
+    transition: none !important;
   }
 }
 </style>

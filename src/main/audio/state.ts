@@ -25,6 +25,26 @@ import {
 import { syncDesktopLyricsSettings } from '../integrations/desktopLyrics'
 import { applyRuntimeSettings } from '../integrations/shortcutsTray'
 import { applyLibraryWatchers } from '../library/watcher'
+import type { DeviceProfileCommit } from './deviceProfiles.ts'
+
+export function persistDeviceProfileCommit(commit: DeviceProfileCommit): void {
+  const { processing, ...patch } = commit
+  const next = normalizeAppSettings({
+    ...runtime.appSettings,
+    ...patch,
+    audioProcessing: {
+      ...runtime.appSettings.audioProcessing,
+      ...processing,
+      dsdToPcm: processing.dsdOutputMode === 'pcm'
+    }
+  })
+  writeAppSettings(next)
+  runtime.appSettings = next
+  runtime.mainWindow?.webContents.send(
+    'settings:changed',
+    createSettingsSnapshot(next, runtime.launchSettings)
+  )
+}
 
 export function persistAudioOutputState(state: AudioOutputState): SettingsSnapshot {
   runtime.appSettings = normalizeAppSettings({
