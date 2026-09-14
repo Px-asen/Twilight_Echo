@@ -78,6 +78,10 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
   `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
 - `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
 
+统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词与设备档案；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。队列撤销与命名会话入口待 A 完成后登记。
+
+Renderer TS 测试通过 `scripts/register-renderer-aliases.mjs` 为 Node `--test` 解析 `@renderer/`，与应用构建使用同一模块位置，不引入额外测试框架。命令面板的键盘、组合输入、失败重试、关闭失效及 20,000 条结果的有界渲染由隐藏 Electron 行为测试覆盖。
+
 ## 音频链路
 
 设备档案位于播放设置和 HiFi 输出页，支持从当前配置创建、命名、复制、编辑、删除及按稳定设备 ID 自动应用。版本化 `audioDeviceProfiles` 保存后端、独占、完整 buffer/routing、软件音量上限、SRC/DSD 策略和 DSP 场景引用；场景 graph 不复制进档案，设备 SRC 作为运行时 output-stage override 独立持久化。手工调整输出或 DSP 后清除“已应用档案”标记，保留实际设置和音量上限；编辑或删除已应用档案也不会突然改变播放。

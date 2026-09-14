@@ -358,3 +358,28 @@ test('logical preferred track preserves unified provider reliability ordering', 
   )
   assert.equal(result.logicalItems[0].preferredTrack.id, 'zzhealthy:1')
 })
+
+test('source pages are bounded and next-page availability uses each source total', async () => {
+  const result = await unifiedSearchSongs({
+    query: 'moon',
+    limit: 2,
+    offset: 2,
+    localTracks: Array.from({ length: 4 }, (_, index) =>
+      track({ id: `local:${index}`, title: `Moon ${index}`, artist: 'Local' })
+    ),
+    providers: [{ id: 'remote', name: 'Remote', capabilities: ['search'], available: true }],
+    searchProviderSongs: async (_provider, _query, limit, offset) => {
+      assert.equal(limit, 2)
+      assert.equal(offset, 2)
+      return {
+        items: Array.from({ length: 10 }, (_, index) =>
+          track({ id: `remote:${index}`, title: 'Moon', artist: 'Remote' })
+        ),
+        total: 4
+      }
+    }
+  })
+  assert.equal(result.items.length, 4)
+  assert.equal(result.total, 8)
+  assert.equal(result.hasMore, false)
+})

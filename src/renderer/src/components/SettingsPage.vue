@@ -43,6 +43,7 @@ import type {
   StreamingAudioCachePolicy
 } from '../types/settings'
 import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
+import type { SettingsNavigationTarget } from '@renderer/app/useAppNavigation.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
   cloneLyricsAppearance
@@ -51,6 +52,7 @@ import { DEFAULT_PLAYER_BAR_SETTINGS, clonePlayerBarSettings } from '../../../sh
 
 const props = defineProps<{
   initialSection?: SectionKey
+  navigationTarget?: SettingsNavigationTarget
 }>()
 
 const emit = defineEmits<{
@@ -985,6 +987,26 @@ function scrollToSection(section: SectionKey): void {
   scrollPageToElement(el, { block: 'start' })
 }
 
+function applyNavigationTarget(): void {
+  if (!pageRef.value) return
+  const target = props.navigationTarget
+  if (target?.anchor) {
+    const element = pageRef.value.querySelector<HTMLDetailsElement>(`#${target.anchor}`)
+    if (element) {
+      element.open = true
+      scrollPageToElement(element, { block: 'center' })
+      element.querySelector('summary')?.focus({ preventScroll: true })
+      return
+    }
+  }
+  if (target?.entry) scrollToSearchResult(target.entry)
+  else scrollToSection(props.initialSection ?? 'general')
+}
+
+watch([() => props.initialSection, () => props.navigationTarget], applyNavigationTarget, {
+  flush: 'post'
+})
+
 function scrollToSearchResult(entry: SettingsSearchEntry): void {
   settingsSearchQuery.value = ''
   activeSection.value = entry.section
@@ -1114,9 +1136,7 @@ onMounted(async () => {
   }, 5_000)
   await nextTick()
   pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
-  if (props.initialSection && props.initialSection !== 'general') {
-    scrollToSection(props.initialSection)
-  }
+  applyNavigationTarget()
 })
 
 onBeforeUnmount(() => {

@@ -184,3 +184,21 @@ test('contextual theme studio entries return to the originating player or librar
   assert.equal(navigation.showSettingsPage.value, false)
   assert.equal(navigation.localViewVisible.value, true)
 })
+
+test('command destinations replace foreground overlays and repeated settings targets are observable', () => {
+  const navigation = useAppNavigation()
+  navigation.openSettingsPage()
+  navigation.openPlayingPage()
+  assert.equal(navigation.showSettingsPage.value, false)
+  assert.equal(navigation.showPlayingPage.value, true)
+  navigation.openEqualizerPage()
+  assert.equal(navigation.showPlayingPage.value, false)
+  navigation.openLibraryPlaylist({ id: 'mix', name: '工作', kind: 'aggregate' })
+  assert.equal(navigation.localViewVisible.value, true)
+  assert.equal(navigation.activeCategory.value, 'aggregate')
+  assert.equal(navigation.activeFilter.value, 'mix')
+  navigation.openSettingsPage('playback', { anchor: 'device-profiles' })
+  const first = navigation.settingsNavigationTarget.value.revision
+  navigation.openSettingsPage('playback', { anchor: 'device-profiles' })
+  assert.equal(navigation.settingsNavigationTarget.value.revision, first + 1)
+})

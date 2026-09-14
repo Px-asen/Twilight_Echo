@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref, shallowRef, type Ref } from 'vue'
 import { useMediaProviders } from '../providers/index.ts'
 import { useMusicStore } from '../stores/useMusicStore.ts'
 import type { Track } from '../types/music'
@@ -21,6 +21,7 @@ export interface UnifiedMusicSearchDependencies {
     networkEntries?: Array<{ profileName: string; entry: NetworkEntry }>
     limit?: number
     offset?: number
+    signal?: AbortSignal
   }) => Promise<UnifiedSearchResult>
 }
 
@@ -31,6 +32,8 @@ export interface UnifiedMusicSearchState {
   providerHealth: Ref<Record<string, UnifiedSearchProviderHealth>>
   loading: Ref<boolean>
   error: Ref<string>
+  total: Ref<number>
+  hasMore: Ref<boolean>
   search: (query: string, options?: { limit?: number; offset?: number }) => Promise<void>
   clear: () => void
 }
@@ -52,21 +55,28 @@ export function createUnifiedMusicSearch(
   dependencies: UnifiedMusicSearchDependencies
 ): UnifiedMusicSearchState {
   const query = ref('')
-  const items = ref<UnifiedSearchTrackItem[]>([])
-  const logicalItems = ref<LogicalMusicItem[]>([])
+  const items = shallowRef<UnifiedSearchTrackItem[]>([])
+  const logicalItems = shallowRef<LogicalMusicItem[]>([])
   const providerHealth = ref<Record<string, UnifiedSearchProviderHealth>>({})
   const loading = ref(false)
   const error = ref('')
+  const total = ref(0)
+  const hasMore = ref(false)
   let latestRequestId = 0
+  let controller: AbortController | null = null
 
   function clear(): void {
     latestRequestId += 1
+    controller?.abort()
+    controller = null
     query.value = ''
     items.value = []
     logicalItems.value = []
     providerHealth.value = {}
     loading.value = false
     error.value = ''
+    total.value = 0
+    hasMore.value = false
   }
 
   async function search(
@@ -80,6 +90,9 @@ export function createUnifiedMusicSearch(
       return
     }
 
+    controller?.abort()
+    const requestController = new AbortController()
+    controller = requestController
     const requestId = ++latestRequestId
     const snapshot = {
       query: normalizedQuery,
@@ -88,21 +101,31 @@ export function createUnifiedMusicSearch(
     }
     loading.value = true
     error.value = ''
+    items.value = []
+    logicalItems.value = []
+    providerHealth.value = {}
+    total.value = 0
+    hasMore.value = false
     try {
       const networkEntries = dependencies.searchNetworkLibrary
         ? await dependencies.searchNetworkLibrary(normalizedQuery).catch(() => [])
         : []
+      if (requestId !== latestRequestId) return
       const result = await dependencies.searchAllSongs({
         query: snapshot.query,
         localTracks: dependencies.getLocalTracks(),
         networkEntries,
         limit: snapshot.limit,
-        offset: snapshot.offset
+        offset: snapshot.offset,
+        signal: requestController.signal
       })
       if (requestId !== latestRequestId) return
       items.value = result.items
       logicalItems.value = result.logicalItems
       providerHealth.value = result.health
+      total.value = result.total
+      hasMore.value =
+        result.hasMore ?? result.total > (snapshot.offset ?? 0) + (snapshot.limit ?? 30)
     } catch (caught) {
       if (requestId !== latestRequestId) return
       error.value = caught instanceof Error ? caught.message : '统一搜索失败'
@@ -123,6 +146,8 @@ export function createUnifiedMusicSearch(
     providerHealth,
     loading,
     error,
+    total,
+    hasMore,
     search,
     clear
   }

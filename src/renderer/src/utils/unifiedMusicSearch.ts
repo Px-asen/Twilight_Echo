@@ -4,16 +4,16 @@ import type { NetworkEntry } from '../../../shared/networkSources.ts'
 import {
   buildLogicalTracks,
   clampReliability,
-  compareSourceVariantPriority,
   getTrackSource,
-  isLosslessTrack,
   type LogicalTrack,
   type SourceVariant
 } from './logicalTrackModel.ts'
 import {
-  getTrackSearchBlob,
-  normalizeSearchText as normalizeLocalSearchText
-} from './localLibrarySearch.ts'
+  compareSearchItems,
+  searchUnifiedLocalPage,
+  searchUnifiedNetworkPage,
+  toSearchItem
+} from '@renderer/utils/unifiedSearchSources.ts'
 
 export interface UnifiedSearchProvider {
   id: string
@@ -80,30 +80,21 @@ export interface UnifiedSearchResult {
   logicalItems: LogicalMusicItem[]
   health: Record<string, UnifiedSearchProviderHealth>
   total: number
+  hasMore?: boolean
 }
 
 export async function unifiedSearchSongs(
   options: UnifiedSearchOptions
 ): Promise<UnifiedSearchResult> {
   const query = options.query.trim()
-  const limit = options.limit ?? 30
-  const offset = options.offset ?? 0
-  const localItems = searchLocalTracks(options.localTracks, query).map((track) =>
-    toSearchItem(track, {
-      sourceName: '本地音乐',
-      providerAvailable: true
-    })
-  )
-  const networkItems = (options.networkEntries ?? [])
-    .filter(({ entry }) => searchNetworkEntry(entry, query))
-    .map(({ profileName, entry }) =>
-      toSearchItem(buildNetworkTrack(profileName, entry), {
-        sourceName: '网络源',
-        providerAvailable: true
-      })
-    )
+  const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30) || 30))
+  const offset = Math.max(0, Math.trunc(options.offset ?? 0) || 0)
+  if (!query) return { items: [], logicalItems: [], health: {}, total: 0, hasMore: false }
+  const local = searchUnifiedLocalPage(options.localTracks, query, limit, offset)
+  const network = searchUnifiedNetworkPage(options.networkEntries ?? [], query, limit, offset)
   const health: Record<string, UnifiedSearchProviderHealth> = {}
-  let total = localItems.length + networkItems.length
+  let total = local.total + network.total
+  let hasMore = local.total > offset + limit || network.total > offset + limit
 
   const providerItems = (
     await Promise.all(
@@ -137,7 +128,8 @@ export async function unifiedSearchSongs(
           const result = await options.searchProviderSongs(provider.id, query, limit, offset)
           baseHealth.resultCount = result.items.length
           total += result.total
-          return result.items.map((track) =>
+          hasMore ||= result.total > offset + limit
+          return result.items.slice(0, limit).map((track) =>
             toSearchItem(track, {
               sourceName: provider.name,
               providerAvailable: true,
@@ -154,12 +146,13 @@ export async function unifiedSearchSongs(
     )
   ).flat()
 
-  const items = [...localItems, ...networkItems, ...providerItems].sort(compareSearchItems)
+  const items = [...local.items, ...network.items, ...providerItems].sort(compareSearchItems)
   return {
     items,
     logicalItems: buildLogicalMusicItemsFromSearchItems(items),
     health,
-    total
+    total,
+    hasMore
   }
 }
 
@@ -180,91 +173,10 @@ function buildLogicalMusicItemsFromSearchItems(
   return buildLogicalTracks(searchItems)
 }
 
-function searchLocalTracks(tracks: Track[], query: string): Track[] {
-  if (!query) return []
-  const q = normalizeLocalSearchText(query.trim())
-  if (!q) return []
-  return tracks.filter(
-    (track) =>
-      getTrackSearchBlob(track).includes(q) || normalizeLocalSearchText(track.fileName).includes(q)
-  )
-}
-
-function buildNetworkTrack(profileName: string, entry: NetworkEntry): Track {
-  const metadata = entry.metadata
-  return {
-    id: entry.id,
-    title: metadata?.title ?? entry.name.replace(/\.[^.]+$/, ''),
-    artist: metadata?.artist ?? profileName,
-    album: metadata?.album ?? profileName,
-    filePath: '',
-    fileName: entry.name,
-    duration: metadata?.duration ?? 0,
-    size: entry.sizeBytes ?? 0,
-    cover: null,
-    lyrics: null,
-    source: 'network',
-    format: metadata?.format,
-    networkSource: { profileId: entry.profileId, entry }
-  }
-}
-
-function searchNetworkEntry(entry: NetworkEntry, query: string): boolean {
-  if (!query) return false
-  const normalizedQuery = normalizeSearchText(query)
-  const metadata = entry.metadata
-  return (
-    normalizedTrackFieldIncludes(metadata?.title ?? '', normalizedQuery) ||
-    normalizedTrackFieldIncludes(metadata?.artist ?? '', normalizedQuery) ||
-    normalizedTrackFieldIncludes(metadata?.album ?? '', normalizedQuery) ||
-    normalizedTrackFieldIncludes(entry.name, normalizedQuery)
-  )
-}
-
-function toSearchItem(
-  track: Track,
-  options: {
-    sourceName: string
-    providerAvailable: boolean
-    providerReliability?: number
-    source?: string
-  }
-): UnifiedSearchTrackItem {
-  const source = getTrackSource(track, options.source)
-  const local = source === 'local'
-  return {
-    kind: 'track',
-    track: { ...track, source },
-    source,
-    sourceName: options.sourceName,
-    local,
-    lossless: isLosslessTrack(track),
-    providerAvailable: options.providerAvailable,
-    providerReliability: local ? 1 : clampReliability(options.providerReliability ?? 1)
-  }
-}
-
-function compareSearchItems(left: UnifiedSearchTrackItem, right: UnifiedSearchTrackItem): number {
-  return (
-    compareSourceVariantPriority(left, right) ||
-    left.track.title.localeCompare(right.track.title, 'zh') ||
-    left.track.artist.localeCompare(right.track.artist, 'zh') ||
-    left.track.id.localeCompare(right.track.id)
-  )
-}
-
 function getProviderReliability(provider: UnifiedSearchProvider): number {
   const playbackUrlSuccessRate = provider.health?.methodStats?.getPlaybackUrl?.successRate
   if (typeof playbackUrlSuccessRate === 'number') return clampReliability(playbackUrlSuccessRate)
   if (typeof provider.health?.successRate === 'number')
     return clampReliability(provider.health.successRate)
   return provider.available === false || provider.health?.available === false ? 0 : 1
-}
-
-function normalizeSearchText(value: string | undefined): string {
-  return (value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-function normalizedTrackFieldIncludes(value: string | undefined, normalizedQuery: string): boolean {
-  return normalizeSearchText(value).includes(normalizedQuery)
 }

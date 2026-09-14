@@ -31,6 +31,7 @@ const props = withDefaults(
      * 不需要关心。
      */
     active?: boolean
+    initialPlaylistId?: string | null
   }>(),
   { surface: 'local', active: true }
 )
@@ -50,7 +51,13 @@ const settingsStore = useSettingsStore()
 const providerStore = useProviderStore()
 
 // ─── 视图状态：网格 ↔ 详情，组件自管，两个实例互不干扰 ────────────────────
-const activePlaylistId = ref<string | null>(null)
+const activePlaylistId = ref<string | null>(props.initialPlaylistId ?? null)
+watch(
+  () => props.initialPlaylistId,
+  (id) => {
+    activePlaylistId.value = id ?? null
+  }
+)
 const searchQuery = ref('')
 const openVariantMenuFor = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)

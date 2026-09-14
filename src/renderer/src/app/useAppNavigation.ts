@@ -1,15 +1,14 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import type { UiContribution } from '../extensions/registry'
+import type { SectionKey, SettingsSearchEntry } from '@renderer/components/settings-page/types.ts'
 
-export type SettingsSection =
-  | 'general'
-  | 'playback'
-  | 'dsp'
-  | 'cache'
-  | 'performance'
-  | 'appearance'
-  | 'shortcuts'
-  | 'about'
+export type SettingsSection = SectionKey
+
+export interface SettingsNavigationTarget {
+  revision: number
+  entry?: SettingsSearchEntry
+  anchor?: 'device-profiles'
+}
 
 export type ThemeStudioDomain =
   | 'presets'
@@ -53,6 +52,7 @@ export function useAppNavigation() {
   const showDspRackPage = ref(false)
   const activePluginPage = ref<UiContribution | null>(null)
   const settingsInitialSection = ref<SettingsSection>('general')
+  const settingsNavigationTarget = shallowRef<SettingsNavigationTarget>({ revision: 0 })
   const activeCategory = ref('dashboard')
   const activeFilter = ref<string | null>(null)
   const songlistTransitionName = ref<'page-down' | 'page-up'>('page-down')
@@ -136,6 +136,13 @@ export function useAppNavigation() {
   }
 
   function openPlayingPage(): void {
+    showLoginPage.value = false
+    showSettingsPage.value = false
+    showThemeStudioPage.value = false
+    showPluginPage.value = false
+    showEqualizerPage.value = false
+    showDspRackPage.value = false
+    activePluginPage.value = null
     showPlayingPage.value = true
   }
 
@@ -227,8 +234,16 @@ export function useAppNavigation() {
     showStreamingPage.value = true
   }
 
-  function openSettingsPage(section: SettingsSection = 'general'): void {
+  function openSettingsPage(
+    section: SettingsSection = 'general',
+    target: Omit<SettingsNavigationTarget, 'revision'> = {}
+  ): void {
     settingsInitialSection.value = section
+    settingsNavigationTarget.value = {
+      ...target,
+      revision: settingsNavigationTarget.value.revision + 1
+    }
+    showLoginPage.value = false
     showPlayingPage.value = false
     showThemeStudioPage.value = false
     showPluginPage.value = false
@@ -295,6 +310,8 @@ export function useAppNavigation() {
   }
 
   function openEqualizerPage(): void {
+    showPlayingPage.value = false
+    showLoginPage.value = false
     showSettingsPage.value = false
     showThemeStudioPage.value = false
     showPluginPage.value = false
@@ -309,6 +326,8 @@ export function useAppNavigation() {
   }
 
   function openDspRackPage(): void {
+    showPlayingPage.value = false
+    showLoginPage.value = false
     showSettingsPage.value = false
     showThemeStudioPage.value = false
     showPluginPage.value = false
@@ -320,6 +339,20 @@ export function useAppNavigation() {
 
   function closeDspRackPage(): void {
     showDspRackPage.value = false
+  }
+
+  function openLibraryPlaylist(playlist: { id: string; name: string; kind?: 'aggregate' }): void {
+    showPlayingPage.value = false
+    showLoginPage.value = false
+    showSettingsPage.value = false
+    showThemeStudioPage.value = false
+    showEqualizerPage.value = false
+    showDspRackPage.value = false
+    returnToLocalMode()
+    onSelectView(
+      playlist.kind === 'aggregate' ? 'aggregate' : 'playlists',
+      playlist.kind === 'aggregate' ? playlist.id : `playlist:${playlist.name}`
+    )
   }
 
   function closeMissingPluginPage(pages: UiContribution[]): void {
@@ -393,6 +426,7 @@ export function useAppNavigation() {
     showDspRackPage,
     activePluginPage: activePluginPage as Ref<UiContribution | null>,
     settingsInitialSection,
+    settingsNavigationTarget,
     activeCategory,
     activeFilter,
     songlistTransitionName,
@@ -427,6 +461,7 @@ export function useAppNavigation() {
     closeEqualizerPage,
     openDspRackPage,
     closeDspRackPage,
+    openLibraryPlaylist,
     closeMissingPluginPage,
     createToggleMenuHandler,
     createToggleSettingsHandler,
