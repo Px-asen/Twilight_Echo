@@ -8,6 +8,36 @@ import { toProviderIpcArgs } from '../providers/mediaProvider.ts'
 
 const source = readFileSync(new URL('./useProviderStore.ts', import.meta.url), 'utf8')
 
+test('NCM startup login waits for provider registration', async () => {
+  const ncmSource = readFileSync(new URL('./useNcmStore.ts', import.meta.url), 'utf8')
+  const functionSource = ncmSource.slice(
+    ncmSource.indexOf('  async function checkLogin()'),
+    ncmSource.indexOf('  function setLogin(')
+  )
+  let finishRegistration!: () => void
+  const registration = new Promise<void>((resolve) => {
+    finishRegistration = resolve
+  })
+  let calls = 0
+  const checkLogin = runInNewContext(`${stripTypeScriptTypes(functionSource)}\ncheckLogin`, {
+    syncPluginProviders: () => registration,
+    callNcmProvider: async () => {
+      calls++
+      return { loggedIn: true }
+    },
+    applyLoginState: (state: { loggedIn: boolean }) => state.loggedIn,
+    isLoggedIn: ref(false),
+    profile: ref(null),
+    resetLibraryState: () => undefined
+  }) as () => Promise<boolean>
+  const restored = checkLogin()
+  await Promise.resolve()
+  assert.equal(calls, 0)
+  finishRegistration()
+  assert.equal(await restored, true)
+  assert.equal(calls, 1)
+})
+
 test('homepage section arguments cross IPC after provider metadata becomes reactive', async () => {
   const metadata = ref({
     ui: {

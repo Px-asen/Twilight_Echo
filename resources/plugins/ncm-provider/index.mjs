@@ -1030,7 +1030,6 @@ async function checkLogin() {
       cacheProfile(profile)
       return { loggedIn: true, profile }
     }
-    await saveCookie('')
     resetCaches()
     return { loggedIn: false, profile: null }
   } catch {
