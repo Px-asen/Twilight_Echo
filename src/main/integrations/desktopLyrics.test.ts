@@ -81,6 +81,16 @@ test('desktop lyrics uses constrained dragging and locked hover unlock forwardin
   assert.match(app, /api\.moveEnd/)
 })
 
+test('desktop lyrics uses programmatic bounds updates so a non-resizable window can shrink', async () => {
+  const main = await source('./desktopLyrics.ts')
+
+  assert.match(
+    main,
+    /const bounds = win\.getBounds\(\)[\s\S]*?win\.setBounds\(\{[\s\S]*?width: settings\.windowWidth,[\s\S]*?height: settings\.windowHeight/
+  )
+  assert.doesNotMatch(main, /win\.setSize\(settings\.windowWidth, settings\.windowHeight\)/)
+})
+
 test('pause auto-hide makes the transparent native window click-through', async () => {
   const main = await source('./desktopLyrics.ts')
   const preload = await source('../../preload/domains/desktopLyricsApi.ts')

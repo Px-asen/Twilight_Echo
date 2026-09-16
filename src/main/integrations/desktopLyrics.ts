@@ -143,7 +143,15 @@ function applyWindowSettings(): void {
   syncDesktopLyricsHoverTracking()
   const bounds = win.getBounds()
   if (bounds.width !== settings.windowWidth || bounds.height !== settings.windowHeight) {
-    win.setSize(settings.windowWidth, settings.windowHeight)
+    // BrowserWindow.setSize() is constrained by the non-resizable style on
+    // Windows and can silently ignore a shrink. setBounds() still permits
+    // trusted programmatic resizing while keeping the window non-resizable
+    // for the user.
+    win.setBounds({
+      ...bounds,
+      width: settings.windowWidth,
+      height: settings.windowHeight
+    })
   }
   if (appliedTaskbarPlacement) {
     appliedTaskbarPlacement = false
