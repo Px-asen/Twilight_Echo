@@ -658,7 +658,7 @@ const isResizingSidebar = ref(false)
 const sidebarResizeStartX = ref(0)
 const sidebarResizeStartWidth = ref(0)
 
-function startResizeSidebar(e: MouseEvent) {
+function startResizeSidebar(e: MouseEvent): void {
   isResizingSidebar.value = true
   sidebarResizeStartX.value = e.clientX
   sidebarResizeStartWidth.value = hifiSidebarWidth.value
@@ -668,14 +668,14 @@ function startResizeSidebar(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-function onResizeSidebar(e: MouseEvent) {
+function onResizeSidebar(e: MouseEvent): void {
   if (!isResizingSidebar.value) return
   const delta = sidebarResizeStartX.value - e.clientX
   const newWidth = Math.min(800, Math.max(320, sidebarResizeStartWidth.value + delta))
   hifiSidebarWidth.value = Math.round(newWidth)
 }
 
-function stopResizeSidebar() {
+function stopResizeSidebar(): void {
   isResizingSidebar.value = false
   document.removeEventListener('mousemove', onResizeSidebar)
   document.removeEventListener('mouseup', stopResizeSidebar)
@@ -1512,6 +1512,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopResizeSidebar()
   if (geometryAnimTimer !== null) window.clearTimeout(geometryAnimTimer)
   geometryAnimTimer = null
   glassPointerEnabled = false
@@ -2146,16 +2147,13 @@ onBeforeUnmount(() => {
       <Transition name="hifi-overlay">
         <div
           v-if="moreOpen"
+          :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
           class="hifi-overlay"
           :style="{ width: `${hifiSidebarWidth}px` }"
           @pointerdown.stop
-          :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
         >
           <!-- 宽度调整手柄 -->
-          <div
-            class="hifi-resize-handle"
-            @mousedown="startResizeSidebar"
-          ></div>
+          <div class="hifi-resize-handle" @mousedown="startResizeSidebar"></div>
           <HiFiSidebar
             :glass="glass"
             :accent-color="playButtonColor"

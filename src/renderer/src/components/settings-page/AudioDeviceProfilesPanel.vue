@@ -32,7 +32,7 @@ async function refresh(): Promise<void> {
 }
 
 onMounted(() => {
-  unsubscribe = window.api.onDeviceProfilesChanged(() => void refresh())
+  unsubscribe = window.api.audioEngine.onDeviceProfilesChanged(() => void refresh())
   void refresh()
 })
 onUnmounted(() => {
