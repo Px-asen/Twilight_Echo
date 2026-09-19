@@ -61,6 +61,10 @@ export const dataApi = {
     ipcRenderer.invoke('cover:grantRemote', source),
   getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
+  getTranslatedLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('lyrics:getTranslated', dir, fileName, filePath),
+  getRomanizedLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('lyrics:getRomanized', dir, fileName, filePath),
   getAmlTtml: (songId: number): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:getAmlTtml', songId),
   importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),

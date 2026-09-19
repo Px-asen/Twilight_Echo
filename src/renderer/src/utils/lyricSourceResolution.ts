@@ -18,8 +18,10 @@ const AUTOMATIC_ORIGINAL_PRIORITY: Record<LyricSource, number> = {
 export interface ResolvedLyricsWithSources {
   lyrics: string | null
   translatedLyrics: string | null
+  romanizedLyrics: string | null
   lyricsSource: LyricSource | null
   translatedLyricsSource: LyricSource | null
+  romanizedLyricsSource: LyricSource | null
   /**
    * A source was requested but could not be reached. This is deliberately
    * distinct from a successful request that found no lyrics, so callers can
@@ -31,10 +33,13 @@ export interface ResolvedLyricsWithSources {
 export interface ResolveLyricsWithSourcesOptions {
   track: Track
   loadLocalLyrics?: () => Promise<string | null>
+  loadLocalTranslatedLyrics?: () => Promise<string | null>
+  loadLocalRomanizedLyrics?: () => Promise<string | null>
   loadProviderLyrics?: () => Promise<MediaProviderLyrics>
   loadAmlTtml?: () => Promise<string | null>
   originalSource?: LyricResolverSource
   translationSource?: LyricResolverSource
+  romanizationSource?: LyricResolverSource
   /** Final fallback when embedded/local/provider all miss. */
   loadOnlineLyrics?: () => Promise<string | null>
   /**
@@ -76,9 +81,13 @@ export async function resolveLyricsWithSources(
   const translationSource = options.translationSource ?? 'automatic'
   let lyrics = normalizeLyricValue(track.lyrics)
   let translatedLyrics = normalizeLyricValue(track.translatedLyrics)
+  let romanizedLyrics = normalizeLyricValue(track.romanizedLyrics)
   let lyricsSource = lyrics ? (track.lyricsSource ?? defaultExistingLyricSource(track)) : null
   let translatedLyricsSource = translatedLyrics
     ? (track.translatedLyricsSource ?? defaultExistingLyricSource(track))
+    : null
+  let romanizedLyricsSource = romanizedLyrics
+    ? (track.romanizedLyricsSource ?? defaultExistingLyricSource(track))
     : null
 
   const shouldLoadLocal =
@@ -100,6 +109,35 @@ export async function resolveLyricsWithSources(
   ) {
     lyrics = localLyrics
     lyricsSource = 'local'
+  }
+
+  // Load local translated lyrics (_trans.lrc)
+  const shouldLoadLocalTranslation =
+    translationSource === 'local' ||
+    (translationSource === 'automatic' && !translatedLyrics)
+  const localTranslationResult =
+    shouldLoadLocalTranslation && options.loadLocalTranslatedLyrics
+      ? await loadOptionalLyrics(options.loadLocalTranslatedLyrics)
+      : { value: null, failed: false }
+  const localTranslation = normalizeLyricValue(localTranslationResult.value)
+  if (localTranslation && (!translatedLyrics || translationSource === 'local')) {
+    translatedLyrics = localTranslation
+    translatedLyricsSource = 'local'
+  }
+
+  // Load local romanized lyrics (_roma.lrc)
+  const romanizationSource = options.romanizationSource ?? 'automatic'
+  const shouldLoadLocalRomanization =
+    romanizationSource === 'local' ||
+    (romanizationSource === 'automatic' && !track.romanizedLyrics)
+  const localRomanizationResult =
+    shouldLoadLocalRomanization && options.loadLocalRomanizedLyrics
+      ? await loadOptionalLyrics(options.loadLocalRomanizedLyrics)
+      : { value: null, failed: false }
+  const localRomanization = normalizeLyricValue(localRomanizationResult.value)
+  if (localRomanization && (!romanizedLyrics || romanizationSource === 'local')) {
+    romanizedLyrics = localRomanization
+    romanizedLyricsSource = 'local'
   }
 
   const shouldLoadAml =
@@ -201,8 +239,10 @@ export async function resolveLyricsWithSources(
       return {
         lyrics,
         translatedLyrics,
+        romanizedLyrics: null,
         lyricsSource,
         translatedLyricsSource,
+        romanizedLyricsSource: null,
         failure: 'online'
       }
     }
@@ -211,8 +251,10 @@ export async function resolveLyricsWithSources(
   const resolved = {
     lyrics,
     translatedLyrics,
+    romanizedLyrics,
     lyricsSource,
-    translatedLyricsSource
+    translatedLyricsSource,
+    romanizedLyricsSource
   }
   if (lyrics || translatedLyrics) return resolved
   if (amlResult.failed) return { ...resolved, failure: 'amll' as const }
