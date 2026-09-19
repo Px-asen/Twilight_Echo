@@ -24,6 +24,7 @@ const windowsRequiredCommands = markdownSection(windowsReleaseGate, 'Required Co
 const lyricsTests = [
   'src/main/lyrics/importLyrics.test.ts',
   'src/main/lyrics/saveLyrics.test.ts',
+  'src/main/ipc/lyricsIpc.test.ts',
   'src/main/persistence/lyricsManagementPersistence.test.ts',
   'src/shared/lyricsEncoding.test.ts',
   'src/shared/lyricsManagement.test.ts',

@@ -23,8 +23,10 @@ test('forced source reloads from a clean automatic baseline and Auto restores th
   assert.deepEqual(resolverLyricsInput(forcedProvider, automatic, 'provider'), {
     lyrics: null,
     translatedLyrics: null,
+    romanizedLyrics: null,
     lyricsSource: null,
-    translatedLyricsSource: null
+    translatedLyricsSource: null,
+    romanizedLyricsSource: null
   })
   assert.equal(resolverLyricsInput(forcedProvider, automatic, 'auto'), automatic)
 })

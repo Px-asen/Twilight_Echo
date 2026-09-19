@@ -3,8 +3,10 @@ import type { LyricSourcePreference } from '../../../shared/lyricsManagement.ts'
 export interface ResolverLyricsState {
   lyrics: string | null
   translatedLyrics?: string | null
+  romanizedLyrics?: string | null
   lyricsSource?: string | null
   translatedLyricsSource?: string | null
+  romanizedLyricsSource?: string | null
 }
 
 /**
@@ -22,7 +24,9 @@ export function resolverLyricsInput<T extends ResolverLyricsState>(
     ...baseline,
     lyrics: null,
     translatedLyrics: null,
+    romanizedLyrics: null,
     lyricsSource: null,
-    translatedLyricsSource: null
+    translatedLyricsSource: null,
+    romanizedLyricsSource: null
   }
 }

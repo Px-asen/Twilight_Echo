@@ -79,6 +79,7 @@ export async function resolveLyricsWithSources(
   const track = options.track
   const originalSource = options.originalSource ?? 'automatic'
   const translationSource = options.translationSource ?? 'automatic'
+  const romanizationSource = options.romanizationSource ?? 'automatic'
   let lyrics = normalizeLyricValue(track.lyrics)
   let translatedLyrics = normalizeLyricValue(track.translatedLyrics)
   let romanizedLyrics = normalizeLyricValue(track.romanizedLyrics)
@@ -113,8 +114,7 @@ export async function resolveLyricsWithSources(
 
   // Load local translated lyrics (_trans.lrc)
   const shouldLoadLocalTranslation =
-    translationSource === 'local' ||
-    (translationSource === 'automatic' && !translatedLyrics)
+    translationSource === 'local' || (translationSource === 'automatic' && !translatedLyrics)
   const localTranslationResult =
     shouldLoadLocalTranslation && options.loadLocalTranslatedLyrics
       ? await loadOptionalLyrics(options.loadLocalTranslatedLyrics)
@@ -126,16 +126,17 @@ export async function resolveLyricsWithSources(
   }
 
   // Load local romanized lyrics (_roma.lrc)
-  const romanizationSource = options.romanizationSource ?? 'automatic'
   const shouldLoadLocalRomanization =
-    romanizationSource === 'local' ||
-    (romanizationSource === 'automatic' && !track.romanizedLyrics)
+    romanizationSource === 'local' || (romanizationSource === 'automatic' && !romanizedLyrics)
   const localRomanizationResult =
     shouldLoadLocalRomanization && options.loadLocalRomanizedLyrics
       ? await loadOptionalLyrics(options.loadLocalRomanizedLyrics)
       : { value: null, failed: false }
   const localRomanization = normalizeLyricValue(localRomanizationResult.value)
-  if (localRomanization && (!romanizedLyrics || romanizationSource === 'local')) {
+  if (romanizationSource === 'local') {
+    romanizedLyrics = localRomanization
+    romanizedLyricsSource = localRomanization ? 'local' : null
+  } else if (localRomanization && !romanizedLyrics) {
     romanizedLyrics = localRomanization
     romanizedLyricsSource = 'local'
   }
@@ -239,10 +240,10 @@ export async function resolveLyricsWithSources(
       return {
         lyrics,
         translatedLyrics,
-        romanizedLyrics: null,
+        romanizedLyrics,
         lyricsSource,
         translatedLyricsSource,
-        romanizedLyricsSource: null,
+        romanizedLyricsSource,
         failure: 'online'
       }
     }
@@ -256,10 +257,12 @@ export async function resolveLyricsWithSources(
     translatedLyricsSource,
     romanizedLyricsSource
   }
-  if (lyrics || translatedLyrics) return resolved
+  if (lyrics || translatedLyrics || romanizedLyrics) return resolved
   if (amlResult.failed) return { ...resolved, failure: 'amll' as const }
   if (providerResult.failed) return { ...resolved, failure: 'provider' as const }
-  if (localResult.failed) return { ...resolved, failure: 'local' as const }
+  if (localResult.failed || localTranslationResult.failed || localRomanizationResult.failed) {
+    return { ...resolved, failure: 'local' as const }
+  }
   return resolved
 }
 

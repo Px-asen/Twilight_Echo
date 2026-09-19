@@ -1001,7 +1001,11 @@ interface WindowAPI {
     cacheCover: (data: ArrayBuffer | Uint8Array) => Promise<string | null>
     grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
-    getTranslatedLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
+    getTranslatedLyrics: (
+      dir: string,
+      fileName: string,
+      filePath?: string
+    ) => Promise<string | null>
     getRomanizedLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
     getAmlTtml: (songId: number) => Promise<string | null>
     importLyrics: () => Promise<string | null>

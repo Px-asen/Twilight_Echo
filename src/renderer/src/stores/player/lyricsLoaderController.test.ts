@@ -60,3 +60,11 @@ test('baseline restore path stays wired through the bounded map', () => {
   const clear = extractInternalFunctionBody(source, 'clearLyricsBaselines')
   assert.match(clear, /automaticLyricsBaselines\.clear\(\)/)
 })
+
+test('local auxiliary lyric files are independent from original lyric replacement', () => {
+  assert.match(source, /const canLoadLocalAuxiliaryLyrics =/)
+  assert.match(source, /loadLocalTranslatedLyrics: canLoadLocalAuxiliaryLyrics/)
+  assert.match(source, /loadLocalRomanizedLyrics: canLoadLocalAuxiliaryLyrics/)
+  assert.match(source, /!canLoadLocalLyrics &&\s*!canLoadLocalAuxiliaryLyrics/)
+  assert.match(source, /romanizationSelection/)
+})

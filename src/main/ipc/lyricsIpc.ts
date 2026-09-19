@@ -154,7 +154,10 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
         }
       }
       try {
-        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_trans.lrc`)
+        const lrcPath = join(
+          resolvedDir,
+          `${basename(safeFileName, extname(safeFileName))}_trans.lrc`
+        )
         const lrc = decodeLyrics(await readFile(lrcPath)).text
         if (lrc) return lrc
       } catch {
@@ -192,7 +195,10 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
         }
       }
       try {
-        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_roma.lrc`)
+        const lrcPath = join(
+          resolvedDir,
+          `${basename(safeFileName, extname(safeFileName))}_roma.lrc`
+        )
         const lrc = decodeLyrics(await readFile(lrcPath)).text
         if (lrc) return lrc
       } catch {

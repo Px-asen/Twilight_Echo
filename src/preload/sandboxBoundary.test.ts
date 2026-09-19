@@ -44,6 +44,16 @@ test('native context menus expose DTO requests through the sandboxed system brid
   assert.match(declarations, /popupContextMenu: \(request: NativeContextMenuRequest\)/)
 })
 
+test('lyrics companion files cross the sandbox through typed data bridge methods', () => {
+  const source = readFileSync(new URL('./domains/dataApi.ts', import.meta.url), 'utf8')
+  const declarations = readFileSync(new URL('./index.d.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /ipcRenderer\.invoke\('lyrics:getTranslated', dir, fileName, filePath\)/)
+  assert.match(source, /ipcRenderer\.invoke\('lyrics:getRomanized', dir, fileName, filePath\)/)
+  assert.match(declarations, /getTranslatedLyrics:/)
+  assert.match(declarations, /getRomanizedLyrics:/)
+})
+
 const COMMON_NODE_BUILTINS = new Set([
   'assert',
   'buffer',
