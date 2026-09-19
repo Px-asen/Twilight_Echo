@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { LyricsContentType, parseBuffer, TimestampFormat, type ILyricsTag } from 'music-metadata'
-import { extractEmbeddedLyrics, loadLocalLyrics } from './loadLyrics.ts'
+import { extractEmbeddedLyrics, loadLocalCompanionLyrics, loadLocalLyrics } from './loadLyrics.ts'
 
 function flacWithLyrics(lyrics: string): Buffer {
   const streamInfo = Buffer.alloc(38)
@@ -114,4 +114,24 @@ test('lazy local loading prefers sibling LRC and falls back to embedded FLAC tim
     await loadLocalLyrics(directory, 'missing.flac', join(directory, 'missing.flac')),
     null
   )
+})
+
+test('local companion loading reads translated and romanized sibling LRC files', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-companion-lyrics-'))
+  t.after(async () => {
+    assert.ok(resolve(directory).startsWith(resolve(tmpdir())))
+    await rm(directory, { recursive: true, force: true })
+  })
+  await writeFile(join(directory, 'timed_trans.lrc'), '[00:01.00]Translation')
+  await writeFile(join(directory, 'timed_roma.lrc'), '[00:01.00]Romanization')
+
+  assert.equal(
+    await loadLocalCompanionLyrics(directory, 'timed.flac', 'translated'),
+    '[00:01.00]Translation'
+  )
+  assert.equal(
+    await loadLocalCompanionLyrics(directory, 'timed.flac', 'romanized'),
+    '[00:01.00]Romanization'
+  )
+  assert.equal(await loadLocalCompanionLyrics(directory, 'missing.flac', 'translated'), null)
 })

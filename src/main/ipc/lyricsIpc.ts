@@ -2,7 +2,7 @@ import { dialog, BrowserWindow, type IpcMain } from 'electron'
 import { basename, dirname } from 'path'
 import { readFile, stat } from 'fs/promises'
 import { importLyricsFromDialog } from '../lyrics/importLyrics.ts'
-import { loadLocalLyrics } from '../lyrics/loadLyrics.ts'
+import { loadLocalCompanionLyrics, loadLocalLyrics } from '../lyrics/loadLyrics.ts'
 import { saveLyricsFromDialog } from '../lyrics/saveLyrics.ts'
 import {
   assertOnlineLyricsRateLimit,
@@ -130,14 +130,7 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
           return null
         }
       }
-      try {
-        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_trans.lrc`)
-        const lrc = decodeLyrics(await readFile(lrcPath)).text
-        if (lrc) return lrc
-      } catch {
-        // no _trans.lrc file found
-      }
-      return null
+      return await loadLocalCompanionLyrics(resolvedDir, safeFileName, 'translated')
     }
   )
 
@@ -168,14 +161,7 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
           return null
         }
       }
-      try {
-        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_roma.lrc`)
-        const lrc = decodeLyrics(await readFile(lrcPath)).text
-        if (lrc) return lrc
-      } catch {
-        // no _roma.lrc file found
-      }
-      return null
+      return await loadLocalCompanionLyrics(resolvedDir, safeFileName, 'romanized')
     }
   )
 }

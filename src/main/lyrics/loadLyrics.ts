@@ -75,3 +75,16 @@ export async function loadLocalLyrics(
     .then(extractEmbeddedLyrics)
     .catch(() => null)
 }
+
+export async function loadLocalCompanionLyrics(
+  directory: string,
+  fileName: string,
+  kind: 'translated' | 'romanized'
+): Promise<string | null> {
+  const suffix = kind === 'translated' ? '_trans' : '_roma'
+  const lrcPath = join(directory, `${basename(fileName, extname(fileName))}${suffix}.lrc`)
+  const lyrics = await readFile(lrcPath)
+    .then((bytes) => decodeLyrics(bytes).text)
+    .catch(() => null)
+  return lyrics || null
+}

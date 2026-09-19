@@ -184,7 +184,7 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
     const override = lyricsManagement.entryFor(triggerTrack.id)
     const requestedSource = override?.source ?? 'auto'
     const layerSource = (
-      key: 'originalSelection' | 'translationSelection'
+      key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
     ): LyricResolverSource | 'manual' => {
       const selection = override?.[key]
       if (selection === 'local' || selection === 'provider' || selection === 'manual') {
@@ -201,11 +201,14 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
     }
     const originalLayerSource = layerSource('originalSelection')
     const translationLayerSource = layerSource('translationSelection')
+    const romanizationLayerSource = layerSource('romanizationSelection')
     const resolverOriginalSource: LyricResolverSource =
       originalLayerSource === 'manual' ? 'automatic' : originalLayerSource
     const resolverTranslationSource: LyricResolverSource =
       translationLayerSource === 'manual' ? 'automatic' : translationLayerSource
-    const sourceSelectionSignature = `${requestedSource}:${originalLayerSource}:${translationLayerSource}`
+    const resolverRomanizationSource: LyricResolverSource =
+      romanizationLayerSource === 'manual' ? 'automatic' : romanizationLayerSource
+    const sourceSelectionSignature = `${requestedSource}:${originalLayerSource}:${translationLayerSource}:${romanizationLayerSource}`
 
     const requestSignature = `${sourceSelectionSignature}:${allowProviderLookup ? 'provider' : 'local'}`
     const existingRequest = activeLyricsLoads.get(triggerTrack.id)
@@ -251,7 +254,8 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         if (
           options.currentTrack.value?.id === triggerTrack.id &&
           options.currentTrack.value.lyrics == null &&
-          options.currentTrack.value.translatedLyrics == null
+          options.currentTrack.value.translatedLyrics == null &&
+          options.currentTrack.value.romanizedLyrics == null
         ) {
           commitResolvedLyrics(triggerTrack, triggerTrack, {
             lyrics: '',
@@ -273,7 +277,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
           originalLayerSource === 'provider' ||
           translationLayerSource === 'local' ||
           translationLayerSource === 'amll' ||
-          translationLayerSource === 'provider') &&
+          translationLayerSource === 'provider' ||
+          romanizationLayerSource === 'local' ||
+          romanizationLayerSource === 'amll' ||
+          romanizationLayerSource === 'provider') &&
         !automaticLyricsBaselines.has(triggerTrack.id)
       ) {
         automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
@@ -294,6 +301,16 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
             shouldLoadAutomaticOriginal(resolverTrack, 'local'))) &&
         !!resolverTrack.dir &&
         !!resolverTrack.fileName
+      const canLoadLocalAuxiliaryLyrics =
+        source === 'local' &&
+        !!resolverTrack.dir &&
+        !!resolverTrack.fileName &&
+        (resolverTranslationSource === 'local' ||
+          (resolverTranslationSource === 'automatic' &&
+            !hasLyricContent(resolverTrack.translatedLyrics)) ||
+          resolverRomanizationSource === 'local' ||
+          (resolverRomanizationSource === 'automatic' &&
+            !hasLyricContent(resolverTrack.romanizedLyrics)))
       const canLoadProviderLyrics =
         allowProviderLookup &&
         (resolverOriginalSource === 'provider' ||
@@ -317,6 +334,7 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
 
       if (
         !canLoadLocalLyrics &&
+        !canLoadLocalAuxiliaryLyrics &&
         !canLoadAmlLyrics &&
         !canLoadProviderLyrics &&
         !canLoadOnlineLyrics
@@ -341,22 +359,31 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
           track: resolverTrack,
           originalSource: resolverOriginalSource,
           translationSource: resolverTranslationSource,
+          romanizationSource: resolverRomanizationSource,
           loadLocalLyrics: canLoadLocalLyrics
             ? () =>
                 window.api.data
                   .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
                   .catch(() => null)
             : undefined,
-          loadLocalTranslatedLyrics: canLoadLocalLyrics
+          loadLocalTranslatedLyrics: canLoadLocalAuxiliaryLyrics
             ? () =>
                 window.api.data
-                  .getTranslatedLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+                  .getTranslatedLyrics(
+                    resolverTrack.dir!,
+                    resolverTrack.fileName,
+                    resolverTrack.filePath
+                  )
                   .catch(() => null)
             : undefined,
-          loadLocalRomanizedLyrics: canLoadLocalLyrics
+          loadLocalRomanizedLyrics: canLoadLocalAuxiliaryLyrics
             ? () =>
                 window.api.data
-                  .getRomanizedLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+                  .getRomanizedLyrics(
+                    resolverTrack.dir!,
+                    resolverTrack.fileName,
+                    resolverTrack.filePath
+                  )
                   .catch(() => null)
             : undefined,
           loadProviderLyrics: canLoadProviderLyrics
@@ -408,7 +435,7 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       const currentOverride = lyricsManagement.entryFor(triggerTrack.id)
       const currentRequestedSource = currentOverride?.source ?? 'auto'
       const currentLayerSource = (
-        key: 'originalSelection' | 'translationSelection'
+        key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
       ): LyricResolverSource | 'manual' => {
         const selection = currentOverride?.[key]
         if (
@@ -429,7 +456,7 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         return 'automatic'
       }
       if (
-        `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}` !==
+        `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}:${currentLayerSource('romanizationSelection')}` !==
         sourceSelectionSignature
       ) {
         completeIfCurrent()
@@ -438,7 +465,8 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       if (
         resolved.failure &&
         !hasLyricContent(resolved.lyrics) &&
-        !hasLyricContent(resolved.translatedLyrics)
+        !hasLyricContent(resolved.translatedLyrics) &&
+        !hasLyricContent(resolved.romanizedLyrics)
       ) {
         if (isCurrentRequest()) {
           options.lyricsLoadState.value = { trackId: triggerTrack.id, status: 'failed' }
@@ -448,7 +476,9 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       }
       commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
       completeIfCurrent(
-        hasLyricContent(resolved.lyrics) || hasLyricContent(resolved.translatedLyrics)
+        hasLyricContent(resolved.lyrics) ||
+          hasLyricContent(resolved.translatedLyrics) ||
+          hasLyricContent(resolved.romanizedLyrics)
           ? 'ready'
           : 'empty'
       )

@@ -62,9 +62,73 @@ test('lyric resolution supports a local original combined with a provider transl
   assert.deepEqual(result, {
     lyrics: '[00:01.00]Local lyric',
     translatedLyrics: '[00:01.00]Provider translation',
+    romanizedLyrics: null,
     lyricsSource: 'local',
-    translatedLyricsSource: 'provider'
+    translatedLyricsSource: 'provider',
+    romanizedLyricsSource: null
   })
+})
+
+test('local translated and romanized files load even when the original is already embedded', async () => {
+  let translatedCalls = 0
+  let romanizedCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      lyrics: '[00:01.00]Embedded lyric',
+      lyricsSource: 'embedded'
+    },
+    loadLocalTranslatedLyrics: async () => {
+      translatedCalls++
+      return '[00:01.00]Local translation'
+    },
+    loadLocalRomanizedLyrics: async () => {
+      romanizedCalls++
+      return '[00:01.00]Local romanization'
+    }
+  })
+
+  assert.equal(translatedCalls, 1)
+  assert.equal(romanizedCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Embedded lyric')
+  assert.equal(result.translatedLyrics, '[00:01.00]Local translation')
+  assert.equal(result.translatedLyricsSource, 'local')
+  assert.equal(result.romanizedLyrics, '[00:01.00]Local romanization')
+  assert.equal(result.romanizedLyricsSource, 'local')
+})
+
+test('explicit local romanization clears a stale non-local value when its file is missing', async () => {
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      lyrics: '[00:01.00]Embedded lyric',
+      lyricsSource: 'embedded',
+      romanizedLyrics: '[00:01.00]Provider romanization',
+      romanizedLyricsSource: 'provider'
+    },
+    romanizationSource: 'local',
+    loadLocalRomanizedLyrics: async () => null
+  })
+
+  assert.equal(result.romanizedLyrics, null)
+  assert.equal(result.romanizedLyricsSource, null)
+})
+
+test('online fallback failure preserves an existing romanized layer', async () => {
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      romanizedLyrics: '[00:01.00]Existing romanization',
+      romanizedLyricsSource: 'local'
+    },
+    loadOnlineLyrics: async () => {
+      throw new Error('online unavailable')
+    }
+  })
+
+  assert.equal(result.failure, 'online')
+  assert.equal(result.romanizedLyrics, '[00:01.00]Existing romanization')
+  assert.equal(result.romanizedLyricsSource, 'local')
 })
 
 test('provider translation is fetched when automatic local lyrics have no translation', async () => {
