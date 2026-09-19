@@ -1002,8 +1002,7 @@ async function toggleLyricVisibility(
 .lyric-manager-heading,
 .lyric-manager-actions,
 .lyric-manager-toggles,
-.lyric-layer-grid,
-.lyric-source-grid {
+.lyric-layer-grid {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1051,7 +1050,8 @@ async function toggleLyricVisibility(
 
 .lyric-source-grid {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .lyric-layer-grid {

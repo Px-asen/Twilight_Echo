@@ -1957,7 +1957,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   right: 0;
   bottom: 0;
   z-index: 1100;
-  width: min(440px, 100vw);
+  width: 440px;
   max-width: 100vw;
   pointer-events: auto;
   display: flex;
@@ -2024,6 +2024,41 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 .hifi-overlay-leave-to {
   opacity: 0;
   transform: translateX(28px);
+}
+
+/* HiFi 侧边栏宽度调整手柄 */
+.hifi-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background 0.2s ease;
+}
+
+.hifi-resize-handle:hover,
+.hifi-resize-handle:active {
+  background: linear-gradient(to right, rgba(99, 102, 241, 0.3), transparent);
+}
+
+.hifi-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 40px;
+  border-radius: 1px;
+  background: rgba(99, 102, 241, 0.4);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.hifi-resize-handle:hover::after {
+  opacity: 1;
 }
 
 /* ===== Tokens ===== */
