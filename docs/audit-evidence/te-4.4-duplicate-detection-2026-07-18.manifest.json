@@ -3,7 +3,7 @@
   "generatedAt": "2026-09-16T14:47:44.782Z",
   "evidence": {
     "path": "te-4.4-duplicate-detection-2026-07-18.json",
-    "sha256": "4e4725619e8384ae4b3a716ac1206103b013d89e5a6c29228df95c3acfc68d04"
+    "sha256": "20bf49acacceb4b822500f0acf9a969331b2eee1f04af6c0550b75fa9b66397e"
   },
   "provenance": {
     "algorithm": "sha256",
@@ -25,7 +25,7 @@
     },
     "packageManifest": {
       "path": "package.json",
-      "sha256": "6d3b300007fe6437c5779f63b1391bd753d5268031bd58508ea8267c10182385"
+      "sha256": "5e69a08a97b973ce50e37c164ecf16c5f775c73e2e6163ed1a449d816f57a299"
     },
     "lockfile": {
       "path": "pnpm-lock.yaml",
