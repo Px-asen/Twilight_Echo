@@ -125,4 +125,80 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
       return await searchOnlineLyrics(query)
     }
   )
+
+  // Local translated lyrics loader — reads _trans.lrc file
+  ipcMain.handle(
+    'lyrics:getTranslated',
+    async (event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
+      assertTrustedIpcSender(event, 'lyrics translated IPC')
+      const safeFileName = basename(
+        normalizeIpcString(fileName, 'lyrics file name', MAX_LYRICS_FILE_NAME_LENGTH)
+      )
+      if (!safeFileName) return null
+      let resolvedFilePath: string | null = null
+      try {
+        resolvedFilePath = filePath
+          ? await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'lyrics audio file path'))
+          : null
+      } catch {
+        return null
+      }
+      let resolvedDir = resolvedFilePath ? dirname(resolvedFilePath) : null
+      if (!resolvedDir) {
+        try {
+          resolvedDir = await resolveAuthorizedLibraryDirectory(
+            normalizeLocalPath(dir, 'lyrics directory')
+          )
+        } catch {
+          return null
+        }
+      }
+      try {
+        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_trans.lrc`)
+        const lrc = decodeLyrics(await readFile(lrcPath)).text
+        if (lrc) return lrc
+      } catch {
+        // no _trans.lrc file found
+      }
+      return null
+    }
+  )
+
+  // Local romanized lyrics loader — reads _roma.lrc file
+  ipcMain.handle(
+    'lyrics:getRomanized',
+    async (event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
+      assertTrustedIpcSender(event, 'lyrics romanized IPC')
+      const safeFileName = basename(
+        normalizeIpcString(fileName, 'lyrics file name', MAX_LYRICS_FILE_NAME_LENGTH)
+      )
+      if (!safeFileName) return null
+      let resolvedFilePath: string | null = null
+      try {
+        resolvedFilePath = filePath
+          ? await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'lyrics audio file path'))
+          : null
+      } catch {
+        return null
+      }
+      let resolvedDir = resolvedFilePath ? dirname(resolvedFilePath) : null
+      if (!resolvedDir) {
+        try {
+          resolvedDir = await resolveAuthorizedLibraryDirectory(
+            normalizeLocalPath(dir, 'lyrics directory')
+          )
+        } catch {
+          return null
+        }
+      }
+      try {
+        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}_roma.lrc`)
+        const lrc = decodeLyrics(await readFile(lrcPath)).text
+        if (lrc) return lrc
+      } catch {
+        // no _roma.lrc file found
+      }
+      return null
+    }
+  )
 }
