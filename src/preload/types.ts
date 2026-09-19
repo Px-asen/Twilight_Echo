@@ -7,7 +7,13 @@
   LoudnessAnalysisResult
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AppSettings } from '../shared/appSettings.ts'
+export type {
+  AudioDeviceProfile,
+  AudioDeviceProfileSettings,
+  AudioDeviceProfilesSnapshot
+} from '../shared/audioDeviceProfiles.ts'
 import type { TrackData } from '../shared/track.ts'
+export type { QueueWorkspaceDocument } from '../shared/queueWorkspace.ts'
 export type {
   NativeContextMenuItem,
   NativeContextMenuRequest

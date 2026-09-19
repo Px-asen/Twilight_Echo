@@ -287,3 +287,20 @@ test('plugin host exposes account login methods and reports its actual handler s
   assert.match(source, /'loginByEmailPassword'/)
   assert.match(source, /supportedMethods: Object\.keys\(handlers\)/)
 })
+
+test('server login requires both a declared method and login capability', () => {
+  const provider = {
+    id: 'jellyfin',
+    name: 'Jellyfin',
+    capabilities: ['login' as const],
+    supportedMethods: ['loginWithServer' as const]
+  }
+  assert.equal(providerSupportsMethod(provider, 'loginWithServer'), true)
+  assert.equal(providerSupportsMethod({ ...provider, capabilities: [] }, 'loginWithServer'), false)
+  assert.equal(
+    providerSupportsMethod({ ...provider, supportedMethods: [] }, 'loginWithServer'),
+    false
+  )
+  const host = readFileSync(new URL('./host.ts', import.meta.url), 'utf8')
+  assert.match(host, /'loginWithServer'/)
+})

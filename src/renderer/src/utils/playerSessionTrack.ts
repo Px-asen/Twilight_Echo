@@ -26,6 +26,7 @@ export function cloneTrackForPlaybackSession(track: Track): Track {
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,
+    networkSource: track.networkSource,
     streamUrl: source === 'local' ? track.streamUrl : null,
     format: track.format,
     sampleRate: track.sampleRate,

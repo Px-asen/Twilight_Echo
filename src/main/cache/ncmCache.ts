@@ -10,7 +10,7 @@ import {
 } from 'fs'
 import { rename, rm } from 'fs/promises'
 import { join, extname } from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import { runtime } from '../core/runtime'
@@ -180,8 +180,9 @@ export async function cacheNcmSong(
 ): Promise<string | null> {
   if (!Number.isFinite(songId) || songId <= 0 || !isSafeRemoteMediaUrl(url)) return null
 
+  const sourceKey = createHash('sha256').update(url).digest('hex')
   const cached = getCachedNcmSong(songId)
-  if (cached) return cached
+  if (cached && cached.includes(`${songId}.${sourceKey}.`)) return cached
 
   // 批量 8.1②：快速连切时只允许当前解析对应的一份全文件下载在跑。
   // 新解析到达即取消所有进行中的缓存下载（含同 songId 的旧 URL 重解析）。
@@ -214,7 +215,7 @@ export async function cacheNcmSong(
       if (!res.body) throw new Error('响应没有内容流')
       const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
       const dir = getNcmCacheDir()
-      const target = join(dir, `${songId}${ext}`)
+      const target = join(dir, `${songId}.${sourceKey}${ext}`)
       // 流式落盘：整文件不经内存（无损单曲 50-150MB）；先写 .part，完成才原子
       // rename 为成品，中断只会留下可清理的 .part 而不会混入“成品”。
       const partPath = `${target}.${randomUUID()}.part`
@@ -229,7 +230,7 @@ export async function cacheNcmSong(
         await rm(partPath, { force: true }).catch(() => undefined)
         throw error
       }
-      rememberNcmCacheEntry(songId, dir, `${songId}${ext}`)
+      rememberNcmCacheEntry(songId, dir, `${songId}.${sourceKey}${ext}`)
       pruneNcmCacheDir(dir)
       return target
     } finally {

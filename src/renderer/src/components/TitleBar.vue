@@ -25,6 +25,7 @@ defineEmits<{
   login: [providerId?: string | null]
   settings: []
   plugins: []
+  commands: []
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
@@ -121,6 +122,15 @@ function close(): void {
       </button>
       <button class="settings-btn" title="设置" @click="$emit('settings')">
         <i class="pi pi-cog"></i>
+      </button>
+      <button
+        class="settings-btn command-palette-trigger"
+        title="命令面板 (Ctrl+K / ⌘K)"
+        aria-label="打开命令面板"
+        aria-keyshortcuts="Control+K Meta+K"
+        @click="$emit('commands')"
+      >
+        <i class="pi pi-search" aria-hidden="true"></i>
       </button>
       <button class="plugins-btn" title="扩展中心" @click="$emit('plugins')">
         <PuzzleIcon />

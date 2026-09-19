@@ -3,6 +3,9 @@ import test from 'node:test'
 import { shallowRef } from 'vue'
 import type { Track } from '../../types/music.ts'
 import { createRemoteControlBridge } from './remoteControlBridge.ts'
+import { createQueueCommandController } from './queueCommandController.ts'
+import { toPlaybackQueueSnapshots } from '@renderer/utils/playbackQueueVirtualization.ts'
+import type { PlayMode } from '@renderer/types/settings'
 
 const track = (id: string, title: string): Track => ({
   id,
@@ -16,6 +19,58 @@ const track = (id: string, title: string): Track => ({
   cover: '',
   lyrics: '',
   source: 'local'
+})
+
+test('remote revisions follow real queue removal and undo and cannot reuse a stale duplicate index', async (t) => {
+  const tracks = shallowRef([track('a', 'Alpha'), track('b', 'Beta')])
+  const queue = shallowRef(
+    toPlaybackQueueSnapshots([tracks.value[0], tracks.value[0], tracks.value[1]])
+  )
+  const originalQueue = shallowRef([...queue.value])
+  const currentTrack = shallowRef<Track | null>(queue.value[1])
+  const queueIndex = shallowRef(1)
+  const playMode = shallowRef<PlayMode>('sequential')
+  const commands = createQueueCommandController({
+    queue,
+    originalQueue,
+    currentTrack,
+    queueIndex,
+    playMode,
+    getPosition: () => 0,
+    prepareSelection: (track) => {
+      currentTrack.value = track
+    },
+    onMutation: () => {}
+  })
+  t.after(commands.dispose)
+  const bridge = createRemoteControlBridge({
+    tracks,
+    queue,
+    queueIndex,
+    playMode,
+    playlists: shallowRef([]),
+    getPlaylistTracks: () => [],
+    playTrack: async () => {},
+    enqueueTrack: (track) => {
+      commands.add([track], queue.value.length, originalQueue.value.length)
+    },
+    removeQueueItem: commands.remove,
+    jumpQueue: () => {},
+    setPlayMode: () => {}
+  })
+  const page = bridge.browse({ view: 'queue', query: '', offset: 0, limit: 40 })
+  await bridge.command({ action: 'removeQueue', index: 0, revision: page.revision! })
+  assert.equal(queueIndex.value, 0)
+  assert.equal(currentTrack.value?.queueEntryId, queue.value[0].queueEntryId)
+  const afterRemoval = bridge.snapshot().queueRevision
+  assert.equal(commands.undo(), true)
+  assert.ok(bridge.snapshot().queueRevision > afterRemoval)
+  assert.equal(queueIndex.value, 1)
+  await assert.rejects(
+    bridge.command({ action: 'removeQueue', index: 0, revision: page.revision! }),
+    /queue_changed/
+  )
+  assert.equal(queue.value.length, 3)
 })
 
 test('remote bridge returns opaque bounded pages and executes a selected track', async () => {

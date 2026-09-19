@@ -630,7 +630,7 @@ test('protocol-relative stream URLs are normalized to https', async () => {
   }
 })
 
-test('prefers a completed disk cache path over a network playback URL', async () => {
+test('revalidates legacy disk cache through the current account before playback', async () => {
   const cachedPath = 'D:\\Cache\\ncm-cache\\90.flac'
   let networkCalls = 0
   let registeredProvider = null
@@ -672,13 +672,16 @@ test('prefers a completed disk cache path over a network playback URL', async ()
   assert.ok(registeredProvider)
 
   try {
-    assert.equal(await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }), cachedPath)
-    assert.equal(networkCalls, 0)
+    assert.equal(
+      await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }),
+      'https://music.example/90.flac'
+    )
+    assert.equal(networkCalls, 1)
     assert.equal(
       await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }, { force: true }),
       'https://music.example/90.flac'
     )
-    assert.equal(networkCalls, 1)
+    assert.equal(networkCalls, 2)
   } finally {
     ncmProvider.deactivate()
   }
@@ -2342,6 +2345,76 @@ test('lyrics lookup preserves a business error when both lyric endpoints fail', 
       provider.getLyrics({ id: 'ncm:90', filePath: 'ncm:90', source: 'ncm' }),
       /NetEase code 460/
     )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('membership upgrade resolves full audio after trial without reusing trial caches', async () => {
+  let member = false
+  const writes = []
+  const provider = await activateProvider(
+    async () => ({
+      code: 200,
+      data: [
+        {
+          code: 200,
+          url: member ? 'https://music.example/full.mp3' : 'https://music.example/trial.mp3',
+          freeTrialInfo: member ? null : { start: 0, end: 30 }
+        }
+      ]
+    }),
+    undefined,
+    {
+      ncm: {
+        getCachedSong: async () => 'D:/Cache/79.mp3',
+        cacheSong: async (_id, url) => {
+          writes.push(url)
+          return null
+        }
+      }
+    }
+  )
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/trial.mp3')
+    assert.deepEqual(writes, [])
+    member = true
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/full.mp3')
+    assert.deepEqual(writes, ['https://music.example/full.mp3'])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('signing in again clears resolved audio and ignores downloads from the old session', async () => {
+  let finishOldDownload
+  let calls = 0
+  const provider = await activateProvider(
+    async (path) =>
+      path.startsWith('/login/status')
+        ? { data: { profile: { userId: 1 } } }
+        : {
+            code: 200,
+            data: [{ code: 200, url: `https://music.example/${++calls}.mp3` }]
+          },
+    undefined,
+    {
+      ncm: {
+        cacheSong: async () =>
+          new Promise((resolve) => {
+            finishOldDownload = resolve
+          })
+      }
+    }
+  )
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/1.mp3')
+    const finish = finishOldDownload
+    await provider.openOfficialLogin()
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
+    finish('D:/Cache/old.mp3')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
   } finally {
     ncmProvider.deactivate()
   }

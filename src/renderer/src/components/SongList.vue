@@ -1114,6 +1114,14 @@ function formatExcludedAt(value: string): string {
   return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toLocaleString() : ''
 }
 
+function appendActionTracksToQueue(actionTracks: Track[]): void {
+  if (actionTracks.length === 0) return
+  playbackStore.appendQueueTracks(actionTracks)
+  repairMessage.value = `已添加 ${actionTracks.length} 首到播放队列`
+  clearSelection()
+  closeContextMenu()
+}
+
 function removeActionTracksFromCurrentPlaylist(actionTracks: Track[]): void {
   const playlistName = currentPlaylistName.value
   if (!playlistName || actionTracks.length === 0) return
@@ -2112,6 +2120,14 @@ const infoTrack = shallowRef<Track | null>(null)
                   <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
                 </button>
                 <button
+                  type="button"
+                  class="selection-btn"
+                  @click="appendActionTracksToQueue(selectionActionTracks)"
+                >
+                  <i class="pi pi-list"></i>
+                  <span>添加到播放队列</span>
+                </button>
+                <button
                   v-if="selectedLocalTrackCount > 0"
                   type="button"
                   class="selection-btn"
@@ -2335,6 +2351,14 @@ const infoTrack = shallowRef<Track | null>(null)
                 @click.stop
                 @close="closeContextMenu"
               >
+                <div
+                  class="menu-item"
+                  data-te-interactive
+                  @click="appendActionTracksToQueue(contextActionTracks)"
+                >
+                  <i class="pi pi-list"></i>
+                  <span>添加到播放队列{{ contextActionLabel }}</span>
+                </div>
                 <div
                   v-if="canPlayNextSelectedTrack && contextActionCount <= 1"
                   class="menu-item"

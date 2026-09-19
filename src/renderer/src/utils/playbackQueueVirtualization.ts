@@ -43,6 +43,7 @@ export function toPlaybackQueueSnapshot(track: Track): Track {
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,
+    networkSource: track.networkSource,
     streamUrl: track.streamUrl ?? null,
     streamQuality: track.streamQuality,
     format: track.format,

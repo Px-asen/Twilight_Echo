@@ -78,7 +78,17 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
   `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
 - `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
 
+统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词、设备档案，以及队列撤销、清空、保存/管理会话和实际播放顺序；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。
+
+队列操作由 `stores/player/queueCommandController.ts` 维护稳定队列项 ID、revision 和有界撤销栈，`playbackSelectionController.ts` 保证重复曲目按具体队列项选择。命名会话的 CRUD、来源重解析与恢复分别由 `queueWorkspaceStore.ts`、`queueSessionSources.ts` / `queueSessionRestore.ts` 和 `queueSessionController.ts` 负责；恢复默认暂停，单独提供“恢复并播放”。`playbackHistoryController.ts` 仅在实际播放成功后记录顺序，最近 200 次开始与累计统计分开持久化。共享 DTO `src/shared/queueWorkspace.ts` 经 preload data API 和 `main/ipc/queueWorkspaceIpc.ts` 写入版本化 `queue-workspace.json`；最多 20 个会话、每个 20,000 项、合计 40,000 项和 32 MiB。详细行为与失败处理见 [队列虚拟化](./playback-queue-virtualization.md) 和 [歌单生命周期](./playlist-lifecycle.md#named-queue-sessions)。
+
+Renderer TS 测试通过 `scripts/register-renderer-aliases.mjs` 为 Node `--test` 解析 `@renderer/`，与应用构建使用同一模块位置，不引入额外测试框架。命令面板的键盘、组合输入、失败重试、关闭失效及 20,000 条结果的有界渲染由隐藏 Electron 行为测试覆盖。
+
 ## 音频链路
+
+设备档案位于播放设置和 HiFi 输出页，支持从当前配置创建、命名、复制、编辑、删除及按稳定设备 ID 自动应用。版本化 `audioDeviceProfiles` 保存后端、独占、完整 buffer/routing、软件音量上限、SRC/DSD 策略和 DSP 场景引用；场景 graph 不复制进档案，设备 SRC 作为运行时 output-stage override 独立持久化。手工调整输出或 DSP 后清除“已应用档案”标记，保留实际设置和音量上限；编辑或删除已应用档案也不会突然改变播放。
+
+档案应用仅经 `audioEngineManager` 的 `DeviceProfiles` 与 `OutputRouter`：串行验证、静音、backend/device/config、DSP plugin chain、DSP revision ACK、输出状态 ACK、持久化，再恢复不超过档案上限的原音量。新的选择淘汰旧请求；失败回滚输出、DSP 和已保存选择，回滚失败则停止播放并显示原因。自动应用只响应重新出现且唯一匹配的稳定 ID，同名、缺失设备、冲突档案或已删除场景均有明确反馈。重启恢复档案选择与上限；服务崩溃后的恢复与配置事务串行，仍等待结构化 ready 且不自动续播。软件上限不是硬件音量或声压保证，也不会自动设置 Unity。对应软件回归位于 `audio/deviceProfiles.test.ts`；真实 DAC 切换未作为本轮验证证据。
 
 ASIO 隔离进程通过回调事件唤醒渲染线程，不依赖 `sleep(1ms)` 轮询；事件可以合并，待处理工作仍以共享内存队列为准。停止线程时主动唤醒，进程退出和回调停滞仍由现有 watchdog 处理。能力枚举只查询，不切换 DSD I/O 模式或设置采样率；PCM 模式下查不到 DSD 倍率时保留未知状态，实际 Native DSD 请求再协商。`AudioFormat.dopEncoded` 只由 DoP 载体构造设置，并经 ASIO helper 协议 v3 传递；普通高采样率 24-bit PCM 不验证 DoP 标记，也不产生 DoP 错误证据。
 
@@ -134,6 +144,7 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 - 主窗口前台空格切换播放/暂停，输入、可编辑区域、按钮、菜单和对话框保留自身键盘行为；全局音量增减默认使用 `CommandOrControl+Alt+Up/Down`，步进 5%，允许在快捷键设置中修改。跨进程快捷键载荷统一在 `src/shared/playerShortcuts.ts`。
 - 全局字体设置支持 `local:<字体名称>`，复用 main 字体枚举与既有字体 CSS 变量，保留 CJK 回退。Windows 字体注册表经 PowerShell 显式 UTF-8 输出，避免中文名称被按错误代码页解码。
 - 均衡器模式切换和参数编辑保留旁路状态；明确点击启用才开启 EQ。合并规则在 `equalizerSettingsPatch.ts`。
+- 参数 EQ 使用随浅色／深色主题切换的全画布工作区；频段面板在遮挡所选节点时上移，可用宽度小于 800px 时停靠在图下。关闭面板不会删除频段；删除最后一段后保留空画布，参数预设按自身模式恢复 0–32 个频段。频率、增益、Q 旋钮支持上下拖动、滚轮、方向键及数值输入，Shift 精调；频率和 Q 使用对数映射，普通拖动 180px 覆盖量程。拖动仅预览，结束手势或滚轮停止 140ms 后沿现有提交链写入；切换频段或执行命令前结束待提交编辑。自动增益补偿不在拖动预览期间单独触发引擎写入。频谱沿用播放器可视化数据，电平标示实际 Peak／RMS。
 - 登录页返回平台列表、切换账号/登录方式和销毁组件后，旧二维码生成/轮询结果不再改写当前页面或触发跳转。
 - 本地歌曲列表及流媒体歌单详情的歌曲标题打开信息，艺人/专辑链接与播放点击隔离；网易云曲目保留 provider 专辑 ID。缺少专辑身份时提示而不猜测同名专辑。
 - HiFi 面板 Teleport 到 body，并按顶栏实际高度避让；面板内部点击不会触发播放栏的外部点击关闭。菜单坐标使用 CSS viewport 坐标并限于视口边界。常用控件 hover 不移动命中区域；两种侧栏和播放栏避让复用 `--te-motion-panel`。
@@ -354,3 +365,9 @@ renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层�
 本地与流媒体歌单总览均支持长按歌单卡片拖动排序，松手后保存本机显示顺序；搜索后只调整可见歌单的相对位置。歌单内歌曲未接入此次长按排序，保留原有曲目排序与播放行为。长按交互提供落点提示、边缘滚动、Esc 取消和防误点击；键盘使用 Alt + ↑ / ↓ 调整。歌曲列表的歌名、歌手与专辑链接按文字内容收缩，长文本仍在列宽内省略，空白区域不触发详情跳转。
 
 本地页面通过 Vue `Transition mode="out-in"` 切换，`SongList` 必须保留单一元素根节点。歌曲信息弹窗置于列表根容器内部，仍经 Teleport 显示；不得与根容器并列，否则离开歌曲列表后切换可能停在空白占位。`LocalViewTransition.test.ts` 使用实际模板的根节点结构验证首页、列表、其他本地页及模式切换，并覆盖弹窗开启状态。
+
+网易云播放在会话首次解析及地址缓存到期后，先通过当前账号解析在线地址，再复用匹配完整来源 URL 的磁盘缓存。旧版仅按歌曲 ID 保存的缓存不参与直接播放；试听响应不写入播放缓存，重新登录清空会话缓存，避免开通会员后继续播放旧试听文件。
+
+本地歌曲列表多选工具栏与右键菜单支持一次性追加选中歌曲到播放队列，复用批量队列命令，不切换当前播放曲目；顺序播放按当前列表顺序追加，随机模式沿用队列随机策略。批量加入歌单与从歌单移除沿用已有多选操作。
+
+播放栏的左、中、右区域显式占据第一行第 1、2、3 列，避免主题装饰节点参与网格自动排位后使操作区落到第二行；标准、迷你和紧凑形态沿用同一列归属。

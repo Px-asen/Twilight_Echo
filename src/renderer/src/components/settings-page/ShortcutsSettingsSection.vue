@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { GlobalShortcutSettings, PlayerShortcutStatus } from '../../types/settings'
+import { isCommandPaletteAccelerator } from '../../../../shared/commandPaletteShortcut.ts'
 
 type BindingKey = keyof GlobalShortcutSettings
 type StatusTone = 'idle' | 'ok' | 'failed'
@@ -60,6 +61,7 @@ const KEY_LABELS: Record<string, string> = {
 const recordingKey = ref<BindingKey | null>(null)
 const conflictBinding = ref<BindingKey | null>(null)
 const conflictWith = ref<BindingKey | null>(null)
+const reservedConflict = ref(false)
 
 const bindingValues = computed<Record<BindingKey, string>>(() => ({
   volumeUp: props.shortcutBindings.volumeUp,
@@ -110,6 +112,7 @@ const statusSummary = computed<{ tone: StatusTone; text: string }>(() => {
 })
 
 const conflictTip = computed(() => {
+  if (reservedConflict.value) return 'Ctrl+K / ⌘K 已保留给应用内命令面板，已保留原值'
   if (!conflictBinding.value) return ''
   const other = EDITABLE_BINDINGS.find((item) => item.key === conflictWith.value)
   return other ? `与「${other.label}」的组合键重复，已保留原值` : '与其他快捷键冲突，已保留原值'
@@ -217,6 +220,12 @@ function handleShortcutKeydown(key: BindingKey, event: KeyboardEvent): void {
 function applyBinding(key: BindingKey, accelerator: string): void {
   const trimmed = accelerator.trim()
   if (!trimmed) return
+  reservedConflict.value = isCommandPaletteAccelerator(trimmed)
+  if (reservedConflict.value) {
+    conflictBinding.value = key
+    conflictWith.value = null
+    return
+  }
   const conflict = findConflict(key, trimmed)
   conflictBinding.value = conflict ? key : null
   conflictWith.value = conflict
@@ -226,6 +235,7 @@ function applyBinding(key: BindingKey, accelerator: string): void {
 }
 
 function resetBinding(key: BindingKey): void {
+  reservedConflict.value = false
   const conflict = findConflict(key, DEFAULT_BINDINGS[key])
   conflictBinding.value = conflict ? key : null
   conflictWith.value = conflict
@@ -234,12 +244,14 @@ function resetBinding(key: BindingKey): void {
 }
 
 function resetAllBindings(): void {
+  reservedConflict.value = false
   conflictBinding.value = null
   conflictWith.value = null
   emit('update:shortcutBindings', { ...DEFAULT_BINDINGS })
 }
 
 function onRecorderFocus(key: BindingKey): void {
+  reservedConflict.value = false
   recordingKey.value = key
   conflictBinding.value = null
   conflictWith.value = null
@@ -256,6 +268,7 @@ function onRecorderBlur(key: BindingKey): void {
       <i class="pi pi-key"></i>
       <h2>快捷键</h2>
     </div>
+    <p class="shortcut-panel-hint">Ctrl+K / ⌘K：打开应用内命令面板。无需启用全局快捷键。</p>
     <div class="setting-list">
       <div class="setting-item">
         <div class="setting-copy">

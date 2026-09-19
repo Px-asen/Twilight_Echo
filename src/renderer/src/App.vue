@@ -29,6 +29,10 @@ const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStu
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
+const CommandPalette = defineAsyncComponent(() => import('@renderer/components/CommandPalette.vue'))
+const QueueWorkspaceDialog = defineAsyncComponent(
+  () => import('@renderer/components/player-bar/QueueWorkspaceDialog.vue')
+)
 const PluginExtensionPage = defineAsyncComponent(
   () => import('./components/PluginExtensionPage.vue')
 )
@@ -47,6 +51,7 @@ import { getStartupSnapshot } from './app/startupSnapshot'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
+import { useCommandPalette } from '@renderer/app/useCommandPalette.ts'
 import { useBackStack } from './app/useBackStack'
 import { hasDismissLayer } from '@renderer/app/useDismissLayer'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
@@ -96,6 +101,7 @@ const {
   showDspRackPage,
   activePluginPage,
   settingsInitialSection,
+  settingsNavigationTarget,
   activeCategory,
   activeFilter,
   songlistTransitionName,
@@ -353,11 +359,17 @@ const {
   restorePlaybackSession,
   createPlaybackSession,
   rehydrateCurrentTrackFromLibrary,
+  queueWorkspace,
+  queueSessions,
+  canUndoQueue,
+  queueUndoLabel,
+  undoQueue,
   visualizerActive
 } = usePlayerStore()
 useDesktopLyricsPublisher()
 const { setAdaptiveMedia } = useThemeStore()
 const mediaProviders = useMediaProviders()
+const commandPalette = useCommandPalette(navigation)
 
 function handlePlayerBarArtistClick(): void {
   const track = currentTrack.value
@@ -643,6 +655,7 @@ onMounted(async () => {
         await flushPlaylistsForExit()
         await flushSoftwareVolumePersist()
         await playbackSessionPersistence.savePlaybackSessionForQuit()
+        await queueWorkspace.flush()
       })
       playbackSessionPersistence.startAutosaveWatchers()
     })
@@ -873,6 +886,7 @@ useLiquidGlassEnvironment({
         @login="handleTitleLogin"
         @settings="toggleSettingsPage"
         @plugins="togglePluginPage"
+        @commands="commandPalette.open"
       />
     </div>
     <div v-if="showLocalSidebar" class="app-shell-navigation">
@@ -913,6 +927,7 @@ useLiquidGlassEnvironment({
             key="local-aggregate"
             :has-player="hasPlayerBar"
             surface="local"
+            :initial-playlist-id="activeFilter"
           />
           <SongList
             v-else-if="localViewVisible"
@@ -1008,6 +1023,7 @@ useLiquidGlassEnvironment({
       <SettingsPage
         v-if="showSettingsPage"
         :initial-section="settingsInitialSection"
+        :navigation-target="settingsNavigationTarget"
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
         @open-theme-studio="openThemeStudioPage"
@@ -1015,9 +1031,29 @@ useLiquidGlassEnvironment({
       />
     </Transition>
   </div>
+  <CommandPalette
+    v-if="commandPalette.isOpen.value"
+    :actions="commandPalette.actions.value"
+    :search="commandPalette.search"
+    :playlists="commandPalette.playlists"
+    :tracks="commandPalette.tracks"
+    :play-track="commandPalette.playTrack"
+    :open-playlist="commandPalette.openPlaylist"
+    @close="commandPalette.close"
+  />
   <Transition name="onboarding-page">
     <OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" />
   </Transition>
+  <QueueWorkspaceDialog
+    v-if="queueSessions.open.value"
+    :workspace="queueWorkspace"
+    :controller="queueSessions"
+    :queue-length="queue.length"
+    :can-undo="canUndoQueue"
+    :undo-label="queueUndoLabel"
+    :undo="undoQueue"
+    @close="queueSessions.open.value = false"
+  />
   <AppNoticeHost />
 </template>
 

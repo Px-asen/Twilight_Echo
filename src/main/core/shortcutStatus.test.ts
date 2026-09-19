@@ -36,3 +36,19 @@ test('records registered and failed shortcut accelerators', () => {
   assert.equal(failed?.registered, false)
   assert.match(failed?.error ?? '', /占用|冲突|失败/)
 })
+
+test('a saved command palette conflict is reported without registering a second action', () => {
+  let calls = 0
+  const statuses = buildPlayerShortcutStatuses(
+    [{ accelerator: 'CommandOrControl+K', action: 'playPause', label: '播放' }],
+    true,
+    () => {
+      calls += 1
+      return true
+    }
+  )
+  assert.equal(calls, 0)
+  assert.equal(statuses[0].registered, false)
+  assert.match(statuses[0].error ?? '', /命令面板/)
+  assert.equal(statuses[0].accelerator, 'CommandOrControl+K')
+})

@@ -1,8 +1,8 @@
 import type { Ref } from 'vue'
-import type { Track } from '../../types/music'
-import type { PlayMode } from '../../types/settings'
-import { shuffleArray } from '../../utils/playerQueueUtils.ts'
-import { toPlaybackQueueSnapshots } from '../../utils/playbackQueueVirtualization.ts'
+import type { Track } from '@renderer/types/music'
+import type { PlayMode } from '@renderer/types/settings'
+import { shuffleArray } from '@renderer/utils/playerQueueUtils.ts'
+import { createQueueCommandController } from '@renderer/stores/player/queueCommandController.ts'
 
 export type PersonalizedStreamKey = 'fm' | 'radar'
 export interface PersonalizedStreamSession {
@@ -26,10 +26,25 @@ export interface PlaybackQueueControllerOptions {
   queueNativeQueueStateSync: () => Promise<void>
   setAudioEngineError: (error: string | null) => void
   clearAutomaticLyricsBaselines: () => void
+  getPosition: () => number
+  prepareSelection: (track: Track | null, position: number) => void
+  onQueueNotice?: (label: string, revision: number) => void
+  exitHeartModeForQueueEdit: () => void
 }
 
 export function createPlaybackQueueController(options: PlaybackQueueControllerOptions) {
   let personalizedStreamSessionSequence = 0
+  const commands = createQueueCommandController({
+    ...options,
+    onNotice: options.onQueueNotice,
+    beforeUndo: endPersonalizedStream,
+    onMutation: () => {
+      options.persistPlaybackSessionAfterQueueMutation()
+      void options.queueNativeQueueStateSync().catch((error) => {
+        options.setAudioEngineError(error instanceof Error ? error.message : String(error))
+      })
+    }
+  })
 
   function getPersonalizedStreamEntryId(track: Track | null): string | null {
     if (!track) return null
@@ -121,40 +136,24 @@ export function createPlaybackQueueController(options: PlaybackQueueControllerOp
     }
 
     options.queue.value = [...options.originalQueue.value]
-    options.queueIndex.value = options.queue.value.findIndex((track) => track.id === current.id)
+    options.queueIndex.value = options.queue.value.findIndex((track) =>
+      current.queueEntryId ? track.queueEntryId === current.queueEntryId : track.id === current.id
+    )
     if (options.queueIndex.value === -1) options.queueIndex.value = 0
   }
 
-  function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
-    endPersonalizedStream()
-    const snapshots = toPlaybackQueueSnapshots(nextQueue)
-    options.queue.value = snapshots
-    options.originalQueue.value = [...snapshots]
-    options.queueIndex.value =
-      snapshots.length === 0 ? -1 : Math.max(0, Math.min(nextIndex, snapshots.length - 1))
-    options.persistPlaybackSessionAfterQueueMutation()
-    void options.queueNativeQueueStateSync().catch((error) => {
-      options.setAudioEngineError(error instanceof Error ? error.message : String(error))
-    })
-  }
-
   function enqueueTrack(track: Track): void {
-    const next = [...options.queue.value, track]
-    commitQueueEdit(next, options.queueIndex.value)
+    options.exitHeartModeForQueueEdit()
+    endPersonalizedStream()
+    commands.add([track], options.queue.value.length, options.originalQueue.value.length)
   }
 
   function appendQueueTracks(tracks: readonly Track[]): void {
     if (tracks.length === 0) return
+    options.exitHeartModeForQueueEdit()
     endPersonalizedStream()
-    const additions = toPlaybackQueueSnapshots(tracks)
-    options.originalQueue.value = [...options.originalQueue.value, ...additions]
-    options.queue.value = [
-      ...options.queue.value,
-      ...(options.playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
-    ]
-    options.persistPlaybackSessionAfterQueueMutation()
-    void options.queueNativeQueueStateSync().catch((error) => {
-      options.setAudioEngineError(error instanceof Error ? error.message : String(error))
+    commands.add(tracks, options.queue.value.length, options.originalQueue.value.length, {
+      shuffle: options.playMode.value === 'shuffle'
     })
   }
 
@@ -163,67 +162,50 @@ export function createPlaybackQueueController(options: PlaybackQueueControllerOp
     tracks: readonly Track[]
   ): boolean {
     if (tracks.length === 0 || !isPersonalizedStreamSessionCurrent(session)) return false
-    const additions = toPlaybackQueueSnapshots(tracks)
+    const additions = commands.add(
+      tracks,
+      options.queue.value.length,
+      options.originalQueue.value.length,
+      {
+        shuffle: options.playMode.value === 'shuffle',
+        undoable: false
+      }
+    )
     for (const track of additions) {
       if (track.queueEntryId) options.personalizedStreamEntryIds.add(track.queueEntryId)
     }
-    options.originalQueue.value = [...options.originalQueue.value, ...additions]
-    options.queue.value = [
-      ...options.queue.value,
-      ...(options.playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
-    ]
     refreshPersonalizedStreamRemaining()
-    options.persistPlaybackSessionAfterQueueMutation()
-    void options.queueNativeQueueStateSync().catch((error) => {
-      options.setAudioEngineError(error instanceof Error ? error.message : String(error))
-    })
     return true
   }
 
   function playNextTrack(track: Track): void {
+    options.exitHeartModeForQueueEdit()
+    endPersonalizedStream()
     const insertAt = options.queueIndex.value >= 0 ? options.queueIndex.value + 1 : 0
-    const next = [...options.queue.value]
-    next.splice(insertAt, 0, track)
-    commitQueueEdit(next, options.queueIndex.value)
+    const originalIndex = options.originalQueue.value.findIndex(
+      (item) => item.queueEntryId === options.currentTrack.value?.queueEntryId
+    )
+    commands.add([track], insertAt, originalIndex + 1)
   }
 
   function removeQueueItem(index: number): void {
-    if (!Number.isInteger(index) || index < 0 || index >= options.queue.value.length) return
-    const next = [...options.queue.value]
-    next.splice(index, 1)
-    const nextIndex =
-      index < options.queueIndex.value ? options.queueIndex.value - 1 : options.queueIndex.value
-    commitQueueEdit(next, nextIndex)
+    options.exitHeartModeForQueueEdit()
+    endPersonalizedStream()
+    commands.remove(index)
   }
 
   function clearQueue(): void {
-    commitQueueEdit([], -1)
-    options.currentTrack.value = null
-    options.isPlaying.value = false
+    if (!options.queue.value.length && !options.currentTrack.value) return
+    options.exitHeartModeForQueueEdit()
+    endPersonalizedStream()
+    commands.replace([], -1)
     options.clearAutomaticLyricsBaselines()
   }
 
   function reorderQueue(fromIndex: number, toIndex: number): void {
-    if (
-      !Number.isInteger(fromIndex) ||
-      !Number.isInteger(toIndex) ||
-      fromIndex < 0 ||
-      toIndex < 0 ||
-      fromIndex >= options.queue.value.length ||
-      toIndex >= options.queue.value.length ||
-      fromIndex === toIndex
-    )
-      return
-    const next = [...options.queue.value]
-    const [moved] = next.splice(fromIndex, 1)
-    next.splice(toIndex, 0, moved)
-    let nextIndex = options.queueIndex.value
-    if (options.queueIndex.value === fromIndex) nextIndex = toIndex
-    else if (fromIndex < options.queueIndex.value && toIndex >= options.queueIndex.value)
-      nextIndex--
-    else if (fromIndex > options.queueIndex.value && toIndex <= options.queueIndex.value)
-      nextIndex++
-    commitQueueEdit(next, nextIndex)
+    options.exitHeartModeForQueueEdit()
+    endPersonalizedStream()
+    commands.move(fromIndex, toIndex)
   }
 
   function saveQueueAsPlaylist(
@@ -240,7 +222,7 @@ export function createPlaybackQueueController(options: PlaybackQueueControllerOp
     startPersonalizedStream,
     isPersonalizedStreamSessionCurrent,
     applyPendingRendererPlayModeAtBoundary,
-    commitQueueEdit,
+    commands,
     enqueueTrack,
     appendQueueTracks,
     appendPersonalizedStreamTracks,

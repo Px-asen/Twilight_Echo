@@ -182,3 +182,53 @@ test('a late unified search page cannot overwrite a newer request with the same 
   )
   assert.equal(search.loading.value, false)
 })
+
+test('clearing search aborts in-flight requests and cannot publish late results', async () => {
+  let release!: () => void
+  let signal: AbortSignal | undefined
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const search = createUnifiedMusicSearch({
+    getLocalTracks: () => [],
+    searchAllSongs: async (options) => {
+      signal = options.signal
+      await pending
+      return unifiedResult(localTrack)
+    }
+  })
+  const request = search.search('moon')
+  assert.equal(search.loading.value, true)
+  search.clear()
+  assert.equal(signal?.aborted, true)
+  release()
+  await request
+  assert.deepEqual(search.logicalItems.value, [])
+  assert.equal(search.loading.value, false)
+  assert.equal(search.total.value, 0)
+})
+
+test('obsolete network-library reads do not start provider searches', async () => {
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const queries: string[] = []
+  const search = createUnifiedMusicSearch({
+    getLocalTracks: () => [],
+    searchNetworkLibrary: async (query) => {
+      if (query === 'old') await pending
+      return []
+    },
+    searchAllSongs: async ({ query }) => {
+      queries.push(query)
+      return unifiedResult(localTrack)
+    }
+  })
+  const old = search.search('old')
+  await search.search('new')
+  release()
+  await old
+  assert.deepEqual(queries, ['new'])
+  assert.equal(search.query.value, 'new')
+})

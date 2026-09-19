@@ -36,6 +36,10 @@ pnpm run build
 
 ## sourceExact / outputPerfect 策略
 
+完整设备档案由 `shared/audioDeviceProfiles.ts` 定义，`audio/deviceProfiles.ts` 在 manager 内编排。手动输出、DSP 场景/处理设置与档案请求共用 OutputRouter 配置队列，默认设备跟随和服务 ready 恢复也进入该队列。档案使用稳定设备 ID，保留已有 DSD 策略与独立路由，场景只保存 ID；SRC override 保存在档案设置中，解析 graph 时覆盖输出级，不修改原场景节点。档案在静音窗口内等待 DSP 与输出 ACK，旧选择到完成应用前保持权威；写入或解除静音失败也恢复旧持久化状态。DSD 独立路由与主 PCM 设备不同时，必须有与实际后端/设备一致的 native 路由诊断才能接受 ACK。服务世代改变会使在途事务失败，恢复任务随后重建已提交配置与队列，禁止续播。
+
+活动档案的 `volumeCeiling` 在所有 manager 音量写入、renderer 音量更新及设置归一化中生效；切换时只取原音量与新上限的较小值。设备不在播放状态时只能确认配置和设备目录可用，实际格式仍以开始播放后的 `outputInfo` 为准；档案存在或测试通过不代表物理设备验证通过。
+
 当前公共契约使用双状态：`sourceExact` 表示源文件级精确，`outputPerfect` 表示 decoded PCM 到后端实际输出期间没有额外处理或格式损伤。后端只上报实际输出格式和能力，最终状态由统一 evaluator 计算。
 
 `outputPerfect=true` 要求 backend capability、decoded PCM 与实际输出的采样率/位深/声道/sample format 完全匹配、无 resample、无 DSP/音量/routing 改变，并且本次播放 `pcmPassthrough=true`。`pcmPassthrough` 由 `AudioPipeline` 用 FFmpeg decoded PCM 与后端 actual output 事实比较得出；后端只上报事实。`sourceExact=true` 还要求源为无损且源格式与输出格式完全一致；MP3/AAC/OGG 等有损源可达成 `outputPerfect=true`，但不会达成 `sourceExact=true`。

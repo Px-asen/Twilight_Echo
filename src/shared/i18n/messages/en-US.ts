@@ -470,6 +470,7 @@ export const EN_US_MESSAGES: Record<string, string> = {
   'error.audio.exclusive_config_failed':
     'Could not apply the exclusive-mode configuration: {detail}',
   'error.audio.device_switch_failed': 'Could not switch the output device: {detail}',
+  'error.audio.device_profile_failed': 'Could not apply the device profile: {detail}',
   'error.audio.service_restarted_during_topology':
     'The audio service restarted while the output topology was being updated',
   'error.audio.service_restarted_during_ack':

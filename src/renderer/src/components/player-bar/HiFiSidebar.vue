@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import AudioDeviceProfilesPanel from '@renderer/components/settings-page/AudioDeviceProfilesPanel.vue'
 import {
   DSD_OUTPUT_MODE_OPTIONS,
   DSD_RATE_POLICY_OPTIONS,
@@ -868,6 +869,7 @@ const deckAccentVars = computed(() => {
 
           <!-- 输出 -->
           <section v-else-if="activeSection === 'output'" key="output" class="deck-stack">
+            <AudioDeviceProfilesPanel compact />
             <section class="deck-card">
               <div class="deck-card-label">
                 <span><em>01</em>BACKEND</span>

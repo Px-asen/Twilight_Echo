@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
+import AudioDeviceProfilesPanel from '@renderer/components/settings-page/AudioDeviceProfilesPanel.vue'
 import { computed, ref } from 'vue'
 import { useAudioOutputDspStore } from '../../stores/useAudioOutputDspStore'
 import { usePlayerStore } from '../../stores/usePlayerStore'
@@ -407,6 +408,7 @@ function setCrossfadeSeconds(event: Event): void {
     </div>
 
     <div v-if="audioEngineError" class="engine-error">{{ audioEngineError }}</div>
+    <AudioDeviceProfilesPanel />
 
     <div v-if="playbackInfo" class="output-diagnostic-panel">
       <div class="diagnostic-head">

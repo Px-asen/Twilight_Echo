@@ -21,6 +21,10 @@ import type {
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AudioEqPreset, AppSettings } from '../shared/appSettings.ts'
 import type {
+  AudioDeviceProfile,
+  AudioDeviceProfilesSnapshot
+} from '../shared/audioDeviceProfiles.ts'
+import type {
   DesktopLyricsBootstrap,
   DesktopLyricsClockSnapshot,
   DesktopLyricsSession,
@@ -721,6 +725,11 @@ interface AudioEngineAPI {
   setExclusiveMode: (enabled: boolean) => Promise<AudioOutputState>
   getExclusiveMode: () => Promise<boolean>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>
+  getDeviceProfiles: () => Promise<AudioDeviceProfilesSnapshot>
+  saveDeviceProfile: (profile: AudioDeviceProfile) => Promise<AudioDeviceProfilesSnapshot>
+  deleteDeviceProfile: (id: string) => Promise<AudioDeviceProfilesSnapshot>
+  applyDeviceProfile: (id: string) => Promise<AudioDeviceProfilesSnapshot>
+  onDeviceProfilesChanged: (callback: () => void) => () => void
   setAudioDevice: (device: string) => Promise<AudioOutputState>
   setOutputConfig: (config: OutputConfig) => Promise<OutputConfig>
   getOutputConfigApplyStatus: () => Promise<OutputConfigApplyStatus>
@@ -1038,6 +1047,15 @@ interface WindowAPI {
       expectedRevision: number
     ) => Promise<
       VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument>
+    >
+    loadQueueWorkspace: () => Promise<VersionedDataEnvelope<
+      import('../shared/queueWorkspace.ts').QueueWorkspaceDocument
+    > | null>
+    saveQueueWorkspace: (
+      document: import('../shared/queueWorkspace.ts').QueueWorkspaceDocument,
+      expectedRevision: number
+    ) => Promise<
+      VersionedDataEnvelope<import('../shared/queueWorkspace.ts').QueueWorkspaceDocument>
     >
     savePlaybackSession: (
       session: PlaybackSession,

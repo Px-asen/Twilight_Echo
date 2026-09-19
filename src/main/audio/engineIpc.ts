@@ -5,6 +5,7 @@ import { release } from 'node:os'
 import { join } from 'path'
 import { runtime } from '../core/runtime'
 import { sleepTimerService } from '../sleepTimer.ts'
+import { createDeviceProfileHandlers } from './deviceProfilesIpc.ts'
 import { registerNativeSleepTimerBoundaries } from './sleepTimerNativeBoundary.ts'
 import {
   createSettingsSnapshot,
@@ -60,7 +61,8 @@ import {
   broadcastPlayerLifecycleEvents,
   getEffectiveAudioProcessing,
   persistAndApplyAudioProcessingState,
-  persistDspSceneState
+  persistDspSceneState,
+  persistDeviceProfileCommit
 } from './state'
 import {
   normalizeFiniteNumber,
@@ -569,12 +571,14 @@ async function initializeAudioEngineRuntime(): Promise<void> {
       audioOutput: runtime.appSettings.audioOutput,
       audioDevice: runtime.appSettings.audioDevice,
       audioOutputConfig: runtime.appSettings.audioOutputConfig,
+      audioDeviceProfiles: runtime.appSettings.audioDeviceProfiles,
       audioProcessing: initialAudioProcessing,
       dspScenes: runtime.appSettings.dspScenes,
       dspPinnedSceneId: runtime.appSettings.dspPinnedSceneId
     },
     {
       audioServiceEntry: join(__dirname, 'audioEngineService.js'),
+      persistDeviceProfiles: persistDeviceProfileCommit,
       dspAssetPathResolver: (assetId) => runtime.dspAssetLibrary?.getKnownPath(assetId) ?? null,
       vst3StateAssetResolver: (assetId) =>
         runtime.dspAssetLibrary?.resolveVst3State(assetId) ?? {
@@ -622,6 +626,10 @@ async function initializeAudioEngineRuntime(): Promise<void> {
 
   runtime.audioEngineManager.on('queue-change', (queue) => {
     void runtime.pluginManager?.broadcastEvent('player:queue-change', { queue })
+  })
+
+  runtime.audioEngineManager.on('device-profiles-changed', () => {
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.deviceProfilesChanged)
   })
 
   runtime.audioEngineManager.on('error', (err: Error) => {
@@ -707,6 +715,13 @@ export function setupAudioEngineIpc(): void {
 }
 
 function registerAudioEngineIpcHandlers(): void {
+  const profiles = createDeviceProfileHandlers(ensureAudioEngineRuntime, (event) =>
+    assertTrustedIpcSender(event as Electron.IpcMainInvokeEvent, 'device profiles')
+  )
+  ipcMain.handle(IPC.audioEngine.getDeviceProfiles, profiles.get)
+  ipcMain.handle(IPC.audioEngine.saveDeviceProfile, profiles.save)
+  ipcMain.handle(IPC.audioEngine.deleteDeviceProfile, profiles.remove)
+  ipcMain.handle(IPC.audioEngine.applyDeviceProfile, profiles.apply)
   ipcMain.handle(IPC.audioEngine.loadQueue, async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     // Recorded even when the request is rejected below: a queue that never
@@ -809,13 +824,15 @@ function registerAudioEngineIpcHandlers(): void {
   ipcMain.handle(IPC.audioEngine.setVolume, async (_event, volume: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedVolume = normalizeFiniteNumber(volume, 'volume', 1, 0, 1)
-    ;(await ensureAudioEngineRuntime()).setVolume(normalizedVolume)
+    const engine = await ensureAudioEngineRuntime()
+    await engine.setVolume(normalizedVolume)
+    const appliedVolume = Math.min(normalizedVolume, engine.getDeviceProfiles().volumeCeiling)
     // The renderer's debounced persistence depends on a setTimeout in the
     // window that drove the change. When that window is hidden (mini-player
     // mode) Chromium throttles or suspends the timer, so the last volume was
     // never written to disk. Persist here in the main process, which is never
     // throttled, so the value survives a restart regardless of window state.
-    scheduleSoftwareVolumePersist(normalizedVolume)
+    scheduleSoftwareVolumePersist(appliedVolume)
     audioDiagnosticRecorder?.record('volume-changed', {
       volume: normalizedVolume,
       unity: Math.abs(normalizedVolume - 1) <= 0.001

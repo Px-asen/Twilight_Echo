@@ -383,3 +383,46 @@ test('collection grid window-mounts cards and derives A-Z from data', () => {
   )
   assert.match(styles, /\.track-playing::before \{[\s\S]*backdrop-filter: blur\(18px\)/)
 })
+
+test('selected tracks append as one queue command without starting playback', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const body = source.match(
+    /function appendActionTracksToQueue\(actionTracks: Track\[\]\): void \{([\s\S]*?)\n\}/
+  )?.[1]
+  assert.ok(body)
+  const batches: unknown[] = []
+  const message = { value: '' }
+  let cleared = 0
+  let closed = 0
+  const append = new Function(
+    'actionTracks',
+    'playbackStore',
+    'repairMessage',
+    'clearSelection',
+    'closeContextMenu',
+    body
+  )
+  const tracks = [{ id: 'local:2' }, { id: 'ncm:1' }]
+  const store = { appendQueueTracks: (items: unknown) => batches.push(items) }
+  append(
+    tracks,
+    store,
+    message,
+    () => cleared++,
+    () => closed++
+  )
+  assert.deepEqual(batches, [tracks])
+  assert.equal(cleared, 1)
+  assert.equal(closed, 1)
+  assert.equal(message.value, '已添加 2 首到播放队列')
+  append(
+    [],
+    store,
+    message,
+    () => cleared++,
+    () => closed++
+  )
+  assert.equal(batches.length, 1)
+  assert.match(source, /@click="appendActionTracksToQueue\(contextActionTracks\)"/)
+  assert.match(source, /@click="appendActionTracksToQueue\(selectionActionTracks\)"/)
+})

@@ -43,6 +43,11 @@ import {
 } from './audioEngineHelpers.ts'
 
 export interface DspOrchestratorHost {
+  callNativeMaybeAsync(
+    context: string,
+    method: keyof NativeAudioBinding,
+    ...args: unknown[]
+  ): Promise<boolean>
   getNative(): NativeAudioBinding | null
   getAudioServiceBinding(): AudioEngineServiceNativeBinding | null
   getPlaybackInfo(): PlaybackInfo
@@ -82,6 +87,7 @@ export class DspOrchestrator {
   private readonly vst3ModuleResolver?: AudioEngineManagerDependencies['vst3ModuleResolver']
   private readonly vst3StateAssetResolver?: AudioEngineManagerDependencies['vst3StateAssetResolver']
   private masterSwitchExplicit = false
+  outputStageOverride: DspOutputStageConfig | null = null
   lastNativeDspPluginStatusCache: {
     readAt: number
     status: unknown
@@ -258,7 +264,9 @@ export class DspOrchestrator {
       this.dspPinnedSceneId
     )
     this.activeDspSceneId = resolution.scene?.id ?? null
-    this.activeDspGraph = resolution.graph
+    this.activeDspGraph = this.outputStageOverride
+      ? { ...resolution.graph, outputStage: this.outputStageOverride }
+      : resolution.graph
     return resolution
   }
 
@@ -621,6 +629,31 @@ export class DspOrchestrator {
     }
   }
 
+  async applyProfileConfiguration(
+    processing: Partial<AudioProcessingSettings>,
+    sceneId: string | null,
+    outputStage: DspOutputStageConfig | null
+  ): Promise<void> {
+    const previousDirect = this.processing.directMode
+    const previousMode = this.processing.volumeNormalization
+    if (previousDirect && processing.directMode === false)
+      await this.applyDirectModeRuntimeOverrides(false)
+    this.processing = this.mergeAudioProcessingSettings(processing)
+    this.dspPinnedSceneId = sceneId
+    this.outputStageOverride = outputStage
+    const chainApplied = await this.host.callNativeMaybeAsync(
+      '设备档案 DSP 插件链',
+      'SetDspPluginChain',
+      this.getEffectiveNativeDspPluginChainJson()
+    )
+    if (!chainApplied) throw new Error(this.lastNativeError || '设备档案 DSP 插件链应用失败')
+    await this.applyNativeDspGraphOrThrow('应用设备档案 DSP')
+    if (!previousDirect && this.processing.directMode)
+      await this.applyDirectModeRuntimeOverrides(true)
+    await this.syncLoudnormModeTransition(previousMode, this.processing.volumeNormalization)
+    this.updateOutputPerfect()
+  }
+
   async setDspScenes(
     scenes: DspScene[],
     pinnedSceneId: string | null = this.dspPinnedSceneId
@@ -668,6 +701,21 @@ export class DspOrchestrator {
    * Does not invent OutputConfig fields; rate lock lives only on the DSP graph output stage.
    */
   async setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> {
+    const previousOverride = this.outputStageOverride
+    if (previousOverride) {
+      this.outputStageOverride = mergeDspOutputStage(previousOverride, partial)
+      try {
+        await this.applyNativeDspGraphOrThrow('更新设备输出级')
+      } catch (error) {
+        this.outputStageOverride = previousOverride
+        await this.applyNativeDspGraph('设备输出级回滚')
+        throw error
+      }
+      this.updateOutputPerfect()
+      this.publishPlaybackInfo()
+      return this.getDspSceneState()
+    }
+    this.outputStageOverride = null
     const previousScenes = this.cloneDspScenes(this.dspScenes)
     const previousProcessing = this.processing
     const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
@@ -688,6 +736,7 @@ export class DspOrchestrator {
     try {
       await this.applyNativeDspGraphOrThrow('更新输出采样率锁')
     } catch (error) {
+      this.outputStageOverride = previousOverride
       this.dspScenes = previousScenes
       this.processing = previousProcessing
       await this.applyNativeDspGraph('输出级回滚')
@@ -699,6 +748,7 @@ export class DspOrchestrator {
   }
 
   getOutputStage(): DspOutputStageConfig {
+    if (this.outputStageOverride) return { ...this.outputStageOverride }
     const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
     return mergeDspOutputStage(defaultScene?.graph.outputStage, {})
   }

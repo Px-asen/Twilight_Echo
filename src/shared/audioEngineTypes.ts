@@ -589,6 +589,7 @@ export interface AudioEngineConfig {
   audioOutput?: AudioOutputId
   audioDevice?: string
   audioOutputConfig?: Partial<OutputConfig>
+  audioDeviceProfiles?: import('./audioDeviceProfiles.ts').AudioDeviceProfileSettings
   audioProcessing?: Partial<AudioProcessingSettings>
   dspScenes?: import('./dspGraph.ts').DspScene[]
   dspPinnedSceneId?: string | null

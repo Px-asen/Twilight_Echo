@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
   "title": "Twilight Echo TE-3.4 production queue virtualization benchmark",
-  "generatedAt": "2026-07-17T10:36:59.481Z",
+  "generatedAt": "2026-09-14T10:39:03.233Z",
   "runner": {
     "implementation": "src/renderer/src/utils/playbackQueueVirtualization.ts",
     "command": [
       "C:\\Program Files\\nodejs\\node.exe",
-      "D:\\Linux Workspace\\Project\\Twilight_Echo\\scripts\\playback-queue-virtualization-benchmark.ts",
+      "D:\\Twilight_Echo-Pxasen\\scripts\\playback-queue-virtualization-benchmark.ts",
       "--output",
       "docs/audit-evidence/te-3.4-queue-virtualization-2026-07-17.json"
     ],
@@ -29,21 +29,21 @@
       },
       "snapshotMetrics": {
         "samplesMs": [
-          7.635499999999979,
-          6.237799999999993,
-          3.1773000000000593
+          3.5383999999999958,
+          3.556100000000015,
+          4.923599999999993
         ],
-        "p95Ms": 7.635499999999979,
-        "maxHeapDeltaBytes": 1338744
+        "p95Ms": 4.923599999999993,
+        "maxHeapDeltaBytes": 4013768
       },
       "windowMetrics": {
         "samplesMs": [
-          2.389099999999985,
-          0.23169999999993252,
-          0.3913000000000011
+          0.42379999999999995,
+          0.05850000000000932,
+          0.06379999999998631
         ],
-        "p95Ms": 2.389099999999985,
-        "maxHeapDeltaBytes": 18080
+        "p95Ms": 0.42379999999999995,
+        "maxHeapDeltaBytes": 18848
       },
       "windows": [
         {
@@ -85,21 +85,21 @@
       },
       "snapshotMetrics": {
         "samplesMs": [
-          15.536499999999933,
-          22.179000000000087,
-          26.71219999999994
+          22.978099999999984,
+          24.27240000000006,
+          18.800700000000006
         ],
-        "p95Ms": 26.71219999999994,
-        "maxHeapDeltaBytes": 4961616
+        "p95Ms": 24.27240000000006,
+        "maxHeapDeltaBytes": 15905928
       },
       "windowMetrics": {
         "samplesMs": [
-          0.470299999999952,
-          0.16449999999986176,
-          0.16620000000011714
+          0.0805000000000291,
+          0.04629999999997381,
+          0.0362999999999829
         ],
-        "p95Ms": 0.470299999999952,
-        "maxHeapDeltaBytes": 8944
+        "p95Ms": 0.0805000000000291,
+        "maxHeapDeltaBytes": 9328
       },
       "windows": [
         {

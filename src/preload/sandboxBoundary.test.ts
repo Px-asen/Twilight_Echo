@@ -8,6 +8,33 @@ import test from 'node:test'
 // leaves window.api undefined and blanks the renderer.
 const ALLOWED_SANDBOX_NODE_BUILTINS = new Set(['events', 'timers', 'url'])
 
+test('queue workspace uses shared DTOs and versioned writes through the data bridge', () => {
+  const source = readFileSync(new URL('./domains/dataApi.ts', import.meta.url), 'utf8')
+  assert.match(source, /ipcRenderer\.invoke\('data:loadQueueWorkspace'\)/)
+  assert.match(
+    source,
+    /invokeVersionedDataWrite\(\s*'data:saveQueueWorkspace',[\s\S]*isQueueWorkspaceDocument/
+  )
+  assert.doesNotMatch(source, /from ['"].*main\//)
+  const declarations = readFileSync(new URL('./index.d.ts', import.meta.url), 'utf8')
+  assert.match(declarations, /loadQueueWorkspace:[\s\S]*QueueWorkspaceDocument/)
+  assert.match(declarations, /saveQueueWorkspace:[\s\S]*expectedRevision: number/)
+})
+
+test('device profiles cross the sandbox as complete DTOs with a removable event subscription', () => {
+  const source = readFileSync(new URL('./domains/audioEngineApi.ts', import.meta.url), 'utf8')
+  for (const action of [
+    'getDeviceProfiles',
+    'saveDeviceProfile',
+    'deleteDeviceProfile',
+    'applyDeviceProfile'
+  ]) {
+    assert.ok(source.includes(`ipcRenderer.invoke(IPC.audioEngine.${action}`))
+  }
+  assert.match(source, /removeListener\(IPC\.audioEngine\.deviceProfilesChanged, listener\)/)
+  assert.doesNotMatch(source, /import .*from ['"].*main\//)
+})
+
 test('native context menus expose DTO requests through the sandboxed system bridge', () => {
   const source = readFileSync(new URL('./domains/systemApi.ts', import.meta.url), 'utf8')
   assert.match(source, /ipcRenderer\.invoke\('contextMenu:popup', request\)/)

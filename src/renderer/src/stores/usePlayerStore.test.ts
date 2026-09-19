@@ -682,11 +682,17 @@ test('provider queues use native for resolved current targets without native que
     'resetPlaybackRuntimeStateForRestore'
   )
 
-  assert.match(restorePlaybackSession, /options\.resetPlaybackRuntimeStateForRestore\(\)/)
+  const prepareQueueSelection = extractInternalFunctionBody(sessionSource, 'prepareQueueSelection')
+  assert.match(restorePlaybackSession, /prepareQueueSelection\(/)
+  assert.match(prepareQueueSelection, /options\.resetPlaybackRuntimeStateForRestore\(\)/)
   assert.match(resetPlaybackRuntimeStateForRestore, /nativePlaybackActive = false/)
   assert.match(resetPlaybackRuntimeStateForRestore, /loadedTrackId = ''/)
   assert.match(resetPlaybackRuntimeStateForRestore, /stopRendererAudio\(true\)/)
   assert.match(resetPlaybackRuntimeStateForRestore, /void stopNativeAudio\(\)/)
+  assert.match(
+    resetPlaybackRuntimeStateForRestore,
+    /if \(castTargetUsn\.value\)[\s\S]*stopCastSession\(\)/
+  )
   assert.match(
     trackUtilsSource,
     /\^\[a-zA-Z\]:\[\\\\\/\]/,
@@ -1010,7 +1016,10 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.match(loadAndPlay, /'error\.audio\.native_unavailable'/)
   assert.match(loadAndPlay, /'error\.audio\.native_fallback'/)
   assert.match(loadAndPlay, /playWithRendererAudio\(/)
-  assert.match(setVolume, /volume\.value = vol/)
+  assert.match(
+    setVolume,
+    /volume\.value = Math\.min\(vol, appSettings\.value\.audioDeviceProfiles\.volumeCeiling\)/
+  )
 })
 
 test('player store keeps default volume at 0.7, persists softwareVolume, and exposes setUnityVolume', () => {
@@ -1033,7 +1042,7 @@ test('player store keeps default volume at 0.7, persists softwareVolume, and exp
   assert.match(source, /watch\(\s*\(\) => appSettings\.value\.softwareVolume,/)
   assert.match(settingsSource, /softwareVolume: 0\.7/)
   assert.match(mainSettings, /softwareVolume: DEFAULT_SOFTWARE_VOLUME/)
-  assert.match(mainSettings, /softwareVolume: clampNumber\(settings\.softwareVolume/)
+  assert.match(mainSettings, /softwareVolume: clampNumber\(\s*settings\.softwareVolume/)
   assert.match(source, /function setUnityVolume\(\): void/)
   assert.match(setUnityVolume, /setVolume\(1\)/)
   assert.doesNotMatch(source, /const volume = ref\(1\)/)
@@ -1047,7 +1056,10 @@ test('player store exposes setOutputStage for HiFi sample-rate lock (graph.outpu
     'utf8'
   )
   const setOutputStage = extractInternalFunctionBody(controllerSource, 'setOutputStage')
-  const refresh = extractInternalFunctionBody(source, 'refreshAudioOutputState')
+  const refresh = extractInternalFunctionBody(
+    readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8'),
+    'refreshAudioOutputState'
+  )
 
   assert.match(source, /dspOutputStage/)
   assert.match(source, /DEFAULT_DSP_OUTPUT_STAGE/)
@@ -1108,8 +1120,8 @@ test('playback session strips transient provider stream URLs before restore', ()
   // bpmAnalysis (tempoMap) must stay out of session clones; it is re-resolved on demand.
   assert.doesNotMatch(sessionTrackSource, /bpmAnalysis: track\.bpmAnalysis/)
   assert.match(
-    sessionSource,
-    /const track = options\.hydratePlaybackTrack\(cloneTrackForPlaybackSession\(session\.track\)\)/
+    extractInternalFunctionBody(sessionSource, 'prepareQueueSelection'),
+    /options\.hydratePlaybackTrack\(cloneTrackForPlaybackSession\(track\)\)/
   )
 })
 
@@ -1605,7 +1617,7 @@ test('an unrecoverable audio service failure is deduped, labelled fatal, and ret
 })
 
 test('renderer audio device normalization derives tri-state capability fallbacks', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8')
   const normalizeSource = readFileSync(
     new URL('./player/audioOutputNormalize.ts', import.meta.url),
     'utf8'
@@ -1678,7 +1690,7 @@ test('dominant cover color extraction ignores stale async results', () => {
 })
 
 test('audio output refresh reruns when hotplug arrives during an in-flight request', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./player/audioOutputState.ts', import.meta.url), 'utf8')
   const helper = extractInternalFunctionBody(source, 'refreshAudioOutputState')
 
   assert.match(source, /let audioEngineStateRefreshQueued = false/)
@@ -1989,16 +2001,20 @@ test('current playlist selection preserves the existing shuffled queue order', (
 
 test('ordinary queue playback ends a personalized stream without adding a play mode', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const playTrack = extractInternalFunctionBody(playerSource, 'playTrack')
-  const playTrackFromPosition = extractInternalFunctionBody(playerSource, 'playTrackFromPosition')
-
-  assert.match(
-    playTrack,
-    /if \(trackList \|\| !isPersonalizedStreamTrack\(track\)\) endPersonalizedStream\(\)/
+  const selectionSource = readFileSync(
+    new URL('./player/playbackSelectionController.ts', import.meta.url),
+    'utf8'
   )
+  const playTrack = extractInternalFunctionBody(selectionSource, 'playTrack')
+  const playTrackFromPosition = extractInternalFunctionBody(
+    selectionSource,
+    'playTrackFromPosition'
+  )
+
+  assert.match(playTrack, /playTrackFromPosition\(track, 0, trackList, context\)/)
   assert.match(
     playTrackFromPosition,
-    /if \(trackList \|\| !isPersonalizedStreamTrack\(track\)\) endPersonalizedStream\(\)/
+    /if \(trackList \|\| !options\.isPersonalizedStreamTrack\(track\)\) options\.endPersonalizedStream\(\)/
   )
   assert.match(playerSource, /export type PersonalizedStreamKey = 'fm' \| 'radar'/)
   assert.doesNotMatch(playerSource, /const modes: PlayMode\[\] = \[[^\]]*personalizedStream/)
@@ -2034,7 +2050,6 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
     new URL('./player/playbackQueueController.ts', import.meta.url),
     'utf8'
   )
-  const commit = extractInternalFunctionBody(source, 'commitQueueEdit')
   const enqueue = extractInternalFunctionBody(source, 'enqueueTrack')
   const append = extractInternalFunctionBody(source, 'appendQueueTracks')
   const appendPersonalized = extractInternalFunctionBody(source, 'appendPersonalizedStreamTracks')
@@ -2045,19 +2060,14 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
   const clear = extractInternalFunctionBody(source, 'clearQueue')
   const reorder = extractInternalFunctionBody(source, 'reorderQueue')
 
-  assert.match(commit, /toPlaybackQueueSnapshots\(nextQueue\)/)
-  assert.match(commit, /originalQueue\.value = \[\.\.\.snapshots\]/)
-  assert.match(commit, /persistPlaybackSessionAfterQueueMutation\(\)/)
-  assert.match(commit, /queueNativeQueueStateSync\(\)/)
-  assert.match(enqueue, /\[\.\.\.options\.queue\.value, track\]/)
-  assert.match(append, /toPlaybackQueueSnapshots\(tracks\)/)
+  assert.match(source, /createQueueCommandController\(/)
   assert.match(
-    append,
-    /originalQueue\.value = \[\.\.\.options\.originalQueue\.value, \.\.\.additions\]/
+    source,
+    /onMutation:[\s\S]*persistPlaybackSessionAfterQueueMutation\(\)[\s\S]*queueNativeQueueStateSync\(\)/
   )
+  assert.match(enqueue, /commands\.add\(\[track\]/)
+  assert.match(append, /commands\.add\(/)
   assert.match(append, /endPersonalizedStream\(\)/)
-  assert.match(append, /persistPlaybackSessionAfterQueueMutation\(\)/)
-  assert.match(append, /queueNativeQueueStateSync\(\)/)
   assert.match(startPersonalized, /options\.personalizedStreamEntryIds\.clear\(\)/)
   assert.match(startPersonalized, /options\.personalizedStreamPlayedEntryIds\.clear\(\)/)
   assert.match(startPersonalized, /markCurrentPersonalizedStreamTrackPlayed\(\)/)
@@ -2066,22 +2076,17 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
     appendPersonalized,
     /options\.personalizedStreamEntryIds\.add\(track\.queueEntryId\)/
   )
-  assert.match(
-    appendPersonalized,
-    /playMode\.value === 'shuffle' \? shuffleArray\(additions\) : additions/
-  )
+  assert.match(appendPersonalized, /shuffle: options\.playMode\.value === 'shuffle'/)
   assert.match(endPersonalized, /options\.personalizedStreamSession\.value = null/)
   assert.match(source, /function markCurrentPersonalizedStreamTrackPlayed\(\)/)
   assert.match(
     source,
     /options\.personalizedStreamPlayedEntryIds\.add\(entryId\)[\s\S]*refreshPersonalizedStreamRemaining\(\)/
   )
-  assert.match(playNext, /next\.splice\(insertAt, 0, track\)/)
-  assert.match(remove, /next\.splice\(index, 1\)/)
-  assert.match(clear, /commitQueueEdit\(\[\], -1\)/)
-  assert.match(reorder, /next\.splice\(fromIndex, 1\)/)
-  assert.match(reorder, /next\.splice\(toIndex, 0, moved\)/)
-  assert.match(reorder, /queueIndex\.value === fromIndex/)
+  assert.match(playNext, /commands\.add\(\[track\], insertAt/)
+  assert.match(remove, /commands\.remove\(index\)/)
+  assert.match(clear, /commands\.replace\(\[\], -1\)/)
+  assert.match(reorder, /commands\.move\(fromIndex, toIndex\)/)
   assert.match(
     source,
     /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.options\.queue\.value\]\)/

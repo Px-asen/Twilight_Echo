@@ -65,6 +65,14 @@ test('preset normalization clamps bands and modes without mutating source arrays
   assert.equal(source[0].frequency, 1)
 })
 
+test('empty parametric edits survive normalization while graphic mode retains ten bands', () => {
+  const empty = normalizeAudioProcessing({ eqMode: 'parametric', eqBands: [] })
+  assert.deepEqual(empty.eqBands, [])
+  assert.deepEqual(normalizeAudioProcessing(empty).eqBands, [])
+  assert.equal(normalizeAudioProcessing({ eqMode: 'graphic', eqBands: [] }).eqBands.length, 10)
+  assert.equal(normalizeAudioProcessing({ eqMode: 'parametric' }).eqBands.length, 10)
+})
+
 test('normalization preserves per-band bypass and channel routing in both modes', () => {
   // Dropping these silently re-enabled bypassed bands on the next edit: the
   // main-process normalizer defaults `enabled` back to true, so the engine

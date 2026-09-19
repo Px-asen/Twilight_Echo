@@ -204,6 +204,17 @@ test('audioProcessingSettingsEqual treats a band bypass toggle as a real change'
   assert.equal(audioProcessingSettingsEqual(left, { ...left }), true)
 })
 
+test('normalization preserves an explicitly empty parametric EQ through a settings round trip', () => {
+  const empty = normalizeAudioProcessingSettings({ eqMode: 'parametric', eqBands: [] })
+  assert.deepEqual(empty.eqBands, [])
+  assert.deepEqual(normalizeAudioProcessingSettings(empty).eqBands, [])
+  assert.equal(
+    normalizeAudioProcessingSettings({ eqMode: 'graphic', eqBands: [] }).eqBands.length,
+    10
+  )
+  assert.equal(normalizeAudioProcessingSettings({ eqMode: 'parametric' }).eqBands.length, 10)
+})
+
 test('normalizeAudioProcessingSettings keeps graphic band gains through a round trip', () => {
   const first = normalizeAudioProcessingSettings({ eqMode: 'graphic' })
   const edited = normalizeAudioProcessingSettings({

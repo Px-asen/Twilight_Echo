@@ -4,6 +4,10 @@
 
 ## PlaybackInfo 与 OutputInfo
 
+设备档案使用 `window.api.audioEngine.getDeviceProfiles/saveDeviceProfile/deleteDeviceProfile/applyDeviceProfile`，返回 `AudioDeviceProfilesSnapshot`；`onDeviceProfilesChanged` 返回退订函数。载荷唯一类型来自 `shared/audioDeviceProfiles.ts`，由 main 边界校验，单次 `applyDeviceProfile(id)` 完成全部输出与 DSP 事务。快照包含当前可保存配置、设备/场景选项、活动 ID、软件音量上限、逐档案不可用原因及 applying/applied/failed 状态。档案集合上限 64，schema version 为 1；旧设置迁移为空集合。删除活动档案不关闭输出、不释放音量上限，编辑后需再次应用才改变配置。
+
+`outputStageOverride` 是设备配置中的 SRC/dither 设置，解析时覆盖引用场景的输出级，保存场景节点不变。`volumeCeiling` 属于软件增益限制，所有音量请求取该上限；硬件音量及声压不在其保证范围。切换与失败日志沿用 `output-route-transaction`，增加 `device-profile` context 和 `dsp-ready` 阶段。恢复顺序仍为 backend → device → config → SetDspPluginChain → ApplyDspState → LoadQueue，不自动播放。
+
 `TAE_GetPlaybackInfo()` 返回 JSON。`outputInfo` 是 canonical 字段，顶层的 `actualBackend`、`actualSampleRate`、`latencyMs`、`sourceExact`、`outputPerfect`、`perfectReason` 等字段只做镜像，值从 `outputInfo` 派生。
 
 关键字段：

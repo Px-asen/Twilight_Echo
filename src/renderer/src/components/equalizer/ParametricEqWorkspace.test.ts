@@ -3,121 +3,88 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./ParametricEqWorkspace.vue', import.meta.url), 'utf8')
+const inspector = readFileSync(new URL('./ParametricEqBandInspector.vue', import.meta.url), 'utf8')
+const knob = readFileSync(new URL('./EqParameterKnob.vue', import.meta.url), 'utf8')
 
-test('frequency response graph supports adding, selecting, dragging, Q wheel edits, and deletion', () => {
-  assert.match(source, /class="parametric-graph-surface"/)
+test('graph keeps direct manipulation and one coordinate surface for paths and nodes', () => {
+  assert.match(source, /ref="surfaceRef"/)
   assert.match(source, /@click\.self="addBand"/)
-  assert.match(source, /class="parametric-band-handle"/)
   assert.match(source, /setPointerCapture\(event\.pointerId\)/)
   assert.match(source, /@pointermove\.prevent\.stop="updatePointer"/)
   assert.match(source, /@wheel\.prevent\.stop="adjustQ\(index, \$event\)"/)
-  assert.match(source, /emit\('delete', selectedIndex\)/)
-  assert.match(source, /emit\('toggle', selectedIndex\)/)
+  assert.match(source, /frequencyToPercent\(band\.frequency\)/)
+  assert.match(source, /gainToPercent\(displayBandGain\(band\)\)/)
+  assert.match(source, /wheelCommit\.schedule\(\)/)
 })
 
-test('workspace exposes filter, frequency, gain, and Q controls with gain-type semantics', () => {
-  assert.match(source, /v-for="filter in filterTypes"/)
-  assert.match(source, /updateNumeric\('frequency', \$event\)/)
-  assert.match(source, /updateNumeric\('gain', \$event\)/)
-  assert.match(source, /updateNumeric\('q', \$event\)/)
-  assert.match(source, /:disabled="!filterUsesGain\(selectedBand\.filterType\)"/)
-  assert.match(source, /displayBandGain\(band\)/)
+test('precision controls use actual pointer gestures, bounded numeric input and gain semantics', () => {
+  assert.match(inspector, /field === 'gain' && !filterUsesGain\(band\.filterType\)/)
+  assert.match(knob, /role="slider"/)
+  assert.match(knob, /:aria-valuenow="displayedValue"/)
+  assert.match(knob, /@pointercancel\.stop="endDrag"/)
+  assert.match(knob, /@lostpointercapture="endDrag"/)
+  assert.match(knob, /@change="updateNumeric"/)
+  assert.match(knob, /Number\.isFinite\(input\.valueAsNumber\)/)
+  assert.match(knob, /createEqKnobGesture/)
+  assert.match(knob, /createEqWheelCommit/)
 })
 
-test('workspace includes spectrum, hover tooltip, status feedback, responsiveness, and reduced motion', () => {
-  assert.match(source, /class="live-spectrum-fill"/)
-  assert.match(source, /class="live-spectrum-line"/)
-  assert.match(source, /class="band-tooltip"/)
-  assert.match(source, /class="stage-status"/)
-  assert.match(source, /PARAMETRIC_EQ_MAX_BANDS/)
-  assert.match(source, /@media \(max-width: 620px\)/)
-  assert.match(source, /@media \(prefers-reduced-motion: reduce\)/)
+test('closing the inspector is separate from deleting a band, and finishes pending edits', () => {
+  assert.match(inspector, /aria-label="收起频段面板"/)
+  assert.match(inspector, /aria-label="删除所选频段"/)
+  assert.match(inspector, /if \(action === 'close'\) emit\('close'\)/)
+  assert.match(inspector, /emit\('delete', props\.index\)/)
+  assert.match(inspector, /knob\.finishInteraction\(\)/)
+  assert.match(source, /@close="closeInspector"/)
+  assert.match(source, /:key="selectedIndex"/)
 })
 
-test('headphone view renders five independently controlled response categories', () => {
-  assert.match(source, /combinedFilterPath: string/)
-  assert.match(source, /showMeasuredSource: boolean/)
-  assert.match(source, /showTargetResponse: boolean/)
-  assert.match(source, /showIndividualFilters: boolean/)
-  assert.match(source, /showCombinedFilter: boolean/)
-  assert.match(source, /showCorrectedResponse: boolean/)
-  assert.match(source, /class="measured-source-line"/)
-  assert.match(source, /class="target-response-line"/)
-  assert.match(source, /class="individual-band-line headphone-filter"/)
-  assert.match(source, /class="combined-filter-line"/)
-  assert.match(source, /class="corrected-acoustic-line"/)
-})
-
-test('headphone curve controls expose pressed state and emit semantic toggle keys', () => {
-  assert.match(source, /class="headphone-curve-controls"/)
+test('headphone view retains five independent categories and its non-measured semantics', () => {
   for (const key of ['source', 'target', 'individual', 'combined', 'corrected']) {
-    assert.match(source, new RegExp(`emit\\('toggle-headphone-curve', '${key}'\\)`))
+    assert.match(source, new RegExp(`key: '${key}'`))
+  }
+  assert.match(source, /:aria-pressed="control\.visible"/)
+  assert.match(source, /emit\('toggle-headphone-curve', control\.key\)/)
+  for (const name of [
+    'measured-source-line',
+    'target-response-line',
+    'individual-band-line headphone-filter',
+    'combined-filter-line',
+    'corrected-acoustic-line'
+  ]) {
+    assert.ok(source.includes(`class="${name}"`))
   }
   assert.match(source, /R\(f\) = M\(f\) \+ H\(f\)/)
   assert.match(source, /数字前级不计入声学预计/)
 })
 
-test('professional analyzer uses logarithmic grid, selected-band focus, and floating precision controls', () => {
-  assert.match(source, /frequencyTicks/)
-  assert.match(source, /frequencyToPercent\(frequency\)/)
-  assert.match(source, /class="selected-band-fill"/)
-  assert.match(source, /class="selected-band-focus"/)
-  assert.match(source, /class="filter-strip"/)
-  assert.match(source, /class="precision-controls"/)
-  assert.match(source, /class="knob-face"/)
-  assert.match(source, /frequencyKnobProgress/)
+test('bands remain individually colored and bypassed bands are excluded from filled response areas', () => {
+  assert.match(source, /class="individual-band-fill"/)
+  assert.match(source, /v-if="!item\.bypassed"/)
+  assert.match(source, /class="composite-response-line"/)
+  assert.match(source, /stroke: var\(--eq-response\)/)
+  assert.match(source, /stroke-dasharray:/)
+  assert.match(source, /eq-spectrum-\$\{useId\(\)\}/)
 })
 
-test('band handles support double-click reset and keyboard precision editing', () => {
-  assert.match(source, /@dblclick\.prevent\.stop="resetBandGain\(index\)"/)
-  assert.match(source, /@keydown="handleBandKeydown\(index, \$event\)"/)
-  assert.match(source, /event\.key === 'ArrowRight'/)
-  assert.match(source, /event\.shiftKey/)
-  assert.match(source, /emit\('preview', index, \{ gain: 0 \}\)/)
+test('layout follows the theme and uses measured geometry with a compact dock', () => {
+  assert.match(source, /html\[data-theme='dark'\] \.parametric-workspace/)
+  assert.match(source, /--eq-color-scheme: light/)
+  assert.match(source, /--eq-color-scheme: dark/)
+  assert.match(source, /root\.clientWidth < 800/)
+  assert.match(source, /placeEqInspector/)
+  assert.match(source, /placeEqTooltip/)
+  assert.match(source, /ResizeObserver/)
+  assert.match(source, /prefers-reduced-motion: reduce/)
+  assert.match(source, /\.compact \.floating-band-inspector/)
 })
 
-test('analyzer keeps a flat signal palette with explicit light and dark instrument tones', () => {
-  assert.match(source, /\.parametric-workspace \{[\s\S]*?--eq-surface:\s*#f5f4f0/)
-  assert.match(source, /\.parametric-workspace \{[\s\S]*?--eq-text:\s*#1e2022/)
-  assert.match(source, /\.parametric-workspace \{[\s\S]*?--eq-response:\s*#22252a/)
-  assert.match(source, /\.parametric-workspace \{[\s\S]*?--eq-accent:\s*#e85010/)
-  assert.match(
-    source,
-    /:global\(html\[data-theme='dark'\] \.parametric-workspace\) \{[\s\S]*?--eq-surface:\s*#181a1d/
-  )
-  assert.match(
-    source,
-    /:global\(html\[data-theme='dark'\] \.parametric-workspace\) \{[\s\S]*?--eq-response:\s*#eceee9/
-  )
-  assert.match(
-    source,
-    /:global\(html\[data-theme='dark'\] \.parametric-workspace\) \{[\s\S]*?--eq-accent:\s*#ff7a1f/
-  )
-  assert.match(source, /--eq-grid:\s*rgba\(30, 32, 34, 0\.06\)/)
-  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.parametric-graph-surface\)/)
-  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.knob-face\)/)
-  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.output-meter\)/)
-  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.analyzer-footer\)/)
-  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.floating-band-inspector\)/)
-  assert.doesNotMatch(source, /:global\(html:not\(\[data-theme='dark'\]\)\)/)
-
-  assert.match(source, /stop-color="var\(--eq-spectrum\)"/)
-  assert.match(source, /\.composite-response-line \{[\s\S]*?stroke: var\(--eq-response\)/)
-  assert.match(source, /class="output-meter"/)
-  assert.match(source, /class="analyzer-footer"/)
-  assert.match(source, /class="meter-peak"/)
-  assert.match(source, /class="meter-rms"/)
-  assert.match(source, /\.floating-band-inspector \{[\s\S]*?background:\s*var\(--eq-surface-soft\)/)
-})
-
-test('flat design contract: no shadows or decorative gradients in the workspace styles', () => {
-  const styles = Array.from(
-    source.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi),
-    (match) => match[1]
-  ).join('\n')
-  assert.doesNotMatch(styles, /box-shadow/)
-  assert.doesNotMatch(styles, /radial-gradient/)
-  assert.doesNotMatch(styles, /linear-gradient/)
-  assert.doesNotMatch(styles, /backdrop-filter/)
-  assert.doesNotMatch(styles, /drop-shadow/)
+test('native meter values are labeled Peak and RMS without simulated stereo offsets', () => {
+  assert.match(source, /aria-label="Peak 峰值"/)
+  assert.match(source, /aria-label="RMS 均方根"/)
+  assert.match(source, /meterLevel\(meterPeakDb\)/)
+  assert.match(source, /meterLevel\(meterRmsDb\)/)
+  assert.doesNotMatch(source, /aria-label="[左右]声道"/)
+  assert.match(source, /role="status"/)
+  assert.match(source, /role="alert"/)
 })

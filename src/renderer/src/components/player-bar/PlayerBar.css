@@ -331,6 +331,7 @@
   position: relative;
   z-index: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
@@ -837,6 +838,18 @@
     background 0.3s,
     border-color 0.3s,
     box-shadow 0.3s;
+}
+
+.player-bar > .player-left {
+  grid-area: 1 / 1;
+}
+
+.player-bar > .player-center {
+  grid-area: 1 / 2;
+}
+
+.player-bar > .player-right {
+  grid-area: 1 / 3;
 }
 
 .player-bar-glass {

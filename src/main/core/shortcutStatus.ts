@@ -1,3 +1,5 @@
+import { isCommandPaletteAccelerator } from '../../shared/commandPaletteShortcut.ts'
+
 export interface PlayerShortcutDefinition<Action extends string = string> {
   accelerator: string
   action: Action
@@ -18,6 +20,13 @@ export function buildPlayerShortcutStatuses<Action extends string>(
       }
     }
 
+    if (isCommandPaletteAccelerator(shortcut.accelerator)) {
+      return {
+        ...shortcut,
+        registered: false,
+        error: 'Ctrl+K / ⌘K 已保留给应用内命令面板，请选择其他全局组合键'
+      }
+    }
     const registered = register(shortcut.accelerator)
     return {
       ...shortcut,

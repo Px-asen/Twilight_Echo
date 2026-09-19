@@ -239,6 +239,13 @@ const fallbackSettings: AppSettings = {
     }
   ],
   dspPinnedSceneId: null,
+  audioDeviceProfiles: {
+    version: 1,
+    profiles: [],
+    activeProfileId: null,
+    volumeCeiling: 1,
+    outputStageOverride: null
+  },
   headphoneCompensation: fallbackHeadphoneCompensation,
   audioEqPresets: [],
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS_SETTINGS },

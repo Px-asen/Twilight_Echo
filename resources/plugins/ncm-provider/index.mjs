@@ -369,7 +369,7 @@ async function getCookie() {
 }
 
 async function saveCookie(cookie) {
-  profileCache = null
+  resetCaches()
   if (cookie) {
     await getContext().settings.set(COOKIE_KEY, cookie)
   } else {
@@ -1749,8 +1749,15 @@ function getUnblockedPlaybackUrl(data) {
   return null
 }
 
-function rememberStreamUrl(cacheKey, url) {
-  streamUrlCache.set(cacheKey, { url, expiresAt: Date.now() + STREAM_URL_CACHE_TTL_MS })
+function rememberStreamUrl(cacheKey, url, songId, fileName) {
+  const entry = { url, expiresAt: Date.now() + STREAM_URL_CACHE_TTL_MS }
+  streamUrlCache.set(cacheKey, entry)
+  void ncmApi
+    .cacheSong(songId, url, fileName)
+    .then((cachedPath) => {
+      if (cachedPath && streamUrlCache.get(cacheKey) === entry) entry.url = cachedPath
+    })
+    .catch(() => {})
 }
 
 async function getPlaybackUrl(track, options = {}, requestContext) {
@@ -1759,17 +1766,6 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
   const force = options?.force === true
   const quality = normalizePlaybackQuality(options?.quality)
   const cacheKey = `${songId}:${quality}`
-
-  // Basic cache-on-play: prefer a completed disk file so repeat plays skip the
-  // network. Host gates this with cachePolicy.streamingAudio; force always refreshes.
-  if (!force && typeof ncmApi?.getCachedSong === 'function') {
-    try {
-      const cachedPath = await ncmApi.getCachedSong(songId)
-      if (typeof cachedPath === 'string' && cachedPath.trim()) return cachedPath
-    } catch {
-      // A failed cache probe never blocks online resolution.
-    }
-  }
 
   const cachedStreamEntry = force ? null : streamUrlCache.get(cacheKey)
   if (cachedStreamEntry) {
@@ -1795,8 +1791,9 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       const url = getOfficialPlaybackUrl(data, streamItem)
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
-        rememberStreamUrl(cacheKey, url)
-        void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
+        if (!streamItem.freeTrialInfo) {
+          rememberStreamUrl(cacheKey, url, songId, track?.fileName)
+        }
         return url
       }
       lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
@@ -1817,8 +1814,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
       const url = getUnblockedPlaybackUrl(data)
       if (url) {
-        rememberStreamUrl(cacheKey, url)
-        void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
+        rememberStreamUrl(cacheKey, url, songId, track?.fileName)
         return url
       }
       lastFailureMessage =

@@ -82,7 +82,10 @@ test('ncm cache lookups run on an in-memory index instead of a per-play director
     source,
     /!ncmCacheIndex \|\| ncmCacheIndex\.dir !== dir[\s\S]*?buildNcmCacheIndexFromNames\(readdirSync\(dir\)\)/
   )
-  assert.match(source, /rememberNcmCacheEntry\(songId, dir, `\$\{songId\}\$\{ext\}`\)/)
+  assert.match(
+    source,
+    /rememberNcmCacheEntry\(songId, dir, `\$\{songId\}\.\$\{sourceKey\}\$\{ext\}`\)/
+  )
   assert.match(source, /forgetNcmCacheEntry\(dir, name\)/)
   // .part 临时文件仍绝不可入索引。
   assert.match(

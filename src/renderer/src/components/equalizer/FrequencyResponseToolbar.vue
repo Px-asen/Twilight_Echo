@@ -9,6 +9,7 @@ const props = defineProps<{
   importing: boolean
   error: string
   card?: boolean
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -71,7 +72,7 @@ const emit = defineEmits<{
       </div>
     </div>
   </section>
-  <div v-else class="response-view-toolbar">
+  <div v-else class="response-view-toolbar" :class="{ 'is-instrument': props.compact }">
     <div class="response-view-switch" aria-label="响应视图">
       <button
         type="button"
@@ -320,5 +321,51 @@ const emit = defineEmits<{
   border-color: var(--te-card-border);
   background: var(--te-card-bg);
   box-shadow: none;
+}
+.response-view-toolbar.is-instrument {
+  margin: 0;
+  gap: 8px;
+  min-width: 0;
+}
+.is-instrument .response-view-switch {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+.is-instrument .response-view-switch button,
+.is-instrument .frequency-response-import,
+.is-instrument .frequency-response-clear {
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--eq-text-subtle);
+  font-size: 10px;
+  font-weight: 400;
+  box-shadow: none;
+}
+.is-instrument .response-view-switch button.active {
+  background: var(--eq-control-bg);
+  color: var(--eq-text);
+}
+.is-instrument .response-view-switch button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.is-instrument .frequency-response-actions {
+  gap: 4px;
+}
+.is-instrument .frequency-response-source {
+  display: none;
+}
+.is-instrument .frequency-response-error {
+  max-width: 200px;
+  white-space: normal;
+  font-size: 10px;
+}
+.is-instrument button:focus-visible {
+  outline: 2px solid var(--eq-response);
+  outline-offset: 2px;
 }
 </style>

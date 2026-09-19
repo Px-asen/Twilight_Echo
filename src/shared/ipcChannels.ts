@@ -1,5 +1,10 @@
 export const IPC = {
   audioEngine: {
+    getDeviceProfiles: 'audioEngine:getDeviceProfiles',
+    saveDeviceProfile: 'audioEngine:saveDeviceProfile',
+    deleteDeviceProfile: 'audioEngine:deleteDeviceProfile',
+    applyDeviceProfile: 'audioEngine:applyDeviceProfile',
+    deviceProfilesChanged: 'audioEngine:device-profiles-changed',
     applyDspScene: 'audioEngine:applyDspScene',
     clearVst3Quarantine: 'audioEngine:clearVst3Quarantine',
     configApplied: 'audioEngine:config-applied',

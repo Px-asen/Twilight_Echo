@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ref } from 'vue'
 import type { Track } from '../../types/music'
+import type { PlayMode } from '@renderer/types/settings'
 import {
   createPlaybackHistoryController,
   type PlaybackBookmarksService,
@@ -23,6 +24,41 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
     ...overrides
   }
 }
+
+test('actual playback order distinguishes duplicate entries and repeats while ignoring pause/resume samples', () => {
+  const recorded: Array<{ entry: string | undefined; mode: PlayMode }> = []
+  const controller = createPlaybackHistoryController({
+    currentTrack: ref(null),
+    currentTime: ref(0),
+    getLatestPlaybackTime: () => 0,
+    seekPlayback: () => {},
+    getPlaybackBookmarks: () => {
+      throw new Error('unused')
+    },
+    getPodcastStore: () => {
+      throw new Error('unused')
+    },
+    now: Date.now,
+    recordActualPlayback: (track, mode) => recorded.push({ entry: track.queueEntryId, mode })
+  })
+  const track = makeTrack({ queueEntryId: 'first' })
+  controller.recordPlaybackStart(track, 'sequential')
+  controller.recordPlaybackStart(track, 'sequential')
+  controller.recordPlaybackStart({ ...track, queueEntryId: 'second' }, 'shuffle')
+  controller.recordPlaybackStart({ ...track, queueEntryId: 'second' }, 'repeat', true)
+  controller.beginPlaybackAttempt()
+  controller.recordPlaybackStart(track, 'listLoop')
+  controller.recordPlaybackStart({ ...track, queueEntryId: 'heart' }, 'heart')
+  controller.dispose()
+  controller.recordPlaybackStart(makeTrack({ queueEntryId: 'disposed' }), 'sequential')
+  assert.deepEqual(recorded, [
+    { entry: 'first', mode: 'sequential' },
+    { entry: 'second', mode: 'shuffle' },
+    { entry: 'second', mode: 'repeat' },
+    { entry: 'first', mode: 'listLoop' },
+    { entry: 'heart', mode: 'heart' }
+  ])
+})
 
 interface Harness {
   currentTrack: ReturnType<typeof ref<Track | null>>
