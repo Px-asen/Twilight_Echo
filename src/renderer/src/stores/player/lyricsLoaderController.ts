@@ -256,8 +256,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
           commitResolvedLyrics(triggerTrack, triggerTrack, {
             lyrics: '',
             translatedLyrics: null,
+            romanizedLyrics: null,
             lyricsSource: null,
-            translatedLyricsSource: null
+            translatedLyricsSource: null,
+            romanizedLyricsSource: null
           })
         }
         completeIfCurrent('empty')

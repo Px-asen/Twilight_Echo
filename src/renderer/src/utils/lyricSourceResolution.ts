@@ -239,8 +239,10 @@ export async function resolveLyricsWithSources(
       return {
         lyrics,
         translatedLyrics,
+        romanizedLyrics: null,
         lyricsSource,
         translatedLyricsSource,
+        romanizedLyricsSource: null,
         failure: 'online'
       }
     }
