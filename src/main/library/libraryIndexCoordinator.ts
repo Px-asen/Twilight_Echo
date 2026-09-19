@@ -36,6 +36,13 @@ export interface LocalLibraryIndexCoordinatorOptions {
   persistDocument: (document: LocalMusicLibraryDocument) => void
   resolveRoots: (folders: string[]) => Promise<string[]>
   getCoverCacheDir: () => string
+  /**
+   * Re-encode covers the worker wrote at their original size down to the
+   * thumbnail width and return the replacement `cover://` handle. The IPC
+   * wiring passes the nativeImage-backed `normalizeCachedCoverHandle`; this
+   * module stays free of Electron imports so the coordinator runs under node.
+   */
+  normalizeCoverHandle?: (handle: string) => Promise<string>
   watcherDebounceMs?: number
   now?: () => Date
 }
@@ -286,6 +293,9 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
 
         let scanAccumulator = createScanAccumulator(snapshot.document)
         let streamedIdentities = new Map<string, LocalLibraryFileIdentity>()
+        // Batches apply in arrival order after their covers are normalized, so
+        // the accumulator only ever sees the thumbnail handles that get persisted.
+        let batchChain: Promise<void> = Promise.resolve()
         const workerResult = await this.options.scanRunner.scan(
           job.id,
           {
@@ -300,14 +310,23 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
             streamResults: true
           },
           (progress) => this.applyProgress(job, progress),
-          (batch) => applyScanBatch(scanAccumulator, batch),
+          (batch) => {
+            batchChain = batchChain.then(async () => {
+              await this.normalizeBatchCovers(batch)
+              applyScanBatch(scanAccumulator, batch)
+            })
+          },
           (batch) => collectScanIdentities(streamedIdentities, batch),
           () => {
-            scanAccumulator = createScanAccumulator(snapshot.document)
             streamedIdentities = new Map<string, LocalLibraryFileIdentity>()
+            batchChain = batchChain.then(() => {
+              scanAccumulator = createScanAccumulator(snapshot.document)
+            })
           }
         )
+        await batchChain
         if (workerResult.parsedTracks.length > 0 || workerResult.parsedFilePaths.length > 0) {
+          await this.normalizeBatchCovers(workerResult)
           applyScanBatch(scanAccumulator, {
             parsedTracks: workerResult.parsedTracks,
             parsedFilePaths: workerResult.parsedFilePaths
@@ -409,6 +428,29 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
     } finally {
       if (this.activeJob?.id === job.id) this.activeJob = null
     }
+  }
+
+  /**
+   * The scan worker cannot resize (no nativeImage in utility processes), so
+   * covers it cached may be full-size. Swap each track's handle for the 500px
+   * entry before the batch reaches the accumulator.
+   */
+  private async normalizeBatchCovers(batch: { parsedTracks: unknown[] }): Promise<void> {
+    const normalize = this.options.normalizeCoverHandle
+    if (!normalize) return
+    await Promise.all(
+      batch.parsedTracks.map(async (track) => {
+        if (!isTrackRecord(track) || typeof track.cover !== 'string') return
+        const handle = track.cover
+        if (!handle.startsWith('cover://')) return
+        try {
+          const normalized = await normalize(handle)
+          if (normalized && normalized !== handle) track.cover = normalized
+        } catch {
+          // Keep the worker's handle when normalization fails.
+        }
+      })
+    )
   }
 
   private applyProgress(

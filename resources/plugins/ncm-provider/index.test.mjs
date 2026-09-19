@@ -1524,6 +1524,34 @@ test('liked tracks page loads only the requested window', async () => {
   }
 })
 
+test('saved albums and artists paginate and normalize cloud collections', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    const offset = Number(url.searchParams.get('offset'))
+    if (url.pathname === '/album/sublist') {
+      return { data: [album(offset === 0 ? 1 : 2)], more: offset === 0 }
+    }
+    if (url.pathname === '/artist/sublist') {
+      return {
+        data: [{ id: 7, name: 'Saved artist', picUrl: 'https://example.com/artist.jpg' }],
+        more: false
+      }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+  try {
+    assert.deepEqual(
+      (await provider.fetchSavedAlbums()).map((item) => item.id),
+      [1, 2]
+    )
+    const artists = await provider.fetchSavedArtists()
+    assert.equal(artists[0].id, 7)
+    assert.equal(artists[0].name, 'Saved artist')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist albums keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

@@ -110,15 +110,18 @@
   animation: home-drift-a 38s ease-in-out infinite alternate-reverse;
 }
 
+/* Translate-only drift: a scale tween on a blur(84px) layer forces the
+   compositor to re-rasterize the blurred texture every frame, while a
+   translate keeps the cached texture and only moves it. */
 @keyframes home-drift-a {
   to {
-    transform: translate3d(60px, 42px, 0) scale(1.12);
+    transform: translate3d(60px, 42px, 0);
   }
 }
 
 @keyframes home-drift-b {
   to {
-    transform: translate3d(-68px, 58px, 0) scale(0.94);
+    transform: translate3d(-68px, 58px, 0);
   }
 }
 

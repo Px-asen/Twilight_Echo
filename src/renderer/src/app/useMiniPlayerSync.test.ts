@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  buildMiniPlayerLyricLines,
   buildMiniPlayerStateSnapshot,
+  createMiniPlayerPublishScheduler,
   findActiveMiniPlayerLyricIndex,
+  miniPlayerProgressKey,
+  resetMiniPlayerLyricCache,
   resolveCurrentLyricForMiniPlayer
 } from './useMiniPlayerSync.ts'
 import type { Track } from '../types/music.ts'
@@ -170,4 +174,105 @@ test('mini player lyric index picks the latest line at or before current time', 
   assert.equal(findActiveMiniPlayerLyricIndex(lines, 7.5), 2)
   assert.equal(findActiveMiniPlayerLyricIndex(lines, 99), 2)
   assert.equal(findActiveMiniPlayerLyricIndex([], 5), -1)
+})
+
+test('mini player lyric parsing is cached per track identity and reused by progress lookups', () => {
+  resetMiniPlayerLyricCache()
+  const track = makeTrack()
+  const first = buildMiniPlayerLyricLines(track)
+  const second = buildMiniPlayerLyricLines({ ...track })
+  assert.equal(first, second, 'same track id + lyric text must hit the parse cache')
+  assert.equal(resolveCurrentLyricForMiniPlayer(track, 3.5)?.original, 'second line')
+
+  const edited = makeTrack({ lyrics: '[00:02.00]changed line', translatedLyrics: '' })
+  const third = buildMiniPlayerLyricLines(edited)
+  assert.notEqual(third, first)
+  assert.deepEqual(third, [{ time: 2, original: 'changed line', translation: null }])
+
+  const other = makeTrack({ id: 'ncm:2' })
+  assert.notEqual(buildMiniPlayerLyricLines(other), third)
+})
+
+test('mini player progress key only changes across lyric lines or whole seconds', () => {
+  const track = makeTrack()
+  assert.equal(miniPlayerProgressKey(track, 1.1), miniPlayerProgressKey(track, 1.4))
+  assert.notEqual(miniPlayerProgressKey(track, 1.9), miniPlayerProgressKey(track, 2.1))
+  assert.notEqual(miniPlayerProgressKey(track, 2.9), miniPlayerProgressKey(track, 3.0))
+  assert.equal(miniPlayerProgressKey(null, 5.2), miniPlayerProgressKey(null, 5.9))
+  assert.notEqual(miniPlayerProgressKey(null, 5.9), miniPlayerProgressKey(null, 6.0))
+})
+
+test('mini player publish scheduler throttles progress ticks and publishes metadata immediately', () => {
+  let now = 0
+  let key = '0:0'
+  const timers: Array<{ at: number; callback: () => void }> = []
+  const published: number[] = []
+  const scheduler = createMiniPlayerPublishScheduler({
+    publish: () => published.push(now),
+    progressKey: () => key,
+    now: () => now,
+    setTimeout: (callback, delayMs) => {
+      const timer = { at: now + delayMs, callback }
+      timers.push(timer)
+      return timer
+    },
+    clearTimeout: (handle) => {
+      const index = timers.indexOf(handle as { at: number; callback: () => void })
+      if (index >= 0) timers.splice(index, 1)
+    },
+    throttleMs: 500
+  })
+  const advance = (ms: number) => {
+    now += ms
+    for (const timer of [...timers]) {
+      if (timer.at > now) continue
+      timers.splice(timers.indexOf(timer), 1)
+      timer.callback()
+    }
+  }
+
+  scheduler.publishNow()
+  assert.deepEqual(published, [0])
+
+  // 250 ms ticks inside the same lyric line and second: nothing is sent.
+  advance(250)
+  scheduler.notifyProgress()
+  advance(250)
+  scheduler.notifyProgress()
+  assert.deepEqual(published, [0])
+
+  // Outside the throttle window a changed key publishes right away.
+  key = '0:1'
+  advance(100)
+  scheduler.notifyProgress()
+  assert.deepEqual(published, [0, 600])
+
+  // Inside the window the publish trails to the window edge, once.
+  key = '0:2'
+  advance(100)
+  scheduler.notifyProgress()
+  advance(100)
+  scheduler.notifyProgress()
+  assert.deepEqual(published, [0, 600])
+  assert.equal(timers.length, 1)
+  advance(300)
+  assert.deepEqual(published, [0, 600, 1100])
+  assert.equal(timers.length, 0)
+
+  // A pending trailing publish is superseded by an immediate metadata publish.
+  key = '1:3'
+  advance(100)
+  scheduler.notifyProgress()
+  assert.equal(timers.length, 1)
+  scheduler.publishNow()
+  assert.equal(timers.length, 0)
+  assert.deepEqual(published, [0, 600, 1100, 1200])
+  advance(1000)
+  assert.deepEqual(published, [0, 600, 1100, 1200])
+
+  scheduler.dispose()
+  key = '2:9'
+  advance(1000)
+  scheduler.notifyProgress()
+  assert.deepEqual(published, [0, 600, 1100, 1200])
 })

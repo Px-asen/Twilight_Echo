@@ -1,8 +1,8 @@
 import { dialog, BrowserWindow, type IpcMain } from 'electron'
-import { basename, dirname, extname, join } from 'path'
+import { basename, dirname } from 'path'
 import { readFile, stat } from 'fs/promises'
-import { parseFile } from 'music-metadata'
 import { importLyricsFromDialog } from '../lyrics/importLyrics.ts'
+import { loadLocalLyrics } from '../lyrics/loadLyrics.ts'
 import { saveLyricsFromDialog } from '../lyrics/saveLyrics.ts'
 import {
   assertOnlineLyricsRateLimit,
@@ -54,30 +54,7 @@ export function registerLyricsIpc(ipcMain: IpcMain): void {
           return null
         }
       }
-      try {
-        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}.lrc`)
-        const lrc = decodeLyrics(await readFile(lrcPath)).text
-        if (lrc) return lrc
-      } catch {
-        // no external .lrc next to the audio file — fall through to embedded lyrics
-      }
-
-      // 2. Try embedded lyrics from audio file metadata
-      if (resolvedFilePath) {
-        try {
-          const meta = await parseFile(resolvedFilePath, { skipCovers: true })
-          const common = meta.common
-          if (common.lyrics && common.lyrics.length > 0) {
-            // music-metadata returns lyrics as { language, text } objects or strings
-            const first = common.lyrics[0]
-            const text = typeof first === 'string' ? first : first?.text
-            if (text) return text
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-      return null
+      return await loadLocalLyrics(resolvedDir, safeFileName, resolvedFilePath)
     }
   )
 

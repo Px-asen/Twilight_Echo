@@ -213,6 +213,8 @@ export interface MediaProvider {
   fetchPrivateContent?: () => Promise<Track[]>
   fetchArtistTopSongs?: (artistId: number | string) => Promise<Track[]>
   fetchArtistAlbums?: (artistId: number | string) => Promise<MediaProviderAlbumSummary[]>
+  fetchSavedAlbums?: () => Promise<MediaProviderAlbumSummary[]>
+  fetchSavedArtists?: () => Promise<MediaProviderArtistSummary[]>
   fetchArtistIntro?: (artistId: number | string) => Promise<string>
   fetchArtistFollowState?: (artistId: number | string) => Promise<boolean | null>
   fetchAlbumTracks?: (albumId: number | string) => Promise<Track[]>

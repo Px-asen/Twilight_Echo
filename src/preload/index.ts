@@ -22,6 +22,7 @@ import { mediaSubscriptionsApi } from './domains/mediaSubscriptionsApi.ts'
 import { networkSourcesApi } from './domains/networkSourcesApi.ts'
 import { bindSettingsIpcEvents, settingsApi } from './domains/settingsApi.ts'
 import { bindThemesIpcEvents, themesApi } from './domains/themesApi.ts'
+import { themeWorkshopApi } from './domains/themeWorkshopApi.ts'
 import { bindPluginsIpcEvents, pluginsApi } from './domains/pluginsApi.ts'
 import { bindSystemIpcEvents, systemApi } from './domains/systemApi.ts'
 
@@ -137,6 +138,7 @@ const api = {
   settings: settingsApi,
   ...systemApi,
   themes: themesApi,
+  themeWorkshop: themeWorkshopApi,
   ...pluginsApi,
   desktopLyrics: desktopLyricsHostApi,
   miniPlayer: miniPlayerHostApi,

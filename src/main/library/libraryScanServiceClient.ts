@@ -73,16 +73,25 @@ export interface LocalLibraryScanServiceClientOptions {
   serviceEntry: string
   startupTimeoutMs?: number
   scanWatchdogMs?: number
+  /**
+   * The worker is killed after this long with no scan in flight so the
+   * music-metadata process does not stay resident between scans. The next
+   * scan forks it again transparently.
+   */
+  idleTimeoutMs?: number
   electron?: ElectronModule
 }
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000
 const DEFAULT_SCAN_WATCHDOG_MS = 60_000
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 const MAX_SCAN_WORKER_RESTARTS = 3
 
 export class LocalLibraryScanServiceClient extends EventEmitter implements LocalLibraryScanRunner {
   private readonly options: LocalLibraryScanServiceClientOptions
   private readonly scanWatchdogMs: number
+  private readonly idleTimeoutMs: number
+  private idleTimer: NodeJS.Timeout | null = null
   private child: UtilityProcessLike | null = null
   private readyPromise: Promise<void> | null = null
   private resolveReady: (() => void) | null = null
@@ -99,6 +108,25 @@ export class LocalLibraryScanServiceClient extends EventEmitter implements Local
       typeof options.scanWatchdogMs === 'number' && Number.isFinite(options.scanWatchdogMs)
         ? Math.max(100, Math.floor(options.scanWatchdogMs))
         : DEFAULT_SCAN_WATCHDOG_MS
+    this.idleTimeoutMs =
+      typeof options.idleTimeoutMs === 'number' && Number.isFinite(options.idleTimeoutMs)
+        ? Math.max(1, Math.floor(options.idleTimeoutMs))
+        : DEFAULT_IDLE_TIMEOUT_MS
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  private armIdleTimer(): void {
+    this.clearIdleTimer()
+    if (this.stopped || !this.child || this.pending.size > 0) return
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      if (this.stopped || this.pending.size > 0) return
+      this.detachChild()
+    }, this.idleTimeoutMs)
   }
 
   async scan(
@@ -109,6 +137,7 @@ export class LocalLibraryScanServiceClient extends EventEmitter implements Local
     onIdentityBatch?: (batch: LocalLibraryScanIdentityBatch) => void,
     onAttemptReset?: () => void
   ): Promise<LocalLibraryWorkerScanResult> {
+    this.clearIdleTimer()
     await this.waitUntilReady()
     const child = this.child
     if (!child)
@@ -171,6 +200,7 @@ export class LocalLibraryScanServiceClient extends EventEmitter implements Local
 
   destroy(): void {
     this.stopped = true
+    this.clearIdleTimer()
     if (this.startupTimer) clearTimeout(this.startupTimer)
     this.startupTimer = null
     const error = new Error('local library scan service stopped')
@@ -395,6 +425,7 @@ export class LocalLibraryScanServiceClient extends EventEmitter implements Local
   }
 
   private detachChild(): void {
+    this.clearIdleTimer()
     const child = this.child
     this.child = null
     if (this.startupTimer) clearTimeout(this.startupTimer)
@@ -415,6 +446,7 @@ export class LocalLibraryScanServiceClient extends EventEmitter implements Local
     this.pending.delete(requestId)
     if (pending.watchdog) clearTimeout(pending.watchdog)
     pending.watchdog = null
+    if (this.pending.size === 0) this.armIdleTimer()
   }
 
   private rejectPendingExcept(requestId: string | null, error: Error): void {

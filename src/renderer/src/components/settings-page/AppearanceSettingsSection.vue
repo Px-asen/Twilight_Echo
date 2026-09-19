@@ -16,6 +16,7 @@ import type { AppSettings, UiDensity } from '../../types/settings'
 
 const emit = defineEmits<{
   openThemeStudio: []
+  openThemeWorkshop: []
 }>()
 
 const { settings, updateSettings } = useSettingsStore()
@@ -46,7 +47,10 @@ function toggleSetting(key: BooleanSettingKey): void {
     </div>
 
     <div class="setting-list">
-      <ThemeControlsSettings @open-theme-studio="emit('openThemeStudio')" />
+      <ThemeControlsSettings
+        @open-theme-studio="emit('openThemeStudio')"
+        @open-theme-workshop="emit('openThemeWorkshop')"
+      />
       <BackgroundEditorSettings />
       <hr />
       <div class="setting-item">

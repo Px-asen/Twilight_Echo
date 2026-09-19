@@ -1,17 +1,21 @@
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 import {
   useMusicStore,
   type Playlist,
   type PlaylistPersistenceNotice
-} from '../../stores/useMusicStore.ts'
-import type { Track } from '../../types/music.ts'
-import { playlistExportFilename, playlistExportMimeType } from '../../utils/playlistExport.ts'
+} from '@renderer/stores/useMusicStore.ts'
+import type { Track } from '@renderer/types/music.ts'
+import { playlistExportFilename, playlistExportMimeType } from '@renderer/utils/playlistExport.ts'
 import {
   assertPlaylistCoverDimensions,
   assertPlaylistCoverFile,
   readPlaylistImportFile
-} from '../../utils/playlistFileValidation.ts'
-import type { PlaylistFileFormat } from '../../utils/playlistLifecycle.ts'
+} from '@renderer/utils/playlistFileValidation.ts'
+import type { PlaylistFileFormat } from '@renderer/utils/playlistLifecycle.ts'
+
+export type PlaylistDialogRequest =
+  | { kind: 'rename' | 'copy'; playlistId: string; initialValue: string }
+  | { kind: 'move'; playlistId: string; initialValue: string; trackIds: string[] }
 
 export interface PlaylistLifecycleActionOptions {
   currentPlaylist: Readonly<Ref<Playlist | null>>
@@ -66,6 +70,11 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
   playlistCoverInput: Ref<HTMLInputElement | null>
   playlistExportFormat: Ref<PlaylistFileFormat>
   playlistRepairPending: Ref<boolean>
+  playlistDialog: Ref<PlaylistDialogRequest | null>
+  playlistDialogError: Ref<string>
+  playlistMoveTargets: Readonly<Ref<Playlist[]>>
+  dismissPlaylistDialog(): void
+  confirmPlaylistDialog(value: string): void
   triggerPlaylistImport(): void
   handlePlaylistImport(event: Event): Promise<void>
   downloadPlaylistDocument(format: PlaylistFileFormat): void
@@ -81,6 +90,7 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
 } {
   const {
     playlists,
+    localPlaylists,
     playlistPersistenceStatus,
     playlistPersistenceNotice,
     renamePlaylist,
@@ -97,6 +107,18 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
   const playlistExportFormat = ref<PlaylistFileFormat>('m3u8')
   const playlistRepairPending = ref(false)
   const playlistDragTrackId = ref<string | null>(null)
+  const playlistDialog = shallowRef<PlaylistDialogRequest | null>(null)
+  const playlistDialogError = ref('')
+  const playlistMoveTargets = computed(() =>
+    localPlaylists.value.filter((playlist) => playlist.id !== options.currentPlaylist.value?.id)
+  )
+
+  watch(
+    () => options.currentPlaylist.value?.id,
+    (id) => {
+      if (playlistDialog.value && playlistDialog.value.playlistId !== id) dismissPlaylistDialog()
+    }
+  )
 
   watch(playlistPersistenceNotice, (notice: PlaylistPersistenceNotice | null) => {
     if (notice) options.repairMessage.value = notice.message
@@ -116,28 +138,63 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
   function handleRenamePlaylist(): void {
     const playlist = requireCurrentPlaylist()
     if (!playlist) return
-    const name = window.prompt('输入新的歌单名称', playlist.name)
-    if (name === null) return
-    try {
-      if (renamePlaylist(playlist.id, name)) {
-        options.repairMessage.value = '歌单已重命名'
-        options.selectPlaylist(name.trim().replace(/\s+/g, ' '))
-      }
-    } catch (error) {
-      options.repairMessage.value = describeError(error, '重命名歌单失败')
-    }
+    playlistDialogError.value = ''
+    playlistDialog.value = { kind: 'rename', playlistId: playlist.id, initialValue: playlist.name }
   }
 
   function handleCopyPlaylist(): void {
     const playlist = requireCurrentPlaylist()
     if (!playlist) return
-    const name = window.prompt('输入副本名称', `${playlist.name} 副本`)
-    if (name === null) return
+    playlistDialogError.value = ''
+    playlistDialog.value = {
+      kind: 'copy',
+      playlistId: playlist.id,
+      initialValue: `${playlist.name} 副本`
+    }
+  }
+
+  function dismissPlaylistDialog(): void {
+    playlistDialog.value = null
+    playlistDialogError.value = ''
+  }
+
+  function confirmPlaylistDialog(value: string): void {
+    const request = playlistDialog.value
+    if (!request) return
+    const playlist = playlists.value.find((item) => item.id === request.playlistId)
+    if (!playlist) {
+      playlistDialogError.value = '原歌单已不存在，请关闭后重试'
+      return
+    }
     try {
-      const copyId = copyPlaylist(playlist.id, name)
-      options.repairMessage.value = copyId ? '已创建歌单副本' : '未找到原歌单'
+      if (request.kind === 'rename') {
+        const changed = renamePlaylist(playlist.id, value)
+        if (changed) {
+          options.repairMessage.value = '歌单已重命名'
+          options.selectPlaylist(playlist.name)
+        }
+      } else if (request.kind === 'copy') {
+        const copyId = copyPlaylist(playlist.id, value)
+        options.repairMessage.value = copyId ? '已创建歌单副本' : '未找到原歌单'
+      } else if (request.kind === 'move') {
+        const target = playlistMoveTargets.value.find((item) => item.id === value)
+        if (!target) {
+          playlistDialogError.value = '目标歌单已不存在，请重新选择'
+          return
+        }
+        const result = movePlaylistTracks(playlist.name, target.name, request.trackIds)
+        if (!result.sourceRemoved) {
+          playlistDialogError.value = '没有可移动的歌曲，请重新选择'
+          return
+        }
+        options.repairMessage.value = `已移动 ${result.sourceRemoved} 首${
+          result.moved < result.sourceRemoved ? '，重复歌曲已合并' : ''
+        }`
+        options.clearSelection()
+      }
+      dismissPlaylistDialog()
     } catch (error) {
-      options.repairMessage.value = describeError(error, '复制歌单失败')
+      playlistDialogError.value = describeError(error, '歌单操作失败')
     }
   }
 
@@ -236,28 +293,20 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
   function handleMoveSelectedToPlaylist(): void {
     const playlist = requireCurrentPlaylist()
     if (!playlist) return
-    const choices = playlists.value.filter((item) => item.id !== playlist.id)
+    const choices = playlistMoveTargets.value
     if (!choices.length) {
       options.repairMessage.value = '请先创建目标歌单'
       return
     }
-    const targetName = window.prompt(
-      `输入目标歌单名称：${choices.map((item) => item.name).join('、')}`
-    )
-    if (!targetName) return
-    const result = movePlaylistTracks(
-      playlist.name,
-      targetName.trim(),
-      options.getSelectedTracks().map((track) => track.id)
-    )
-    if (!result.sourceRemoved) {
-      options.repairMessage.value = '目标歌单不存在，或没有可移动歌曲'
-      return
+    const trackIds = options.getSelectedTracks().map((track) => track.id)
+    if (!trackIds.length) return
+    playlistDialogError.value = ''
+    playlistDialog.value = {
+      kind: 'move',
+      playlistId: playlist.id,
+      initialValue: choices[0].id,
+      trackIds
     }
-    options.repairMessage.value = `已移动 ${result.sourceRemoved} 首${
-      result.moved < result.sourceRemoved ? '，重复歌曲已合并' : ''
-    }`
-    options.clearSelection()
   }
 
   async function handlePlaylistRepair(): Promise<void> {
@@ -290,6 +339,11 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
     playlistCoverInput,
     playlistExportFormat,
     playlistRepairPending,
+    playlistDialog,
+    playlistDialogError,
+    playlistMoveTargets,
+    dismissPlaylistDialog,
+    confirmPlaylistDialog,
     triggerPlaylistImport,
     handlePlaylistImport,
     downloadPlaylistDocument,

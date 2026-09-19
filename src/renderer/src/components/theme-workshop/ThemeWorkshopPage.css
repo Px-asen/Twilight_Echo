@@ -1,0 +1,118 @@
+.workshop-page {
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  background: var(--te-app-bg);
+  color: var(--te-neutral-900);
+  font: 14px/1.5 sans-serif;
+}
+.workshop-header,
+.workshop-create,
+.workshop-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.workshop-header h1 {
+  font-size: 24px;
+  margin: 0;
+}
+.workshop-header small {
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.workshop-header > div {
+  margin-right: auto;
+}
+.workshop-page button,
+.workshop-page input,
+.workshop-page select,
+.workshop-page textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-neutral-200);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.workshop-page button {
+  cursor: pointer;
+}
+.workshop-page button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.workshop-page button:hover,
+.workshop-page button.active {
+  background: var(--te-hover-bg);
+}
+.workshop-workspace {
+  display: grid;
+  grid-template-columns: 150px minmax(260px, 1fr) 300px;
+  gap: 16px;
+  height: calc(100% - 135px);
+  min-height: 450px;
+}
+.workshop-workspace nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+.workshop-preview {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--te-card-bg);
+}
+.workshop-toolbar {
+  padding: 10px;
+  margin: 0;
+}
+.workshop-properties {
+  overflow: auto;
+  padding: 16px;
+  background: var(--te-card-bg);
+  border-radius: 12px;
+}
+.workshop-properties label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.workshop-properties p {
+  overflow-wrap: anywhere;
+}
+.workshop-properties > button {
+  margin-bottom: 10px;
+}
+.workshop-code {
+  width: 100%;
+  min-height: 300px;
+  font-family: monospace !important;
+}
+.workshop-asset {
+  height: 100px;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.workshop-error {
+  color: var(--te-favorite-color);
+}
+.workshop-empty {
+  padding: 80px 20px;
+  text-align: center;
+}
+@media (max-width: 1000px) {
+  .workshop-workspace {
+    grid-template-columns: 105px minmax(200px, 1fr) 230px;
+    gap: 8px;
+  }
+  .workshop-page {
+    padding: 12px;
+  }
+}

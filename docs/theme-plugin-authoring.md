@@ -6,6 +6,46 @@ that can rearrange the application layout while keeping every API v1 and v2 them
 
 ## Contract Files
 
+## Theme workshop editor metadata
+
+Theme contributions may include `editor: { schemaVersion: 1, controls: [...] }`.
+Each control declares `id`, `label`, `group`, `type`, one of `variable` / `token` / host `slot`, and `defaults`
+for `pureWhite` and `dark`. Types are `color`, `number`, `select`, `boolean`,
+`image`, and `text`; numeric controls may specify `min`, `max`, `step`, and `unit`.
+Select controls declare `options`. An optional `selector` scopes the CSS variable
+override to the element where the original stylesheet declares that variable.
+Optional `targets: { local, streaming }` selectors expose independent local and
+streaming overrides. Controls are linked by default. Unlinking copies the current
+value; relinking uses the explicitly selected side for both modes.
+Defaults describe the existing stylesheet; they are not applied until the user
+changes a control. This preserves the original theme when creating a project.
+
+The built-in theme workshop is disabled by default. It snapshots enabled theme
+plugins into independent projects and exports `.teworkshop` editable documents
+or declarative `.tep` packages. Source files are never rewritten. Local image
+references are embedded in the snapshot; external URLs and stylesheet imports
+currently require author-side consolidation before snapshotting.
+
+The settings Appearance section places **Theme Plugin Workshop** immediately below
+**Theme Creative Studio**. Its sidebar shortcut is hidden. The button becomes available
+when the bundled tool plugin is enabled; disabling still flushes the current draft.
+
+Projects can contain an asset library (PNG/JPEG/WebP and WOFF2), per-tone surface layers,
+non-destructive crop, four-edge fade, opacity, blur, gradient, mask, ordering and display
+conditions. The host renders decorative layers behind content with pointer events disabled.
+Library density uses the existing mode contract so virtualized rows keep their measured height.
+Structured layout and modes are preserved through compilation and export. Applied versions
+are saved separately and can be restored without changing the installed source theme.
+Image references and license notices are captured with the project; asset source/attribution
+fields are included in exported attribution metadata.
+
+Whole-window trial restores managed theme attributes as well as CSS on exit. Escape and a
+host-owned top-layer recovery button exit trial. The default iframe has no script permission
+and receives no preload bridge; host-rendered preview components use fixture tracks and inert
+controls. The settings preview is a controls sample rather than an interactive settings page.
+
+Editor metadata does not grant script execution or arbitrary component access.
+
 - `packages/plugin-api/src/index.ts`: authoritative TypeScript declarations.
 - `packages/plugin-api/theme-contract.json`: machine-readable token, mode, and visibility catalog.
 - `src/shared/theme.ts`: host registry and normalization behavior.

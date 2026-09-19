@@ -270,6 +270,18 @@ export function buildDisplacementPixels(geometry: DisplacementGeometry): Displac
 }
 
 const cache = new Map<string, string>()
+/** Each entry is a data-URL raster up to 1024 px square; a handful covers every live surface size. */
+const MAX_CACHED_MAPS = 8
+
+function rememberMap(key: string, url: string): void {
+  cache.delete(key)
+  cache.set(key, url)
+  while (cache.size > MAX_CACHED_MAPS) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+}
 
 export function geometryKey(geometry: DisplacementGeometry): string {
   const { width, height, shape, blurRadius } = resolveRasterGeometry(geometry)
@@ -300,7 +312,7 @@ export function getDisplacementMapUrl(geometry: DisplacementGeometry): string {
   context.putImageData(imageData, 0, 0)
 
   const url = canvas.toDataURL()
-  cache.set(key, url)
+  rememberMap(key, url)
   return url
 }
 

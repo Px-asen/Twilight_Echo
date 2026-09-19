@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMusicStore } from '../stores/useMusicStore'
 import {
@@ -27,6 +27,7 @@ const emit = defineEmits<{
   (event: 'select-view', category: string, filter: string | null): void
   (event: 'open-library-settings'): void
 }>()
+const props = defineProps<{ previewTracks?: Track[] }>()
 
 // Relative so the packaged file:// build resolves it next to index.html
 // instead of the filesystem root.
@@ -36,7 +37,8 @@ const SHELF_SIZE = 6
 const TOP_TRACK_COUNT = 6
 const ALBUM_SHELF_SIZE = 5
 
-const { tracks, albums, artists } = useMusicStore()
+const { tracks: libraryTracks, albums, artists } = useMusicStore()
+const tracks = computed(() => props.previewTracks ?? libraryTracks.value)
 const { listeningStats } = useListeningStatsStore()
 const playbackStore = usePlayerStore()
 const audioOutputDspStore = useAudioOutputDspStore()
@@ -47,15 +49,33 @@ const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = pla
 const now = ref(new Date())
 
 onMounted(() => {
+  if (props.previewTracks) return
   window.addEventListener('keydown', onDspRouteDialogKeydown)
   void refreshDspRouteState(true)
+  // The polled graph status only moves while audio is flowing (meters, process
+  // time). When paused or stopped the last snapshot stays valid, so the 1 Hz
+  // IPC round-trip is skipped until playback resumes or the route changes.
   dspRoutePoll = window.setInterval(() => {
     if (document.visibilityState === 'hidden') return
+    if (!isPlaying.value && !dspRouteDialogOpen.value && !dspRouteDirty) return
+    dspRouteDirty = false
     dspRoutePollTick += 1
     void refreshDspGraphStatus()
     if (dspRoutePollTick % 5 === 0) void refreshDspSceneState()
   }, 1000)
 })
+
+watch(
+  () => [
+    isPlaying.value,
+    outputInfo.value?.nativeDsp?.graph?.revision,
+    playbackInfo.value?.outputInfo?.nativeDsp?.graph?.revision,
+    audioProcessing.value
+  ],
+  () => {
+    dspRouteDirty = true
+  }
+)
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onDspRouteDialogKeydown)
@@ -94,6 +114,7 @@ interface RankedStat {
 }
 
 const rankedStats = computed<RankedStat[]>(() => {
+  if (props.previewTracks) return []
   const resolveRecentTrack = createUnifiedRecentTrackResolver(tracks.value)
   return getMostListenedTracks(TOP_TRACK_COUNT).map((stat) => {
     const track = resolveRecentTrack(stat) ?? stat.track ?? null
@@ -111,6 +132,7 @@ const rankedStats = computed<RankedStat[]>(() => {
 })
 
 const lastPlayedTrack = computed<Track | null>(() => {
+  if (props.previewTracks) return props.previewTracks[0] ?? null
   const latestStat = getRecentTracks(1)[0]
   if (!latestStat) return null
 
@@ -119,6 +141,7 @@ const lastPlayedTrack = computed<Track | null>(() => {
 })
 
 const heroTrack = computed<Track | null>(() => {
+  if (props.previewTracks) return props.previewTracks[0] ?? null
   if (currentTrack.value) return currentTrack.value
   if (lastPlayedTrack.value) return lastPlayedTrack.value
   const ranked = rankedStats.value[0]
@@ -134,7 +157,9 @@ const heroCoverKey = computed(
   () =>
     `hero:${heroTrack.value?.id ?? 'none'}:${heroTrack.value?.cover ?? ''}:${heroTrack.value?.coverSource ?? ''}`
 )
-const nowPlayingTitle = computed(() => currentTrack.value?.title || heroTrack.value?.title)
+const nowPlayingTitle = computed(() =>
+  props.previewTracks ? heroTrack.value?.title : currentTrack.value?.title || heroTrack.value?.title
+)
 // 0..100 的进度百分比，供 transform 用；useSmoothedValue 把每秒一跳的播放
 // 进度补成连续运动，seek/切歌的大跳变（>2.5%）直接 snap 不补间。
 const heroProgressPercent = computed(() => Math.min(100, Math.max(0, progress.value)))
@@ -179,7 +204,9 @@ const topMaxSeconds = computed(() =>
 )
 
 const albumShelf = computed(() =>
-  [...albums.value].sort((a, b) => b.trackCount - a.trackCount).slice(0, ALBUM_SHELF_SIZE)
+  props.previewTracks
+    ? []
+    : [...albums.value].sort((a, b) => b.trackCount - a.trackCount).slice(0, ALBUM_SHELF_SIZE)
 )
 
 function playDashboardTrack(track: Track | null | undefined): void {
@@ -382,6 +409,7 @@ const dspRouteLoading = ref(false)
 const dspRouteError = ref('')
 let dspRoutePoll: number | null = null
 let dspRoutePollTick = 0
+let dspRouteDirty = false
 let dspRouteRefreshInFlight = false
 
 const embeddedDspGraphStatus = computed(

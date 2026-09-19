@@ -1622,6 +1622,81 @@ void testDspGraphEpochRetirementStaysBoundedAcrossOneThousandUpdates() {
 #endif
 }
 
+// ENG-1: retired decode streams used to be reclaimed only once the pipeline
+// reached Stopped, so every manual skip / re-preload during a long session
+// parked a live decoder + ring buffer until the user pressed stop. The render
+// thread now ACKs a retirement epoch per callback and the control thread
+// reclaims behind that ACK while playback keeps running.
+void testRetiredDecodeStreamsAreReclaimedWhilePlaying() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  const auto item = [](int index) {
+    QueueItem queueItem;
+    queueItem.id = "reclaim-" + std::to_string(index);
+    // "auto-promote-current" selects the short 4096-frame fake profile.
+    queueItem.source = "auto-promote-current-" + std::to_string(index) + ".flac";
+    queueItem.durationSeconds = 0.09;
+    return queueItem;
+  };
+  // Non-unity volume keeps typed passthrough off so gapless preload can arm.
+  assert(
+      pipeline.play(
+          item(0),
+          item(1),
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          0.5,
+          "{\"dspEnabled\":true,\"fftEnabled\":false,\"gapless\":true}",
+          true,
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(waitUntil([&pipeline] { return pipeline.status().preloadReady; }));
+  assert(pipeline.retiredDecodeStreamCountForTests() == 0);
+
+  constexpr int kTracks = 20;
+  for (int index = 1; index <= kTracks; ++index) {
+    renderBackendFrames(backend, 64);
+    error.clear();
+    // Manual-next path: the previous active stream is withdrawn from the
+    // render pointers and parked as retired.
+    assert(pipeline.skipToPreloaded(item(index), &error));
+    assert(pipeline.status().state == PipelineState::Playing);
+    assert(pipeline.retiredDecodeStreamCountForTests() == 1);
+
+    // A control-thread sweep before any callback ran must keep holding it: the
+    // in-flight callback may still be reading from that stream.
+    (void)pipeline.status();
+    assert(pipeline.retiredDecodeStreamCountForTests() == 1);
+
+    // One callback samples the new epoch and ACKs it on exit; the next control
+    // sweep reclaims without the transport ever leaving Playing.
+    renderBackendFrames(backend, 64);
+    (void)pipeline.status();
+    assert(pipeline.retiredDecodeStreamCountForTests() == 0);
+    assert(pipeline.status().state == PipelineState::Playing);
+
+    error.clear();
+    assert(pipeline.preloadNext(item(index + 1), &error));
+    assert(waitUntil([&pipeline] { return pipeline.status().preloadReady; }));
+  }
+
+  // Re-arming a different upcoming item retires the previous preload stream
+  // through the same gate.
+  error.clear();
+  assert(pipeline.preloadNext(item(kTracks + 5), &error));
+  assert(pipeline.retiredDecodeStreamCountForTests() == 1);
+  renderBackendFrames(backend, 64);
+  (void)pipeline.status();
+  assert(pipeline.retiredDecodeStreamCountForTests() == 0);
+  assert(pipeline.status().state == PipelineState::Playing);
+
+  pipeline.stop();
+  assert(pipeline.retiredDecodeStreamCountForTests() == 0);
+}
+
 void testApplyDspStateGraphPreparationFailureIsTransactional() {
   TwilightAudioEngine engine;
   const std::string acceptedState =
@@ -3862,6 +3937,7 @@ int main() {
   testVolumeCommandStormCoalescesToNewestValue();
   testDspGraphCommandAppliesAtRenderBoundary();
   testDspGraphEpochRetirementStaysBoundedAcrossOneThousandUpdates();
+  testRetiredDecodeStreamsAreReclaimedWhilePlaying();
   testApplyDspStateGraphPreparationFailureIsTransactional();
   testApplyDspStateCapacityFailureKeepsLastAcceptedState();
   testStoppedVolumeAcceptanceIsVisibleBeforePlayback();

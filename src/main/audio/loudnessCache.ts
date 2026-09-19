@@ -4,10 +4,11 @@ import { dirname } from 'path'
 import { isDeepStrictEqual } from 'util'
 import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import type { LoudnessAnalysisResult } from '../../shared/audioEngineTypes.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../../shared/libraryLoudness.ts'
 
 export type { LoudnessAnalysisResult }
 
-export const LOUDNESS_ANALYSIS_ALGORITHM_VERSION = 1
+export const LOUDNESS_ANALYSIS_ALGORITHM_VERSION = LIBRARY_LOUDNESS_ALGORITHM_VERSION
 export const LOUDNORM_DEFAULT_TARGET_LUFS = -23.0
 export const LOUDNORM_DEFAULT_TRUE_PEAK_CEILING_DB = -1.0
 /** Soft cap on cached identities; oldest analyzedAt entries are evicted first. */
@@ -55,7 +56,12 @@ export class LoudnessAnalysisCache {
     await this.mutationTail
     const file = await this.read()
     const result = file.entries[buildLoudnessAnalysisCacheKey(identity)]
-    return isLoudnessAnalysisResult(result) ? result : null
+    return isLoudnessAnalysisResult(result) &&
+      result.algorithmVersion ===
+        (identity.algorithmVersion ?? LOUDNESS_ANALYSIS_ALGORITHM_VERSION) &&
+      result.available !== false
+      ? result
+      : null
   }
 
   async set(

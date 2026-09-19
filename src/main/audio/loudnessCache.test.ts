@@ -69,6 +69,11 @@ test('loudness cache persists and invalidates stale entries', async () => {
   await cache.set(identity, analysis)
   assert.deepEqual(await cache.get(identity), analysis)
   assert.equal(await cache.get({ ...identity, size: 999 }), null)
+  await cache.set(identity, {
+    ...analysis,
+    algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION - 1
+  })
+  assert.equal(await cache.get(identity), null)
 
   const raw = JSON.parse(await readFile(cachePath, 'utf-8')) as { entries: Record<string, unknown> }
   assert.equal(Object.keys(raw.entries).length, 1)

@@ -56,8 +56,11 @@ type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 const audioOutputDspStore = useAudioOutputDspStore()
 const playerStore = usePlayerStore()
 const { audioProcessing, outputInfo, audioEngineReady } = storeToRefs(audioOutputDspStore)
-const { visualizationData, isPlaying } = playerStore
+const { visualizationData, isPlaying, acquireVisualizationConsumer } = playerStore
 const { setAudioProcessing } = audioOutputDspStore
+// The spectrum overlay and level meters read visualizationData while this page
+// is open; the store poll only runs while at least one consumer holds a handle.
+let releaseVisualizationConsumer: (() => void) | null = null
 
 const autoPreampStorageKey = 'twilight-echo:eq-auto-preamp:v1'
 
@@ -856,12 +859,15 @@ function selectBand(index: number): void {
 }
 
 onMounted(() => {
+  releaseVisualizationConsumer = acquireVisualizationConsumer()
   loadAutoPreampPreference()
   void loadAppSettings()
   void loadOpraStatus()
 })
 
 onBeforeUnmount(() => {
+  releaseVisualizationConsumer?.()
+  releaseVisualizationConsumer = null
   clearApplyFeedbackTimer()
   if (pendingBandFrame !== 0) window.cancelAnimationFrame(pendingBandFrame)
   if (spectrumAnimationFrame !== 0) window.cancelAnimationFrame(spectrumAnimationFrame)

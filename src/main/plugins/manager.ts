@@ -1,6 +1,6 @@
 import { app, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { cp, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { basename, dirname, extname, join, resolve } from 'path'
 import { EventEmitter } from 'events'
@@ -61,6 +61,13 @@ import { redactSensitiveText } from '../security/secureStorage.ts'
 import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
 import { normalizeThemeContribution, normalizeUiContribution } from './themeContribution.ts'
 import { QISHUI_PLUGIN_ID, QishuiAuthBridge } from './qishuiAuthBridge.ts'
+import { DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS, PluginHostIdleTracker } from './hostIdle.ts'
+import {
+  PLUGIN_CONTRIBUTIONS_CACHE_FILE,
+  loadPluginContributionsCache,
+  savePluginContributionsCache,
+  type PluginContributionsCacheFile
+} from './contributionsCache.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -112,6 +119,27 @@ export interface TwilightPluginManagerOptions {
     previous: () => Promise<void> | void
   }
   getProxyEnv?: () => Record<string, string>
+  /**
+   * Plugin hosts that have had no provider call, UI command, or subscribed
+   * event for this long are hibernated (their utility process is stopped)
+   * and transparently re-activated by the next call. 0 disables hibernation.
+   */
+  hostIdleTimeoutMs?: number
+}
+
+/**
+ * Contributions a hibernated plugin registered while it was running. They
+ * keep the provider visible and routable so the next call can wake the host
+ * instead of reporting the provider as disabled.
+ */
+interface HibernatedPlugin {
+  descriptor: TwilightPluginDescriptor
+  /** Size:mtime of the entry file the snapshot was taken from. */
+  mainSignature: string
+  providers: TwilightMediaProviderRegistration[]
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
+  subscriptions: Set<string>
 }
 
 interface RunningPlugin {
@@ -197,6 +225,12 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly getProxyEnv: TwilightPluginManagerOptions['getProxyEnv']
   private readonly running = new Map<string, RunningPlugin>()
+  private readonly hibernated = new Map<string, HibernatedPlugin>()
+  private readonly wakeOperations = new Map<string, Promise<RunningPlugin>>()
+  private readonly hibernating = new Set<string>()
+  private contributionsCache: PluginContributionsCacheFile = {}
+  private contributionsSaveChain: Promise<void> = Promise.resolve()
+  private readonly hostIdle: PluginHostIdleTracker | null
   private readonly logWriteChains = new Map<string, Promise<void>>()
   private readonly logSizes = new Map<string, number>()
   private readonly providerHealth = new Map<string, ProviderHealthRecord>()
@@ -225,6 +259,15 @@ export class TwilightPluginManager extends EventEmitter {
     this.applyNativeDspPluginChain = options.applyNativeDspPluginChain
     this.player = options.player
     this.getProxyEnv = options.getProxyEnv
+    const idleTimeoutMs = options.hostIdleTimeoutMs ?? DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS
+    this.hostIdle =
+      idleTimeoutMs > 0
+        ? new PluginHostIdleTracker({
+            idleTimeoutMs,
+            canHibernate: (id) => this.canHibernatePlugin(id),
+            onIdle: (id) => void this.hibernatePlugin(id)
+          })
+        : null
   }
 
   get roots(): {
@@ -233,6 +276,7 @@ export class TwilightPluginManager extends EventEmitter {
     data: string
     logs: string
     stateFile: string
+    contributionsFile: string
   } {
     const userData = app.getPath('userData')
     return {
@@ -240,13 +284,17 @@ export class TwilightPluginManager extends EventEmitter {
       staging: join(userData, 'plugin-staging'),
       data: join(userData, 'plugin-data'),
       logs: join(userData, 'logs', 'plugins'),
-      stateFile: join(userData, STATE_FILE)
+      stateFile: join(userData, STATE_FILE),
+      contributionsFile: join(userData, PLUGIN_CONTRIBUTIONS_CACHE_FILE)
     }
   }
 
   async initialize(): Promise<void> {
     this.ensureRoots()
     await this.loadState()
+    this.contributionsCache = this.hostIdle
+      ? await loadPluginContributionsCache(this.roots.contributionsFile)
+      : {}
     await this.syncBundledPlugins()
     await this.scanAndStartEnabled()
     await this.syncNativeDspChain()
@@ -568,20 +616,44 @@ export class TwilightPluginManager extends EventEmitter {
   async broadcastEvent(name: string, payload: unknown): Promise<void> {
     for (const running of this.running.values()) {
       if (running.subscriptions.has(name)) {
+        this.hostIdle?.touch(running.descriptor.id)
         running.process.postMessage({ kind: 'event', name, payload } satisfies PluginHostRequest)
       }
+    }
+    // A hibernated plugin that subscribed to this event is woken so it does
+    // not miss it; plugins that never subscribed stay asleep. Lifecycle
+    // events during shutdown must not resurrect hosts.
+    if (this.shuttingDown || PUBLIC_APP_EVENTS.has(name)) return
+    for (const [id, sleeping] of this.hibernated) {
+      if (!sleeping.subscriptions.has(name)) continue
+      void this.wakePlugin(id)
+        .then((running) => {
+          if (this.running.get(id) !== running) return
+          running.process.postMessage({ kind: 'event', name, payload } satisfies PluginHostRequest)
+        })
+        .catch(() => undefined)
     }
   }
 
   listProviders(): TwilightMediaProviderRegistration[] {
-    return dedupeProviderRegistrations(this.running.values()).map((provider) => ({
+    return dedupeProviderRegistrations(this.contributingPlugins()).map((provider) => ({
       ...provider,
       health: this.getProviderHealth(provider.id)
     }))
   }
 
+  /** Running plugins plus hibernated ones, so contributions survive host sleep. */
+  private contributingPlugins(): Array<RunningPlugin | HibernatedPlugin> {
+    return [...this.hibernated.values(), ...this.running.values()]
+  }
+
+  /** Whether a plugin's host is currently hibernated (contributions kept, process stopped). */
+  isHibernated(id: string): boolean {
+    return this.hibernated.has(id)
+  }
+
   async listExtensions(): Promise<TwilightPluginExtensionContribution[]> {
-    const runningExtensions = [...this.running.values()]
+    const runningExtensions = this.contributingPlugins()
       .filter((running) => running.ui.length > 0 || running.themes.length > 0)
       .map((running) => ({
         pluginId: running.descriptor.id,
@@ -604,10 +676,12 @@ export class TwilightPluginManager extends EventEmitter {
   async executeUiCommand(command: string, args: unknown[] = []): Promise<unknown> {
     const normalized = command.trim()
     if (!normalized) throw new Error('UI command 不能为空')
-    const running = [...this.running.values()].find((candidate) =>
+    const owner = this.contributingPlugins().find((candidate) =>
       candidate.ui.some((contribution) => contribution.command === normalized)
     )
-    if (!running) throw new Error(`UI command 未注册：${normalized}`)
+    if (!owner) throw new Error(`UI command 未注册：${normalized}`)
+    const running = await this.ensureRunningForCall(owner.descriptor.id)
+    this.hostIdle?.touch(running.descriptor.id)
     const requestId = randomUUID()
     return this.rpcCalls.request<unknown, UiCommandRpcMetadata>({
       requestId,
@@ -644,10 +718,11 @@ export class TwilightPluginManager extends EventEmitter {
     options: TwilightProviderCallOptions = {}
   ): Promise<unknown> {
     const normalizedProviderId = providerId.trim().toLowerCase()
-    const running = findProviderRoute(this.running.values(), normalizedProviderId, method)
-    const hasProvider = [...this.running.values()].some((candidate) =>
+    const route = findProviderRoute(this.contributingPlugins(), normalizedProviderId, method)
+    const hasProvider = this.contributingPlugins().some((candidate) =>
       candidate.providers.some((provider) => provider.id === normalizedProviderId)
     )
+    const running = route ? await this.ensureRunningForCall(route.descriptor.id) : null
     if (!running) {
       const isBundledProvider = this.isBundledPluginId(normalizedProviderId)
       throw new Error(
@@ -659,6 +734,7 @@ export class TwilightPluginManager extends EventEmitter {
       )
     }
 
+    this.hostIdle?.touch(running.descriptor.id)
     const requestId = randomUUID()
     const idempotencyKey = resolveProviderIdempotencyKey(method, options.idempotencyKey)
     return this.rpcCalls.request<unknown, ProviderRpcMetadata>({
@@ -706,11 +782,166 @@ export class TwilightPluginManager extends EventEmitter {
 
   async destroy(): Promise<void> {
     this.shuttingDown = true
+    this.hostIdle?.destroy()
+    this.hibernated.clear()
     try {
       await Promise.all([...this.running.keys()].map((id) => this.stopPlugin(id)))
     } finally {
       await this.statePersistenceFor().flush()
+      await this.contributionsSaveChain
     }
+  }
+
+  /**
+   * Resolves the running host for a call, waking a hibernated plugin first.
+   * Concurrent callers share one wake so a burst of provider calls forks a
+   * single process.
+   */
+  private async ensureRunningForCall(id: string): Promise<RunningPlugin> {
+    const running = this.running.get(id)
+    if (running) return running
+    if (!this.hibernated.has(id)) throw new Error(`Provider 未启用：${id}`)
+    return this.wakePlugin(id)
+  }
+
+  private wakePlugin(id: string): Promise<RunningPlugin> {
+    const existing = this.wakeOperations.get(id)
+    if (existing) return existing
+    const wake = this.pluginOperationQueue
+      .run(id, async () => {
+        const already = this.running.get(id)
+        if (already) return already
+        const sleeping = this.hibernated.get(id)
+        if (!sleeping) throw new Error(`Provider 未启用：${id}`)
+        const descriptor = await this.findDescriptor(id)
+        if (!descriptor.enabled || !descriptor.main) {
+          this.hibernated.delete(id)
+          throw new Error(`Provider 未启用：${id}`)
+        }
+        this.appendLog(descriptor, 'info', '插件宿主从休眠唤醒')
+        try {
+          await this.startPlugin(descriptor, { persistState: false })
+        } catch (error) {
+          this.markFailed(id, error instanceof Error ? error.message : String(error), descriptor)
+          throw error
+        }
+        const woken = this.running.get(id)
+        if (!woken) throw new Error(`Plugin ${id} exited during wake-up.`)
+        return woken
+      })
+      .finally(() => {
+        if (this.wakeOperations.get(id) === wake) this.wakeOperations.delete(id)
+      })
+    this.wakeOperations.set(id, wake)
+    return wake
+  }
+
+  private mainFileSignature(descriptor: TwilightPluginDescriptor): string {
+    if (!descriptor.main) return ''
+    try {
+      const info = statSync(resolve(descriptor.paths.versionRoot, descriptor.main))
+      return `${info.size}:${Math.floor(info.mtimeMs)}`
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * Boots an enabled plugin straight into hibernation when the last run's
+   * contributions are cached for this exact version and entry file, so the
+   * utility process only forks once something actually calls the plugin.
+   */
+  private hibernateFromCache(descriptor: TwilightPluginDescriptor): boolean {
+    if (!this.hostIdle || descriptor.id === QISHUI_PLUGIN_ID) return false
+    const cached = this.contributionsCache[descriptor.id]
+    if (!cached || cached.version !== descriptor.version) return false
+    const signature = this.mainFileSignature(descriptor)
+    if (!signature || cached.mainSignature !== signature) return false
+    if (this.running.has(descriptor.id)) return false
+    this.hibernated.set(descriptor.id, {
+      descriptor,
+      mainSignature: signature,
+      providers: [...cached.providers],
+      ui: [...cached.ui],
+      themes: this.normalizeDeclarativeThemeContributions(descriptor),
+      subscriptions: new Set(cached.subscriptions)
+    })
+    this.appendLog(descriptor, 'info', '插件贡献已从缓存恢复，宿主按需启动')
+    this.emit('changed')
+    return true
+  }
+
+  private rememberContributions(id: string, snapshot: HibernatedPlugin): void {
+    if (!this.hostIdle || !snapshot.mainSignature) return
+    this.contributionsCache[id] = {
+      version: snapshot.descriptor.version,
+      mainSignature: snapshot.mainSignature,
+      providers: snapshot.providers.map((provider) => ({ ...provider })),
+      ui: snapshot.ui.map((contribution) => ({ ...contribution })),
+      subscriptions: [...snapshot.subscriptions]
+    }
+    this.queueContributionsSave()
+  }
+
+  private forgetContributions(id: string): void {
+    if (!(id in this.contributionsCache)) return
+    delete this.contributionsCache[id]
+    this.queueContributionsSave()
+  }
+
+  private queueContributionsSave(): void {
+    if (!this.hostIdle) return
+    const snapshot = { ...this.contributionsCache }
+    this.contributionsSaveChain = this.contributionsSaveChain
+      .then(() => savePluginContributionsCache(this.roots.contributionsFile, snapshot))
+      .catch(() => undefined)
+  }
+
+  private canHibernatePlugin(id: string): boolean {
+    const running = this.running.get(id)
+    if (!running || running.trial || this.shuttingDown) return false
+    // The Qishui auth bridge is bound to the live host process; stopping it
+    // would discard the user's login, so that plugin stays resident.
+    if (id === QISHUI_PLUGIN_ID) return false
+    if (this.stopOperations.has(id) || this.wakeOperations.has(id)) return false
+    if (this.rpcCalls.getPendingCount(id) > 0) return false
+    for (const key of this.internalNcmRequests.keys()) {
+      if (key.startsWith(`${id}\u0000`)) return false
+    }
+    return true
+  }
+
+  /**
+   * Stops an idle plugin host while remembering everything it registered.
+   * The plugin stays "enabled" in persisted state and in list(); only the
+   * process goes away until the next provider call, UI command, or
+   * subscribed event.
+   */
+  private async hibernatePlugin(id: string): Promise<void> {
+    await this.pluginOperationQueue.run(id, async () => {
+      const running = this.running.get(id)
+      if (!running || !this.canHibernatePlugin(id)) return
+      this.hibernating.add(id)
+      const snapshot: HibernatedPlugin = {
+        descriptor: running.descriptor,
+        mainSignature: this.mainFileSignature(running.descriptor),
+        providers: [...running.providers],
+        ui: [...running.ui],
+        themes: [...running.themes],
+        subscriptions: new Set(running.subscriptions)
+      }
+      this.hibernated.set(id, snapshot)
+      this.rememberContributions(id, snapshot)
+      this.appendLog(running.descriptor, 'info', '插件宿主空闲，进入休眠')
+      try {
+        await this.stopPlugin(id)
+      } catch {
+        // stopPlugin already tolerates a process that exited on its own.
+      } finally {
+        this.hibernating.delete(id)
+      }
+      if (this.running.has(id)) this.hibernated.delete(id)
+    })
   }
 
   private assertRunningPlugin(running: RunningPlugin): void {
@@ -771,6 +1002,7 @@ export class TwilightPluginManager extends EventEmitter {
       const wave = wavesByDepth.get(depth) ?? []
       await Promise.all(
         wave.map(async (descriptor) => {
+          if (this.hibernateFromCache(descriptor)) return
           await this.startPlugin(descriptor).catch((error) => {
             this.markFailed(
               descriptor.id,
@@ -903,6 +1135,7 @@ export class TwilightPluginManager extends EventEmitter {
       themes: this.normalizeDeclarativeThemeContributions(descriptor)
     }
     this.running.set(descriptor.id, running)
+    this.hibernated.delete(descriptor.id)
     child.on('message', (message: PluginHostResponse) => {
       void this.handleHostMessage(descriptor.id, message)
     })
@@ -921,6 +1154,7 @@ export class TwilightPluginManager extends EventEmitter {
         void this.qishuiAuth.clear(descriptor.paths.versionRoot).catch(() => undefined)
       }
       this.running.delete(descriptor.id)
+      this.hostIdle?.clear(descriptor.id)
       if (
         this.state[descriptor.id]?.enabled &&
         !running.trial &&
@@ -953,6 +1187,17 @@ export class TwilightPluginManager extends EventEmitter {
       await activation
       if (options.persistState !== false) this.markStarted(descriptor)
       this.appendLog(descriptor, 'info', '插件已激活')
+      if (!running.trial) {
+        this.hostIdle?.touch(descriptor.id)
+        this.rememberContributions(descriptor.id, {
+          descriptor,
+          mainSignature: this.mainFileSignature(descriptor),
+          providers: running.providers,
+          ui: running.ui,
+          themes: running.themes,
+          subscriptions: running.subscriptions
+        })
+      }
     } catch (error) {
       await this.stopPlugin(descriptor.id).catch(() => undefined)
       throw error
@@ -962,8 +1207,14 @@ export class TwilightPluginManager extends EventEmitter {
   private async stopPlugin(id: string): Promise<void> {
     const existingStop = this.stopOperations.get(id)
     if (existingStop) return existingStop
+    this.hostIdle?.clear(id)
     const running = this.running.get(id)
     if (!running) {
+      // A hibernated plugin has no process; an explicit stop just forgets it.
+      if (!this.hibernating.has(id)) {
+        this.hibernated.delete(id)
+        this.forgetContributions(id)
+      }
       this.rpcCalls.cancelPlugin(id, `Plugin ${id} is no longer running.`)
       this.abortInternalNcmRequests(id, `Plugin ${id} is no longer running.`)
       return
@@ -976,6 +1227,10 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private async stopRunningPlugin(id: string, running: RunningPlugin): Promise<void> {
+    if (!this.hibernating.has(id)) {
+      this.hibernated.delete(id)
+      if (!running.trial) this.forgetContributions(id)
+    }
     this.rpcCalls.cancelPlugin(id, `Plugin ${id} was stopped before its RPC completed.`)
     this.abortInternalNcmRequests(id, `Plugin ${id} was stopped before its internal API completed.`)
     const requestId = randomUUID()
@@ -1264,7 +1519,7 @@ export class TwilightPluginManager extends EventEmitter {
       const owner = providerId === 'ncm' ? '内置网易云插件' : '本地音乐库'
       throw new Error(`Provider id ${providerId} 已保留给${owner}`)
     }
-    for (const running of this.running.values()) {
+    for (const running of this.contributingPlugins()) {
       if (running.descriptor.id === pluginId) continue
       if (running.providers.some((provider) => provider.id === providerId)) {
         throw new Error(`Provider id 已被插件 ${running.descriptor.id} 注册：${providerId}`)
@@ -1477,7 +1732,7 @@ export class TwilightPluginManager extends EventEmitter {
 
   private getProviderHealth(providerId: string): TwilightMediaProviderHealth {
     const normalizedProviderId = providerId.trim().toLowerCase()
-    const running = [...this.running.values()].find((candidate) =>
+    const running = this.contributingPlugins().find((candidate) =>
       candidate.providers.some((provider) => provider.id === normalizedProviderId)
     )
     const pluginId = running?.descriptor.id ?? normalizedProviderId

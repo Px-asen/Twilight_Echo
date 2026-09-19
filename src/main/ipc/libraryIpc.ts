@@ -50,7 +50,11 @@ import type {
   LocalLibraryWorkerScanRequest
 } from '../../shared/localLibraryScan.ts'
 import { runtime } from '../core/runtime'
-import { getCoverCacheDir, migrateBase64Cover } from '../library/coverCache'
+import {
+  getCoverCacheDir,
+  migrateBase64Cover,
+  normalizeCachedCoverHandle
+} from '../library/coverCache'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { normalizeLocalPath, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
@@ -107,6 +111,16 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
       })
     })
     if (result.cancelled) return []
+    // The worker writes covers at their source size; hand the renderer the
+    // 500px thumbnail handles the coordinator would have persisted.
+    await Promise.all(
+      result.parsedTracks.map(async (track) => {
+        if (!track || typeof track !== 'object') return
+        const record = track as Record<string, unknown>
+        if (typeof record.cover !== 'string' || !record.cover.startsWith('cover://')) return
+        record.cover = await normalizeCachedCoverHandle(record.cover)
+      })
+    )
     return result.parsedTracks
   })
 
@@ -141,6 +155,7 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     resolveRoots: async () =>
       await filterAuthorizedLibraryRoots(runtime.appSettings.libraryFolders),
     getCoverCacheDir,
+    normalizeCoverHandle: normalizeCachedCoverHandle,
     watcherDebounceMs: runtime.libraryWatcherDebounceMs
   })
   runtime.localLibraryIndexCoordinator = localLibraryIndexCoordinator

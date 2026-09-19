@@ -19,6 +19,7 @@ import {
   type WindowsSmtcBinding
 } from './windowsSmtcBinding.ts'
 import { WINDOWS_APP_USER_MODEL_ID } from './windowsAppIdentity.ts'
+import { windowsSmtcUpdateSignature } from './windowsSmtcSignature.ts'
 
 let binding: WindowsSmtcBinding | null = null
 let setupAttempted = false
@@ -140,17 +141,19 @@ export function buildWindowsSmtcUpdate(
   }
 }
 
-export function refreshWindowsSmtc(): void {
+let lastUpdateSignature: string | null = null
+
+export function refreshWindowsSmtc(force = false): void {
   if (!binding || !status.active) return
+  const enabled = runtime.appSettings.smtcEnabled !== false
+  const signature = windowsSmtcUpdateSignature(runtime.latestMiniPlayerState, enabled)
+  if (!force && signature === lastUpdateSignature) return
   try {
-    binding.Update(
-      buildWindowsSmtcUpdate(
-        runtime.latestMiniPlayerState,
-        runtime.appSettings.smtcEnabled !== false
-      )
-    )
+    binding.Update(buildWindowsSmtcUpdate(runtime.latestMiniPlayerState, enabled))
+    lastUpdateSignature = signature
     status.lastError = null
   } catch (error) {
+    lastUpdateSignature = null
     status.lastError = error instanceof Error ? error.message : String(error)
     console.warn('[smtc] failed to update Windows media session:', error)
   }
@@ -200,8 +203,9 @@ export function initializeWindowsSmtc(): boolean {
     }
     binding = loaded.binding
     status = { supported: true, active: true, lastError: null }
+    lastUpdateSignature = null
     runtime.refreshWindowsSmtc = refreshWindowsSmtc
-    refreshWindowsSmtc()
+    refreshWindowsSmtc(true)
     return true
   } catch (error) {
     status = {
@@ -216,6 +220,7 @@ export function initializeWindowsSmtc(): boolean {
 
 export function destroyWindowsSmtc(): void {
   runtime.refreshWindowsSmtc = null
+  lastUpdateSignature = null
   const current = binding
   binding = null
   if (current) {

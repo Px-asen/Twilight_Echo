@@ -3,8 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import { usePlaylistLibraryView } from '@renderer/components/streaming-page/usePlaylistLibraryView'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
+import SavedMusicCollections from '@renderer/components/streaming-page/SavedMusicCollections.vue'
 import type {
   MediaProviderPlaylistSummary,
+  MediaProviderAlbumSummary,
+  MediaProviderArtistSummary,
   MediaProviderProfile
 } from '@renderer/providers/mediaProvider'
 import {
@@ -67,6 +70,8 @@ const emit = defineEmits<{
   openLikedTracks: []
   playLikedSongs: []
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
+  openAlbum: [album: MediaProviderAlbumSummary]
+  openArtist: [artist: MediaProviderArtistSummary]
   togglePinnedPlaylist: [playlist: MediaProviderPlaylistSummary]
   createPlaylist: []
   deletePlaylist: [playlist: MediaProviderPlaylistSummary]
@@ -402,6 +407,12 @@ function deleteMenuPlaylist(): void {
     </section>
 
     <!-- Playlists Section -->
+    <SavedMusicCollections
+      v-if="isLoggedIn && profile && activeProvider === 'ncm'"
+      :user-id="profile.userId"
+      @open-album="emit('openAlbum', $event)"
+      @open-artist="emit('openArtist', $event)"
+    />
     <section class="playlist-section">
       <div class="section-header">
         <div>

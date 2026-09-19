@@ -8,6 +8,16 @@ import test from 'node:test'
 // leaves window.api undefined and blanks the renderer.
 const ALLOWED_SANDBOX_NODE_BUILTINS = new Set(['events', 'timers', 'url'])
 
+test('library loudness analysis uses shared DTOs, invoke channels and removable subscriptions', () => {
+  const source = readFileSync(new URL('./domains/audioEngineApi.ts', import.meta.url), 'utf8')
+  for (const name of ['startBatch', 'cancelBatch', 'getBatch', 'getResults', 'clearResults'])
+    assert.ok(source.includes(`ipcRenderer.invoke('loudnessAnalysis:${name}'`))
+  assert.match(source, /removeListener\('loudnessAnalysis:batchProgress', handler\)/)
+  assert.doesNotMatch(source, /from ['"].*main\//)
+  const declarations = readFileSync(new URL('./index.d.ts', import.meta.url), 'utf8')
+  assert.match(declarations, /loudnessAnalysis:.*LibraryLoudnessApi/)
+})
+
 test('queue workspace uses shared DTOs and versioned writes through the data bridge', () => {
   const source = readFileSync(new URL('./domains/dataApi.ts', import.meta.url), 'utf8')
   assert.match(source, /ipcRenderer\.invoke\('data:loadQueueWorkspace'\)/)
@@ -112,4 +122,11 @@ test('sandboxed preload only imports Node builtins supported by the sandbox', ()
     [],
     `sandboxed preload imports Node builtins that Electron cannot load: ${banned.join(', ')}`
   )
+})
+
+test('workshop project and restore APIs stay in the sandboxed bridge', () => {
+  const source = readFileSync(new URL('./domains/themeWorkshopApi.ts', import.meta.url), 'utf8')
+  for (const channel of ['get', 'restoreApplied', 'save', 'apply', 'importAsset'])
+    assert.ok(source.includes("ipcRenderer.invoke('themeWorkshop:" + channel + "'"))
+  assert.doesNotMatch(source, /from ['"].*main\//)
 })

@@ -242,6 +242,12 @@ export async function syncPluginProviders(): Promise<void> {
             ? (artistId) =>
                 callProvider<MediaProviderAlbumSummary[]>('fetchArtistAlbums', [artistId])
             : undefined,
+          fetchSavedAlbums: supports('fetchSavedAlbums')
+            ? () => callProvider<MediaProviderAlbumSummary[]>('fetchSavedAlbums')
+            : undefined,
+          fetchSavedArtists: supports('fetchSavedArtists')
+            ? () => callProvider<MediaProviderArtistSummary[]>('fetchSavedArtists')
+            : undefined,
           fetchArtistIntro: provider.capabilities.includes('library')
             ? (artistId) => callProvider<string>('fetchArtistIntro', [artistId])
             : undefined,

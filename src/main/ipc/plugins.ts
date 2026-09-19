@@ -27,6 +27,8 @@ import {
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { resolveConfiguredDownloadRoot } from '../security/localPaths.ts'
 import { reconcileThemeAfterPluginChange } from './themes.ts'
+import { setupThemeWorkshopIpc, prepareThemeWorkshopDisable } from './themeWorkshop.ts'
+import { THEME_WORKSHOP_ID } from '../../shared/themeWorkshop.ts'
 import {
   PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
   type ProviderDownloadCreateInput
@@ -50,15 +52,29 @@ const activeProviderCallControllers = new Map<string, AbortController>()
 
 export function setupPluginIpc(): void {
   if (runtime.pluginManager) return
-  const bundledPluginIds = ['com.twilightecho.provider.ncm']
+  const bundledPluginIds = ['com.twilightecho.provider.ncm', THEME_WORKSHOP_ID]
+  setupThemeWorkshopIpc()
   runtime.pluginManager = new TwilightPluginManager({
     appVersion: app.getVersion(),
     hostEntry: join(__dirname, 'pluginHost.js'),
+    // Diagnostics / soak runs can shorten the host idle window; production uses the default.
+    ...(resolvePluginHostIdleOverride(process.env.TWILIGHT_PLUGIN_HOST_IDLE_MS) !== null
+      ? {
+          hostIdleTimeoutMs: resolvePluginHostIdleOverride(
+            process.env.TWILIGHT_PLUGIN_HOST_IDLE_MS
+          )!
+        }
+      : {}),
     bundledPlugins: [
       {
         id: bundledPluginIds[0],
         sourcePath: bundledPluginPath('ncm-provider'),
         defaultEnabled: true
+      },
+      {
+        id: THEME_WORKSHOP_ID,
+        sourcePath: bundledPluginPath('theme-workshop'),
+        defaultEnabled: false
       }
     ],
     ncm: {
@@ -164,6 +180,7 @@ export function setupPluginIpc(): void {
   ipcMain.handle('plugins:disable', async (_event, id: string) => {
     assertTrustedIpcSender(_event, 'plugin IPC')
     await runtime.pluginManagerReady
+    if (normalizePluginId(id) === THEME_WORKSHOP_ID) await prepareThemeWorkshopDisable()
     return await runtime.pluginManager!.disable(normalizePluginId(id))
   })
   ipcMain.handle(
@@ -445,4 +462,11 @@ function isRegisteredThemeStylesheet(
   } catch {
     return false
   }
+}
+
+function resolvePluginHostIdleOverride(raw: string | undefined): number | null {
+  if (!raw) return null
+  const value = Number.parseInt(raw, 10)
+  if (!Number.isFinite(value) || value < 0) return null
+  return value
 }

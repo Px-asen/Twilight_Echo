@@ -261,3 +261,65 @@ test('paused scans do not restart when progress arrives or the watchdog interval
   client.cancel('pause-job')
   assert.equal((await pending).cancelled, true)
 })
+
+test('local library scan worker is reclaimed after idling and re-forked by the next scan', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const children: ManualUtilityProcess[] = []
+  const client = new LocalLibraryScanServiceClient({
+    serviceEntry: 'libraryScanService.js',
+    idleTimeoutMs: 1000,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          const child = new ManualUtilityProcess()
+          children.push(child)
+          return child
+        }
+      }
+    }
+  })
+  const completed = {
+    mode: 'startup' as const,
+    completeIdentitySnapshot: true,
+    identities: [],
+    parsedTracks: [],
+    parsedFilePaths: [],
+    removedFilePaths: [],
+    skippedUnchanged: 0,
+    parsedFileCount: 0,
+    cancelled: false
+  }
+
+  const first = client.scan('first-job', scanRequest)
+  children[0].emit('message', { kind: 'ready' } satisfies LocalLibraryScanWorkerMessage)
+  await new Promise((resolve) => setImmediate(resolve))
+  children[0].emit('message', {
+    kind: 'response',
+    requestId: 'first-job',
+    ok: true,
+    value: completed
+  } satisfies LocalLibraryScanWorkerMessage)
+  await first
+  assert.equal(children[0].killCount, 0, 'the worker stays warm right after a scan')
+
+  t.mock.timers.tick(999)
+  assert.equal(children[0].killCount, 0)
+  t.mock.timers.tick(1)
+  assert.equal(children[0].killCount, 1, 'the idle worker is killed after the timeout')
+
+  const second = client.scan('second-job', scanRequest)
+  assert.equal(children.length, 2, 'the next scan forks a fresh worker')
+  children[1].emit('message', { kind: 'ready' } satisfies LocalLibraryScanWorkerMessage)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(children[1].messages, [
+    { kind: 'scan', requestId: 'second-job', request: scanRequest }
+  ])
+  children[1].emit('message', {
+    kind: 'response',
+    requestId: 'second-job',
+    ok: true,
+    value: completed
+  } satisfies LocalLibraryScanWorkerMessage)
+  assert.equal((await second).cancelled, false)
+  client.destroy()
+})

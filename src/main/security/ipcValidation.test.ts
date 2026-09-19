@@ -198,7 +198,10 @@ test('data IPC applies path and storage limits before touching local files', () 
     source,
     /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'lyrics audio file path'\)\s*\)/
   )
-  assert.match(source, /const lrc = decodeLyrics\(await readFile\(lrcPath\)\)\.text/)
+  assert.match(
+    source,
+    /return await loadLocalLyrics\(resolvedDir, safeFileName, resolvedFilePath\)/
+  )
   assert.match(source, /decodeLyrics\(await readFile\(filePath\)\)\.text/)
   assert.doesNotMatch(source, /readFile\(lrcPath,\s*['"]utf-?8['"]\)/)
   assert.match(

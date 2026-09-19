@@ -1,5 +1,6 @@
 import { app, nativeImage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { join, extname, dirname, resolve } from 'path'
 import { createHash } from 'crypto'
 import { parseFile } from 'music-metadata'
@@ -21,7 +22,12 @@ export const COVER_NAMES = [
 ]
 
 // ─── Cover thumbnail disk cache ─────────────────────────────────────
-// Covers are resized to 500px JPEG (~30-80KB each) and stored on disk.
+// Every cover that reaches the disk cache is capped at 500px wide JPEG
+// (~30-80KB each): main-process imports resize here, the scan worker's raw
+// writes are normalized by `normalizeCachedCoverHandle` when the coordinator
+// ingests its batches, and remote covers go through `resizeCoverImageBytes`
+// before `remoteCoverCache` stores them. The renderer therefore never decodes
+// a multi-megapixel bitmap for a thumbnail slot.
 // Track.cover stores "cover://<hash>.jpg" instead of multi-MB base64 strings.
 // A pre-blurred 32px version ("cover://<hash>_blur.jpg") is also generated
 // for background use, eliminating expensive CSS filter: blur() at runtime.
@@ -166,6 +172,69 @@ export function cacheCoverFromBuffer(data: Buffer): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Downscale encoded image bytes to the cover thumbnail width. Returns null when
+ * the image already fits, cannot be decoded (GIF/SVG/WebP stay as-is), or is
+ * not a raster type nativeImage handles; callers then keep the original bytes.
+ */
+export function resizeCoverImageBytes(
+  bytes: Uint8Array,
+  mime: string
+): { bytes: Buffer; mime: string } | null {
+  if (!/^image\/(?:jpe?g|png|webp)$/i.test(mime.split(';', 1)[0].trim())) return null
+  try {
+    const img = nativeImage.createFromBuffer(
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    )
+    if (img.isEmpty()) return null
+    if (img.getSize().width <= COVER_THUMBNAIL_WIDTH) return null
+    const resized = img.resize({ width: COVER_THUMBNAIL_WIDTH, quality: 'good' })
+    return { bytes: resized.toJPEG(COVER_JPEG_QUALITY), mime: 'image/jpeg' }
+  } catch {
+    return null
+  }
+}
+
+const MAX_NORMALIZED_COVER_HANDLES = 4096
+const normalizedCoverHandles = new Map<string, Promise<string>>()
+
+/**
+ * The scan worker has no nativeImage, so it writes embedded/folder art at its
+ * original size. Re-encode any such `cover://` file wider than the thumbnail
+ * width to a 500px JPEG entry and return the replacement handle. Handles that
+ * already fit (or cannot be decoded) are returned unchanged; results are
+ * memoized so albums sharing one picture decode it once.
+ */
+export function normalizeCachedCoverHandle(handle: string): Promise<string> {
+  const memoized = normalizedCoverHandles.get(handle)
+  if (memoized) return memoized
+  const pending = normalizeCachedCoverHandleUncached(handle).catch(() => handle)
+  normalizedCoverHandles.delete(handle)
+  normalizedCoverHandles.set(handle, pending)
+  while (normalizedCoverHandles.size > MAX_NORMALIZED_COVER_HANDLES) {
+    const oldest = normalizedCoverHandles.keys().next().value
+    if (oldest === undefined) break
+    normalizedCoverHandles.delete(oldest)
+  }
+  return pending
+}
+
+async function normalizeCachedCoverHandleUncached(handle: string): Promise<string> {
+  if (!handle.startsWith('cover://')) return handle
+  const fileName = handle.slice('cover://'.length)
+  if (fileName.includes('/') || !isCoverCacheFileName(fileName)) return handle
+  const filePath = resolveCoverCacheFile(fileName)
+  if (!filePath) return handle
+  const data = await readFile(filePath)
+  const resized = resizeCoverImageBytes(data, getCoverCacheContentType(fileName))
+  if (!resized) return handle
+  const hash = createHash('md5').update(resized.bytes).digest('hex').slice(0, 16)
+  const targetName = `${hash}.jpg`
+  const targetPath = join(ensureCoverCacheDir(), targetName)
+  if (!existsSync(targetPath)) writeFileSync(targetPath, resized.bytes)
+  return `cover://${targetName}`
 }
 
 /** Extract cover from an image file on disk, resize, save to cache. Returns cover:// handle. */

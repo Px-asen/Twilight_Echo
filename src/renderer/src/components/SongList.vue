@@ -3,7 +3,18 @@ import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import { useLocalPlaylistOrder } from '@renderer/components/song-list/useLocalPlaylistOrder'
 import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import PlaylistActionDialog from '@renderer/components/song-list/PlaylistActionDialog.vue'
+import PlaylistLifecycleToolbar from '@renderer/components/song-list/PlaylistLifecycleToolbar.vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch
+} from 'vue'
 import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
@@ -40,7 +51,6 @@ import {
   formatPlaylistSourceSummary,
   summarizePlaylistSources
 } from '../utils/playlistSourceSummary'
-import { PLAYLIST_EXPORT_FORMATS } from '../utils/playlistExport.ts'
 import { selectLocalLibraryActionTracks } from '../utils/localTrackRemovalPolicy'
 import {
   applyLibraryView,
@@ -71,6 +81,7 @@ const props = defineProps<{
   filter: string | null
   hasPlayer: boolean
   transitionName: 'page-down' | 'page-up'
+  previewTracks?: Track[]
 }>()
 
 const emit = defineEmits<{
@@ -160,8 +171,24 @@ function closeRecentSourceMenuDelayed(): void {
 
 // ─── 库管理下拉（重复检查 + 已移除） ────────────────────────────────────────
 const libraryToolsMenuOpen = ref(false)
+const LibraryLoudnessDialog = defineAsyncComponent(
+  () => import('@renderer/components/library-loudness/LibraryLoudnessDialog.vue')
+)
+const loudnessOpen = ref(false)
+const loudnessSelection = shallowRef<Track[] | null>(null)
+const loudnessFocusTarget = shallowRef<HTMLElement | null>(null)
+
+function openLoudness(all: boolean, event: Event): void {
+  const target = event.currentTarget as HTMLElement
+  loudnessFocusTarget.value =
+    target.closest('.library-tools-dropdown')?.querySelector('button') ?? target
+  loudnessSelection.value = all ? null : selectLocalLibraryActionTracks(getSelectedTracks())
+  libraryToolsMenuOpen.value = false
+  loudnessOpen.value = true
+}
 
 const baseDisplayTracks = computed(() => {
+  if (props.previewTracks) return props.previewTracks
   if (props.category === 'allSongs') return tracks.value
   if (props.category === 'recent') {
     const recentStats = getRecentTracks()
@@ -947,6 +974,11 @@ const {
   playlistCoverInput,
   playlistExportFormat,
   playlistRepairPending,
+  playlistDialog,
+  playlistDialogError,
+  playlistMoveTargets,
+  dismissPlaylistDialog,
+  confirmPlaylistDialog,
   triggerPlaylistImport,
   handlePlaylistImport,
   downloadPlaylistDocument,
@@ -1713,49 +1745,17 @@ const infoTrack = shallowRef<Track | null>(null)
               </div>
             </div>
             <div class="header-right">
-              <div v-if="isPlaylistDetail" class="playlist-lifecycle-actions" aria-label="歌单操作">
-                <button type="button" title="重命名歌单" @click="handleRenamePlaylist">
-                  <i class="pi pi-pencil"></i>
-                </button>
-                <button type="button" title="复制歌单" @click="handleCopyPlaylist">
-                  <i class="pi pi-copy"></i>
-                </button>
-                <button type="button" title="设置歌单封面" @click="triggerPlaylistCoverPicker">
-                  <i class="pi pi-image"></i>
-                </button>
-                <button type="button" title="导入 M3U、M3U8 或 PLS" @click="triggerPlaylistImport">
-                  <i class="pi pi-file-import"></i>
-                </button>
-                <label class="playlist-export-format" title="选择导出歌单格式">
-                  <span class="sr-only">导出歌单格式</span>
-                  <select v-model="playlistExportFormat" aria-label="导出歌单格式">
-                    <option
-                      v-for="option in PLAYLIST_EXPORT_FORMATS"
-                      :key="option.value"
-                      :value="option.value"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  :title="`导出 ${playlistExportFormat.toUpperCase()}`"
-                  @click="downloadPlaylistDocument(playlistExportFormat)"
-                >
-                  <i class="pi pi-download"></i>
-                </button>
-                <button
-                  type="button"
-                  title="扫描文件夹并批量重新定位缺失文件"
-                  :disabled="playlistRepairPending"
-                  @click="handlePlaylistRepair"
-                >
-                  <i
-                    :class="playlistRepairPending ? 'pi pi-spin pi-spinner' : 'pi pi-map-marker'"
-                  ></i>
-                </button>
-              </div>
+              <PlaylistLifecycleToolbar
+                v-if="isPlaylistDetail"
+                v-model:export-format="playlistExportFormat"
+                :repair-pending="playlistRepairPending"
+                @rename="handleRenamePlaylist"
+                @copy="handleCopyPlaylist"
+                @cover="triggerPlaylistCoverPicker"
+                @import="triggerPlaylistImport"
+                @export="downloadPlaylistDocument(playlistExportFormat)"
+                @repair="handlePlaylistRepair"
+              />
               <div
                 v-if="category === 'allSongs'"
                 class="library-tools-dropdown"
@@ -1781,6 +1781,15 @@ const infoTrack = shallowRef<Track | null>(null)
                   ></i>
                 </button>
                 <div v-if="libraryToolsMenuOpen" class="library-tools-menu" role="menu">
+                  <button
+                    type="button"
+                    class="library-tools-option"
+                    role="menuitem"
+                    @click="openLoudness(true, $event)"
+                  >
+                    <i class="pi pi-chart-bar"></i>
+                    <span>响度分析与结果</span>
+                  </button>
                   <button
                     type="button"
                     class="library-tools-option"
@@ -2115,10 +2124,6 @@ const infoTrack = shallowRef<Track | null>(null)
             <div v-if="hasSelection" class="selection-toolbar">
               <span class="selection-count">已选择 {{ selectedCount }} 首</span>
               <div class="selection-actions">
-                <button type="button" class="selection-btn" @click="handleToolbarFavorite">
-                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                  <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
-                </button>
                 <button
                   type="button"
                   class="selection-btn"
@@ -2126,6 +2131,19 @@ const infoTrack = shallowRef<Track | null>(null)
                 >
                   <i class="pi pi-list"></i>
                   <span>添加到播放队列</span>
+                </button>
+                <button
+                  v-if="selectedLocalTrackCount > 0"
+                  type="button"
+                  class="selection-btn"
+                  @click="openLoudness(false, $event)"
+                >
+                  <i class="pi pi-chart-bar"></i>
+                  <span>响度分析</span>
+                </button>
+                <button type="button" class="selection-btn" @click="handleToolbarFavorite">
+                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
                 </button>
                 <button
                   v-if="selectedLocalTrackCount > 0"
@@ -2612,6 +2630,26 @@ const infoTrack = shallowRef<Track | null>(null)
           </div>
         </div>
       </Transition>
+    </Teleport>
+
+    <PlaylistActionDialog
+      v-if="playlistDialog"
+      :request="playlistDialog"
+      :error="playlistDialogError"
+      :targets="playlistMoveTargets"
+      @close="dismissPlaylistDialog"
+      @confirm="confirmPlaylistDialog"
+    />
+
+    <Teleport to="body">
+      <LibraryLoudnessDialog
+        v-if="loudnessOpen"
+        :library-tracks="tracks"
+        :selected-tracks="loudnessSelection"
+        :albums="albums"
+        :restore-focus="loudnessFocusTarget"
+        @close="loudnessOpen = false"
+      />
     </Teleport>
 
     <Teleport to="body">

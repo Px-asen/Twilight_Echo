@@ -75,8 +75,6 @@ const AUDIO_SERVICE_BUSY_CODE = 'ERR_AUDIO_SERVICE_BUSY'
 const AUDIO_SERVICE_TIMEOUT_CODE = 'ERR_AUDIO_SERVICE_TIMEOUT'
 const MAX_AUDIO_SERVICE_DEFAULT_RESPONSE_BYTES = 1024 * 1024
 const MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES = 8 * 1024 * 1024
-const MAX_AUDIO_SERVICE_MESSAGE_BYTES =
-  MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES + MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES
 const AUDIO_SERVICE_INVALID_MESSAGE = 'audio service returned an invalid or oversized message'
 
 // Native calls that may legally block the audio service's single JS thread far
@@ -681,10 +679,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
       return
     }
-    if (!inspectUtilityProcessMessage(record, MAX_AUDIO_SERVICE_MESSAGE_BYTES).ok) {
-      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
-      return
-    }
+    // The envelope fields are bounded by parseUtilityProcessResponse and the
+    // payload by the per-method limit below; serializing the whole record a
+    // second time here only doubled the cost of every 250 ms playback-info
+    // and 60 ms visualization reply.
 
     const parsed = parseUtilityProcessResponse(record)
     if (!parsed.ok) {
