@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { execFile } from 'node:child_process'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { compileStyle } from '@vue/compiler-sfc'
 import {
   LIQUID_GLASS_CARD_FILTER_ID,
   LIQUID_GLASS_CARD_SELECTOR,
@@ -266,4 +273,78 @@ test('playbar pointer tracking remains element-local', () => {
   assert.match(playerBar, /@pointermove="onGlassPointerMove"/)
   assert.match(playerBar, /playerBarRef\.value/)
   assert.doesNotMatch(playerBar, /document\.elementFromPoint/)
+})
+
+test('playbar regions keep their columns when a theme inserts decorative grid content', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'te-playbar-grid-'))
+  const require = createRequire(import.meta.url)
+  try {
+    const css = compileStyle({
+      source: playerBarStyle,
+      filename: 'PlayerBar.css',
+      id: 'data-v-grid',
+      scoped: true
+    }).code
+    const html = join(directory, 'fixture.html')
+    const runner = join(directory, 'runner.cjs')
+    await writeFile(
+      html,
+      `<html><head><style>${css}
+      .player-bar::before { content: ''; }
+      </style></head><body><div class="player-bar-shell" data-v-grid>
+      <div class="player-bar player-bar-liquid" data-v-grid>
+      <span class="player-bar-warp" data-v-grid></span>
+      <div class="player-left" data-v-grid>Song</div>
+      <div class="player-center" data-v-grid>Playback</div>
+      <div class="player-right" data-v-grid>Queue</div>
+      </div></div><script>
+      window.check = () => {
+        const shell = document.querySelector('.player-bar-shell');
+        const bar = document.querySelector('.player-bar');
+        for (const mode of ['standard', 'mini', 'compact']) {
+          shell.dataset.tePlaybarMode = mode;
+          bar.className = 'player-bar ' + (mode === 'standard' ? 'player-bar-liquid' : 'player-bar-' + mode);
+          for (const menu of [false, true]) {
+            shell.classList.toggle('menu-open', menu);
+            shell.style.setProperty('--te-menu-width', '200px');
+            const regions = ['left','center','right'].map(name => bar.querySelector('.player-' + name));
+            const rects = regions.map(node => node.getBoundingClientRect());
+            if (!(rects[0].x < rects[1].x && rects[1].x < rects[2].x)) throw Error(mode + ': columns shifted');
+            for (const [index, node] of regions.entries()) {
+              const style = getComputedStyle(node);
+              if (style.gridRowStart !== '1' || style.gridColumnStart !== String(index + 1)) throw Error(mode + ': implicit grid placement');
+              const rect = node.getBoundingClientRect(), parent = bar.getBoundingClientRect();
+              if (rect.top < parent.top || rect.bottom > parent.bottom + 1) throw Error(mode + ': region outside bar');
+            }
+          }
+        }
+        return true;
+      };
+      </script></body></html>`
+    )
+    await writeFile(
+      runner,
+      `const { app, BrowserWindow } = require('electron');
+      app.whenReady().then(async () => {
+        const win = new BrowserWindow({ show: false, width: 1399, height: 814 });
+        try {
+          await win.loadFile(process.argv.at(-1));
+          for (const width of [1399, 1100, 900]) {
+            win.setContentSize(width, 814);
+            const result = await win.webContents.executeJavaScript('(() => { try { return window.check() } catch (e) { return e.message } })()');
+            if (result !== true) throw Error(result);
+          }
+          console.error('PLAYBAR_GRID_OK'); app.exit(0);
+        } catch (error) { console.error(error); app.exit(1); }
+      });`
+    )
+    const { stderr } = await promisify(execFile)(
+      require('electron') as string,
+      ['--no-sandbox', runner, html],
+      { windowsHide: true, timeout: 30000 }
+    )
+    assert.match(stderr, /PLAYBAR_GRID_OK/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

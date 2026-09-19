@@ -840,6 +840,18 @@
     box-shadow 0.3s;
 }
 
+.player-bar > .player-left {
+  grid-area: 1 / 1;
+}
+
+.player-bar > .player-center {
+  grid-area: 1 / 2;
+}
+
+.player-bar > .player-right {
+  grid-area: 1 / 3;
+}
+
 .player-bar-glass {
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
