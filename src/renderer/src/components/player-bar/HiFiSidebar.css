@@ -763,6 +763,12 @@ html[data-theme='dark'] .deck .deck-card {
   color: var(--d-ink) !important;
 }
 
+.deck-dark .deck-lyric-source-controls select option,
+html[data-theme='dark'] .deck .deck-lyric-source-controls select option {
+  background: #1e293b !important;
+  color: #eef2f7 !important;
+}
+
 .deck-lyric-source-controls select:focus-visible,
 .deck-translation-toggle:focus-visible {
   outline: 2px solid var(--d-accent);
@@ -1344,6 +1350,7 @@ html[data-theme='dark'] .deck .deck-select {
 
 /* ===== 行动按钮 ===== */
 .deck-actions {
+  display: flex;
   flex-direction: row;
   gap: 8px;
   padding: 2px 0 0;

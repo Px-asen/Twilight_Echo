@@ -653,6 +653,35 @@ const {
  * customizer is Teleported from inside it), just invisible and click-through.
  */
 const lyricsCustomizerActive = ref(false)
+const hifiSidebarWidth = ref(440)
+const isResizingSidebar = ref(false)
+const sidebarResizeStartX = ref(0)
+const sidebarResizeStartWidth = ref(0)
+
+function startResizeSidebar(e: MouseEvent) {
+  isResizingSidebar.value = true
+  sidebarResizeStartX.value = e.clientX
+  sidebarResizeStartWidth.value = hifiSidebarWidth.value
+  document.addEventListener('mousemove', onResizeSidebar)
+  document.addEventListener('mouseup', stopResizeSidebar)
+  document.body.style.cursor = 'ew-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function onResizeSidebar(e: MouseEvent) {
+  if (!isResizingSidebar.value) return
+  const delta = sidebarResizeStartX.value - e.clientX
+  const newWidth = Math.min(800, Math.max(320, sidebarResizeStartWidth.value + delta))
+  hifiSidebarWidth.value = Math.round(newWidth)
+}
+
+function stopResizeSidebar() {
+  isResizingSidebar.value = false
+  document.removeEventListener('mousemove', onResizeSidebar)
+  document.removeEventListener('mouseup', stopResizeSidebar)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
 
 watch(moreOpen, (open) => {
   if (open) void playbackBookmarks.ensureLoaded()
@@ -2118,9 +2147,15 @@ onBeforeUnmount(() => {
         <div
           v-if="moreOpen"
           class="hifi-overlay"
+          :style="{ width: `${hifiSidebarWidth}px` }"
           @pointerdown.stop
           :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
         >
+          <!-- 宽度调整手柄 -->
+          <div
+            class="hifi-resize-handle"
+            @mousedown="startResizeSidebar"
+          ></div>
           <HiFiSidebar
             :glass="glass"
             :accent-color="playButtonColor"
