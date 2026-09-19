@@ -130,8 +130,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
     resolved: {
       lyrics: string | null
       translatedLyrics: string | null
+      romanizedLyrics: string | null
       lyricsSource: Track['lyricsSource']
       translatedLyricsSource: Track['translatedLyricsSource']
+      romanizedLyricsSource: Track['romanizedLyricsSource']
     }
   ): void {
     if (options.currentTrack.value?.id !== triggerTrack.id) return
@@ -150,11 +152,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       ...existing,
       lyrics: nextLyrics,
       translatedLyrics: resolved.translatedLyrics,
+      romanizedLyrics: resolved.romanizedLyrics,
       lyricsSource: resolved.lyricsSource,
       translatedLyricsSource: resolved.translatedLyricsSource,
-      romanizedLyrics: existing.romanizedLyrics ?? resolverTrack.romanizedLyrics ?? null,
-      romanizedLyricsSource:
-        existing.romanizedLyricsSource ?? resolverTrack.romanizedLyricsSource ?? null
+      romanizedLyricsSource: resolved.romanizedLyricsSource
     }
     options.currentTrack.value = updatedTrack
     options.patchTrackInQueues(updatedTrack)
@@ -321,8 +322,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         commitResolvedLyrics(triggerTrack, resolverTrack, {
           lyrics: hasOriginal ? resolverTrack.lyrics! : '',
           translatedLyrics: resolverTrack.translatedLyrics ?? null,
+          romanizedLyrics: resolverTrack.romanizedLyrics ?? null,
           lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-          translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
+          translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
+          romanizedLyricsSource: resolverTrack.romanizedLyricsSource ?? null
         })
         completeIfCurrent(
           hasOriginal || hasLyricContent(resolverTrack.translatedLyrics) ? 'ready' : 'empty'
@@ -340,6 +343,18 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
             ? () =>
                 window.api.data
                   .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+                  .catch(() => null)
+            : undefined,
+          loadLocalTranslatedLyrics: canLoadLocalLyrics
+            ? () =>
+                window.api.data
+                  .getTranslatedLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+                  .catch(() => null)
+            : undefined,
+          loadLocalRomanizedLyrics: canLoadLocalLyrics
+            ? () =>
+                window.api.data
+                  .getRomanizedLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
                   .catch(() => null)
             : undefined,
           loadProviderLyrics: canLoadProviderLyrics
@@ -380,8 +395,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         resolved = {
           lyrics: resolverTrack.lyrics ?? null,
           translatedLyrics: resolverTrack.translatedLyrics ?? null,
+          romanizedLyrics: resolverTrack.romanizedLyrics ?? null,
           lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
           translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
+          romanizedLyricsSource: resolverTrack.romanizedLyricsSource ?? null,
           failure: 'provider'
         }
       }
