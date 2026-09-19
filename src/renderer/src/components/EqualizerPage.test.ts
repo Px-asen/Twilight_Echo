@@ -217,7 +217,12 @@ test('parametric page puts mode, presets and power into the instrument with a co
 })
 
 test('parametric editor reuses native player visualization data and cleans up animation work', () => {
-  assert.match(page, /const \{ visualizationData, isPlaying \} = playerStore/)
+  assert.match(
+    page,
+    /const \{ visualizationData, isPlaying, acquireVisualizationConsumer \} = playerStore/
+  )
+  assert.match(page, /releaseVisualizationConsumer = acquireVisualizationConsumer\(\)/)
+  assert.match(page, /releaseVisualizationConsumer\?\.\(\)/)
   assert.match(page, /spectrumToPath\(smoothedSpectrum/)
   assert.match(page, /watch\(\[spectrumVisible, responseView, isPlaying\]/)
   assert.match(page, /onBeforeUnmount/)

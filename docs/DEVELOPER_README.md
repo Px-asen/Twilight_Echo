@@ -4,7 +4,28 @@
 
 ## 技术栈
 
-Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.1.4`，许可证为 Apache-2.0。
+### 反馈 38–43 行为修正
+
+- 主窗口关闭时将普通尺寸和最大化状态原子保存至 `userData/window-state.json`；启动按当前主屏工作区与响应式最小尺寸恢复，最大化不会覆盖普通尺寸。
+- 网易云个人音乐库展示收藏专辑和歌手，分批渲染，复用现有详情导航；切换账户或分类后忽略旧请求结果。
+- 播放设置中的 DSP 链路指示受 DSP 总开关约束；关闭总开关后，音量等其他处理的运行态不显示为 DSP 已开启。
+- 自定义背景图片和显式页面背景覆盖优先于主题背景；主题素材校验仅向 IPC 发送普通素材记录，避免 Vue Proxy 无法克隆。
+- 歌曲信息对话框的关闭按钮、Escape 和原生取消事件统一通知父组件卸载，并在卸载时释放原生模态状态。
+
+### 主题插件工坊（开发中）
+
+内置 `theme-workshop` 工具插件复用 bundled 插件生命周期，入口按需加载独立工坊页面。
+`themeWorkshop` preload 域调用 `src/main/ipc/themeWorkshop.ts`；项目保存在用户数据目录的
+`theme-workshop/projects`，采用原子 JSON 写入、备份恢复与 revision 冲突检查。
+项目保存基础 CSS、结构化主题、内嵌素材和个人参数。`.teworkshop` 保留编辑数据，
+`.tep` 经现有主题包 ZIP 写入器导出，应用操作经过插件管理器的安装和启用流程。
+定向验证入口为 `pnpm run test:theme-workshop`。
+
+当前预览使用沙箱 iframe 与宿主组件 Teleport，样式隔离，首页与列表传入固定示例曲目；
+部分组件仍共享宿主状态。停用经编辑器保存响应后才进入插件生命周期操作。
+全部页面预览、多图层编辑、预览状态完全隔离和实际应用的视觉回归仍需完成后才能正式验收。
+
+Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.2.3`，许可证为 Apache-2.0。
 
 核心依赖：
 
@@ -56,7 +77,13 @@ Electron main 侧有五个构建入口，均在 `electron.vite.config.ts` 中声
 
 `audioAnalysisService` 使用独立 `utilityProcess` worker pool 执行 BPM/loudness 完整文件解码。其有界优先级队列使用 aging 防止低优先级任务饥饿，并为等待任务设置 deadline；队列满时更高有效优先级可驱逐最差等待项。并发上限、取消、watchdog 和 worker 重启均与实时 `audioEngineService` 隔离，离线分析不得进入播放 RPC 队列。BPM/loudness manager 在 cache commit 期间收到取消时会按精确值条件回滚，且不得广播 completed 事件。
 
-`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。大扫描通过有界批次传输 identity 与解析结果，进度按时间/文件数节流；元数据通过可随机定位的文件 tokenizer 读取，跳过音频载荷但保留尾部标签与封面；无 CUE 的目录复用枚举阶段的 dependency signature，避免逐曲同步重读目录。单文件解析和扫描 worker 均有 watchdog；暂停期间停用 worker watchdog。完整 identity 快照扫描在 worker 重启后保留主进程已收到的结果批次及 identity 快照，仅解析尚未完成的文件，进度累计已完成文件数；当前阻塞路径跳过并在下次扫描重试，watch 局部扫描仍重新核对变化路径。恢复检查点仅在当前扫描任务内有效，不跨应用重启持久化。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
+曲库的选择工具栏提供“响度分析”，库管理提供“响度分析与结果”。`libraryLoudnessManager` 把 Track/Album 分组逐个提交到同一个分析池，使用独立任务种类 `loudness-batch`、优先级 −20；播放用 loudnorm 仍使用 `loudness` 和高优先级，两者的取消互不影响。一次最多 10,000 首、每张专辑最多 256 首。专辑分析使用当前曲库已物化的完整专辑分组，包含全部碟片和合辑成员；CUE 只测量实际源区间。任务可取消、重试未完成项，关闭面板后继续，重新打开可恢复进度；应用退出后不自动续做。
+
+原始测量使用 libebur128（算法版本 2），输出 LUFS / dBTP；Album 通过 `ebur128_loudness_global_multiple` 合并门限统计，峰值取各曲目最高值。面板同时展示以 −18 LUFS 为参考的 ReplayGain 2 增益，以及以 −23 LUFS 为参考的 R128 增益。缺少测量证据时显示“未分析”，不会把已有标签当作新测量。首版只保存库内结果，不写音频标签，也不自动应用到播放或 DSP。
+
+每个 Track/Album 分组以一份小型原子 JSON（含备份）保存到 `userData/library-loudness/`，专辑记录同时保存成员测量。缓存核对算法、模式、成员顺序和 ID、授权后的真实路径、文件大小、mtime 与 CUE 起止点；曲目和专辑分别缓存。提交前再次授权并检查文件身份，随后同步原子提交该组，取消检查与提交之间不跨异步等待。取消或失败的当前专辑不会发布部分结果，已完成的其它组保留。结果面板使用 shallow Map 索引、按 100 组查询和虚拟窗口，进度更新只触及变化项。完整接口和数值语义见 [音频引擎 API](./audio-engine-api.md#库内批量响度分析)。
+
+`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。所有进入 `cover-cache` 的封面统一限制为 500 px 宽 JPEG（`COVER_THUMBNAIL_WIDTH`）：主进程导入直接缩放；utilityProcess 没有 `nativeImage`，扫描 worker 先按原尺寸落盘，`libraryIndexCoordinator` 在批次进入累加器前经 `normalizeCachedCoverHandle` 换成缩略图句柄（`fs:scanMusicFiles` 同样在返回前替换），worker 写下的原图文件保留不清理。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。大扫描通过有界批次传输 identity 与解析结果，进度按时间/文件数节流；元数据通过可随机定位的文件 tokenizer 读取，跳过音频载荷但保留尾部标签与封面；无 CUE 的目录复用枚举阶段的 dependency signature，避免逐曲同步重读目录。单文件解析和扫描 worker 均有 watchdog；暂停期间停用 worker watchdog。完整 identity 快照扫描在 worker 重启后保留主进程已收到的结果批次及 identity 快照，仅解析尚未完成的文件，进度累计已完成文件数；当前阻塞路径跳过并在下次扫描重试，watch 局部扫描仍重新核对变化路径。恢复检查点仅在当前扫描任务内有效，不跨应用重启持久化。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
 
 主进程负责窗口生命周期、单实例锁、IPC 注册、设置持久化、本地库扫描、桌面歌词、快捷键托盘、Discord RPC、NCM API 启动和音频引擎编排。
 
@@ -87,6 +114,8 @@ Renderer TS 测试通过 `scripts/register-renderer-aliases.mjs` 为 Node `--tes
 ## 音频链路
 
 设备档案位于播放设置和 HiFi 输出页，支持从当前配置创建、命名、复制、编辑、删除及按稳定设备 ID 自动应用。版本化 `audioDeviceProfiles` 保存后端、独占、完整 buffer/routing、软件音量上限、SRC/DSD 策略和 DSP 场景引用；场景 graph 不复制进档案，设备 SRC 作为运行时 output-stage override 独立持久化。手工调整输出或 DSP 后清除“已应用档案”标记，保留实际设置和音量上限；编辑或删除已应用档案也不会突然改变播放。
+
+设备档案的读取、保存、应用、删除和变更订阅统一经 `window.api.audioEngine` 暴露。`preload/domains/audioEngineApi.ts` 使用 `satisfies` 限定音频桥的四个顶层域；同目录运行时测试验证域层级、完整 DTO 转发、事件隔离和取消订阅，防止接口误挂到 `window.api` 顶层后导致设置页挂载抛错、进入动画停在透明状态。
 
 档案应用仅经 `audioEngineManager` 的 `DeviceProfiles` 与 `OutputRouter`：串行验证、静音、backend/device/config、DSP plugin chain、DSP revision ACK、输出状态 ACK、持久化，再恢复不超过档案上限的原音量。新的选择淘汰旧请求；失败回滚输出、DSP 和已保存选择，回滚失败则停止播放并显示原因。自动应用只响应重新出现且唯一匹配的稳定 ID，同名、缺失设备、冲突档案或已删除场景均有明确反馈。重启恢复档案选择与上限；服务崩溃后的恢复与配置事务串行，仍等待结构化 ready 且不自动续播。软件上限不是硬件音量或声压保证，也不会自动设置 Unity。对应软件回归位于 `audio/deviceProfiles.test.ts`；真实 DAC 切换未作为本轮验证证据。
 
@@ -126,6 +155,8 @@ VST3 音频桥按绝对帧位置回填预分配的环形缓冲，宿主按提交
 
 本地曲库加载时先把已保存曲目放入 renderer，使界面尽快可用；`libraryScanService` 随后用快速索引做启动增量核对，provider 元数据补全也在后台进行。后台结果按 track id/path 合并，避免覆盖用户在加载期间新增、删除或排除的曲目。完整扫描的大规模提交只返回有界增量；renderer 收到 reload 标记后重新加载已原子提交的曲库文档。主进程加载路径不得遍历解析全库 metadata、转换 base64 封面或逐项修复封面；这些工作只允许在显式后台重扫中执行。
 
+本地歌词经 `lyrics:get` 完成路径授权后，由 `main/lyrics/loadLyrics.ts` 按需读取同名 LRC 或内嵌歌词。优先保留原始标签中的 LRC 时间轴；只有结构化同步歌词时，把毫秒 `syncText` 转成 LRC，不能只返回已去掉时间戳的 `common.lyrics[].text`。歌单详情的工具栏与编辑弹窗分别位于 `PlaylistLifecycleToolbar.vue`、`PlaylistActionDialog.vue`；重命名、复制及移动使用应用内表单，校验和持久化仍由原有 music store 负责。交互细节见 [歌单生命周期](playlist-lifecycle.md) 与 [歌词管理](lyrics-management.md)。
+
 `useMusicStore` 维护两个非响应式索引：
 
 - `trackById`：按 track id 定位曲目。
@@ -149,7 +180,7 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 - 本地歌曲列表及流媒体歌单详情的歌曲标题打开信息，艺人/专辑链接与播放点击隔离；网易云曲目保留 provider 专辑 ID。缺少专辑身份时提示而不猜测同名专辑。
 - HiFi 面板 Teleport 到 body，并按顶栏实际高度避让；面板内部点击不会触发播放栏的外部点击关闭。菜单坐标使用 CSS viewport 坐标并限于视口边界。常用控件 hover 不移动命中区域；两种侧栏和播放栏避让复用 `--te-motion-panel`。
 - Streaming 返回滚动位置在进入动画开始时恢复，避免进入动画结束后跳回旧位置。
-- 授权后的远程封面按完整来源地址哈希缓存到现有 `cover-cache`，缓存有效期 7 天、单项上限 25 MiB，遵守 `cachePolicy.cover` 及上游 `private/no-store`。音频请求不经封面缓存。清理音乐缓存包含这些文件。
+- 授权后的远程封面按完整来源地址哈希缓存到现有 `cover-cache`，缓存有效期 7 天、单项上限 25 MiB，遵守 `cachePolicy.cover` 及上游 `private/no-store`；JPEG/PNG/WebP 宽度超过 500 px 时先经 `resizeCoverImageBytes` 缩成 500 px JPEG 再落盘（GIF/SVG 或解码失败保持原样），响应体仍是上游原始字节。音频请求不经封面缓存。清理音乐缓存包含这些文件。
 - 诊断 Markdown 单独列出欠载/丢缓冲计数，并兼容旧版 diagnosis 中的实际输出格式；非逐位直通不等同于播放卡顿。Issue 附件的 1.1.2 legacy-native / Voicemeeter ASIO 卡顿尚需当前版本同配置实机对照，不能仅凭无设备测试判定已解决。
 
 ## Renderer 性能约束
@@ -167,6 +198,8 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 - 单曲 metadata、BPM 等回写路径使用 `trackIndexById` 定位数组槽位，不要对整张曲库 `findIndex`。
 - 最近播放、排行榜和 Dashboard 榜单等只需要前 N 项的选择器使用 store 内的有界 top-N 收集，避免在 SFC 内为整张历史表创建 `entries/filter/sort/slice/map` 中间链。
 - 播放 tick 会写入的统计状态使用 `shallowRef` 加显式 `triggerRef` 提交，更新单条统计时不要复制整张历史表。
+- 迷你播放器 / 托盘 / SMTC 共用的状态快照分两路发布：曲目、传输、收藏等元数据变化立即发；`currentTime` 只在当前歌词行或整秒变化时经 ≥500ms 节流发，歌词解析按曲目缓存，主进程再按渲染签名去重后才调用原生 SMTC。不要把 `currentTime` 直接加回即时 watch。
+- 播放栏 / 均衡器的 60ms 频谱轮询按消费者引用计数启动：读取 `visualizationData` 的组件挂载时 `acquireVisualizationConsumer()`、卸载时释放，计数为 0 不发 IPC；store 轮询不请求 oscilloscope / spectrogram（完整可视化面板自带请求）。
 - 搜索热路径避免为每首歌创建临时字段数组，优先短路判断，并尽量只保留当前页需要渲染的结果。
 - store composable 可以被多个组件调用；模块级初始化不能在每次调用时全量重建曲库索引。
 - 启动期跨 store 副作用优先由入口层注入所需 refs，不要在 store 内动态 import 已经被主界面静态引用的热 store；否则既形成隐式反向依赖，也无法带来实际 chunk 拆分。
@@ -187,6 +220,10 @@ Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/str
 ## 插件边界
 
 插件运行在 `utilityProcess`，入口为 `src/main/pluginHost.ts`。插件只能通过版本化 `twilight` API 访问宿主能力，不得直接 import Electron、Node 内置模块或 app 内部实现。
+
+宿主进程按需存在：`TwilightPluginManager` 用 `plugins/hostIdle.ts` 跟踪每个 JS 插件的活动（provider 调用、UI command、已订阅事件）；连续 5 分钟无活动且没有未完成 RPC 的宿主会被休眠（进程停止，provider/UI 贡献与事件订阅保留在内存快照中），下一次 provider 调用、UI command 或已订阅事件到达时透明唤醒，并发调用共享一次唤醒。休眠期间插件在 `list()` 里仍是 `enabled`，`plugin-state.json` 不变。贡献快照同时持久化到 `plugin-contributions.json`（含插件版本和入口文件 size:mtime）；下次启动若版本与入口文件签名都匹配，启用的插件直接以休眠态就绪而不 fork 进程，签名不符则照常冷启动。试激活、汽水音乐（登录态绑定宿主进程）与正在处理内部 NCM 请求的插件不会休眠；`app:*` 生命周期事件不唤醒休眠宿主。
+
+`audioAnalysisService` 的 worker 池与 `libraryScanService` 同样惰性：分析 worker 只按当前排队/进行中任务数 fork，空闲 60 s 后回收；扫描 worker 在没有扫描进行时 60 s 后回收，下一次扫描重新 fork。
 
 app 仓库允许包含：
 
@@ -365,6 +402,10 @@ renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层�
 本地与流媒体歌单总览均支持长按歌单卡片拖动排序，松手后保存本机显示顺序；搜索后只调整可见歌单的相对位置。歌单内歌曲未接入此次长按排序，保留原有曲目排序与播放行为。长按交互提供落点提示、边缘滚动、Esc 取消和防误点击；键盘使用 Alt + ↑ / ↓ 调整。歌曲列表的歌名、歌手与专辑链接按文字内容收缩，长文本仍在列宽内省略，空白区域不触发详情跳转。
 
 本地页面通过 Vue `Transition mode="out-in"` 切换，`SongList` 必须保留单一元素根节点。歌曲信息弹窗置于列表根容器内部，仍经 Teleport 显示；不得与根容器并列，否则离开歌曲列表后切换可能停在空白占位。`LocalViewTransition.test.ts` 使用实际模板的根节点结构验证首页、列表、其他本地页及模式切换，并覆盖弹窗开启状态。
+
+### Theme workshop completion
+
+The built-in theme workshop opens from Settings / Appearance below the theme studio, not from the sidebar. Shared project compilation and validation live in `themeWorkshopCompiler.ts` and `themeWorkshopValidation.ts`. The preload domain exposes project summaries, individual reads, assets, applied-version restore and packaging. Decorative layers are host-owned, non-interactive elements; preview and installed themes share the same compiled CSS. Run `test:theme-workshop` for IPC, persistence, compilation and SFC checks.
 
 网易云播放在会话首次解析及地址缓存到期后，先通过当前账号解析在线地址，再复用匹配完整来源 URL 的磁盘缓存。旧版仅按歌曲 ID 保存的缓存不参与直接播放；试听响应不写入播放缓存，重新登录清空会话缓存，避免开通会员后继续播放旧试听文件。
 

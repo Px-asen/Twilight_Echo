@@ -113,6 +113,8 @@ test('prefers the latest registration when multiple plugins expose the same prov
 })
 
 test('classifies provider call timeouts by method latency class', () => {
+  assert.equal(getProviderCallTimeoutMs('fetchSavedAlbums'), 120_000)
+  assert.equal(getProviderCallTimeoutMs('fetchSavedArtists'), 120_000)
   assert.equal(getProviderCallTimeoutMs('fetchPlaylistTracks'), 120_000)
   assert.equal(getProviderCallTimeoutMs('getPlaybackUrl'), 30_000)
   assert.equal(getProviderCallTimeoutMs('likeTrack'), 15_000)

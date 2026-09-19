@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { restoreWindowSize } from './windowState.ts'
 
 test('main-process startup creates the window before deferred runtime work', async () => {
   const source = await readFile(new URL('./lifecycle.ts', import.meta.url), 'utf8')
@@ -22,8 +23,25 @@ test('main-process startup creates the window before deferred runtime work', asy
 })
 test('main window keeps the responsive layout minimum size', async () => {
   const source = await readFile(new URL('./window.ts', import.meta.url), 'utf8')
-  assert.match(source, /width:\s*Math\.min\(1495, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
-  assert.match(source, /height:\s*Math\.min\(883, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
+  assert.match(
+    source,
+    /restoreWindowSize\(windowState, screen\.getPrimaryDisplay\(\)\.workAreaSize\)/
+  )
+  assert.deepEqual(restoreWindowSize(undefined, { width: 1920, height: 1080 }), {
+    width: 1495,
+    height: 883
+  })
+  assert.deepEqual(
+    restoreWindowSize(
+      { width: 1000, height: 750, maximized: false },
+      { width: 1920, height: 1080 }
+    ),
+    { width: 1000, height: 750 }
+  )
+  assert.deepEqual(
+    restoreWindowSize({ width: 1900, height: 1000, maximized: true }, { width: 700, height: 600 }),
+    { width: 700, height: 600 }
+  )
   assert.match(source, /minWidth:\s*Math\.min\(760, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
   assert.match(source, /minHeight:\s*Math\.min\(692, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
 })

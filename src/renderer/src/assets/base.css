@@ -928,12 +928,14 @@ a {
   font-weight: inherit;
 }
 
+/* Translate-only: the full-window gradient layer stays a cached texture that
+   the compositor slides, instead of re-rasterizing on every scale step. */
 @keyframes ambient-light-shift {
   from {
-    transform: translate3d(-1.2%, -0.6%, 0) scale(1);
+    transform: translate3d(-1.2%, -0.6%, 0);
   }
   to {
-    transform: translate3d(1.4%, 0.8%, 0) scale(1.025);
+    transform: translate3d(1.4%, 0.8%, 0);
   }
 }
 

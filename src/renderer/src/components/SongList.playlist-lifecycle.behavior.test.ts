@@ -51,9 +51,12 @@ test('real Vue, Pinia and Electron DOM exercise the complete playlist lifecycle'
         }
       }
     })
-    const bundleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.iife.js'))
+    const bundleFiles = await readdir(bundleDirectory)
+    const bundleName = bundleFiles.find((name) => name.endsWith('.iife.js'))
+    const stylesheetName = bundleFiles.find((name) => name.endsWith('.css'))
     assert.ok(bundleName, 'Vite should bundle the production playlist composable and store')
-    await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
+    assert.ok(stylesheetName, 'Vite should bundle the production toolbar and dialog styles')
+    await writeFile(htmlPath, runtimeHtml(bundleName, stylesheetName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
     const electronPath = require('electron') as string
@@ -81,11 +84,28 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/utils/playlistLifecycle.ts'
   ).replaceAll('\\', '/')
+  const toolbarPath = join(
+    workspaceRoot,
+    'src/renderer/src/components/song-list/PlaylistLifecycleToolbar.vue'
+  ).replaceAll('\\', '/')
+  const dialogPath = join(
+    workspaceRoot,
+    'src/renderer/src/components/song-list/PlaylistActionDialog.vue'
+  ).replaceAll('\\', '/')
+  const baseStylePath = join(workspaceRoot, 'src/renderer/src/assets/base.css').replaceAll(
+    '\\',
+    '/'
+  )
+  const iconStylePath = require.resolve('primeicons/primeicons.css').replaceAll('\\', '/')
   return `import { computed, createApp, h, nextTick, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlaylistLifecycleActions } from ${JSON.stringify(actionsPath)}
 import { useMusicStore } from ${JSON.stringify(storePath)}
 import { MAX_PLAYLIST_IMPORT_BYTES } from ${JSON.stringify(lifecyclePath)}
+import PlaylistLifecycleToolbar from ${JSON.stringify(toolbarPath)}
+import PlaylistActionDialog from ${JSON.stringify(dialogPath)}
+import ${JSON.stringify(baseStylePath)}
+import ${JSON.stringify(iconStylePath)}
 
 function expect(condition, message) {
   if (!condition) throw new Error(message)
@@ -125,7 +145,23 @@ const statusText = () => document.querySelector('#playlist-status')?.textContent
 const click = async (selector) => {
   const element = document.querySelector(selector)
   expect(element, 'missing control ' + selector)
+  element.focus()
   element.click()
+  await tick()
+}
+
+const renameButton = '[aria-label="重命名歌单"]'
+const copyButton = '[aria-label="复制歌单"]'
+const dialogSelector = '.playlist-action-dialog'
+const setDialogValue = async (value) => {
+  const input = document.querySelector('#playlist-action-value')
+  expect(input, 'playlist dialog did not open')
+  input.value = value
+  input.dispatchEvent(new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+  await tick()
+}
+const submitDialog = async () => {
+  document.querySelector(dialogSelector + ' form').requestSubmit()
   await tick()
 }
 
@@ -149,11 +185,11 @@ music.tracks.value = [
 ]
 music.refreshLibraryIndex()
 
-const activePlaylistId = ref('pl-source')
+const activePlaylistName = ref('Road Mix')
 const selectedIds = ref([])
 const repairMessage = ref('')
 const currentPlaylist = computed(
-  () => music.playlists.value.find((playlist) => playlist.id === activePlaylistId.value) || null
+  () => music.localPlaylists.value.find((playlist) => playlist.name === activePlaylistName.value) || null
 )
 const Root = {
   setup() {
@@ -168,30 +204,32 @@ const Root = {
         selectedIds.value = []
       },
       selectPlaylist: (name) => {
+        activePlaylistName.value = name
         window.__playlistFixture.lastSelectedPlaylist = name
       }
     })
     return () =>
       h('main', [
-        h(
-          'select',
-          {
-            id: 'playlist-export-format',
-            value: actions.playlistExportFormat.value,
-            onChange: (event) => {
-              actions.playlistExportFormat.value = event.target.value
-            }
-          },
-          ['m3u', 'm3u8', 'pls'].map((format) => h('option', { value: format }, format))
-        ),
-        h(
-          'button',
-          {
-            id: 'playlist-export',
-            onClick: () => actions.downloadPlaylistDocument(actions.playlistExportFormat.value)
-          },
-          'Export'
-        ),
+        h(PlaylistLifecycleToolbar, {
+          exportFormat: actions.playlistExportFormat.value,
+          'onUpdate:exportFormat': (format) => { actions.playlistExportFormat.value = format },
+          repairPending: actions.playlistRepairPending.value,
+          onRename: actions.handleRenamePlaylist,
+          onCopy: actions.handleCopyPlaylist,
+          onCover: actions.triggerPlaylistCoverPicker,
+          onImport: actions.triggerPlaylistImport,
+          onExport: () => actions.downloadPlaylistDocument(actions.playlistExportFormat.value),
+          onRepair: actions.handlePlaylistRepair
+        }),
+        actions.playlistDialog.value
+          ? h(PlaylistActionDialog, {
+              request: actions.playlistDialog.value,
+              error: actions.playlistDialogError.value,
+              targets: actions.playlistMoveTargets.value,
+              onClose: actions.dismissPlaylistDialog,
+              onConfirm: actions.confirmPlaylistDialog
+            })
+          : null,
         h('input', {
           id: 'playlist-import',
           ref: actions.playlistImportInput,
@@ -204,15 +242,12 @@ const Root = {
           type: 'file',
           onChange: actions.handlePlaylistCover
         }),
-        h('button', { id: 'playlist-rename', onClick: actions.handleRenamePlaylist }, 'Rename'),
-        h('button', { id: 'playlist-copy', onClick: actions.handleCopyPlaylist }, 'Copy'),
         h(
           'button',
           { id: 'playlist-reorder-start', onClick: () => actions.handleMoveSelectedWithinPlaylist(false) },
           'Move start'
         ),
         h('button', { id: 'playlist-move', onClick: actions.handleMoveSelectedToPlaylist }, 'Move'),
-        h('button', { id: 'playlist-repair', onClick: actions.handlePlaylistRepair }, 'Repair'),
         h('output', { id: 'playlist-status' }, repairMessage.value),
         h('pre', { id: 'playlist-state' }, JSON.stringify(music.playlists.value))
       ])
@@ -224,10 +259,10 @@ const runPlaylistLifecycleRuntime = async () => {
   await tick()
 
   for (const format of ['m3u', 'm3u8', 'pls']) {
-    const select = document.querySelector('#playlist-export-format')
+    const select = document.querySelector('[aria-label="导出歌单格式"]')
     select.value = format
     select.dispatchEvent(new Event('change', { bubbles: true }))
-    await click('#playlist-export')
+    await click('.playlist-export-controls button')
   }
   expect(window.__playlistFixture.downloads.length === 3, 'all three exports must download')
   for (const format of ['m3u', 'm3u8', 'pls']) {
@@ -285,9 +320,36 @@ const runPlaylistLifecycleRuntime = async () => {
   await waitFor(() => statusText().includes('歌单封面已更新'), 'valid cover feedback missing')
   expect(currentPlaylist.value.cover?.startsWith('data:image/png;base64,'), 'valid cover not applied')
 
-  window.__playlistFixture.prompts.push('Road Renamed')
+  await click(renameButton)
+  const nameInput = document.querySelector('#playlist-action-value')
+  expect(document.querySelector(dialogSelector)?.open, 'rename must open a native modal in Electron')
+  expect(document.activeElement === nameInput, 'rename should focus its input')
+  expect(nameInput.value === 'Road Mix', 'rename should prefill the current name')
+  expect(nameInput.selectionStart === 0 && nameInput.selectionEnd === nameInput.value.length, 'rename should select the existing name')
+  await setDialogValue('Cancelled name')
+  nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  await tick()
+  expect(!document.querySelector(dialogSelector), 'Escape should close the rename dialog')
+  expect(currentPlaylist.value.name === 'Road Mix', 'cancel must preserve the playlist name')
+  expect(document.activeElement === document.querySelector(renameButton), 'cancel should restore trigger focus')
+
+  await click(renameButton)
+  await setDialogValue('   ')
+  expect(document.querySelector(dialogSelector + ' button[type="submit"]').disabled, 'blank names must disable save')
+  await setDialogValue('Target')
+  await submitDialog()
+  expect(document.querySelector('[role="alert"]')?.textContent.includes('同名'), 'duplicate-name errors must stay visible in the dialog')
+  expect(currentPlaylist.value.name === 'Road Mix', 'rejected name must not change the active playlist')
+  const composing = new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })
+  document.querySelector('#playlist-action-value').dispatchEvent(composing)
+  expect(composing.defaultPrevented, 'IME confirmation must not submit a name')
+
+  await setDialogValue('  Road   Renamed  ')
   window.__playlistFixture.conflictNext = true
-  await click('#playlist-rename')
+  await submitDialog()
+  expect(!document.querySelector(dialogSelector), 'successful rename should close its dialog')
+  expect(currentPlaylist.value?.name === 'Road Renamed', 'name-based navigation must retain the renamed playlist')
+  expect(document.activeElement === document.querySelector(renameButton), 'save should restore trigger focus')
   expect(window.__playlistFixture.lastSelectedPlaylist === 'Road Renamed', 'rename did not select the renamed playlist')
   expect(await music.flushPlaylists(), 'rename persistence did not flush')
   await waitFor(
@@ -297,8 +359,10 @@ const runPlaylistLifecycleRuntime = async () => {
   expect(music.playlists.value.some((playlist) => playlist.id === 'pl-remote'), 'authoritative remote playlist was lost')
   expect(music.playlists.value.find((playlist) => playlist.id === 'pl-source')?.name === 'Road Renamed', 'local rename was lost during CAS recovery')
 
-  window.__playlistFixture.prompts.push('Road Copy')
-  await click('#playlist-copy')
+  await click(copyButton)
+  expect(document.querySelector('#playlist-action-value').value === 'Road Renamed 副本', 'copy should suggest a name')
+  await setDialogValue('Road Copy')
+  await submitDialog()
   expect(music.playlists.value.some((playlist) => playlist.name === 'Road Copy'), 'copy action did not use the real store')
 
   selectedIds.value = ['b']
@@ -306,19 +370,26 @@ const runPlaylistLifecycleRuntime = async () => {
   expect(currentPlaylist.value.trackIds[0] === 'b', 'manual reorder did not move the selected track')
 
   selectedIds.value = ['a', 'c']
-  window.__playlistFixture.prompts.push('Target')
   await click('#playlist-move')
+  await setDialogValue('pl-target')
+  await submitDialog()
   const target = music.playlists.value.find((playlist) => playlist.id === 'pl-target')
   expect(target.trackIds.includes('a') && target.trackIds.includes('c'), 'batch move did not populate target')
   expect(!currentPlaylist.value.trackIds.includes('a') && !currentPlaylist.value.trackIds.includes('c'), 'batch move did not remove source ids')
 
-  await click('#playlist-repair')
+  await click('[aria-label="重新定位缺失文件"]')
   await waitFor(() => statusText().includes('已重新定位 1 首'), 'unique relocation feedback missing')
   expect(currentPlaylist.value.trackIds.includes('relocated-missing'), 'unique relocation was not applied')
   expect(!currentPlaylist.value.trackIds.includes('missing'), 'stale missing id survived relocation')
 
   expect(await music.flushPlaylists(), 'final lifecycle transaction did not flush')
   expect(window.__playlistFixture.authoritative.some((playlist) => playlist.id === 'pl-remote'), 'final CAS state discarded authoritative data')
+  await click(renameButton)
+  activePlaylistName.value = 'Target'
+  await tick()
+  expect(!document.querySelector(dialogSelector), 'navigation must dismiss an edit for the previous playlist')
+  activePlaylistName.value = 'Road Renamed'
+  await tick()
   console.log('PLAYLIST_LIFECYCLE_RUNTIME_OK')
 }
 return runPlaylistLifecycleRuntime
@@ -327,12 +398,14 @@ window.runPlaylistLifecycleRuntime = async () => (await runtimeReady)()
 `
 }
 
-function runtimeHtml(bundleName: string): string {
-  return `<!doctype html><html><body><div id="app"></div><script>
+function runtimeHtml(bundleName: string, stylesheetName: string): string {
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><link rel="stylesheet" href="bundle/${stylesheetName}"><style>
+body { margin: 0; padding: 32px; background: var(--te-app-bg); color: var(--te-neutral-900); font-family: system-ui, sans-serif; }
+.playlist-lifecycle-actions { margin-bottom: 24px; }
+</style></head><body><div id="app"></div><script>
 window.__playlistFixture = {
   revision: 1,
   conflictNext: false,
-  prompts: [],
   downloads: [],
   blobs: new Map(),
   lastSelectedPlaylist: '',
@@ -357,7 +430,6 @@ window.__playlistFixture = {
 const fixture = window.__playlistFixture
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const envelope = () => ({ version: 2, revision: fixture.revision, savedAt: new Date().toISOString(), data: clone(fixture.authoritative) })
-window.prompt = () => fixture.prompts.shift() ?? null
 window.URL.createObjectURL = (blob) => {
   const url = 'blob:playlist-' + (fixture.blobs.size + 1)
   fixture.blobs.set(url, blob)
@@ -406,15 +478,56 @@ window.api = {
 }
 
 function electronRunnerSource(): string {
+  const renameClickSource = `document.querySelector('.playlist-lifecycle-actions button').focus(); document.querySelector('.playlist-lifecycle-actions button').click()`
   return `const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
+const assert = require('node:assert/strict')
+const fs = require('node:fs/promises')
 const target = process.argv.at(-1)
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: false } })
+  const window = new BrowserWindow({ show: false, width: 920, height: 600, webPreferences: { contextIsolation: false, nodeIntegration: false, backgroundThrottling: false } })
   window.webContents.on('console-message', (_event, _level, message, line, sourceId) => console.error('RENDERER', sourceId + ':' + line, message))
   try {
     await window.loadFile(path.resolve(target))
     await window.webContents.executeJavaScript('window.runPlaylistLifecycleRuntime()')
+    const evaluate = (source) => window.webContents.executeJavaScript(source)
+    const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
+    const openRename = async () => {
+      await evaluate(${JSON.stringify(renameClickSource)})
+      await settle()
+      assert.equal(await evaluate('document.querySelector(".playlist-action-dialog")?.open'), true, 'rename dialog should be visible')
+    }
+    const press = async (keyCode) => {
+      window.webContents.sendInputEvent({ type: 'keyDown', keyCode })
+      if (keyCode === 'Enter') window.webContents.sendInputEvent({ type: 'char', keyCode: String.fromCharCode(13) })
+      window.webContents.sendInputEvent({ type: 'keyUp', keyCode })
+      await settle()
+    }
+    await openRename()
+    await evaluate('const nameField = document.querySelector("#playlist-action-value"); nameField.value = "Keyboard rename"; nameField.dispatchEvent(new Event("input", { bubbles: true }))')
+    await press('Enter')
+    assert.equal(await evaluate('!!document.querySelector(".playlist-action-dialog")'), false, 'native Enter must save and close')
+    assert.equal(await evaluate('JSON.parse(document.querySelector("#playlist-state").textContent).find(p => p.id === "pl-source").name'), 'Keyboard rename')
+    await openRename()
+    await press('Escape')
+    assert.equal(await evaluate('!!document.querySelector(".playlist-action-dialog")'), false, 'native Escape must cancel')
+    assert.equal(await evaluate('document.activeElement === document.querySelector(".playlist-lifecycle-actions button")'), true)
+
+    const evidence = process.env.TWILIGHT_PLAYLIST_EVIDENCE_DIR
+    if (evidence) {
+      await fs.mkdir(evidence, { recursive: true })
+      await evaluate('const previewStyle = document.createElement("style"); previewStyle.textContent = "main > :not(.playlist-lifecycle-actions):not(dialog) { display: none; }"; document.head.append(previewStyle)')
+      await evaluate('const formatField = document.querySelector(".playlist-export-format select"); formatField.value = "m3u8"; formatField.dispatchEvent(new Event("change", { bubbles: true }))')
+      for (const theme of ['dark', 'light']) {
+        await evaluate('document.documentElement.dataset.theme = ' + JSON.stringify(theme))
+        await settle()
+        const bounds = await evaluate('(() => { const toolbar = document.querySelector(".playlist-lifecycle-actions"); const r = toolbar.getBoundingClientRect(); const last = toolbar.lastElementChild.getBoundingClientRect(); return { x: Math.floor(r.x) - 8, y: Math.floor(r.y) - 8, width: Math.ceil(last.right - r.left) + 16, height: Math.ceil(r.height) + 16 }; })()')
+        await fs.writeFile(path.join(evidence, 'playlist-toolbar-' + theme + '.png'), (await window.webContents.capturePage(bounds)).toPNG())
+        await openRename()
+        await fs.writeFile(path.join(evidence, 'playlist-rename-' + theme + '.png'), (await window.webContents.capturePage()).toPNG())
+        await press('Escape')
+      }
+    }
     app.exit(0)
   } catch (error) {
     console.error('PLAYLIST_LIFECYCLE_RUNTIME_FAILED', error && error.stack ? error.stack : error)

@@ -376,3 +376,46 @@ test('plugin host logs rotate at a bounded size and append through a serialized 
   assert.match(body, /await rename\(logPath, previousLogPath\)/)
   assert.match(body, /this\.logWriteChains\.get\(logPath\) \?\? Promise\.resolve\(\)/)
 })
+
+test('plugin hosts hibernate when idle and wake on demand without losing contributions', () => {
+  const hostIdleSource = readFileSync(new URL('./hostIdle.ts', import.meta.url), 'utf8')
+  assert.match(hostIdleSource, /export class PluginHostIdleTracker/)
+  // Provider routing, UI commands, health, and takeover checks all see hibernated plugins.
+  assert.match(
+    managerSource,
+    /private contributingPlugins\(\): Array<RunningPlugin \| HibernatedPlugin>/
+  )
+  assert.match(
+    managerSource,
+    /findProviderRoute\(this\.contributingPlugins\(\), normalizedProviderId, method\)/
+  )
+  assert.match(managerSource, /dedupeProviderRegistrations\(this\.contributingPlugins\(\)\)/)
+  assert.match(managerSource, /const owner = this\.contributingPlugins\(\)\.find/)
+  // A call to a hibernated plugin wakes it through the single-flight queue.
+  assert.match(
+    managerSource,
+    /const running = route \? await this\.ensureRunningForCall\(route\.descriptor\.id\) : null/
+  )
+  assert.match(managerSource, /private wakePlugin\(id: string\): Promise<RunningPlugin>/)
+  assert.match(managerSource, /const existing = this\.wakeOperations\.get\(id\)/)
+  // Busy hosts (pending RPCs, internal NCM requests, trial runs, Qishui auth) never hibernate.
+  assert.match(managerSource, /if \(this\.rpcCalls\.getPendingCount\(id\) > 0\) return false/)
+  assert.match(managerSource, /if \(id === QISHUI_PLUGIN_ID\) return false/)
+  assert.match(
+    managerSource,
+    /if \(!running \|\| running\.trial \|\| this\.shuttingDown\) return false/
+  )
+  // Explicit stops forget the snapshot; only hibernation keeps it.
+  assert.match(
+    managerSource,
+    /if \(!this\.hibernating\.has\(id\)\) \{\s*this\.hibernated\.delete\(id\)/
+  )
+  // Boot restores cached contributions instead of forking when version and entry file match.
+  assert.match(managerSource, /if \(this\.hibernateFromCache\(descriptor\)\) return/)
+  assert.match(managerSource, /cached\.mainSignature !== signature/)
+  // Lifecycle broadcasts must not resurrect sleeping hosts.
+  assert.match(
+    managerSource,
+    /if \(this\.shuttingDown \|\| PUBLIC_APP_EVENTS\.has\(name\)\) return/
+  )
+})

@@ -14,6 +14,7 @@ import {
   getCoverCacheContentType,
   isCoverCacheFileName,
   readCoverCacheFileBytes,
+  resizeCoverImageBytes,
   resolveBackgroundImageFile
 } from '../library/coverCache'
 import { decodeAudioFileUrlPath } from '../library/scan'
@@ -312,8 +313,9 @@ export function startApp(): void {
       protocol.handle(
         'twilight-media',
         createRemoteMediaRequestHandler({
-          imageCache: createRemoteCoverCache(() =>
-            runtime.appSettings.cachePolicy.cover ? getCoverCacheDir() : null
+          imageCache: createRemoteCoverCache(
+            () => (runtime.appSettings.cachePolicy.cover ? getCoverCacheDir() : null),
+            { resize: resizeCoverImageBytes }
           ),
           fetch: async (source, init) => {
             const upstream = await undiciFetch(source, {
@@ -409,6 +411,7 @@ export function startApp(): void {
       void runtime.pluginManager?.destroy()
       runtime.bpmAnalysisManager?.cancel()
       runtime.loudnessAnalysisManager?.cancel()
+      void runtime.libraryLoudnessManager?.cancel()
       runtime.audioAnalysisService?.destroy()
       runtime.audioAnalysisService = null
       runtime.localLibraryIndexCoordinator?.destroy()
@@ -420,6 +423,7 @@ export function startApp(): void {
       destroyTelemetry()
       runtime.bpmAnalysisManager = null
       runtime.loudnessAnalysisManager = null
+      runtime.libraryLoudnessManager = null
       runtime.pluginManager = null
       destroyRadioMediaIpc()
       void destroyRemoteIpc()

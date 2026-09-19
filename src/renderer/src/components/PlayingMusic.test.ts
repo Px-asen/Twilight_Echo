@@ -482,7 +482,10 @@ test('the HiFi signal path reports runtime DSP state instead of the configured m
   const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
   assert.match(sidebar, /dspActive\?: boolean/)
-  assert.match(sidebar, /const dspRuntimeActive = computed\(\(\) => props\.dspActive === true\)/)
+  assert.match(
+    sidebar,
+    /const dspRuntimeActive = computed\(\(\) => dspMasterOn\.value && props\.dspActive === true\)/
+  )
   assert.match(
     sidebar,
     /if \(dspRuntimeActive\.value\) return \{ label: 'ENGAGED',[\s\S]*if \(dspMasterOn\.value\) return \{ label: 'STANDBY'/

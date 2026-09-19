@@ -143,6 +143,53 @@ main 进程（`engineIpc.ts`）在播放状态变化、引擎错误与诊断导�
 
 **Stage-2 输出采样率锁：** 采样率锁 / resampler / dither 仅通过 DSP graph `outputStage` 配置（`AudioEngineManager.setOutputStage` / HiFi 输出页 / DspRack）。非 `device` 目标采样率或启用 SRC/dither 会使 `outputPerfect=false`。`setAudioProcessing` 重写 legacy graph 时保留既有 `outputStage`。
 
+### 库内批量响度分析
+
+`window.api.loudnessAnalysis` 增加以下方法。DTO 唯一定义在 `src/shared/libraryLoudness.ts`，handler 由 `audio/loudnessIpc.ts` 注册，经 `libraryLoudnessIpc.ts` 校验可信 sender、字段、数量、16 MiB 载荷上限及本地路径；实际读取前由 `resolveAuthorizedAudioFile` 检查授权与 canonical path。
+
+| 方法 / 事件                 | 行为                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `startBatch(groups)`        | 开始一个有界任务，返回状态和全部项目；已有运行任务时拒绝新任务                          |
+| `cancelBatch(jobId)`        | 只取消匹配任务，等待当前分析退出；旧 jobId 不影响新任务                                 |
+| `getBatch()`                | 返回本次应用运行内最近任务的快照                                                        |
+| `getResults(groups)`        | 按当前完整成员和文件身份返回 `measured`、`missing` 或 `unavailable`，专辑结果附成员测量 |
+| `clearResults(ids)`         | 清理这些分组的记录和备份；分析运行期间须先取消                                          |
+| `onBatchProgress(callback)` | 订阅 `loudnessAnalysis:batchProgress`，返回解除订阅函数                                 |
+
+其余五个通道使用同名 `loudnessAnalysis:<方法>`。状态中的 `total` / `processed` / `failed` 按组计数，`currentTitle` 标识正在处理的曲目或专辑；专辑内部不伪造逐曲百分比。`revision` 单调递增，renderer 用它丢弃旧快照。完整任务上限 10,000 首，每张专辑 1–256 首；Track 组必须恰好一首。关闭面板不会取消分析，应用退出会取消在途任务，完成的记录可跨重启读取。
+
+原生 `AnalyzeLoudness(source, optionsJson)` 保留单文件返回格式，并增加分组输入：
+
+```json
+{
+  "segments": [
+    { "source": "D:/Music/disc.flac", "startSeconds": 0, "endSeconds": 180 },
+    { "source": "D:/Music/disc.flac", "startSeconds": 180, "endSeconds": 390 }
+  ],
+  "album": true
+}
+```
+
+分组返回 `{ tracks: LoudnessAnalysisResult[], album: LoudnessAnalysisResult | null }`。省略区间时测量完整文件；批量输入的 `maxAnalysisSeconds` 必须省略或为 0，不能把采样片段标为完整专辑。原始测量必须为 `source: 'analyzed'`、`available: true`、`algorithmVersion: 2`，且 LUFS、峰值和时间戳有效。旧原生模块、解码错误、静音 / 不足以形成综合响度的区间、缺失成员、越过文件末尾的 CUE 都显式失败；整个分组不返回半套 `tracks` 或 Album 值。
+
+| 数值              | 单位与计算                                                 |
+| ----------------- | ---------------------------------------------------------- |
+| `integratedLufs`  | libebur128 的综合响度，LUFS；不是播放块 RMS 估算           |
+| `truePeakDb`      | oversampling true peak，dBTP；不是 sample peak dBFS        |
+| ReplayGain 2 gain | `−18 − integratedLufs` dB                                  |
+| R128 gain         | `−23 − integratedLufs` dB；Q7.8 数值为增益 dB × 256 后取整 |
+| Peak linear       | `10 ** (truePeakDb / 20)`                                  |
+
+Album 保留每首的 libebur128 测量状态，再调用 `ebur128_loudness_global_multiple` 合并门限统计；不能平均各曲目的 dB。专辑真峰值取成员最高值。JSON 数值保留至 0.001，界面展示两位小数。首版结果供库内查询与后续分析复用，不写文件标签，也不改变播放增益；既有自动 loudnorm 仍用独立的 512 项缓存，该缓存算法身份也升级至 2。
+
+专辑分组直接使用 `useMusicStore().albums`：其稳定 ID、合辑合并及多碟排序继续遵循已有曲库规则。选中一首进行 Album 分析也会包含该专辑在当前曲库中的全部成员。身份不是只凭同名标题重建的；曲库成员变化后，旧专辑测量无法命中新成员指纹。CUE 使用实际源区间 `[startSeconds, endSeconds)`，起止位置分别转换到最近 PCM 样本；显式 PREGAP 产生的虚拟静音不参与测量，源内 INDEX 00 仍按既有区间归属处理。为保证样本边界，离线分析从文件开头解码并跳过起点前的 PCM，后段 CUE 会重复解码前缀。没有 CUE 区间的容器子曲目尚不支持，不能退化为测量整个容器。
+
+记录位置为 `userData/library-loudness/<sha256(groupId)>.json`，schema version 1，每组最多 512 KiB，使用现有 JSON 原子替换和备份恢复。指纹包含算法版本、Track/Album 模式、全部有序成员 ID、canonical path、size、mtime 和实际 CUE 起止点；虚拟 PREGAP 不影响测量身份。Track 与 Album 分别缓存；专辑记录中的成员结果随该专辑一起清理。读取同样重新验证授权和源文件，失效数据只显示未分析 / 不可用。清理只删除此库内目录的确定记录和备份。
+
+`libraryLoudnessManager` 每次向独立分析池提交一组，任务种类 `loudness-batch`、优先级 −20、执行 deadline 14,520 秒，复用现有队列上限、aging、等待 deadline 和 worker 重启。取消只终止该种类，不取消自动 loudnorm 或 BPM。每组测量完成后再次验证文件身份；取消检查后立即同步原子提交一份小记录，检查与提交间没有异步等待。当前组取消、源文件变化或部分成员失败时不发布该组结果，先前完整提交的其它组保留。worker 崩溃表现为组失败，可手动重试；不会重启播放 service。
+
+验证：`test:audio-manager` 覆盖取消边界、源文件 / CUE / 成员失效、持久化失败、IPC 授权和与播放的隔离；`test:local-perf` 覆盖完整专辑分组及 Electron 面板的键盘、焦点、重试、旧请求和 10,000 项虚拟 DOM。`test:loudness-native` 使用确定的 48 kHz stereo PCM fixtures，LUFS 容差 0.15、1 kHz 真峰值容差 0.1 dB、重复测量和 CUE 对切片参考容差 0.001，并校验逐样本区间、intersample peak、静音、缺失与截断失败；该测试已接入 `test:audio-engine:mingw`。
+
 ### 原生音频能力清单
 
 `resources/audio-engine/audio-capabilities.json` 由 `pnpm run stage:audio-engine` 生成；开发环境可单独运行 `pnpm run generate:audio-capability-manifest`。`artifactDirectory` 固定为逻辑根 `.`，全部 artifact 路径相对此根，绝不写入构建机绝对路径。清单只检查实际暂存的原生二进制与其导入表，记录 SWR、CPU PCM→DSD、miniaudio PoC、CUDA 和其它 GPU backend 的编译事实；CUDA 与其它 GPU 导入检查覆盖每个成功解析的 native artifact，主引擎专属的 PCM/SWR 判断仍只读取引擎二进制。

@@ -21,6 +21,7 @@ import { destroyWindowsSmtc, initializeWindowsSmtc } from '../integrations/windo
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
 import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
+import { readWindowState, restoreWindowSize, saveWindowState } from './windowState.ts'
 
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
 const closePersistenceAttemptGate = new ClosePersistenceAttemptGate()
@@ -133,6 +134,8 @@ export function supportsWindowsAcrylic(): boolean {
 }
 
 export function createWindow(): void {
+  const windowStatePath = join(app.getPath('userData'), 'window-state.json')
+  const windowState = readWindowState(windowStatePath)
   const requestedTransparency = runtime.appSettings.windowTransparency === true
   // Linux Wayland 上 Electron 透明窗口不受支持（alpha 被忽略、内容可能整窗不渲染），
   // 此时强制回退为不透明窗口，保证应用始终可见。
@@ -155,8 +158,7 @@ export function createWindow(): void {
   }
 
   runtime.mainWindow = new BrowserWindow({
-    width: Math.min(1495, screen.getPrimaryDisplay().workAreaSize.width),
-    height: Math.min(883, screen.getPrimaryDisplay().workAreaSize.height),
+    ...restoreWindowSize(windowState, screen.getPrimaryDisplay().workAreaSize),
     minWidth: Math.min(760, screen.getPrimaryDisplay().workAreaSize.width),
     minHeight: Math.min(692, screen.getPrimaryDisplay().workAreaSize.height),
     show: false,
@@ -176,10 +178,22 @@ export function createWindow(): void {
   })
 
   runtime.mainWindow.on('ready-to-show', () => {
+    if (windowState?.maximized) runtime.mainWindow?.maximize()
     runtime.mainWindow?.show()
   })
 
   runtime.mainWindow.on('close', (event) => {
+    const win = runtime.mainWindow!
+    const bounds = win.getNormalBounds()
+    try {
+      saveWindowState(windowStatePath, {
+        width: bounds.width,
+        height: bounds.height,
+        maximized: win.isMaximized()
+      })
+    } catch (error) {
+      console.error('[window] Unable to save window size:', error)
+    }
     const closeBehavior = runtime.appSettings.closeWindowBehavior ?? 'quit'
     if (!runtime.forceQuit && (closeBehavior === 'tray' || closeBehavior === 'miniPlayer')) {
       event.preventDefault()

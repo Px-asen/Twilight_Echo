@@ -355,6 +355,70 @@ test('worker restart resets streamed batches before accepting the replacement sn
   }
 })
 
+test('worker cover handles are normalized to thumbnails before batches and results are committed', async () => {
+  const fixture = createFixture('cover-normalize')
+  try {
+    const streamedPath = join(fixture.root, 'streamed.flac')
+    const finalPath = join(fixture.root, 'final.flac')
+    fixture.persist(createDocument(1, [fixture.root], []))
+    const normalized: string[] = []
+    const runner = new ScriptedRunner(async (call) => {
+      call.onBatch?.({
+        parsedTracks: [{ ...createTrack('streamed', streamedPath), cover: 'cover://full-a.png' }],
+        parsedFilePaths: [streamedPath]
+      })
+      return scanResult({
+        identities: [
+          { filePath: streamedPath, size: 1, mtimeMs: 1 },
+          { filePath: finalPath, size: 1, mtimeMs: 1 }
+        ],
+        parsedTracks: [
+          { ...createTrack('final', finalPath), cover: 'cover://full-b.jpg' },
+          { ...createTrack('remote', join(fixture.root, 'remote.flac')), cover: 'https://x/y.jpg' }
+        ],
+        parsedFilePaths: [finalPath, join(fixture.root, 'remote.flac')],
+        parsedFileCount: 3
+      })
+    })
+    const coordinator = fixture.coordinator(runner, {
+      normalizeCoverHandle: async (handle) => {
+        normalized.push(handle)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return handle === 'cover://full-b.jpg' ? handle : 'cover://thumb-a.jpg'
+      }
+    })
+
+    const result = await coordinator.scanFull()
+
+    const covers = Object.fromEntries(
+      result.library.tracks.map((track) => [
+        (track as { id: string }).id,
+        (track as { cover: unknown }).cover
+      ])
+    )
+    assert.deepEqual(covers, {
+      streamed: 'cover://thumb-a.jpg',
+      final: 'cover://full-b.jpg',
+      remote: 'https://x/y.jpg'
+    })
+    assert.deepEqual(normalized.sort(), ['cover://full-a.png', 'cover://full-b.jpg'])
+    assert.deepEqual(
+      Object.fromEntries(
+        fixture
+          .load()
+          .tracks.map((track) => [
+            (track as { id: string }).id,
+            (track as { cover: unknown }).cover
+          ])
+      ),
+      covers
+    )
+    coordinator.destroy()
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('large scan deltas use a reload marker instead of crossing IPC inline', () => {
   const removedFilePaths = Array.from({ length: 2_001 }, (_, index) => `C:\\Music\\${index}.mp3`)
   const update = toLocalLibraryScanUpdate({

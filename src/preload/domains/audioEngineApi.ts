@@ -1,6 +1,13 @@
 import { IPC } from '../../shared/ipcChannels.ts'
 import { ipcRenderer } from 'electron'
-import type { AudioDeviceProfile, AudioDeviceProfilesSnapshot } from '../types'
+import type {
+  AudioDeviceProfile,
+  AudioDeviceProfilesSnapshot,
+  LibraryLoudnessResult,
+  LoudnessBatchProgress,
+  LoudnessBatchSnapshot,
+  LoudnessInputGroup
+} from '../types'
 import type {
   AudioEngineConfigAppliedCallback,
   AudioEngineConfigAppliedEvent,
@@ -152,20 +159,20 @@ export function bindAudioEngineIpcEvents(): void {
 }
 
 export const audioEngineApi = {
-  getDeviceProfiles: (): Promise<AudioDeviceProfilesSnapshot> =>
-    ipcRenderer.invoke(IPC.audioEngine.getDeviceProfiles),
-  saveDeviceProfile: (profile: AudioDeviceProfile): Promise<AudioDeviceProfilesSnapshot> =>
-    ipcRenderer.invoke(IPC.audioEngine.saveDeviceProfile, profile),
-  deleteDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
-    ipcRenderer.invoke(IPC.audioEngine.deleteDeviceProfile, id),
-  applyDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
-    ipcRenderer.invoke(IPC.audioEngine.applyDeviceProfile, id),
-  onDeviceProfilesChanged: (callback: () => void): (() => void) => {
-    const listener = () => callback()
-    ipcRenderer.on(IPC.audioEngine.deviceProfilesChanged, listener)
-    return () => ipcRenderer.removeListener(IPC.audioEngine.deviceProfilesChanged, listener)
-  },
   audioEngine: {
+    getDeviceProfiles: (): Promise<AudioDeviceProfilesSnapshot> =>
+      ipcRenderer.invoke(IPC.audioEngine.getDeviceProfiles),
+    saveDeviceProfile: (profile: AudioDeviceProfile): Promise<AudioDeviceProfilesSnapshot> =>
+      ipcRenderer.invoke(IPC.audioEngine.saveDeviceProfile, profile),
+    deleteDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
+      ipcRenderer.invoke(IPC.audioEngine.deleteDeviceProfile, id),
+    applyDeviceProfile: (id: string): Promise<AudioDeviceProfilesSnapshot> =>
+      ipcRenderer.invoke(IPC.audioEngine.applyDeviceProfile, id),
+    onDeviceProfilesChanged: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on(IPC.audioEngine.deviceProfilesChanged, listener)
+      return () => ipcRenderer.removeListener(IPC.audioEngine.deviceProfilesChanged, listener)
+    },
     loadQueue: (items: AudioEngineQueueItem[], startIndex?: number): Promise<void> =>
       ipcRenderer.invoke(IPC.audioEngine.loadQueue, items, startIndex),
     play: (filePath: string, startTime?: number): Promise<AudioEnginePlayResult> =>
@@ -351,6 +358,20 @@ export const audioEngineApi = {
     }
   },
   loudnessAnalysis: {
+    startBatch: (groups: LoudnessInputGroup[]): Promise<LoudnessBatchSnapshot> =>
+      ipcRenderer.invoke('loudnessAnalysis:startBatch', groups),
+    cancelBatch: (jobId: string): Promise<void> =>
+      ipcRenderer.invoke('loudnessAnalysis:cancelBatch', jobId),
+    getBatch: (): Promise<LoudnessBatchSnapshot> => ipcRenderer.invoke('loudnessAnalysis:getBatch'),
+    getResults: (groups: LoudnessInputGroup[]): Promise<LibraryLoudnessResult[]> =>
+      ipcRenderer.invoke('loudnessAnalysis:getResults', groups),
+    clearResults: (ids: string[]): Promise<void> =>
+      ipcRenderer.invoke('loudnessAnalysis:clearResults', ids),
+    onBatchProgress: (callback: (event: LoudnessBatchProgress) => void): (() => void) => {
+      const handler = (_event, data: LoudnessBatchProgress): void => callback(data)
+      ipcRenderer.on('loudnessAnalysis:batchProgress', handler)
+      return () => ipcRenderer.removeListener('loudnessAnalysis:batchProgress', handler)
+    },
     request: (request: LoudnessAnalysisRequest): Promise<LoudnessAnalysisRequestResult> =>
       ipcRenderer.invoke('loudnessAnalysis:request', request),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('loudnessAnalysis:getCacheSize'),
@@ -372,4 +393,7 @@ export const audioEngineApi = {
     refresh: (): Promise<OpraCatalogStatus> => ipcRenderer.invoke('opra:refresh'),
     getStatus: (): Promise<OpraCatalogStatus> => ipcRenderer.invoke('opra:getStatus')
   }
-}
+} satisfies Record<
+  'audioEngine' | 'bpmAnalysis' | 'loudnessAnalysis' | 'opra',
+  Record<string, unknown>
+>

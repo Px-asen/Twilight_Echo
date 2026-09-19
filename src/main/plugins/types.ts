@@ -318,64 +318,8 @@ export interface TwilightQrLoginRequest {
   expiresInSeconds?: number
 }
 
-export type TwilightMediaProviderMethod =
-  | 'getPlaybackUrl'
-  | 'getLyrics'
-  | 'searchSongs'
-  | 'searchPlaylists'
-  | 'searchArtists'
-  | 'fetchPlaylistTracks'
-  | 'createDownload'
-  | 'getDownloadStatus'
-  | 'getDownloadFile'
-  | 'cancelDownload'
-  | 'checkLogin'
-  | 'getProfile'
-  | 'logout'
-  | 'openOfficialLogin'
-  | 'sendCaptcha'
-  | 'loginByPhonePassword'
-  | 'loginByPhoneCaptcha'
-  | 'loginByEmailPassword'
-  | 'loginWithServer'
-  | 'getQrLogin'
-  | 'getQrKey'
-  | 'getQrImage'
-  | 'checkQrLogin'
-  | 'fetchUserLibrary'
-  | 'fetchLikedTracks'
-  | 'fetchLikedTracksPage'
-  | 'fetchCloudSongsPage'
-  | 'prepareCloudUpload'
-  | 'completeCloudUpload'
-  | 'getCloudDownloadUrl'
-  | 'fetchRecommendSongs'
-  | 'fetchRecommendPlaylists'
-  | 'fetchPlaylistCategories'
-  | 'fetchDiscoveryPlaylists'
-  | 'fetchHighQualityPlaylists'
-  | 'fetchPersonalFm'
-  | 'fetchPrivateContent'
-  | 'fetchArtistTopSongs'
-  | 'fetchArtistAlbums'
-  | 'fetchArtistIntro'
-  | 'fetchArtistFollowState'
-  | 'fetchAlbumTracks'
-  | 'fetchArtistPlaylists'
-  | 'fetchUserPlaylistsByUid'
-  | 'fetchUserFollows'
-  | 'fetchUserFolloweds'
-  | 'fetchPlayRecords'
-  | 'fetchRecentSongs'
-  | 'fetchIntelligenceList'
-  | 'followArtist'
-  | 'followUser'
-  | 'likeTrack'
-  | 'isTrackLiked'
-  | 'createPlaylist'
-  | 'deletePlaylist'
-  | 'addTracksToPlaylist'
-  | 'removeTracksFromPlaylist'
+import type { TwilightMediaProviderMethod } from '../../shared/mediaProviderMethods.ts'
+export type { TwilightMediaProviderMethod } from '../../shared/mediaProviderMethods.ts'
 
 export type TwilightUiContributionKind =
   | 'sidebarPage'
@@ -398,6 +342,7 @@ export interface TwilightUiContribution {
 }
 
 export interface TwilightThemeContribution {
+  editor?: import('../../shared/themeWorkshop.ts').ThemeEditorDescriptor
   id: string
   name: string
   description?: string

@@ -5,6 +5,7 @@ import {
   findUnsupportedThemeModeIds,
   normalizeStructuredPluginTheme
 } from '../../shared/theme.ts'
+import { normalizeThemeEditor } from '../../shared/themeWorkshop.ts'
 import type {
   TwilightPluginPermission,
   TwilightPluginType,
@@ -60,6 +61,7 @@ export function normalizeThemeContribution(
     variables,
     stylesheet,
     structured,
+    editor: normalizeThemeEditor(record.editor),
     ...(compatibilityNotes.length > 0 ? { compatibilityNotes } : {})
   }
 }

@@ -188,7 +188,8 @@ test('every registered playback token is wired into a real playback or DSP surfa
 test('theme studio is a dedicated navigable settings surface', () => {
   assert.match(app, /ThemeStudioPage/)
   assert.match(app, /@open-theme-studio="openThemeStudioPage"/)
-  assert.match(settingsSurfaces, /打开主题工作室/)
+  assert.match(settingsSurfaces, /打开主题创意工坊/)
+  assert.match(settingsSurfaces, /@click="emit\('openThemeStudio'\)"/)
   assert.doesNotMatch(studioSurfaces, /structuredClone\(profile\)/)
   assert.match(studioSurfaces, /配色与背景/)
   assert.match(studio, /theme-domain-list/)

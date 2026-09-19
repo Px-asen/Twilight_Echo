@@ -271,6 +271,8 @@ Renderer（usePlayerStore）→ window.api.audioEngine → main IPC
 
 BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥饿、deadline、满时高优先级驱逐）。取消发生在 cache commit 期间要按精确值条件回滚，且不得广播 completed。
 
+库内批量响度使用独立的 `loudness-batch` 任务种类，不能调用自动 loudnorm 的取消入口。`audio/libraryLoudnessManager.ts` 负责分组任务和最终源身份复核，`libraryLoudnessCache.ts` 使用每组一份原子 sidecar；该提交为同步操作，取消检查与提交之间不得增加 await。Album 的完整成员来自已物化的曲库分组；renderer 入口和虚拟结果面板集中在 `components/library-loudness/`，不用向超大 player store 添加离线分析职责。共享 DTO / 数值契约在 `shared/libraryLoudness.ts`，只由 preload 暴露 `loudnessAnalysis` 方法。真实数值 fixtures 随 `test:audio-engine:mingw` 执行，进程隔离与取消归入 `test:audio-manager`，面板行为和分组归入 `test:local-perf`。
+
 ### 8.4 状态归属速查
 
 - 播放会话：renderer `usePlayerStore`（`usePlaybackSessionPersistence` 落盘）。

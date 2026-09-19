@@ -368,7 +368,7 @@ export async function copyThemeAssets(
   }
 }
 
-async function writeStoredZip(root: string, outputFile: string): Promise<void> {
+export async function writeStoredZip(root: string, outputFile: string): Promise<void> {
   const files = await collectSafeFiles(root)
   const chunks: Buffer[] = []
   const central: Buffer[] = []

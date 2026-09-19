@@ -61,6 +61,21 @@ const SPONSORS: readonly Sponsor[] = [
     id: 'mumu-hina',
     name: 'MuMuHina',
     avatarUrl: 'https://s41.ax1x.com/2026/08/30/pnP5zOH.jpg'
+  },
+  {
+    id: 'yjo',
+    name: 'YJO',
+    avatarUrl: 'https://s41.ax1x.com/2026/09/16/pnuWoHf.jpg'
+  },
+  {
+    id: 'basement-little-evil-cow',
+    name: '地下室的小邪牛本人',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/03/pmI8Lzq.png'
+  },
+  {
+    id: 'afdian-user-3adb7',
+    name: '爱发电用户_3adb7',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/03/pmI8Lzq.png'
   }
 ]
 

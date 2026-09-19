@@ -20,6 +20,11 @@ import {
   MAX_UTILITY_PROCESS_ERROR_TEXT_BYTES
 } from './security/utilityProcessSafety.ts'
 import { isLoudnessAnalysisResult, type LoudnessAnalysisResult } from './audio/loudnessCache.ts'
+import {
+  isLoudnessGroupMeasurement,
+  type LoudnessGroupMeasurement,
+  type LoudnessInputGroup
+} from '../shared/libraryLoudness.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -68,6 +73,7 @@ type AnalysisWorker = {
   taskId: string | null
   startupTimer: NodeJS.Timeout | null
   restartTimer: NodeJS.Timeout | null
+  idleTimer: NodeJS.Timeout | null
   startupFailures: number
   disabled: boolean
   logBudget: UtilityProcessLogBudget
@@ -86,6 +92,12 @@ export interface AudioAnalysisServiceClientOptions {
   startupTimeoutMs?: number
   restartDelayMs?: number
   maxStartupFailures?: number
+  /**
+   * Idle workers are killed after this long without a task so an analysis
+   * burst does not leave a pool of utility processes resident for the rest
+   * of the session. Workers are re-forked lazily on the next request.
+   */
+  idleTimeoutMs?: number
   now?: () => number
   electron?: ElectronModule
 }
@@ -100,6 +112,8 @@ export interface AudioAnalysisServiceStatus {
   active: number
   queued: number
   readyWorkers: number
+  /** Workers currently forked (ready or still starting). */
+  liveWorkers: number
   maxConcurrency: number
   maxQueueSize: number
   lastError: string
@@ -113,12 +127,11 @@ const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_AGING_INTERVAL_MS = 1000
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000
 const DEFAULT_RESTART_DELAY_MS = 250
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 const DEFAULT_MAX_CONCURRENCY = 1
 const DEFAULT_MAX_QUEUE_SIZE = 32
 const DEFAULT_MAX_STARTUP_FAILURES = 3
 const MAX_AUDIO_ANALYSIS_RESPONSE_BYTES = 512 * 1024
-const MAX_AUDIO_ANALYSIS_MESSAGE_BYTES =
-  MAX_AUDIO_ANALYSIS_RESPONSE_BYTES + MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES
 const AUDIO_ANALYSIS_INVALID_RESPONSE_CODE = 'ERR_AUDIO_ANALYSIS_INVALID_RESPONSE'
 const AUDIO_ANALYSIS_INVALID_RESPONSE =
   'audio analysis worker returned an invalid or oversized message'
@@ -133,9 +146,9 @@ export class AudioAnalysisServiceClient extends EventEmitter {
   private readonly startupTimeoutMs: number
   private readonly restartDelayMs: number
   private readonly maxStartupFailures: number
+  private readonly idleTimeoutMs: number
   private readonly now: () => number
   private readonly workers: AnalysisWorker[]
-  private workersStarted = false
   private readonly queued: AnalysisTask[] = []
   private readonly active = new Map<string, AnalysisTask>()
   private sequence = 0
@@ -175,6 +188,12 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       DEFAULT_STARTUP_TIMEOUT_MS
     )
     this.restartDelayMs = clampInteger(options.restartDelayMs, 0, 30_000, DEFAULT_RESTART_DELAY_MS)
+    this.idleTimeoutMs = clampInteger(
+      options.idleTimeoutMs,
+      1,
+      60 * 60 * 1000,
+      DEFAULT_IDLE_TIMEOUT_MS
+    )
     this.maxStartupFailures = clampInteger(
       options.maxStartupFailures,
       1,
@@ -189,10 +208,38 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       taskId: null,
       startupTimer: null,
       restartTimer: null,
+      idleTimer: null,
       startupFailures: 0,
       disabled: false,
       logBudget: new UtilityProcessLogBudget()
     }))
+  }
+
+  async analyzeLoudnessGroup(group: LoudnessInputGroup): Promise<LoudnessGroupMeasurement> {
+    const value = parseAnalysisJson(
+      await this.request(
+        'loudness-batch',
+        group.tracks[0].filePath,
+        JSON.stringify({
+          segments: group.tracks.map((track) => ({
+            source: track.filePath,
+            startSeconds: track.cueRange?.startSeconds ?? 0,
+            endSeconds: track.cueRange?.endSeconds ?? 0
+          })),
+          album: group.mode === 'album'
+        }),
+        { priority: -20, timeoutMs: MAX_TASK_TIMEOUT_MS }
+      ),
+      'loudness batch'
+    )
+    if (!isLoudnessGroupMeasurement(value))
+      throw new Error(analysisErrorMessage(value, '原生引擎不支持批量响度测量，请更新引擎'))
+    if (
+      value.tracks.length !== group.tracks.length ||
+      (group.mode === 'album' && value.album === null)
+    )
+      throw new Error('专辑响度测量不完整')
+    return value
   }
 
   async analyzeBpm(
@@ -279,6 +326,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       active: this.active.size,
       queued: this.queued.length,
       readyWorkers: this.workers.filter((worker) => worker.ready).length,
+      liveWorkers: this.workers.filter((worker) => worker.child).length,
       maxConcurrency: this.maxConcurrency,
       maxQueueSize: this.maxQueueSize,
       lastError: this.lastError
@@ -293,6 +341,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     for (const worker of this.workers) {
       if (worker.restartTimer) clearTimeout(worker.restartTimer)
       worker.restartTimer = null
+      this.clearIdleTimer(worker)
       this.terminateWorker(
         worker,
         createAnalysisError('ERR_AUDIO_ANALYSIS_STOPPED', 'audio analysis service stopped'),
@@ -336,17 +385,63 @@ export class AudioAnalysisServiceClient extends EventEmitter {
         timer: null
       }
       if (!this.admitTask(task, now)) return
-      this.ensureWorkersStarted()
+      this.ensureWorkerCapacity()
       if (this.unavailableError) return
       this.scheduleQueueMaintenance(now)
       this.pump()
     })
   }
 
-  private ensureWorkersStarted(): void {
-    if (this.workersStarted || this.stopped) return
-    this.workersStarted = true
-    for (const worker of this.workers) this.startWorker(worker)
+  /**
+   * Forks only as many workers as the current demand needs. A single
+   * loudness request must not fan out into a full pool of resident
+   * processes; further workers start when more tasks are waiting.
+   */
+  private ensureWorkerCapacity(): void {
+    if (this.stopped || this.unavailableError) return
+    const demand = this.queued.length + this.active.size
+    let capacity = this.workers.filter((worker) => worker.child || worker.restartTimer).length
+    for (const worker of this.workers) {
+      if (capacity >= demand) break
+      if (worker.child || worker.restartTimer || worker.disabled) continue
+      this.startWorker(worker)
+      if (worker.child) capacity += 1
+    }
+  }
+
+  private clearIdleTimer(worker: AnalysisWorker): void {
+    if (worker.idleTimer) clearTimeout(worker.idleTimer)
+    worker.idleTimer = null
+  }
+
+  private armIdleTimer(worker: AnalysisWorker): void {
+    this.clearIdleTimer(worker)
+    if (this.stopped || !worker.child || worker.taskId) return
+    worker.idleTimer = setTimeout(() => {
+      worker.idleTimer = null
+      if (this.stopped || !worker.child || worker.taskId) return
+      if (this.queued.length > 0) {
+        this.pump()
+        return
+      }
+      this.releaseIdleWorker(worker)
+    }, this.idleTimeoutMs)
+  }
+
+  /** Kills an idle worker without treating it as a failure; the slot is re-forked on demand. */
+  private releaseIdleWorker(worker: AnalysisWorker): void {
+    const child = worker.child
+    worker.child = null
+    worker.ready = false
+    worker.taskId = null
+    if (worker.startupTimer) clearTimeout(worker.startupTimer)
+    worker.startupTimer = null
+    this.clearIdleTimer(worker)
+    try {
+      child?.kill()
+    } catch {
+      // The process already exited; the detached identity ignores its late events.
+    }
   }
 
   private startWorker(worker: AnalysisWorker): void {
@@ -366,6 +461,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       worker.child = child
       worker.ready = false
       worker.logBudget.reset()
+      this.clearIdleTimer(worker)
       worker.startupTimer = setTimeout(() => {
         if (worker.child !== child || worker.ready) return
         this.terminateWorker(
@@ -492,10 +588,9 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       this.handleWorkerProtocolViolation(worker)
       return
     }
-    if (!inspectUtilityProcessMessage(record, MAX_AUDIO_ANALYSIS_MESSAGE_BYTES).ok) {
-      this.handleWorkerProtocolViolation(worker)
-      return
-    }
+    // Envelope fields are bounded by parseUtilityProcessResponse; the payload
+    // is inspected separately below, so a whole-record serialization here
+    // would only duplicate that work.
 
     const parsed = parseUtilityProcessResponse(record)
     if (!parsed.ok) {
@@ -535,6 +630,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     for (const candidate of this.workers) {
       if (candidate.restartTimer) clearTimeout(candidate.restartTimer)
       candidate.restartTimer = null
+      this.clearIdleTimer(candidate)
       this.terminateWorker(
         candidate,
         createAnalysisError('ERR_AUDIO_ANALYSIS_UNAVAILABLE', this.unavailableError),
@@ -551,7 +647,11 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     for (const worker of this.workers) {
       if (!worker.ready || worker.taskId || !worker.child) continue
       const task = this.takeNextTask(now)
-      if (!task) break
+      if (!task) {
+        this.armIdleTimer(worker)
+        continue
+      }
+      this.clearIdleTimer(worker)
       worker.taskId = task.id
       this.active.set(task.id, task)
       task.timer = setTimeout(() => {
@@ -584,6 +684,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
         )
       }
     }
+    if (this.queued.length > 0) this.ensureWorkerCapacity()
     this.scheduleQueueMaintenance(this.now())
   }
 
@@ -592,6 +693,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     task.timer = null
     this.active.delete(task.id)
     if (worker.taskId === task.id) worker.taskId = null
+    if (worker.child && worker.ready) this.armIdleTimer(worker)
   }
 
   private terminateWorker(worker: AnalysisWorker, error: Error, restart: boolean): void {
@@ -601,6 +703,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     worker.ready = false
     if (worker.startupTimer) clearTimeout(worker.startupTimer)
     worker.startupTimer = null
+    this.clearIdleTimer(worker)
     const task = worker.taskId ? this.active.get(worker.taskId) : undefined
     if (task) {
       this.completeTask(worker, task)

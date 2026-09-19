@@ -84,6 +84,15 @@ primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时�
 
 ## 3. API 版本与兼容性承诺
 
+主题 contribution 可选声明独立版本化的 `editor.schemaVersion: 1`，用于主题插件工坊
+展示参数分组、图片槽位和变量控件；不改变 `structured` 的版本语义。控制项字段见
+`@twilight-echo/plugin-api` 的 `TwilightThemeEditorDescriptor`。无效项和重复 ID 被忽略。
+`selector` 仅用于生成 CSS 变量覆盖，不提供 DOM 或脚本权限。
+
+内置工具插件 `com.twilightecho.tool.theme-workshop` 默认关闭。其专用宿主页面仅按
+固定插件 ID 与页面 ID 路由，普通 `sidebarPage` 仍使用受控命令页面。
+工坊文件接口要求插件启用；导出的纯主题插件不依赖工坊启用状态。
+
 - 插件 API 独立于应用版本，使用 `apiVersion` 主版本号（1, 2, …）。
 - **主版本内只加不改不删**；废弃 API 须先标记 deprecated 并保留至少一个主版本。
 - 宿主升级时按 `engines.twilightEcho` 做兼容检查；不兼容插件标记为禁用而非崩溃。
@@ -97,11 +106,12 @@ primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时�
 - 所有 JS 插件默认运行在独立的插件宿主进程（Electron `utilityProcess`）中，通过 IPC 与主进程 API 网关通信。
 - 目的是**崩溃隔离与可观测性**（信任式安装下不承诺安全沙箱）：插件死循环、内存泄漏、崩溃不得拖垮主进程与音频链路。
 - UI 插件的渲染部分在 renderer 注入，业务逻辑仍在宿主进程；渲染入口只能拿到受限桥接对象。
+- 宿主进程按需存在：长时间（默认 5 分钟）没有 provider 调用、UI command 或已订阅事件的宿主会被休眠（进程停止，注册的 provider/UI 贡献由宿主保留），下一次调用时透明唤醒。插件不得依赖进程常驻的内存状态跨调用存活；需要跨调用保留的状态（登录态、设备 ID 等）必须写入 `context.settings`。
 
 ### 4.2 生命周期
 
-- `activate(context)`：插件被启用或应用启动时调用。
-- `deactivate()`：插件被禁用、卸载或应用退出时调用，须释放全部资源。
+- `activate(context)`：插件被启用、应用启动或从休眠唤醒时调用。同一插件在一次应用会话中可能被多次 `activate`。
+- `deactivate()`：插件被禁用、卸载、应用退出或进入休眠时调用，须释放全部资源。
 - `context` 注入内容：版本化 `twilight` API 句柄、插件私有存储目录路径、设置读写接口、日志器。
 - `dependencies` 仅声明宿主内已安装插件之间的依赖关系；宿主不会自动安装或自动启用依赖。依赖缺失、版本不满足、未启用或循环依赖时，依赖方标记为失败并写入插件日志。
 
@@ -192,6 +202,9 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
   用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。
   启动恢复登录须等待音源注册完成；登录检查失败或未返回用户资料时保留加密 Cookie，
   供后续检查重试，仅显式退出登录时删除凭据。
+  `library` 能力可选提供 `fetchSavedAlbums()` / `fetchSavedArtists()`，返回标准
+  `AlbumSummary[]` / `ArtistSummary[]`；内置网易云插件分页读取收藏列表，音乐库按批展示并复用详情导航。
+  方法名称联合类型统一定义于 `src/shared/mediaProviderMethods.ts`，main/preload 共用，仍经现有 provider 调用桥接。
 - 第三方音源插件使用同一 Provider API。Bilibili 收藏夹音频插件作为外部插件仓库
   或私有插件索引分发，插件 ID 为 `com.twilightecho.provider.bilibili`，provider 前缀
   固定为 `bili`；仅在用户安装、启用并扫码登录后，流媒体 UI 才展示其视频收藏夹。
@@ -291,5 +304,11 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - 并发索引刷新使用单调 generation：只有最新请求可以写入 cache envelope 或提交内存中的 entry、origin、status 与 base URL，晚到的旧响应必须返回最新快照且不得回写磁盘。插件包下载开始时绑定索引 origin 与完整 entry（含 manifest、source URL、审核声明和发布者签名）的 canonical SHA-256 指纹；下载期间任一字段变化都必须拒绝，不能只比较包 checksum。
 - 远程索引和 `.tep` 获取必须使用 `redirect: 'manual'`，最多跟随 5 跳；每一跳都重新校验 URL、协议、凭据和 HTTPS 不得降级为 HTTP。`Content-Length` 在读取 body 前预检，未知长度响应按 chunk 累计上限并在超限时 abort。`.tep` 必须逐块写入与插件安装目标同卷的 user-data staging 目录，同时增量计算 SHA-256；任何下载、写入、校验或重定向失败都清理部分临时文件。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。
+
+### 主题插件工坊入口与编辑项目
+
+内置工具 `com.twilightecho.tool.theme-workshop` 默认关闭。启用后从设置 → 外观 → 主题创意工坊下方的「主题插件工坊」打开；侧边栏隐藏该内置贡献入口，插件详情仍可打开。停用时先保存草稿再关闭页面和试用。
+
+编辑描述 schemaVersion 1 的绑定三选一：`variable`、`token` 或宿主已登记的 `slot`；开关可声明 `checkedValue` / `uncheckedValue`，参数可声明 `description`。编译与导出保留 structured 布局、模式、深浅色参数。项目包含素材及许可、分页面图层和上次应用版本；导出的声明式主题不依赖工坊启用状态。主题源码和素材仍保留在外部插件仓库。
 
 服务器型音源可声明 `loginWithServer(serverUrl, username, password, context?)`，返回 `{ loggedIn, profile }`，并声明 `login` 能力。宿主根据已注册方法展示服务器地址、用户名和密码表单，经现有 provider 调用桥传递，不新增 IPC 通道；同一插件未实现该方法时继续使用原登录流程。插件只持久化服务端会话令牌，不保存密码。Jellyfin provider 位于独立插件仓库，使用官方 AuthenticateByName、Items、Playlists 和 Audio universal 接口。

@@ -36,7 +36,7 @@ let titleObserver: ResizeObserver | undefined
 onMounted(() => {
   const updateInset = (): void => {
     if (titleBar.value)
-      document.documentElement.style.setProperty(
+      titleBar.value.ownerDocument.documentElement.style.setProperty(
         '--te-titlebar-inset',
         `${titleBar.value.getBoundingClientRect().bottom}px`
       )

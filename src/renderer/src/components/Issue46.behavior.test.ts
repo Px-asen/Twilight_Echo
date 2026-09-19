@@ -39,6 +39,7 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
     const vue = await readFile(require.resolve('vue/dist/vue.global.prod.js'), 'utf8')
     const scripts = await Promise.all([
       component('./TrackInfoDialog.vue', 'TrackInfoDialog'),
+      component('./streaming-page/SavedMusicCollections.vue', 'SavedMusicCollections'),
       component('./streaming-page/StreamingDetailStage.vue', 'DetailStage'),
       component('./LoginPage.vue', 'LoginPage')
     ])
@@ -46,21 +47,25 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
     const runner = join(directory, 'runner.cjs')
     await writeFile(
       html,
-      `<!doctype html><html><body><div id="login"></div><div id="list"></div><script>${vue}</script><script>
+      `<!doctype html><html><body><div id="login"></div><div id="list"></div><div id="saved"></div><script>${vue}</script><script>
       const { ref, computed } = Vue;
+      Vue.Transition = { setup: (_props, { slots }) => () => slots.default?.() };
       const replies = [];
+      const savedAlbums = [], savedArtists = [];
       const provider = { id: 'ncm', name: 'NetEase', capabilities: ['login'], ui: {} };
       window.fixture = {
         QRCode: { toDataURL: async () => 'data:image/png;base64,AA==' },
         AnimatedInput: { template: '<input />' }, CoverImg: { template: '<img />' },
         useBackHandler: () => {},
+        useEscapeToClose: () => {},
+        useMediaProviders: () => ({ get: () => ({ fetchSavedAlbums: () => new Promise(resolve => savedAlbums.push(resolve)), fetchSavedArtists: () => new Promise(resolve => savedArtists.push(resolve)) }) }),
         createVisibilityPollingController: () => ({ onVisibilityChange() {} }),
         useNcmStore: () => ({ checkLogin: async () => {} }),
         useProviderStore: () => ({ providers: ref([provider]), syncProviders: async () => {}, hasProvider: () => true, getProvider: () => provider, checkLogin: async () => ({ loggedIn: false, profile: null }), getQrLogin: () => new Promise(resolve => replies.push(resolve)) }),
         useProgressiveList: source => ({ visibleItems: computed(source), visibleStart: ref(0), paddingTop: ref(0), totalHeight: computed(() => source().length * 64), listRef: () => {} })
       };
       ${scripts.join('\n')}
-      const tick = async () => { for (let i = 0; i < 6; i++) { await Vue.nextTick(); await new Promise(resolve => requestAnimationFrame(resolve)); } };
+      const tick = async () => { for (let i = 0; i < 2; i++) { await Vue.nextTick(); await new Promise(resolve => setTimeout(resolve, 0)); } };
       const check = (value, message) => { if (!value) throw Error(message) };
       window.runChecks = async () => {
         let loggedIn = 0;
@@ -79,13 +84,36 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
         list.mount('#list'); await tick();
         document.querySelector('.row-title').click(); await tick();
         check(document.querySelector('dialog[open]'), 'song title opens information');
-        document.querySelector('dialog').close(); await tick();
+        document.querySelector('.track-info-close').click(); await tick();
+        check(!document.querySelector('dialog'), 'close button removes song information');
+        document.querySelector('.row-title').click(); await tick();
+        document.querySelector('dialog').dispatchEvent(new Event('cancel', { cancelable: true })); await tick();
+        check(!document.querySelector('dialog'), 'cancel removes song information');
         document.querySelector('.row-artist').click();
         document.querySelector('.stage-row .col-album button').click();
         document.querySelector('.row-artist').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
         check(artist === 1 && album === 1 && played === 0, 'metadata links must not play');
         document.querySelector('.row-play-btn').click(); check(played === 1, 'play button still plays');
-        list.unmount(); return 'passed';
+        list.unmount();
+        let openedAlbum = null, openedArtist = null;
+        const saved = Vue.createApp(fixture.SavedMusicCollections, { userId: 1, onOpenAlbum: item => openedAlbum = item, onOpenArtist: item => openedArtist = item });
+        saved.mount('#saved'); await tick();
+        savedAlbums[0](Array.from({ length: 60 }, (_, id) => ({ id, name: 'Album ' + id, cover: null, trackCount: 1 }))); await tick();
+        check(document.querySelectorAll('#saved .saved-grid button').length === 40, 'saved collections render a bounded first batch');
+        document.querySelector('#saved .saved-grid button').click();
+        check(openedAlbum.id === 0, 'saved album opens album detail');
+        const selectSaved = text => [...document.querySelectorAll('#saved header button')].find(button => button.textContent.trim() === text).click();
+        selectSaved('歌手'); await tick();
+        selectSaved('专辑'); await tick();
+        savedArtists[0]([{ id: 9, name: 'Stale artist', picUrl: null }]); await tick();
+        check(!document.querySelector('#saved').textContent.includes('Stale artist'), 'late collection replies cannot replace the active category');
+        savedAlbums[1]([]); await tick();
+        check(document.querySelector('#saved').textContent.includes('暂无收藏专辑'), 'empty collections are visible');
+        selectSaved('歌手'); await tick();
+        savedArtists[1]([{ id: 10, name: 'Saved artist', picUrl: null }]); await tick();
+        document.querySelector('#saved .saved-grid button').click();
+        check(openedArtist.id === 10, 'saved artist opens artist detail');
+        saved.unmount(); return 'passed';
       };
     </script></body></html>`
     )

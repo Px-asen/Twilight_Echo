@@ -696,6 +696,20 @@ function observeSurface(surface: Element): void {
   surfaceVisibilityObserver.observe(surface)
 }
 
+function releaseSurface(surface: Element): void {
+  if (!observedSurfaces.delete(surface)) return
+  surfaceVisibilityObserver?.unobserve(surface)
+  surface.classList.remove(LIQUID_GLASS_OFFSCREEN_CLASS, LIQUID_GLASS_BUDGET_CLASS)
+}
+
+/** Drops every observed surface inside a subtree that was removed from the DOM. */
+function releaseSurfacesIn(root: Element): void {
+  if (observedSurfaces.size === 0) return
+  for (const surface of observedSurfaces) {
+    if (surface === root || root.contains(surface)) releaseSurface(surface)
+  }
+}
+
 function observeSurfacesIn(root: Element | Document): void {
   if (!surfaceVisibilityObserver) return
   if (root instanceof Element) observeSurface(root)
@@ -736,6 +750,12 @@ function syncSurfaceVisibility(): void {
   surfaceVisibilityObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
+        // A surface that left the document still sits in observedSurfaces
+        // (and keeps its subtree alive) until it is dropped here.
+        if (!entry.target.isConnected) {
+          releaseSurface(entry.target)
+          continue
+        }
         entry.target.classList.toggle(LIQUID_GLASS_OFFSCREEN_CLASS, !entry.isIntersecting)
       }
       syncExpandedSurfaceBudget()
@@ -747,6 +767,9 @@ function syncSurfaceVisibility(): void {
     for (const record of records) {
       for (const node of record.addedNodes) {
         if (node instanceof Element) observeSurfacesIn(node)
+      }
+      for (const node of record.removedNodes) {
+        if (node instanceof Element) releaseSurfacesIn(node)
       }
     }
   })

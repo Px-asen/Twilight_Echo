@@ -4,6 +4,18 @@ Local playlists support rename, cover selection, copying, manual ordering, and m
 to another playlist. A playlist update is queued as one versioned persistence transaction; a bulk action
 does not create one JSON write per track.
 
+Rename and copy use an application modal with the current name selected for editing. Enter confirms,
+Escape or Cancel dismisses, and focus returns to the initiating button. Blank names cannot be saved;
+duplicate names and other validation errors stay in the dialog. A successful rename keeps the detail
+view on the same playlist using its normalized name. Navigation dismisses an unfinished edit.
+Moving tracks uses a destination selector containing other local playlists and commits the selection
+captured when the dialog opened.
+
+The detail toolbar uses the active theme's surface, text, border and accent tokens. Edit actions,
+import/export and missing-file repair are grouped; export format and download form one joined control.
+Controls scale with the interface font size and expose keyboard focus, accessible labels and repair
+progress.
+
 ## Named Queue Sessions
 
 The queue drawer and command palette provide a **队列与会话** dialog. A session stores its name,

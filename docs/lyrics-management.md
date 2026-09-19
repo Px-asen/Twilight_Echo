@@ -15,6 +15,11 @@ edited original lyrics as a separate LRC file from the Lyrics manager.
   resolver and its fallback order. `Manual` has explicit precedence only for
   the selected track and never overwrites the resolver result held by the
   playback queue.
+- Embedded lyrics retain the original timed tag text, including LRC offsets, repeated timestamps and
+  word timing. When only structured synchronized lyrics are available, millisecond `syncText` entries
+  are converted to LRC; MPEG frame numbers are not interpreted as milliseconds. Timed entries take
+  precedence over plain text from the same metadata. A sibling `.lrc` still has priority, and audio
+  metadata is read lazily for the requested track with cover loading disabled.
 - Import accepts a user-selected `.lrc` or `.txt` file through the main-process
   dialog, strips a UTF-8 BOM, and rejects content above 1 MiB. Lyrics files
   may be UTF-8 with or without BOM, GBK, or GB18030; decoding is fatal, so

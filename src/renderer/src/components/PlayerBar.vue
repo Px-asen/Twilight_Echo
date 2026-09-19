@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import PlayerControlIcon from '@renderer/components/player-bar/PlayerControlIcon.vue'
+import type { Track } from '@renderer/types/music'
 import { ref, computed, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
@@ -69,6 +70,7 @@ const props = withDefaults(
     glass?: boolean
     menuOpen?: boolean
     preview?: boolean
+    previewTrack?: Track
     /** Show the expanded artwork and waveform stage on the actual lyrics page. */
     visualizerVisible?: boolean
     /**
@@ -103,7 +105,7 @@ const isCompact = computed(() => props.mode === 'compact')
 const showCompactVisualizer = computed(() => isCompact.value && props.visualizerVisible)
 
 const {
-  currentTrack,
+  currentTrack: playbackCurrentTrack,
   dominantColor,
   isPlaying,
   isStreamBuffering,
@@ -131,6 +133,7 @@ const {
   loudnormStatus,
   outputInfo,
   visualizationData,
+  acquireVisualizationConsumer,
   cyclePlayMode,
   togglePlay,
   next,
@@ -182,6 +185,23 @@ const {
   discoverCastDevices,
   refreshCastTarget
 } = usePlayerStore()
+const currentTrack = computed(() =>
+  props.preview && props.previewTrack ? props.previewTrack : playbackCurrentTrack.value
+)
+// Keep the visualization poll alive only while the compact skyline is mounted.
+let releaseVisualizationConsumer: (() => void) | null = null
+watch(
+  showCompactVisualizer,
+  (visible) => {
+    if (visible && !props.preview) {
+      releaseVisualizationConsumer ??= acquireVisualizationConsumer()
+      return
+    }
+    releaseVisualizationConsumer?.()
+    releaseVisualizationConsumer = null
+  },
+  { immediate: true }
+)
 
 /** Destroy/recreate the whole left rail on track change (navigation remount is what fixed covers). */
 const playerLeftKey = computed(
@@ -940,7 +960,7 @@ const audioStatusChips = computed(() => {
   })
   if (outputInfo.value?.resampled)
     chips.push({ label: 'Resampled', tone: 'warning', title: '采样率或格式发生重采样' })
-  if (playbackInfo.value?.dspActive)
+  if (audioProcessing.value.dspEnabled && playbackInfo.value?.dspActive)
     chips.push({ label: 'DSP', tone: 'warning', title: 'DSP 处理链正在改变样本' })
   if (exclusiveMode.value)
     chips.push({ label: 'Exclusive', tone: 'success', title: '独占模式（设置态，非实时证明）' })
@@ -1513,6 +1533,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopResizeSidebar()
+  releaseVisualizationConsumer?.()
+  releaseVisualizationConsumer = null
   if (geometryAnimTimer !== null) window.clearTimeout(geometryAnimTimer)
   geometryAnimTimer = null
   glassPointerEnabled = false

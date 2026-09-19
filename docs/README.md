@@ -39,6 +39,7 @@
 - [播放能力分阶段 Agent 提示词包](./playback-capability-agent-prompt-pack.md)：可直接复制给 GPT-5.6 Sol / Terra / Luna 的单 AP、S0～S5 总控、复核与续作提示词。
 
 - [本地库元数据补全](./local-library-metadata-enrichment.md)
+- [库内批量响度分析](./audio-engine-api.md#库内批量响度分析)：Track/Album、CUE、LUFS / True Peak、取消与缓存契约。
 - [本地库移除策略](./local-library-removal-policy.md)
 - [本地库排序与筛选](./local-library-sorting-and-filters.md)
 - [搜索与跨来源歌曲身份](./search-and-library-identity.md)

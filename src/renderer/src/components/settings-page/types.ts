@@ -503,7 +503,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
     // ── 外观 ──────────────────────────────────────────────
     {
       section: 'appearance',
-      title: '主题工作室 · Beta',
+      title: '主题创意工坊与主题插件工坊',
       terms: '主题 工作室 theme 编辑器 自定义 皮肤'
     },
     { section: 'appearance', title: '主题模式', terms: '主题 模式 浅色 深色 系统 亮色 暗色' },

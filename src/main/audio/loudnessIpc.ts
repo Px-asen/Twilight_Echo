@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 
 import { runtime } from '../core/runtime'
@@ -11,6 +11,9 @@ import {
 import { resolveAuthorizedAudioFile } from '../security/localPaths.ts'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { LibraryLoudnessCache } from './libraryLoudnessCache.ts'
+import { LibraryLoudnessManager } from './libraryLoudnessManager.ts'
+import { createLibraryLoudnessHandlers } from './libraryLoudnessIpc.ts'
 
 const LOUDNESS_ANALYSIS_CACHE_FILE = 'loudness-analysis-cache.json'
 const MAX_LOUDNESS_TRACK_ID_LENGTH = 512
@@ -20,6 +23,32 @@ const MAX_LOUDNESS_FILE_PATH_LENGTH = 4096
 const LOUDNESS_WHOLE_FILE_TASK_TIMEOUT_MS = (14_400 + 120) * 1000
 
 export function setupLoudnessAnalysisIpc(): void {
+  runtime.libraryLoudnessManager = new LibraryLoudnessManager({
+    cache: new LibraryLoudnessCache(join(app.getPath('userData'), 'library-loudness')),
+    authorizePath: resolveAuthorizedAudioFile,
+    analyze: async (group) => {
+      const service = runtime.audioAnalysisService
+      if (!service) throw new Error('音频分析服务不可用')
+      return service.analyzeLoudnessGroup(group)
+    },
+    cancelWork: () => {
+      runtime.audioAnalysisService?.cancelAll('loudness-batch')
+    },
+    onProgress: (event) => {
+      const window = runtime.mainWindow
+      if (window && !window.isDestroyed())
+        window.webContents.send('loudnessAnalysis:batchProgress', event)
+    }
+  })
+  const batch = createLibraryLoudnessHandlers(runtime.libraryLoudnessManager, (event) =>
+    assertTrustedIpcSender(event as IpcMainInvokeEvent, 'Library loudness IPC')
+  )
+  ipcMain.handle('loudnessAnalysis:startBatch', batch.start)
+  ipcMain.handle('loudnessAnalysis:cancelBatch', batch.cancel)
+  ipcMain.handle('loudnessAnalysis:getBatch', batch.snapshot)
+  ipcMain.handle('loudnessAnalysis:getResults', batch.results)
+  ipcMain.handle('loudnessAnalysis:clearResults', batch.clear)
+
   runtime.loudnessAnalysisManager = new LoudnessAnalysisManager({
     cache: new LoudnessAnalysisCache(getLoudnessAnalysisCachePath()),
     analyzeFile: async (request) => {

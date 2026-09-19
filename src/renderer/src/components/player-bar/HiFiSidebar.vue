@@ -319,7 +319,7 @@ const crossfeedPercent = computed(() => Math.round(props.audioProcessing.crossfe
 const crossfadeSeconds = computed(() => props.audioProcessing.crossfadeSeconds)
 const replayGainPreamp = computed(() => props.audioProcessing.replayGainPreamp)
 const dspMasterOn = computed(() => props.audioProcessing.dspEnabled)
-const dspRuntimeActive = computed(() => props.dspActive === true)
+const dspRuntimeActive = computed(() => dspMasterOn.value && props.dspActive === true)
 const dspSignalState = computed(() => {
   if (dspRuntimeActive.value) return { label: 'ENGAGED', tone: 'warning' as StatusTone }
   if (dspMasterOn.value) return { label: 'STANDBY', tone: 'muted' as StatusTone }

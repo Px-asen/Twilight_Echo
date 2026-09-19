@@ -357,6 +357,8 @@ const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 // 高频（60ms）整体替换的可视化载荷不值得一层层深度代理，消费方只读快照。
 const visualizationData = shallowRef<NativeVisualizationData>(createInactiveVisualizationData())
+// 读取 visualizationData 的已挂载组件数；为 0 时 60ms IPC 轮询不启动。
+const visualizationConsumers = ref(0)
 const { settings: appSettings, updateSettings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
 let playbackAudio: HTMLAudioElement | null = null
@@ -2066,10 +2068,15 @@ function setAudioServiceReadyNotice(event?: {
 
 const visualizationPolling = createVisualizationPolling({
   data: visualizationData,
-  active: visualizerActive
+  active: visualizerActive,
+  consumers: visualizationConsumers
 })
 
-const { stop: stopVisualizationPolling, start: startVisualizationPolling } = visualizationPolling
+const {
+  stop: stopVisualizationPolling,
+  start: startVisualizationPolling,
+  acquireConsumer: acquireVisualizationConsumer
+} = visualizationPolling
 
 async function handlePlaybackEnded(): Promise<void> {
   if (await getSleepTimerController().reportBoundary('trackEnd')) return
@@ -2806,6 +2813,16 @@ watch(
   },
   { immediate: true }
 )
+
+watch(visualizationConsumers, (consumers) => {
+  if (consumers > 0) {
+    if (isPlaying.value && audioEngineReady.value && currentTrack.value?.id) {
+      startVisualizationPolling()
+    }
+    return
+  }
+  stopVisualizationPolling(true)
+})
 
 function clearCrossfadeTimer(): void {
   if (crossfadeTimer) {
@@ -3960,6 +3977,7 @@ export function usePlayerStore(): {
   loudnormStatusSource: Ref<string | null>
   outputInfo: ComputedRef<NativeOutputInfo | null>
   visualizationData: Ref<NativeVisualizationData>
+  acquireVisualizationConsumer: () => () => void
   cyclePlayMode: () => void
   setPlayMode: (mode: PlayMode) => void
   enqueueTrack: (track: Track) => void
@@ -4188,6 +4206,7 @@ export function usePlayerStore(): {
     loudnormStatusSource,
     outputInfo,
     visualizationData,
+    acquireVisualizationConsumer,
     castTargetName,
     cyclePlayMode,
     setPlayMode,

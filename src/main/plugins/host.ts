@@ -166,6 +166,8 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'fetchPrivateContent',
   'fetchArtistTopSongs',
   'fetchArtistAlbums',
+  'fetchSavedAlbums',
+  'fetchSavedArtists',
   'fetchArtistIntro',
   'fetchArtistFollowState',
   'fetchAlbumTracks',

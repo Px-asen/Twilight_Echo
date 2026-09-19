@@ -9,11 +9,19 @@ import type { AppTheme, MotionPreference } from '../../types/settings'
 
 const emit = defineEmits<{
   openThemeStudio: []
+  openThemeWorkshop: []
 }>()
 
 const { settings, updateSettings } = useSettingsStore()
 const themeStore = useThemeStore()
-const { themeContributions } = useExtensionRegistry()
+const { themeContributions, uiContributions } = useExtensionRegistry()
+
+const workshopEnabled = computed(() =>
+  uiContributions.value.some(
+    (entry) =>
+      entry.pluginId === 'com.twilightecho.tool.theme-workshop' && entry.id === 'theme-workshop'
+  )
+)
 
 const pluginThemeOptions = computed(() =>
   themeContributions.value.map((theme) => ({
@@ -65,11 +73,29 @@ async function setPluginTheme(event: Event): Promise<void> {
 <template>
   <div class="setting-item">
     <div class="setting-copy">
-      <strong>主题工作室</strong>
+      <strong>主题创意工坊</strong>
     </div>
     <button type="button" class="primary-button" @click="emit('openThemeStudio')">
       <i class="ph ph-swatches"></i>
-      打开主题工作室
+      打开主题创意工坊
+    </button>
+  </div>
+  <div class="setting-item">
+    <div class="setting-copy">
+      <strong>主题插件工坊</strong
+      ><span>{{
+        workshopEnabled
+          ? '定制已加载的主题插件，管理素材并导出个人主题。'
+          : '在插件管理中启用「主题插件工坊」后使用。'
+      }}</span>
+    </div>
+    <button
+      type="button"
+      class="primary-button"
+      :disabled="!workshopEnabled"
+      @click="emit('openThemeWorkshop')"
+    >
+      <i class="ph ph-paint-brush"></i>打开主题插件工坊
     </button>
   </div>
   <hr />

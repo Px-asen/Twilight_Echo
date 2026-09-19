@@ -194,63 +194,7 @@ type TwilightMediaProviderCapability =
   | 'library'
   | 'login'
   | 'download'
-type TwilightMediaProviderMethod =
-  | 'getPlaybackUrl'
-  | 'getLyrics'
-  | 'searchSongs'
-  | 'searchPlaylists'
-  | 'searchArtists'
-  | 'fetchPlaylistTracks'
-  | 'createDownload'
-  | 'getDownloadStatus'
-  | 'getDownloadFile'
-  | 'cancelDownload'
-  | 'checkLogin'
-  | 'getProfile'
-  | 'logout'
-  | 'openOfficialLogin'
-  | 'sendCaptcha'
-  | 'loginByPhonePassword'
-  | 'loginByPhoneCaptcha'
-  | 'loginByEmailPassword'
-  | 'getQrLogin'
-  | 'getQrKey'
-  | 'getQrImage'
-  | 'checkQrLogin'
-  | 'fetchUserLibrary'
-  | 'fetchLikedTracks'
-  | 'fetchLikedTracksPage'
-  | 'fetchCloudSongsPage'
-  | 'prepareCloudUpload'
-  | 'completeCloudUpload'
-  | 'getCloudDownloadUrl'
-  | 'fetchRecommendSongs'
-  | 'fetchRecommendPlaylists'
-  | 'fetchPlaylistCategories'
-  | 'fetchDiscoveryPlaylists'
-  | 'fetchHighQualityPlaylists'
-  | 'fetchPersonalFm'
-  | 'fetchPrivateContent'
-  | 'fetchArtistTopSongs'
-  | 'fetchArtistAlbums'
-  | 'fetchArtistIntro'
-  | 'fetchArtistFollowState'
-  | 'fetchAlbumTracks'
-  | 'fetchArtistPlaylists'
-  | 'fetchUserPlaylistsByUid'
-  | 'fetchUserFollows'
-  | 'fetchUserFolloweds'
-  | 'fetchPlayRecords'
-  | 'fetchRecentSongs'
-  | 'fetchIntelligenceList'
-  | 'followArtist'
-  | 'followUser'
-  | 'likeTrack'
-  | 'isTrackLiked'
-  | 'createPlaylist'
-  | 'deletePlaylist'
-  | 'addTracksToPlaylist'
-  | 'removeTracksFromPlaylist'
+import type { TwilightMediaProviderMethod } from '../shared/mediaProviderMethods.ts'
 type ProviderDownloadQuality = 'aac' | 'lossless' | 'hi-res'
 type ProviderDownloadTaskStatus =
   | 'queued'
@@ -897,7 +841,7 @@ interface WindowAPI {
     cancel: (filePath?: string) => Promise<void>
     onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void) => () => void
   }
-  loudnessAnalysis: {
+  loudnessAnalysis: import('../shared/libraryLoudness.ts').LibraryLoudnessApi & {
     request: (request: LoudnessAnalysisRequest) => Promise<LoudnessAnalysisRequestResult>
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
@@ -1183,6 +1127,7 @@ interface WindowAPI {
   fonts: {
     listInstalled: () => Promise<string[]>
   }
+  themeWorkshop: import('../shared/themeWorkshop').ThemeWorkshopApi
   themes: {
     getSystemTone: () => Promise<ThemeTone>
     getBootstrap: () => Promise<ThemeBootstrap>

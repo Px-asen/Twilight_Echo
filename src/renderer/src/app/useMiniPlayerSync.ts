@@ -111,10 +111,72 @@ export function buildMiniPlayerStateSnapshot(
  * lyrics are excluded because the mini player switches lines by timestamp.
  */
 export function buildMiniPlayerLyricLines(track: Track | null): MiniPlayerLyricLineSnapshot[] {
-  if (!track) return []
-  return buildLyricLines(track.lyrics, track.translatedLyrics)
-    .filter((line) => line.time != null && line.text.trim().length > 0)
-    .map((line) => ({ time: line.time, ...compactLyricLine(line) }))
+  return resolveCachedLyrics(track).snapshotLines
+}
+
+type ParsedLyricLine = ReturnType<typeof buildLyricLines>[number]
+
+interface CachedMiniPlayerLyrics {
+  trackId: string
+  lyrics: string | null | undefined
+  translatedLyrics: string | null | undefined
+  lines: ParsedLyricLine[]
+  snapshotLines: MiniPlayerLyricLineSnapshot[]
+}
+
+const EMPTY_CACHED_LYRICS: CachedMiniPlayerLyrics = {
+  trackId: '',
+  lyrics: null,
+  translatedLyrics: null,
+  lines: [],
+  snapshotLines: []
+}
+
+/**
+ * Single-slot parse cache. The playback clock republishes the mini player
+ * snapshot several times per second, and parsing LRC/TTML for every tick was
+ * the dominant cost of that path; the parse only changes when the track (or
+ * its lyric text) does.
+ */
+let cachedLyrics: CachedMiniPlayerLyrics = EMPTY_CACHED_LYRICS
+
+function resolveCachedLyrics(track: Track | null): CachedMiniPlayerLyrics {
+  if (!track) return EMPTY_CACHED_LYRICS
+  if (
+    cachedLyrics.trackId === track.id &&
+    cachedLyrics.lyrics === track.lyrics &&
+    cachedLyrics.translatedLyrics === track.translatedLyrics
+  ) {
+    return cachedLyrics
+  }
+  const lines = buildLyricLines(track.lyrics, track.translatedLyrics)
+  cachedLyrics = {
+    trackId: track.id,
+    lyrics: track.lyrics,
+    translatedLyrics: track.translatedLyrics,
+    lines,
+    snapshotLines: lines
+      .filter((line) => line.time != null && line.text.trim().length > 0)
+      .map((line) => ({ time: line.time, ...compactLyricLine(line) }))
+  }
+  return cachedLyrics
+}
+
+/** Test hook: drop the parse cache so cache-hit assertions start clean. */
+export function resetMiniPlayerLyricCache(): void {
+  cachedLyrics = EMPTY_CACHED_LYRICS
+}
+
+/**
+ * Coarse progress identity for the throttled currentTime path: the mini
+ * player only needs a fresh snapshot when the active lyric line or the whole
+ * second changes, not on every 250 ms clock tick.
+ */
+export function miniPlayerProgressKey(track: Track | null, currentTime: number): string {
+  const lines = resolveCachedLyrics(track).lines
+  const lineIndex = lines.length ? findActiveLyricIndex(lines, currentTime) : -1
+  const second = Number.isFinite(currentTime) ? Math.floor(Math.max(0, currentTime)) : -1
+  return `${lineIndex}:${second}`
 }
 
 /**
@@ -157,7 +219,7 @@ export function resolveCurrentLyricForMiniPlayer(
   time: number
 ): { original: string; translation: string | null } | null {
   if (!track) return null
-  const lines = buildLyricLines(track.lyrics, track.translatedLyrics)
+  const lines = resolveCachedLyrics(track).lines
   if (lines.length === 0) return null
   const index = findActiveLyricIndex(lines, time)
   if (index < 0) return null
@@ -165,6 +227,82 @@ export function resolveCurrentLyricForMiniPlayer(
   const compact = compactLyricLine(line)
   if (!compact.original) return null
   return compact
+}
+
+export const MINI_PLAYER_PROGRESS_THROTTLE_MS = 500
+
+export interface MiniPlayerPublishSchedulerOptions {
+  publish: () => void
+  progressKey: () => string
+  now?: () => number
+  setTimeout?: (callback: () => void, delayMs: number) => unknown
+  clearTimeout?: (handle: unknown) => void
+  throttleMs?: number
+}
+
+export interface MiniPlayerPublishScheduler {
+  /** Metadata / transport change: publish immediately and drop any pending progress publish. */
+  publishNow: () => void
+  /** Playback clock tick: publish only when the progress key changed, trailing-throttled. */
+  notifyProgress: () => void
+  dispose: () => void
+}
+
+/**
+ * Splits mini player publishing into an immediate path (track, transport,
+ * favourite, volume...) and a throttled progress path so the 250 ms playback
+ * clock no longer fans out a full snapshot (with every lyric line) four times
+ * a second to the main process, SMTC, tray and satellite windows.
+ */
+export function createMiniPlayerPublishScheduler(
+  options: MiniPlayerPublishSchedulerOptions
+): MiniPlayerPublishScheduler {
+  const now = options.now ?? (() => Date.now())
+  const schedule = options.setTimeout ?? ((callback, delayMs) => setTimeout(callback, delayMs))
+  const cancel = options.clearTimeout ?? ((handle) => clearTimeout(handle as number))
+  const throttleMs = Math.max(0, options.throttleMs ?? MINI_PLAYER_PROGRESS_THROTTLE_MS)
+  let timer: unknown = null
+  let lastPublishedAt = Number.NEGATIVE_INFINITY
+  let lastProgressKey = ''
+  let disposed = false
+
+  function clearTimer(): void {
+    if (timer === null) return
+    cancel(timer)
+    timer = null
+  }
+
+  function publishNow(): void {
+    if (disposed) return
+    clearTimer()
+    lastProgressKey = options.progressKey()
+    lastPublishedAt = now()
+    options.publish()
+  }
+
+  function notifyProgress(): void {
+    if (disposed || timer !== null) return
+    if (options.progressKey() === lastProgressKey) return
+    const elapsed = now() - lastPublishedAt
+    if (elapsed >= throttleMs) {
+      publishNow()
+      return
+    }
+    timer = schedule(() => {
+      timer = null
+      if (disposed) return
+      if (options.progressKey() !== lastProgressKey) publishNow()
+    }, throttleMs - elapsed)
+  }
+
+  return {
+    publishNow,
+    notifyProgress,
+    dispose: () => {
+      disposed = true
+      clearTimer()
+    }
+  }
 }
 
 export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
@@ -236,6 +374,11 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
     }
   }
 
+  const scheduler = createMiniPlayerPublishScheduler({
+    publish: publishState,
+    progressKey: () => miniPlayerProgressKey(options.currentTrack.value, options.currentTime.value)
+  })
+
   const stopStateWatch = watch(
     [
       () => options.currentTrack.value?.id,
@@ -244,9 +387,10 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
       () => options.currentTrack.value?.album,
       () => options.currentTrack.value?.cover,
       () => options.currentTrack.value?.coverSource,
+      () => options.currentTrack.value?.lyrics,
+      () => options.currentTrack.value?.translatedLyrics,
       options.isPlaying,
       options.isLoading,
-      options.currentTime,
       options.duration,
       options.playbackRate,
       options.volume,
@@ -258,13 +402,16 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
       options.queueIndex,
       () => options.queue.value.length
     ],
-    publishState,
+    () => scheduler.publishNow(),
     { immediate: true }
   )
+  const stopProgressWatch = watch(options.currentTime, () => scheduler.notifyProgress())
   const removeCommandListener = window.api.miniPlayer.onCommand(runCommand)
 
   onBeforeUnmount(() => {
     stopStateWatch()
+    stopProgressWatch()
+    scheduler.dispose()
     removeCommandListener()
   })
 }

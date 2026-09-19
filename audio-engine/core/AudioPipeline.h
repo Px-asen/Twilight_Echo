@@ -173,6 +173,8 @@ class AudioPipeline {
   size_t renderDspGraphGenerationCountForTests() const;
   size_t maxRenderDspGraphGenerationCountForTests() const;
   uint64_t appliedRenderDspEpochForTests() const noexcept;
+  /** Retired decode streams still held because the render thread has not ACKed their epoch. */
+  size_t retiredDecodeStreamCountForTests() const;
   OutputInfo::RenderPerformanceSnapshot renderPerformanceSnapshot() const noexcept;
 
   static void setBackendFactoryForTests(BackendFactory factory);
@@ -256,6 +258,16 @@ class AudioPipeline {
     std::string graphStatusJson;
   };
 
+  // A decode stream whose raw pointer was withdrawn from renderActiveStream_ /
+  // renderPreloadStream_. `epoch` is the value retiredStreamEpoch_ took right
+  // after that withdrawal; the stream may only be destroyed once the render
+  // thread has ACKed an epoch >= this one (see renderAckedStreamEpoch_).
+  struct RetiredDecodeStream {
+    std::shared_ptr<DecodeStream> stream;
+    uint64_t epoch = 0;
+  };
+  static constexpr size_t kRetiredStreamSlots = 16;
+
   static std::shared_ptr<DecodeStream> makeDecodeStream();
   static DecodeStreamReaper& decodeStreamReaper();
   bool configureActiveStreamLocked(
@@ -311,6 +323,9 @@ class AudioPipeline {
   bool retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream);
   void cleanupRetiredDecodeStreams() const;
   void tryCleanupRetiredDecodeStreams() const;
+  size_t takeReclaimableRetiredStreamsLocked(
+      std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots>& retired,
+      std::vector<std::shared_ptr<DecodeStream>>& deferred) const;
   DspChain& activeDspChainLocked();
   const DspChain& activeDspChainLocked() const;
   DspChain& spareDspChainLocked();
@@ -354,10 +369,18 @@ class AudioPipeline {
   std::unique_ptr<IOutputBackend> output_;
   std::shared_ptr<DecodeStream> activeStream_;
   std::shared_ptr<DecodeStream> preloadStream_;
-  static constexpr size_t kRetiredStreamSlots = 16;
-  mutable std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retiredStreams_;
+  mutable std::array<RetiredDecodeStream, kRetiredStreamSlots> retiredStreams_;
   mutable size_t retiredStreamCount_ = 0;
-  mutable std::vector<std::shared_ptr<DecodeStream>> deferredRetiredStreams_;
+  mutable std::vector<RetiredDecodeStream> deferredRetiredStreams_;
+  // Control-side counter bumped after every render-pointer withdrawal
+  // (retireDecodeStreamLocked). The render callback samples it before loading
+  // the stream pointers and re-publishes the sampled value when the callback
+  // finishes (renderAckedStreamEpoch_). A retired stream is reclaimable once
+  // the ACK reaches its epoch: the callback that ACKed it loaded the pointers
+  // after the withdrawal, callbacks are serialized, so no callback can still be
+  // reading the stream. Playback never has to reach Stopped for this.
+  std::atomic<uint64_t> retiredStreamEpoch_{0};
+  std::atomic<uint64_t> renderAckedStreamEpoch_{0};
   FftSpectrumAnalyzer spectrum_;
   std::unique_ptr<DspChain> dspChain_;
   std::unique_ptr<DspChain> preloadDspChain_;
@@ -408,6 +431,9 @@ class AudioPipeline {
   // thread mutates the phase itself.
   uint64_t renderDopMarkerIndex_ = 0;
   std::atomic<bool> renderDopMarkerResetRequested_{false};
+  // Render-thread-owned: retiredStreamEpoch_ sampled at the top of the current
+  // callback, published to renderAckedStreamEpoch_ by recordRenderPerformance.
+  uint64_t renderObservedStreamEpoch_ = 0;
   // Render-thread volume-ramp state: last gain applied to the output.
   // Negative means "snap to the next applied volume" (fresh stream /
   // promotion). Reset on the control path at transport transitions. Stored as

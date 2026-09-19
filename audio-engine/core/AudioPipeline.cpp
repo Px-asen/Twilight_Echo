@@ -1639,28 +1639,77 @@ AudioPipeline::DecodeStreamReaper& AudioPipeline::decodeStreamReaper() {
 bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream) {
   if (!stream) return true;
   stream->requestStop();
+  // Every caller has already withdrawn this stream's raw pointer from
+  // renderActiveStream_ / renderPreloadStream_ on this thread, so that store is
+  // sequenced before this release increment. A render callback that later
+  // acquires an epoch >= this value therefore loads the replacement pointers,
+  // and once it publishes that epoch as its ACK the stream is unreachable from
+  // the audio thread. Before this epoch gate, reclamation waited for the whole
+  // pipeline to reach Stopped, so every EOF auto-next / manual skip during a
+  // long listening session parked a live decoder plus a 2 s ring buffer here.
+  const uint64_t epoch = retiredStreamEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
   if (retiredStreamCount_ >= retiredStreams_.size()) {
-    deferredRetiredStreams_.push_back(std::move(stream));
+    deferredRetiredStreams_.push_back(RetiredDecodeStream{std::move(stream), epoch});
     return true;
   }
-  retiredStreams_[retiredStreamCount_++] = std::move(stream);
+  retiredStreams_[retiredStreamCount_++] = RetiredDecodeStream{std::move(stream), epoch};
   return true;
 }
 
+size_t AudioPipeline::takeReclaimableRetiredStreamsLocked(
+    std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots>& retired,
+    std::vector<std::shared_ptr<DecodeStream>>& deferred) const {
+  // Stopped means stopUnlocked() nulled the render pointers and the callback
+  // no longer dereferences streams, so everything is reclaimable regardless of
+  // ACK progress (the backend may already have ceased calling us).
+  const bool stopped = renderState_.load(std::memory_order_acquire) == PipelineState::Stopped;
+  const uint64_t acked = renderAckedStreamEpoch_.load(std::memory_order_acquire);
+  const auto reclaimable = [stopped, acked](const RetiredDecodeStream& entry) {
+    return stopped || entry.epoch <= acked;
+  };
+
+  size_t retiredCount = 0;
+  size_t kept = 0;
+  for (size_t i = 0; i < retiredStreamCount_; ++i) {
+    if (reclaimable(retiredStreams_[i])) {
+      retired[retiredCount++] = std::move(retiredStreams_[i].stream);
+      retiredStreams_[i] = {};
+    } else {
+      if (kept != i) {
+        retiredStreams_[kept] = std::move(retiredStreams_[i]);
+        retiredStreams_[i] = {};
+      }
+      ++kept;
+    }
+  }
+  retiredStreamCount_ = kept;
+
+  if (!deferredRetiredStreams_.empty()) {
+    size_t keptDeferred = 0;
+    for (size_t i = 0; i < deferredRetiredStreams_.size(); ++i) {
+      if (reclaimable(deferredRetiredStreams_[i])) {
+        deferred.push_back(std::move(deferredRetiredStreams_[i].stream));
+      } else {
+        if (keptDeferred != i) deferredRetiredStreams_[keptDeferred] = std::move(deferredRetiredStreams_[i]);
+        ++keptDeferred;
+      }
+    }
+    deferredRetiredStreams_.resize(keptDeferred);
+    if (keptDeferred == 0) deferredRetiredStreams_.shrink_to_fit();
+  }
+  return retiredCount;
+}
+
 void AudioPipeline::cleanupRetiredDecodeStreams() const {
-  if (renderState_.load(std::memory_order_acquire) != PipelineState::Stopped) return;
   std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retired;
   std::vector<std::shared_ptr<DecodeStream>> deferred;
   size_t retiredCount = 0;
   {
     std::lock_guard lock(mutex_);
-    retiredCount = retiredStreamCount_;
-    for (size_t i = 0; i < retiredCount; ++i) {
-      retired[i] = std::move(retiredStreams_[i]);
-    }
-    retiredStreamCount_ = 0;
-    deferred.swap(deferredRetiredStreams_);
+    retiredCount = takeReclaimableRetiredStreamsLocked(retired, deferred);
   }
+  // stop() joins the decode thread and frees the decoder; it runs on this
+  // control/clock thread with mutex_ released, never inside the audio callback.
   for (size_t i = 0; i < retiredCount; ++i) {
     if (retired[i]) retired[i]->stop();
   }
@@ -1670,19 +1719,13 @@ void AudioPipeline::cleanupRetiredDecodeStreams() const {
 }
 
 void AudioPipeline::tryCleanupRetiredDecodeStreams() const {
-  if (renderState_.load(std::memory_order_acquire) != PipelineState::Stopped) return;
   std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retired;
   std::vector<std::shared_ptr<DecodeStream>> deferred;
   size_t retiredCount = 0;
   {
     std::unique_lock lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) return;
-    retiredCount = retiredStreamCount_;
-    for (size_t i = 0; i < retiredCount; ++i) {
-      retired[i] = std::move(retiredStreams_[i]);
-    }
-    retiredStreamCount_ = 0;
-    deferred.swap(deferredRetiredStreams_);
+    retiredCount = takeReclaimableRetiredStreamsLocked(retired, deferred);
   }
   for (size_t i = 0; i < retiredCount; ++i) {
     if (retired[i]) retired[i]->stop();
@@ -1690,6 +1733,11 @@ void AudioPipeline::tryCleanupRetiredDecodeStreams() const {
   for (const auto& stream : deferred) {
     if (stream) stream->stop();
   }
+}
+
+size_t AudioPipeline::retiredDecodeStreamCountForTests() const {
+  std::lock_guard lock(mutex_);
+  return retiredStreamCount_ + deferredRetiredStreams_.size();
 }
 
 void AudioPipeline::setBackendFactoryForTests(BackendFactory factory) {
@@ -2830,10 +2878,14 @@ TAE_Result AudioPipeline::stopUnlocked() {
     preload = std::move(preloadStream_);
     retiredCount = retiredStreamCount_;
     for (size_t i = 0; i < retiredCount; ++i) {
-      retired[i] = std::move(retiredStreams_[i]);
+      retired[i] = std::move(retiredStreams_[i].stream);
+      retiredStreams_[i] = {};
     }
     retiredStreamCount_ = 0;
-    deferred.swap(deferredRetiredStreams_);
+    deferred.reserve(deferredRetiredStreams_.size());
+    for (auto& entry : deferredRetiredStreams_) deferred.push_back(std::move(entry.stream));
+    deferredRetiredStreams_.clear();
+    deferredRetiredStreams_.shrink_to_fit();
   }
 
   if (output) {
@@ -3354,6 +3406,12 @@ void AudioPipeline::recordRenderPerformance(
     size_t frameCount,
     int sampleRate,
     uint64_t elapsedNanoseconds) noexcept {
+  // Every render/renderTyped exit path calls this last, after the final use of
+  // the stream pointers loaded in that callback. Publishing the epoch sampled
+  // at the callback's start tells the control thread which retired streams
+  // this (and, because callbacks are serialized, every earlier) callback can
+  // no longer touch.
+  renderAckedStreamEpoch_.store(renderObservedStreamEpoch_, std::memory_order_release);
   renderCallbackCount_.fetch_add(1, std::memory_order_relaxed);
   renderTotalCallbackNanoseconds_.fetch_add(elapsedNanoseconds, std::memory_order_relaxed);
 
@@ -4609,6 +4667,10 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     renderDopMarkerIndex_ = 0;
   }
 
+  // Sampled before the stream pointers below; published back as the ACK by
+  // recordRenderPerformance on every exit path. Any stream retired under a
+  // higher epoch may still be referenced by this callback and must outlive it.
+  renderObservedStreamEpoch_ = retiredStreamEpoch_.load(std::memory_order_acquire);
   const PipelineState state = renderState_.load(std::memory_order_acquire);
   DecodeStream* const active = renderActiveStream_.load(std::memory_order_acquire);
   const AudioFormat outputFormat = renderOutputFormat_;
@@ -4848,6 +4910,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     resetDitherState(renderDitherRandom_, renderDitherPreviousNoise_, renderDitherError_);
   }
 
+  // See renderTyped: sample the retirement epoch before the pointer loads.
+  renderObservedStreamEpoch_ = retiredStreamEpoch_.load(std::memory_order_acquire);
   const PipelineState state = renderState_.load(std::memory_order_acquire);
   const AudioFormat outputFormat = renderOutputFormat_;
   const AudioFormat decodeFormat = renderDecodeFormat_;

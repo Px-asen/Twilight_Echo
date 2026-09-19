@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { mountWorkshopDecorations } from '@renderer/components/theme-workshop/workshopDecorations'
 import {
   ref,
   provide,
@@ -26,6 +27,9 @@ const NetworkSourcesPage = defineAsyncComponent(() => import('./components/Netwo
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
+const ThemeWorkshopPage = defineAsyncComponent(
+  () => import('./components/theme-workshop/ThemeWorkshopPage.vue')
+)
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
@@ -448,13 +452,27 @@ useMotionPreference(computed(() => settings.value.motionPreference))
 useLanguagePreference(computed(() => settings.value.language))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
-const sidebarPages = computed(() =>
+const availablePluginPages = computed(() =>
   uiContributions.value.filter(
     (contribution) =>
       contribution.kind === 'sidebarPage' &&
       !STREAMING_ACCOUNT_PAGE_KEYS.has(`${contribution.pluginId}:${contribution.id}`)
   )
 )
+const sidebarPages = computed(() =>
+  availablePluginPages.value.filter(
+    (page) => page.pluginId !== 'com.twilightecho.tool.theme-workshop'
+  )
+)
+function openThemeWorkshop(): void {
+  const page = availablePluginPages.value.find(
+    (page) =>
+      page.pluginId === 'com.twilightecho.tool.theme-workshop' && page.id === 'theme-workshop'
+  )
+  if (!page) return
+  closeSettingsPage()
+  onSelectPluginPage(page)
+}
 const localSidebarItems = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
 )
@@ -798,7 +816,7 @@ watch(
   { immediate: true }
 )
 
-watch(sidebarPages, (pages) => closeMissingPluginPage(pages))
+watch(availablePluginPages, (pages) => closeMissingPluginPage(pages))
 
 onBeforeUnmount(() => {
   idleLoginCheck?.cancel()
@@ -862,6 +880,11 @@ useLiquidGlassEnvironment({
   active: liquidGlassActive,
   page: liquidGlassBackgroundPage
 })
+let onWorkshopDecorationsUnmount: (() => void) | undefined
+onMounted(() => {
+  onWorkshopDecorationsUnmount = mountWorkshopDecorations(document)
+})
+onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
 </script>
 
 <template>
@@ -971,7 +994,18 @@ useLiquidGlassEnvironment({
           />
         </Transition>
         <Transition name="settings-page">
-          <PluginPage v-if="showPluginPage" />
+          <PluginPage
+            v-if="showPluginPage"
+            @open-theme-workshop="
+              onSelectPluginPage({
+                pluginId: 'com.twilightecho.tool.theme-workshop',
+                id: 'theme-workshop',
+                kind: 'sidebarPage',
+                title: '主题插件工坊',
+                command: 'theme-workshop.open'
+              })
+            "
+          />
         </Transition>
         <Transition name="settings-page">
           <ThemeStudioPage
@@ -987,7 +1021,13 @@ useLiquidGlassEnvironment({
           <EqualizerPage v-if="showEqualizerPage" />
         </Transition>
         <Transition name="login-page">
-          <PluginExtensionPage v-if="activePluginPage" :page="activePluginPage" />
+          <ThemeWorkshopPage
+            v-if="
+              activePluginPage?.pluginId === 'com.twilightecho.tool.theme-workshop' &&
+              activePluginPage.id === 'theme-workshop'
+            "
+          />
+          <PluginExtensionPage v-else-if="activePluginPage" :page="activePluginPage" />
         </Transition>
       </div>
     </div>
@@ -1027,6 +1067,7 @@ useLiquidGlassEnvironment({
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
         @open-theme-studio="openThemeStudioPage"
+        @open-theme-workshop="openThemeWorkshop"
         @reopen-onboarding="handleReopenOnboarding"
       />
     </Transition>

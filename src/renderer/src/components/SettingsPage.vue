@@ -59,6 +59,7 @@ const emit = defineEmits<{
   openEqualizer: []
   openDspRack: []
   openThemeStudio: []
+  openThemeWorkshop: []
   reopenOnboarding: []
 }>()
 
@@ -1338,7 +1339,10 @@ onBeforeUnmount(() => {
 
         <PerformanceSettingsSection :toggle-setting="toggleSetting" />
 
-        <AppearanceSettingsSection @open-theme-studio="emit('openThemeStudio')" />
+        <AppearanceSettingsSection
+          @open-theme-studio="emit('openThemeStudio')"
+          @open-theme-workshop="emit('openThemeWorkshop')"
+        />
 
         <DesktopLyricsSettingsSection
           :desktop-lyrics="settings.desktopLyrics"

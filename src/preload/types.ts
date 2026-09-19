@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   PlayMode,
   LoudnormStatus,
   EqualizerBand,
@@ -7,6 +7,13 @@
   LoudnessAnalysisResult
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AppSettings } from '../shared/appSettings.ts'
+export type {
+  LibraryLoudnessApi,
+  LibraryLoudnessResult,
+  LoudnessBatchProgress,
+  LoudnessBatchSnapshot,
+  LoudnessInputGroup
+} from '../shared/libraryLoudness.ts'
 export type {
   AudioDeviceProfile,
   AudioDeviceProfileSettings,
@@ -346,63 +353,8 @@ export type TwilightMediaProviderCapability =
   | 'library'
   | 'login'
   | 'download'
-export type TwilightMediaProviderMethod =
-  | 'getPlaybackUrl'
-  | 'getLyrics'
-  | 'searchSongs'
-  | 'searchPlaylists'
-  | 'searchArtists'
-  | 'fetchPlaylistTracks'
-  | 'createDownload'
-  | 'getDownloadStatus'
-  | 'getDownloadFile'
-  | 'cancelDownload'
-  | 'checkLogin'
-  | 'getProfile'
-  | 'logout'
-  | 'openOfficialLogin'
-  | 'sendCaptcha'
-  | 'loginByPhonePassword'
-  | 'loginByPhoneCaptcha'
-  | 'loginByEmailPassword'
-  | 'getQrLogin'
-  | 'getQrKey'
-  | 'getQrImage'
-  | 'checkQrLogin'
-  | 'fetchUserLibrary'
-  | 'fetchLikedTracks'
-  | 'fetchLikedTracksPage'
-  | 'fetchCloudSongsPage'
-  | 'prepareCloudUpload'
-  | 'completeCloudUpload'
-  | 'getCloudDownloadUrl'
-  | 'fetchRecommendSongs'
-  | 'fetchRecommendPlaylists'
-  | 'fetchPlaylistCategories'
-  | 'fetchDiscoveryPlaylists'
-  | 'fetchHighQualityPlaylists'
-  | 'fetchPersonalFm'
-  | 'fetchPrivateContent'
-  | 'fetchArtistTopSongs'
-  | 'fetchArtistAlbums'
-  | 'fetchArtistIntro'
-  | 'fetchArtistFollowState'
-  | 'fetchAlbumTracks'
-  | 'fetchArtistPlaylists'
-  | 'fetchUserPlaylistsByUid'
-  | 'fetchUserFollows'
-  | 'fetchUserFolloweds'
-  | 'fetchPlayRecords'
-  | 'fetchRecentSongs'
-  | 'fetchIntelligenceList'
-  | 'followArtist'
-  | 'followUser'
-  | 'likeTrack'
-  | 'isTrackLiked'
-  | 'createPlaylist'
-  | 'deletePlaylist'
-  | 'addTracksToPlaylist'
-  | 'removeTracksFromPlaylist'
+import type { TwilightMediaProviderMethod } from '../shared/mediaProviderMethods.ts'
+export type { TwilightMediaProviderMethod } from '../shared/mediaProviderMethods.ts'
 
 export type ProviderDownloadQuality = 'aac' | 'lossless' | 'hi-res'
 export type ProviderDownloadTaskStatus =
@@ -698,6 +650,8 @@ export interface TwilightThemeContribution {
   structured?: StructuredPluginTheme
   compatibilityNotes?: string[]
 }
+
+export type ThemeWorkshopApi = import('../shared/themeWorkshop').ThemeWorkshopApi
 
 export interface TwilightPluginExtensionContribution {
   pluginId: string

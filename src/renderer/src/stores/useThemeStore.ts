@@ -483,6 +483,22 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   applySettingsAccentColor(tone, variables)
   Object.assign(variables, appFontCssVariables(uiFontFamily))
   applyExplicitThemePreferences(selectedProfile, tone, themedVariables, variables)
+  if (appBackground) {
+    const global = appBackground.global
+    if (global.kind === 'image' && global.image) {
+      variables['--te-app-bg-image'] = toBackgroundImageValue(global)
+    }
+    for (const page of APP_BACKGROUND_PAGES) {
+      const override = appBackground.pages[page]
+      const background = override.inherit ? global : override
+      if (background.kind === 'image' && background.image) {
+        variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background)
+      } else if (!override.inherit) {
+        variables[`--te-${page}-bg`] = background[tone === 'dark' ? 'dark' : 'light']
+        variables[`--te-${page}-bg-image`] = 'none'
+      }
+    }
+  }
   applyLiquidGlassVariables(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
@@ -774,7 +790,10 @@ async function assertProfileAssetsAvailable(profile: ThemeProfileV2): Promise<vo
     .join('|')}`
   let validation = assetValidationCache.get(key)
   if (!validation) {
-    validation = window.api.themes.validateAssets(profile.id, assets)
+    validation = window.api.themes.validateAssets(
+      profile.id,
+      assets.map(({ id, path, type }) => ({ id, path, type }))
+    )
     assetValidationCache.set(key, validation)
     if (assetValidationCache.size > 64) {
       const oldest = assetValidationCache.keys().next().value

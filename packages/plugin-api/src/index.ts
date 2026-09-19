@@ -532,6 +532,8 @@ export interface TwilightMediaProviderRegistration {
     artistId: string | number,
     context?: TwilightProviderRequestContext
   ): Promise<Track[]>
+  fetchSavedAlbums?(context?: TwilightProviderRequestContext): Promise<AlbumSummary[]>
+  fetchSavedArtists?(context?: TwilightProviderRequestContext): Promise<ArtistSummary[]>
   fetchArtistAlbums?(
     artistId: string | number,
     context?: TwilightProviderRequestContext
@@ -699,8 +701,33 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
+  editor?: TwilightThemeEditorDescriptor
   structured?: TwilightStructuredTheme
   compatibilityNotes?: string[]
+}
+
+export interface TwilightThemeEditorDescriptor {
+  schemaVersion: 1
+  controls: Array<{
+    id: string
+    label: string
+    group: string
+    type: 'color' | 'number' | 'select' | 'boolean' | 'image' | 'text'
+    variable?: string
+    token?: string
+    slot?: string
+    selector?: string
+    targets?: { local: string; streaming: string }
+    defaults: Record<'pureWhite' | 'dark', string>
+    min?: number
+    max?: number
+    step?: number
+    unit?: string
+    options?: string[]
+    checkedValue?: string
+    uncheckedValue?: string
+    description?: string
+  }>
 }
 
 export type TwilightThemeTone = 'pureWhite' | 'dark'

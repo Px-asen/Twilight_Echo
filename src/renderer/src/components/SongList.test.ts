@@ -290,7 +290,7 @@ test('library header places the search box last so it renders right-most', () =>
     'class="library-tools-dropdown"',
     'class="recent-source-dropdown"',
     'class="library-filter-dropdown"',
-    'class="playlist-lifecycle-actions"'
+    '<PlaylistLifecycleToolbar'
   ]) {
     const index = tableHeader.indexOf(marker)
     assert.ok(index > 0, `${marker} missing from library header`)

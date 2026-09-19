@@ -1,0 +1,13 @@
+{
+  "id": "com.twilightecho.tool.theme-workshop",
+  "name": "主题插件工坊",
+  "version": "1.0.0",
+  "description": "定制已安装的主题插件，从模板创建主题并导出独立主题包。",
+  "author": "Twilight Echo",
+  "license": "Apache-2.0",
+  "type": ["tool", "ui"],
+  "main": "index.mjs",
+  "engines": { "twilightEcho": ">=1.2.0" },
+  "apiVersion": 3,
+  "permissions": ["ui:inject"]
+}

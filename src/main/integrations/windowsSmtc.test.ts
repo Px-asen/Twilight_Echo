@@ -40,3 +40,60 @@ test('native Windows SMTC binds to the Electron BrowserWindow handle when availa
   assert.match(nativeSource, /PKEY_AppUserModel_ID/)
   assert.match(nativeSource, /GetForWindow\(smtcHwnd/)
 })
+
+test('native Windows SMTC updates are skipped when the rendered session state is unchanged', async () => {
+  const { windowsSmtcUpdateSignature } = await import('./windowsSmtcSignature.ts')
+  const base = {
+    track: {
+      id: 'local:1',
+      title: 'Daydream',
+      artist: 'Twilight Echo',
+      album: 'Afterglow',
+      albumArtist: 'Twilight Echo',
+      trackNumber: 7,
+      cover: 'cover://abc.jpg',
+      format: 'FLAC',
+      sampleRate: 44100,
+      bitDepth: 16,
+      coverSource: null
+    },
+    currentLyric: null,
+    lyrics: [],
+    isPlaying: true,
+    isLoading: false,
+    currentTime: 12.2,
+    duration: 240.9,
+    playbackRate: 1,
+    volume: 0.5,
+    playMode: 'sequential' as const,
+    favoriteAvailable: false,
+    favoriteLiked: false,
+    favoriteLoading: false,
+    dominantColor: '#000',
+    queueIndex: 0,
+    queueLength: 3
+  }
+  const signature = windowsSmtcUpdateSignature(base, true)
+  // Sub-second clock ticks and fields the session never renders do not change the signature.
+  assert.equal(windowsSmtcUpdateSignature({ ...base, currentTime: 12.7 }, true), signature)
+  assert.equal(
+    windowsSmtcUpdateSignature(
+      { ...base, volume: 0.9, lyrics: [{ time: 1, original: 'x', translation: null }] },
+      true
+    ),
+    signature
+  )
+  // Whole-second progress, transport, identity and enablement all do.
+  assert.notEqual(windowsSmtcUpdateSignature({ ...base, currentTime: 13.0 }, true), signature)
+  assert.notEqual(windowsSmtcUpdateSignature({ ...base, isPlaying: false }, true), signature)
+  assert.notEqual(
+    windowsSmtcUpdateSignature({ ...base, track: { ...base.track, id: 'local:2' } }, true),
+    signature
+  )
+  assert.notEqual(windowsSmtcUpdateSignature(base, false), signature)
+  assert.notEqual(windowsSmtcUpdateSignature(null, true), signature)
+
+  const source = await readFile(new URL('./windowsSmtc.ts', import.meta.url), 'utf8')
+  assert.match(source, /if \(!force && signature === lastUpdateSignature\) return/)
+  assert.match(source, /refreshWindowsSmtc\(true\)/)
+})

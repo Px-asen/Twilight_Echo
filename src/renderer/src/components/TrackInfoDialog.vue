@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useEscapeToClose } from '@renderer/app/useDismissLayer'
 import type { Track } from '@renderer/types/music'
 import CoverImg from '@renderer/components/CoverImg.vue'
 
@@ -7,6 +8,11 @@ defineProps<{ track: Track }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
 onMounted(() => dialog.value?.showModal())
+useEscapeToClose(
+  () => true,
+  () => emit('close')
+)
+onBeforeUnmount(() => dialog.value?.close())
 </script>
 
 <template>
@@ -16,12 +22,13 @@ onMounted(() => dialog.value?.showModal())
       class="track-info-dialog"
       aria-labelledby="track-info-title"
       @close="emit('close')"
+      @cancel.prevent="emit('close')"
     >
       <button
         type="button"
         class="track-info-close"
         aria-label="关闭歌曲信息"
-        @click="dialog?.close()"
+        @click.stop="emit('close')"
       >
         ×
       </button>
@@ -52,6 +59,7 @@ onMounted(() => dialog.value?.showModal())
 
 <style scoped>
 .track-info-dialog {
+  -webkit-app-region: no-drag;
   position: fixed;
   width: min(420px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);

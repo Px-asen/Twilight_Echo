@@ -1,6 +1,6 @@
 export const AUDIO_ANALYSIS_PROTOCOL_VERSION = 1
 
-export type AudioAnalysisKind = 'bpm' | 'loudness'
+export type AudioAnalysisKind = 'bpm' | 'loudness' | 'loudness-batch'
 
 export interface AudioAnalysisWorkerRequest {
   kind: 'request'

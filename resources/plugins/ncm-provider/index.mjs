@@ -113,6 +113,8 @@ export async function activate(context) {
     fetchPrivateContent,
     fetchArtistTopSongs,
     fetchArtistAlbums,
+    fetchSavedAlbums,
+    fetchSavedArtists,
     fetchArtistIntro,
     fetchArtistFollowState,
     fetchAlbumTracks,
@@ -2161,6 +2163,24 @@ async function fetchArtistAlbums(artistId) {
     limit: 100
   })
   return albums.map(normalizeAlbum)
+}
+
+async function fetchSavedAlbums() {
+  const albums = await fetchPagedItems({
+    makePath: (limit, offset) => `/album/sublist?limit=${limit}&offset=${offset}`,
+    getItems: (data) => (Array.isArray(data.data) ? data.data : []),
+    limit: 100
+  })
+  return albums.map(normalizeAlbum)
+}
+
+async function fetchSavedArtists() {
+  const artists = await fetchPagedItems({
+    makePath: (limit, offset) => `/artist/sublist?limit=${limit}&offset=${offset}`,
+    getItems: getArtistItems,
+    limit: 100
+  })
+  return artists.map(normalizeArtist)
 }
 
 async function fetchArtistIntro(artistId) {
