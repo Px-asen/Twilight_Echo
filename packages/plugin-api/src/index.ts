@@ -453,6 +453,12 @@ export interface TwilightMediaProviderRegistration {
     password: string,
     context?: TwilightProviderRequestContext
   ): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
+  loginWithServer?(
+    serverUrl: string,
+    username: string,
+    password: string,
+    context?: TwilightProviderRequestContext
+  ): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
   getQrLogin?(context?: TwilightProviderRequestContext): Promise<QrLoginRequest | null>
   getQrKey?(context?: TwilightProviderRequestContext): Promise<string | null>
   getQrImage?(key: string, context?: TwilightProviderRequestContext): Promise<string | null>

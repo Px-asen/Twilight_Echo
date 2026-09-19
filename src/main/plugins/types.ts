@@ -337,6 +337,7 @@ export type TwilightMediaProviderMethod =
   | 'loginByPhonePassword'
   | 'loginByPhoneCaptcha'
   | 'loginByEmailPassword'
+  | 'loginWithServer'
   | 'getQrLogin'
   | 'getQrKey'
   | 'getQrImage'

@@ -145,6 +145,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'loginByPhonePassword',
   'loginByPhoneCaptcha',
   'loginByEmailPassword',
+  'loginWithServer',
   'getQrLogin',
   'getQrKey',
   'getQrImage',

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import QRCode from 'qrcode'
+import ServerLoginForm from '@renderer/components/login/ServerLoginForm.vue'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBackHandler } from '../app/useBackStack'
@@ -121,13 +122,18 @@ const providerCards = computed<ProviderCard[]>(() =>
       loggedIn: state.loggedIn,
       profile: state.profile,
       error: state.error,
-      needsSetup: provider.ui?.authType === 'settings'
+      needsSetup:
+        provider.ui?.authType === 'settings' &&
+        !provider.supportedMethods?.includes('loginWithServer')
     }
   })
 )
 
 function providerCardDescription(provider: ProviderInfo): string {
-  if (provider.ui?.authType === 'settings') {
+  if (
+    provider.ui?.authType === 'settings' &&
+    !provider.supportedMethods?.includes('loginWithServer')
+  ) {
     return provider.ui?.loginInstructions || '请在插件设置中配置服务地址和 API Key'
   }
   return provider.ui?.description ?? '在线音源'
@@ -150,6 +156,9 @@ const activeProfile = computed(() =>
 )
 
 const activeUi = computed(() => activeProvider.value?.ui)
+const supportsServerLogin = computed(
+  () => activeProvider.value?.supportedMethods?.includes('loginWithServer') === true
+)
 const supportsAccountLogin = computed(() => activeProviderId.value === 'ncm')
 const isOAuthProvider = computed(() => Boolean(activeUi.value?.showBrowserButton))
 
@@ -264,7 +273,10 @@ function openAccount(providerId: string): void {
   lastKeyGenTime.value = 0
   activeProviderId.value = providerId
   confirmLogout.value = false
-  if (providerStore.getProvider(providerId)?.ui?.authType === 'settings') {
+  if (
+    providerStore.getProvider(providerId)?.ui?.authType === 'settings' &&
+    !supportsServerLogin.value
+  ) {
     emit('configure')
     return
   }
@@ -278,6 +290,10 @@ function openAccount(providerId: string): void {
   }
   if (state.loggedIn) {
     pageState.value = 'logged_in'
+    return
+  }
+  if (supportsServerLogin.value) {
+    pageState.value = 'qr_ready'
     return
   }
   loginMethod.value = 'qr'
@@ -621,6 +637,33 @@ async function handleAccountLogin(): Promise<void> {
   }
 }
 
+async function handleServerLogin(
+  serverUrl: string,
+  username: string,
+  password: string
+): Promise<void> {
+  const providerId = activeProviderId.value
+  if (!providerId || accountLoginBusy.value) return
+  const revision = ++loginRevision
+  accountLoginBusy.value = true
+  accountLoginMessage.value = ''
+  try {
+    const result = await providerStore.callProvider<{ loggedIn: boolean }>(
+      providerId,
+      'loginWithServer',
+      [serverUrl, username, password]
+    )
+    if (revision !== loginRevision || activeProviderId.value !== providerId) return
+    if (!result.loggedIn) throw new Error('登录未成功，请检查服务器地址和账号')
+    pageState.value = 'login_success'
+    await syncSuccessfulLogin(providerId, true)
+  } catch (error) {
+    if (revision === loginRevision) accountLoginMessage.value = normalizeLoginError(error)
+  } finally {
+    accountLoginBusy.value = false
+  }
+}
+
 function requestLogout(): void {
   confirmLogout.value = true
 }
@@ -859,7 +902,14 @@ onUnmounted(() => {
             </div>
 
             <!-- 扫码 / OAuth -->
-            <div v-if="loginMethod === 'qr'" class="qr-stage">
+            <ServerLoginForm
+              v-if="supportsServerLogin"
+              :key="activeProviderId || ''"
+              :busy="accountLoginBusy"
+              :error="accountLoginMessage"
+              @submit="handleServerLogin"
+            />
+            <div v-else-if="loginMethod === 'qr'" class="qr-stage">
               <template v-if="isOAuthProvider">
                 <div class="oauth-panel">
                   <div class="lp-spinner"></div>

@@ -291,3 +291,5 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - 并发索引刷新使用单调 generation：只有最新请求可以写入 cache envelope 或提交内存中的 entry、origin、status 与 base URL，晚到的旧响应必须返回最新快照且不得回写磁盘。插件包下载开始时绑定索引 origin 与完整 entry（含 manifest、source URL、审核声明和发布者签名）的 canonical SHA-256 指纹；下载期间任一字段变化都必须拒绝，不能只比较包 checksum。
 - 远程索引和 `.tep` 获取必须使用 `redirect: 'manual'`，最多跟随 5 跳；每一跳都重新校验 URL、协议、凭据和 HTTPS 不得降级为 HTTP。`Content-Length` 在读取 body 前预检，未知长度响应按 chunk 累计上限并在超限时 abort。`.tep` 必须逐块写入与插件安装目标同卷的 user-data staging 目录，同时增量计算 SHA-256；任何下载、写入、校验或重定向失败都清理部分临时文件。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。
+
+服务器型音源可声明 `loginWithServer(serverUrl, username, password, context?)`，返回 `{ loggedIn, profile }`，并声明 `login` 能力。宿主根据已注册方法展示服务器地址、用户名和密码表单，经现有 provider 调用桥传递，不新增 IPC 通道；同一插件未实现该方法时继续使用原登录流程。插件只持久化服务端会话令牌，不保存密码。Jellyfin provider 位于独立插件仓库，使用官方 AuthenticateByName、Items、Playlists 和 Audio universal 接口。
