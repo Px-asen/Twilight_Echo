@@ -1,10 +1,46 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { stripTypeScriptTypes } from 'node:module'
 import test from 'node:test'
+import { normalizeDesktopLyricsSettings } from '../../shared/desktopLyrics.ts'
 
 async function source(path: string): Promise<string> {
   return readFile(new URL(path, import.meta.url), 'utf8')
 }
+
+test('taskbar lyrics preserve translation preferences and fit both lines without changing saved settings', async () => {
+  const main = await source('./desktopLyrics.ts')
+  const effectiveSettings = main.slice(
+    main.indexOf('export function getEffectiveDesktopLyricsSettings'),
+    main.indexOf('function applyWindowSettings')
+  )
+  const createSettings = new Function(
+    'runtime',
+    'currentTaskbarBounds',
+    'resolveDesktopLyricsFontFamily',
+    `${stripTypeScriptTypes(effectiveSettings.replace('export ', ''))}; return getEffectiveDesktopLyricsSettings()`
+  )
+  for (const translationVisible of [true, false]) {
+    for (const height of [28, 40, 48]) {
+      const saved = normalizeDesktopLyricsSettings({
+        version: 3,
+        placement: 'taskbar',
+        taskbarFontSize: 32,
+        translationVisible
+      })
+      const before = structuredClone(saved)
+      const effective = createSettings(
+        { appSettings: { desktopLyrics: saved, lyricsAppearance: { styles: { active: {} } } } },
+        () => ({ width: 320, height }),
+        () => 'sans-serif'
+      )
+      assert.equal(effective.translationVisible, translationVisible)
+      const contentHeight = effective.fontSize * 1.08 * (translationVisible ? 1.65 : 1)
+      assert.ok(contentHeight + (translationVisible ? 4 : 2) <= height)
+      assert.deepEqual(saved, before)
+    }
+  }
+})
 
 test('desktop lyrics v3 isolates host and satellite IPC capabilities', async () => {
   const main = await source('./desktopLyrics.ts')

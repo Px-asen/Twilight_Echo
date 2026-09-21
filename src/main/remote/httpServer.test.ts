@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { RemoteAuthSession } from './auth.ts'
 
@@ -22,6 +23,24 @@ const hooks = registerHooks({
 })
 const { RemoteHttpServer, RemoteCommandError } = await import('./httpServer.ts')
 hooks.deregister()
+
+test('default remote root serves the complete UI and packaging includes its runtime assets', async (t) => {
+  const server = new RemoteHttpServer()
+  const status = await server.start()
+  t.after(() => server.stop())
+  for (const path of ['/', '/remote.js', '/remote.css']) {
+    const response = await fetch(`http://127.0.0.1:${status.port}${path}`)
+    assert.equal(response.status, 200, path)
+    assert.ok((await response.text()).length > 0)
+  }
+  const packaging = await readFile(
+    new URL('../../../electron-builder.yml', import.meta.url),
+    'utf8'
+  )
+  assert.match(packaging, /from: resources\/remote\s+to: remote/)
+  const source = await readFile(new URL('./httpServer.ts', import.meta.url), 'utf8')
+  assert.match(source, /app\.isPackaged\s*\? join\(process\.resourcesPath, 'remote'\)/)
+})
 
 async function fixture(t: test.TestContext) {
   const server = new RemoteHttpServer({

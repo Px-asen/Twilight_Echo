@@ -83,6 +83,19 @@ async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
+test('now playing picker accepts a track outside the queue and keeps the clicked snapshot', () => {
+  const calls: string[] = []
+  const notices: QueueAddToPlaylistNotice[] = []
+  const picker = createPicker({ queue: [], calls, notices })
+  const current = track({ queueEntryId: undefined })
+  picker.openForTrack(current)
+  current.id = 'local:next-song'
+  picker.addToLocalPlaylist('深夜')
+  assert.deepEqual(calls, ['local-add:深夜:local:moon'])
+  assert.equal(picker.open.value, false)
+  assert.equal(notices[0].kind, 'success')
+})
+
 test('queue picker adds the entry it was opened for to a local playlist and reports the result', () => {
   const calls: string[] = []
   const notices: QueueAddToPlaylistNotice[] = []

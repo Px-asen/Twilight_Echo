@@ -121,6 +121,7 @@ export interface MiniPlayerLyricLineSnapshot {
 }
 
 export interface MiniPlayerStateSnapshot {
+  capturedAtMs?: number
   track: MiniPlayerTrackSnapshot | null
   /**
    * Current lyric line at snapshot time (original + optional translation).
@@ -579,6 +580,9 @@ export function normalizeMiniPlayerStateSnapshot(raw: unknown): MiniPlayerStateS
 
   return {
     track: normalizeTrack(value.track),
+    ...(typeof value.capturedAtMs === 'number' && Number.isFinite(value.capturedAtMs)
+      ? { capturedAtMs: value.capturedAtMs }
+      : {}),
     currentLyric: normalizeMiniPlayerLyric(value.currentLyric),
     lyrics: normalizeMiniPlayerLyrics(value.lyrics),
     isPlaying: value.isPlaying === true,

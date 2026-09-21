@@ -113,9 +113,9 @@ test('locking clears hover UI and does not schedule the toolbar again', () => {
 })
 
 test('locked desktop lyrics show a central unlock affordance after hover or immediately on double click', () => {
-  assert.match(app, /const DESKTOP_LYRICS_LOCKED_HOVER_DELAY_MS = 3000/)
+  assert.match(app, /const DESKTOP_LYRICS_LOCKED_HOVER_DELAY_MS = 500/)
   assert.match(app, /api\.onHoverIntent\(onHoverIntent\)/)
-  assert.match(app, /setLockedInteractionActive\(true\)/)
+  assert.match(app, /const bounds = unlockButton\.value\?\.getBoundingClientRect\(\)/)
   assert.match(app, /function onDoubleClick\(event: MouseEvent\): void/)
   assert.match(app, /revealUnlockAffordance\(\)/)
   assert.match(app, /v-if="unlockAffordanceVisible"/)
@@ -131,10 +131,10 @@ test('locked desktop lyrics show a central unlock affordance after hover or imme
     app.indexOf('function scheduleUnlockAffordance')
   )
   assert.doesNotMatch(hoverIntent, /setLockedInteractionActive\(true\)/)
-  assert.match(reveal, /setLockedInteractionActive\(true\)/)
+  assert.doesNotMatch(reveal, /setLockedInteractionActive\(true\)/)
   assert.match(
     app,
-    /function onPointerLeave\(\): void \{[\s\S]*if \(settings\.value\.locked\) \{[\s\S]*clearLockedHover\(\)/
+    /function onPointerLeave\(\): void \{[\s\S]*if \(settings\.value\.locked\) \{[\s\S]*setLockedInteractionActive\(false\)/
   )
 })
 

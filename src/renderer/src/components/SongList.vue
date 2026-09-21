@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import { useLocalPlaylistOrder } from '@renderer/components/song-list/useLocalPlaylistOrder'
@@ -943,17 +943,20 @@ const {
   paddingTop,
   onScroll,
   updateViewportHeight,
+  restoreScrollAndMeasure,
   scrollTop,
   viewportHeight
 } = useSongListVirtualScroll({
   displayTracks,
-  resetSources: [
-    () => props.category,
-    () => props.filter,
-    debouncedSearchQuery,
-    currentLibraryViewKey,
-    libraryViewState
-  ],
+  resetSources: [],
+  viewIdentity: currentLibraryViewKey,
+  viewKey: computed(() =>
+    JSON.stringify([
+      currentLibraryViewKey.value,
+      debouncedSearchQuery.value,
+      libraryViewState.value
+    ])
+  ),
   shouldResetOnSearch: showTable,
   debouncedSearchQuery
 })
@@ -1411,6 +1414,11 @@ function openRowAlbum(track: Track): void {
 }
 
 const infoTrack = shallowRef<Track | null>(null)
+
+function finishViewSwitchAndRestoreScroll(): void {
+  finishViewSwitch()
+  restoreScrollAndMeasure()
+}
 </script>
 
 <template>
@@ -1426,9 +1434,9 @@ const infoTrack = shallowRef<Track | null>(null)
       :name="localTransitionName"
       mode="out-in"
       @before-leave="onViewBeforeLeave"
-      @after-enter="finishViewSwitch"
-      @enter-cancelled="finishViewSwitch"
-      @leave-cancelled="finishViewSwitch"
+      @after-enter="finishViewSwitchAndRestoreScroll"
+      @enter-cancelled="finishViewSwitchAndRestoreScroll"
+      @leave-cancelled="finishViewSwitchAndRestoreScroll"
     >
       <div :key="viewKey" :class="showGrid ? 'grid-view' : 'table-view'">
         <template v-if="showGrid">

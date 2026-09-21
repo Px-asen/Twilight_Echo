@@ -1,21 +1,35 @@
-import { computed, onMounted, onUnmounted, ref, watch, type ComputedRef, type Ref } from 'vue'
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+  type ComputedRef,
+  type Ref
+} from 'vue'
 import type { Track } from '../../types/music'
-import { getSongListVirtualRange } from './songListVirtualWindow'
+import { getSongListVirtualRange } from '@renderer/components/song-list/songListVirtualWindow.ts'
 
 type UseSongListVirtualScrollOptions = {
   displayTracks: ComputedRef<Track[]>
   resetSources: unknown[]
   shouldResetOnSearch: ComputedRef<boolean>
   debouncedSearchQuery: Ref<string>
+  viewKey?: ComputedRef<string>
+  viewIdentity?: ComputedRef<string>
 }
 
 const ROW_HEIGHT = 68
+const savedScrollPositions = new Map<string, number>()
 
 export function useSongListVirtualScroll({
   displayTracks,
   resetSources,
   shouldResetOnSearch,
-  debouncedSearchQuery
+  debouncedSearchQuery,
+  viewKey,
+  viewIdentity
 }: UseSongListVirtualScrollOptions): {
   containerRef: Ref<HTMLElement | null>
   tbodyRef: Ref<HTMLElement | null>
@@ -27,12 +41,16 @@ export function useSongListVirtualScroll({
   onScroll: (e: Event) => void
   updateViewportHeight: () => void
   resetScrollAndMeasure: () => void
+  restoreScrollAndMeasure: () => void
   scrollTop: Ref<number>
   viewportHeight: Ref<number>
 } {
   const containerRef = ref<HTMLElement | null>(null)
   const tbodyRef = ref<HTMLElement | null>(null)
-  const scrollTop = ref(0)
+  const scrollTop = ref(viewKey ? (savedScrollPositions.get(viewKey.value) ?? 0) : 0)
+  let restorePending = !!viewKey
+  let activeKey = viewKey?.value
+  let activeIdentity = viewIdentity?.value
   const viewportHeight = ref(0)
   const tableOffsetTop = ref(0)
   const rowHeight = ROW_HEIGHT
@@ -55,6 +73,7 @@ export function useSongListVirtualScroll({
   const paddingTop = computed(() => visibleRange.value.start * rowHeight)
 
   function onScroll(e: Event): void {
+    if (restorePending) return
     const target = e.target as HTMLElement
     scrollTop.value = target.scrollTop
   }
@@ -71,6 +90,7 @@ export function useSongListVirtualScroll({
   }
 
   function resetScrollAndMeasure(): void {
+    restorePending = false
     if (containerRef.value) {
       containerRef.value.scrollTop = 0
     }
@@ -78,12 +98,46 @@ export function useSongListVirtualScroll({
     requestAnimationFrame(updateViewportHeight)
   }
 
+  function savePosition(): void {
+    if (!activeKey) return
+    savedScrollPositions.delete(activeKey)
+    savedScrollPositions.set(activeKey, scrollTop.value)
+    if (savedScrollPositions.size > 100) {
+      savedScrollPositions.delete(savedScrollPositions.keys().next().value!)
+    }
+  }
+
+  function restoreScrollAndMeasure(): void {
+    void nextTick(() => {
+      updateViewportHeight()
+      if (containerRef.value) containerRef.value.scrollTop = scrollTop.value
+      restorePending = false
+    })
+  }
+
+  if (viewKey) {
+    watch(
+      viewKey,
+      (key) => {
+        savePosition()
+        activeKey = key
+        restorePending = true
+        scrollTop.value = savedScrollPositions.get(key) ?? 0
+        if (activeIdentity === viewIdentity?.value) restoreScrollAndMeasure()
+        activeIdentity = viewIdentity?.value
+      },
+      { flush: 'pre' }
+    )
+  }
+
   onMounted(() => {
     updateViewportHeight()
+    restoreScrollAndMeasure()
     window.addEventListener('resize', updateViewportHeight)
   })
 
   onUnmounted(() => {
+    savePosition()
     window.removeEventListener('resize', updateViewportHeight)
   })
 
@@ -92,7 +146,7 @@ export function useSongListVirtualScroll({
   watch(
     debouncedSearchQuery,
     () => {
-      if (shouldResetOnSearch.value) {
+      if (!viewKey && shouldResetOnSearch.value) {
         resetScrollAndMeasure()
       }
     },
@@ -110,6 +164,7 @@ export function useSongListVirtualScroll({
     onScroll,
     updateViewportHeight,
     resetScrollAndMeasure,
+    restoreScrollAndMeasure,
     scrollTop,
     viewportHeight
   }

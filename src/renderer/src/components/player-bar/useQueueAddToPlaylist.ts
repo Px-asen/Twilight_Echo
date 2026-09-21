@@ -72,6 +72,7 @@ export function useQueueAddToPlaylist(options: QueueAddToPlaylistOptions): {
   newPlaylistName: Ref<string>
   canConfirmCreate: ComputedRef<boolean>
   openForEntry: (queueEntryId: string) => void
+  openForTrack: (track: Track) => void
   close: () => void
   startCreate: (scope: 'local' | 'provider') => void
   cancelCreate: () => void
@@ -144,6 +145,10 @@ export function useQueueAddToPlaylist(options: QueueAddToPlaylistOptions): {
   function openForEntry(queueEntryId: string): void {
     const track = options.queue.value.find((item) => item.queueEntryId === queueEntryId)
     if (!track) return
+    openForTrack(track)
+  }
+
+  function openForTrack(track: Track): void {
     ++providerRequestId
     resetState()
     targetTrack.value = { ...track }
@@ -322,6 +327,7 @@ export function useQueueAddToPlaylist(options: QueueAddToPlaylistOptions): {
     newPlaylistName,
     canConfirmCreate,
     openForEntry,
+    openForTrack,
     close,
     startCreate,
     cancelCreate,

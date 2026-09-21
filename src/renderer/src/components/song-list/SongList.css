@@ -120,8 +120,9 @@
   display: flex;
   align-items: flex-end;
   gap: 14px;
-  min-width: 250px;
-  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 280px;
 }
 
 .title-group {
@@ -130,6 +131,8 @@
   align-items: flex-start;
   gap: 5px;
   min-width: 0;
+  max-width: 100%;
+  flex: 1;
 }
 
 .title-line {
@@ -137,6 +140,8 @@
   align-items: baseline;
   gap: 14px;
   min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .view-stats {
@@ -289,7 +294,8 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: min(48vw, 560px);
+  min-width: 0;
+  max-width: 100%;
 }
 .header-right {
   display: flex;
@@ -297,7 +303,9 @@
   justify-content: flex-end;
   gap: 18px;
   flex: 1.2 1 420px;
-  min-width: 320px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .online-search-toggle {

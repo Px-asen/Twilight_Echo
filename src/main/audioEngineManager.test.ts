@@ -1481,6 +1481,40 @@ function makeManager(
   })
 }
 
+test('leaving loudnorm while cache lookup is pending cannot apply measurements or restart analysis', async () => {
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: { dspEnabled: true, volumeNormalization: 'loudnorm' }
+    },
+    new FakeNativeBinding()
+  )
+  let resolveLookup!: (value: unknown) => void
+  let requested = false
+  manager.setLoudnessAnalysisManager({
+    peekCached: () =>
+      new Promise((resolve) => {
+        resolveLookup = resolve
+      }),
+    cancel: () => {},
+    requestAnalysis: () => {
+      requested = true
+      return Promise.resolve({ status: 'skipped' })
+    }
+  } as never)
+  const prepare = (
+    manager as unknown as { prepareLoudnormForPlay: (path: string) => Promise<void> }
+  ).prepareLoudnormForPlay('C:/Music/test.flac')
+  await manager.setReplayGainMode('off')
+  resolveLookup({ integratedLufs: -18, truePeakDb: -2 })
+  await prepare
+  assert.equal(manager.getLoudnormStatus().status, 'idle')
+  assert.equal(requested, false)
+  manager.destroy()
+})
+
 test('normalizing explicit DSD Auto is not overridden by legacy dsdToPcm flag', () => {
   const normalized = normalizeAudioProcessingSettings({
     ...DEFAULT_AUDIO_PROCESSING,

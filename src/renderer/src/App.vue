@@ -340,6 +340,7 @@ const { checkLogin, isLoggedIn: ncmLoggedIn } = useNcmStore()
 const {
   currentTrack,
   currentTime,
+  estimatePlaybackClockPosition,
   duration,
   playbackRate,
   isPlaying,
@@ -424,6 +425,7 @@ watch(
 )
 
 useMiniPlayerSync({
+  positionAt: estimatePlaybackClockPosition,
   currentTrack,
   isPlaying,
   isLoading,

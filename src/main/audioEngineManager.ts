@@ -798,6 +798,12 @@ export class AudioEngineManager extends EventEmitter {
 
     const trackId = this.queue.find((item) => item.source === source)?.id ?? source
     const cached = await manager.peekCached({ trackId, filePath: source })
+    if (
+      this.destroyed ||
+      this.processing.volumeNormalization !== 'loudnorm' ||
+      this.loudnormStatusSource !== source
+    )
+      return
     if (cached && Number.isFinite(cached.integratedLufs)) {
       this.loudnormStatus = 'cached'
       this.applyLoudnormMeasurementToQueue(source, cached)

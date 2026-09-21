@@ -23,8 +23,23 @@ import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { findActiveMiniPlayerLyricIndex } from '../app/useMiniPlayerSync'
 import type { MiniPlayerLyricLineSnapshot } from '../../../shared/miniPlayer'
 import type { MotionPreference } from '../../../shared/motion.ts'
+import { estimateMiniPlayerTime } from '../../../shared/miniPlayerClock.ts'
 
 const state = ref<MiniPlayerStateSnapshot>({ ...EMPTY_MINI_PLAYER_STATE })
+const clockNow = ref(Date.now())
+let receivedAtMs = clockNow.value
+let clockTimer: ReturnType<typeof setInterval> | null = null
+const playbackTime = computed(() =>
+  estimateMiniPlayerTime(state.value, clockNow.value, receivedAtMs)
+)
+watch(
+  state,
+  () => {
+    receivedAtMs = Date.now()
+    clockNow.value = receivedAtMs
+  },
+  { flush: 'sync' }
+)
 const ready = ref(false)
 const bootstrapError = ref('')
 const coverFailed = ref(false)
@@ -49,7 +64,7 @@ const activeProfile = computed(
 const activeStyle = computed(() => resolveMiniPlayerStyle(settings.value.activeStyleId))
 const rawProgressPercent = computed(() =>
   state.value.duration > 0
-    ? Math.min(100, Math.max(0, (state.value.currentTime / state.value.duration) * 100))
+    ? Math.min(100, Math.max(0, (playbackTime.value / state.value.duration) * 100))
     : 0
 )
 // Snapshot pushes are stepped; glide between them like the main PlayerBar.
@@ -123,7 +138,7 @@ const trackAlbum = computed(() => state.value.track?.album || 'TWILIGHT ECHO')
 // as "no lyric" so the idle view never dereferences a missing line.
 const lyricLines = computed<MiniPlayerLyricLineSnapshot[]>(() => state.value.lyrics ?? [])
 const activeLyricIndex = computed(() =>
-  findActiveMiniPlayerLyricIndex(lyricLines.value, state.value.currentTime)
+  findActiveMiniPlayerLyricIndex(lyricLines.value, playbackTime.value)
 )
 const currentLyricLine = computed(() =>
   activeLyricIndex.value >= 0 ? (lyricLines.value[activeLyricIndex.value] ?? null) : null
@@ -187,7 +202,7 @@ function togglePlay(): void {
 
 function seekTo(value: number): void {
   const time = Math.min(state.value.duration || value, Math.max(0, value))
-  state.value = { ...state.value, currentTime: time }
+  state.value = { ...state.value, currentTime: time, capturedAtMs: Date.now() }
   sendCommand({ type: 'seek', value: time })
 }
 
@@ -310,6 +325,9 @@ let removeSettingsListener: (() => void) | null = null
 let removeMotionPreferenceListener: (() => void) | null = null
 
 onMounted(async () => {
+  clockTimer = setInterval(() => {
+    clockNow.value = Date.now()
+  }, 50)
   removeStateListener = window.api.miniPlayer.onState((nextState) => {
     state.value = nextState
   })
@@ -348,6 +366,7 @@ watch(coverSrc, () => {
 })
 
 onBeforeUnmount(() => {
+  if (clockTimer !== null) clearInterval(clockTimer)
   const pendingFlush = customization.flush()
   customization.dispose()
   void pendingFlush.catch(() => undefined)
@@ -527,13 +546,13 @@ onBeforeUnmount(() => {
               min="0"
               :max="state.duration || 1"
               step="0.1"
-              :value="state.currentTime"
+              :value="playbackTime"
               aria-label="播放进度"
               :disabled="!state.track"
               @input="onProgressInput"
             />
             <div v-if="resolvedVisibility.time" class="mini-time-row">
-              <span>{{ formatTime(state.currentTime) }}</span>
+              <span>{{ formatTime(playbackTime) }}</span>
               <span>{{ formatTime(state.duration) }}</span>
             </div>
           </div>

@@ -200,7 +200,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
       </label>
       <template v-if="draft.placement === 'taskbar'">
         <p>
-          单行歌词浮层显示在主屏任务栏区域，鼠标可穿透。调整位置避开应用图标；自动隐藏任务栏时显示在屏幕底部。
+          歌词浮层显示在主屏任务栏区域，支持显示翻译，鼠标可穿透。调整位置避开应用图标；自动隐藏任务栏时显示在屏幕底部。
         </p>
         <label
           >横向位置

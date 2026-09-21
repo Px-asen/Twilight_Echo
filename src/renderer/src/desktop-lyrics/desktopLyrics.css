@@ -529,3 +529,9 @@
 .dl-root.is-taskbar {
   pointer-events: none;
 }
+
+.dl-root.is-taskbar .dl-translation {
+  margin-top: 2px;
+  font-size: 0.65em;
+  color: rgba(255, 255, 255, 0.85);
+}

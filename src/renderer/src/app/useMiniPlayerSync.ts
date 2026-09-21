@@ -43,6 +43,7 @@ interface MiniPlayerStateSource {
 }
 
 interface MiniPlayerSyncOptions {
+  positionAt?: () => number
   currentTrack: Ref<Track | null>
   isPlaying: Ref<boolean>
   isLoading: Ref<boolean>
@@ -73,6 +74,7 @@ export function buildMiniPlayerStateSnapshot(
   const track = source.track
   const lyrics = buildMiniPlayerLyricLines(track)
   return {
+    capturedAtMs: Date.now(),
     track: track
       ? {
           id: track.id,
@@ -312,7 +314,7 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
         track: options.currentTrack.value,
         isPlaying: options.isPlaying.value,
         isLoading: options.isLoading.value,
-        currentTime: options.currentTime.value,
+        currentTime: options.positionAt?.() ?? options.currentTime.value,
         duration: options.duration.value,
         playbackRate: options.playbackRate.value,
         volume: options.volume.value,

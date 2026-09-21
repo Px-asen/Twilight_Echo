@@ -18,7 +18,7 @@ import './desktopLyrics.css'
 type SlotInstance = InstanceType<typeof DesktopLyricSlot>
 
 const DESKTOP_LYRICS_TOOLBAR_HOVER_DELAY_MS = 500
-const DESKTOP_LYRICS_LOCKED_HOVER_DELAY_MS = 3000
+const DESKTOP_LYRICS_LOCKED_HOVER_DELAY_MS = 500
 const api = window.api.desktopLyrics
 const settings = shallowRef<DesktopLyricsSettingsV3>({ ...DEFAULT_DESKTOP_LYRICS_SETTINGS })
 const session = shallowRef<DesktopLyricsSession | null>(null)
@@ -34,6 +34,7 @@ const systemReduced = ref(false)
 const slotZero = ref<SlotInstance | null>(null)
 const slotOne = ref<SlotInstance | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
+const unlockButton = ref<HTMLButtonElement | null>(null)
 const clock = createDesktopLyricsClock()
 const disposers: Array<() => void> = []
 let pauseTimer: ReturnType<typeof setTimeout> | null = null
@@ -41,6 +42,7 @@ let toolbarTimer: ReturnType<typeof setTimeout> | null = null
 let unlockAffordanceTimer: ReturnType<typeof setTimeout> | null = null
 let activeLineTimer: ReturnType<typeof setTimeout> | null = null
 let lockedInteractionActive = false
+let lastPointer: { clientX: number; clientY: number; buttons: number } | null = null
 let dragFrame = 0
 let pendingMove: { x: number; y: number } | null = null
 let dragOrigin: { pointerX: number; pointerY: number; windowX: number; windowY: number } | null =
@@ -148,8 +150,10 @@ function setLockedInteractionActive(active: boolean): void {
 function revealUnlockAffordance(): void {
   clearUnlockAffordanceTimer()
   if (!settings.value.locked || !lockedHovering.value) return
-  setLockedInteractionActive(true)
   unlockAffordanceVisible.value = true
+  void nextTick(() => {
+    if (lastPointer) updateUnlockHitTest(lastPointer)
+  })
 }
 
 function scheduleUnlockAffordance(): void {
@@ -289,8 +293,9 @@ function onHoverIntent(pointerInside: boolean): void {
   scheduleUnlockAffordance()
 }
 
-function onPointerEnter(): void {
+function onPointerEnter(event: PointerEvent): void {
   if (settings.value.locked) {
+    if (event.buttons !== 0) return
     lockedHovering.value = true
     scheduleUnlockAffordance()
     return
@@ -301,7 +306,7 @@ function onPointerEnter(): void {
 
 function onPointerLeave(): void {
   if (settings.value.locked) {
-    clearLockedHover()
+    setLockedInteractionActive(false)
     return
   }
   clearHoverUi()
@@ -348,7 +353,32 @@ function onPointerDown(event: PointerEvent): void {
   event.preventDefault()
 }
 
+function updateUnlockHitTest(event: { clientX: number; clientY: number; buttons: number }): void {
+  if (!settings.value.locked) return
+  if (event.buttons !== 0) {
+    clearLockedHover()
+    return
+  }
+  if (!lockedHovering.value) {
+    lockedHovering.value = true
+    scheduleUnlockAffordance()
+  }
+  const bounds = unlockButton.value?.getBoundingClientRect()
+  setLockedInteractionActive(
+    !!bounds &&
+      event.clientX >= bounds.left &&
+      event.clientX <= bounds.right &&
+      event.clientY >= bounds.top &&
+      event.clientY <= bounds.bottom
+  )
+}
+
 function onPointerMove(event: PointerEvent): void {
+  lastPointer = { clientX: event.clientX, clientY: event.clientY, buttons: event.buttons }
+  if (settings.value.locked) {
+    updateUnlockHitTest(event)
+    return
+  }
   if (!dragging.value || !dragOrigin) return
   pendingMove = {
     x: dragOrigin.windowX + event.screenX - dragOrigin.pointerX,
@@ -514,6 +544,7 @@ onBeforeUnmount(() => {
     <Transition name="dl-unlock-transition">
       <button
         v-if="unlockAffordanceVisible"
+        ref="unlockButton"
         class="dl-unlock-affordance"
         type="button"
         title="解锁桌面歌词"

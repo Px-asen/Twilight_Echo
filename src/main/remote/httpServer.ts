@@ -65,7 +65,11 @@ export class RemoteHttpServer {
   constructor(options: RemoteHttpServerOptions = {}) {
     this.auth = options.auth ?? new RemoteAuthSession()
     this.mediaGrants = options.mediaGrants ?? new MediaStreamGrantStore()
-    this.staticRoot = options.staticRoot ?? join(app.getAppPath(), 'resources', 'remote')
+    this.staticRoot =
+      options.staticRoot ??
+      (app.isPackaged
+        ? join(process.resourcesPath, 'remote')
+        : join(app.getAppPath(), 'resources', 'remote'))
     this.onCommand = options.onCommand ?? null
     this.onBrowse = options.onBrowse ?? null
   }

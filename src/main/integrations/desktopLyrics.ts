@@ -25,6 +25,7 @@ let desktopLyricsPausedHidden = false
 let desktopLyricsHoverCheckTimer: ReturnType<typeof setInterval> | null = null
 let desktopLyricsPointerInside = false
 let appliedTaskbarPlacement = false
+let taskbarStackingTimer: ReturnType<typeof setInterval> | null = null
 
 const DESKTOP_LYRICS_HOVER_CHECK_INTERVAL_MS = 120
 
@@ -105,10 +106,12 @@ export function getEffectiveDesktopLyricsSettings(): DesktopLyricsSettingsV3 {
       ? {
           windowWidth: currentTaskbarBounds().width,
           windowHeight: currentTaskbarBounds().height,
-          fontSize: settings.taskbarFontSize ?? 18,
+          fontSize: Math.min(
+            settings.taskbarFontSize ?? 18,
+            (currentTaskbarBounds().height - 6) / (settings.translationVisible ? 1.8 : 1.08)
+          ),
           writingMode: 'horizontal' as const,
           displayMode: 'single' as const,
-          translationVisible: false,
           romanizationVisible: false,
           alwaysOnTop: true,
           locked: true
@@ -127,6 +130,7 @@ function applyWindowSettings(): void {
   const win = runtime.desktopLyricsWindow
   if (!win || win.isDestroyed()) return
   const settings = getEffectiveDesktopLyricsSettings()
+  win.setFocusable(settings.placement !== 'taskbar')
   if (settings.placement === 'taskbar') {
     appliedTaskbarPlacement = true
     win.setBounds(currentTaskbarBounds())
@@ -134,8 +138,15 @@ function applyWindowSettings(): void {
     win.setIgnoreMouseEvents(true)
     clearDesktopLyricsHoverTracking()
     desktopLyricsInteractionActive = false
+    if (taskbarStackingTimer === null) {
+      taskbarStackingTimer = setInterval(() => {
+        if (!win.isDestroyed() && win.isVisible()) win.moveTop()
+      }, 500)
+      taskbarStackingTimer.unref()
+    }
     return
   }
+  clearTaskbarStackingTimer()
   win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
   const ignoreMouseEvents =
     desktopLyricsPausedHidden || (settings.locked && !desktopLyricsInteractionActive)
@@ -158,6 +169,12 @@ function applyWindowSettings(): void {
     settings.windowY = constrained.y
     writeAppSettings(runtime.appSettings)
   }
+}
+
+function clearTaskbarStackingTimer(): void {
+  if (taskbarStackingTimer === null) return
+  clearInterval(taskbarStackingTimer)
+  taskbarStackingTimer = null
 }
 
 function notifySettingsChanged(): void {
@@ -437,6 +454,7 @@ function createDesktopLyricsWindow(): void {
   })
   win.webContents.on('render-process-gone', (_event, details) => {
     if (destroyingWindow || details.reason === 'clean-exit') return
+    clearTaskbarStackingTimer()
     runtime.desktopLyricsWindow = null
     if (!runtime.appSettings.desktopLyrics.enabled || runtime.desktopLyricsCrashRestarts >= 1) {
       runtime.appSettings.desktopLyrics.enabled = false
@@ -455,6 +473,7 @@ function createDesktopLyricsWindow(): void {
   })
   win.on('closed', () => {
     if (runtime.desktopLyricsWindow !== win) return
+    clearTaskbarStackingTimer()
     runtime.desktopLyricsWindow = null
     desktopLyricsInteractionActive = false
     desktopLyricsPausedHidden = false
@@ -481,6 +500,7 @@ export function showDesktopLyrics(): void {
 }
 
 export function destroyDesktopLyrics(): void {
+  clearTaskbarStackingTimer()
   const win = runtime.desktopLyricsWindow
   if (!win || win.isDestroyed()) {
     runtime.desktopLyricsWindow = null
@@ -624,7 +644,13 @@ export function setupDesktopLyricsIpc(): void {
     const win = runtime.desktopLyricsWindow
     if (!win || win.isDestroyed() || runtime.appSettings.desktopLyrics.locked) return
     const position = clampToCurrentDisplay(win, Number(value.x), Number(value.y))
-    win.setPosition(position.x, position.y)
+    const settings = runtime.appSettings.desktopLyrics
+    win.setBounds({
+      x: position.x,
+      y: position.y,
+      width: settings.windowWidth,
+      height: settings.windowHeight
+    })
   })
 
   ipcMain.on('desktopLyrics:moveEnd', (event) => {
