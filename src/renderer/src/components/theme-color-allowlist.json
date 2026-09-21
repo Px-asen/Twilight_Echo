@@ -56,7 +56,7 @@
   "src/renderer/src/components/StreamingSearch.vue": 49,
   "src/renderer/src/components/theme-studio/ThemeStudioPage.css": 8,
   "src/renderer/src/components/TitleBar.vue": 12,
-  "src/renderer/src/desktop-lyrics/desktopLyrics.css": 29,
+  "src/renderer/src/desktop-lyrics/desktopLyrics.css": 30,
   "src/renderer/src/mini-player/MiniPlayer.css": 7,
   "src/renderer/src/mini-player/MiniPlayerCustomizer.css": 6
 }
