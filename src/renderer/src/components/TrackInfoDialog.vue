@@ -10,10 +10,17 @@ import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 
 const props = defineProps<{ track: Track }>()
 const editing = ref(false)
-const editableTracks = computed(() => selectLocalLibraryActionTracks([props.track]))
-const { applyLocalTagWrite } = useMusicStore()
+const editableTracks = computed(() => {
+  const track = props.track
+  const id = typeof track.id === 'string' ? track.id : ''
+  const source = track.source
+  const mayBeLocal =
+    source === 'local' ||
+    (!source && (/^[a-zA-Z]:[\\/]/.test(id) || /^[\\/]/.test(id) || !id.includes(':')))
+  return mayBeLocal ? selectLocalLibraryActionTracks([track]) : []
+})
 function applyTags(paths: string[], patch: LocalLibraryTagPatch): void {
-  applyLocalTagWrite(paths, patch)
+  useMusicStore().applyLocalTagWrite(paths, patch)
 }
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
