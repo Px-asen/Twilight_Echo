@@ -722,7 +722,11 @@ async function searchUnifiedSongs(
     signal: options?.signal
   })
   return {
-    tracks: result.logicalItems.map((item) => item.preferredTrack),
+    tracks: result.logicalItems.flatMap((item) =>
+      item.preferenceUnavailable
+        ? item.variants.map((variant) => variant.track)
+        : [item.preferredTrack]
+    ),
     total: result.total
   }
 }

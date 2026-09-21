@@ -66,6 +66,9 @@ import {
 import CoverImg from './CoverImg.vue'
 import CreateAggregatePlaylistDialog from './aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import LocalLibraryTagManager from './LocalLibraryTagManager.vue'
+const LibraryInboxDialog = defineAsyncComponent(
+  () => import('@renderer/components/library-inbox/LibraryInboxDialog.vue')
+)
 import ThemeIcon from './ThemeIcon.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
@@ -104,6 +107,8 @@ const {
   removeLocalTracks,
   restoreExcludedTracks,
   applyLocalTagWrite,
+  startFullLibraryScan,
+  isScanning,
   clearTrackMetadataMatch,
   applyTrackMetadataMatch,
   refreshLibraryIndex,
@@ -449,6 +454,12 @@ const currentPlaylist = computed(() =>
 const repairMessage = ref('')
 const showExcludedTracksDialog = ref(false)
 const showTagManager = ref(false)
+const showLibraryInbox = ref(false)
+const showMusicVersions = ref(false)
+const MusicVersionsHost = defineAsyncComponent(
+  () => import('@renderer/components/music-versions/MusicVersionsHost.vue')
+)
+const libraryToolsTrigger = ref<HTMLButtonElement | null>(null)
 const tagManagerInitialView = ref<'edit' | 'duplicates'>('edit')
 const tagManagerTracks = ref<Track[]>([])
 const tagManagerFocusRestoreTarget = ref<HTMLElement | null>(null)
@@ -1292,6 +1303,16 @@ function openLibraryDuplicates(): void {
   openTagManager('duplicates')
 }
 
+function openMusicVersions(): void {
+  showMusicVersions.value = true
+  libraryToolsMenuOpen.value = false
+}
+
+function openLibraryInbox(): void {
+  showLibraryInbox.value = true
+  libraryToolsMenuOpen.value = false
+}
+
 function openLibraryExcluded(): void {
   libraryToolsMenuOpen.value = false
   showExcludedTracksDialog.value = true
@@ -1764,6 +1785,14 @@ function finishViewSwitchAndRestoreScroll(): void {
                 @export="downloadPlaylistDocument(playlistExportFormat)"
                 @repair="handlePlaylistRepair"
               />
+              <button
+                v-if="category === 'albums'"
+                type="button"
+                class="library-tools-trigger"
+                @click="openMusicVersions"
+              >
+                专辑版本管理
+              </button>
               <div
                 v-if="category === 'allSongs'"
                 class="library-tools-dropdown"
@@ -1772,6 +1801,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                 <button
                   type="button"
                   class="excluded-tracks-trigger library-tools-trigger"
+                  ref="libraryToolsTrigger"
                   title="重复检查与已移除管理"
                   :aria-expanded="libraryToolsMenuOpen"
                   aria-haspopup="menu"
@@ -1789,6 +1819,22 @@ function finishViewSwitchAndRestoreScroll(): void {
                   ></i>
                 </button>
                 <div v-if="libraryToolsMenuOpen" class="library-tools-menu" role="menu">
+                  <button
+                    type="button"
+                    class="library-tools-option"
+                    role="menuitem"
+                    @click="openMusicVersions"
+                  >
+                    歌曲与专辑版本
+                  </button>
+                  <button
+                    type="button"
+                    class="library-tools-option"
+                    role="menuitem"
+                    @click="openLibraryInbox"
+                  >
+                    <i class="pi pi-inbox"></i><span>曲库整理收件箱</span>
+                  </button>
                   <button
                     type="button"
                     class="library-tools-option"
@@ -2661,12 +2707,32 @@ function finishViewSwitchAndRestoreScroll(): void {
     </Teleport>
 
     <Teleport to="body">
+      <MusicVersionsHost
+        v-if="showMusicVersions"
+        :restore-focus="libraryToolsTrigger"
+        :initial-scope="category === 'albums' ? 'albums' : 'tracks'"
+        :initial-track="filter?.startsWith('album:') ? displayTracks[0] : undefined"
+        @close="showMusicVersions = false"
+      />
+      <LibraryInboxDialog
+        v-if="showLibraryInbox"
+        :tracks="tracks"
+        :scanning="isScanning"
+        :rescan="startFullLibraryScan"
+        :restore-focus="libraryToolsTrigger"
+        @close="showLibraryInbox = false"
+        @applied="applyTagManagerWrite"
+      />
+    </Teleport>
+
+    <Teleport to="body">
       <Transition name="dialog-fade">
         <div v-if="showTagManager" class="dialog-overlay" @click.self="closeTagManager">
           <LocalLibraryTagManager
             :key="`${tagManagerInitialView}:${tagManagerTracks.map((track) => track.id).join(',')}`"
             :initial-view="tagManagerInitialView"
             :tracks="tagManagerTracks"
+            :current-tracks="tracks"
             @close="closeTagManager"
             @applied="applyTagManagerWrite"
           />

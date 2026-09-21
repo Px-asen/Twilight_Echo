@@ -72,6 +72,19 @@ and then `title + artist + duration` (within two seconds). Multiple candidates r
 reported for manual resolution. A repair replaces the stored playlist snapshot and track id together, so
 the persisted order remains stable after restart.
 
+## Manual Version Relationships
+
+Song/release version overrides do not rewrite playlist IDs, snapshots, ordering or queue entries.
+Favorite and local replacement caches include the version revision, so an explicit split takes
+effect immediately while existing entries remain stored. Different recordings in one version
+family remain distinct. Album preferred-version playback preserves the selected source's disc
+and track order.
+
+Aggregate playlist grouping uses the shared recording identity. An explicit per-playlist source
+selection takes priority over the global preferred source. If the global preference is absent,
+the row stays visible with a selection prompt and is excluded from automatic queue construction
+until the user selects a source. Existing active queues are not rewritten by a version edit.
+
 ## Covers
 
 Playlist covers accept user-selected PNG, JPEG, and WebP files only. The UI rejects files larger than

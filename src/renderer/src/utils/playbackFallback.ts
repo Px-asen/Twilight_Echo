@@ -1,7 +1,10 @@
 import type { Track, TrackSource } from '../types/music'
-import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
 import {
-  canShareLogicalTrack,
+  getRecordingTrackKey as getLogicalTrackKey,
+  preferredSourceKey
+} from '@renderer/utils/logicalTrackModel.ts'
+import {
+  canShareTrackIdentity,
   compareSourceVariants,
   getTrackSource,
   toSourceVariant
@@ -15,6 +18,7 @@ export interface PlaybackFallbackOptions {
 }
 
 export function findPlaybackFallbackTrack(options: PlaybackFallbackOptions): Track | null {
+  if (preferredSourceKey(options.failedTrack)) return null
   const unavailableSources = new Set((options.unavailableSources ?? []).map(normalizeSource))
   const failedSource = getTrackSource(options.failedTrack)
   const failedKey = getLogicalTrackKey(options.failedTrack)
@@ -22,7 +26,7 @@ export function findPlaybackFallbackTrack(options: PlaybackFallbackOptions): Tra
   const candidates = options.candidates
     .filter((candidate) => candidate.id !== options.failedTrack.id)
     .filter((candidate) => getLogicalTrackKey(candidate) === failedKey)
-    .filter((candidate) => canShareLogicalTrack(options.failedTrack, candidate))
+    .filter((candidate) => canShareTrackIdentity(options.failedTrack, candidate))
     .filter((candidate) => !unavailableSources.has(getTrackSource(candidate)))
     .filter((candidate) => getTrackSource(candidate) !== failedSource || failedSource === 'local')
     .sort((left, right) => compareFallbackCandidates(left, right, options.sourceReliability))

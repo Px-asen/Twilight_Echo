@@ -1,6 +1,7 @@
 import type { ListeningTrackStat } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
-import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
+import { getRecordingTrackKey as getLogicalTrackKey } from '@renderer/utils/logicalTrackModel.ts'
+import { musicVersionRevision, getMusicVersions } from '@renderer/stores/musicVersions.ts'
 import { buildLogicalTracks, getTrackSource, type LogicalTrack } from './logicalTrackModel.ts'
 
 export type UnifiedRecentStat = ListeningTrackStat & { id: string }
@@ -18,7 +19,7 @@ export function resolveUnifiedRecentTracks({
 
   for (const stat of recentStats) {
     const resolved = resolveTrack(stat)
-    const seenKey = getLogicalTrackKey(stat)
+    const seenKey = getLogicalTrackKey(resolved ?? stat.track ?? stat)
     if (!resolved || seen.has(seenKey)) continue
     seen.add(seenKey)
     tracks.push(resolved)
@@ -29,6 +30,7 @@ export function resolveUnifiedRecentTracks({
 
 interface UnifiedRecentResolverIndexes {
   tracks: Track[]
+  versionRevision: number
   localById: Map<string, Track>
   localByLogicalKey: Map<string, LogicalTrack>
 }
@@ -44,9 +46,14 @@ let resolverRebuildCount = 0
 export function createUnifiedRecentTrackResolver(
   localTracks: Track[]
 ): (stat: UnifiedRecentStat) => Track | null {
-  if (cachedResolverIndexes?.tracks !== localTracks) {
+  getMusicVersions()
+  if (
+    cachedResolverIndexes?.tracks !== localTracks ||
+    cachedResolverIndexes.versionRevision !== musicVersionRevision.value
+  ) {
     cachedResolverIndexes = {
       tracks: localTracks,
+      versionRevision: musicVersionRevision.value,
       localById: buildLocalTrackIdMap(localTracks),
       localByLogicalKey: buildLocalLogicalTrackMap(localTracks)
     }
@@ -79,7 +86,7 @@ function resolveRecentTrack(
     if (localTrack) return localTrack
   }
 
-  const localVariant = localByLogicalKey.get(getLogicalTrackKey(stat))
+  const localVariant = localByLogicalKey.get(getLogicalTrackKey(stat.track ?? stat))
   if (localVariant) return localVariant.preferredTrack
 
   if (!stat.track) return null

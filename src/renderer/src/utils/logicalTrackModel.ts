@@ -1,5 +1,8 @@
-import type { Track, TrackSource } from '../types/music'
-import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
+import type { Track, TrackSource } from '@renderer/types/music'
+import { sourceVersion } from '@renderer/stores/musicVersions.ts'
+import { getTrackSource, versionSourceKey } from '@renderer/utils/trackSourceIdentity.ts'
+export { getTrackSource } from '@renderer/utils/trackSourceIdentity.ts'
+import { getLogicalTrackKey } from '@renderer/utils/logicalTrackIdentity.ts'
 
 export interface SourceVariantInput {
   track: Track
@@ -27,6 +30,7 @@ export interface LogicalTrack {
   album: string
   preferredTrack: Track
   variants: SourceVariant[]
+  preferenceUnavailable?: boolean
 }
 
 const LOSSLESS_FORMATS = new Set([
@@ -50,20 +54,21 @@ export function buildLogicalTracks(inputs: Iterable<SourceVariantInput>): Logica
 
   for (const input of inputs) {
     const variant = toSourceVariant(input)
-    const candidateKey = getLogicalTrackKey(variant.track)
+    const candidateKey = getRecordingTrackKey(variant.track)
     const candidates = groupsByKey.get(candidateKey)
-    const existing = candidates?.find((item) =>
-      canShareLogicalTrack(item.preferredTrack, variant.track)
+    const existing = candidates?.find(
+      (item) =>
+        candidateKey.startsWith('version:') ||
+        item.variants.every((member) => canShareTrackIdentity(member.track, variant.track))
     )
 
     if (existing) {
-      existing.variants = [...existing.variants, variant].sort(compareSourceVariants)
-      existing.preferredTrack = existing.variants[0].track
+      existing.variants.push(variant)
       continue
     }
 
     const nextGroup = {
-      id: candidateKey,
+      id: candidates?.length ? `${candidateKey}:${versionSourceKey(variant.track)}` : candidateKey,
       title: variant.track.title.trim() || '未知歌曲',
       artist: variant.track.artist.trim() || '未知艺术家',
       album: variant.track.album.trim() || '未知专辑',
@@ -78,6 +83,16 @@ export function buildLogicalTracks(inputs: Iterable<SourceVariantInput>): Logica
     }
   }
 
+  for (const group of groups) {
+    group.variants.sort(compareSourceVariants)
+    group.preferredTrack = group.variants[0].track
+    const preferred = preferredSourceKey(group.preferredTrack)
+    group.preferenceUnavailable =
+      !!preferred &&
+      !group.variants.some(
+        (variant) => versionSourceKey(variant.track) === preferred && variant.providerAvailable
+      )
+  }
   return groups
 }
 
@@ -106,6 +121,7 @@ export function compareSourceVariants(left: SourceVariant, right: SourceVariant)
 
 export function compareSourceVariantPriority(left: SourceVariant, right: SourceVariant): number {
   return (
+    compareBoolean(isPreferredSource(right.track), isPreferredSource(left.track)) ||
     compareBoolean(right.local, left.local) ||
     compareBoolean(right.lossless, left.lossless) ||
     compareBoolean(right.providerAvailable, left.providerAvailable) ||
@@ -126,16 +142,21 @@ export function canShareLogicalTrack(left: Track, right: Track): boolean {
   return Math.abs(left.duration - right.duration) <= LOGICAL_DURATION_TOLERANCE_SECONDS
 }
 
-/**
- * Whether two tracks that already share a logical key (same normalized title and
- * artist) are actually the same recording, and so may collapse into one entry.
- *
- * Two different remote ids on one provider are always two different recordings —
- * a provider never issues one song id twice — so that comparison is decisive.
- * Local files carry no remote id, which is what keeps a local file standing in
- * for the streaming entry of the same song.
- */
 export function canShareTrackIdentity(left: Track, right: Track): boolean {
+  if (versionSourceKey(left) === versionSourceKey(right)) return true
+  const leftVersion = sourceVersion('tracks', versionSourceKey(left))
+  const rightVersion = sourceVersion('tracks', versionSourceKey(right))
+  if (leftVersion || rightVersion) return !!leftVersion && leftVersion.id === rightVersion?.id
+  if (getLogicalTrackKey(left) !== getLogicalTrackKey(right)) return false
+  const versionHint = (track: Track): string =>
+    (track.title + ' ' + track.album)
+      .match(
+        /\blive\b|现场|\bremaster(?:ed)?\b|重制|\bacoustic\b|\bunplugged\b|不插电|\binstrumental\b|伴奏/gi
+      )
+      ?.map((hint) => hint.toLowerCase())
+      .sort()
+      .join(':') ?? ''
+  if (versionHint(left) !== versionHint(right)) return false
   const leftRemote = getRemoteSongRef(left)
   const rightRemote = getRemoteSongRef(right)
   if (
@@ -158,16 +179,19 @@ function getRemoteSongRef(track: Track): { provider: string; id: string } | null
   return remoteId ? { provider: source, id: remoteId } : null
 }
 
-export function getTrackSource(
-  track: Pick<Track, 'id' | 'source'>,
-  fallback?: string
-): TrackSource {
-  if (track.source) return normalizeTrackSource(track.source)
-  if (fallback) return normalizeTrackSource(fallback)
-  const id = track.id.trim()
-  if (/^[a-zA-Z]:[\\/]/.test(id) || /^[\\/]/.test(id)) return 'local'
-  const separatorIndex = id.indexOf(':')
-  return separatorIndex > 0 ? normalizeTrackSource(id.slice(0, separatorIndex)) : 'local'
+export function getRecordingTrackKey(
+  track: Pick<Track, 'id' | 'title' | 'artist'> & Partial<Track>
+): string {
+  const version = sourceVersion('tracks', versionSourceKey(track))
+  return version ? `version:${version.id}` : getLogicalTrackKey(track)
+}
+
+export function preferredSourceKey(track: Track): string | null {
+  return sourceVersion('tracks', versionSourceKey(track))?.preferredSource ?? null
+}
+
+function isPreferredSource(track: Track): boolean {
+  return preferredSourceKey(track) === versionSourceKey(track)
 }
 
 export function isLosslessTrack(track: Track): boolean {
@@ -185,8 +209,4 @@ export function clampReliability(value: number): number {
 function compareBoolean(left: boolean, right: boolean): number {
   if (left === right) return 0
   return left ? 1 : -1
-}
-
-function normalizeTrackSource(source: string): TrackSource {
-  return source.trim().toLowerCase() as TrackSource
 }

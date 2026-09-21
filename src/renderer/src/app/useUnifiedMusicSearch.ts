@@ -1,4 +1,6 @@
-import { ref, shallowRef, type Ref } from 'vue'
+import { musicVersionRevision } from '@renderer/stores/musicVersions.ts'
+import { buildLogicalTracks } from '@renderer/utils/logicalTrackModel.ts'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import { useMediaProviders } from '../providers/index.ts'
 import { useMusicStore } from '../stores/useMusicStore.ts'
 import type { Track } from '../types/music'
@@ -56,7 +58,11 @@ export function createUnifiedMusicSearch(
 ): UnifiedMusicSearchState {
   const query = ref('')
   const items = shallowRef<UnifiedSearchTrackItem[]>([])
-  const logicalItems = shallowRef<LogicalMusicItem[]>([])
+  const resultLogicalItems = shallowRef<LogicalMusicItem[]>([])
+  const logicalItems = computed(() => {
+    void musicVersionRevision.value
+    return items.value.length ? buildLogicalTracks(items.value) : resultLogicalItems.value
+  })
   const providerHealth = ref<Record<string, UnifiedSearchProviderHealth>>({})
   const loading = ref(false)
   const error = ref('')
@@ -71,7 +77,7 @@ export function createUnifiedMusicSearch(
     controller = null
     query.value = ''
     items.value = []
-    logicalItems.value = []
+    resultLogicalItems.value = []
     providerHealth.value = {}
     loading.value = false
     error.value = ''
@@ -102,7 +108,7 @@ export function createUnifiedMusicSearch(
     loading.value = true
     error.value = ''
     items.value = []
-    logicalItems.value = []
+    resultLogicalItems.value = []
     providerHealth.value = {}
     total.value = 0
     hasMore.value = false
@@ -121,7 +127,7 @@ export function createUnifiedMusicSearch(
       })
       if (requestId !== latestRequestId) return
       items.value = result.items
-      logicalItems.value = result.logicalItems
+      resultLogicalItems.value = result.logicalItems
       providerHealth.value = result.health
       total.value = result.total
       hasMore.value =
@@ -130,7 +136,7 @@ export function createUnifiedMusicSearch(
       if (requestId !== latestRequestId) return
       error.value = caught instanceof Error ? caught.message : '统一搜索失败'
       items.value = []
-      logicalItems.value = []
+      resultLogicalItems.value = []
       providerHealth.value = {}
     } finally {
       if (requestId === latestRequestId) {

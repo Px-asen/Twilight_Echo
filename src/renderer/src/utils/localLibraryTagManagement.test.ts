@@ -89,3 +89,20 @@ test('blank batch form fields stay absent so a batch edit cannot clear unrelated
   })
   assert.deepEqual(patch, { genre: 'Electronic' })
 })
+
+test('typing and clearing text or whitespace never clears existing tags', () => {
+  assert.deepEqual(
+    tagPatchFromForm({
+      title: '',
+      artist: '  ',
+      album: '\t',
+      albumArtist: undefined,
+      genre: ' Jazz ',
+      track: undefined,
+      disc: undefined,
+      year: undefined,
+      coverData: undefined
+    }),
+    { genre: 'Jazz' }
+  )
+})

@@ -1,5 +1,9 @@
 import type { Track } from '../types/music'
-import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
+import {
+  getRecordingTrackKey as getLogicalTrackKey,
+  preferredSourceKey
+} from '@renderer/utils/logicalTrackModel.ts'
+import { versionSourceKey } from '@renderer/utils/trackSourceIdentity.ts'
 import {
   canShareTrackIdentity,
   compareSourceVariants,
@@ -7,15 +11,6 @@ import {
   toSourceVariant,
   type SourceVariant
 } from './logicalTrackModel.ts'
-
-/**
- * 聚合歌单视图：把一个歌单里跨音源的曲目按"同一段录音"折叠成一行，让用户按行
- * 选择用哪个音源播放，并按音源整体显示 / 隐藏。
- *
- * 分组刻意用 `canShareTrackIdentity` 而不是 `buildLogicalTracks` 内部的时长判定
- * ——同一个 provider 永远不会把一个歌曲 id 发两次，所以同 provider 的两个不同 id
- * 是两段不同录音，哪怕标题歌手完全相同。用宽判定会让同名同歌手的不同歌互相顶掉。
- */
 
 export interface AggregatePlaylistLike {
   kind?: string
@@ -28,19 +23,15 @@ export interface AggregatePlaylistOrderLike {
 }
 
 export interface AggregateRow {
-  /** 稳定的行标识：本行所有音源里字典序最小的 trackId，可直接当持久化 key。 */
   anchorTrackId: string
   title: string
   artist: string
   album: string
-  /** 本行全部音源，最佳优先（含被隐藏的）。 */
   allVariants: SourceVariant[]
-  /** 本行未被隐藏的音源，最佳优先。 */
   visibleVariants: SourceVariant[]
-  /** 当前用来播放这一行的音源。 */
   selectedVariant: SourceVariant
-  /** 用户为这一行显式选过音源，且该选择当前仍然可用。 */
   variantPinned: boolean
+  preferenceUnavailable: boolean
 }
 
 export interface AggregateSourceCount {
@@ -59,7 +50,6 @@ export function isAggregatePlaylist(playlist: AggregatePlaylistLike): boolean {
   return playlist.kind === 'aggregate'
 }
 
-/** 置顶优先（按置顶时间倒序），其余按最近更新倒序；同序保持原有相对次序。 */
 export function sortAggregatePlaylists<T extends AggregatePlaylistOrderLike>(playlists: T[]): T[] {
   return playlists
     .map((playlist, index) => ({ playlist, index }))
@@ -110,14 +100,19 @@ export function buildAggregateRows({
       allVariants,
       visibleVariants,
       selectedVariant,
-      variantPinned: !!pinnedVariant
+      variantPinned: !!pinnedVariant,
+      preferenceUnavailable:
+        !pinnedVariant &&
+        !!preferredSourceKey(selectedVariant.track) &&
+        !visibleVariants.some(
+          (variant) => versionSourceKey(variant.track) === preferredSourceKey(selectedVariant.track)
+        )
     })
   }
 
   return rows
 }
 
-/** 筛选条要展示的音源清单：本地优先，其余按音源 id 字母序。 */
 export function collectAggregateSources(
   tracks: Track[],
   hiddenSources: string[] = []
@@ -142,12 +137,10 @@ export function collectAggregateSources(
     })
 }
 
-/** 可见行按当前选定音源展开的播放队列。 */
 export function resolveAggregateQueue(rows: AggregateRow[]): Track[] {
-  return rows.map((row) => row.selectedVariant.track)
+  return rows.filter((row) => !row.preferenceUnavailable).map((row) => row.selectedVariant.track)
 }
 
-/** 切换音源隐藏状态后的新 hiddenSources，顺序稳定以免持久化快照无意义地抖动。 */
 export function toggleHiddenSource(hiddenSources: string[], source: string): string[] {
   return hiddenSources.includes(source)
     ? hiddenSources.filter((item) => item !== source)

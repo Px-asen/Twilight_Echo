@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { defineAsyncComponent, computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEscapeToClose } from '@renderer/app/useDismissLayer'
 import type { Track } from '@renderer/types/music'
 import CoverImg from '@renderer/components/CoverImg.vue'
@@ -10,6 +10,10 @@ import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 
 const props = defineProps<{ track: Track }>()
 const editing = ref(false)
+const versions = ref(false)
+const MusicVersionsHost = defineAsyncComponent(
+  () => import('@renderer/components/music-versions/MusicVersionsHost.vue')
+)
 const editableTracks = computed(() => {
   const track = props.track
   const id = typeof track.id === 'string' ? track.id : ''
@@ -26,7 +30,7 @@ const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
 onMounted(() => dialog.value?.showModal())
 useEscapeToClose(
-  () => !editing.value,
+  () => !editing.value && !versions.value,
   () => emit('close')
 )
 onBeforeUnmount(() => dialog.value?.close())
@@ -37,13 +41,19 @@ onBeforeUnmount(() => dialog.value?.close())
     <dialog
       ref="dialog"
       class="track-info-dialog"
-      :class="{ 'is-editing': editing }"
+      :class="{ 'is-editing': editing || versions }"
       aria-labelledby="track-info-title"
       @close="emit('close')"
-      @cancel.prevent="editing ? (editing = false) : emit('close')"
+      @cancel.prevent="versions ? (versions = false) : editing ? (editing = false) : emit('close')"
     >
+      <MusicVersionsHost
+        v-if="versions"
+        embedded
+        :initial-track="track"
+        @close="versions = false"
+      />
       <LocalLibraryTagManager
-        v-if="editing"
+        v-else-if="editing"
         :tracks="editableTracks"
         @close="editing = false"
         @applied="applyTags"
@@ -85,6 +95,9 @@ onBeforeUnmount(() => dialog.value?.close())
           @click="editing = true"
         >
           编辑歌曲信息
+        </button>
+        <button type="button" class="track-info-edit" @click="versions = true">
+          歌曲与专辑版本
         </button>
       </template>
     </dialog>

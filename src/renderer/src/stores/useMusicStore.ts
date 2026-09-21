@@ -23,14 +23,17 @@ import {
   type LibraryMetadataEnrichmentStatus,
   type LibraryMetadataEnrichmentTrackUpdate
 } from '../utils/libraryMetadataEnrichment.ts'
-import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
+import { getRecordingTrackKey as getLogicalTrackKey } from '@renderer/utils/logicalTrackModel.ts'
+import { musicVersionRevision, getMusicVersions } from '@renderer/stores/musicVersions.ts'
 import { isAggregatePlaylist, sortAggregatePlaylists } from '../utils/aggregatePlaylistView.ts'
 import {
   buildLogicalTracks,
   canShareTrackIdentity,
+  preferredSourceKey,
   getTrackSource,
   type LogicalTrack
 } from '../utils/logicalTrackModel.ts'
+import { versionSourceKey } from '@renderer/utils/trackSourceIdentity.ts'
 import {
   enrichLocalTrackMetadata,
   type MetadataMatchConfidence
@@ -200,12 +203,14 @@ const trackIndexById = new Map<string, number>()
 let derivedCollectionsInitialized = false
 let tracksRevision = 0
 let localLogicalTrackMapRevision = -1
+let localLogicalVersionRevision = -1
 let localLogicalTrackMapCache = new Map<string, LogicalTrack>()
 let playlistIdentityCache: {
   playlist: Playlist
   trackIds: string[]
   snapshots: Record<string, Track> | undefined
   tracksRevision: number
+  versionRevision: number
   ids: Set<string>
   snapshotsByLogicalKey: Map<string, Track[]>
 } | null = null
@@ -1703,7 +1708,8 @@ export function useMusicStore(): {
       playlistIdentityCache.playlist === playlist &&
       playlistIdentityCache.trackIds === playlist.trackIds &&
       playlistIdentityCache.snapshots === playlist.trackSnapshots &&
-      playlistIdentityCache.tracksRevision === tracksRevision
+      playlistIdentityCache.tracksRevision === tracksRevision &&
+      playlistIdentityCache.versionRevision === musicVersionRevision.value
     ) {
       return playlistIdentityCache
     }
@@ -1727,6 +1733,7 @@ export function useMusicStore(): {
       trackIds: playlist.trackIds,
       snapshots: playlist.trackSnapshots,
       tracksRevision,
+      versionRevision: musicVersionRevision.value,
       ids,
       snapshotsByLogicalKey
     }
@@ -1747,13 +1754,22 @@ export function useMusicStore(): {
     // actually the same recording rather than any same-titled neighbour.
     const localReplacement = getLocalLogicalTracks()
       .get(key)
-      ?.variants.find((variant) => canShareTrackIdentity(snapshot, variant.track))?.track
+      ?.variants.find(
+        (variant) =>
+          canShareTrackIdentity(snapshot, variant.track) &&
+          (!preferredSourceKey(snapshot) ||
+            versionSourceKey(variant.track) === preferredSourceKey(snapshot))
+      )?.track
     if (localReplacement) return localReplacement
     return getTrackSource(snapshot) === 'local' ? undefined : snapshot
   }
 
   function getLocalLogicalTrackMap(): Map<string, LogicalTrack> {
-    if (localLogicalTrackMapRevision === tracksRevision) {
+    getMusicVersions()
+    if (
+      localLogicalTrackMapRevision === tracksRevision &&
+      localLogicalVersionRevision === musicVersionRevision.value
+    ) {
       return localLogicalTrackMapCache
     }
 
@@ -1771,10 +1787,14 @@ export function useMusicStore(): {
     })()
 
     for (const logicalTrack of buildLogicalTracks(localInputs)) {
-      if (!result.has(logicalTrack.id)) result.set(logicalTrack.id, logicalTrack)
+      const key = getLogicalTrackKey(logicalTrack.preferredTrack)
+      const existing = result.get(key)
+      if (existing) existing.variants.push(...logicalTrack.variants)
+      else result.set(key, { ...logicalTrack, variants: [...logicalTrack.variants] })
     }
     localLogicalTrackMapCache = result
     localLogicalTrackMapRevision = tracksRevision
+    localLogicalVersionRevision = musicVersionRevision.value
     return result
   }
 
@@ -2023,7 +2043,12 @@ export function useMusicStore(): {
       // 就得丢掉——否则会给出一个点了放不出来的本地音源。
       const relocated = getLocalLogicalTracks()
         .get(getLogicalTrackKey(snapshot))
-        ?.variants.find((variant) => canShareTrackIdentity(snapshot, variant.track))?.track
+        ?.variants.find(
+          (variant) =>
+            canShareTrackIdentity(snapshot, variant.track) &&
+            (!preferredSourceKey(snapshot) ||
+              versionSourceKey(variant.track) === preferredSourceKey(snapshot))
+        )?.track
       if (relocated) resolved.push(relocated)
     }
     return resolved

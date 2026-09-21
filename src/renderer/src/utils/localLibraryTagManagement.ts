@@ -1,3 +1,4 @@
+export { normalizePortableLibraryPath as tagWritePathKey } from '@renderer/stores/library/musicStoreData.ts'
 import type {
   DuplicateActionPlan,
   DuplicateDetectionResult,
@@ -64,7 +65,7 @@ export function tagPatchFromForm(
   const patch: LocalLibraryTagPatch = {}
   for (const field of ['title', 'artist', 'album', 'albumArtist', 'genre'] as const) {
     const value = values[field]
-    if (typeof value === 'string') patch[field] = value.trim()
+    if (typeof value === 'string' && value.trim()) patch[field] = value.trim()
   }
   for (const field of ['track', 'disc', 'year'] as const) {
     const value = values[field]
@@ -85,14 +86,17 @@ export type DuplicateReviewGroup = {
 }
 
 export function toDuplicateReviewGroups(result: DuplicateDetectionResult): DuplicateReviewGroup[] {
+  const suggestions = new Map(
+    result.suggestions.map((suggestion) => [suggestion.group.key, suggestion])
+  )
   return result.groups.map((group) => ({
     group,
-    suggestion: result.suggestions.find((suggestion) => suggestion.group.key === group.key),
+    suggestion: suggestions.get(group.key),
     label: duplicateGroupLabel(group)
   }))
 }
 
-function duplicateGroupLabel(group: DuplicateGroup): string {
+export function duplicateGroupLabel(group: DuplicateGroup): string {
   const evidence = {
     path: '相同路径',
     contentHash: '相同文件 hash',

@@ -2712,6 +2712,71 @@ test('default favorites match logical tracks across local and provider variants'
   store.clearTracks()
 })
 
+test('manual version split invalidates favorite caches while preserving playlist IDs and snapshots', async () => {
+  const { getMusicVersions, loadMusicVersions, saveMusicVersions } =
+    await import('./musicVersions.ts')
+  const { editMusicVersions } = await import('../utils/musicVersions.ts')
+  const { versionSourceKey } = await import('../utils/trackSourceIdentity.ts')
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  let raw: string | null = null
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => raw,
+      setItem: (_key: string, value: string) => {
+        raw = value
+      }
+    }
+  })
+  const store = setupStore()
+  loadMusicVersions()
+  try {
+    store.playlists.value = []
+    const local = { ...generateMockTracks(1)[0], id: 'local:version', source: 'local' }
+    const remote = { ...local, id: 'ncm:version', filePath: 'ncm:version', source: 'ncm' }
+    await store.addTracks([local])
+    store.createPlaylist('我收藏的音乐')
+    store.addToPlaylist('我收藏的音乐', local.id, local)
+    assert.equal(store.isFavoriteTrack(remote), true)
+    const before = getMusicVersions()
+    saveMusicVersions(
+      editMusicVersions(before, 'tracks', 'split', [versionSourceKey(remote)], 'Live'),
+      before
+    )
+    assert.equal(store.isFavoriteTrack(remote), false)
+    assert.equal(store.isFavoriteTrack(local), true)
+    assert.deepEqual(store.playlists.value[0].trackIds, [local.id])
+    store.addToPlaylist('我收藏的音乐', remote.id, remote)
+    const snapshot = JSON.stringify(store.playlists.value)
+    const separated = getMusicVersions()
+    saveMusicVersions(
+      editMusicVersions(
+        separated,
+        'tracks',
+        'sources',
+        [versionSourceKey(local), versionSourceKey(remote)],
+        'Studio'
+      ),
+      separated
+    )
+    assert.equal(JSON.stringify(store.playlists.value), snapshot)
+    const linked = getMusicVersions()
+    saveMusicVersions(
+      editMusicVersions(linked, 'tracks', 'split', [versionSourceKey(remote)], 'Live'),
+      linked
+    )
+    assert.equal(JSON.stringify(store.playlists.value), snapshot)
+    loadMusicVersions()
+    assert.equal(store.getPlaylistTracks('我收藏的音乐').length, 2)
+  } finally {
+    store.clearTracks()
+    raw = null
+    loadMusicVersions()
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage)
+    else Reflect.deleteProperty(globalThis, 'localStorage')
+  }
+})
+
 test('playlist exact-id reads reuse indexes instead of rebuilding logical maps', async () => {
   const store = setupStore()
   const tracks = generateMockTracks(5000)

@@ -71,7 +71,11 @@ const rows = computed<Row[]>(() => {
         title: track.title,
         description: `${track.artist} · ${track.album} · ${preferred?.sourceName ?? track.source ?? '本地音乐'}`,
         group: '歌曲',
-        disabledReason: preferred?.providerAvailable === false ? '当前音源不可用' : undefined,
+        disabledReason: item.preferenceUnavailable
+          ? '偏好来源未载入，请在歌曲信息的版本管理中选择来源'
+          : preferred?.providerAvailable === false
+            ? '当前音源不可用'
+            : undefined,
         run: () => props.playTrack(track, [track])
       })
     }

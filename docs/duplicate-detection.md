@@ -4,6 +4,14 @@ Duplicate detection is an inspection-only feature. The renderer can request a re
 `window.api.library.detectDuplicates()`, but that API exposes no merge, delete, tag-write, or
 library mutation operation.
 
+The **曲库整理收件箱** entry also exposes this read-only detection through an explicit button.
+It shows numbered evidence groups, candidate paths and confidence, with 50 candidate rows per
+page and an unreadable-hash count. Results returned after a library snapshot replacement are
+discarded. Ignore/review decisions apply only to the candidate issue and evidence fingerprint;
+changed membership invalidates them. Marking an issue reviewed never chooses a keeper, merges,
+or deletes a file. Existing duplicate review also pages flattened members in groups rather than
+rendering every member at once.
+
 Evidence is applied from strongest to weakest:
 
 1. Canonical local path and complete-file SHA-256 are exact evidence. SHA-256 is streamed only
@@ -25,7 +33,8 @@ merge suggestion as requiring human review. This screen deliberately has no dele
 tag-write command.
 
 The same local selection toolbar opens **Edit tags** for one or more authorized local files. A
-batch form only sends fields the user filled in; an unfilled field cannot erase existing tags. The
+batch form previews before/after values before a separate write confirmation and only sends
+nonblank fields; an unfilled or cleared field cannot erase existing tags. The
 editor validates PNG/JPEG type and the 8 MiB client-side size limit before upload, while the main
 process remains authoritative for MIME, dimensions, pixel count, authorization, backups, and
 journal recovery. Results are presented per path as success, failed, rolled back, or not

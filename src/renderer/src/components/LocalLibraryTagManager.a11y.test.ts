@@ -52,8 +52,8 @@ async function compileTagManager(): Promise<string> {
   )
   compiled = compiled.replace(/import\s+type\s+[\s\S]*?\s+from\s+['"][^'"]+['"]\s*/g, '')
   compiled = compiled.replace(
-    /import\s+\{[\s\S]*?\}\s+from\s+['"]\.\.\/utils\/localLibraryTagManagement\.ts['"]\s*/,
-    'const { hasTagPatch, successfulTagPaths, summarizeTagWriteResults, tagPatchFromForm, toDuplicateReviewGroups, validateTagCoverFile } = window.__tagManagerUtils\n'
+    /import\s+\{[\s\S]*?\}\s+from\s+['"]@renderer\/utils\/localLibraryTagManagement\.ts['"]\s*/,
+    'const { hasTagPatch, successfulTagPaths, summarizeTagWriteResults, tagPatchFromForm, tagWritePathKey, toDuplicateReviewGroups, validateTagCoverFile } = window.__tagManagerUtils\n'
   )
   assert.doesNotMatch(compiled, /^import\s/m, 'fixture must run without Node module imports')
   compiled = compiled.replace('export default', 'window.TagManagerComponent =')
@@ -82,6 +82,7 @@ function createFixture(vueRuntime: string, component: string): string {
       successfulTagPaths: () => [],
       summarizeTagWriteResults: () => ({ successCount: 0, failedCount: 0, rolledBackCount: 0, notAttemptedCount: 0 }),
       tagPatchFromForm: () => ({}),
+      tagWritePathKey: value => value,
       toDuplicateReviewGroups: () => [],
       validateTagCoverFile: () => null
     }

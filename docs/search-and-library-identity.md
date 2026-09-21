@@ -39,6 +39,34 @@ available. Otherwise they use the normalized `albumArtist + album` tuple, with `
 legacy fallback for files that do not carry an album-artist tag. Album navigation and Vue keys
 use this group id, so two artists with the same album title remain separate.
 
+## Manual Recording And Release Versions
+
+The library tools menu, track information dialog and album detail toolbar expose song and
+album version management. A version contains explicitly associated sources; a version family
+links distinct recordings or releases without merging their identities. Labels, source grouping,
+explicit splits, families and separate preferred-version/preferred-source choices are stored in
+the versioned renderer record `twilight.music-versions.v1`. Existing libraries need no rewrite.
+Remote source keys use provider and item ID; local keys use normalized path and CUE segment,
+so rescanning with new generated track IDs retains overrides. Moving a file changes its key.
+
+Manual relationships take priority in the shared logical track model, favorite matching,
+playlist resolution, unified search/recent items and playback fallback. Unannotated tracks retain
+legacy candidate matching; this does not create a persisted recording relationship. Different
+IDs from one provider and conflicting live/remaster/acoustic markers remain separate. A local
+candidate cannot bridge two otherwise incompatible provider recordings.
+
+Edits show a preview before saving; withdrawing a relationship restores automatic interpretation.
+Saving checks both the preview revision and the persisted record. Conflicts, corrupt data and
+storage failures are reported without overwriting the existing document. Missing sources remain
+visible for repair. Catalog entries come from the loaded library and saved playlist snapshots;
+presence is not a guarantee of playback availability. Lists and member details render 50 entries
+per page. Album sources reuse existing album identities and retain disc and track order.
+
+Playing a preferred version is explicit. Ordinary playback does not switch to another recording
+because it belongs to the same family. An absent preferred source requires source selection;
+automatic fallback does not silently substitute another source. The player still validates the
+chosen resource through its normal route. Version management never writes tags or merges files.
+
 ## Folder Identity
 
 Folder cards represent configured scan roots. A root owns tracks whose normalized file paths are

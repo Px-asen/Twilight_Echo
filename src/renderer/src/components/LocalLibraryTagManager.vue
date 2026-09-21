@@ -1,24 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import type { DuplicateDetectionResult } from '../../../shared/duplicateDetection.ts'
 import type {
   LocalLibraryTagOperationResult,
   LocalLibraryTagPatch
 } from '../../../shared/localLibraryTags.ts'
-import type { Track } from '../types/music'
+import type { Track } from '@renderer/types/music'
 import {
   hasTagPatch,
   successfulTagPaths,
   summarizeTagWriteResults,
   tagPatchFromForm,
+  tagWritePathKey,
   toDuplicateReviewGroups,
   validateTagCoverFile,
   type DuplicateReviewGroup
-} from '../utils/localLibraryTagManagement.ts'
+} from '@renderer/utils/localLibraryTagManagement.ts'
 
 const props = withDefaults(
   defineProps<{
     tracks: Track[]
+    currentTracks?: Track[]
     initialView?: 'edit' | 'duplicates'
   }>(),
   { initialView: 'edit' }
@@ -36,8 +38,48 @@ let focusRestoreTarget: HTMLElement | null = null
 const busy = ref(false)
 const coverError = ref('')
 const operationError = ref('')
-const operationResults = ref<LocalLibraryTagOperationResult[]>([])
-const duplicateResult = ref<DuplicateDetectionResult | null>(null)
+const operationResults = shallowRef<LocalLibraryTagOperationResult[]>([])
+const duplicateResult = shallowRef<DuplicateDetectionResult | null>(null)
+const previewTracks = shallowRef<Track[]>([])
+const previewPatch = shallowRef<LocalLibraryTagPatch | null>(null)
+const previewPage = ref(0)
+const resultsPage = ref(0)
+const duplicatePage = ref(0)
+const tagFieldLabels: Record<keyof LocalLibraryTagPatch, string> = {
+  title: '标题',
+  artist: '歌手',
+  album: '专辑',
+  albumArtist: '专辑歌手',
+  track: '曲目号',
+  disc: '碟号',
+  year: '年份',
+  genre: '流派',
+  coverData: '封面'
+}
+const previewRows = computed(() =>
+  previewTracks.value.slice(previewPage.value * 50, (previewPage.value + 1) * 50)
+)
+const resultRows = computed(() =>
+  operationResults.value.slice(resultsPage.value * 50, (resultsPage.value + 1) * 50)
+)
+const duplicateRows = computed(() => {
+  const rows: Array<{
+    key: string
+    label: string
+    track: DuplicateReviewGroup['group']['items'][number]
+  }> = []
+  for (const [groupIndex, review] of reviewGroups.value.entries())
+    for (const track of review.group.items)
+      rows.push({
+        key: `${review.group.kind}:${review.group.key}:${track.id}`,
+        label: `第 ${groupIndex + 1} 组 · ${review.label}`,
+        track
+      })
+  return rows
+})
+const visibleDuplicates = computed(() =>
+  duplicateRows.value.slice(duplicatePage.value * 50, (duplicatePage.value + 1) * 50)
+)
 const duplicateError = ref('')
 const form = ref({
   title: undefined as string | undefined,
@@ -61,6 +103,71 @@ const hasPatch = computed(() => hasTagPatch(toPatch()))
 const canWrite = computed(
   () => !busy.value && selectedLocalTracks.value.length > 0 && hasPatch.value && !coverError.value
 )
+watch(
+  form,
+  () => {
+    previewPatch.value = null
+  },
+  { deep: true }
+)
+watch(
+  () => props.tracks,
+  () => {
+    previewPatch.value = null
+  }
+)
+watch(
+  () => props.currentTracks,
+  () => {
+    if (duplicateResult.value) {
+      duplicateResult.value = null
+      duplicateError.value = '曲库已变化，请重新检查。'
+      duplicatePage.value = 0
+    }
+  }
+)
+
+function currentTargets(targets: Track[]): Track[] {
+  if (!props.currentTracks) return targets
+  const current = new Map(props.currentTracks.map((track) => [track.id, track]))
+  return targets.filter((track) => current.get(track.id) === track)
+}
+
+function preparePreview(failedOnly = false): void {
+  if (!canWrite.value) return
+  const failed = new Set(
+    operationResults.value
+      .filter((item) => item.status !== 'success')
+      .map((item) => tagWritePathKey(item.filePath))
+  )
+  const targets = failedOnly
+    ? selectedLocalTracks.value.filter((track) => failed.has(tagWritePathKey(track.filePath)))
+    : selectedLocalTracks.value
+  if (currentTargets(targets).length !== targets.length) {
+    operationError.value = '曲库数据已变化，请关闭编辑器并重新选择歌曲。'
+    return
+  }
+  if (targets.some((track) => track.subTrack || track.cueRange)) {
+    operationError.value = 'CUE 或容器子曲目共享源文件，请编辑原文件标签后重新扫描。'
+    return
+  }
+  const paths = new Map(targets.map((track) => [tagWritePathKey(track.filePath), track]))
+  if (paths.size > 1000) {
+    operationError.value = '每次最多写入 1000 个文件，请缩小选择范围。'
+    return
+  }
+  operationError.value = ''
+  previewTracks.value = [...paths.values()]
+  previewPatch.value = toPatch()
+  previewPage.value = 0
+}
+
+function beforeValue(track: Track, key: string): string {
+  if (key === 'coverData') return track.cover || track.coverSource ? '已有封面' : '无封面'
+  if (key === 'track') return String(track.trackNumber ?? '未记录')
+  if (key === 'disc') return String(track.discNumber ?? '未记录')
+  return String((track as unknown as Record<string, unknown>)[key] ?? '未记录')
+}
 
 watch(
   () => props.tracks,
@@ -121,22 +228,38 @@ async function onCoverInput(event: Event): Promise<void> {
 }
 
 async function submitTagWrite(): Promise<void> {
-  const patch = toPatch()
-  if (!hasTagPatch(patch) || selectedLocalTracks.value.length === 0 || busy.value) return
+  const patch = previewPatch.value
+  const targets = previewTracks.value
+  if (!patch || !hasTagPatch(patch) || targets.length === 0 || busy.value) return
+  if (currentTargets(targets).length !== targets.length) {
+    previewPatch.value = null
+    operationError.value = '曲库数据已变化，请重新选择并预览。'
+    return
+  }
   busy.value = true
   operationError.value = ''
   operationResults.value = []
   try {
     const result = await window.api.library.writeTags({
-      items: selectedLocalTracks.value.map((track) => ({ filePath: track.filePath, ...patch }))
+      items: targets.map((track) => ({ filePath: track.filePath, ...patch }))
     })
     operationResults.value = result.items
-    const successful = successfulTagPaths(result.items)
+    resultsPage.value = 0
+    const currentPaths = new Set(
+      currentTargets(targets).map((track) => tagWritePathKey(track.filePath))
+    )
+    const successful = successfulTagPaths(result.items).filter((path) =>
+      currentPaths.has(tagWritePathKey(path))
+    )
     if (successful.length > 0) emit('applied', successful, patch)
+    if (currentPaths.size !== targets.length)
+      operationError.value =
+        '文件写入已返回；曲库期间发生变化，请后台重扫刷新，未覆盖新的曲库标签。'
   } catch (error) {
     operationError.value = error instanceof Error ? error.message : '标签写入失败'
   } finally {
     busy.value = false
+    previewPatch.value = null
   }
 }
 
@@ -158,8 +281,16 @@ async function loadDuplicates(): Promise<void> {
   if (busy.value) return
   busy.value = true
   duplicateError.value = ''
+  const snapshot = props.currentTracks ?? props.tracks
   try {
-    duplicateResult.value = await window.api.library.detectDuplicates()
+    const result = await window.api.library.detectDuplicates()
+    if (snapshot !== (props.currentTracks ?? props.tracks)) {
+      duplicateResult.value = null
+      duplicateError.value = '曲库已变化，请重新检查。'
+    } else {
+      duplicateResult.value = result
+      duplicatePage.value = 0
+    }
   } catch (error) {
     duplicateError.value = error instanceof Error ? error.message : '重复歌曲检查失败'
   } finally {
@@ -188,6 +319,7 @@ function restoreTriggerFocus(): void {
 }
 
 function requestClose(): void {
+  if (busy.value) return
   emit('close')
   void nextTick(restoreTriggerFocus)
 }
@@ -229,6 +361,7 @@ onMounted(() => {
   const activeElement = document.activeElement
   focusRestoreTarget = activeElement instanceof HTMLElement ? activeElement : null
   void nextTick(() => closeButtonRef.value?.focus())
+  if (activeView.value === 'duplicates') void loadDuplicates()
 })
 </script>
 
@@ -252,6 +385,7 @@ onMounted(() => {
         class="tag-icon-button"
         aria-label="关闭标签管理"
         title="关闭"
+        :disabled="busy"
         @click="requestClose"
       >
         <i class="pi pi-times"></i>
@@ -300,10 +434,10 @@ onMounted(() => {
       class="tag-editor"
       role="tabpanel"
       aria-labelledby="tag-manager-edit-tab"
-      @submit.prevent="submitTagWrite"
+      @submit.prevent="preparePreview()"
     >
       <p class="tag-help">批量写入只会覆盖填写的字段。每次写入都先创建可恢复备份。</p>
-      <div class="tag-form-grid">
+      <fieldset class="tag-form-grid" :disabled="busy">
         <label>标题<input v-model="form.title" maxlength="1024" /></label>
         <label>歌手<input v-model="form.artist" maxlength="1024" /></label>
         <label>专辑<input v-model="form.album" maxlength="1024" /></label>
@@ -317,7 +451,7 @@ onMounted(() => {
           <input accept="image/png,image/jpeg" type="file" @change="onCoverInput" />
           <span v-if="form.coverName">{{ form.coverName }}</span>
         </label>
-      </div>
+      </fieldset>
       <p v-if="coverError" class="tag-field-error" role="alert">{{ coverError }}</p>
       <div class="tag-actions">
         <button
@@ -329,9 +463,41 @@ onMounted(() => {
           从恢复日志还原
         </button>
         <button type="submit" class="tag-primary-button" :disabled="!canWrite" :aria-busy="busy">
-          {{ busy ? '正在写入' : `写入 ${selectedLocalTracks.length} 首` }}
+          {{ busy ? '正在写入' : `预览 ${selectedLocalTracks.length} 首的修改` }}
+        </button>
+        <button
+          v-if="summary.failedCount || summary.rolledBackCount || summary.notAttemptedCount"
+          type="button"
+          :disabled="busy"
+          @click="preparePreview(true)"
+        >
+          预览失败项并重试
         </button>
       </div>
+      <section v-if="previewPatch" class="tag-preview" aria-label="标签修改预览">
+        <p>请核对前后值。未填写的字段保持原值，封面写入后请后台重扫刷新。</p>
+        <article v-for="track in previewRows" :key="track.filePath">
+          <strong>{{ track.filePath }}</strong>
+          <p v-for="(value, field) in previewPatch" :key="field">
+            {{ tagFieldLabels[field] }}：{{ beforeValue(track, field) }} →
+            {{ field === 'coverData' ? form.coverName : value }}
+          </p>
+        </article>
+        <button type="button" :disabled="previewPage === 0 || busy" @click="previewPage--">
+          上一页预览
+        </button>
+        <span>第 {{ previewPage + 1 }} 页 · {{ previewTracks.length }} 个文件</span>
+        <button
+          type="button"
+          :disabled="(previewPage + 1) * 50 >= previewTracks.length || busy"
+          @click="previewPage++"
+        >
+          下一页预览
+        </button>
+        <button type="button" class="tag-primary-button" :disabled="busy" @click="submitTagWrite">
+          确认写入 {{ previewTracks.length }} 个文件
+        </button>
+      </section>
     </form>
 
     <section
@@ -353,19 +519,21 @@ onMounted(() => {
         未发现需要复核的重复歌曲。
       </p>
       <div v-else class="duplicate-groups">
-        <article v-for="review in reviewGroups" :key="review.group.key" class="duplicate-group">
+        <article v-for="review in visibleDuplicates" :key="review.key" class="duplicate-group">
           <header>
             <strong>{{ review.label }}</strong>
-            <span>{{ review.group.items.length }} 个候选</span>
           </header>
-          <ul>
-            <li v-for="track in review.group.items" :key="track.id">
-              <span>{{ track.title || track.filePath }}</span>
-              <small :title="track.filePath">{{ track.artist }} · {{ track.filePath }}</small>
-            </li>
-          </ul>
-          <p v-if="review.suggestion" class="duplicate-suggestion">需要人工确认的只读合并建议</p>
+          <p>{{ review.track.title || review.track.filePath }}</p>
+          <small>{{ review.track.artist }} · {{ review.track.filePath }}</small>
         </article>
+        <button :disabled="duplicatePage === 0" @click="duplicatePage--">上一页</button>
+        <span>{{ duplicateRows.length }} 个候选 · 第 {{ duplicatePage + 1 }} 页</span>
+        <button
+          :disabled="(duplicatePage + 1) * 50 >= duplicateRows.length"
+          @click="duplicatePage++"
+        >
+          下一页
+        </button>
       </div>
     </section>
 
@@ -373,7 +541,7 @@ onMounted(() => {
       <summary>查看逐项结果</summary>
       <ul>
         <li
-          v-for="result in operationResults"
+          v-for="result in resultRows"
           :key="`${result.filePath}:${result.status}`"
           :class="`tag-result-${result.status}`"
         >
@@ -382,6 +550,10 @@ onMounted(() => {
           ><small v-if="result.message">{{ result.message }}</small>
         </li>
       </ul>
+      <button :disabled="resultsPage === 0" @click="resultsPage--">上一页结果</button>
+      <button :disabled="(resultsPage + 1) * 50 >= operationResults.length" @click="resultsPage++">
+        下一页结果
+      </button>
     </details>
   </section>
 </template>
@@ -458,9 +630,15 @@ onMounted(() => {
   gap: 12px;
 }
 .tag-form-grid {
+  margin: 0;
+  padding: 0;
+  border: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+.tag-preview {
+  overflow-wrap: anywhere;
 }
 .tag-form-grid label {
   display: grid;

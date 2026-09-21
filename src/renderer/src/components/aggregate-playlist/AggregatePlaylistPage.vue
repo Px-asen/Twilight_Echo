@@ -99,7 +99,10 @@ const searchedRows = computed<AggregateRow[]>(() => {
 })
 
 /** 虚拟滚动跑在"每行当前选定音源"上，行数据再按 trackId 映射回来。 */
-const displayTracks = computed<Track[]>(() => resolveAggregateQueue(searchedRows.value))
+const displayTracks = computed<Track[]>(() =>
+  searchedRows.value.map((row) => row.selectedVariant.track)
+)
+const playableTracks = computed<Track[]>(() => resolveAggregateQueue(searchedRows.value))
 const rowByTrackId = computed(() => {
   const map = new Map<string, AggregateRow>()
   for (const row of searchedRows.value) map.set(row.selectedVariant.track.id, row)
@@ -283,7 +286,11 @@ onUnmounted(() => {
 })
 
 function playRow(track: Track): void {
-  playTrack(track, displayTracks.value)
+  if (rowFor(track)?.preferenceUnavailable) {
+    actionError.value = '偏好来源未载入，请通过来源菜单明确选择，或在歌曲信息中修改偏好'
+    return
+  }
+  playTrack(track, playableTracks.value)
 }
 
 function onRowClick(track: Track): void {
@@ -525,6 +532,9 @@ function rowNumber(index: number): number {
               <td class="col-info">
                 <span class="aggregate-row-title">{{ track.title }}</span>
                 <span class="aggregate-row-artist">{{ track.artist }}</span>
+                <span v-if="rowFor(track)?.preferenceUnavailable" class="aggregate-row-artist"
+                  >偏好来源未载入，请选择音源</span
+                >
               </td>
               <td class="col-source">
                 <template v-if="rowFor(track)">
