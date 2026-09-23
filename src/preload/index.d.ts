@@ -685,6 +685,7 @@ interface AudioEngineAPI {
   ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
   getDspSceneState: () => Promise<DspSceneState>
+  audition: import('../shared/dspAudition.ts').DspAuditionApi
   setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null) => Promise<DspSceneState>
   setOutputStage: (partial: Partial<DspOutputStageConfig>) => Promise<DspSceneState>
   setStereoImage: (partial: Partial<DspStereoImageConfig>) => Promise<DspSceneState>

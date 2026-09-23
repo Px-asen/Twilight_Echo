@@ -79,7 +79,7 @@ function update(): void {
     '}\n' +
     props.css
 }
-watch(() => [props.css, props.tone], update)
+watch(() => [props.css, props.tone, props.project], update)
 onBeforeUnmount(() => {
   observer?.disconnect()
   cleanupDecorations?.()

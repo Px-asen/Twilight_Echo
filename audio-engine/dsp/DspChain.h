@@ -30,6 +30,7 @@ class DspChain {
   void reset();
   DspStatus status();
   DspConfig config() const;
+  bool auditionTransition() const { return auditionTransition_; }
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
   ConvolverInfo convolverInfo() const;
@@ -93,6 +94,7 @@ class DspChain {
   std::vector<IAudioProcessor*> activeProcessors_;
   std::vector<GraphNodeRuntime> graphNodes_;
   bool graphConfigured_ = false;
+  bool auditionTransition_ = false;
   uint64_t graphRevision_ = 0;
   std::string graphSceneId_;
 };

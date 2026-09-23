@@ -7,6 +7,19 @@ import { translate } from '../../../shared/i18n/translate.ts'
 import { ZH_CN_MESSAGES } from '../../../shared/i18n/messages/zh-CN.ts'
 import { EN_US_MESSAGES } from '../../../shared/i18n/messages/en-US.ts'
 
+test('each playback load clears stale pending positions before asynchronous work starts', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const load = extractInternalFunctionBody(source, 'loadAndPlay')
+  const clear = load.indexOf('playbackSessionController.clearPendingPlaybackPosition()')
+  assert.ok(clear >= 0 && clear < load.indexOf('await '))
+  assert.match(load, /playbackSessionController\.consumePendingPlaybackPosition\(/)
+  const toggle = extractInternalFunctionBody(source, 'togglePlayState')
+  assert.match(
+    toggle,
+    /loadAndPlay\(track, restoredPlaybackPending \? restoredPlaybackPosition : 0\)/
+  )
+})
+
 function extractFunctionBody(source: string, functionName: string): string {
   const signatureIndex = source.indexOf(`export function ${functionName}`)
   assert.notEqual(signatureIndex, -1, `${functionName} export should exist`)
@@ -910,7 +923,14 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(clockControllerSource, /playbackSessionClock\.estimate\(\)/)
   assert.match(playbackSessionClockSource, /maxPredictionGapMs/)
   assert.match(playbackSessionClockSource, /needsResync: true/)
-  assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)
+  const sessionControllerSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    sessionControllerSource,
+    /options\.getRestoredPlaybackPending\(\) && Number\.isFinite\(position\)/
+  )
   // A seek defers to the restore-pending slot only while a load is actually in
   // flight; otherwise it must reach the real dispatch below instead of being
   // dropped on a stale loadedTrackId.

@@ -16,6 +16,7 @@ import type {
 import DspGraphCanvas from './dsp-rack/DspGraphCanvas.vue'
 import DspNodeEditor from './dsp-rack/DspNodeEditor.vue'
 import DspScenePane from './dsp-rack/DspScenePane.vue'
+import DspAuditionPanel from '@renderer/components/dsp-rack/DspAuditionPanel.vue'
 import {
   nodeCatalog,
   normalizeNodeEditorParams,
@@ -454,6 +455,10 @@ onBeforeUnmount(() => {
       {{ message }}
     </p>
 
+    <DspAuditionPanel
+      :a="snapshotA?.find((scene) => scene.id === selectedScene?.id)?.graph ?? null"
+      :b="selectedScene?.graph ?? null"
+    />
     <fieldset class="rack-layout" :disabled="busy" :inert="busy" :aria-busy="busy">
       <DspScenePane
         :scenes="scenes"

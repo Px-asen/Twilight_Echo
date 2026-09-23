@@ -546,9 +546,22 @@ export class DspOrchestrator {
     }
   }
 
-  async applyNativeDspGraph(context: string): Promise<DspGraphStatus> {
+  async applyNativeDspGraph(
+    context: string,
+    auditionGraph?: DspGraphConfig
+  ): Promise<DspGraphStatus> {
     const revision = ++this.dspGraphRevision
     const payload = this.dspStatePayload(revision)
+    if (auditionGraph) {
+      payload.graph = { ...auditionGraph, ...{ auditionTransition: true } }
+      payload.processing = {
+        ...payload.processing,
+        dspEnabled: true,
+        directMode: false,
+        eqEnabled: true,
+        volumeNormalization: 'off'
+      }
+    }
     this.dspGraphApplyState = 'pending'
     this.dspGraphApplyError = ''
     try {

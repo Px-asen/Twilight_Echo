@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   THEME_MODE_DEFINITIONS,
   type ThemeShellLayout,
@@ -54,6 +55,15 @@ const layouts: { id: string; name: string; layout: ThemeShellLayout }[] = [
 ]
 const props = defineProps<{ project: WorkshopProject }>()
 const emit = defineEmits<{ change: [project: WorkshopProject] }>()
+const selectedLayout = computed(() =>
+  props.project.layout === null
+    ? 'default'
+    : props.project.layout === undefined
+      ? ''
+      : (layouts.find(
+          (preset) => JSON.stringify(preset.layout) === JSON.stringify(props.project.layout)
+        )?.id ?? 'custom')
+)
 function read(id: string): string {
   const base = props.project.base.structured
   const modes = resolveThemeModes(
@@ -83,8 +93,12 @@ function layout(id: string): void {
 </script>
 <template>
   <label
-    >窗口布局<select @change="layout(($event.target as HTMLSelectElement).value)">
+    >窗口布局<select
+      :value="selectedLayout"
+      @change="layout(($event.target as HTMLSelectElement).value)"
+    >
       <option value="">继承来源</option>
+      <option v-if="selectedLayout === 'custom'" value="custom" disabled>自定义布局</option>
       <option value="default">默认布局</option>
       <option v-for="preset in layouts" :key="preset.id" :value="preset.id">
         {{ preset.name }}

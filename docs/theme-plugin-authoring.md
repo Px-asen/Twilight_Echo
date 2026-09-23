@@ -26,6 +26,13 @@ or declarative `.tep` packages. Source files are never rewritten. Local image
 references are embedded in the snapshot; external URLs and stylesheet imports
 currently require author-side consolidation before snapshotting.
 
+The `.tep` writer uses the `plugin-theme` archive format, restricted to `plugin.json`,
+`theme.css`, and `ATTRIBUTION.json`; legacy theme archive validation remains unchanged.
+The workshop round-trip test writes and extracts a real archive, validates the exported
+contribution, and reimports the editable document after its source becomes unavailable.
+Set `TWILIGHT_WORKSHOP_SOURCE` to an external theme plugin directory when running
+`pnpm run test:theme-workshop` to exercise that theme without copying it into this repository.
+
 The settings Appearance section places **Theme Plugin Workshop** immediately below
 **Theme Creative Studio**. Its sidebar shortcut is hidden. The button becomes available
 when the bundled tool plugin is enabled; disabling still flushes the current draft.
@@ -43,6 +50,8 @@ Whole-window trial restores managed theme attributes as well as CSS on exit. Esc
 host-owned top-layer recovery button exit trial. The default iframe has no script permission
 and receives no preload bridge; host-rendered preview components use fixture tracks and inert
 controls. The settings preview is a controls sample rather than an interactive settings page.
+Mode-only edits refresh preview attributes even when CSS is unchanged. Base-update previews
+use the candidate's structured layout and modes; cancelling leaves the stored base intact.
 
 Editor metadata does not grant script execution or arbitrary component access.
 

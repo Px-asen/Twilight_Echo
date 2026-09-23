@@ -6,6 +6,7 @@ import { isLoudnessAnalysisResult, type LoudnessAnalysisResult } from './audio/l
 import type { LoudnessAnalysisManager } from './audio/loudnessAnalysisManager.ts'
 import {
   graphHasEnabledProcessing,
+  type DspGraphConfig,
   type DspGraphStatus,
   type DspOutputStageConfig,
   type DspScene,
@@ -911,6 +912,46 @@ export class AudioEngineManager extends EventEmitter {
 
   getDspSceneState(): DspSceneState {
     return this.dsp.getDspSceneState()
+  }
+
+  async getAuditionContext() {
+    const info = await this.getPlaybackInfo()
+    const status = await this.getDspGraphStatus()
+    return {
+      info,
+      revision: this.dsp.dspGraphRevision,
+      applied: status.applyState === 'applied' && status.revision === this.dsp.dspGraphRevision,
+      graph: this.getDspSceneState().effectiveGraph ?? this.getDspSceneState().graph,
+      key: JSON.stringify([
+        info.source,
+        info.queueIndex,
+        info.outputBackend,
+        info.outputDevice,
+        this.outputConfig,
+        info.recoveryCount,
+        info.playbackRate,
+        info.volume,
+        info.state === 'stopped'
+      ])
+    }
+  }
+
+  async applyAuditionGraph(
+    revision: number,
+    key: string | null,
+    graph?: DspGraphConfig
+  ): Promise<number> {
+    return this.outputRouter.serializeConfiguration(async () => {
+      const context = await this.getAuditionContext()
+      if (context.revision !== revision || (key !== null && context.key !== key))
+        throw new Error('音源、设备或 DSP 配置已改变，试听已失效')
+      const status = await this.dsp.applyNativeDspGraph('等响度试听', graph)
+      if (status.applyState !== 'applied' || status.appliedRevision !== status.requestedRevision) {
+        await this.dsp.applyNativeDspGraph('退出未确认的试听')
+        throw new Error(status.applyError || '试听 DSP 未收到应用确认')
+      }
+      return status.revision
+    })
   }
 
   async setDspScenes(

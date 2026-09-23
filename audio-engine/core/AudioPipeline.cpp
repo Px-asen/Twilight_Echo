@@ -4752,6 +4752,8 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
       if (read > 0) {
         DspChain* activeDsp = renderActiveDspGraph_.load(std::memory_order_acquire);
         if (activeDsp) activeDsp->process(segment, read);
+        auditionTransition_.process(segment, read, decodeFormat.channelCount,
+            decodeFormat.sampleRate, activeDsp, activeDsp && activeDsp->auditionTransition());
         const double volume = loadAtomicDouble(appliedVolumeBits_, std::memory_order_acquire);
         if (std::abs(volume - 1.0) > kUnityVolumeEpsilon) {
           for (size_t i = 0; i < read * static_cast<size_t>(channels); ++i) {
@@ -5010,6 +5012,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       const size_t read = active->readFloat(readBuffer, want);
       if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
         if (activeDspChain) activeDspChain->process(readBuffer, read);
+        auditionTransition_.process(readBuffer, read, decodeFormat.channelCount,
+            decodeFormat.sampleRate, activeDspChain, activeDspChain && activeDspChain->auditionTransition());
         if (routingRequired) {
           channelRouter_.route(
               readBuffer,

@@ -411,6 +411,7 @@ void DspChain::configureFromJson(const std::string& json) {
 bool DspChain::configureGraphJson(const std::string& json, std::string* error) {
   const std::string graphJson = json_utils::fieldObject(json, "graph");
   const std::string root = graphJson.empty() ? json : graphJson;
+  auditionTransition_ = json_utils::fieldBool(root, "auditionTransition").value_or(false);
   const std::string nodeArray = extractArrayField(root, "nodes");
   const uint64_t revision = static_cast<uint64_t>(std::max(0.0, extractNumberField(json, "revision").value_or(0.0)));
   const std::string sceneId = extractStringField(json, "sceneId").value_or("");

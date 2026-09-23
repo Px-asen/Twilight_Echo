@@ -209,6 +209,21 @@ export function createPlaybackSessionController(options: PlaybackSessionControll
     }
   }
 
+  function clearPendingPlaybackPosition(): void {
+    options.setRestoredPlaybackPending(false)
+    options.setRestoredPlaybackPosition(0)
+  }
+
+  function consumePendingPlaybackPosition(track: Track, startTime: number): number {
+    const position = options.getRestoredPlaybackPosition()
+    const resumeAt =
+      options.getRestoredPlaybackPending() && Number.isFinite(position)
+        ? clampCuePlaybackPosition(track, position)
+        : startTime
+    clearPendingPlaybackPosition()
+    return resumeAt
+  }
+
   function removeUnavailableTracks(trackIds: string[], filePaths: string[]): void {
     for (const trackId of trackIds) options.deleteAutomaticLyricsBaseline(trackId)
     const nextState = pruneUnavailableLocalTracks(
@@ -259,6 +274,8 @@ export function createPlaybackSessionController(options: PlaybackSessionControll
     restorePlaybackSession,
     prepareQueueSelection,
     createPlaybackSession,
+    clearPendingPlaybackPosition,
+    consumePendingPlaybackPosition,
     removeUnavailableTracks
   }
 }

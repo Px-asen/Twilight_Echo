@@ -2885,6 +2885,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   playbackHistoryController.clearResumeOfferForOtherTrack(track)
 
   const normalizedStartTime = clampCuePlaybackPosition(track, startTime)
+  playbackSessionController.clearPendingPlaybackPosition()
   const loadToken = ++activeLoadToken
   // New load is always an intentional play — drop pause-toggle grace so a
   // prior pause cannot keep the UI stuck while this track starts.
@@ -3104,12 +3105,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     autoAdvanceInFlight = false
     loadedTrackId = track.id
     lastActiveTrack = track
-    const resumeAt =
-      restoredPlaybackPending && Number.isFinite(restoredPlaybackPosition)
-        ? clampCuePlaybackPosition(track, restoredPlaybackPosition)
-        : normalizedStartTime
-    restoredPlaybackPending = false
-    restoredPlaybackPosition = 0
+    const resumeAt = playbackSessionController.consumePendingPlaybackPosition(
+      track,
+      normalizedStartTime
+    )
     beginPlaybackPositionTransition(resumeAt, { keepRendererClockAlive: true })
     if (resumeAt > 0.05 && Math.abs(resumeAt - normalizedStartTime) > 0.05) {
       if (nativePlaybackActive) {

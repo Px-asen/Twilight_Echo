@@ -1,7 +1,5 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { app } from 'electron'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
 import { resolveAuthorizedAudioFile } from '../security/localPaths.ts'
@@ -56,14 +54,9 @@ const rendererRequests = new Map<
 >()
 const RENDERER_REQUEST_TIMEOUT_MS = 5_000
 
-function getStaticRoot(): string {
-  return join(app.getAppPath(), 'resources', 'remote')
-}
-
 function ensureServer(): RemoteHttpServer {
   if (!server) {
     server = new RemoteHttpServer({
-      staticRoot: getStaticRoot(),
       onCommand: async (command) => {
         await dispatchRemoteCommand(command)
       },

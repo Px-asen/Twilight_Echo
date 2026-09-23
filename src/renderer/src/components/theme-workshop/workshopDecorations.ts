@@ -38,8 +38,8 @@ export function mountWorkshopDecorations(doc: Document): () => void {
     queueMicrotask(update)
   })
   const scroll = (event: Event): void => {
-    const target = event.target
-    if (!(target instanceof Element)) return
+    const target = event.target as Element | null
+    if (target?.nodeType !== 1) return
     let host: Element | null = target
     while (host) {
       if (host.matches(selector))

@@ -65,7 +65,9 @@ function rule(
     .join(';')}}`
 }
 
-export function compileWorkshopTheme(project: WorkshopProject): WorkshopCompiledTheme {
+function workshopStructuredTheme(
+  project: WorkshopProject
+): Extract<StructuredPluginTheme, { schemaVersion: 3 }> {
   const source = project.base.structured
   const structured: StructuredPluginTheme = {
     ...source,
@@ -87,6 +89,11 @@ export function compileWorkshopTheme(project: WorkshopProject): WorkshopCompiled
         ? undefined
         : (project.layout ?? (source?.schemaVersion === 3 ? source.layout : undefined))
   }
+  return structured
+}
+
+export function compileWorkshopTheme(project: WorkshopProject): WorkshopCompiledTheme {
+  const structured = workshopStructuredTheme(project)
   const blocks = [project.base.css]
   for (const tone of ['pureWhite', 'dark'] as const) {
     blocks.push(
@@ -147,12 +154,10 @@ export function compileWorkshopProject(project: WorkshopProject): string {
 }
 
 export function workshopRuntimeAttributes(project: WorkshopProject): Record<string, string> {
-  const theme = compileWorkshopTheme(project).structured
+  const theme = workshopStructuredTheme(project)
   return {
-    ...themeModesToDataAttributes(
-      resolveThemeModes(theme && theme.schemaVersion !== 1 ? theme.modes : undefined)
-    ),
-    ...themeShellLayoutToDataAttributes(theme?.schemaVersion === 3 ? theme.layout : undefined)
+    ...themeModesToDataAttributes(resolveThemeModes(theme.modes)),
+    ...themeShellLayoutToDataAttributes(theme.layout)
   }
 }
 

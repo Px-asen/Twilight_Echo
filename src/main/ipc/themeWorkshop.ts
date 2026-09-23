@@ -325,7 +325,7 @@ export function setupThemeWorkshopIpc(): void {
         const work = await mkdtemp(join(tmpdir(), 'te-workshop-'))
         try {
           await packageProject(project, work)
-          await writeStoredZip(work, result.filePath)
+          await writeStoredZip(work, result.filePath, 'plugin-theme')
         } finally {
           await rm(work, { recursive: true, force: true })
         }

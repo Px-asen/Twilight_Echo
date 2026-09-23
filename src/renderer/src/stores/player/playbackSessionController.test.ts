@@ -105,7 +105,12 @@ function fixture() {
     isPlaying,
     isLoading,
     resets: () => resets,
-    pending: () => pending
+    pending: () => pending,
+    pendingPosition: () => restoredPosition,
+    seekDuringLoad: (position: number) => {
+      pending = true
+      restoredPosition = position
+    }
   }
 }
 
@@ -165,4 +170,40 @@ test('automatic restore strips stale provider URLs from both the queue and selec
   assert.equal(state.queue.value[0].streamUrl, null)
   assert.equal(state.currentTrack.value?.streamUrl, null)
   assert.equal(state.currentTrack.value?.queueEntryId, 'entry')
+})
+
+test('playing another song after a paused session restore does not inherit its position', () => {
+  for (const startTime of [0, 12]) {
+    const state = fixture()
+    const saved = makeTrack('saved')
+    const next = makeTrack('next')
+    state.restore(saved, [saved, next], 0)
+    state.currentTrack.value = next
+    state.controller.clearPendingPlaybackPosition()
+    assert.equal(state.controller.consumePendingPlaybackPosition(next, startTime), startTime)
+    assert.equal(state.pending(), false)
+    assert.equal(state.pendingPosition(), 0)
+  }
+})
+
+test('resuming the restored song keeps its explicitly requested starting position', () => {
+  const state = fixture()
+  const saved = makeTrack('saved')
+  state.restore(saved, [saved], 0)
+  const startTime = state.pendingPosition()
+  state.controller.clearPendingPlaybackPosition()
+  assert.equal(state.controller.consumePendingPlaybackPosition(saved, startTime), 25)
+})
+
+test('seeking during a load overrides its start but is discarded when another load begins', () => {
+  const state = fixture()
+  const track = makeTrack('saved')
+  state.restore(track, [track], 0)
+  state.controller.clearPendingPlaybackPosition()
+  state.seekDuringLoad(40)
+  assert.equal(state.controller.consumePendingPlaybackPosition(track, 25), 40)
+  assert.equal(state.controller.consumePendingPlaybackPosition(track, 0), 0)
+  state.seekDuringLoad(60)
+  state.controller.clearPendingPlaybackPosition()
+  assert.equal(state.controller.consumePendingPlaybackPosition(makeTrack('next'), 0), 0)
 })

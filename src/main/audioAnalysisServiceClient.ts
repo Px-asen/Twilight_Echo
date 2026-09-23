@@ -242,6 +242,22 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     return value
   }
 
+  async analyzeDspAudition(
+    source: string,
+    optionsJson: string
+  ): Promise<import('../shared/dspAudition.ts').DspAuditionMeasurement> {
+    const value = parseAnalysisJson(
+      await this.request('dsp-audition', source, optionsJson, { priority: 10 }),
+      'processed loudness'
+    )
+    if (
+      !isLoudnessAnalysisResult(value) ||
+      (value as { processingVersion?: number }).processingVersion !== 1
+    )
+      throw new Error(analysisErrorMessage(value, '处理后测量不可用，请更新原生引擎'))
+    return value as LoudnessAnalysisResult & { processingVersion: number }
+  }
+
   async analyzeBpm(
     source: string,
     optionsJson: string,

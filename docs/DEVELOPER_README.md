@@ -105,6 +105,8 @@ renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要
   `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
 - `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
 
+播放会话恢复后默认暂停；继续播放原曲时使用保存的进度，主动选择其他歌曲时从头播放（指定起点的播放操作使用指定位置）。每次加载开始清除旧的待恢复进度，加载期间手动调整的进度只应用到本次加载，不能带入下一首。
+
 统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词、设备档案，以及队列撤销、清空、保存/管理会话和实际播放顺序；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。
 
 队列操作由 `stores/player/queueCommandController.ts` 维护稳定队列项 ID、revision 和有界撤销栈，`playbackSelectionController.ts` 保证重复曲目按具体队列项选择。命名会话的 CRUD、来源重解析与恢复分别由 `queueWorkspaceStore.ts`、`queueSessionSources.ts` / `queueSessionRestore.ts` 和 `queueSessionController.ts` 负责；恢复默认暂停，单独提供“恢复并播放”。`playbackHistoryController.ts` 仅在实际播放成功后记录顺序，最近 200 次开始与累计统计分开持久化。共享 DTO `src/shared/queueWorkspace.ts` 经 preload data API 和 `main/ipc/queueWorkspaceIpc.ts` 写入版本化 `queue-workspace.json`；最多 20 个会话、每个 20,000 项、合计 40,000 项和 32 MiB。详细行为与失败处理见 [队列虚拟化](./playback-queue-virtualization.md) 和 [歌单生命周期](./playlist-lifecycle.md#named-queue-sessions)。
@@ -379,7 +381,7 @@ renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层�
 
 ## 局域网远程控制
 
-远控页面资源由 `electron-builder.yml` 的 `extraResources` 复制到安装目录的 `resources/remote`；打包运行时从 `process.resourcesPath/remote` 提供页面，开发时从仓库 `resources/remote` 读取。
+远控页面资源由 `electron-builder.yml` 的 `extraResources` 复制到安装目录的 `resources/remote`；打包运行时从 `process.resourcesPath/remote` 提供页面，开发时从仓库 `resources/remote` 读取。静态资源路径由 `RemoteHttpServer` 统一选择，创建服务时不要覆盖默认路径。
 
 远程控制默认关闭。完整控制面由 `src/main/remote/httpServer.ts` 提供，PIN 配对后才会暴露带 Bearer token 的状态、SSE、浏览与命令接口；投送模式的 `mediaOnly` bind 仍只服务 capability-token 媒体，绝不开放远控 UI/API。
 

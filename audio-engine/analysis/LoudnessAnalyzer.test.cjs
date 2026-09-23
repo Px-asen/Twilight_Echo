@@ -5,7 +5,10 @@ const { tmpdir } = require('node:os')
 const { join, resolve, sep } = require('node:path')
 const test = require('node:test')
 
-const native = require('../../resources/audio-engine/twilight_audio_node.node')
+const native = require(
+  process.env.TWILIGHT_LOUDNESS_NATIVE_BINDING ||
+    '../../resources/audio-engine/twilight_audio_node.node'
+)
 const sampleRate = 48000
 
 function wav(segments, frequency = 1000, phase = 0) {
@@ -69,6 +72,50 @@ function near(actual, expected, tolerance, label) {
     `${label}: ${actual}, expected ${expected} ± ${tolerance}`
   )
 }
+
+test('processed EQ loudness matches gain references and compensated remeasurement', (t) => {
+  const file = fixtures(t)
+  const path = file('audition.wav', wav([{ seconds: 12, amplitude: 0.1 }]))
+  const graph = (gain, bands = []) => ({
+    version: 2,
+    nodes: [
+      {
+        id: 'eq',
+        type: 'equalizer',
+        enabled: true,
+        params: { mode: 'parametric', preampDb: gain, bands }
+      }
+    ],
+    outputStage: {
+      targetSampleRate: 'device',
+      resamplerQuality: 'native',
+      dither: 'off',
+      safetyClamp: true
+    }
+  })
+  const measured = (processedGraph) =>
+    analyze(path, { startSeconds: 0, endSeconds: 12, processedGraph })
+  const a = measured(graph(0))
+  const b = measured(graph(-6))
+  assert.equal(a.processingVersion, 1, JSON.stringify(a))
+  near(a.integratedLufs - b.integratedLufs, 6, 0.01, 'processed gain difference')
+  const matchedA = measured(graph(b.integratedLufs - a.integratedLufs))
+  near(matchedA.integratedLufs, b.integratedLufs, 0.1, 'matched LUFS')
+  assert.ok(matchedA.truePeakDb <= -1 && b.truePeakDb <= -1)
+  const eq = measured(
+    graph(0, [{ frequency: 1000, gain: -6, q: 1, enabled: true, filterType: 'peak' }])
+  )
+  near(eq.integratedLufs, b.integratedLufs, 0.1, 'EQ center attenuation')
+  const unity = measured({ ...graph(0), nodes: [] })
+  near(unity.integratedLufs, analyze(path).integratedLufs, 0.001, 'identity graph')
+  const unsupported = graph(0)
+  unsupported.nodes[0].type = 'compressor'
+  assert.match(measured(unsupported).error, /equalizer/)
+  assert.match(
+    analyze(path, { startSeconds: 0, endSeconds: 2, processedGraph: graph(0) }).error,
+    /10 to 60/
+  )
+})
 
 test('native whole-track measurements repeat and meet sine loudness / true-peak tolerances', (t) => {
   const file = fixtures(t)

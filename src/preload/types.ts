@@ -8,6 +8,12 @@ import type {
 } from '../shared/audioEngineTypes.ts'
 import type { PlaybackResumeMode, AppSettings } from '../shared/appSettings.ts'
 export type {
+  DspAuditionApi,
+  DspAuditionRequest,
+  DspAuditionResult
+} from '../shared/dspAudition.ts'
+
+export type {
   LibraryLoudnessApi,
   LibraryLoudnessResult,
   LoudnessBatchProgress,

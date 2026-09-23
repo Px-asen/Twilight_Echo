@@ -1,4 +1,5 @@
 import { IPC } from '../../shared/ipcChannels.ts'
+import type { DspAuditionRequest, DspAuditionResult } from '../types'
 import { ipcRenderer } from 'electron'
 import type {
   AudioDeviceProfile,
@@ -219,6 +220,15 @@ export const audioEngineApi = {
       ipcRenderer.invoke(IPC.audioEngine.getAudioProcessing),
     getDspSceneState: (): Promise<DspSceneState> =>
       ipcRenderer.invoke(IPC.audioEngine.getDspSceneState),
+    audition: {
+      measure: (request: DspAuditionRequest): Promise<DspAuditionResult> =>
+        ipcRenderer.invoke(IPC.audioEngine.measureDspAudition, JSON.parse(JSON.stringify(request))),
+      select: (id: string, side: 'a' | 'b'): Promise<DspAuditionResult> =>
+        ipcRenderer.invoke(IPC.audioEngine.selectDspAudition, id, side),
+      end: (): Promise<void> => ipcRenderer.invoke(IPC.audioEngine.endDspAudition),
+      status: (): Promise<DspAuditionResult | null> =>
+        ipcRenderer.invoke(IPC.audioEngine.getDspAudition)
+    },
     setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null): Promise<DspSceneState> =>
       ipcRenderer.invoke(IPC.audioEngine.setDspScenes, scenes, pinnedSceneId),
     setOutputStage: (partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> =>

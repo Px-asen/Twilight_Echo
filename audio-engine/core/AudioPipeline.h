@@ -1,4 +1,5 @@
 #pragma once
+#include "../dsp/AuditionTransition.h"
 
 #include "AudioBuffer.h"
 #include "AudioTypes.h"
@@ -463,6 +464,7 @@ class AudioPipeline {
   std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
   std::atomic<bool> renderPromotionPending_{false};
   std::atomic<bool> renderCrossfadeResetRequested_{false};
+  AuditionTransition auditionTransition_;
   std::atomic<uint32_t> renderDitherMode_{static_cast<uint32_t>(DspDitherMode::Off)};
   std::atomic<bool> renderDitherResetRequested_{false};
   std::atomic<DspChain*> renderActiveDspGraph_{nullptr};

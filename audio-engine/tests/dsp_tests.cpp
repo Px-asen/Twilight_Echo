@@ -1,4 +1,5 @@
 #include "../dsp/DspChain.h"
+#include "../dsp/AuditionTransition.h"
 #include "../dsp/DspChainActiveUtils.h"
 #include "../dsp/ConvolverProcessorUtils.h"
 #include "../dsp/CrossfeedProcessorUtils.h"
@@ -558,6 +559,47 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
 }  // namespace
 
 int main() {
+  {
+    AuditionTransition transition;
+    int a = 0, b = 0;
+    std::vector<float> first(128, 0.5f);
+    transition.process(first.data(), 64, 2, 48000, &a, false);
+    std::vector<float> next(1200, -0.5f);
+    transition.process(next.data(), 600, 2, 48000, &b, true);
+    assert(next.front() == 0.5f);
+    assert(next.back() == -0.5f);
+    for (size_t i = 2; i < next.size(); ++i) {
+      assert(std::abs(next[i]) <= 0.5f);
+      assert(std::abs(next[i] - next[i - 2]) < 0.003f);
+    }
+    std::vector<float> restored(1200, 0.25f);
+    transition.process(restored.data(), 600, 2, 48000, &a, false);
+    assert(restored.front() == -0.5f);
+    assert(restored.back() == 0.25f);
+  }
+  {
+    AudioFormat format;
+    format.sampleRate = 48000;
+    format.channelCount = 2;
+    format.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    const std::string graph = R"({"nodes":[{"id":"eq","type":"equalizer","enabled":true,"params":{"mode":"parametric","preampDb":-3,"bands":[{"frequency":1000,"gain":4,"q":1,"filterType":"peak","enabled":true}]}}],"outputStage":{"targetSampleRate":"device","resamplerQuality":"native","dither":"off","safetyClamp":true}})";
+    DspChain offline, realtime;
+    std::string error;
+    assert(offline.configureGraphJson(graph, &error));
+    offline.prepare(format);
+    offline.reset();
+    realtime.prepare(format);
+    assert(realtime.configureGraphJson(graph, &error));
+    std::vector<float> left(48000 * 2), right;
+    for (size_t i = 0; i < left.size(); ++i)
+      left[i] = static_cast<float>(0.05 * std::sin(2 * 3.141592653589793 * 1000 * (i / 2) / 48000));
+    right = left;
+    for (size_t i = 0; i < 48000; i += 4096)
+      offline.process(left.data() + i * 2, std::min<size_t>(4096, 48000 - i));
+    for (size_t i = 0; i < 48000; i += 127)
+      realtime.process(right.data() + i * 2, std::min<size_t>(127, 48000 - i));
+    for (size_t i = 0; i < left.size(); ++i) assert(std::abs(left[i] - right[i]) < 1e-7);
+  }
   testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex();
   testFftAnalyzerCaptureDoesNotSlideFullWindows();
   testFftAnalyzerReadRefreshReusesScratchBuffers();

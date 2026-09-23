@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { readFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { RemoteAuthSession } from './auth.ts'
 
@@ -14,7 +16,8 @@ const hooks = registerHooks({
     if (url === 'test:remote-electron') {
       return {
         format: 'module',
-        source: 'export const app = { getAppPath: () => process.cwd() }',
+        source:
+          "export const app = { getAppPath: () => process.cwd(), get isPackaged() { return process.env.TWILIGHT_TEST_REMOTE_PACKAGED === '1' } }",
         shortCircuit: true
       }
     }
@@ -40,6 +43,36 @@ test('default remote root serves the complete UI and packaging includes its runt
   assert.match(packaging, /from: resources\/remote\s+to: remote/)
   const source = await readFile(new URL('./httpServer.ts', import.meta.url), 'utf8')
   assert.match(source, /app\.isPackaged\s*\? join\(process\.resourcesPath, 'remote'\)/)
+  const ipcSource = await readFile(new URL('./remoteIpc.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(ipcSource, /staticRoot\s*:/)
+})
+
+test('packaged remote root serves the UI from process resources', async (t) => {
+  const resourcesPath = await mkdtemp(join(tmpdir(), 'twilight-remote-test-'))
+  const previousResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+  const previousPackaged = process.env.TWILIGHT_TEST_REMOTE_PACKAGED
+  t.after(async () => {
+    if (previousResourcesPath)
+      Object.defineProperty(process, 'resourcesPath', previousResourcesPath)
+    else Reflect.deleteProperty(process, 'resourcesPath')
+    if (previousPackaged === undefined) delete process.env.TWILIGHT_TEST_REMOTE_PACKAGED
+    else process.env.TWILIGHT_TEST_REMOTE_PACKAGED = previousPackaged
+    await rm(resourcesPath, { recursive: true, force: true })
+  })
+  await cp(new URL('../../../resources/remote', import.meta.url), join(resourcesPath, 'remote'), {
+    recursive: true
+  })
+  Object.defineProperty(process, 'resourcesPath', { configurable: true, value: resourcesPath })
+  process.env.TWILIGHT_TEST_REMOTE_PACKAGED = '1'
+
+  const server = new RemoteHttpServer()
+  const status = await server.start()
+  t.after(() => server.stop())
+  for (const path of ['/', '/remote.js', '/remote.css']) {
+    const response = await fetch(`http://127.0.0.1:${status.port}${path}`)
+    assert.equal(response.status, 200, path)
+    assert.ok((await response.text()).length > 0)
+  }
 })
 
 async function fixture(t: test.TestContext) {

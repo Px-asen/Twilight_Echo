@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { readFileSync, mkdtempSync, rmSync } = require('node:fs')
+const { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const vm = require('node:vm')
@@ -87,6 +87,176 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
     assert.equal((await invoke('restoreApplied', saved.id)).name, project.name)
     enabled = false
     await assert.rejects(invoke('save', project), /启用/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('source snapshots export real plugin archives and editable projects without source files', async () => {
+  const shared = await import('../../shared/themeWorkshop.ts')
+  const templates = await import('../../shared/themeWorkshopTemplates.ts')
+  const { WorkshopRepository } = await import('../themes/workshopRepository.ts')
+  const { normalizeThemeContribution } = await import('../plugins/themeContribution.ts')
+  const jsonSafety = await import('../security/jsonSafety.ts')
+  const extract = require('extract-zip')
+  const directory = mkdtempSync(join(tmpdir(), 'workshop-roundtrip-'))
+  const sourceRoot = process.env.TWILIGHT_WORKSHOP_SOURCE || join(directory, 'source')
+  const fixture = !process.env.TWILIGHT_WORKSHOP_SOURCE
+  if (fixture) {
+    mkdirSync(sourceRoot)
+    writeFileSync(
+      join(sourceRoot, 'art.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSocAAAAASUVORK5CYII=',
+        'base64'
+      )
+    )
+    writeFileSync(
+      join(sourceRoot, 'theme.css'),
+      ":root{--art:url('art.png')}.card{background-image:var(--art)}"
+    )
+    writeFileSync(join(sourceRoot, 'LICENSE'), 'Fixture attribution')
+    writeFileSync(
+      join(sourceRoot, 'plugin.json'),
+      JSON.stringify({
+        id: 'com.example.theme',
+        version: '1.0.0',
+        author: 'Author',
+        license: 'MIT',
+        contributes: {
+          themes: [
+            {
+              id: 'theme',
+              name: 'Source',
+              stylesheet: 'theme.css',
+              editor: {
+                schemaVersion: 1,
+                controls: [
+                  {
+                    id: 'art',
+                    label: 'Art',
+                    group: 'Images',
+                    type: 'image',
+                    variable: '--art',
+                    defaults: { pureWhite: 'none', dark: 'none' }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      })
+    )
+  }
+  const manifest = JSON.parse(readFileSync(join(sourceRoot, 'plugin.json'), 'utf8'))
+  const theme = manifest.contributes.themes[0]
+  let sourceAvailable = true
+  let savePath = join(directory, 'theme.tep')
+  const handlers = new Map()
+  const electron = {
+    app: { getPath: () => directory },
+    dialog: {
+      showSaveDialog: async () => ({ filePath: savePath }),
+      showOpenDialog: async () => ({ filePaths: [savePath] })
+    },
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) }
+  }
+  const runtime = {
+    pluginManagerReady: Promise.resolve(),
+    pluginManager: {
+      list: async () => [
+        { id: shared.THEME_WORKSHOP_ID, enabled: true },
+        ...(sourceAvailable
+          ? [
+              {
+                ...manifest,
+                enabled: true,
+                paths: { versionRoot: sourceRoot, manifestPath: join(sourceRoot, 'plugin.json') }
+              }
+            ]
+          : [])
+      ],
+      listExtensions: async () => [
+        {
+          pluginId: manifest.id,
+          themes: [{ ...theme, stylesheet: join(sourceRoot, theme.stylesheet) }]
+        }
+      ]
+    }
+  }
+  function load(path, dependencies) {
+    const exports = {}
+    const source = ts.transpileModule(readFileSync(path, 'utf8'), {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true
+      }
+    }).outputText
+    vm.runInNewContext(source, {
+      exports,
+      Buffer,
+      setTimeout,
+      clearTimeout,
+      require: (id) => (id.startsWith('node:') ? require(id) : (dependencies[id] ?? {}))
+    })
+    return exports
+  }
+  const archive = load(join(__dirname, '../themes/themeArchive.ts'), {
+    electron,
+    'extract-zip': extract
+  })
+  const module = load(join(__dirname, 'themeWorkshop.ts'), {
+    electron,
+    '../core/runtime.ts': { runtime },
+    '../security/electronSecurity.ts': { assertTrustedIpcSender() {} },
+    '../security/ipcValidation.ts': { stringifyJsonForIpcStorage: JSON.stringify },
+    '../security/jsonSafety.ts': jsonSafety,
+    '../themes/workshopRepository.ts': { WorkshopRepository },
+    '../themes/themeArchive.ts': archive,
+    '../../shared/themeWorkshopTemplates.ts': templates,
+    '../../shared/themeWorkshop.ts': shared
+  })
+  const invoke = (name, ...args) => handlers.get('themeWorkshop:' + name)({}, ...args)
+  try {
+    module.setupThemeWorkshopIpc()
+    const project = await invoke('create', '', {
+      pluginId: manifest.id,
+      themeId: theme.id,
+      name: theme.name,
+      version: manifest.version
+    })
+    assert.match(project.base.css, /data:image\//)
+    const compiled = shared.compileWorkshopProject(project)
+    sourceAvailable = false
+    await assert.rejects(invoke('updateBase', project.id), /卸载/)
+    await invoke('exportProject', project.id, 'tep')
+    const extracted = join(directory, 'extracted')
+    await extract(savePath, { dir: extracted })
+    const exported = JSON.parse(readFileSync(join(extracted, 'plugin.json'), 'utf8'))
+    const normalized = normalizeThemeContribution({
+      pluginApiVersion: exported.apiVersion,
+      pluginTypes: exported.type,
+      raw: exported.contributes.themes[0],
+      source: 'roundtrip',
+      resolveStylesheet: (value) => join(extracted, value)
+    })
+    assert.notEqual(exported.id, manifest.id)
+    assert.equal(exported.main, undefined)
+    assert.equal(readFileSync(normalized.stylesheet, 'utf8'), compiled)
+    assert.equal(
+      JSON.parse(readFileSync(join(extracted, 'ATTRIBUTION.json'), 'utf8')).sourcePlugin,
+      manifest.id
+    )
+    savePath = join(directory, 'theme.teworkshop')
+    await invoke('exportProject', project.id, 'project')
+    const restored = await invoke('importProject')
+    assert.notEqual(restored.id, project.id)
+    assert.equal(shared.compileWorkshopProject(restored), compiled)
+    await assert.rejects(
+      archive.writeStoredZip(extracted, join(directory, 'invalid-theme.zip')),
+      /theme.json/
+    )
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

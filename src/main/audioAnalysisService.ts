@@ -60,7 +60,7 @@ if (startupError) {
   servicePort.postMessage({
     kind: 'ready',
     protocolVersion: AUDIO_ANALYSIS_PROTOCOL_VERSION,
-    analyses: ['bpm', 'loudness', 'loudness-batch']
+    analyses: ['bpm', 'loudness', 'loudness-batch', 'dsp-audition']
   })
 }
 

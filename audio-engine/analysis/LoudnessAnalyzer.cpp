@@ -2,6 +2,7 @@
 
 #include "../core/AudioTypes.h"
 #include "../decoder/FFmpegDecoder.h"
+#include "../dsp/DspChain.h"
 #include "../utils/JsonUtils.h"
 
 #include <algorithm>
@@ -59,6 +60,7 @@ struct Measurement {
 };
 
 bool measureSegment(const std::string& source, double start, double end, double limit,
+                    const std::string& graph,
                     Measurement& result, std::string& error) {
   if (source.empty() || !std::isfinite(start) || !std::isfinite(end) || start < 0.0 ||
       end < 0.0 || (end > 0.0 && end <= start)) {
@@ -67,6 +69,11 @@ bool measureSegment(const std::string& source, double start, double end, double 
   }
   FFmpegDecoder decoder;
   if (!decoder.open(source, &error)) return false;
+  if (!graph.empty() && (decoder.streamInfo().isDsd ||
+      decoder.streamInfo().sourceFormat.channelCount > 2)) {
+    error = "processed loudness requires mono/stereo PCM";
+    return false;
+  }
   AudioFormat format = decoder.streamInfo().sourceFormat;
   if (format.sampleRate <= 0) format.sampleRate = 48000;
   format.channelCount = std::clamp(format.channelCount, 1, 8);
@@ -74,6 +81,12 @@ bool measureSegment(const std::string& source, double start, double end, double 
   format.sampleFormat = AudioSampleFormat::Float32Interleaved;
   if (!decoder.setOutputFormat(format, &error)) return false;
   format = decoder.outputFormat();
+  DspChain chain;
+  if (!graph.empty()) {
+    if (!chain.configureGraphJson(graph, &error)) return false;
+    chain.prepare(format);
+    chain.reset();
+  }
   result.sampleRate = std::max(1, format.sampleRate);
   result.channels = std::clamp(format.channelCount, 1, 8);
   result.state.reset(ebur128_init(static_cast<unsigned int>(result.channels),
@@ -111,6 +124,7 @@ bool measureSegment(const std::string& source, double start, double end, double 
       return false;
     }
     skipped += read;
+    if (!graph.empty()) chain.process(chunk.data(), read);
   }
   while (!decoder.eof()) {
     if (maxFrames > 0 && result.frames >= maxFrames) break;
@@ -119,6 +133,15 @@ bool measureSegment(const std::string& source, double start, double end, double 
     const size_t read = decoder.readFrames(chunk.data(), want, &error);
     if (!error.empty()) return false;
     if (read == 0) break;
+    if (!graph.empty()) {
+      chain.process(chunk.data(), read);
+      for (size_t sample = 0; sample < read * static_cast<size_t>(result.channels); ++sample) {
+        if (!std::isfinite(chunk[sample]) || std::abs(chunk[sample]) >= 0.999999f) {
+          error = "processed signal clips; reduce EQ preamp before matching";
+          return false;
+        }
+      }
+    }
     if (ebur128_add_frames_float(result.state.get(), chunk.data(), read) != EBUR128_SUCCESS) {
       error = "libebur128 failed while adding frames";
       return false;
@@ -149,7 +172,8 @@ bool measureSegment(const std::string& source, double start, double end, double 
   return true;
 }
 
-void writeMeasurement(std::ostream& json, double lufs, double peakDb, const Measurement* track = nullptr) {
+void writeMeasurement(std::ostream& json, double lufs, double peakDb, const Measurement* track = nullptr,
+                      bool processed = false) {
   json << "{\"integratedLufs\":" << std::round(lufs * 1000.0) / 1000.0
        << ",\"truePeakDb\":" << std::round(peakDb * 1000.0) / 1000.0;
   if (track) {
@@ -157,7 +181,8 @@ void writeMeasurement(std::ostream& json, double lufs, double peakDb, const Meas
          << ",\"analyzedFrames\":" << track->frames;
   }
   json << ",\"source\":\"analyzed\",\"analyzedAt\":\"" << isoTimestampUtc()
-       << "\",\"algorithmVersion\":" << kAlgorithmVersion << ",\"available\":true}";
+       << "\",\"algorithmVersion\":" << kAlgorithmVersion
+       << ",\"processingVersion\":" << (processed ? 1 : 0) << ",\"available\":true}";
 }
 #endif
 
@@ -173,6 +198,25 @@ std::string analyzeLoudnessJson(const std::string& source, const std::string& op
   (void)optionsJson;
   return errorJson("libebur128 unavailable; loudnorm measurement disabled", false);
 #else
+  const std::string graph = json_utils::fieldObject(optionsJson, "processedGraph");
+  if (!graph.empty()) {
+    const auto stage = json_utils::fieldObject(graph, "outputStage");
+    if (json_utils::fieldString(stage, "targetSampleRate").value_or("") != "device" ||
+        json_utils::fieldString(stage, "resamplerQuality").value_or("") != "native" ||
+        json_utils::fieldString(stage, "dither").value_or("") != "off")
+      return errorJson("processed loudness does not support output conversion", true);
+    size_t equalizers = 0;
+    for (const auto& node : json_utils::splitTopLevelObjects(json_utils::fieldArray(graph, "nodes"))) {
+      if (!json_utils::fieldBool(node, "enabled").value_or(false)) continue;
+      if (json_utils::fieldString(node, "type").value_or("") != "equalizer" || ++equalizers > 1)
+        return errorJson("processed loudness supports one built-in equalizer only", true);
+    }
+    const double start = json_utils::fieldNumber(optionsJson, "startSeconds").value_or(0);
+    const double end = json_utils::fieldNumber(optionsJson, "endSeconds").value_or(0);
+    if (start < 0 || start > 600 || end - start < 10 || end - start > 60 ||
+        json_utils::topLevelFieldValueStart(optionsJson, "segments").has_value())
+      return errorJson("processed loudness requires a 10 to 60 second interval within the first 11 minutes", true);
+  }
   const bool batch = json_utils::topLevelFieldValueStart(optionsJson, "segments").has_value();
   const auto segments = batch
       ? json_utils::splitTopLevelObjects(json_utils::fieldArray(optionsJson, "segments"))
@@ -191,14 +235,14 @@ std::string analyzeLoudnessJson(const std::string& source, const std::string& op
     const std::string path = batch ? json_utils::fieldString(segment, "source").value_or("") : source;
     const double start = json_utils::fieldNumber(segment, "startSeconds").value_or(0.0);
     const double end = json_utils::fieldNumber(segment, "endSeconds").value_or(0.0);
-    if (!measureSegment(path, start, end, limit, measurement, error))
+    if (!measureSegment(path, start, end, limit, graph, measurement, error))
       return errorJson("track " + std::to_string(measurements.size() + 1) + ": " + error, true);
     measurements.push_back(std::move(measurement));
   }
   std::ostringstream json;
   if (!batch) {
     const auto& track = measurements.front();
-    writeMeasurement(json, track.integratedLufs, track.truePeakDb, &track);
+    writeMeasurement(json, track.integratedLufs, track.truePeakDb, &track, !graph.empty());
     return json.str();
   }
   json << "{\"tracks\":[";

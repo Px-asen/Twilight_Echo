@@ -55,6 +55,9 @@ let disablePrepared = false
 let saving: Promise<void> = Promise.resolve()
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const copyProject = copyWorkshopDraft
+const previewProject = computed(() =>
+  draft.value && candidate.value ? { ...draft.value, base: candidate.value } : draft.value
+)
 const css = computed(() => {
   if (!draft.value) return ''
   try {
@@ -150,7 +153,6 @@ function change(edit: (project: WorkshopProject) => void): void {
   edit(next)
   draft.value = next
   checkpoint()
-  if (trialSheet) trialSheet.textContent = css.value
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     void persist().catch((e) => {
@@ -197,7 +199,6 @@ function undo(offset: number): void {
   draft.value = { ...copyProject(history[index]), revision }
   cursor = index
   historyIndex.value = index
-  if (trialSheet) trialSheet.textContent = css.value
   void persist().catch((e) => {
     error.value = String(e)
   })
@@ -274,7 +275,7 @@ function toggleTrial(): void {
     trialAttributes[key] = document.documentElement.getAttribute(key)
     document.documentElement.removeAttribute(key)
   }
-  const attrs = workshopRuntimeAttributes(draft.value!)
+  const attrs = workshopRuntimeAttributes(previewProject.value!)
   attrs['data-theme'] = tone.value
   for (const [key, value] of Object.entries(attrs)) {
     if (!(key in trialAttributes)) trialAttributes[key] = document.documentElement.getAttribute(key)
@@ -311,11 +312,11 @@ function toggleTrial(): void {
   trialRecovery.showPopover()
   trial.value = true
 }
-watch([css, tone], () => {
-  if (!trialSheet || !draft.value) return
+watch([css, tone, previewProject], () => {
+  if (!trialSheet || !draft.value || compilationError.value) return
   trialSheet.textContent = css.value
   for (const key of THEME_MANAGED_DATA_ATTRIBUTES) document.documentElement.removeAttribute(key)
-  for (const [key, value] of Object.entries(workshopRuntimeAttributes(draft.value)))
+  for (const [key, value] of Object.entries(workshopRuntimeAttributes(previewProject.value!)))
     document.documentElement.setAttribute(key, value)
   document.documentElement.dataset.theme = tone.value
 })
@@ -461,7 +462,7 @@ onBeforeUnmount(() => {
         </select>
         <WorkshopPreview
           :css="css"
-          :project="draft"
+          :project="previewProject!"
           :tone="tone"
           :surface="surface"
           :width="width"
