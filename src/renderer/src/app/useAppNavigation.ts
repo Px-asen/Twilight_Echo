@@ -31,7 +31,8 @@ const songlistOrder = [
   'playlists',
   'aggregate',
   'folders',
-  'recent'
+  'recent',
+  'analytics'
 ] as const
 
 export function useAppNavigation() {

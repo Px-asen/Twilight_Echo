@@ -1,0 +1,625 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Listening Analytics Page — token-driven dashboard.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.analytics-page {
+  --an-ink: var(--te-neutral-900);
+  --an-muted: var(--te-neutral-500);
+  --an-card: var(--te-card-bg);
+  --an-line: var(--te-card-border);
+  --an-soft: var(--te-subtle-bg);
+  --an-hover: var(--te-hover-bg);
+  --an-accent: var(--te-primary-500);
+  --an-tint: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  --an-radius-lg: 22px;
+  --an-radius-md: 14px;
+  --an-radius-sm: 10px;
+  --an-shadow: var(--te-glass-shadow);
+
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 36px 40px 120px;
+  color: var(--an-ink);
+  background: transparent;
+  font-family: var(--te-font-sans, sans-serif);
+}
+
+.analytics-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  gap: 16px;
+}
+
+.analytics-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analytics-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--an-accent);
+  text-transform: uppercase;
+}
+
+.analytics-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.analytics-generated {
+  font-size: 12px;
+  color: var(--an-muted);
+  white-space: nowrap;
+}
+
+/* ── Summary cards ──────────────────────────────────────────────────── */
+
+.analytics-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px 22px 18px;
+  background: var(--an-card);
+  border: 1px solid var(--an-line);
+  border-radius: var(--an-radius-md);
+  box-shadow: var(--an-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.summary-card:hover {
+  transform: translateY(-2px);
+}
+
+.summary-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1;
+}
+
+.summary-value {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.summary-unit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--an-muted);
+}
+
+.summary-caption {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--an-muted);
+}
+
+/* ── Detail cards ────────────────────────────────────────────────────── */
+
+.analytics-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.detail-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  padding: 20px;
+  background: var(--an-card);
+  border: 1px solid var(--an-line);
+  border-radius: var(--an-radius-md);
+  box-shadow: var(--an-shadow);
+}
+
+.detail-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  color: var(--an-muted);
+}
+
+.detail-card-head i {
+  font-size: 18px;
+}
+
+.detail-card-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--an-ink);
+}
+
+.detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--an-radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.detail-row:hover {
+  background: var(--an-hover);
+}
+
+.detail-row.is-static {
+  cursor: default;
+}
+
+.detail-row.is-static:hover {
+  background: transparent;
+}
+
+.detail-row.is-current {
+  background: var(--an-tint);
+}
+
+/* CoverImg's root is the <img> itself, so the class sizes the bitmap directly. */
+.detail-cover {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--an-soft);
+}
+
+.detail-avatar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--an-accent);
+  background: var(--an-tint);
+}
+
+.format-avatar {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.detail-meta {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detail-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-sub {
+  font-size: 12px;
+  color: var(--an-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-stat {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--an-muted);
+}
+
+/* ── Inline progress track (最常听曲目) ─────────────────────────────── */
+
+.detail-bar,
+.rank-bar {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--an-muted) 20%, transparent);
+  overflow: hidden;
+}
+
+.detail-bar {
+  margin-top: 3px;
+}
+
+.detail-bar > span,
+.rank-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--an-accent);
+  transition: width 0.35s var(--te-ease-out-quint, ease-out);
+}
+
+/* ── Ranked rows (最常听艺人) ───────────────────────────────────────── */
+
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rank-row {
+  --rank-alpha: 0.28;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 12px 11px;
+  border-radius: var(--an-radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.rank-row:hover {
+  background: var(--an-hover);
+}
+
+.rank-spine {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--an-accent);
+  opacity: var(--rank-alpha);
+}
+
+.rank-index {
+  flex: 0 0 auto;
+  min-width: 22px;
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--an-muted);
+  line-height: 1.25;
+}
+
+.rank-row.is-champion .rank-index {
+  color: var(--an-ink);
+}
+
+.rank-cover {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--te-library-cover-radius, 8px);
+  object-fit: cover;
+  background: var(--an-soft);
+}
+
+.rank-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rank-name {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rank-sub {
+  font-size: 12px;
+  color: var(--an-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rank-pill {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  padding: 3px 10px;
+  border: 1px solid var(--an-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--an-muted);
+  background: var(--an-soft);
+  white-space: nowrap;
+}
+
+.rank-row.is-champion .rank-pill {
+  border-color: transparent;
+  color: var(--an-accent);
+  background: var(--an-tint);
+}
+
+.detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 13px;
+  color: var(--an-muted);
+  text-align: center;
+}
+
+/* ── Year heatmap ──────────────────────────────────────────────────────── */
+
+.analytics-heatmap {
+  padding: 22px 24px 20px;
+  background: var(--an-card);
+  border: 1px solid var(--an-line);
+  border-radius: var(--an-radius-lg);
+  box-shadow: var(--an-shadow);
+}
+
+.heatmap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  gap: 16px;
+}
+
+.heatmap-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.heatmap-title i {
+  font-size: 20px;
+  color: var(--an-muted);
+}
+
+.heatmap-title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.heatmap-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--an-muted);
+}
+
+/* GitHub-style year wall: week columns × weekday rows, every day of the
+   trailing year drawn so the grid always reads as a complete calendar. */
+
+.wall-scroll {
+  margin-bottom: 22px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.wall-inner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  row-gap: 6px;
+  min-width: 720px;
+}
+
+.wall-rail-spacer {
+  width: 18px;
+}
+
+.wall-months {
+  display: grid;
+  grid-template-columns: repeat(var(--wall-weeks, 53), minmax(0, 1fr));
+  gap: 3px;
+  align-items: end;
+  min-height: 16px;
+}
+
+.wall-month-label {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--an-muted);
+  white-space: nowrap;
+  justify-self: start;
+}
+
+.wall-weekdays {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 3px;
+  width: 18px;
+}
+
+.wall-weekdays span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--an-muted);
+}
+
+.wall-grid {
+  display: grid;
+  /* Rows size to the square cells, so the two rails stay locked together. */
+  grid-template-rows: repeat(7, auto);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+}
+
+.wall-cell {
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--an-muted) 16%, transparent);
+  transition: transform 0.12s ease;
+}
+
+.wall-cell:hover {
+  transform: scale(1.25);
+  z-index: 1;
+}
+
+.wall-cell.is-future {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--an-muted) 10%, transparent);
+}
+
+.wall-cell.lv-1 {
+  background: color-mix(in srgb, var(--an-accent) 30%, transparent);
+}
+
+.wall-cell.lv-2 {
+  background: color-mix(in srgb, var(--an-accent) 52%, transparent);
+}
+
+.wall-cell.lv-3 {
+  background: color-mix(in srgb, var(--an-accent) 76%, transparent);
+}
+
+.wall-cell.lv-4 {
+  background: var(--an-accent);
+}
+
+.wall-cell.is-today {
+  box-shadow: inset 0 0 0 1.5px var(--an-ink);
+}
+
+.heatmap-foot {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.heatmap-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heatmap-stat-label {
+  font-size: 12px;
+  color: var(--an-muted);
+}
+
+.heatmap-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.heatmap-legend {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--an-muted);
+}
+
+.heatmap-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.heatmap-legend i.lv-0 {
+  background: color-mix(in srgb, var(--an-muted) 16%, transparent);
+}
+
+.heatmap-legend i.lv-1 {
+  background: color-mix(in srgb, var(--an-accent) 30%, transparent);
+}
+
+.heatmap-legend i.lv-2 {
+  background: color-mix(in srgb, var(--an-accent) 52%, transparent);
+}
+
+.heatmap-legend i.lv-3 {
+  background: color-mix(in srgb, var(--an-accent) 76%, transparent);
+}
+
+.heatmap-legend i.lv-4 {
+  background: var(--an-accent);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+
+@media (max-width: 1200px) {
+  .analytics-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .analytics-page {
+    padding: 24px 20px 100px;
+  }
+
+  .analytics-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .analytics-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .wall-inner {
+    min-width: 620px;
+  }
+
+  .heatmap-foot {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -33,6 +33,9 @@ const ThemeWorkshopPage = defineAsyncComponent(
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
+const ListeningAnalyticsPage = defineAsyncComponent(
+  () => import('./components/ListeningAnalyticsPage.vue')
+)
 const CommandPalette = defineAsyncComponent(() => import('@renderer/components/CommandPalette.vue'))
 const QueueWorkspaceDialog = defineAsyncComponent(
   () => import('@renderer/components/player-bar/QueueWorkspaceDialog.vue')
@@ -398,6 +401,20 @@ function handlePlayerBarArtistClick(): void {
     providerId: source,
     artistName,
     ...(artistId !== undefined ? { artistId } : {})
+  }
+  enterStreamingMode()
+}
+
+// The analytics dashboard only knows an aggregated artist string, so it hands
+// streaming-owned artists here; the provider falls back to a name search.
+function handleAnalyticsArtistOpen(request: { name: string; providerId: string }): void {
+  const artistName = getPrimaryStreamingArtistName(request.name)
+  if (!artistName) return
+  streamingInitialTab.value = 'home'
+  streamingArtistRequest.value = {
+    key: ++streamingArtistRequestKey,
+    providerId: request.providerId,
+    artistName
   }
   enterStreamingMode()
 }
@@ -951,6 +968,12 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             :has-player="hasPlayerBar"
             surface="local"
             :initial-playlist-id="activeFilter"
+          />
+          <ListeningAnalyticsPage
+            v-else-if="localViewVisible && activeCategory === 'analytics'"
+            key="local-analytics"
+            @select-view="onSelectView"
+            @open-artist="handleAnalyticsArtistOpen"
           />
           <SongList
             v-else-if="localViewVisible"

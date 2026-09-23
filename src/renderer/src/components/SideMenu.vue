@@ -37,7 +37,8 @@ const menuItems: MenuItem[] = [
   { key: 'playlists', label: '歌单', icon: 'navigation.playlists' },
   { key: 'aggregate', label: '聚合歌单', icon: 'navigation.playlists' },
   { key: 'folders', label: '文件夹', icon: 'navigation.folders' },
-  { key: 'recent', label: '最近播放', icon: 'navigation.recent' }
+  { key: 'recent', label: '最近播放', icon: 'navigation.recent' },
+  { key: 'analytics', label: '统计仪表盘', icon: 'navigation.analytics' }
 ]
 
 const { libraryScanStatus, libraryScanProgress } = useMusicStore()

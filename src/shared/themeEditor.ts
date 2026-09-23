@@ -9,6 +9,7 @@ export const WORKSHOP_IMAGE_SLOTS = {
   'navigation.playlists': '[data-theme-icon-slot="navigation.playlists"]',
   'navigation.folders': '[data-theme-icon-slot="navigation.folders"]',
   'navigation.recent': '[data-theme-icon-slot="navigation.recent"]',
+  'navigation.analytics': '[data-theme-icon-slot="navigation.analytics"]',
   'navigation.streaming': '[data-theme-icon-slot="navigation.streaming"]',
   'navigation.radio': '[data-theme-icon-slot="navigation.radio"]',
   'navigation.import': '[data-theme-icon-slot="navigation.import"]',
