@@ -224,6 +224,13 @@ test('settings wallpaper is painted once by the overlay root, never per element'
   assert.doesNotMatch(baseStyles, /html\[data-theme='dark'\] \.title-bar\.title-bar-settings,/)
 })
 
+test('plugin center uses the settings wallpaper painter over streaming content', () => {
+  const overlay =
+    appSource.match(/<div\s+class="settings-overlay-root"[\s\S]*?<CommandPalette/)?.[0] ?? ''
+  assert.match(overlay, /settings-overlay-root--active': showSettingsPage \|\| showPluginPage/)
+  assert.match(overlay, /<PluginPage\s+v-if="showPluginPage"/)
+})
+
 test('audio output device cards are opt-in through a closed native checkbox', () => {
   assert.match(playbackPageSource, /const audioOutputPanelExpanded = ref\(false\)/)
   assert.match(

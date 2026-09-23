@@ -996,20 +996,6 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           />
         </Transition>
         <Transition name="settings-page">
-          <PluginPage
-            v-if="showPluginPage"
-            @open-theme-workshop="
-              onSelectPluginPage({
-                pluginId: 'com.twilightecho.tool.theme-workshop',
-                id: 'theme-workshop',
-                kind: 'sidebarPage',
-                title: '主题插件工坊',
-                command: 'theme-workshop.open'
-              })
-            "
-          />
-        </Transition>
-        <Transition name="settings-page">
           <ThemeStudioPage
             v-if="showThemeStudioPage"
             :initial-domain="themeStudioInitialDomain"
@@ -1060,7 +1046,10 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       />
     </div>
   </div>
-  <div class="settings-overlay-root" :class="{ 'settings-overlay-root--active': showSettingsPage }">
+  <div
+    class="settings-overlay-root"
+    :class="{ 'settings-overlay-root--active': showSettingsPage || showPluginPage }"
+  >
     <Transition name="settings-page">
       <SettingsPage
         v-if="showSettingsPage"
@@ -1071,6 +1060,20 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @open-theme-studio="openThemeStudioPage"
         @open-theme-workshop="openThemeWorkshop"
         @reopen-onboarding="handleReopenOnboarding"
+      />
+    </Transition>
+    <Transition name="settings-page">
+      <PluginPage
+        v-if="showPluginPage"
+        @open-theme-workshop="
+          onSelectPluginPage({
+            pluginId: 'com.twilightecho.tool.theme-workshop',
+            id: 'theme-workshop',
+            kind: 'sidebarPage',
+            title: '主题插件工坊',
+            command: 'theme-workshop.open'
+          })
+        "
       />
     </Transition>
   </div>
