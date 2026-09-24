@@ -66,6 +66,11 @@ interface TwilightPluginContext {
       next: () => Promise<void>
       previous: () => Promise<void>
     }
+    overlay: {
+      show: () => Promise<void>
+      configure: (config: unknown) => Promise<unknown>
+      hide: () => Promise<void>
+    }
     providers: {
       register: (
         provider: {
@@ -298,6 +303,11 @@ function createContext(
       next: () => callPlayerApi('next').then(() => undefined),
       previous: () => callPlayerApi('previous').then(() => undefined)
     },
+    overlay: {
+      show: () => callOverlayApi('show').then(() => undefined),
+      configure: (config) => callOverlayApi('configure', [config]),
+      hide: () => callOverlayApi('hide').then(() => undefined)
+    },
     providers: {
       register: async (provider) => {
         const handlers: ProviderHandler = {}
@@ -417,6 +427,13 @@ function callProviderApi(
   provider: unknown
 ): Promise<unknown> {
   return callApi('providers', method, [provider])
+}
+
+function callOverlayApi(
+  method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
+  args: unknown[] = []
+): Promise<unknown> {
+  return callApi('overlay', method, args)
 }
 
 function callUiApi(

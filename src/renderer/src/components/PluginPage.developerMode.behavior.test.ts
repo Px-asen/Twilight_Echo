@@ -231,6 +231,7 @@ function checksScript(): string {
       pluginSettingsForms: {},
       pluginSettingsValues: {},
       runningPluginSettingsCommand: '',
+      resetPluginSettingsForm: () => {},
       pluginPanelStateKey: () => 'panel',
       trackActivationModeOptions: [{ value: 'singleClick', label: '单击播放', icon: 'pi pi-bolt' }],
       startupHomePageOptions: [{ value: 'local', label: '本地音乐主页', icon: 'pi pi-home' }],

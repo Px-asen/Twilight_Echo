@@ -695,6 +695,126 @@ export interface TwilightUiApi {
   ): void
 }
 
+export interface TwilightOverlayApi {
+  /** Show the host-owned Dynamic Island overlay. */
+  show(): Promise<void>
+  /**
+   * Apply a Dynamic Island DIY configuration. Missing or out-of-range values
+   * fall back to host defaults; the resolved configuration is returned so the
+   * plugin can persist exactly what the host renders. Rejects while another
+   * plugin owns the overlay.
+   */
+  configure(config: TwilightOverlayConfigInput): Promise<TwilightOverlayConfig>
+  /** Hide the overlay owned by the calling plugin. */
+  hide(): Promise<void>
+}
+
+export interface TwilightOverlayConfig {
+  appearance: {
+    /** `#rrggbb` */
+    backgroundColor: string
+    /** 30–100 (%) */
+    backgroundOpacity: number
+    textColor: string
+    accentColor: string
+    /** `cover` follows the current track's dominant artwork color. */
+    accentSource: 'custom' | 'cover'
+    visualizerColor: string
+    /** 80–130 (%) */
+    fontScale: number
+    /** 0–32 px, capped at half the collapsed height. */
+    collapsedRadius: number
+    /** 16–72 px, capped at half the expanded height. */
+    expandedRadius: number
+    audioReactive: boolean
+  }
+  layout: {
+    /** 160–360 px */
+    collapsedWidth: number
+    /** 36–64 px */
+    collapsedHeight: number
+    /** 360–560 px; the expanded height follows the width and visible components. */
+    expandedWidth: number
+    anchor: 'left' | 'center' | 'right'
+    /** -600–600 px */
+    offsetX: number
+    /** 0–200 px from the top of the display. */
+    offsetY: number
+    display: 'main-window' | 'primary'
+  }
+  components: {
+    collapsedContent: 'artwork' | 'track' | 'lyric'
+    cover: boolean
+    visualizer: boolean
+    lyric: boolean
+    progress: boolean
+    time: boolean
+    favorite: boolean
+    skip: boolean
+    volume: boolean
+  }
+  behavior: {
+    expandTrigger: 'hover' | 'click'
+    /** 0–3000 ms */
+    collapseDelayMs: number
+    motion: 'off' | 'fast' | 'normal' | 'slow'
+    visibility: 'always' | 'when-track' | 'when-playing'
+  }
+}
+
+export type TwilightOverlayConfigInput = {
+  [Section in keyof TwilightOverlayConfig]?: Partial<TwilightOverlayConfig[Section]>
+}
+
+/**
+ * Structured form a `settingsPanel` command may return. The host renders it
+ * with its own controls; values travel back to `submitCommand` as a
+ * `Record<string, string>` (toggles as `'true'`/`'false'`, ranges as decimal
+ * strings, colors as `#rrggbb`).
+ */
+export interface TwilightSettingsForm {
+  kind: 'settings-form'
+  submitCommand: string
+  /** Optional command that restores defaults; it returns the same shape as submit. */
+  resetCommand?: string
+  /** Submit automatically (debounced) on every change instead of showing a save button. */
+  live?: boolean
+  notice?: string
+  /** At most 40 fields. */
+  fields: TwilightSettingsField[]
+}
+
+export type TwilightSettingsField =
+  | (TwilightSettingsFieldBase & { type: 'text' | 'password' | 'url' })
+  | (TwilightSettingsFieldBase & { type: 'select'; options: Array<{ label: string; value: string }> })
+  | (TwilightSettingsFieldBase & { type: 'toggle' })
+  | (TwilightSettingsFieldBase & { type: 'color' })
+  | (TwilightSettingsFieldBase & {
+      type: 'range'
+      min: number
+      max: number
+      step?: number
+      /** Short suffix shown after the value, such as `px` or `%`. */
+      unit?: string
+    })
+
+export interface TwilightSettingsFieldBase {
+  key: string
+  label: string
+  value?: string
+  required?: boolean
+  placeholder?: string
+  description?: string
+  /** Consecutive fields sharing a group are rendered under one heading. */
+  group?: string
+}
+
+/** What `submitCommand` / `resetCommand` may return. */
+export interface TwilightSettingsFormResult {
+  message?: string
+  form?: TwilightSettingsForm
+}
+
 export interface TwilightThemeContribution {
   id: string
   name: string
@@ -920,6 +1040,7 @@ export interface TwilightApi {
   player: TwilightPlayerApi
   providers: TwilightProvidersApi
   ui: TwilightUiApi
+  overlay: TwilightOverlayApi
   themes: TwilightThemesApi
   /** Optional host-owned secure QR flow for the Qishui provider. */
   qishuiAuth?: TwilightQishuiAuthApi

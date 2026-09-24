@@ -51,6 +51,7 @@ export const runtime = {
   libraryLoudnessManager: null as LibraryLoudnessManager | null,
   mainWindow: null as BrowserWindow | null,
   miniPlayerWindow: null as BrowserWindow | null,
+  dynamicIslandWindow: null as BrowserWindow | null,
   trayPlayerWindow: null as BrowserWindow | null,
   pendingTrayNavigation: null as TrayNavigationTarget | null,
   latestMiniPlayerState: null as MiniPlayerStateSnapshot | null,

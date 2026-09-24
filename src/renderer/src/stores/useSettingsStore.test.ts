@@ -196,6 +196,7 @@ function readSettingsPageSources(): string {
   return [
     'SettingsPage.vue',
     'settings-page/types.ts',
+    'settings-page/usePluginSettingsPanels.ts',
     'settings-page/AboutSettingsSection.vue',
     'settings-page/ShortcutsSettingsSection.vue',
     'settings-page/MiniPlayerSettingsSection.vue',

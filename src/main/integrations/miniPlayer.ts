@@ -25,6 +25,7 @@ import { runtime } from '../core/runtime'
 import { createSettingsSnapshot, writeAppSettings } from '../core/settings'
 import { importBackgroundImage } from '../library/coverCache'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
+import { publishDynamicIslandState } from './dynamicIsland.ts'
 import {
   MINI_PLAYER_MAX_HEIGHT,
   MINI_PLAYER_MAX_WIDTH,
@@ -404,6 +405,7 @@ export function setupMiniPlayerIpc(): void {
     if (!shouldAcceptSenderWindow(event, runtime.mainWindow, 'mini player state IPC')) return
     const state = normalizeMiniPlayerStateSnapshot(rawState)
     runtime.latestMiniPlayerState = state
+    publishDynamicIslandState(state)
     sendMiniPlayerState(state)
     runtime.refreshTrayMenu?.()
     runtime.refreshTaskbarThumbarButtons?.()

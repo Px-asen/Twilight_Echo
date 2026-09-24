@@ -4,6 +4,7 @@ import DownloadSettingsFields from '@renderer/components/settings-page/DownloadS
 import IntegrationsSettingsSection from './IntegrationsSettingsSection.vue'
 import BackupAndResetSettingsSection from './BackupAndResetSettingsSection.vue'
 import NetworkProxySettingsSection from './NetworkProxySettingsSection.vue'
+import PluginSettingsFormView from './PluginSettingsFormView.vue'
 import type { UiContribution } from '../../extensions/registry'
 import type { LibraryWatcherStatusSnapshot } from '../../../../shared/localLibraryScan.ts'
 import type {
@@ -81,6 +82,7 @@ defineProps<{
   runPluginSettingsPanel: (panel: UiContribution) => void
   setPluginSettingsField: (panel: UiContribution, key: string, value: string) => void
   submitPluginSettingsForm: (panel: UiContribution) => void
+  resetPluginSettingsForm: (panel: UiContribution) => void
 }>()
 
 const emit = defineEmits<{
@@ -92,6 +94,63 @@ const emit = defineEmits<{
     <div class="section-title-row">
       <i class="pi pi-sliders-h"></i>
       <h2>常规 (General)</h2>
+    </div>
+
+    <div v-if="pluginSettingsPanels.length > 0" class="section-block plugin-settings-block">
+      <h3>插件设置 (Plugin Settings)</h3>
+      <p class="section-hint">已安装插件的可配置项会显示在这里。</p>
+      <div class="setting-list">
+        <template
+          v-for="(panel, index) in pluginSettingsPanels"
+          :key="`${panel.pluginId}:${panel.id}`"
+        >
+          <hr v-if="index > 0" />
+          <div class="setting-item top-align">
+            <div class="setting-copy">
+              <strong>{{ panel.title }}</strong>
+              <span>{{ panel.description || panel.pluginId }}</span>
+              <small
+                v-if="pluginSettingsResult[pluginPanelStateKey(panel)]"
+                class="plugin-command-result"
+              >
+                {{ pluginSettingsResult[pluginPanelStateKey(panel)] }}
+              </small>
+              <small
+                v-if="pluginSettingsError[pluginPanelStateKey(panel)]"
+                class="plugin-command-error"
+              >
+                {{ pluginSettingsError[pluginPanelStateKey(panel)] }}
+              </small>
+            </div>
+            <button
+              type="button"
+              class="soft-button"
+              :disabled="!panel.command || Boolean(runningPluginSettingsCommand)"
+              @click="runPluginSettingsPanel(panel)"
+            >
+              <i v-if="panel.icon" :class="panel.icon"></i>
+              {{
+                runningPluginSettingsCommand === pluginPanelStateKey(panel)
+                  ? '执行中…'
+                  : pluginSettingsForms[pluginPanelStateKey(panel)]
+                    ? '重新载入'
+                    : '打开设置'
+              }}
+            </button>
+          </div>
+          <PluginSettingsFormView
+            v-if="pluginSettingsForms[pluginPanelStateKey(panel)]"
+            :form="pluginSettingsForms[pluginPanelStateKey(panel)]!"
+            :values="pluginSettingsValues[pluginPanelStateKey(panel)] ?? {}"
+            :id-prefix="`plugin-settings-${pluginPanelStateKey(panel)}`"
+            :busy="Boolean(runningPluginSettingsCommand)"
+            :pending="runningPluginSettingsCommand === pluginPanelStateKey(panel)"
+            @update="(key: string, value: string) => setPluginSettingsField(panel, key, value)"
+            @submit="submitPluginSettingsForm(panel)"
+            @reset="resetPluginSettingsForm(panel)"
+          />
+        </template>
+      </div>
     </div>
 
     <div class="section-block">
@@ -505,107 +564,6 @@ const emit = defineEmits<{
       "
     />
 
-    <div v-if="pluginSettingsPanels.length > 0" class="section-block">
-      <h3>插件设置 (Plugin Settings)</h3>
-      <div class="setting-list">
-        <template
-          v-for="(panel, index) in pluginSettingsPanels"
-          :key="`${panel.pluginId}:${panel.id}`"
-        >
-          <hr v-if="index > 0" />
-          <div class="setting-item top-align">
-            <div class="setting-copy">
-              <strong>{{ panel.title }}</strong>
-              <span>{{ panel.description || panel.pluginId }}</span>
-              <small
-                v-if="pluginSettingsResult[pluginPanelStateKey(panel)]"
-                class="plugin-command-result"
-              >
-                {{ pluginSettingsResult[pluginPanelStateKey(panel)] }}
-              </small>
-              <small
-                v-if="pluginSettingsError[pluginPanelStateKey(panel)]"
-                class="plugin-command-error"
-              >
-                {{ pluginSettingsError[pluginPanelStateKey(panel)] }}
-              </small>
-            </div>
-            <button
-              type="button"
-              class="soft-button"
-              :disabled="!panel.command || Boolean(runningPluginSettingsCommand)"
-              @click="runPluginSettingsPanel(panel)"
-            >
-              <i v-if="panel.icon" :class="panel.icon"></i>
-              {{
-                runningPluginSettingsCommand === pluginPanelStateKey(panel)
-                  ? '执行中…'
-                  : pluginSettingsForms[pluginPanelStateKey(panel)]
-                    ? '重新载入'
-                    : '打开设置'
-              }}
-            </button>
-          </div>
-          <div v-if="pluginSettingsForms[pluginPanelStateKey(panel)]" class="plugin-settings-form">
-            <p
-              v-if="pluginSettingsForms[pluginPanelStateKey(panel)]?.notice"
-              class="plugin-settings-notice"
-            >
-              {{ pluginSettingsForms[pluginPanelStateKey(panel)]?.notice }}
-            </p>
-            <label
-              v-for="field in pluginSettingsForms[pluginPanelStateKey(panel)]?.fields"
-              :key="field.key"
-              class="plugin-settings-field"
-            >
-              <span>{{ field.label }}<b v-if="field.required"> *</b></span>
-              <select
-                v-if="field.type === 'select'"
-                class="preview-select"
-                :value="pluginSettingsValues[pluginPanelStateKey(panel)]?.[field.key] ?? ''"
-                @change="
-                  setPluginSettingsField(
-                    panel,
-                    field.key,
-                    ($event.target as HTMLSelectElement).value
-                  )
-                "
-              >
-                <option v-for="option in field.options" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
-              <input
-                v-else
-                class="preview-select"
-                :type="field.type"
-                :required="field.required"
-                :placeholder="field.placeholder"
-                :autocomplete="field.type === 'password' ? 'new-password' : 'off'"
-                :value="pluginSettingsValues[pluginPanelStateKey(panel)]?.[field.key] ?? ''"
-                @input="
-                  setPluginSettingsField(
-                    panel,
-                    field.key,
-                    ($event.target as HTMLInputElement).value
-                  )
-                "
-              />
-            </label>
-            <button
-              type="button"
-              class="soft-button plugin-settings-submit"
-              :disabled="Boolean(runningPluginSettingsCommand)"
-              @click="submitPluginSettingsForm(panel)"
-            >
-              {{
-                runningPluginSettingsCommand === pluginPanelStateKey(panel) ? '保存中…' : '保存设置'
-              }}
-            </button>
-          </div>
-        </template>
-      </div>
-    </div>
     <NetworkProxySettingsSection
       :proxy-mode="settings.proxyMode"
       :proxy-host="settings.proxyHost"

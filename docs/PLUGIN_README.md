@@ -178,6 +178,39 @@ UI contribution 通过 command 返回字符串或可序列化对象，宿主只�
 
 不要试图在 UI 入口里直接操纵 DOM 或调 Electron renderer API。所有交互走 command 协议回宿主进程，再由宿主决定渲染什么。
 
+### 9.1 设置表单（settings-form）
+
+`settingsPanel` 的 command 可以返回一个结构化表单，宿主用自己的控件渲染（类型见 `TwilightSettingsForm`）：
+
+```ts
+return {
+  kind: 'settings-form',
+  submitCommand: 'my-plugin.settings.save',
+  resetCommand: 'my-plugin.settings.reset', // 可选：显示「恢复默认」
+  live: true, // 可选：修改后自动提交（防抖），不显示保存按钮
+  fields: [
+    { key: 'theme.color', label: '强调色', type: 'color', value: '#ff8fb6', group: '外观' },
+    { key: 'theme.size', label: '尺寸', type: 'range', min: 0, max: 100, unit: 'px', value: '40' },
+    { key: 'theme.glow', label: '发光', type: 'toggle', value: 'true', description: '可选说明' }
+  ]
+}
+```
+
+- 字段类型：`text` / `password` / `url` / `select` / `toggle` / `range` / `color`，最多 40 个；相邻且 `group` 相同的字段显示在同一标题下。
+- 提交时 `submitCommand` 收到 `Record<string, string>`：开关为 `'true'`/`'false'`，滑块为数字字符串，颜色为 `#rrggbb`。宿主会丢弃非法字段并钳制滑块范围，但插件仍需自行校验。
+- `submitCommand` / `resetCommand` 可返回 `{ message?, form? }`（`TwilightSettingsFormResult`），`form` 会替换当前表单值。实时模式下若用户在提交途中继续编辑，宿主不会用返回值覆盖新的输入，并会在上一次提交完成后补发一次。
+- contribution 设置 `autoLoad: true` 时，打开设置页会自动载入该表单。
+
+### 9.2 灵动岛（overlay）
+
+`twilight.overlay` 控制宿主拥有的灵动岛窗口（需要 `ui:inject`），同一时间只有一个插件可以占用：
+
+- `show()` / `hide()`：显示或隐藏。
+- `configure(config)`：应用 DIY 配置（`TwilightOverlayConfigInput`，外观、布局、组件、交互四组）。缺失或越界的值回退到宿主默认值；返回实际生效的完整配置，插件应持久化这个返回值。隐藏期间也可调用，配置会在下次 `show()` 时生效。
+
+参考实现见外部插件仓库的
+[`plugins/dynamic-island`](https://github.com/Px-asen/Twilight-Echo-plugins/tree/main/plugins/dynamic-island)。
+
 扩展点清单见 [spec §4.4](./twilight-echo-plugin-spec.md#44-扩展点清单首批)。
 
 ## 10. 主题规则

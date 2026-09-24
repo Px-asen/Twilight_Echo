@@ -32,6 +32,7 @@ import type {
   DesktopLyricsTransportAction
 } from '../shared/desktopLyrics.ts'
 import type { TrackData } from '../shared/track.ts'
+import type { DynamicIslandPresentation } from '../shared/dynamicIsland.ts'
 import type { NativeContextMenuRequest } from '../shared/nativeContextMenu.ts'
 import type {
   DspAsset,
@@ -380,6 +381,11 @@ type TrayNavigationTarget = 'local' | 'streaming' | 'settings'
 
 interface TrayPlayerBootstrap {
   state: MiniPlayerStateSnapshot
+}
+
+interface DynamicIslandBootstrap extends DynamicIslandPresentation {
+  state: MiniPlayerStateSnapshot
+  expanded: boolean
 }
 
 interface OpraCatalogStatus {
@@ -1238,6 +1244,15 @@ interface WindowAPI {
     navigate: (target: TrayNavigationTarget) => void
     hide: () => void
     onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
+  }
+  dynamicIsland: {
+    getBootstrap: () => Promise<DynamicIslandBootstrap>
+    command: (command: MiniPlayerCommand) => void
+    getVisualizationData: (options?: VisualizationOptions) => Promise<VisualizationData>
+    setExpanded: (expanded: boolean) => Promise<boolean>
+    onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
+    onExpanded: (cb: (expanded: boolean) => void) => () => void
+    onConfig: (cb: (presentation: DynamicIslandPresentation) => void) => () => void
   }
   debug: {
     appendNativeTrace: (message: string) => Promise<void>

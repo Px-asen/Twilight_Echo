@@ -118,6 +118,12 @@ export interface TwilightPluginManagerOptions {
     next: () => Promise<void> | void
     previous: () => Promise<void> | void
   }
+  dynamicIsland?: {
+    show: (pluginId: string) => Promise<void> | void
+    configure: (pluginId: string, config: unknown) => unknown
+    hide: (pluginId: string) => Promise<void> | void
+    isOwner: (pluginId: string) => boolean
+  }
   getProxyEnv?: () => Record<string, string>
   /**
    * Plugin hosts that have had no provider call, UI command, or subscribed
@@ -223,6 +229,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly getPlaybackInfo: TwilightPluginManagerOptions['getPlaybackInfo']
   private readonly applyNativeDspPluginChain: TwilightPluginManagerOptions['applyNativeDspPluginChain']
   private readonly player: TwilightPluginManagerOptions['player']
+  private readonly dynamicIsland: TwilightPluginManagerOptions['dynamicIsland']
   private readonly getProxyEnv: TwilightPluginManagerOptions['getProxyEnv']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly hibernated = new Map<string, HibernatedPlugin>()
@@ -258,6 +265,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.getPlaybackInfo = options.getPlaybackInfo
     this.applyNativeDspPluginChain = options.applyNativeDspPluginChain
     this.player = options.player
+    this.dynamicIsland = options.dynamicIsland
     this.getProxyEnv = options.getProxyEnv
     const idleTimeoutMs = options.hostIdleTimeoutMs ?? DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS
     this.hostIdle =
@@ -903,6 +911,7 @@ export class TwilightPluginManager extends EventEmitter {
     // The Qishui auth bridge is bound to the live host process; stopping it
     // would discard the user's login, so that plugin stays resident.
     if (id === QISHUI_PLUGIN_ID) return false
+    if (this.dynamicIsland?.isOwner(id)) return false
     if (this.stopOperations.has(id) || this.wakeOperations.has(id)) return false
     if (this.rpcCalls.getPendingCount(id) > 0) return false
     for (const key of this.internalNcmRequests.keys()) {
@@ -1153,6 +1162,7 @@ export class TwilightPluginManager extends EventEmitter {
       if (descriptor.id === QISHUI_PLUGIN_ID) {
         void this.qishuiAuth.clear(descriptor.paths.versionRoot).catch(() => undefined)
       }
+      void this.releaseOverlay(descriptor.id)
       this.running.delete(descriptor.id)
       this.hostIdle?.clear(descriptor.id)
       if (
@@ -1210,6 +1220,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.hostIdle?.clear(id)
     const running = this.running.get(id)
     if (!running) {
+      void this.releaseOverlay(id)
       // A hibernated plugin has no process; an explicit stop just forgets it.
       if (!this.hibernating.has(id)) {
         this.hibernated.delete(id)
@@ -1227,6 +1238,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private async stopRunningPlugin(id: string, running: RunningPlugin): Promise<void> {
+    await this.releaseOverlay(id)
     if (!this.hibernating.has(id)) {
       this.hibernated.delete(id)
       if (!running.trial) this.forgetContributions(id)
@@ -1396,6 +1408,14 @@ export class TwilightPluginManager extends EventEmitter {
           value: await this.handleQishuiAuthApiCall(id, message)
         }
       }
+      if (message.namespace === 'overlay') {
+        return {
+          kind: 'api-result',
+          requestId: message.requestId,
+          ok: true,
+          value: await this.handleOverlayApiCall(id, message)
+        }
+      }
       if (message.namespace !== 'player') throw new Error('未知 API 命名空间')
       const method = message.method
       if (method === 'getPlaybackInfo') {
@@ -1562,6 +1582,34 @@ export class TwilightPluginManager extends EventEmitter {
       return this.ncm.cacheSong(songId, url, typeof fileName === 'string' ? fileName : undefined)
     }
     throw new Error('未知内部 API')
+  }
+
+  private async handleOverlayApiCall(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'api-call' }>
+  ): Promise<unknown> {
+    this.requirePermission(pluginId, 'ui:inject', `twilight.overlay.${message.method}`)
+    const overlay = this.dynamicIsland
+    if (!overlay) throw new Error('灵动岛功能不可用')
+    switch (message.method) {
+      case 'show':
+        await overlay.show(pluginId)
+        return null
+      case 'hide':
+        await overlay.hide(pluginId)
+        return null
+      case 'configure':
+        return overlay.configure(pluginId, message.args[0])
+      default:
+        throw new Error('未知 Overlay API')
+    }
+  }
+
+  /** Tear down the Dynamic Island if this plugin owns it; never rejects. */
+  private releaseOverlay(pluginId: string): Promise<void> {
+    return Promise.resolve()
+      .then(() => this.dynamicIsland?.hide(pluginId))
+      .catch(() => undefined)
   }
 
   private async handleQishuiAuthApiCall(

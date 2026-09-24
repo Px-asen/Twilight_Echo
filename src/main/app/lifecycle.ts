@@ -29,6 +29,7 @@ import {
   showDesktopLyrics,
   setupDesktopLyricsIpc
 } from '../integrations/desktopLyrics'
+import { destroyDynamicIsland, setupDynamicIslandIpc } from '../integrations/dynamicIsland.ts'
 import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
 import { setupTrayPlayerIpc } from '../integrations/trayPlayer'
 import { destroyWindowsSmtc, setupWindowsSmtcIpc } from '../integrations/windowsSmtc.ts'
@@ -349,6 +350,7 @@ export function startApp(): void {
       setupThemeIpc()
       setupDesktopLyricsIpc()
       setupMiniPlayerIpc()
+      setupDynamicIslandIpc()
       setupTrayPlayerIpc()
       setupWindowsSmtcIpc()
 
@@ -398,6 +400,7 @@ export function startApp(): void {
     app.on('before-quit', () => {
       runtime.forceQuit = true
       destroyDesktopLyrics()
+      destroyDynamicIsland()
       // 队列已同步落盘；退出期间的网络投递是尽力而为，未发出的事件下次启动重试。
       void runtime.telemetry?.endSession()
       void runtime.pluginManager?.broadcastEvent('app:before-quit', null)
@@ -405,6 +408,7 @@ export function startApp(): void {
 
     app.on('will-quit', () => {
       destroyDesktopLyrics()
+      destroyDynamicIsland()
       destroyWindowsSmtc()
       unregisterPlayerShortcuts()
       destroyTray()
