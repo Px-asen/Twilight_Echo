@@ -307,6 +307,7 @@ export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
   'navigation.playlists': themeIconSlot('navigation', 'playlist'),
   'navigation.folders': themeIconSlot('navigation', 'folder-open'),
   'navigation.recent': themeIconSlot('navigation', 'clock-counter-clockwise'),
+  'navigation.analytics': themeIconSlot('navigation', 'chart-bar'),
   'navigation.streaming': themeIconSlot('navigation', 'globe'),
   'navigation.radio': themeIconSlot('navigation', 'radio'),
   'navigation.import': themeIconSlot('navigation', 'plus'),
