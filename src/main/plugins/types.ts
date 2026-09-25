@@ -436,6 +436,7 @@ export type PluginHostResponse =
         | 'register'
         | 'registerUi'
         | 'registerTheme'
+        | 'notify'
         | 'ncmRequest'
         | 'ncmOfficialLogin'
         | 'ncmGetCachedSong'

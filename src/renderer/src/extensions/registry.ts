@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type { StructuredPluginTheme } from '../../../shared/theme.ts'
+import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 
 export type UiContributionKind =
   | 'sidebarPage'
@@ -57,6 +58,14 @@ function setupExtensionChangeListener(): void {
   listenerSetup = true
   window.api.plugins.onChanged(() => {
     void syncExtensions()
+  })
+  window.api.plugins.onNotice((notice) => {
+    useAppNoticeStore().pushNotice({
+      kind: notice.kind,
+      message: notice.message,
+      durationMs: notice.durationMs,
+      dedupeKey: `plugin-notice:${notice.pluginId}:${notice.kind}`
+    })
   })
 }
 

@@ -89,6 +89,7 @@ import type {
   TwilightPluginUninstallOptions
 } from './types'
 import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
+import { normalizePluginNoticeInput, type PluginNotice } from '../../shared/pluginNotice.ts'
 
 export interface TwilightPluginManagerOptions {
   appVersion: string
@@ -1377,7 +1378,7 @@ export class TwilightPluginManager extends EventEmitter {
           kind: 'api-result',
           requestId: message.requestId,
           ok: true,
-          value: this.registerExtensionFromPlugin(id, message)
+          value: await this.handleExtensionApiCall(id, message)
         }
       }
       if (message.namespace === 'internal') {
@@ -1588,6 +1589,20 @@ export class TwilightPluginManager extends EventEmitter {
       return null
     }
     throw new Error('未知汽水音乐安全登录 API')
+  }
+
+  private async handleExtensionApiCall(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'api-call' }>
+  ): Promise<TwilightUiContribution | TwilightThemeContribution | null> {
+    if (message.method !== 'notify') {
+      return this.registerExtensionFromPlugin(pluginId, message)
+    }
+    this.requirePermission(pluginId, 'ui:inject', 'ui.notify')
+    const notice = normalizePluginNoticeInput(message.args[0])
+    if (!notice) throw new Error('通知内容必须是包含 message 的对象')
+    this.emit('notice', { pluginId, ...notice } satisfies PluginNotice)
+    return null
   }
 
   private registerExtensionFromPlugin(

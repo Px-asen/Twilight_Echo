@@ -95,6 +95,7 @@ interface TwilightPluginContext {
         autoLoad?: boolean
       }) => Promise<void>
       onCommand: (command: string, handler: CommandHandler) => () => void
+      notify: (notice: { kind?: string; message: string; durationMs?: number }) => Promise<void>
     }
     themes: {
       register: (theme: {
@@ -324,7 +325,8 @@ function createContext(
         if (!normalized) throw new Error('UI command is required')
         commandHandlers.set(normalized, handler)
         return () => commandHandlers.delete(normalized)
-      }
+      },
+      notify: (notice) => callUiApi('notify', notice).then(() => undefined)
     },
     themes: {
       register: async () => {

@@ -755,6 +755,7 @@
     "plugins.list",
     "plugins.listIndex",
     "plugins.onChanged",
+    "plugins.onNotice",
     "plugins.openLog",
     "plugins.refreshIndex",
     "plugins.setNativeDspParameters",
