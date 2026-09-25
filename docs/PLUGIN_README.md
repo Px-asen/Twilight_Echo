@@ -139,7 +139,7 @@ JS 插件实现两个函数：
 | `twilight.events`    | 事件总线，订阅曲目切换、播放暂停、进度、队列变更、应用启停              |
 | `twilight.player`    | 播放器控制与状态查询                                                    |
 | `twilight.providers` | 注册 provider 能力、查询已注册 provider                                 |
-| `twilight.ui`        | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板、流媒体/本地侧栏入口） |
+| `twilight.ui`        | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板、流媒体/本地侧栏入口）并显示提示 toast |
 | `twilight.themes`    | 主题资源声明                                                            |
 
 不要试图绕过网关直接拿宿主内部对象。API 主版本内只加不改不删（见 [spec §3](./twilight-echo-plugin-spec.md#3-api-版本与兼容性承诺)），所以绑在 `twilight` 上的调用是稳的。
@@ -173,6 +173,18 @@ JS 插件实现两个函数：
 - `streamingHome`：流媒体首页入口
 
 这三类都通过 **command 回到插件宿主进程**执行业务逻辑。宿主只渲染它批准的 DTO，不向插件开放任意 DOM 权限。这是 Phase 3 受控 UI 注入的核心设计：渲染在 renderer，逻辑在 utilityProcess，中间是受限桥接。
+
+`twilight.ui` 还提供 `notify(notice)`，用于弹出宿主风格的提示（toast），同样需要 `ui:inject` 权限：
+
+```ts
+await context.twilight.ui.notify({
+  kind: 'warning', // 'info' | 'success' | 'warning' | 'error'，默认 info
+  message: '当前版本不支持该功能',
+  durationMs: 6000 // 可选，宿主会限制在 2500–30000ms
+})
+```
+
+提示内容是纯文本，宿主会做长度截断。该方法是 API v3 新增的可选能力，旧宿主可能没有；调用前请用 `typeof context.twilight.ui.notify === 'function'` 判断。
 
 UI contribution 通过 command 返回字符串或可序列化对象，宿主只在受控页面中按纯文本/结构化数据展示。任意插件 HTML、`srcdoc` iframe 和 DOM 注入都不是受支持的扩展路径。旧版 `renderMode: 'html'` 输入只为 API v1 兼容而保留，宿主会忽略它并按 command 模式处理。
 

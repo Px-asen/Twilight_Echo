@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron'
 import { ProviderWriteIdempotencyCoordinator } from '../../shared/providerWriteIdempotency.ts'
 import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../../shared/providerDownloads.ts'
+import { PLUGIN_NOTICE_CHANNEL, type PluginNotice } from '../../shared/pluginNotice.ts'
 import type {
   ProviderDownloadTaskSnapshot,
   ProviderDownloadCreateInput,
@@ -14,6 +15,7 @@ import type {
 } from '../types'
 
 const pluginChangedCallbacks = new Set<() => void>()
+const pluginNoticeCallbacks = new Set<(notice: PluginNotice) => void>()
 const providerDownloadChangedCallbacks = new Set<(tasks: ProviderDownloadTaskSnapshot[]) => void>()
 const providerWriteIdempotency = new ProviderWriteIdempotencyCoordinator()
 
@@ -21,6 +23,12 @@ export function bindPluginsIpcEvents(): void {
   ipcRenderer.on('plugins:changed', () => {
     for (const cb of pluginChangedCallbacks) {
       cb()
+    }
+  })
+
+  ipcRenderer.on(PLUGIN_NOTICE_CHANNEL, (_event, notice: PluginNotice) => {
+    for (const cb of pluginNoticeCallbacks) {
+      cb(notice)
     }
   })
 
@@ -66,6 +74,10 @@ export const pluginsApi = {
     onChanged: (cb: () => void): (() => void) => {
       pluginChangedCallbacks.add(cb)
       return () => pluginChangedCallbacks.delete(cb)
+    },
+    onNotice: (cb: (notice: PluginNotice) => void): (() => void) => {
+      pluginNoticeCallbacks.add(cb)
+      return () => pluginNoticeCallbacks.delete(cb)
     }
   },
   providers: {

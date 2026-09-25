@@ -33,6 +33,7 @@ import {
   PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
   type ProviderDownloadCreateInput
 } from '../../shared/providerDownloads.ts'
+import { PLUGIN_NOTICE_CHANNEL, type PluginNotice } from '../../shared/pluginNotice.ts'
 
 const MAX_PLUGIN_ID_LENGTH = 128
 const MAX_PROVIDER_ID_LENGTH = 128
@@ -151,6 +152,10 @@ export function setupPluginIpc(): void {
     void reconcileThemeAfterPluginChange().catch((error) =>
       console.warn('[themes] failed to refresh inherited window values', error)
     )
+  })
+
+  runtime.pluginManager.on('notice', (notice: PluginNotice) => {
+    runtime.mainWindow?.webContents.send(PLUGIN_NOTICE_CHANNEL, notice)
   })
 
   ipcMain.handle('plugins:list', async (event) => {

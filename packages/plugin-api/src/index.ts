@@ -687,12 +687,30 @@ export interface TwilightPluginExtensionContribution {
   themes: TwilightThemeContribution[]
 }
 
+export type TwilightUiNoticeKind = 'info' | 'success' | 'warning' | 'error'
+
+/** A transient host notice (toast) requested by a plugin. */
+export interface TwilightUiNotice {
+  /** Defaults to `info` when omitted or unrecognized. */
+  kind?: TwilightUiNoticeKind
+  /** Plain text shown to the user; the host truncates overly long messages. */
+  message: string
+  /** Suggested auto-dismiss delay in ms; the host clamps it to 2500–30000. */
+  durationMs?: number
+}
+
 export interface TwilightUiApi {
   register(contribution: TwilightUiContribution): Promise<void>
   onCommand(
     command: string,
     handler: (...args: [...unknown[], TwilightUiCommandContext]) => unknown | Promise<unknown>
   ): void
+  /**
+   * Ask the host to show a transient notice (toast). Requires the `ui:inject`
+   * permission. Hosts predating this method omit it, so detect support with
+   * `typeof twilight.ui.notify === 'function'` before calling.
+   */
+  notify(notice: TwilightUiNotice): Promise<void>
 }
 
 export interface TwilightThemeContribution {
