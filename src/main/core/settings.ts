@@ -3,8 +3,9 @@ import {
   normalizeDownloadPreferences
 } from '../../shared/downloadPreferences.ts'
 import { app } from 'electron'
+import { normalizeContinuityOutputConfig } from '../../shared/audioOutputConfig.ts'
 import { normalizeAudioDeviceProfileSettings } from '../../shared/audioDeviceProfiles.ts'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { release } from 'node:os'
 import { stat, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
@@ -229,6 +230,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   audioDevice: 'auto',
   audioExclusiveMode: false,
   audioOutputConfig: {
+    ...normalizeContinuityOutputConfig({}),
     preferredBufferSize: 0,
     routingMode: 'auto',
     wasapiExclusivePushMode: false,
@@ -624,6 +626,7 @@ export function normalizeOutputConfig(config: unknown): OutputConfig {
   if (!config || typeof config !== 'object') return { ...DEFAULT_SETTINGS.audioOutputConfig }
   const value = config as Partial<Record<keyof OutputConfig, unknown>>
   return {
+    ...normalizeContinuityOutputConfig(value),
     preferredBufferSize:
       typeof value.preferredBufferSize === 'number'
         ? clampNumber(Math.trunc(value.preferredBufferSize), 0, 8192, 0)
@@ -876,29 +879,44 @@ export function supportsNativeWindowTransparency(): boolean {
 // 关闭时 DWM 不提供系统背板，Electron 会把窗口画成灰色。
 // 这里读注册表检测该开关，供窗口层决定是否使用亚克力（而非逐像素透明）。
 let windowsAcrylicBackdropAvailableCache: boolean | null = null
+const TRANSPARENCY_REG_ARGS = [
+  'query',
+  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize',
+  '/v',
+  'EnableTransparency'
+]
+
+// 读不到注册表时不做强判，交给 Electron 的默认回退行为。
+function parseTransparencyQuery(output: string): boolean {
+  const match = /EnableTransparency\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(output)
+  return match ? parseInt(match[1], 16) === 1 : true
+}
+
 export function isWindowsAcrylicBackdropAvailable(): boolean {
   if (process.platform !== 'win32') return false
   if (windowsAcrylicBackdropAvailableCache !== null) {
     return windowsAcrylicBackdropAvailableCache
   }
   try {
-    const output = execFileSync(
-      'reg',
-      [
-        'query',
-        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize',
-        '/v',
-        'EnableTransparency'
-      ],
-      { encoding: 'utf8', timeout: 3000 }
-    )
-    const match = /EnableTransparency\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(output)
-    windowsAcrylicBackdropAvailableCache = match ? parseInt(match[1], 16) === 1 : true
+    const output = execFileSync('reg', TRANSPARENCY_REG_ARGS, { encoding: 'utf8', timeout: 3000 })
+    windowsAcrylicBackdropAvailableCache = parseTransparencyQuery(output)
   } catch {
-    // 读不到注册表时不做强判，交给 Electron 的默认回退行为。
     windowsAcrylicBackdropAvailableCache = true
   }
   return windowsAcrylicBackdropAvailableCache
+}
+
+// 启动时异步预热，避免建窗时同步起 reg.exe 阻塞主进程。
+export function warmWindowsAcrylicBackdropAvailability(): Promise<void> {
+  if (process.platform !== 'win32' || windowsAcrylicBackdropAvailableCache !== null) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    execFile('reg', TRANSPARENCY_REG_ARGS, { encoding: 'utf8', timeout: 3000 }, (error, stdout) => {
+      windowsAcrylicBackdropAvailableCache ??= error ? true : parseTransparencyQuery(stdout)
+      resolve()
+    })
+  })
 }
 
 export function createSettingsSnapshot(

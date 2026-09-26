@@ -1,4 +1,4 @@
-import { Client, FileType, type FileInfo } from 'basic-ftp'
+import type { FileInfo } from 'basic-ftp'
 import { PassThrough } from 'node:stream'
 import { buildNetworkEntryId, normalizeRemotePath } from '../networkPath.ts'
 import { NetworkSourceFailure } from '../errors.ts'
@@ -29,6 +29,7 @@ export function createFtpAdapter(): NetworkSourceAdapter {
       profile: NetworkSourceProfile,
       auth: NetworkAuth
     ): Promise<NetworkSourceSession> {
+      const { Client, FileType } = await import('basic-ftp')
       const client = new Client(profile.options.transferTimeoutMs)
       if (process.env.NETWORK_FTP_DEBUG === '1') client.ftp.verbose = true
       let connected = false

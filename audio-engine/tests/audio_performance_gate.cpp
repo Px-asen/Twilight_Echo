@@ -618,7 +618,7 @@ int main() {
       "crossfade-promote",
       crossfadeA,
       12.0,
-      "{\"dspEnabled\":true,\"gapless\":true,\"crossfadeSeconds\":0.25}",
+      "{\"dspEnabled\":true,\"gapless\":true,\"crossfadeSeconds\":0.25,\"crossfadeContent\":\"all\"}",
       crossfadeB));
   reports.push_back(runPipelineScenario(
       "convolution-short-ir",

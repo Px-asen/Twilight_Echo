@@ -9,7 +9,7 @@ import {
 } from '../stores/useListeningStatsStore'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import { useSmoothedValue } from '../utils/useSmoothedValue'
+import SmoothedProgressFill from './SmoothedProgressFill.vue'
 import {
   DEFAULT_DSP_OUTPUT_STAGE,
   type DspGraphNode,
@@ -160,13 +160,8 @@ const heroCoverKey = computed(
 const nowPlayingTitle = computed(() =>
   props.previewTracks ? heroTrack.value?.title : currentTrack.value?.title || heroTrack.value?.title
 )
-// 0..100 的进度百分比，供 transform 用；useSmoothedValue 把每秒一跳的播放
-// 进度补成连续运动，seek/切歌的大跳变（>2.5%）直接 snap 不补间。
+// 0..100 的进度百分比；SmoothedProgressFill 在自身内部补间，首页不随每帧重渲染。
 const heroProgressPercent = computed(() => Math.min(100, Math.max(0, progress.value)))
-const smoothedHeroProgress = useSmoothedValue(heroProgressPercent, {
-  tau: 160,
-  snapThreshold: 2.5
-})
 
 const heroLabel = computed(() => {
   if (!heroTrack.value) return ''
@@ -920,7 +915,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                   aria-label="播放进度"
                   @click="handleHeroSeek"
                 >
-                  <span :style="{ transform: `scaleX(${smoothedHeroProgress / 100})` }"></span>
+                  <SmoothedProgressFill as="span" :percent="heroProgressPercent" />
                 </button>
                 <div class="hero-time">
                   <span>{{ formatTime(currentTime) }}</span>

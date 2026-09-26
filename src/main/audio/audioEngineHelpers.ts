@@ -283,6 +283,7 @@ export function createPlaybackInfoFanoutSignature(
     nativePlaybackActive,
     info.bitrate,
     info.sourceSampleRate,
+    info.sourceChannels,
     info.sourceBitDepth,
     info.decodedSampleRate,
     info.decodedBitDepth,
@@ -324,6 +325,10 @@ export function createPlaybackInfoFanoutSignature(
     info.replayGainDb,
     info.crossfeedStrength,
     info.crossfadeSeconds,
+    info.crossfadeMixActive,
+    info.crossfadeEffectiveSeconds,
+    info.crossfadeCurve,
+    info.crossfadeBlockedReason,
     info.convolverLatencyFrames,
     info.partitionSize,
     info.channelMappingMode,
@@ -502,6 +507,9 @@ export function deviceCompatibleWithOutput(
 export function outputConfigsEqual(left: OutputConfig, right: OutputConfig): boolean {
   return (
     left.preferredBufferSize === right.preferredBufferSize &&
+    (left.playbackPolicy ?? 'bit-perfect-first') ===
+      (right.playbackPolicy ?? 'bit-perfect-first') &&
+    (left.continuitySampleRate ?? 48000) === (right.continuitySampleRate ?? 48000) &&
     left.routingMode === right.routingMode &&
     left.wasapiExclusivePushMode === right.wasapiExclusivePushMode &&
     (left.pcmToDsdMode ?? 'off') === (right.pcmToDsdMode ?? 'off') &&
@@ -565,7 +573,9 @@ export function audioProcessingSettingsEqual(
     left.crossfeedDelayMs === right.crossfeedDelayMs &&
     left.crossfeedCutoffHz === right.crossfeedCutoffHz &&
     left.gapless === right.gapless &&
-    left.crossfadeSeconds === right.crossfadeSeconds
+    left.crossfadeSeconds === right.crossfadeSeconds &&
+    (left.crossfadeCurve ?? 'linear') === (right.crossfadeCurve ?? 'linear') &&
+    (left.crossfadeContent ?? 'conservative') === (right.crossfadeContent ?? 'conservative')
   )
 }
 
@@ -911,7 +921,12 @@ export function normalizeAudioProcessingSettings(
     crossfeedDelayMs: clampNumber(settings?.crossfeedDelayMs, 0.05, 2, 0.35),
     crossfeedCutoffHz: clampNumber(settings?.crossfeedCutoffHz, 80, 4000, 700),
     gapless: settings?.gapless !== false,
-    crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0)
+    crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0),
+    crossfadeCurve: settings?.crossfadeCurve === 'equal-power' ? 'equal-power' : 'linear',
+    crossfadeContent:
+      settings?.crossfadeContent === 'all' || settings?.crossfadeContent === 'live'
+        ? settings.crossfadeContent
+        : 'conservative'
   }
 }
 
@@ -1316,6 +1331,7 @@ export function createDefaultPlaybackInfo(
     codec: '未知',
     bitrate: 0,
     sourceSampleRate: 0,
+    sourceChannels: 0,
     sourceBitDepth: 0,
     decodedSampleRate: 0,
     decodedBitDepth: 0,

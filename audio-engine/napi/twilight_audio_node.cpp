@@ -358,6 +358,9 @@ void ensureEngine() {
   if (!g_engine) {
     if (TAE_CreateEngine(&g_engine) == TAE_RESULT_OK && g_engine) {
       TAE_SetEventCallback(g_engine, eventCallback, nullptr);
+      // eventCallback only keeps "error"; playback state is polled through
+      // GetPlaybackInfo, so the engine need not serialize snapshot events.
+      TAE_SetStateEventsEnabled(g_engine, 0);
     }
   }
 }
@@ -379,10 +382,9 @@ napi_value readJson(napi_env env, TAE_Result (*fn)(TAE_EngineHandle, char*, size
   fn(g_engine, nullptr, 0, &required);
   std::vector<char> buffer(required == 0 ? 1 : required);
   TAE_Result result = TAE_RESULT_OK;
-  // The engine's clock thread mutates state every 100ms, so the JSON can grow
-  // between the size probe and the fill; copyStringResult then reports
-  // INVALID_ARGUMENT with a larger required size. Re-probe until a snapshot
-  // fits — the same pattern GetVisualizationData already uses.
+  // The fill normally copies the snapshot the size probe kept for this thread.
+  // Should it ever report INVALID_ARGUMENT with a larger required size, grow
+  // and retry — the same pattern GetVisualizationData already uses.
   for (int attempt = 0; attempt < 3; ++attempt) {
     result = fn(g_engine, buffer.data(), buffer.size(), &required);
     if (result == TAE_RESULT_OK) break;

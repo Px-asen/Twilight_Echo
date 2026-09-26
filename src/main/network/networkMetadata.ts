@@ -1,6 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { parseFile } from 'music-metadata'
 import { downloadEntryToCache } from './networkCache.ts'
 import type { NetworkSourceSession } from './adapters/types.ts'
 import type { NetworkEntry, NetworkEntryMetadata } from '../../shared/networkSources.ts'
@@ -13,6 +12,7 @@ interface ParsedEntry {
 
 async function parseCachedEntry(cacheFilePath: string): Promise<ParsedEntry | null> {
   try {
+    const { parseFile } = await import('music-metadata')
     const parsed = await parseFile(cacheFilePath, { duration: false })
     const common = parsed.common
     const format = parsed.format

@@ -69,37 +69,26 @@ const {
 } = (await import(new URL('./removal.ts', import.meta.url).href)) as typeof import('./removal.ts')
 
 test('local library scan normalizes common bpm metadata into Track bpm', () => {
-  const source = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
 
   assert.match(source, /function normalizeBpm\(/)
-  assert.match(source, /const bpm = normalizeBpm\(common\.bpm\)/)
+  assert.match(source, /const bpm = normalizeBpm\(metadata\.common\.bpm\)/)
   assert.match(source, /if \(bpm !== undefined\) track\.bpm = bpm/)
 })
 
 test('local library scan persists trackNumber and discNumber from common tags', () => {
-  const scanSource = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
   const serviceSource = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
 
-  for (const source of [scanSource, serviceSource]) {
-    assert.match(source, /function normalizeTrackIndex\(/)
-    assert.match(source, /trackNumber/)
-    assert.match(source, /discNumber/)
-  }
-  assert.match(scanSource, /normalizeTrackIndex\(common\.track\)/)
-  assert.match(scanSource, /normalizeTrackIndex\(common\.disk\)/)
+  assert.match(serviceSource, /function normalizeTrackIndex\(/)
+  assert.match(serviceSource, /trackNumber/)
+  assert.match(serviceSource, /discNumber/)
   assert.match(serviceSource, /normalizeTrackIndex\(metadata\.common\.track\)/)
   assert.match(serviceSource, /normalizeTrackIndex\(metadata\.common\.disk\)/)
 })
 
 test('local library scan only stores albumArtist from a real ALBUMARTIST tag', () => {
-  const scanSource = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
   const serviceSource = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
 
-  assert.match(
-    scanSource,
-    /\.\.\.\(common\.albumartist \? \{ albumArtist: common\.albumartist \} : \{\}\)/
-  )
-  assert.doesNotMatch(scanSource, /albumArtist:\s*common\.albumartist\s*\|\|\s*artist/)
   assert.match(
     serviceSource,
     /\.\.\.\(metadata\.common\.albumartist \? \{ albumArtist: metadata\.common\.albumartist \} : \{\}\)/
@@ -111,8 +100,8 @@ test('local library scan only stores albumArtist from a real ALBUMARTIST tag', (
 })
 
 test('local library scan persists ReplayGain and R128 tags onto Track records', () => {
-  const source = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
-  assert.match(source, /export function extractReplayGainTags\(/)
+  const source = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
+  assert.match(source, /function extractReplayGainTags\(/)
   assert.match(source, /function normalizeGainDb\(/)
   assert.match(source, /function normalizePeak\(/)
   assert.match(source, /function normalizeR128GainDb\(/)
@@ -123,17 +112,17 @@ test('local library scan persists ReplayGain and R128 tags onto Track records', 
   assert.match(source, /replayGainAlbumPeak/)
   assert.match(source, /r128TrackGainDb/)
   assert.match(source, /r128AlbumGainDb/)
-  assert.match(source, /Math\.abs\(value\) > 64 \? value \/ 256/)
+  assert.match(source, /Math\.abs\(numeric\) > 64 \? numeric \/ 256/)
   assert.match(source, /REPLAYGAIN_TRACK_GAIN/)
   assert.match(source, /R128_TRACK_GAIN/)
   assert.match(source, /R128_ALBUM_GAIN/)
 })
 
 test('local library scan decodes sibling lyrics with the shared multi-encoding decoder', () => {
-  const source = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../lyrics/loadLyrics.ts', import.meta.url), 'utf8')
 
-  assert.match(source, /decodeLyrics\(readFileSync\(lrcPath\)\)\.text/)
-  assert.doesNotMatch(source, /readFileSync\(lrcPath,\s*['"]utf-?8['"]\)/)
+  assert.match(source, /decodeLyrics\(bytes\)\.text/)
+  assert.doesNotMatch(source, /readFile\(lrcPath,\s*['"]utf-?8['"]\)/)
 })
 
 test('music library legacy data migrates to schema v2 and survives a restart', () => {

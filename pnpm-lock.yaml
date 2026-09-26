@@ -24,18 +24,12 @@ importers:
 
   .:
     dependencies:
-      '@electron-toolkit/preload':
-        specifier: ^3.0.2
-        version: 3.0.2(electron@43.2.0)
       '@electron-toolkit/utils':
         specifier: ^4.0.0
         version: 4.0.0(electron@43.2.0)
       '@neteasecloudmusicapienhanced/api':
         specifier: ^4.35.1
         version: 4.35.1(patch_hash=656fbb26c80cd8fce02181032bac95656a93ff1e6f1726e8d4cba566fb1cca5b)
-      '@phosphor-icons/web':
-        specifier: ^2.1.2
-        version: 2.1.2(patch_hash=d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb)
       '@tokenizer/inflate':
         specifier: 0.4.1
         version: 0.4.1
@@ -162,15 +156,9 @@ importers:
       pend:
         specifier: 1.2.0
         version: 1.2.0
-      pinia:
-        specifier: ^3.0.4
-        version: 3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
       pngjs:
         specifier: 5.0.0
         version: 5.0.0
-      primeicons:
-        specifier: ^7.0.0
-        version: 7.0.0
       proxy-from-env:
         specifier: 2.1.0
         version: 2.1.0
@@ -220,6 +208,9 @@ importers:
       '@electron-toolkit/tsconfig':
         specifier: ^2.0.0
         version: 2.0.0(@types/node@22.19.17)
+      '@phosphor-icons/web':
+        specifier: ^2.1.2
+        version: 2.1.2(patch_hash=d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb)
       '@types/node':
         specifier: ^22.19.1
         version: 22.19.17
@@ -247,9 +238,15 @@ importers:
       node-api-headers:
         specifier: ^1.9.0
         version: 1.9.0
+      pinia:
+        specifier: ^3.0.4
+        version: 3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
       prettier:
         specifier: ^3.7.4
         version: 3.8.3
+      primeicons:
+        specifier: ^7.0.0
+        version: 7.0.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -381,11 +378,6 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
-
-  '@electron-toolkit/preload@3.0.2':
-    resolution: {integrity: sha512-TWWPToXd8qPRfSXwzf5KVhpXMfONaUuRAZJHsKthKgZR/+LqX1dZVSSClQ8OTAEduvLGdecljCsoT2jSshfoUg==}
-    peerDependencies:
-      electron: '>=13.0.0'
 
   '@electron-toolkit/tsconfig@2.0.0':
     resolution: {integrity: sha512-AdPsP770WhW7b260h13SHMdmjEEHJL6xFtgi3jwgdsSQbJOkJLeNnnpZW9qxTPCvmRI6vmdzWz5K3gibFS6SNg==}
@@ -3487,10 +3479,6 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - supports-color
-
-  '@electron-toolkit/preload@3.0.2(electron@43.2.0)':
-    dependencies:
-      electron: 43.2.0
 
   '@electron-toolkit/tsconfig@2.0.0(@types/node@22.19.17)':
     dependencies:

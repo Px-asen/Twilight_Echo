@@ -104,7 +104,6 @@ export const networkSourcesApi = {
       return () => remoteRequestCallbacks.delete(callback)
     },
     discoverDlna: (): Promise<DlnaDeviceInfo[]> => ipcRenderer.invoke('remote:discoverDlna'),
-    getDlnaDevices: (): Promise<DlnaDeviceInfo[]> => ipcRenderer.invoke('remote:getDlnaDevices'),
     castToDevice: (payload: {
       usn: string
       /** Authorized local library / managed-cache path. Mutually exclusive with mediaUrl. */

@@ -15,6 +15,17 @@ const raw = {
   volumeCeiling: 0.4
 }
 
+test('device profiles preserve continuity policy and migrate older output settings', () => {
+  assert.equal(normalizeAudioDeviceProfile(raw)!.outputConfig.playbackPolicy, 'bit-perfect-first')
+  const profile = normalizeAudioDeviceProfile({
+    ...raw,
+    outputConfig: { playbackPolicy: 'continuity-first', continuitySampleRate: 96000 }
+  })!
+  assert.equal(profile.outputConfig.playbackPolicy, 'continuity-first')
+  assert.equal(profile.outputConfig.continuitySampleRate, 96000)
+  assert.deepEqual(normalizeAudioDeviceProfile(JSON.parse(JSON.stringify(profile))), profile)
+})
+
 test('old settings migrate without inventing a profile or raising software volume', () => {
   assert.deepEqual(normalizeAudioDeviceProfileSettings(), {
     version: 1,

@@ -13,6 +13,8 @@ const {
   normalizeAudioProcessingSettings,
   normalizeOutputConversionInfo,
   normalizeOutputProviderImplementation,
+  normalizeOutputConfig,
+  outputConfigsEqual,
   parseDspGraphStatusOrThrow,
   parseNativeJson,
   resolveProcessingMasterState,
@@ -24,6 +26,38 @@ const {
 function deeplyNestedJson(depth: number): string {
   return `${'['.repeat(depth)}0${']'.repeat(depth)}`
 }
+
+test('crossfade defaults remain linear and content rules participate in settings equality', () => {
+  const previous = normalizeAudioProcessingSettings()
+  assert.equal(previous.crossfadeCurve, 'linear')
+  assert.equal(previous.crossfadeContent, 'conservative')
+  const next = normalizeAudioProcessingSettings({
+    crossfadeCurve: 'equal-power',
+    crossfadeContent: 'all'
+  })
+  assert.equal(audioProcessingSettingsEqual(previous, next), false)
+  assert.deepEqual(normalizeAudioProcessingSettings(JSON.parse(JSON.stringify(next))), next)
+})
+
+test('continuity output policy migrates defaults and participates in route transactions', () => {
+  const previous = normalizeOutputConfig()
+  assert.equal(previous.playbackPolicy, 'bit-perfect-first')
+  assert.equal(previous.continuitySampleRate, 48000)
+  const continuous = normalizeOutputConfig({
+    playbackPolicy: 'continuity-first',
+    continuitySampleRate: 96000
+  })
+  assert.equal(outputConfigsEqual(previous, continuous), false)
+  assert.equal(
+    outputConfigsEqual(continuous, { ...continuous, continuitySampleRate: 44100 }),
+    false
+  )
+  assert.deepEqual(normalizeOutputConfig(JSON.parse(JSON.stringify(continuous))), continuous)
+  assert.equal(
+    normalizeOutputConfig(JSON.parse('{"continuitySampleRate":12345}')).continuitySampleRate,
+    48000
+  )
+})
 
 function makePlaybackInfo(overrides: Partial<PlaybackInfo> = {}): PlaybackInfo {
   return {

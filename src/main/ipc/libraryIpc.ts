@@ -14,6 +14,7 @@ import {
   synchronizeLocalLibraryFileIndexRevision
 } from '../library/fileIndex.ts'
 import type { LocalLibraryScanRunner } from '../library/libraryScanServiceClient.ts'
+import { expandSacdIsoTracks } from '../library/sacdIsoTracks.ts'
 import {
   MAX_MUSIC_LIBRARY_BYTES,
   assertMusicLibraryRevision,
@@ -45,6 +46,7 @@ import type {
   LocalLibraryTrackSelection,
   LocalMusicLibraryDocument
 } from '../../shared/localLibrary.ts'
+import type { NativeAudioMetadata } from '../../shared/audioEngineTypes.ts'
 import type {
   LocalLibraryScanStatus,
   LocalLibraryWorkerScanRequest
@@ -111,17 +113,18 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
       })
     })
     if (result.cancelled) return []
+    const parsedTracks = await expandSacdIsoTracks(result.parsedTracks, readSacdIsoMetadata)
     // The worker writes covers at their source size; hand the renderer the
     // 500px thumbnail handles the coordinator would have persisted.
     await Promise.all(
-      result.parsedTracks.map(async (track) => {
+      parsedTracks.map(async (track) => {
         if (!track || typeof track !== 'object') return
         const record = track as Record<string, unknown>
         if (typeof record.cover !== 'string' || !record.cover.startsWith('cover://')) return
         record.cover = await normalizeCachedCoverHandle(record.cover)
       })
     )
-    return result.parsedTracks
+    return parsedTracks
   })
 
   const tagWriteIpc = createTagWriteIpcHandlers({
@@ -156,6 +159,7 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
       await filterAuthorizedLibraryRoots(runtime.appSettings.libraryFolders),
     getCoverCacheDir,
     normalizeCoverHandle: normalizeCachedCoverHandle,
+    readSacdIsoMetadata,
     watcherDebounceMs: runtime.libraryWatcherDebounceMs
   })
   runtime.localLibraryIndexCoordinator = localLibraryIndexCoordinator
@@ -501,6 +505,10 @@ async function runLocalLibraryScanOperation<T>(operation: () => Promise<T>): Pro
     console.error('[library] background scan operation failed:', message)
     throw new Error(message)
   }
+}
+
+async function readSacdIsoMetadata(filePath: string): Promise<NativeAudioMetadata | null> {
+  return (await runtime.audioEngineManager?.getMetadataAsync(filePath)) ?? null
 }
 
 function unavailableLocalLibraryScanRunner(): LocalLibraryScanRunner {

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -36,6 +37,7 @@ struct PlaybackInfo {
   std::string codec = "未知";
   int bitrate = 0;
   int sourceSampleRate = 0;
+  int sourceChannels = 0;
   int sourceBitDepth = 0;
   int decodedSampleRate = 0;
   int decodedBitDepth = 0;
@@ -75,6 +77,10 @@ struct PlaybackInfo {
   double replayGainDb = 0.0;
   double crossfeedStrength = 0.0;
   double crossfadeSeconds = 0.0;
+  bool crossfadeMixActive = false;
+  double crossfadeEffectiveSeconds = 0.0;
+  std::string crossfadeCurve = "linear";
+  std::string crossfadeBlockedReason;
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
@@ -103,6 +109,7 @@ class TwilightAudioEngine {
   TwilightAudioEngine& operator=(const TwilightAudioEngine&) = delete;
 
   void setEventCallback(TAE_EventCallback callback, void* userData);
+  void setStateEventsEnabled(bool enabled);
 
   TAE_Result play(const std::string& source, double startTimeSeconds);
   TAE_Result pause();
@@ -115,8 +122,6 @@ class TwilightAudioEngine {
   TAE_Result setOutputBackend(const std::string& backendId);
 
   TAE_Result loadQueue(const std::string& queueJson, int startIndex);
-  TAE_Result addToQueue(const std::string& itemJson);
-  TAE_Result removeFromQueue(int index);
   TAE_Result next();
   TAE_Result previous();
   TAE_Result setPlayMode(const std::string& mode);
@@ -148,9 +153,24 @@ class TwilightAudioEngine {
   std::string getVisualizationDataJson(const std::string& optionsJson) const;
 
  private:
+  // Wakes the clock thread when a public command returns, so an idle engine
+  // that waits on the slow tick reacts to transport/config changes at once.
+  class ClockWake {
+   public:
+    explicit ClockWake(const TwilightAudioEngine& engine) : engine_(engine) {}
+    ~ClockWake() { engine_.wakeClock(); }
+    ClockWake(const ClockWake&) = delete;
+    ClockWake& operator=(const ClockWake&) = delete;
+
+   private:
+    const TwilightAudioEngine& engine_;
+  };
+
   void startClock();
   void stopClock();
   void clockLoop();
+  void wakeClock() const;
+  void waitForClockTick(bool active);
   void emit(const char* type, const std::string& payload) const;
   void emitError(
       const std::string& message,
@@ -185,6 +205,11 @@ class TwilightAudioEngine {
   mutable TAE_Result lastErrorCode_ = TAE_RESULT_OK;
   mutable std::string lastErrorContext_;
   std::atomic<bool> running_{true};
+  std::atomic<bool> stateEventsEnabled_{true};
+  mutable std::mutex clockMutex_;
+  mutable std::condition_variable clockCv_;
+  mutable bool clockWakeRequested_ = false;
+  bool clockIdle_ = true;
   std::thread clockThread_;
   std::chrono::steady_clock::time_point lastTick_;
   uint64_t lastEmittedAppliedConfigRevision_ = 0;

@@ -32,6 +32,13 @@ test('audition rejects unsupported graphs and compensation never mutates the sce
     outputStage: { ...DEFAULT_DSP_OUTPUT_STAGE }
   }
   const result = compensatedAuditionGraph(graph, -6)
+  assert.equal(
+    normalizeAuditionGraph({
+      ...graph,
+      nodes: [{ id: 'meter', type: 'meter', enabled: true, params: {} }]
+    }).nodes.length,
+    0
+  )
   assert.equal(graph.nodes.length, 0)
   assert.equal(result.nodes[0].params.preampDb, -6)
   assert.throws(() => compensatedAuditionGraph(graph, -25), /补偿/)

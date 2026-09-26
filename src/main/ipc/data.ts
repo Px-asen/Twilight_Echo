@@ -7,7 +7,6 @@ import { registerDiscordIpc } from './discordIpc.ts'
 import { registerAppIpc } from './appIpc.ts'
 import { registerFontsIpc } from './fonts.ts'
 import { registerSettingsIpc } from './settingsIpc.ts'
-import { registerDebugIpc } from './debugIpc.ts'
 import { registerFilesystemIpc } from './filesystemIpc.ts'
 import { registerLibraryIpc } from './libraryIpc.ts'
 import { registerCoverIpc } from './coverIpc.ts'
@@ -22,7 +21,6 @@ export function setupDataIpc(): void {
   registerAppIpc(ipcMain)
   registerFontsIpc(ipcMain)
   registerSettingsIpc(ipcMain)
-  registerDebugIpc(ipcMain)
   registerFilesystemIpc(ipcMain)
   registerLibraryIpc(ipcMain)
   registerCoverIpc(ipcMain)

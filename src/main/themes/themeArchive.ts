@@ -1,4 +1,3 @@
-import extract from 'extract-zip'
 import { app } from 'electron'
 import {
   lstat,
@@ -72,6 +71,7 @@ export async function importThemeArchive(source: string): Promise<ThemeProfileV2
   preflightThemeArchive(await readFile(source))
   const temporary = await mkdtemp(join(tmpdir(), 'twilight-theme-import-'))
   try {
+    const { default: extract } = await import('extract-zip')
     await extract(source, { dir: temporary })
     const entries = await collectSafeFiles(temporary)
     const themeEntry = entries.find((entry) => entry.relative === 'theme.json')

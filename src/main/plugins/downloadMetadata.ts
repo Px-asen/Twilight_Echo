@@ -1,7 +1,6 @@
 import { copyFile, rename, rm, writeFile } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { File, Picture, PictureType, ByteVector } from 'node-taglib-sharp'
-import { parseFile } from 'music-metadata'
+import { loadTaglib, type Taglib } from '../library/taglib.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import type {
   ProviderDownloadQuality,
@@ -57,6 +56,7 @@ export async function prepareDownloadedMetadata(options: {
   const warnings: string[] = []
   let actualQuality: ProviderDownloadQuality | null = null
   try {
+    const { parseFile } = await import('music-metadata')
     const metadata = await parseFile(partPath, { skipCovers: true, duration: false })
     actualQuality = detectedDownloadQuality(metadata.format)
   } catch {
@@ -74,7 +74,8 @@ export async function prepareDownloadedMetadata(options: {
   signal.throwIfAborted()
   if (preferences.embedMetadata) {
     const taggedPath = `${partPath}.tags${extname(targetPath)}`
-    let media: File | undefined
+    const { ByteVector, File, Picture, PictureType } = loadTaglib()
+    let media: Taglib.File | undefined
     try {
       await copyFile(partPath, taggedPath)
       let cover: Uint8Array | undefined

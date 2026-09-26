@@ -69,8 +69,6 @@ export const libraryAndFileSystemApi = {
   fs: {
     scanMusicFiles: (folderPath: string): Promise<unknown[]> =>
       ipcRenderer.invoke('fs:scanMusicFiles', folderPath),
-    readAudioFile: (filePath: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> =>
-      ipcRenderer.invoke('fs:readAudioFile', filePath),
     getAudioFileUrl: (filePath: string): Promise<string> =>
       ipcRenderer.invoke('fs:getAudioFileUrl', filePath),
     isAudioFileAuthorized: (filePath: string): Promise<boolean> =>

@@ -25,6 +25,7 @@ import {
   persistLocalLibraryFileIndex
 } from './fileIndex.ts'
 import type { LocalLibraryScanRunner } from './libraryScanServiceClient.ts'
+import { expandSacdIsoTracks, type SacdIsoMetadataReader } from './sacdIsoTracks.ts'
 
 type LibraryTransaction = <T>(operation: () => Promise<T> | T) => Promise<T>
 
@@ -43,6 +44,8 @@ export interface LocalLibraryIndexCoordinatorOptions {
    * module stays free of Electron imports so the coordinator runs under node.
    */
   normalizeCoverHandle?: (handle: string) => Promise<string>
+  /** Native metadata reader used to split SACD ISO files into their area tracks. */
+  readSacdIsoMetadata?: SacdIsoMetadataReader
   watcherDebounceMs?: number
   now?: () => Date
 }
@@ -312,7 +315,7 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
           (progress) => this.applyProgress(job, progress),
           (batch) => {
             batchChain = batchChain.then(async () => {
-              await this.normalizeBatchCovers(batch)
+              await this.prepareBatch(batch)
               applyScanBatch(scanAccumulator, batch)
             })
           },
@@ -326,7 +329,7 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
         )
         await batchChain
         if (workerResult.parsedTracks.length > 0 || workerResult.parsedFilePaths.length > 0) {
-          await this.normalizeBatchCovers(workerResult)
+          await this.prepareBatch(workerResult)
           applyScanBatch(scanAccumulator, {
             parsedTracks: workerResult.parsedTracks,
             parsedFilePaths: workerResult.parsedFilePaths
@@ -428,6 +431,18 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
     } finally {
       if (this.activeJob?.id === job.id) this.activeJob = null
     }
+  }
+
+  private async prepareBatch(batch: { parsedTracks: unknown[] }): Promise<void> {
+    const readIsoMetadata = this.options.readSacdIsoMetadata
+    if (readIsoMetadata) {
+      const expanded = await expandSacdIsoTracks(batch.parsedTracks, readIsoMetadata)
+      if (expanded !== batch.parsedTracks) {
+        batch.parsedTracks.length = 0
+        for (const track of expanded) batch.parsedTracks.push(track)
+      }
+    }
+    await this.normalizeBatchCovers(batch)
   }
 
   /**

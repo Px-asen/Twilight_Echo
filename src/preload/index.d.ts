@@ -828,7 +828,6 @@ interface WindowAPI {
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
-    readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
     getAudioFileUrl: (filePath: string) => Promise<string>
     isAudioFileAuthorized: (filePath: string) => Promise<boolean>
     areAudioFilesAuthorized: (filePaths: string[]) => Promise<boolean[]>
@@ -868,12 +867,6 @@ interface WindowAPI {
      */
     onSavePlaybackSession: (cb: () => Promise<void> | void) => () => void
     onNavigate: (cb: (target: TrayNavigationTarget) => void) => () => void
-  }
-  ncm: {
-    getPort: () => Promise<number>
-    request: (path: string, cookie?: string) => Promise<unknown>
-    getCachedSong: (songId: number) => Promise<string | null>
-    cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
   ncmCloud: {
     chooseUploadFiles: () => Promise<NcmCloudSelectedFile[]>
@@ -1088,7 +1081,6 @@ interface WindowAPI {
         | void
     ) => () => void
     discoverDlna: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
-    getDlnaDevices: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
     castToDevice: (payload: {
       usn: string
       /** Authorized local library / managed-cache path. Mutually exclusive with mediaUrl. */
@@ -1153,7 +1145,6 @@ interface WindowAPI {
   }
   plugins: {
     list: () => Promise<TwilightPluginDescriptor[]>
-    installFromPath: (path: string) => Promise<TwilightPluginInstallResult>
     chooseAndInstall: (
       kind?: 'package' | 'directory'
     ) => Promise<TwilightPluginInstallResult | null>
@@ -1239,9 +1230,6 @@ interface WindowAPI {
     navigate: (target: TrayNavigationTarget) => void
     hide: () => void
     onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
-  }
-  debug: {
-    appendNativeTrace: (message: string) => Promise<void>
   }
 }
 

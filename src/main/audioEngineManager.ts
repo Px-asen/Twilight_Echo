@@ -304,6 +304,7 @@ export class AudioEngineManager extends EventEmitter {
         },
         getDevice: () => this.device,
         getOutput: () => this.output,
+        getOutputConfig: () => this.outputConfig,
         getLastNativeError: () => this.lastNativeError,
         setLastNativeError: (error) => {
           this.lastNativeError = error
@@ -922,9 +923,12 @@ export class AudioEngineManager extends EventEmitter {
       revision: this.dsp.dspGraphRevision,
       applied: status.applyState === 'applied' && status.revision === this.dsp.dspGraphRevision,
       graph: this.getDspSceneState().effectiveGraph ?? this.getDspSceneState().graph,
+      cueRange: this.queue[info.queueIndex]?.cueRange,
       key: JSON.stringify([
         info.source,
         info.queueIndex,
+        this.queue[info.queueIndex]?.id,
+        this.queue[info.queueIndex]?.cueRange,
         info.outputBackend,
         info.outputDevice,
         this.outputConfig,

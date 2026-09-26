@@ -61,6 +61,8 @@ enum class PcmToDsdMode {
 };
 
 struct OutputConfig {
+  bool continuityFirst = false;
+  int continuitySampleRate = 48000;
   uint32_t preferredBufferSize = 0;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
   bool wasapiExclusivePushMode = false;

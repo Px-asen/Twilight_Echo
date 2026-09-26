@@ -27,6 +27,7 @@ import type {
   EqMode,
   EqualizerBand,
   NativeAudioBinding,
+  OutputConfig,
   PlaybackInfo,
   VolumeNormalizationMode
 } from './audioEngineTypes.ts'
@@ -54,6 +55,7 @@ export interface DspOrchestratorHost {
   setPlaybackInfo(info: PlaybackInfo): void
   getDevice(): string
   getOutput(): AudioOutputId
+  getOutputConfig?(): OutputConfig
   getLastNativeError(): string
   setLastNativeError(error: string): void
   getScheduler(): AudioEngineScheduler
@@ -267,6 +269,19 @@ export class DspOrchestrator {
     this.activeDspGraph = this.outputStageOverride
       ? { ...resolution.graph, outputStage: this.outputStageOverride }
       : resolution.graph
+    const outputConfig = this.host.getOutputConfig?.()
+    if (
+      outputConfig?.playbackPolicy === 'continuity-first' &&
+      this.dspSceneContext().sourceKind === 'pcm'
+    ) {
+      this.activeDspGraph = {
+        ...this.activeDspGraph,
+        outputStage: {
+          ...this.activeDspGraph.outputStage,
+          targetSampleRate: outputConfig.continuitySampleRate ?? 48000
+        }
+      }
+    }
     return resolution
   }
 
@@ -381,7 +396,13 @@ export class DspOrchestrator {
         ? {
             version: this.activeDspGraph.version,
             nodes: [],
-            outputStage: this.identityOutputStage()
+            outputStage: {
+              ...this.identityOutputStage(),
+              ...(this.host.getOutputConfig?.().playbackPolicy === 'continuity-first' &&
+              this.dspSceneContext().sourceKind === 'pcm'
+                ? { targetSampleRate: this.host.getOutputConfig?.().continuitySampleRate ?? 48000 }
+                : {})
+            }
           }
         : this.materializeGraphAssets(this.graphWithRuntimeModuleGates(this.activeDspGraph))
     return {

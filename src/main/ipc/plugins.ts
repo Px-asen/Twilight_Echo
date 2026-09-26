@@ -158,13 +158,6 @@ export function setupPluginIpc(): void {
     await runtime.pluginManagerReady
     return await runtime.pluginManager!.list()
   })
-  ipcMain.handle('plugins:installFromPath', async (_event, sourcePath: string) => {
-    assertTrustedIpcSender(_event, 'plugin IPC')
-    await runtime.pluginManagerReady
-    return await runtime.pluginManager!.installFromPath(
-      normalizeIpcString(sourcePath, 'plugin package path', MAX_IPC_PATH_LENGTH)
-    )
-  })
   ipcMain.handle('plugins:chooseAndInstall', async (event, kind?: unknown) => {
     assertTrustedIpcSender(event, 'plugin IPC')
     await runtime.pluginManagerReady

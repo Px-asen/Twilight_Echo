@@ -7,6 +7,8 @@ import { usePlayerStore } from '../../stores/usePlayerStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import {
   HIFI_STATUS_COPY,
+  gaplessRuntimeStatusCopy,
+  crossfadeBlockedReasonCopy,
   dsdRouteTargetsDistinctRoute,
   withDsdRoutePatch,
   type DsdRouteSettings
@@ -398,6 +400,34 @@ function setCrossfadeSeconds(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
   updateAudioProcessing({ crossfadeSeconds: value })
 }
+
+function setCrossfadeCurve(event: Event): void {
+  updateAudioProcessing({
+    crossfadeCurve: (event.target as HTMLSelectElement)
+      .value as AudioProcessingSettings['crossfadeCurve']
+  })
+}
+
+function setCrossfadeContent(event: Event): void {
+  updateAudioProcessing({
+    crossfadeContent: (event.target as HTMLSelectElement)
+      .value as AudioProcessingSettings['crossfadeContent']
+  })
+}
+
+function setPlaybackPolicy(event: Event): void {
+  void setAudioOutputConfig({
+    playbackPolicy: (event.target as HTMLSelectElement).value as OutputConfig['playbackPolicy']
+  })
+}
+
+function setContinuitySampleRate(event: Event): void {
+  void setAudioOutputConfig({
+    continuitySampleRate: Number(
+      (event.target as HTMLSelectElement).value
+    ) as OutputConfig['continuitySampleRate']
+  })
+}
 </script>
 
 <template>
@@ -733,10 +763,71 @@ function setCrossfadeSeconds(event: Event): void {
         <hr />
         <div class="setting-item">
           <div class="setting-copy">
+            <strong>连续播放策略</strong>
+            <span
+              >原样优先保留来源格式；连续优先将 PCM 统一为双声道 Float32，允许重采样，不保证
+              bit-perfect。DSD 单独切换。</span
+            >
+            <span v-if="audioOutputConfig.playbackPolicy === 'continuity-first'">
+              目标：{{ audioOutputConfig.continuitySampleRate ?? 48000 }} Hz / 32 bit / 2 声道。
+              需自动声道路由并关闭 PCM 转 DSD；切换策略会保留进度重新打开输出。
+            </span>
+            <span v-if="playbackInfo?.source">
+              来源：{{ playbackInfo.sourceSampleRate }} Hz / {{ playbackInfo.sourceBitDepth }} bit /
+              {{ playbackInfo.sourceChannels ?? '—' }} 声道； 实际：{{
+                playbackInfo.outputSampleRate
+              }}
+              Hz / {{ playbackInfo.outputBitDepth }} bit / {{ playbackInfo.channelCount }} 声道。
+              {{
+                gaplessRuntimeStatusCopy({
+                  intentEnabled: audioProcessing.gapless,
+                  ...playbackInfo
+                })
+              }}
+            </span>
+          </div>
+          <div class="inline-controls continuity-controls">
+            <select
+              class="preview-select"
+              aria-label="连续播放策略"
+              :value="audioOutputConfig.playbackPolicy ?? 'bit-perfect-first'"
+              :disabled="audioOutputConfigApplyStatus.state === 'pending'"
+              @change="setPlaybackPolicy"
+            >
+              <option value="bit-perfect-first">原样优先</option>
+              <option value="continuity-first">连续优先</option>
+            </select>
+            <select
+              v-if="audioOutputConfig.playbackPolicy === 'continuity-first'"
+              class="preview-select"
+              aria-label="连续播放目标采样率"
+              :value="audioOutputConfig.continuitySampleRate ?? 48000"
+              :disabled="audioOutputConfigApplyStatus.state === 'pending'"
+              @change="setContinuitySampleRate"
+            >
+              <option :value="44100">44.1 kHz</option>
+              <option :value="48000">48 kHz</option>
+              <option :value="96000">96 kHz</option>
+            </select>
+          </div>
+        </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
             <strong>无缝播放 (Gapless Playback)</strong>
             <span>{{ HIFI_STATUS_COPY.gaplessNote }}</span>
+            <span
+              >交叉淡化会改变 PCM
+              信号。等功率曲线仍可能削波；CUE、未知时长和变速播放始终保留边界。</span
+            >
+            <span v-if="audioProcessing.crossfadeSeconds > 0 && playbackInfo">
+              {{ playbackInfo.crossfadeCurve === 'equal-power' ? '等功率' : '线性' }} ·
+              {{ playbackInfo.crossfadeMixActive ? '正在混合' : '等待交接' }} · 可用重叠
+              {{ playbackInfo.crossfadeEffectiveSeconds ?? 0 }} 秒。
+              {{ crossfadeBlockedReasonCopy(playbackInfo.crossfadeBlockedReason) }}
+            </span>
           </div>
-          <div class="inline-controls">
+          <div class="inline-controls continuity-controls">
             <div class="crossfade-group">
               <span>交叉淡入淡出 (秒)</span>
               <input
@@ -749,6 +840,25 @@ function setCrossfadeSeconds(event: Event): void {
                 @input="setCrossfadeSeconds"
               />
             </div>
+            <select
+              class="preview-select"
+              aria-label="交叉淡化曲线"
+              :value="audioProcessing.crossfadeCurve ?? 'linear'"
+              @change="setCrossfadeCurve"
+            >
+              <option value="linear">线性</option>
+              <option value="equal-power">等功率</option>
+            </select>
+            <select
+              class="preview-select"
+              aria-label="交叉淡化内容规则"
+              :value="audioProcessing.crossfadeContent ?? 'conservative'"
+              @change="setCrossfadeContent"
+            >
+              <option value="conservative">保留同专辑与短曲边界</option>
+              <option value="all">允许同专辑与短曲淡化</option>
+              <option value="live">现场内容：保留边界</option>
+            </select>
             <span
               class="toggle-switch"
               :class="{ active: audioProcessing.gapless, inactive: !audioProcessing.gapless }"

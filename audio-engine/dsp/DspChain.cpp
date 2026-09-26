@@ -1016,6 +1016,9 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.ditherMode = parseDitherMode(extractStringField(json, "dither").value_or("off"));
   config.outputSafetyClamp = extractBoolField(json, "outputSafetyClamp").value_or(true);
   config.crossfadeSeconds = std::clamp(extractNumberField(json, "crossfadeSeconds").value_or(0.0), 0.0, 12.0);
+  config.crossfadeEqualPower = extractStringField(json, "crossfadeCurve").value_or("linear") == "equal-power";
+  const auto crossfadeContent = extractStringField(json, "crossfadeContent").value_or("conservative");
+  config.crossfadeContent = crossfadeContent == "all" ? 1 : (crossfadeContent == "live" ? 2 : 0);
   return config;
 }
 

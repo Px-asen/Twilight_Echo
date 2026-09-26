@@ -1017,27 +1017,6 @@ html:is(
 }
 
 /* Desktop Lyrics controls */
-.range-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 200px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--te-card-border);
-  outline: none;
-  cursor: pointer;
-}
-.range-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--brand-500, #2563eb);
-  cursor: pointer;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
-}
 .color-picker {
   width: 40px;
   height: 32px;
@@ -1046,19 +1025,6 @@ html:is(
   cursor: pointer;
   background: var(--te-card-bg);
   padding: 2px;
-}
-.select-control {
-  padding: 6px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  color: #333;
-  background: var(--te-card-bg);
-  cursor: pointer;
-  outline: none;
-}
-.select-control:focus {
-  border-color: var(--brand-400, #3b82f6);
 }
 
 .toggle-switch {
@@ -1558,105 +1524,9 @@ html[data-theme='dark'] .theme-segment button.active {
   gap: 14px;
 }
 
-.desktop-font-field {
-  position: relative;
-  flex: 0 0 220px;
-}
-
-.desktop-font-setting.font-menu-open {
-  z-index: 30;
-}
-
-html[data-te-motion='full'] .setting-item.desktop-font-setting.font-menu-open:hover {
-  translate: 0 0;
-}
-
-.desktop-font-trigger {
-  display: flex;
-  width: 100%;
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 12px;
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  color: #374151;
-  background: var(--te-card-bg);
-  cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  font-weight: 650;
-  text-align: left;
-}
-
-.desktop-font-trigger span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-font-menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 10px;
-  background: var(--te-settings-bg, var(--te-card-bg));
-  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.2);
-}
-
-.desktop-font-search {
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 8px;
-  color: var(--te-neutral-900);
-  background: var(--te-card-bg);
-}
-
-.desktop-font-list {
-  display: grid;
-  max-height: 250px;
-  overflow-y: auto;
-}
-
-.desktop-font-group {
-  display: flex;
-  justify-content: space-between;
-  margin: 7px 0 3px;
-  padding: 0 7px;
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.71429);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.desktop-font-group small {
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.desktop-font-option {
-  min-height: 32px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--te-neutral-900);
-  background: transparent;
-  cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  text-align: left;
-}
-
-.desktop-font-option:hover {
-  background: color-mix(in srgb, var(--te-primary-400) 12%, transparent);
+.continuity-controls {
+  flex-wrap: wrap;
+  max-width: 480px;
 }
 
 .compact-row {
@@ -1887,34 +1757,6 @@ html[data-te-motion='full'] .setting-item.desktop-font-setting.font-menu-open:ho
   background: #f9fafb;
   color: #6b7280;
   font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-}
-
-.plugin-empty {
-  display: grid;
-  place-items: center;
-  min-height: 180px;
-  gap: 8px;
-  border: 1px dashed #d1d5db;
-  border-radius: 14px;
-  background: rgba(249, 250, 251, 0.55);
-  color: #6b7280;
-  text-align: center;
-}
-
-.plugin-empty i {
-  color: var(--brand-400);
-  font-size: calc(var(--te-font-size-body, 14px) * 2.14286);
-}
-
-.plugin-empty strong {
-  color: #1f2937;
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  font-weight: 650;
-}
-
-.plugin-empty span {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  font-weight: 500;
 }
 
 .swatch-row {
@@ -2319,74 +2161,6 @@ html[data-te-motion='full'] .swatch.active {
   min-width: 56px;
 }
 
-.background-options {
-  display: flex;
-  gap: 16px;
-}
-
-.background-options button {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  color: #6b7280;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.16s ease;
-}
-
-.background-options button:hover,
-.background-options button.active {
-  opacity: 1;
-}
-
-.background-options span {
-  width: 64px;
-  height: 40px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
-}
-
-.background-options small {
-  color: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.71429);
-  font-weight: 650;
-}
-
-.background-options button.active span {
-  border-color: var(--brand-500);
-  outline: 2px solid rgba(var(--te-primary-rgb), 0.3);
-  outline-offset: 1px;
-}
-
-.background-options button.active small {
-  color: var(--brand-600);
-}
-
-.blur-cover {
-  filter: blur(2px);
-  background: linear-gradient(
-    135deg,
-    var(--te-primary-300),
-    var(--te-primary-400) 52%,
-    var(--te-primary-500)
-  );
-}
-
-.background-options button:hover .blur-cover {
-  filter: blur(0);
-}
-
-.fluid-cover {
-  background: linear-gradient(90deg, #22d3ee, #3b82f6);
-}
-
-.solid-cover {
-  background: #111827;
-}
-
 .range-pill {
   display: inline-flex;
   align-items: center;
@@ -2509,13 +2283,6 @@ html[data-te-motion='full'] .swatch.active {
   font-weight: 550;
   letter-spacing: 0;
   text-transform: none;
-}
-
-.about-copy .about-honesty {
-  margin-top: 0.55rem;
-  color: color-mix(in srgb, var(--te-text-muted, #64748b) 92%, transparent);
-  font-size: 0.82rem;
-  line-height: 1.55;
 }
 
 .about-copy p {
@@ -3380,7 +3147,6 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
 
   .path-control,
   .inline-controls,
-  .background-options,
   .about-links,
   .settings-command-actions {
     flex-direction: column;
@@ -3430,19 +3196,6 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   color: #dc2626;
   font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
   font-weight: 650;
-}
-
-.plugin-extension-group {
-  margin-top: 24px;
-}
-
-.plugin-extension-group h3 {
-  margin: 0 0 16px;
-  color: var(--brand-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.78571);
-  font-weight: 650;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
 }
 
 .wasapi-push-row {
@@ -3845,13 +3598,6 @@ html[data-te-motion='full'] .signal-line.active::before {
 }
 
 /* ── Crossfeed 百分�?── */
-.crossfeed-percent {
-  min-width: 32px;
-  text-align: right;
-  color: #4b5563;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  font-weight: 650;
-}
 
 /* ── Convolver 高算力消耗标�?── */
 .compute-badge {
@@ -4174,87 +3920,5 @@ html[data-density='comfortable'] .setting-copy {
  * The preview hosts the real KaraokeLine component out of the lyrics window, so
  * this wrapper only has to supply a legible box and let `--dl-*` do the rest.
  */
-.desktop-lyrics-preview {
-  flex: 1 1 320px;
-  min-width: 0;
-  max-width: 460px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 16px;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--te-neutral-900) 88%, transparent),
-      color-mix(in srgb, var(--te-primary-500) 24%, var(--te-neutral-900))
-    ),
-    var(--te-card-bg);
-  overflow: hidden;
-}
-
-.desktop-preset-field {
-  display: grid;
-  flex: 0 0 320px;
-  gap: 8px;
-  min-width: 0;
-}
-
-.desktop-preset-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.desktop-preset-input {
-  flex: 1 1 120px;
-  min-width: 96px;
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 8px;
-  color: var(--te-neutral-900);
-  background: var(--te-card-bg);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-}
 
 /* The picker is driven by the 导入 JSON button, never shown on its own. */
-.desktop-preset-file {
-  display: none;
-}
-
-.desktop-preset-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.desktop-preset-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 4px 3px 10px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 999px;
-  color: var(--te-neutral-700);
-  background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.78571);
-  font-weight: 600;
-}
-
-.desktop-preset-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  border-radius: 999px;
-  color: var(--te-neutral-500);
-  background: transparent;
-  cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.71429);
-}
-
-.desktop-preset-remove:hover {
-  color: var(--te-neutral-900);
-  background: color-mix(in srgb, var(--te-neutral-500) 18%, transparent);
-}

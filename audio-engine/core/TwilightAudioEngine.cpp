@@ -389,6 +389,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"codec\":\"" << json_utils::escape(info.codec) << "\","
        << "\"bitrate\":" << info.bitrate << ","
        << "\"sourceSampleRate\":" << info.sourceSampleRate << ","
+       << "\"sourceChannels\":" << info.sourceChannels << ","
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
        << "\"decodedSampleRate\":" << info.decodedSampleRate << ","
        << "\"decodedBitDepth\":" << info.decodedBitDepth << ","
@@ -524,6 +525,10 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"replayGainDb\":" << info.replayGainDb << ","
        << "\"crossfeedStrength\":" << info.crossfeedStrength << ","
        << "\"crossfadeSeconds\":" << info.crossfadeSeconds << ","
+       << "\"crossfadeMixActive\":" << (info.crossfadeMixActive ? "true" : "false") << ","
+       << "\"crossfadeEffectiveSeconds\":" << info.crossfadeEffectiveSeconds << ","
+       << "\"crossfadeCurve\":\"" << info.crossfadeCurve << "\","
+       << "\"crossfadeBlockedReason\":\"" << info.crossfadeBlockedReason << "\","
        << "\"convolverLatencyFrames\":" << info.convolverLatencyFrames << ","
        << "\"partitionSize\":" << info.partitionSize << ","
        << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","
@@ -630,6 +635,9 @@ OutputConfig parseOutputConfigJson(const std::string& json) {
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
   config.wasapiExclusivePushMode = parseBoolField(json, "wasapiExclusivePushMode", false);
+  config.continuityFirst = parseStringField(json, "playbackPolicy", "bit-perfect-first") == "continuity-first";
+  const int continuityRate = static_cast<int>(parseUintField(json, "continuitySampleRate", 48000));
+  config.continuitySampleRate = continuityRate == 44100 || continuityRate == 96000 ? continuityRate : 48000;
   config.pcmToDsdMode = parsePcmToDsdMode(parseStringField(json, "pcmToDsdMode", "off"));
   config.dsdMutePreRollFrames = parseUintField(json, "dsdMutePreRollFrames", 256);
   config.dsdMutePostRollFrames = parseUintField(json, "dsdMutePostRollFrames", 256);
@@ -718,7 +726,12 @@ void TwilightAudioEngine::setEventCallback(TAE_EventCallback callback, void* use
   eventUserData_ = userData;
 }
 
+void TwilightAudioEngine::setStateEventsEnabled(bool enabled) {
+  stateEventsEnabled_.store(enabled, std::memory_order_relaxed);
+}
+
 TAE_Result TwilightAudioEngine::play(const std::string& source, double startTimeSeconds) {
+  const ClockWake wake(*this);
   if (source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
 
   std::string backend;
@@ -853,6 +866,7 @@ TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double star
 }
 
 TAE_Result TwilightAudioEngine::pause() {
+  const ClockWake wake(*this);
   if (pipeline_) pipeline_->togglePause();
   std::lock_guard lock(mutex_);
   if (pipeline_) {
@@ -866,6 +880,7 @@ TAE_Result TwilightAudioEngine::pause() {
 }
 
 TAE_Result TwilightAudioEngine::stop() {
+  const ClockWake wake(*this);
   if (pipeline_) pipeline_->stop();
   std::lock_guard lock(mutex_);
   info_.state = PlaybackState::Stopped;
@@ -875,6 +890,7 @@ TAE_Result TwilightAudioEngine::stop() {
 }
 
 TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
+  const ClockWake wake(*this);
   if (!std::isfinite(positionSeconds)) return TAE_RESULT_INVALID_ARGUMENT;
   std::string error;
   PlaybackState currentState = PlaybackState::Stopped;
@@ -908,6 +924,7 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
 }
 
 TAE_Result TwilightAudioEngine::setVolume(double volume) {
+  const ClockWake wake(*this);
   if (!std::isfinite(volume)) return TAE_RESULT_INVALID_ARGUMENT;
   std::string rerouteReason;
   double reroutePosition = 0.0;
@@ -935,6 +952,7 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
 }
 
 TAE_Result TwilightAudioEngine::setPlaybackRate(double rate) {
+  const ClockWake wake(*this);
   if (!std::isfinite(rate)) return TAE_RESULT_INVALID_ARGUMENT;
   std::string rerouteReason;
   double reroutePosition = 0.0;
@@ -962,6 +980,7 @@ TAE_Result TwilightAudioEngine::setPlaybackRate(double rate) {
 }
 
 TAE_Result TwilightAudioEngine::setLoopRange(double startSeconds, double endSeconds) {
+  const ClockWake wake(*this);
   if (pipeline_) {
     pipeline_->setLoopRange(startSeconds, endSeconds);
   }
@@ -1012,6 +1031,7 @@ TAE_Result TwilightAudioEngine::setOutputBackend(const std::string& backendId) {
 }
 
 TAE_Result TwilightAudioEngine::loadQueue(const std::string& queueJson, int startIndex) {
+  const ClockWake wake(*this);
   std::string error;
   std::lock_guard lock(mutex_);
   if (!queue_.loadFromJson(queueJson, startIndex, &error)) {
@@ -1037,26 +1057,8 @@ TAE_Result TwilightAudioEngine::loadQueue(const std::string& queueJson, int star
   return TAE_RESULT_OK;
 }
 
-TAE_Result TwilightAudioEngine::addToQueue(const std::string& itemJson) {
-  std::string error;
-  std::lock_guard lock(mutex_);
-  if (!queue_.addFromJson(itemJson, &error)) {
-    emitError(error.empty() ? "无法加入播放队列" : error, TAE_RESULT_INVALID_ARGUMENT, "queue");
-    return TAE_RESULT_INVALID_ARGUMENT;
-  }
-  emit("queue-change", queue_.queueJson());
-  return TAE_RESULT_OK;
-}
-
-TAE_Result TwilightAudioEngine::removeFromQueue(int index) {
-  std::lock_guard lock(mutex_);
-  if (!queue_.removeAt(index)) return TAE_RESULT_INVALID_ARGUMENT;
-  info_.queueIndex = queue_.currentIndex();
-  emit("queue-change", queue_.queueJson());
-  return TAE_RESULT_OK;
-}
-
 TAE_Result TwilightAudioEngine::next() {
+  const ClockWake wake(*this);
   std::optional<QueueItem> item;
   std::optional<QueueItem> upcoming;
   PlaybackState state = PlaybackState::Stopped;
@@ -1095,6 +1097,7 @@ TAE_Result TwilightAudioEngine::next() {
 }
 
 TAE_Result TwilightAudioEngine::previous() {
+  const ClockWake wake(*this);
   std::optional<QueueItem> item;
   PlaybackState state = PlaybackState::Stopped;
   {
@@ -1122,6 +1125,7 @@ TAE_Result TwilightAudioEngine::previous() {
 }
 
 TAE_Result TwilightAudioEngine::setPlayMode(const std::string& mode) {
+  const ClockWake wake(*this);
   std::optional<QueueItem> upcoming;
   {
     std::lock_guard lock(mutex_);
@@ -1139,6 +1143,7 @@ TAE_Result TwilightAudioEngine::setPlayMode(const std::string& mode) {
 }
 
 TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
+  const ClockWake wake(*this);
   std::string rerouteReason;
   double reroutePosition = 0.0;
   PlaybackState rerouteState = PlaybackState::Stopped;
@@ -1217,6 +1222,7 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
 }
 
 TAE_Result TwilightAudioEngine::setDspGraph(const std::string& graphJson) {
+  const ClockWake wake(*this);
   const std::string next = graphJson.empty() ? "{\"graph\":{\"nodes\":[]}}" : graphJson;
   std::string error;
   AudioPipeline* pipeline = nullptr;
@@ -1241,6 +1247,7 @@ TAE_Result TwilightAudioEngine::setDspGraph(const std::string& graphJson) {
 TAE_Result TwilightAudioEngine::applyDspState(
     uint64_t revision,
     const std::string& stateJson) {
+  const ClockWake wake(*this);
   const auto payloadRevision = json_utils::fieldNumber(stateJson, "revision");
   const std::string processingJson = json_utils::fieldObject(stateJson, "processing");
   if (revision == 0 || !payloadRevision.has_value() || !std::isfinite(*payloadRevision) ||
@@ -1348,7 +1355,13 @@ TAE_Result TwilightAudioEngine::applyDspState(
 }
 
 TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson) {
+  const ClockWake wake(*this);
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
+  if (parsed.continuityFirst &&
+      (parsed.routingMode != ChannelRoutingMode::Auto || parsed.pcmToDsdMode != PcmToDsdMode::Off)) {
+    emitError("连续优先需要自动声道路由且关闭 PCM 转 DSD", TAE_RESULT_INVALID_ARGUMENT, "output-config");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   std::string error;
   std::string rerouteReason;
   double reroutePosition = 0.0;
@@ -1356,9 +1369,12 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   bool routePending = false;
   {
     std::lock_guard lock(mutex_);
-    routePending = outputRoutePending_ && pipeline_ && info_.state != PlaybackState::Stopped;
+    routePending = (outputRoutePending_ || outputConfig_.continuityFirst != parsed.continuityFirst ||
+                    (parsed.continuityFirst && outputConfig_.continuitySampleRate != parsed.continuitySampleRate)) &&
+                   pipeline_ && info_.state != PlaybackState::Stopped;
   }
-  if (!routePending && pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
+  if (routePending && pipeline_) pipeline_->stop();
+  if (pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
     emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "output-config");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
@@ -1391,6 +1407,7 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
 }
 
 TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
+  const ClockWake wake(*this);
   if (path.empty()) return TAE_RESULT_INVALID_ARGUMENT;
   std::string error;
   if (!pipeline_ || !pipeline_->loadImpulseResponse(path, &error)) {
@@ -1414,6 +1431,7 @@ TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
 }
 
 TAE_Result TwilightAudioEngine::unloadImpulseResponse() {
+  const ClockWake wake(*this);
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->unloadImpulseResponse();
   std::string rerouteReason;
@@ -1437,6 +1455,7 @@ std::string TwilightAudioEngine::getConvolverInfoJson() const {
 }
 
 TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
+  const ClockWake wake(*this);
   std::string error;
   if (!pipeline_ || !pipeline_->setEqBands(eqJson, &error)) {
     emitError(error.empty() ? "均衡器设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
@@ -1459,6 +1478,7 @@ TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
 }
 
 TAE_Result TwilightAudioEngine::setEqPreset(const std::string& presetJson) {
+  const ClockWake wake(*this);
   std::string error;
   if (!pipeline_ || !pipeline_->setEqPreset(presetJson, &error)) {
     emitError(error.empty() ? "均衡器预设应用失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
@@ -1481,6 +1501,7 @@ TAE_Result TwilightAudioEngine::setEqPreset(const std::string& presetJson) {
 }
 
 TAE_Result TwilightAudioEngine::setCrossfeedStrength(double strength) {
+  const ClockWake wake(*this);
   if (!std::isfinite(strength)) return TAE_RESULT_INVALID_ARGUMENT;
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->setCrossfeedStrength(strength);
@@ -1505,6 +1526,7 @@ TAE_Result TwilightAudioEngine::setReplayGainMode(
     double preampDb,
     double fallbackDb,
     bool clip) {
+  const ClockWake wake(*this);
   if (!std::isfinite(preampDb) || !std::isfinite(fallbackDb)) return TAE_RESULT_INVALID_ARGUMENT;
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->setReplayGainMode(parseReplayGainModeId(mode), preampDb, fallbackDb, clip);
@@ -1525,6 +1547,7 @@ TAE_Result TwilightAudioEngine::setReplayGainMode(
 }
 
 TAE_Result TwilightAudioEngine::setNativeDspPluginChain(const std::string& chainJson) {
+  const ClockWake wake(*this);
   std::string nextChain;
   {
     std::lock_guard lock(mutex_);
@@ -1764,13 +1787,50 @@ void TwilightAudioEngine::startClock() {
 }
 
 void TwilightAudioEngine::stopClock() {
-  running_ = false;
+  {
+    std::lock_guard lock(clockMutex_);
+    running_ = false;
+  }
+  clockCv_.notify_all();
   if (clockThread_.joinable()) clockThread_.join();
 }
 
+void TwilightAudioEngine::wakeClock() const {
+  {
+    std::lock_guard lock(clockMutex_);
+    // A playing clock already ticks every 100 ms; waking it early would only
+    // pull its tick right behind each command.
+    if (!clockIdle_) return;
+    clockWakeRequested_ = true;
+  }
+  clockCv_.notify_all();
+}
+
+void TwilightAudioEngine::waitForClockTick(bool active) {
+  // While playing the tick drives position, end-of-track, loop-range and
+  // preload promotion, so it keeps the 100 ms cadence. Stopped or paused, it
+  // only has to notice device/render failures and reap retired decode streams,
+  // which a 1 s tick covers; transport and DSP commands wake it immediately.
+  const auto interval = active ? std::chrono::milliseconds(100) : std::chrono::milliseconds(1000);
+  std::unique_lock lock(clockMutex_);
+  clockIdle_ = !active;
+  clockCv_.wait_for(lock, interval, [this] { return clockWakeRequested_ || !running_; });
+  clockWakeRequested_ = false;
+}
+
 void TwilightAudioEngine::clockLoop() {
+  PipelineState lastPipelineState = PipelineState::Stopped;
   while (running_) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    bool active = lastPipelineState == PipelineState::Playing;
+    if (!active) {
+      std::lock_guard lock(mutex_);
+      active = info_.state == PlaybackState::Playing;
+    }
+    waitForClockTick(active);
+    if (!running_) break;
+    // Nobody may be listening for playback snapshots (the N-API addon polls
+    // GetPlaybackInfo instead), so only serialize them when a consumer asked.
+    const bool stateEvents = stateEventsEnabled_.load(std::memory_order_relaxed);
     std::string payload;
     bool emitTick = false;
     bool emitEnded = false;
@@ -1799,6 +1859,7 @@ void TwilightAudioEngine::clockLoop() {
       // track-start flag read. Refresh after observing that flag so the queue-index transition is
       // never published with the previous CUE segment's duration or ReplayGain state.
       if (trackStarted) pipelineStatus = pipeline_->status();
+      lastPipelineState = pipelineStatus.state;
     }
     if (hasPipelineStatus &&
         pipelineStatus.appliedConfigRevision > lastEmittedAppliedConfigRevision_) {
@@ -1826,8 +1887,10 @@ void TwilightAudioEngine::clockLoop() {
         recover = info_.outputDevice == "auto" && !source.empty() && previousState != PlaybackState::Stopped;
         if (!recover) {
           info_.state = PlaybackState::Stopped;
-          payload = playbackInfoToJson(info_);
-          emitTick = true;
+          if (stateEvents) {
+            payload = playbackInfoToJson(info_);
+            emitTick = true;
+          }
         }
       }
       if (recover) {
@@ -1855,8 +1918,10 @@ void TwilightAudioEngine::clockLoop() {
         std::lock_guard lock(mutex_);
         if (hasPipelineStatus) applyPipelineStatusLocked(pipelineStatus);
         info_.state = PlaybackState::Stopped;
-        payload = playbackInfoToJson(info_);
-        emitTick = true;
+        if (stateEvents) {
+          payload = playbackInfoToJson(info_);
+          emitTick = true;
+        }
       }
       if (pipeline_) pipeline_->stop();
       emitError(
@@ -1891,8 +1956,10 @@ void TwilightAudioEngine::clockLoop() {
         upcoming = queue_.upcoming();
         info_.hasUpcomingTrack = upcoming.has_value();
         info_.upcomingTrack = upcoming.value_or(QueueItem{});
-        payload = playbackInfoToJson(info_);
-        emitTick = true;
+        if (stateEvents) {
+          payload = playbackInfoToJson(info_);
+          emitTick = true;
+        }
       }
       std::string preloadError;
       if (pipeline_) pipeline_->preloadNext(upcoming, &preloadError);
@@ -1924,8 +1991,10 @@ void TwilightAudioEngine::clockLoop() {
       }
       if (!autoNextItem &&
           (info_.state == PlaybackState::Playing || info_.state == PlaybackState::Paused || emitEnded)) {
-        payload = playbackInfoToJson(info_);
-        emitTick = true;
+        if (stateEvents) {
+          payload = playbackInfoToJson(info_);
+          emitTick = true;
+        }
       }
     }
     if (autoNextItem && !autoNextItem->source.empty()) {
@@ -1979,6 +2048,7 @@ void TwilightAudioEngine::emitError(const std::string& message, TAE_Result code,
 }
 
 void TwilightAudioEngine::publishStateLocked() const {
+  if (!stateEventsEnabled_.load(std::memory_order_relaxed)) return;
   emit("playback-info", playbackInfoToJson(info_));
 }
 
@@ -2004,6 +2074,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.codec = status.stream.codec.empty() ? info_.codec : status.stream.codec;
   info_.bitrate = static_cast<int>(std::max<int64_t>(0, status.stream.bitrate));
   info_.sourceSampleRate = status.stream.sourceFormat.sampleRate;
+  info_.sourceChannels = status.stream.sourceFormat.channelCount;
   info_.sourceBitDepth = status.stream.sourceFormat.bitDepth;
   info_.decodedSampleRate = status.stream.decodedFormat.sampleRate;
   info_.decodedBitDepth = status.stream.decodedFormat.bitDepth;
@@ -2011,7 +2082,13 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.decodedSampleFormat = sampleFormatToString(status.stream.decodedFormat.sampleFormat);
   info_.queueIndex = queue_.currentIndex();
   info_.playMode = queue_.playModeId();
-  info_.outputBackend = status.backendId.empty() ? info_.outputBackend : status.backendId;
+  // While an output route transaction is pending, info_.outputBackend holds the
+  // backend setOutputBackend accepted but setOutputConfig has not committed yet;
+  // the running pipeline's backend must not overwrite it, or the commit would
+  // reopen the old backend.
+  if (!outputRoutePending_) {
+    info_.outputBackend = status.backendId.empty() ? info_.outputBackend : status.backendId;
+  }
   (void)status.deviceName;
   info_.outputSampleRate = status.outputFormat.sampleRate;
   info_.outputBitDepth = status.outputFormat.bitDepth;
@@ -2051,6 +2128,10 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.replayGainDb = status.replayGainDb;
   info_.crossfeedStrength = status.crossfeedStrength;
   info_.crossfadeSeconds = status.crossfadeSeconds;
+  info_.crossfadeMixActive = status.crossfadeMixActive;
+  info_.crossfadeEffectiveSeconds = status.crossfadeEffectiveSeconds;
+  info_.crossfadeCurve = status.crossfadeCurve;
+  info_.crossfadeBlockedReason = status.crossfadeBlockedReason;
   info_.convolverLatencyFrames = status.convolverLatencyFrames;
   info_.partitionSize = status.partitionSize;
   info_.channelMappingMode = status.channelMappingMode;
@@ -2077,7 +2158,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
 
   AudioFormat sourceFormat;
   sourceFormat.sampleRate = info_.sourceSampleRate;
-  sourceFormat.channelCount = info_.channelCount > 0 ? info_.channelCount : info_.outputInfo.actualChannels;
+  sourceFormat.channelCount = info_.sourceChannels;
   sourceFormat.bitDepth = info_.sourceBitDepth;
   sourceFormat.sampleFormat = sampleFormatFromText("", sourceFormat.bitDepth);
 
@@ -2290,6 +2371,67 @@ TAE_Result analyzeWithProbeResult(
       analyze(normalizedSource, normalizedOptions), buffer, bufferSize, requiredSize);
 }
 
+enum class JsonGetter {
+  None,
+  Queue,
+  UpcomingTrack,
+  DspConfig,
+  DspGraphStatus,
+  ConvolverInfo,
+  DspPluginStatus,
+  Metadata,
+  Devices,
+  Backends,
+  Capabilities,
+  LastError,
+  PlaybackInfo,
+  DiagnosticLog,
+  Visualization
+};
+
+struct JsonProbeResult {
+  TAE_EngineHandle engine = nullptr;
+  JsonGetter getter = JsonGetter::None;
+  std::string key;
+  uint64_t cursor = 0;
+  std::string value;
+};
+
+thread_local JsonProbeResult jsonProbeResult;
+
+// Hosts size-probe with a NULL buffer and then fill, and each call used to
+// serialize the state again under the engine lock (GetMetadata even reopened
+// the file and base64-encoded the cover twice). The probe keeps its snapshot
+// for this thread so the matching fill copies it instead of rebuilding it.
+template <typename Produce>
+TAE_Result copyJsonWithProbeResult(
+    TAE_EngineHandle engine,
+    JsonGetter getter,
+    const std::string& key,
+    char* buffer,
+    size_t bufferSize,
+    size_t* requiredSize,
+    uint64_t* cursorOut,
+    Produce&& produce) {
+  const bool sizeProbe = !buffer || bufferSize == 0;
+  JsonProbeResult current;
+  current.engine = engine;
+  current.getter = getter;
+  current.key = key;
+  JsonProbeResult& probe = jsonProbeResult;
+  if (!sizeProbe && probe.engine == engine && probe.getter == getter && probe.key == key) {
+    current.value = std::move(probe.value);
+    current.cursor = probe.cursor;
+  } else {
+    current.value = produce(&current.cursor);
+  }
+  probe = JsonProbeResult{};
+  if (cursorOut) *cursorOut = current.cursor;
+  const TAE_Result result = copyStringResult(current.value, buffer, bufferSize, requiredSize);
+  if (sizeProbe || result != TAE_RESULT_OK) probe = std::move(current);
+  return result;
+}
+
 }  // namespace
 
 extern "C" {
@@ -2306,6 +2448,7 @@ TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine) {
 }
 
 void TAE_DestroyEngine(TAE_EngineHandle engine) {
+  if (jsonProbeResult.engine == engine) jsonProbeResult = JsonProbeResult{};
   if (bpmProbeResult.engine == engine) bpmProbeResult = AnalysisProbeResult{};
   if (loudnessProbeResult.engine == engine) loudnessProbeResult = AnalysisProbeResult{};
   delete fromHandle(engine);
@@ -2314,6 +2457,12 @@ void TAE_DestroyEngine(TAE_EngineHandle engine) {
 TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callback, void* user_data) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   fromHandle(engine)->setEventCallback(callback, user_data);
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TAE_SetStateEventsEnabled(TAE_EngineHandle engine, int enabled) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  fromHandle(engine)->setStateEventsEnabled(enabled != 0);
   return TAE_RESULT_OK;
 }
 
@@ -2367,16 +2516,6 @@ TAE_Result TAE_LoadQueue(TAE_EngineHandle engine, const char* queue_json, int st
   return fromHandle(engine)->loadQueue(queue_json ? queue_json : "[]", start_index);
 }
 
-TAE_Result TAE_AddToQueue(TAE_EngineHandle engine, const char* item_json) {
-  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return fromHandle(engine)->addToQueue(item_json ? item_json : "{}");
-}
-
-TAE_Result TAE_RemoveFromQueue(TAE_EngineHandle engine, int index) {
-  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return fromHandle(engine)->removeFromQueue(index);
-}
-
 TAE_Result TAE_Next(TAE_EngineHandle engine) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->next();
@@ -2394,12 +2533,18 @@ TAE_Result TAE_SetPlayMode(TAE_EngineHandle engine, const char* mode) {
 
 TAE_Result TAE_GetQueue(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getQueueJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::Queue, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getQueueJson();
+      });
 }
 
 TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getUpcomingTrackJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::UpcomingTrack, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getUpcomingTrackJson();
+      });
 }
 
 TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json) {
@@ -2427,12 +2572,18 @@ TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_confi
 
 TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getDspConfig(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::DspConfig, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getDspConfig();
+      });
 }
 
 TAE_Result TAE_GetDspGraphStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getDspGraphStatusJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::DspGraphStatus, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getDspGraphStatusJson();
+      });
 }
 
 TAE_Result TAE_LoadImpulseResponse(TAE_EngineHandle engine, const char* path) {
@@ -2447,7 +2598,10 @@ TAE_Result TAE_UnloadImpulseResponse(TAE_EngineHandle engine) {
 
 TAE_Result TAE_GetConvolverInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getConvolverInfoJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::ConvolverInfo, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getConvolverInfoJson();
+      });
 }
 
 TAE_Result TAE_SetEqBands(TAE_EngineHandle engine, const char* eq_json) {
@@ -2482,7 +2636,10 @@ TAE_Result TAE_SetDspPluginChain(TAE_EngineHandle engine, const char* chain_json
 
 TAE_Result TAE_GetDspPluginStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getNativeDspPluginStatusJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::DspPluginStatus, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getNativeDspPluginStatusJson();
+      });
 }
 
 TAE_Result TAE_GetMetadata(
@@ -2492,32 +2649,50 @@ TAE_Result TAE_GetMetadata(
     size_t buffer_size,
     size_t* required_size) {
   if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
-  return copyStringResult(fromHandle(engine)->getMetadataJson(source), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::Metadata, source, buffer, buffer_size, required_size, nullptr, [engine, source](uint64_t*) {
+        return fromHandle(engine)->getMetadataJson(source);
+      });
 }
 
 TAE_Result TAE_EnumerateDevices(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->enumerateDevicesJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::Devices, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->enumerateDevicesJson();
+      });
 }
 
 TAE_Result TAE_EnumerateBackends(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->enumerateBackendsJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::Backends, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->enumerateBackendsJson();
+      });
 }
 
 TAE_Result TAE_GetEngineCapabilities(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->engineCapabilitiesJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::Capabilities, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->engineCapabilitiesJson();
+      });
 }
 
 TAE_Result TAE_GetLastError(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getLastErrorJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::LastError, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getLastErrorJson();
+      });
 }
 
 TAE_Result TAE_GetPlaybackInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(fromHandle(engine)->getPlaybackInfoJson(), buffer, buffer_size, required_size);
+  return copyJsonWithProbeResult(
+      engine, JsonGetter::PlaybackInfo, {}, buffer, buffer_size, required_size, nullptr, [engine](uint64_t*) {
+        return fromHandle(engine)->getPlaybackInfoJson();
+      });
 }
 
 TAE_Result TAE_GetDiagnosticLog(
@@ -2529,11 +2704,17 @@ TAE_Result TAE_GetDiagnosticLog(
     size_t* required_size,
     uint64_t* next_sequence) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(
-      twilight::audio::DiagnosticLog::instance().toJson(since_sequence, max_entries, next_sequence),
+  return copyJsonWithProbeResult(
+      engine,
+      JsonGetter::DiagnosticLog,
+      std::to_string(since_sequence) + ":" + std::to_string(max_entries),
       buffer,
       buffer_size,
-      required_size);
+      required_size,
+      next_sequence,
+      [since_sequence, max_entries](uint64_t* cursor) {
+        return twilight::audio::DiagnosticLog::instance().toJson(since_sequence, max_entries, cursor);
+      });
 }
 
 TAE_Result TAE_GetSpectrumData(TAE_EngineHandle engine, float* buffer, size_t point_count, size_t* written_count) {
@@ -2550,11 +2731,16 @@ TAE_Result TAE_GetVisualizationData(
     size_t buffer_size,
     size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
-  return copyStringResult(
-      fromHandle(engine)->getVisualizationDataJson(options_json ? options_json : "{}"),
+  const std::string options = options_json ? options_json : "{}";
+  return copyJsonWithProbeResult(
+      engine,
+      JsonGetter::Visualization,
+      options,
       buffer,
       buffer_size,
-      required_size);
+      required_size,
+      nullptr,
+      [engine, &options](uint64_t*) { return fromHandle(engine)->getVisualizationDataJson(options); });
 }
 
 TAE_Result TAE_AnalyzeBpm(

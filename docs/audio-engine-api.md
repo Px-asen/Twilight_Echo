@@ -289,3 +289,25 @@ main 进程会在输出后端、设备、独占模式、audio service recovery�
 ## 当前非闭环范围
 
 当前不包含高级多设备同步；Windows 已接入 `WM_DEVICECHANGE` 事件刷新，Linux 已接入 ALSA `/dev/snd` 节点 watcher，CoreAudio 播放后端已接入设备失效监听，但 macOS 枚举级复杂热插拔同步仍待真实设备验证和补充。所有平台仍保留轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。ASIO 兼容层不携带 SDK，且仅在 Windows x64 构建中编译；默认枚举并可激活已安装驱动，设置 `TWILIGHT_DISABLE_ASIO=1` 可显式禁用。真实设备 smoke（WASAPI Exclusive / ASIO PCM / DoP DAC / Native DSD / SACD ISO / CoreAudio Hog / ALSA `hw:`）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有对应设备时必须跳过并保持默认验证通过。`pnpm run smoke:audio-evidence -- --input <evidence-envelope.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表和未闭环 surface 的 `actionPlan`；只有带固定采集元数据、存在本地 artifact 与匹配 SHA-256 的 `real-device` pass 计入 complete，mock/未知来源不计入。发布前可手动加 `--require-complete` 让证据不完整时退出非 0。证据库采集与判定细节见 [Audio Smoke Evidence](./audio-smoke-evidence.md)。
+
+## 等响度试听会话
+
+`window.api.audioEngine.audition` 使用 `shared/dspAudition.ts` 唯一契约：
+
+- `measure({ source, startSeconds, endSeconds, a, b })` 冻结当前已授权本地源、文件 size/mtime、CUE 区间和两套 graph，返回会话 ID、A/B 处理后 LUFS/True Peak、共同目标及补偿。期间不改变播放；每次重新测量，不复用源文件响度缓存。
+- `select(id, 'a' | 'b')` 在音源、设备和 DSP revision 仍一致时，经 AudioEngineManager 与 DSP ACK 应用临时补偿图；成功后才返回选中状态。不 seek、不重建队列、不保存场景或设备档案。
+- `status()` 返回有效会话或 `null`；`end()` 取消测量并等待在途切换，在 revision 未被其他修改替换时恢复原有处理设置。旧请求、外部设置/设备变更和引擎恢复使会话失效，不能用旧恢复覆盖新配置。
+
+四个 IPC 为 `audioEngine:measureDspAudition/selectDspAudition/getDspAudition/endDspAudition`。入口验证 sender 和有界 JSON；本地文件仍由 path grants 授权。分析走独立 `audioAnalysisService` 的 `dsp-audition` 类别，取消不影响同源 loudnorm。原生 `AnalyzeLoudness` options 增加 `processedGraph`、`startSeconds`、`endSeconds`，响应 `processingVersion: 1` 才可参与匹配；旧引擎或仅源文件测量不可冒充处理后结果。
+
+首版接受单/双声道、本机可解码为 PCM 的音频，要求实际输出同采样率、同声道数、正常速度、自动声道路由；不接受 DSD/DoP、远程、交叉淡化、输出重采样/抖动或其他 DSP 节点。图只允许无处理或一个内置 EQ；不改变 PCM 的 meter 观察节点在分析图中略去。区间长 10–60 秒、起点不晚于 600 秒，CUE 不得越过当前段。静音、截断、削波、超出 ±24 dB 前级范围或复测失败均不显示“已匹配”。补偿只衰减，以共同可用目标约束两侧 True Peak；补偿后再次原生测量，要求差值 ≤0.1 LU、峰值 ≤−1 dBTP（允许测量舍入误差 0.01 dB）。这只说明选定区间的测量结果，不保证主观等响，也不保证曲目其他区间或外部设备链路的峰值。
+
+### 连续播放策略与交叉淡化
+
+`OutputConfig.playbackPolicy` 为 `bit-perfect-first | continuity-first`，旧配置归一化为前者；`continuitySampleRate` 为 44100、48000（默认）或 96000。设置和设备档案共同保存该配置，经既有输出事务应用，播放中切换保留进度和暂停状态并重新打开输出。连续模式对 PCM 请求固定双声道 Float32，采样率优先于场景 outputStage 的目标，复用 FFmpeg/libswresample；设备协商后的实际格式在本次连续序列内复用于下一首。界面并列显示来源、请求目标及实际格式，不以策略名称宣称 bit-perfect。该模式要求自动声道路由、关闭 PCM 转 DSD，冲突配置拒绝应用。
+
+原样优先只预加载来源采样率、位深、声道和采样格式兼容的 PCM。连续优先允许上述 PCM 格式变化，同专辑、专辑边界和混排均遵循同一个固定目标。DSD 不参与 PCM 连续预加载，保留原有 DSD 选路并以正常切歌重新打开；不代表实现 DSD gapless。新候选失败时撤下旧预加载，保留当前播放和未消费的新曲起点，运行状态继续报告阻断。
+
+处理设置新增 `crossfadeCurve: linear | equal-power`（默认 linear）与 `crossfadeContent: conservative | all | live`（默认 conservative）。线性增益为 `(1-t,t)`，等功率为 `(cos(πt/2),sin(πt/2))`，`t` 限于 0–1；相关信号仍可能相加超过满幅，混音保留既有幅度限幅。conservative 保留同专辑且同艺术家的曲间边界，以及时长不足 `max(10, 2×请求淡化秒数)` 的短曲；all 可覆盖这两项，live 始终保留边界，不猜测文件名。CUE（包括精确 pregap）、DSD、未知时长和非正常速度始终不重叠。重叠上限取请求长度和两曲各自一半时长的最小值，避免在交接前耗尽下一首；seek 与变速重建下一首预加载，手动 next 遇到已消费的重叠流时重新打开下一首，从其起点播放。
+
+`PlaybackInfo.sourceChannels` 补齐来源声道事实；`crossfadeCurve`、`crossfadeEffectiveSeconds`、`crossfadeBlockedReason` 和 `crossfadeMixActive` 分别报告实际曲线、规则允许的重叠上限、未生效原因和实时混合状态。原有 `crossfadeActive` 仍表达处理请求，不能当作正在混合的证据。两路先经过各自 DSP，再混合；没有新增自动响度分析或额外曲间响度匹配。

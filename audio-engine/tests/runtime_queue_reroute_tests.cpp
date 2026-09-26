@@ -1147,7 +1147,7 @@ class FakeOutputBackend final : public IOutputBackend {
   }
 
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override {
-    std::lock_guard lock(g_backendRegistry.mutex);
+    std::unique_lock lock(g_backendRegistry.mutex);
     ++state_->startCalls;
     if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyStartFailures.load() > 0) {
       g_fakeTopologyStartFailures.fetch_sub(1);
@@ -1160,7 +1160,9 @@ class FakeOutputBackend final : public IOutputBackend {
     state_->started = true;
     state_->typedStarted = false;
     if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyDeviceInvalidated.exchange(false)) {
-      state_->event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
+      const auto event = state_->event;
+      lock.unlock();
+      event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
       if (error) *error = "fake WASAPI device invalidated";
       return false;
     }
@@ -1172,7 +1174,7 @@ class FakeOutputBackend final : public IOutputBackend {
       RenderCallback fallbackCallback,
       OutputEventCallback eventCallback,
       std::string* error) override {
-    std::lock_guard lock(g_backendRegistry.mutex);
+    std::unique_lock lock(g_backendRegistry.mutex);
     ++state_->startCalls;
     if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyStartFailures.load() > 0) {
       g_fakeTopologyStartFailures.fetch_sub(1);
@@ -1185,7 +1187,9 @@ class FakeOutputBackend final : public IOutputBackend {
     state_->started = true;
     state_->typedStarted = true;
     if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyDeviceInvalidated.exchange(false)) {
-      state_->event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
+      const auto event = state_->event;
+      lock.unlock();
+      event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
       if (error) *error = "fake WASAPI device invalidated";
       return false;
     }
@@ -1342,6 +1346,11 @@ TrackProfile buildTrackProfile(const std::string& source) {
       source.find("pcm-192k") != std::string::npos
           ? makePcmFormat(192000, 2, 24, AudioSampleFormat::Int24Interleaved)
           : makePcmFormat(44100, 2, 24, AudioSampleFormat::Int24Interleaved);
+  if (source.find("pcm-mono-16") != std::string::npos) {
+    profile.stream.sourceFormat = makePcmFormat(48000, 1, 16, AudioSampleFormat::Int16Interleaved);
+  } else if (source.find("pcm-surround") != std::string::npos) {
+    profile.stream.sourceFormat = makePcmFormat(96000, 6, 24, AudioSampleFormat::Int24Interleaved);
+  }
   profile.stream.decodedFormat = profile.stream.sourceFormat;
   profile.defaultOutput = profile.stream.decodedFormat;
   profile.totalFrames = 65536;
@@ -1868,6 +1877,60 @@ void testConfigAppliedEventFollowsRenderApplication() {
   assert(playbackJsonNumber(payload, "appliedConfigRevision") == requested);
   // capture is declared after the harness and is therefore destroyed first;
   // detach it before the engine's clock thread is stopped by harness teardown.
+  engine.setEventCallback(nullptr, nullptr);
+}
+
+// NAT-1: the stopped/paused clock waits on a slow 1 s tick. Transport commands
+// must wake it at once, and shutdown must not wait out the idle interval.
+void testIdleClockWakesPromptlyOnPlayAndShutdown() {
+  {
+    EngineHarness harness;
+    auto& engine = harness.engine();
+    ConfigEventCapture capture;
+    engine.setEventCallback(captureConfigEvent, &capture);
+    // Let the clock settle into its idle wait before issuing play.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    assert(capturedEventCount(capture, "property-change") == 0);
+    const auto playStarted = std::chrono::steady_clock::now();
+    assert(engine.play("clock-wake-idle.flac", 0.0) == TAE_RESULT_OK);
+    assert(waitForLatestStartedBackendState());
+    assert(waitUntil([&capture] { return capturedEventCount(capture, "property-change") >= 1; }, 1500));
+    const auto firstTickMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - playStarted)
+                                 .count();
+    assert(firstTickMs < 400);
+    engine.setEventCallback(nullptr, nullptr);
+  }
+
+  auto engine = std::make_unique<TwilightAudioEngine>();
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  const auto destroyStarted = std::chrono::steady_clock::now();
+  engine.reset();
+  const auto destroyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - destroyStarted)
+                             .count();
+  assert(destroyMs < 400);
+}
+
+// NAT-1: a host that polls GetPlaybackInfo opts out of snapshot events, and the
+// clock then stops serializing them while config-applied still arrives.
+void testDisabledStateEventsSkipPlaybackSnapshots() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  ConfigEventCapture capture;
+  engine.setStateEventsEnabled(false);
+  engine.setEventCallback(captureConfigEvent, &capture);
+  assert(engine.setDspConfig(kUnityGainProcessingConfigJson) == TAE_RESULT_OK);
+  assert(engine.play("state-events-disabled.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForLatestStartedBackendState());
+  assert(waitUntil([&capture] { return capturedEventCount(capture, "config-applied") >= 1; }));
+  std::this_thread::sleep_for(std::chrono::milliseconds(350));
+  assert(capturedEventCount(capture, "property-change") == 0);
+  assert(capturedEventCount(capture, "playback-info") == 0);
+  assert(engine.getPlaybackInfoJson().find("\"state\":\"playing\"") != std::string::npos);
+
+  engine.setStateEventsEnabled(true);
+  assert(waitUntil([&capture] { return capturedEventCount(capture, "property-change") >= 1; }));
   engine.setEventCallback(nullptr, nullptr);
 }
 
@@ -3306,11 +3369,11 @@ void testAutoNextDoesNotInheritDsdPath() {
   assertLatestPlaybackContains(engine, "\"source\":\"auto-next.flac\"");
 }
 
-void testNativeCrossfadeOverlapMixesPreloadAndPromotes() {
+void testNativeCrossfadeOverlapMixesPreloadAndPromotes(bool equalPower = false) {
   EngineHarness harness;
   auto& engine = harness.engine();
 
-  assert(engine.setDspConfig("{\"gapless\":true,\"crossfadeSeconds\":0.04}") == TAE_RESULT_OK);
+  assert(engine.setDspConfig(std::string("{\"gapless\":true,\"crossfadeSeconds\":0.04,\"crossfadeContent\":\"all\",\"crossfadeCurve\":\"") + (equalPower ? "equal-power" : "linear") + "\"}") == TAE_RESULT_OK);
   const std::string queueJson =
       "[{\"id\":\"current\",\"source\":\"crossfade-current.flac\",\"duration\":0.08},"
       "{\"id\":\"next\",\"source\":\"crossfade-next.flac\",\"duration\":0.20}]";
@@ -3354,6 +3417,42 @@ void testNativeCrossfadeOverlapMixesPreloadAndPromotes() {
   assert(promoted);
   assertLatestPlaybackContains(engine, "\"source\":\"crossfade-next.flac\",\"codec\"");
   assertLatestPlaybackContains(engine, "\"queueIndex\":1");
+  assert(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") >= 0.039);
+}
+
+void testCrossfadeDiscontinuitiesRestartPreloadAtItsBeginning() {
+  EngineHarness harness;
+  AudioPipeline pipeline;
+  QueueItem current, next;
+  current.id = "current";
+  current.source = "crossfade-current.flac";
+  current.durationSeconds = 0.08;
+  next.id = "next";
+  next.source = "crossfade-next.flac";
+  next.durationSeconds = 0.20;
+  std::string error;
+  assert(pipeline.play(current, next, 0, "wasapi-exclusive", "auto", 1,
+      "{\"gapless\":true,\"crossfadeSeconds\":0.04,\"crossfadeContent\":\"all\",\"crossfadeCurve\":\"equal-power\"}", true, &error) == TAE_RESULT_OK);
+  auto backend = waitForLatestStartedBackendState();
+  assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+  for (int i = 0; i < 12 && !pipeline.status().crossfadeMixActive; ++i) renderBackendFrames(backend, 256);
+  assert(pipeline.status().crossfadeMixActive);
+  assert(!pipeline.skipToPreloaded(next, &error));
+  assert(pipeline.seek(0, &error) == TAE_RESULT_OK);
+  assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+  const auto restarted = renderBackendFrames(backend, 256);
+  assert(!bufferHasSampleAbove(restarted, 0.3f));
+  assert(!pipeline.status().crossfadeMixActive);
+  for (int i = 0; i < 12 && !pipeline.status().crossfadeMixActive; ++i) renderBackendFrames(backend, 256);
+  assert(pipeline.status().crossfadeMixActive);
+  assert(pipeline.togglePause() == TAE_RESULT_OK);
+  pipeline.setPlaybackRate(1.5);
+  assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+  renderBackendFrames(backend, 256);
+  assert(pipeline.status().crossfadeBlockedReason == "playback_rate");
+  assert(pipeline.skipToPreloaded(next, &error));
+  assert(pipeline.status().positionSeconds < 0.001);
+  pipeline.stop();
 }
 
 void testPreloadedPromotionKeepsRuntimeReplayGainSettings() {
@@ -3407,6 +3506,69 @@ void testGaplessBlockedReasonReportsCrossfadeAndDisabled() {
   }));
   assertLatestPlaybackContains(engine, "\"gaplessActive\":true");
   assertLatestPlaybackContains(engine, "\"gaplessBlockedReason\":\"\"");
+}
+
+void testContinuityPolicyConvertsMixedFormatsAndRejectsDsdPreload() {
+  for (const auto& nextSource : {"pcm-192k.flac", "pcm-mono-16.flac", "pcm-surround.flac"}) {
+    EngineHarness harness;
+    AudioPipeline pipeline;
+    OutputConfig config;
+    config.continuityFirst = true;
+    config.continuitySampleRate = 48000;
+    std::string error;
+    assert(pipeline.setOutputConfig(config, &error));
+    QueueItem current;
+    current.id = "current";
+    current.source = "auto-promote-current.flac";
+    current.durationSeconds = 0.08;
+    QueueItem next;
+    next.id = "next";
+    next.source = nextSource;
+    next.durationSeconds = 0.20;
+    assert(pipeline.play(current, next, 0, "wasapi-exclusive", "auto", 1.0,
+                         "{\"gapless\":true}", true, &error) == TAE_RESULT_OK);
+    const auto backend = waitForLatestStartedBackendState();
+    assert(backend);
+    assert(backend->requestedFormat.sampleRate == 48000);
+    assert(backend->requestedFormat.channelCount == 2);
+    assert(backend->requestedFormat.bitDepth == 32);
+    assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+    assert(!pipeline.status().outputPerfect);
+    const size_t backendCount = g_backendRegistry.snapshots().size();
+    for (int i = 0; i < 96 && pipeline.status().currentItem.id != next.id; ++i) {
+      renderBackendFrames(backend, 256);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    assert(pipeline.status().currentItem.id == next.id);
+    assert(g_backendRegistry.snapshots().size() == backendCount);
+    QueueItem dsd;
+    dsd.id = "dsd";
+    dsd.source = harness.dsdPath();
+    assert(!pipeline.preloadNext(dsd, &error));
+    assert(!pipeline.status().preloadReady);
+    assert(pipeline.status().gaplessBlockedReason == "format_mismatch");
+    pipeline.stop();
+  }
+}
+
+void testOriginalPolicyRejectsMixedFormatAndPolicySwitchRetainsPause() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"gapless\":true}") == TAE_RESULT_OK);
+  assert(engine.loadQueue("[{\"id\":\"a\",\"source\":\"current.flac\"},{\"id\":\"b\",\"source\":\"pcm-192k.flac\"}]", 0) == TAE_RESULT_OK);
+  assert(engine.play("current.flac", 0.1) == TAE_RESULT_OK);
+  assert(waitUntil([&] { return jsonContains(engine.getPlaybackInfoJson(), "\"gaplessBlockedReason\":\"format_mismatch\""); }));
+  assert(engine.pause() == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"playbackPolicy\":\"continuity-first\",\"continuitySampleRate\":96000}") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - 0.1) < 0.001);
+  assert(waitUntil([&] { return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true"); }));
+  assert(engine.setOutputConfig("{\"playbackPolicy\":\"continuity-first\",\"routingMode\":\"stereo\"}") == TAE_RESULT_INVALID_ARGUMENT);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(engine.setOutputConfig("{}") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":44100");
 }
 
 void testAutoNextPrefersPreloadedPromoteWithoutReopen() {
@@ -3592,7 +3754,7 @@ void testCueSameSourcePreloadPreservesFullVirtualPregapWithCrossfadeEnabled() {
           "wasapi-exclusive",
           "auto",
           0.5,
-          "{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0.004}",
+          "{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0.004,\"crossfadeContent\":\"all\",\"crossfadeCurve\":\"equal-power\"}",
           true,
           &error) == TAE_RESULT_OK);
   const auto backend = waitForLatestStartedBackendState();
@@ -3942,6 +4104,8 @@ int main() {
   testApplyDspStateCapacityFailureKeepsLastAcceptedState();
   testStoppedVolumeAcceptanceIsVisibleBeforePlayback();
   testConfigAppliedEventFollowsRenderApplication();
+  testIdleClockWakesPromptlyOnPlayAndShutdown();
+  testDisabledStateEventsSkipPlaybackSnapshots();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();
   testPcmTypedPassthroughIsOutputPerfect();
@@ -4008,9 +4172,13 @@ int main() {
   testManualNextDoesNotInheritDsdPath();
   testAutoNextDoesNotInheritDsdPath();
   testNativeCrossfadeOverlapMixesPreloadAndPromotes();
+  testNativeCrossfadeOverlapMixesPreloadAndPromotes(true);
+  testCrossfadeDiscontinuitiesRestartPreloadAtItsBeginning();
   testPreloadedPromotionKeepsRuntimeReplayGainSettings();
   testGaplessBlockedReasonReportsCrossfadeAndDisabled();
   testAutoNextPrefersPreloadedPromoteWithoutReopen();
+  testContinuityPolicyConvertsMixedFormatsAndRejectsDsdPreload();
+  testOriginalPolicyRejectsMixedFormatAndPolicySwitchRetainsPause();
   testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain();
   testCueVirtualPregapRendersExactPcmSilenceAndMapsSeek();
   testCueSameSourcePreloadPreservesFullVirtualPregapWithCrossfadeEnabled();

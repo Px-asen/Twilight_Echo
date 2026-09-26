@@ -201,7 +201,10 @@ test('compact keeps its progress readout out of the layout, on its own top edge'
     assert.equal(placed.includes(id as never), false, `${id} must not be a layout control`)
   }
   assert.match(playerBar, /v-if="isCompact" class="compact-progress-rail"/)
-  assert.match(playerBar, /class="compact-progress-fill" :style="progressFillStyle"/)
+  assert.match(
+    playerBar,
+    /<SmoothedProgressFill class="compact-progress-fill" :percent="progressPercent" \/>/
+  )
   // Same 0..1 seek handler as mini's long rail, so neither has to know pixels.
   assert.match(playerBar, /class="compact-progress-slider"[\s\S]{0,320}@input="onFlatRailInput"/)
   assert.match(playerBar, /function onFlatRailInput/)

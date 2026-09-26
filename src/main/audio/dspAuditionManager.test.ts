@@ -30,6 +30,8 @@ function fixture() {
         isDsd: false,
         state: 'playing',
         decodedChannels: 2,
+        actualChannels: 2,
+        actualOutputFormat: 'float32',
         sourceSampleRate: 48000,
         actualSampleRate: 48000,
         playbackRate: 1,
@@ -37,6 +39,7 @@ function fixture() {
       }
     }) as Awaited<ReturnType<AudioEngineManager['getAuditionContext']>>
   let waitAnalysis: (() => Promise<void>) | null = null
+  let waitApply: (() => Promise<void>) | null = null
   const manager = new DspAuditionManager({
     context,
     authorize: async (value) => value,
@@ -50,6 +53,7 @@ function fixture() {
     apply: async (expected, _key, value) => {
       assert.equal(expected, revision)
       applied.push(value)
+      await waitApply?.()
       return ++revision
     }
   })
@@ -57,6 +61,9 @@ function fixture() {
     manager,
     applied,
     measured,
+    waitApply: (fn: () => Promise<void>) => {
+      waitApply = fn
+    },
     change: () => {
       revision++
       key = 'changed'
@@ -82,6 +89,50 @@ test('processed measurements are frozen, switching waits for ACK, exit restores 
   assert.equal(f.applied.length, 2)
   assert.equal(f.applied[1], undefined)
   assert.equal(graph.nodes.length, 0)
+})
+
+test('exit waits for a late DSP ACK and a new measurement cannot overtake restoration', async () => {
+  const f = fixture()
+  const result = await f.manager.measure(request)
+  let release!: () => void
+  let entered!: () => void
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.waitApply(async () => {
+    entered()
+    await blocked
+  })
+  const selecting = f.manager.select(result.id, 'a')
+  await started
+  const rejected = assert.rejects(selecting, /结束/)
+  const ending = f.manager.end()
+  const next = f.manager.measure(request)
+  assert.equal(f.measured.length, 4)
+  release()
+  await rejected
+  await ending
+  const nextResult = await next
+  assert.notEqual(nextResult.id, result.id)
+  assert.deepEqual(
+    f.applied.map((value) => !!value),
+    [true, false]
+  )
+  await f.manager.end()
+})
+
+test('simultaneous measurements keep only the newest request and reject short intervals', async () => {
+  const f = fixture()
+  const first = f.manager.measure(request)
+  const second = f.manager.measure(request)
+  await assert.rejects(first, /取消/)
+  await second
+  assert.equal(f.measured.length, 4)
+  await assert.rejects(f.manager.measure({ ...request, endSeconds: 3 }), /10–60/)
+  await f.manager.end()
 })
 
 test('external revisions and changed sources invalidate selection without restoring over newer configuration', async () => {

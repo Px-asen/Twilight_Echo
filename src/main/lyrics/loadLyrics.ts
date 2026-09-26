@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
-import { parseFile, TimestampFormat, type IAudioMetadata } from 'music-metadata'
+import type { IAudioMetadata } from 'music-metadata'
 import { decodeLyrics } from '../../shared/lyricsEncoding.ts'
+
+// music-metadata's TimestampFormat.milliseconds; imported lazily, so the value is inlined.
+const MILLISECOND_TIMESTAMPS = 2
 
 const TIMED_LRC = /\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]/
 const LYRIC_TAG_IDS = new Set(['LYRICS', 'UNSYNCEDLYRICS', 'USLT', 'SYLT', '©LYR', 'WM/LYRICS'])
@@ -38,7 +41,7 @@ export function extractEmbeddedLyrics(metadata: {
     if (text && TIMED_LRC.test(text)) return text
   }
   for (const lyric of lyrics) {
-    if (lyric.timeStampFormat !== TimestampFormat.milliseconds) continue
+    if (lyric.timeStampFormat !== MILLISECOND_TIMESTAMPS) continue
     const lines: string[] = []
     for (const entry of lyric.syncText ?? []) {
       if (
@@ -71,6 +74,7 @@ export async function loadLocalLyrics(
     .catch(() => null)
   if (lyrics) return lyrics
   if (!filePath) return null
+  const { parseFile } = await import('music-metadata')
   return await parseFile(filePath, { skipCovers: true, duration: false })
     .then(extractEmbeddedLyrics)
     .catch(() => null)

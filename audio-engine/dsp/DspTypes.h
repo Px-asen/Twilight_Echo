@@ -208,6 +208,9 @@ struct DspConfig {
 
   double crossfadeSeconds = 0.0;
 
+  bool crossfadeEqualPower = false;
+  int crossfadeContent = 0;
+
   bool channelMatrixEnabled = false;
   std::vector<double> channelMatrix;
 

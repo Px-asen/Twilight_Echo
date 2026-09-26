@@ -30,7 +30,6 @@
   "src/renderer/src/components/PlayingMusic.vue": 76,
   "src/renderer/src/components/PluginExtensionPage.vue": 15,
   "src/renderer/src/components/PluginPage.vue": 79,
-  "src/renderer/src/components/PluginSettingsPanel.vue": 21,
   "src/renderer/src/components/RadioPodcastPage.vue": 34,
   "src/renderer/src/components/settings-page/SettingsPage.css": 362,
   "src/renderer/src/components/settings-page/AudioDeviceProfileEditor.vue": 3,

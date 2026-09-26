@@ -1,16 +1,30 @@
 import { ipcRenderer } from 'electron'
-import {
-  isThemeLibraryDocument,
-  type ThemeAssetReference,
-  type ThemeAssetType,
-  type ThemeBootstrap,
-  type ThemeLibrarySnapshot,
-  type ThemeProfileV2,
-  type ThemeSelection,
-  type ThemeTone,
-  type ThemeWindowInheritance
+import type {
+  ThemeAssetReference,
+  ThemeAssetType,
+  ThemeBootstrap,
+  ThemeLibraryDocument,
+  ThemeLibrarySnapshot,
+  ThemeProfileV2,
+  ThemeSelection,
+  ThemeTone,
+  ThemeWindowInheritance
 } from '../../shared/theme.ts'
 import { invokeOptionalVersionedDataWrite, invokeVersionedDataWrite } from './versionedData.ts'
+
+// Main validates theme documents before persisting them. A value import of the
+// full validator would pull every preset and token table into the preload
+// bundle, so the bridge only checks the envelope shape it needs to route
+// revision conflicts.
+function isThemeLibraryDocument(value: unknown): value is ThemeLibraryDocument {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    Array.isArray(record.profiles) &&
+    typeof record.activeTheme === 'object' &&
+    record.activeTheme !== null
+  )
+}
 
 const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
 const systemThemeChangedCallbacks = new Set<(tone: ThemeTone) => void>()

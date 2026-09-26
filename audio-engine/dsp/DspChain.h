@@ -31,6 +31,8 @@ class DspChain {
   DspStatus status();
   DspConfig config() const;
   bool auditionTransition() const { return auditionTransition_; }
+  bool crossfadeEqualPower() const { return config_.crossfadeEqualPower; }
+  int crossfadeContent() const { return config_.crossfadeContent; }
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
   ConvolverInfo convolverInfo() const;

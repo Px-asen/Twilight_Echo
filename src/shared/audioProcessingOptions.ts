@@ -322,6 +322,22 @@ export function gaplessBlockedReasonCopy(reason: string | null | undefined): str
   }
 }
 
+export function crossfadeBlockedReasonCopy(reason: string | undefined): string {
+  const labels: Record<string, string> = {
+    disabled: '未开启',
+    dsd_path: 'DSD 不参与交叉淡化',
+    playback_rate: '变速播放时暂停交叉淡化',
+    no_preload: '等待兼容的下一首',
+    buffering: '下一首正在缓冲',
+    cue: 'CUE 保留原始曲间边界和 pregap',
+    live: '现场内容保留原始曲间边界',
+    unknown_duration: '时长未知，不进行交叉淡化',
+    album: '同专辑保留原始曲间边界',
+    short_track: '短曲保留原始曲间边界'
+  }
+  return reason ? (labels[reason] ?? reason) : ''
+}
+
 /** HiFi status line for intent + runtime gapless state. */
 export function gaplessRuntimeStatusCopy(input: {
   intentEnabled: boolean

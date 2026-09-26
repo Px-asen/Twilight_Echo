@@ -1,17 +1,11 @@
-import { app, BrowserWindow, session, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, session, shell } from 'electron'
 import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import { join } from 'path'
 import { existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { runtime } from '../core/runtime'
-import { getCachedNcmSong, cacheNcmSong } from '../cache/ncmCache'
 import { redactSensitiveText } from '../security/secureStorage.ts'
-import {
-  normalizeInteger,
-  normalizeIpcString,
-  normalizeOptionalIpcString
-} from '../security/ipcValidation.ts'
-import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { normalizeIpcString } from '../security/ipcValidation.ts'
 import { setupNcmCloudTransferIpc } from './cloudTransfer.ts'
 import { getListeningPort, waitForListeningPort } from './serverBinding.ts'
 import { Agent } from 'undici'
@@ -30,8 +24,6 @@ const NCM_KEEP_ALIVE_AGENT = new Agent({
 })
 const MAX_NCM_API_PATH_LENGTH = 4096
 const MAX_NCM_COOKIE_LENGTH = 16 * 1024
-const MAX_NCM_REMOTE_URL_LENGTH = 8192
-const MAX_NCM_CACHE_FILENAME_LENGTH = 255
 const NCM_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 export interface NcmApiRequestOptions {
@@ -236,34 +228,6 @@ export async function openNcmOfficialLogin(): Promise<string> {
 
 export function setupNcmIpc(): void {
   setupNcmCloudTransferIpc()
-  ipcMain.handle('ncm:getPort', async (event) => {
-    assertTrustedIpcSender(event, 'NCM IPC')
-    await ensureNcmServer()
-    if (!runtime.ncmServer) throw new Error('NetEase API server did not start')
-    return getListeningPort(runtime.ncmServer)
-  })
-
-  ipcMain.handle('ncm:getCachedSong', async (_event, songId: number) => {
-    assertTrustedIpcSender(_event, 'NCM IPC')
-    return getCachedNcmSong(normalizeNcmSongId(songId))
-  })
-
-  ipcMain.handle(
-    'ncm:cacheSong',
-    async (_event, songId: number, url: string, fileName?: string) => {
-      assertTrustedIpcSender(_event, 'NCM IPC')
-      return await cacheNcmSong(
-        normalizeNcmSongId(songId),
-        normalizeIpcString(url, 'NCM cache url', MAX_NCM_REMOTE_URL_LENGTH),
-        normalizeOptionalIpcString(fileName, 'NCM cache file name', MAX_NCM_CACHE_FILENAME_LENGTH)
-      )
-    }
-  )
-
-  ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
-    assertTrustedIpcSender(_event, 'NCM IPC')
-    return requestNcmApi(path, cookie)
-  })
 }
 
 function normalizeNcmApiPath(path: unknown): string | null {
@@ -291,12 +255,6 @@ function normalizeNcmCookie(cookie: unknown): string | undefined {
   } catch {
     return undefined
   }
-}
-
-function normalizeNcmSongId(songId: unknown): number {
-  const normalized = normalizeInteger(songId, 'NCM song id', 0, 1, Number.MAX_SAFE_INTEGER)
-  if (normalized <= 0) throw new Error('NCM song id is invalid')
-  return normalized
 }
 
 // S4：登录窗外部跳转仅放行 https:（http: 如需放行须显式传域名白名单）

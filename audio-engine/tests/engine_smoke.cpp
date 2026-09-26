@@ -58,6 +58,37 @@ int main() {
   assert(std::strstr(json.data(), "\"sampleRateConverted\"") != nullptr);
   assert(std::strstr(json.data(), "\"channelLayoutConverted\"") != nullptr);
   assert(std::strstr(json.data(), "\"source\":\"unavailable\"") != nullptr);
+
+  // NAT-2: the fill after a size probe copies the probe's snapshot rather than
+  // serializing again, even when state changed in between; the next probe is
+  // fresh.
+  assert(TAE_SetVolume(engine, 1.0) == TAE_RESULT_OK);
+  required = 0;
+  assert(TAE_GetPlaybackInfo(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  const size_t probedSize = required;
+  assert(TAE_SetVolume(engine, 0.25) == TAE_RESULT_OK);
+  std::vector<char> probed(probedSize);
+  assert(TAE_GetPlaybackInfo(engine, probed.data(), probed.size(), &required) == TAE_RESULT_OK);
+  assert(required == probedSize);
+  assert(std::strstr(probed.data(), "\"volume\":1") != nullptr);
+  required = 0;
+  assert(TAE_GetPlaybackInfo(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  std::vector<char> fresh(required);
+  assert(TAE_GetPlaybackInfo(engine, fresh.data(), fresh.size(), &required) == TAE_RESULT_OK);
+  assert(std::strstr(fresh.data(), "\"volume\":0.25") != nullptr);
+  // A different getter in between discards the kept snapshot.
+  required = 0;
+  assert(TAE_GetPlaybackInfo(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(TAE_SetVolume(engine, 1.0) == TAE_RESULT_OK);
+  size_t queueRequired = 0;
+  assert(TAE_GetQueue(engine, nullptr, 0, &queueRequired) == TAE_RESULT_OK);
+  std::vector<char> queueJson(queueRequired);
+  assert(TAE_GetQueue(engine, queueJson.data(), queueJson.size(), &queueRequired) == TAE_RESULT_OK);
+  fresh.assign(required + 64, '\0');
+  assert(TAE_GetPlaybackInfo(engine, fresh.data(), fresh.size(), &required) == TAE_RESULT_OK);
+  assert(std::strstr(fresh.data(), "\"volume\":1") != nullptr);
+  assert(TAE_SetStateEventsEnabled(engine, 0) == TAE_RESULT_OK);
+  assert(TAE_SetStateEventsEnabled(nullptr, 0) == TAE_RESULT_NOT_INITIALIZED);
   assert(std::strstr(json.data(), "\"actualBackend\"") != nullptr);
   assert(std::strstr(json.data(), "\"actualOutputFormat\"") != nullptr);
   assert(std::strstr(json.data(), "\"actualSampleRate\"") != nullptr);

@@ -105,15 +105,6 @@ export const systemApi = {
       return () => appNavigationCallbacks.delete(cb)
     }
   },
-  ncm: {
-    getPort: (): Promise<number> => ipcRenderer.invoke('ncm:getPort'),
-    request: (path: string, cookie?: string): Promise<unknown> =>
-      ipcRenderer.invoke('ncm:request', path, cookie),
-    getCachedSong: (songId: number): Promise<string | null> =>
-      ipcRenderer.invoke('ncm:getCachedSong', songId),
-    cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
-      ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
-  },
   ncmCloud: {
     chooseUploadFiles: (): Promise<NcmCloudSelectedFile[]> =>
       ipcRenderer.invoke('ncmCloud:chooseUploadFiles'),

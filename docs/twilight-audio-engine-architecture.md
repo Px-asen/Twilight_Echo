@@ -131,3 +131,19 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke，并有 audio smoke evidence 报告工具沉淀结果。
 2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURE_MANIFEST` 可指向外部 JSON 矩阵，`TAE_AUDIO_FIXTURES_DIR` 继续作为 MP3/FLAC/M4A/OGG/AAC/DSF/DFF 等外部小样本目录扫描 fallback。
 3. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查；WASAPI / CoreAudio 的 native DSD 属平台限制，不作为待补代码项。
+
+## 等响度 A/B 的离线等价边界
+
+DSP 机架的 A 快照和当前 B 草稿通过 `DspAuditionPanel` 发出试听意图。`DspAuditionManager` 管理冻结输入、四次测量（A/B 原配置及补偿后复测）、revision 失效和串行退出；处理只发生在独立分析进程。当前不建立处理后缓存，避免与曲库原始响度缓存混用。实时切换仍由唯一播放编排器调用 DspOrchestrator，临时 payload 不修改保存的场景或 processing，退出重新应用原有配置。UI 等待 ACK，取消、修改草稿、切换音源、关闭面板都会结束会话。
+
+原生分析复用 `DspChain` / `ParametricEqProcessor`，不另写一套 EQ。源按原采样率解码，分析前从文件起点处理前缀以建立滤波状态，仅统计选定区间；CUE 仍用文件内绝对边界。首版 EQ 没有算法延迟，不额外附加尾音；滤波器尾部属于连续节目内容，不将文件结束后的静音尾部计入区间。实时新图使用原有的重建/初始化路径，切换最初的瞬态不作为稳态响度保证。其他有状态、带延迟或依赖外部资源的节点未取得等价证据，直接拒绝匹配。
+
+`dsp_tests.cpp` 对离线 4096 帧与实时 127 帧分块、不同配置准备顺序进行逐样本比较（误差 <1e-7）；原生 loudness fixture 验证无处理、已知 −6 dB 前级、1 kHz EQ 衰减及补偿后复测。`AuditionTransition` 在试听图更换及恢复时用 10 ms 从上一输出末样本过渡到新图结果，无分配、无队列或位置变更；测试确认端点连续、样本不超出两端范围。这不替代真实设备的切换听感和模拟输出尖峰检查。
+
+参见 [音频 API 的等响度试听契约](./audio-engine-api.md#等响度试听会话)。ABX、盲听统计、跨版本音源对比及插件离线渲染不在首版范围。
+
+### 连续输出与交叉淡化边界
+
+`OutputConfig` 的连续策略通过 AudioEngineManager 既有输出事务进入 native，切换策略或目标采样率重新打开当前曲目并保留暂停与进度。AudioPipeline 在打开 PCM backend 前统一请求格式，active 与 preload 共用设备协商结果；DSD 不进入该连续序列。输出原样优先时，预加载比较两路来源格式，不能借 SRC 掩盖不兼容。候选替换先撤下旧 preload，失败不接上过期曲目。
+
+`CrossfadePolicy.h` 统一控制侧状态与渲染侧规则；渲染侧读取已准备的不可变 DSP 图，不加锁、不分配、不做全曲分析。混合使用线性或等功率曲线，开始位置按帧切分，消费长度受两曲时长约束；每个 DecodeStream 原子记录已消费的 overlap 帧数，自动交接将其计入下一首进度。seek、变速重建 preload；手动 next 拒绝提升已消费的 preload，沿用普通打开路径。内容规则和运行字段见 [音频 API](./audio-engine-api.md#连续播放策略与交叉淡化)。

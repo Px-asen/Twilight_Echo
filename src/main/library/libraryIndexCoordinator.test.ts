@@ -12,6 +12,7 @@ import type {
   LocalLibraryWorkerScanResult
 } from '../../shared/localLibraryScan.ts'
 import type { LocalMusicLibraryDocument } from '../../shared/localLibrary.ts'
+import type { NativeAudioMetadata } from '../../shared/audioEngineTypes.ts'
 import { loadLocalLibraryFileIndex, persistLocalLibraryFileIndex } from './fileIndex.ts'
 import {
   LocalLibraryIndexCoordinator,
@@ -413,6 +414,82 @@ test('worker cover handles are normalized to thumbnails before batches and resul
       ),
       covers
     )
+    coordinator.destroy()
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('SACD ISO files expand into their playable area tracks before persisting', async () => {
+  const fixture = createFixture('sacd-iso')
+  try {
+    const isoPath = join(fixture.root, 'album.iso')
+    const flacPath = join(fixture.root, 'single.flac')
+    fixture.persist(createDocument(1, [fixture.root], []))
+    const areaTrack = (source: string, title: string, playable = true) => ({
+      source,
+      title,
+      artist: 'Artist',
+      album: 'SACD Album',
+      albumArtist: 'Artist',
+      trackNumber: source.slice(-1),
+      discNumber: '',
+      container: 'SACD ISO',
+      sampleRate: 2_822_400,
+      bitDepth: 1,
+      duration: 181.6,
+      playable
+    })
+    const reads: string[] = []
+    const runner = new ScriptedRunner(async (call) => {
+      call.onBatch?.({
+        parsedTracks: [
+          { ...createTrack('iso-container', isoPath), cover: 'cover://folder.jpg' },
+          createTrack('flac', flacPath)
+        ],
+        parsedFilePaths: [isoPath, flacPath]
+      })
+      return scanResult({
+        identities: [
+          { filePath: isoPath, size: 1, mtimeMs: 1 },
+          { filePath: flacPath, size: 1, mtimeMs: 1 }
+        ],
+        parsedTracks: [],
+        parsedFilePaths: [],
+        parsedFileCount: 2
+      })
+    })
+    const coordinator = fixture.coordinator(runner, {
+      readSacdIsoMetadata: async (filePath) => {
+        reads.push(filePath)
+        return {
+          isoTracks: [
+            areaTrack(`${isoPath}#sacd-stereo-1`, 'One'),
+            areaTrack(`${isoPath}#sacd-stereo-2`, 'Two'),
+            areaTrack(`${isoPath}#sacd-multi-1`, 'Locked', false)
+          ]
+        } as unknown as NativeAudioMetadata
+      }
+    })
+
+    const result = await coordinator.scanFull()
+
+    assert.deepEqual(reads, [isoPath])
+    const tracks = result.library.tracks as Array<Record<string, unknown>>
+    const isoTracks = tracks.filter((track) => track.filePath === isoPath)
+    assert.deepEqual(
+      isoTracks.map((track) => [track.title, track.subTrack, track.trackNumber, track.cover]),
+      [
+        ['One', `${isoPath}#sacd-stereo-1`, 1, 'cover://folder.jpg'],
+        ['Two', `${isoPath}#sacd-stereo-2`, 2, 'cover://folder.jpg']
+      ]
+    )
+    assert.equal(isoTracks[0].duration, 182)
+    assert.equal(
+      tracks.some((track) => track.id === 'iso-container'),
+      false
+    )
+    assert.equal(tracks.filter((track) => track.filePath === flacPath).length, 1)
     coordinator.destroy()
   } finally {
     fixture.cleanup()

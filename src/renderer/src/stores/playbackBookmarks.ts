@@ -19,10 +19,15 @@ const document = ref<PlaybackBookmarksDocument>(
 const revision = ref(0)
 const loading = ref<Promise<void> | null>(null)
 
-function trackKeyFor(track: Pick<Track, 'id' | 'filePath' | 'source'>): string {
+function trackKeyFor(
+  track: Pick<Track, 'id' | 'filePath' | 'source' | 'subTrack' | 'cueRange'>
+): string {
   const source = track.source ?? 'local'
-  if (source === 'local' && track.filePath) return `local:${track.filePath}`
-  return `${source}:${track.id}`
+  if (source !== 'local' || !track.filePath) return `${source}:${track.id}`
+  const base = `local:${track.filePath}`
+  if (track.subTrack) return `${base}#${track.subTrack}`
+  if (track.cueRange) return `${base}#cue:${track.cueRange.startSeconds}`
+  return base
 }
 
 async function ensureLoaded(): Promise<void> {

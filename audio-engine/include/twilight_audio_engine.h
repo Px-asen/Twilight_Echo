@@ -29,9 +29,25 @@ typedef enum TAE_Result {
 
 typedef void (*TAE_EventCallback)(const char* event_type, const char* payload_json, void* user_data);
 
+/*
+ * JSON getters (buffer, buffer_size, required_size) follow a probe/fill
+ * protocol: a call with a NULL buffer (or one too small) reports the required
+ * size and keeps that serialized snapshot for the calling thread; the next
+ * getter call on the same thread with the same arguments and a large enough
+ * buffer receives exactly that snapshot instead of serializing again. Any
+ * other getter call on that thread discards the kept snapshot.
+ */
 TAE_API TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine);
 TAE_API void TAE_DestroyEngine(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callback, void* user_data);
+/**
+ * Playback snapshot events ("property-change" clock ticks and "playback-info")
+ * serialize the whole playback state. They are on by default; a host that
+ * polls TAE_GetPlaybackInfo instead passes enabled = 0 so the engine skips
+ * building them. "error", "config-applied", "start-file", "end-file" and
+ * "queue-change" are delivered either way.
+ */
+TAE_API TAE_Result TAE_SetStateEventsEnabled(TAE_EngineHandle engine, int enabled);
 
 TAE_API TAE_Result TAE_Play(TAE_EngineHandle engine, const char* source, double start_time_seconds);
 TAE_API TAE_Result TAE_Pause(TAE_EngineHandle engine);
@@ -49,8 +65,6 @@ TAE_API TAE_Result TAE_SetOutputDevice(TAE_EngineHandle engine, const char* devi
 TAE_API TAE_Result TAE_SetOutputBackend(TAE_EngineHandle engine, const char* backend_id);
 
 TAE_API TAE_Result TAE_LoadQueue(TAE_EngineHandle engine, const char* queue_json, int start_index);
-TAE_API TAE_Result TAE_AddToQueue(TAE_EngineHandle engine, const char* item_json);
-TAE_API TAE_Result TAE_RemoveFromQueue(TAE_EngineHandle engine, int index);
 TAE_API TAE_Result TAE_Next(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_Previous(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_SetPlayMode(TAE_EngineHandle engine, const char* mode);

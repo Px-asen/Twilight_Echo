@@ -8,6 +8,20 @@ import test from 'node:test'
 // leaves window.api undefined and blanks the renderer.
 const ALLOWED_SANDBOX_NODE_BUILTINS = new Set(['events', 'timers', 'url'])
 
+test('DSP audition stays on the audio engine invoke bridge with a shared API contract', () => {
+  const source = readFileSync(new URL('./domains/audioEngineApi.ts', import.meta.url), 'utf8')
+  for (const channel of [
+    'measureDspAudition',
+    'selectDspAudition',
+    'endDspAudition',
+    'getDspAudition'
+  ])
+    assert.ok(source.includes(`ipcRenderer.invoke(IPC.audioEngine.${channel}`))
+  assert.match(source, /JSON\.parse\(JSON\.stringify\(request\)\)/)
+  const declarations = readFileSync(new URL('./index.d.ts', import.meta.url), 'utf8')
+  assert.match(declarations, /audition:.*DspAuditionApi/)
+})
+
 test('library loudness analysis uses shared DTOs, invoke channels and removable subscriptions', () => {
   const source = readFileSync(new URL('./domains/audioEngineApi.ts', import.meta.url), 'utf8')
   for (const name of ['startBatch', 'cancelBatch', 'getBatch', 'getResults', 'clearResults'])

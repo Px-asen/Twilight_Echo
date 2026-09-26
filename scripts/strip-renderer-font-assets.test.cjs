@@ -19,6 +19,7 @@ test('strips legacy Outfit/Nunito and non-WOFF2 Phosphor; keeps Inter/Jakarta + 
       'Nunito-x.woff2',
       'Phosphor-x.woff',
       'Phosphor-x.ttf',
+      'Phosphor-x.svg',
       'Phosphor-x.woff2',
       'primeicons.woff2'
     ]) {

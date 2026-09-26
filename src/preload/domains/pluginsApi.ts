@@ -37,8 +37,6 @@ export function bindPluginsIpcEvents(): void {
 export const pluginsApi = {
   plugins: {
     list: (): Promise<TwilightPluginDescriptor[]> => ipcRenderer.invoke('plugins:list'),
-    installFromPath: (path: string): Promise<TwilightPluginInstallResult> =>
-      ipcRenderer.invoke('plugins:installFromPath', path),
     chooseAndInstall: (
       kind?: 'package' | 'directory'
     ): Promise<TwilightPluginInstallResult | null> =>
@@ -123,9 +121,5 @@ export const pluginsApi = {
       ipcRenderer.invoke('extensions:executeCommand', command, args),
     readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
       ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)
-  },
-  debug: {
-    appendNativeTrace: (message: string): Promise<void> =>
-      ipcRenderer.invoke('debug:appendNativeTrace', message)
   }
 }

@@ -17,7 +17,7 @@ import {
   resizeCoverImageBytes,
   resolveBackgroundImageFile
 } from '../library/coverCache'
-import { decodeAudioFileUrlPath } from '../library/scan'
+import { decodeAudioFileUrlPath } from '../library/audioFileUrl.ts'
 import { initializeLocalPathGrants, resolveAuthorizedAudioFile } from '../security/localPaths'
 import {
   unregisterPlayerShortcuts,
@@ -55,7 +55,11 @@ import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { destroyTelemetry, initializeTelemetry } from '../analytics/index.ts'
 import { createWindow } from './window'
-import { consumeAppSettingsLoadIssue, supportsNativeWindowTransparency } from '../core/settings'
+import {
+  consumeAppSettingsLoadIssue,
+  supportsNativeWindowTransparency,
+  warmWindowsAcrylicBackdropAvailability
+} from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
@@ -191,7 +195,9 @@ export function startApp(): void {
       win.focus()
     })
 
+    const acrylicBackdropWarmup = warmWindowsAcrylicBackdropAvailability()
     app.whenReady().then(async () => {
+      await acrylicBackdropWarmup
       const shellIdentity = ensureWindowsShellIdentity()
       if (!shellIdentity.ok) {
         console.warn(

@@ -1,5 +1,6 @@
 #include "../core/AudioTypes.h"
 #include "../core/AudioPipelineRenderUtils.h"
+#include "../core/CrossfadePolicy.h"
 
 #include <cassert>
 #include <cmath>
@@ -160,6 +161,36 @@ void testCrossfadeSegmentMixesWithIncrementalFade() {
   assert(std::abs(output[3] - 0.6f) < 0.0001f);
   assert(output[4] == 1.0f);
   assert(output[5] == -1.0f);
+}
+
+void testCrossfadeCurvesAndContentRules() {
+  float previousIn = -1;
+  float previousOut = 2;
+  for (uint64_t frame = 0; frame <= 100; ++frame) {
+    float incoming = 0, one = 1, outgoing = 1, zero = 0;
+    render::mixCrossfadeSegment(&incoming, &one, 1, 1, frame, 100, true);
+    render::mixCrossfadeSegment(&outgoing, &zero, 1, 1, frame, 100, true);
+    require(incoming >= previousIn && outgoing <= previousOut);
+    require(std::abs(incoming * incoming + outgoing * outgoing - 1) < 0.00001);
+    previousIn = incoming;
+    previousOut = outgoing;
+  }
+  require(std::abs(previousIn - 1) < 0.000001 && std::abs(previousOut) < 0.000001);
+  float correlated = 1, one = 1;
+  render::mixCrossfadeSegment(&correlated, &one, 1, 1, 50, 100, true);
+  require(correlated == 1);
+  QueueItem current, next;
+  require(decideCrossfade(12, 1, current, &next, 4, 2, false, 1).seconds == 1);
+  require(std::string(decideCrossfade(4, 0, current, &next, 5, 30, false, 1).reason) == "short_track");
+  current.album = next.album = "album";
+  require(std::string(decideCrossfade(4, 0, current, &next, 30, 30, false, 1).reason) == "album");
+  require(decideCrossfade(4, 1, current, &next, 30, 30, false, 1).seconds == 4);
+  require(std::string(decideCrossfade(4, 2, current, &next, 30, 30, false, 1).reason) == "live");
+  require(decideCrossfade(4, 1, current, &next, 0, 30, false, 1).seconds == 0);
+  require(decideCrossfade(4, 1, current, &next, 30, 30, false, 1.2).seconds == 0);
+  require(decideCrossfade(4, 1, current, &next, 30, 30, true, 1).seconds == 0);
+  next.cueStartSeconds = 0;
+  require(std::string(decideCrossfade(4, 1, current, &next, 30, 30, false, 1).reason) == "cue");
 }
 
 void testCrossfadeSegmentDetectsBoundedFadeRange() {
@@ -853,6 +884,7 @@ int main() {
   testZeroVolumeSilencesRenderedFramesWithoutTouchingTail();
   testCrossfadeSegmentMixesWithIncrementalFade();
   testCrossfadeSegmentDetectsBoundedFadeRange();
+  testCrossfadeCurvesAndContentRules();
   testTypedPcmToFloatZerosOnlyUnconvertedTail();
   testTypedPcmToFloatFloat32AllowsInPlaceFullConversion();
   testFloat32PcmConversionSkipsCopyWhenAlreadyInPlace();

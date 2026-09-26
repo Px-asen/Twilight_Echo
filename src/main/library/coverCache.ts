@@ -1,25 +1,10 @@
 import { app, nativeImage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { readFile } from 'fs/promises'
-import { join, extname, dirname, resolve } from 'path'
+import { join, extname, resolve } from 'path'
 import { createHash } from 'crypto'
-import { parseFile } from 'music-metadata'
 import { getMusicCacheRoot } from '../cache/ncmCache.ts'
 import { readCachedProtocolFile, type ProtocolAssetBytes } from '../cache/protocolAssetCache'
-
-export const COVER_NAMES = [
-  'cover.jpg',
-  'cover.png',
-  'cover.webp',
-  'folder.jpg',
-  'folder.png',
-  'album.jpg',
-  'album.png',
-  'front.jpg',
-  'front.png',
-  'artwork.jpg',
-  'artwork.png'
-]
 
 // ─── Cover thumbnail disk cache ─────────────────────────────────────
 // Every cover that reaches the disk cache is capped at 500px wide JPEG
@@ -237,36 +222,6 @@ async function normalizeCachedCoverHandleUncached(handle: string): Promise<strin
   return `cover://${targetName}`
 }
 
-/** Extract cover from an image file on disk, resize, save to cache. Returns cover:// handle. */
-export function cacheCoverFromFile(filePath: string): string | null {
-  try {
-    const data = readFileSync(filePath)
-    return cacheCoverFromBuffer(data)
-  } catch {
-    return null
-  }
-}
-
-/** Read a cached cover file and return as base64 data URL. */
-export function readCachedCover(handle: string): string | null {
-  if (!handle.startsWith('cover://')) return null
-  const fileName = handle.slice('cover://'.length)
-  const fullPath = resolveCoverCacheFile(fileName)
-  if (!fullPath) return null
-  try {
-    const data = readFileSync(fullPath)
-    return `data:${getCoverCacheContentType(fileName)};base64,${data.toString('base64')}`
-  } catch {
-    return null
-  }
-}
-
-export function coverHandleExists(handle: unknown): boolean {
-  if (typeof handle !== 'string' || !handle.startsWith('cover://')) return false
-  const fileName = handle.slice('cover://'.length)
-  return resolveCoverCacheFile(fileName) !== null
-}
-
 /** Migrate a base64 data: URL cover to disk cache. Returns cover:// handle. */
 export function migrateBase64Cover(dataUrl: string): string | null {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
@@ -277,95 +232,4 @@ export function migrateBase64Cover(dataUrl: string): string | null {
   } catch {
     return null
   }
-}
-
-export const coverCache = new Map<string, string | null>()
-export const MAX_COVER_CACHE_ENTRIES = 2048
-
-function rememberCoverCacheEntry(dir: string, handle: string | null): void {
-  // Directory discovery is only a convenience cache; the durable handle is
-  // stored on the track. Keep it bounded so scans of large libraries cannot
-  // retain every directory forever.
-  coverCache.delete(dir)
-  coverCache.set(dir, handle)
-  while (coverCache.size > MAX_COVER_CACHE_ENTRIES) {
-    const oldest = coverCache.keys().next().value
-    if (oldest === undefined) break
-    coverCache.delete(oldest)
-  }
-}
-
-export function clearCoverDirectoryCache(): void {
-  coverCache.clear()
-}
-
-export function findCoverInDir(dir: string): string | null {
-  if (coverCache.has(dir)) return coverCache.get(dir) ?? null
-  for (const name of COVER_NAMES) {
-    const fullPath = join(dir, name)
-    if (existsSync(fullPath)) {
-      const handle = cacheCoverFromFile(fullPath)
-      if (handle) {
-        rememberCoverCacheEntry(dir, handle)
-        return handle
-      }
-    }
-  }
-  rememberCoverCacheEntry(dir, null)
-  return null
-}
-
-export async function rebuildMissingTrackCover(track: Record<string, unknown>): Promise<boolean> {
-  const cover = track.cover
-  if (typeof cover !== 'string' || !cover.startsWith('cover://') || coverHandleExists(cover)) {
-    return false
-  }
-
-  const filePath = typeof track.filePath === 'string' ? track.filePath : ''
-  const dir =
-    typeof track.dir === 'string' && track.dir ? track.dir : filePath ? dirname(filePath) : ''
-  let repairedCover: string | null = null
-
-  if (filePath && existsSync(filePath) && !filePath.toLowerCase().endsWith('.iso')) {
-    try {
-      const meta = await parseFile(filePath, { skipCovers: false })
-      const pic = meta.common.picture?.[0]
-      if (pic) {
-        repairedCover = cacheCoverFromBuffer(Buffer.from(pic.data))
-      }
-    } catch {
-      /* keep folder-art fallback */
-    }
-  }
-
-  if (!repairedCover && dir) {
-    repairedCover = findCoverInDir(dir)
-  }
-
-  if (!repairedCover) return false
-  track.cover = repairedCover
-  return repairedCover !== cover
-}
-
-export async function repairMissingLibraryCovers(tracks: unknown[]): Promise<boolean> {
-  const candidates = tracks.filter(
-    (track): track is Record<string, unknown> =>
-      !!track &&
-      typeof track === 'object' &&
-      !Array.isArray(track) &&
-      typeof (track as Record<string, unknown>).cover === 'string' &&
-      ((track as Record<string, unknown>).cover as string).startsWith('cover://') &&
-      !coverHandleExists((track as Record<string, unknown>).cover)
-  )
-  if (candidates.length === 0) return false
-
-  let changed = false
-  const batchSize = 4
-  for (let i = 0; i < candidates.length; i += batchSize) {
-    const batch = candidates.slice(i, i + batchSize)
-    const repaired = await Promise.all(batch.map(rebuildMissingTrackCover))
-    changed = repaired.some(Boolean) || changed
-    await new Promise((resolve) => setImmediate(resolve))
-  }
-  return changed
 }

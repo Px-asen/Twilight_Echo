@@ -1,5 +1,8 @@
-import DiscordRPC from 'discord-rpc'
+import { createRequire } from 'module'
+import type DiscordRPC from 'discord-rpc'
 import { runtime, type DiscordActivityData } from '../core/runtime'
+
+const require = createRequire(import.meta.url)
 
 export const DISCORD_CLIENT_ID = '1390521943809896488' // Twilight Echo application ID
 
@@ -21,7 +24,9 @@ export function connectDiscord(): void {
   if (runtime.discordConnectAttempted || runtime.discordConnected) return
   runtime.discordConnectAttempted = true
   try {
-    runtime.discordClient = new DiscordRPC.Client({ transport: 'ipc' })
+    // Loaded on first connect so users with Discord RPC off never pay for it.
+    const { Client } = require('discord-rpc') as typeof DiscordRPC
+    runtime.discordClient = new Client({ transport: 'ipc' })
     runtime.discordClient.once('connected', () => {
       runtime.discordConnected = true
       runtime.discordLastError = null

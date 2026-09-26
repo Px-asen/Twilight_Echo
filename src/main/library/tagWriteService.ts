@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { ByteVector, File, Picture, PictureType } from 'node-taglib-sharp'
+import { loadTaglib, type Taglib } from './taglib.ts'
 import {
   loadJsonFileWithBackup,
   writeJsonFileAtomic,
@@ -163,7 +163,8 @@ export function clearTagBackup(filePath: string, backupRoot: string): void {
 }
 
 function writeTags(input: TagWriteInput): void {
-  let media: File | undefined
+  const { ByteVector, File, Picture, PictureType } = loadTaglib()
+  let media: Taglib.File | undefined
   try {
     media = File.createFromPath(input.filePath)
     if (input.title !== undefined) media.tag.title = input.title

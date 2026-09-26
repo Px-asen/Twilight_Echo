@@ -1,4 +1,3 @@
-import extract from 'extract-zip'
 import { createRequire } from 'module'
 import { existsSync, realpathSync } from 'fs'
 import { lstat, readdir, stat } from 'fs/promises'
@@ -42,6 +41,7 @@ export async function assertPluginPackageFileSize(source: string): Promise<void>
 export async function extractPluginPackage(source: string, targetDir: string): Promise<void> {
   await assertPluginPackageFileSize(source)
   await inspectZipPackage(source)
+  const { default: extract } = await import('extract-zip')
   await extract(source, { dir: targetDir })
   await assertPluginTreeSafe(targetDir)
 }

@@ -29,7 +29,7 @@ function stripRendererFontAssets(rendererDir) {
       if (
         /^Outfit-.*\.woff2$/i.test(name) ||
         /^Nunito.*\.woff2$/i.test(name) ||
-        /^Phosphor-.*\.(woff|ttf)$/i.test(name)
+        /^Phosphor-.*\.(woff|ttf|svg)$/i.test(name)
       ) {
         fs.rmSync(path.join(assets, name), { force: true })
       }

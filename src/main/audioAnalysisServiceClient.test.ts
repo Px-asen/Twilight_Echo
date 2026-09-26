@@ -38,6 +38,30 @@ const measurement = {
   truePeakDb: -1,
   analyzedAt: '2026-09-14T00:00:00Z'
 }
+
+test('DSP audition rejects unprocessed native results and cancellation is isolated from loudnorm', async () => {
+  const worker = new Worker()
+  const service = new AudioAnalysisServiceClient({
+    serviceEntry: 'analysis.js',
+    electron: { utilityProcess: { fork: () => worker } }
+  })
+  try {
+    const old = service.analyzeDspAudition('song.wav', '{"processedGraph":{}}')
+    worker.ready()
+    assert.equal((worker.messages[0] as AudioAnalysisWorkerRequest).analysis, 'dsp-audition')
+    worker.respond(0, measurement)
+    await assert.rejects(old, /处理后/)
+    const processed = service.analyzeDspAudition('song.wav', '{"processedGraph":{}}')
+    worker.respond(1, { ...measurement, processingVersion: 1 })
+    assert.equal((await processed).integratedLufs, -18)
+    const loudnorm = service.analyzeLoudness('song.wav', '{}')
+    assert.equal(service.cancelBySource('song.wav', 'dsp-audition'), 0)
+    worker.respond(2, measurement)
+    assert.equal((await loudnorm).integratedLufs, -18)
+  } finally {
+    service.destroy()
+  }
+})
 const group: LoudnessInputGroup = {
   id: 'album:one',
   title: 'One',

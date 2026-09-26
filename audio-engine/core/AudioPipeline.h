@@ -67,6 +67,10 @@ struct PipelineStatus {
   double replayGainDb = 0.0;
   double crossfeedStrength = 0.0;
   double crossfadeSeconds = 0.0;
+  bool crossfadeMixActive = false;
+  double crossfadeEffectiveSeconds = 0.0;
+  std::string crossfadeCurve = "linear";
+  std::string crossfadeBlockedReason;
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
@@ -150,6 +154,7 @@ class AudioPipeline {
   void setNativeDspPluginChain(const std::string& json);
   std::string nativeDspPluginStatusJson() const;
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
+  void resetPreloadOverlap();
   bool skipToPreloaded(const QueueItem& item, std::string* error);
 
   PipelineStatus status();
@@ -316,6 +321,8 @@ class AudioPipeline {
       const std::string& forcedDsdFallbackReason,
       const std::optional<NativeDsdRuntimeFacts>& forcedNativeDsdFallbackFacts,
       std::string* error);
+  void recomputeDspActiveLocked();
+  void recomputeDspActiveLocked(double requestedVolume);
   bool updatePerfectLocked();
   PipelineStatus buildStatusLocked();
   PipelineStatus fallbackStatus() const;
@@ -477,7 +484,7 @@ class AudioPipeline {
   // skipToPreloaded's overlap guard — atomic so that read is defined.
   std::atomic<bool> renderCrossfadeMixActive_{false};
   uint64_t renderCrossfadeFramesProcessed_ = 0;
-  uint64_t renderCrossfadeTotalFrames_ = 0;
+  std::atomic<uint64_t> renderCrossfadeTotalFrames_{0};
   std::array<uint32_t, 8> renderDitherRandom_{{0x12345678U, 0x23456789U, 0x3456789aU, 0x456789abU,
                                                 0x56789abcU, 0x6789abcdU, 0x789abcdeU, 0x89abcdefU}};
   std::array<float, 8> renderDitherPreviousNoise_{};

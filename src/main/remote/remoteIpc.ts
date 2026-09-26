@@ -423,11 +423,6 @@ export function setupRemoteIpc(): void {
     return lastDlnaDevices
   })
 
-  ipcMain.handle('remote:getDlnaDevices', async (event) => {
-    assertTrustedIpcSender(event, 'remote control IPC')
-    return lastDlnaDevices
-  })
-
   ipcMain.handle(
     'remote:castToDevice',
     async (

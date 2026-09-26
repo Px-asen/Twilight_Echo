@@ -406,12 +406,20 @@ test('player bar remounts the progress control for every queue entry', () => {
 
 test('player bar smooths progress between player store ticks and snaps large jumps', () => {
   const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+  const fill = readFileSync(new URL('./SmoothedProgressFill.vue', import.meta.url), 'utf8')
 
-  assert.match(source, /useSmoothedValue\(progressPercent, \{\s*tau: 160,\s*snapThreshold: 2\.5/)
   assert.match(
-    source,
-    /transform: `scaleX\(\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\) \/ 100\}\)`/
+    fill,
+    /useSmoothedValue\(toRef\(props, 'percent'\), \{\s*tau: 160,\s*snapThreshold: 2\.5/
   )
+  assert.match(
+    fill,
+    /transform: `scaleX\(\$\{Math\.min\(100, Math\.max\(0, smoothedPercent\.value\)\) \/ 100\}\)`/
+  )
+  // The per-frame smoothed value must not be read by the player bar itself,
+  // otherwise its whole template re-renders on every animation frame.
+  assert.doesNotMatch(source, /useSmoothedValue/)
+  assert.equal(source.match(/<SmoothedProgressFill[^>]*:percent="progressPercent"/g)?.length, 3)
 })
 
 test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {

@@ -95,8 +95,6 @@ const SLOW_NATIVE_METHODS = new Set<string>([
   'SetOutputBackend',
   'SetOutputConfig',
   'LoadQueue',
-  'AddToQueue',
-  'RemoveFromQueue',
   'SetDspConfig',
   'SetDspGraph',
   'ApplyDspState',

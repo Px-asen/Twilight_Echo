@@ -1,4 +1,3 @@
-import extract from 'extract-zip'
 import { createRequire } from 'module'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname, extname, join, relative, resolve } from 'path'
@@ -123,6 +122,7 @@ export async function importDspProfileArchive(
   await inspectProfileArchive(source)
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'twilight-dsp-profile-'))
   try {
+    const { default: extract } = await import('extract-zip')
     await extract(source, { dir: temporaryRoot })
     const manifestPath = resolve(temporaryRoot, 'manifest.json')
     const manifestInfo = await stat(manifestPath)

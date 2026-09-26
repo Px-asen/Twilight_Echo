@@ -22,6 +22,7 @@ export function normalizePcmToDsdMode(value: unknown): NonNullable<OutputConfig[
 
 export function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
   return {
+    ...normalizeContinuityOutputConfig(config ?? {}),
     preferredBufferSize: Number.isFinite(config?.preferredBufferSize)
       ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 2048, 0)
       : 0,
@@ -37,5 +38,19 @@ export function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputCon
     upmixSurroundGain: clampNumber(config?.upmixSurroundGain, 0, 2, 0.5),
     upmixSideGain: clampNumber(config?.upmixSideGain, 0, 2, 0.3),
     upmixSurroundDelayMs: clampNumber(config?.upmixSurroundDelayMs, 0, 100, 0)
+  }
+}
+
+export function normalizeContinuityOutputConfig(value: {
+  playbackPolicy?: unknown
+  continuitySampleRate?: unknown
+}): Pick<OutputConfig, 'playbackPolicy' | 'continuitySampleRate'> {
+  return {
+    playbackPolicy:
+      value.playbackPolicy === 'continuity-first' ? 'continuity-first' : 'bit-perfect-first',
+    continuitySampleRate:
+      value.continuitySampleRate === 44100 || value.continuitySampleRate === 96000
+        ? value.continuitySampleRate
+        : 48000
   }
 }

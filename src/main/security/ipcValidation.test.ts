@@ -10,7 +10,6 @@ function readDataIpcSources(): string {
     '../ipc/windowIpc.ts',
     '../ipc/fonts.ts',
     '../ipc/settingsIpc.ts',
-    '../ipc/debugIpc.ts',
     '../ipc/filesystemIpc.ts',
     '../ipc/libraryIpc.ts',
     '../ipc/coverIpc.ts',
@@ -237,8 +236,6 @@ test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and p
   assert.match(ncmSource, /const MAX_NCM_API_PATH_LENGTH = 4096/)
   assert.match(ncmSource, /normalizeNcmApiPath\(path\)/)
   assert.match(ncmSource, /normalizeNcmCookie\(cookie\)/)
-  assert.match(ncmSource, /normalizeNcmSongId\(songId\)/)
-  assert.match(ncmSource, /normalizeIpcString\(url, 'NCM cache url', MAX_NCM_REMOTE_URL_LENGTH\)/)
 })
 
 test('settings, background image, OPRA, and BPM IPC apply input limits before expensive work', () => {

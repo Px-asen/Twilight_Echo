@@ -733,15 +733,22 @@ function registerAudioEngineIpcHandlers(): void {
   const audition = createDspAuditionHandlers(auditionManager, (event) =>
     assertTrustedIpcSender(event as Electron.IpcMainInvokeEvent, 'DSP audition')
   )
-  ipcMain.handle(IPC.audioEngine.measureDspAudition, audition.measure)
+  const auditionOwners = new WeakSet<Electron.WebContents>()
+  ipcMain.handle(IPC.audioEngine.measureDspAudition, async (event, value) => {
+    const result = audition.measure(event, value)
+    if (event.sender === runtime.mainWindow?.webContents && !auditionOwners.has(event.sender)) {
+      auditionOwners.add(event.sender)
+      event.sender.once('destroyed', () => {
+        void auditionManager
+          .end()
+          .catch((error) => console.warn('关闭窗口时退出 DSP 试听失败', error))
+      })
+    }
+    return result
+  })
   ipcMain.handle(IPC.audioEngine.selectDspAudition, audition.select)
   ipcMain.handle(IPC.audioEngine.endDspAudition, audition.end)
   ipcMain.handle(IPC.audioEngine.getDspAudition, audition.status)
-  app.on('browser-window-created', (_event, window) => {
-    window.on('closed', () => {
-      void auditionManager.end().catch(() => undefined)
-    })
-  })
   const profiles = createDeviceProfileHandlers(ensureAudioEngineRuntime, (event) =>
     assertTrustedIpcSender(event as Electron.IpcMainInvokeEvent, 'device profiles')
   )

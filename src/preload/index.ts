@@ -142,11 +142,7 @@ const api = {
   ...pluginsApi,
   desktopLyrics: desktopLyricsHostApi,
   miniPlayer: miniPlayerHostApi,
-  trayPlayer: trayPlayerWindowApi,
-  debug: {
-    appendNativeTrace: (message: string): Promise<void> =>
-      ipcRenderer.invoke('debug:appendNativeTrace', message)
-  }
+  trayPlayer: trayPlayerWindowApi
 }
 
 if (process.contextIsolated) {

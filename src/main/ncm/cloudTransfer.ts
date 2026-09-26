@@ -7,7 +7,6 @@ import { basename, extname } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
-import { parseFile } from 'music-metadata'
 import { runtime } from '../core/runtime.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import {
@@ -479,6 +478,7 @@ async function readAudioMetadata(
 }> {
   const fallbackTitle = fileName.replace(/\.[^.]+$/, '')
   try {
+    const { parseFile } = await import('music-metadata')
     const metadata = await parseFile(path, { duration: false, skipCovers: true })
     const bitrate = Math.round(Number(metadata.format.bitrate))
     return {

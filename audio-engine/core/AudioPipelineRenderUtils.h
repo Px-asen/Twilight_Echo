@@ -164,13 +164,28 @@ inline void mixCrossfadeSegment(
     size_t frames,
     int channels,
     uint64_t framesProcessed,
-    uint64_t totalFrames) {
+    uint64_t totalFrames,
+    bool equalPower = false) {
   if (!output || !preload || frames == 0 || channels <= 0) return;
 
   const double denominator = static_cast<double>(std::max<uint64_t>(1, totalFrames));
   double fadeIn = std::clamp(static_cast<double>(framesProcessed) / denominator, 0.0, 1.0);
   const double fadeStep = 1.0 / denominator;
   const size_t channelCount = static_cast<size_t>(channels);
+
+  if (equalPower) {
+    for (size_t frame = 0; frame < frames; ++frame) {
+      const double t = std::clamp(fadeIn, 0.0, 1.0);
+      const double incoming = std::sin(t * 1.5707963267948966);
+      const double outgoing = std::cos(t * 1.5707963267948966);
+      for (size_t channel = 0; channel < channelCount; ++channel) {
+        const size_t index = frame * channelCount + channel;
+        output[index] = static_cast<float>(std::clamp(output[index] * outgoing + preload[index] * incoming, -1.0, 1.0));
+      }
+      fadeIn += fadeStep;
+    }
+    return;
+  }
 
   if (crossfadeSegmentFadeIsBounded(frames, framesProcessed, totalFrames)) {
     fadeIn = static_cast<double>(framesProcessed) / denominator;

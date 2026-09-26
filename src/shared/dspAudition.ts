@@ -46,7 +46,7 @@ export function normalizeAuditionGraph(value: DspGraphConfig): DspGraphConfig {
     stage.dither !== 'off'
   )
     throw new Error('首版试听不支持重采样或抖动，请使用原采样率 PCM')
-  const nodes = value.nodes.filter((node) => node.enabled)
+  const nodes = value.nodes.filter((node) => node.enabled && node.type !== 'meter')
   if (nodes.length > 1 || nodes.some((node) => node.type !== 'equalizer'))
     throw new Error('首版等响度试听仅支持无处理或一个内置 EQ 节点')
   for (const node of nodes) {

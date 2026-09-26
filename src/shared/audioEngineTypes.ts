@@ -77,6 +77,8 @@ export interface AudioProcessingSettings {
   crossfeedCutoffHz: number
   gapless: boolean
   crossfadeSeconds: number
+  crossfadeCurve?: 'linear' | 'equal-power'
+  crossfadeContent?: 'conservative' | 'all' | 'live'
 }
 
 export interface AudioOutputOption {
@@ -134,6 +136,8 @@ export interface AudioDeviceOption {
 export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
 export interface OutputConfig {
+  playbackPolicy?: 'bit-perfect-first' | 'continuity-first'
+  continuitySampleRate?: 44100 | 48000 | 96000
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
@@ -448,6 +452,7 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   nativePlaybackActive: boolean
   bitrate: number
   sourceSampleRate: number
+  sourceChannels?: number
   sourceBitDepth: number
   decodedSampleRate: number
   decodedBitDepth: number
@@ -484,6 +489,10 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   convolverActive: boolean
   crossfeedActive: boolean
   crossfadeActive: boolean
+  crossfadeMixActive?: boolean
+  crossfadeEffectiveSeconds?: number
+  crossfadeCurve?: 'linear' | 'equal-power'
+  crossfadeBlockedReason?: string
   fftActive: boolean
   irResampled: boolean
   replayGainDb: number
