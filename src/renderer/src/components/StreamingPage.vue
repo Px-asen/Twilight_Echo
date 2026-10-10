@@ -195,6 +195,7 @@ const streamingTransitionName = ref('stream-page-down')
 // the stack top; writes go through pushDetail / replaceTopDetail / popDetail
 // / resetDetail so the transition and scroll machinery stay in sync.
 const detailStack = ref<DetailStackEntry[]>([])
+let detailNavigationToken = 0
 const currentDetail = computed<DetailView | null>(
   () => detailStack.value[detailStack.value.length - 1]?.view ?? null
 )
@@ -1472,6 +1473,7 @@ function applyDetailState(snapshot: DetailSnapshot | undefined): void {
 // Navigates one level deeper. The outgoing level's loaded data is snapshotted
 // onto its own entry first, so back-navigation restores instead of refetching.
 function pushDetail(view: DetailView): void {
+  detailNavigationToken += 1
   const top = detailStack.value[detailStack.value.length - 1]
   if (top) top.snapshot = captureDetailState()
   detailStack.value.push({ view })
@@ -1485,6 +1487,7 @@ function replaceTopDetail(view: DetailView): void {
 
 // Pops exactly one level and restores the level underneath, if any.
 function popDetail(): void {
+  detailNavigationToken += 1
   if (detailStack.value.length === 0) return
   detailLoadToken++
   streamingTransitionName.value = 'stream-detail-back'
@@ -1509,7 +1512,8 @@ function removeDetailEntries(predicate: (view: DetailView) => boolean): void {
   if (top) top.snapshot = undefined
 }
 
-function resetDetail(options?: { animate?: boolean }): void {
+function resetDetail(options?: { animate?: boolean; keepNavigationRequest?: boolean }): void {
+  if (!options?.keepNavigationRequest) detailNavigationToken += 1
   detailLoadToken++
   const animate = options?.animate !== false
   if (animate && currentDetail.value) {
@@ -1820,6 +1824,14 @@ function canOpenTrackAlbum(track: Track): boolean {
 
 let detailNavigationProvider: string | null = null
 
+function isCurrentDetailNavigation(token: number, providerId?: string): boolean {
+  return (
+    token === detailNavigationToken &&
+    props.active !== false &&
+    (providerId === undefined || providerId === activeProvider.value)
+  )
+}
+
 async function selectDetailProvider(providerId: string): Promise<void> {
   if (providerId === activeProvider.value) return
   // A result may belong to a different source from the current library. Keep
@@ -1834,6 +1846,7 @@ async function selectDetailProvider(providerId: string): Promise<void> {
 }
 
 async function openTrackAlbum(track: Track): Promise<void> {
+  const token = ++detailNavigationToken
   if (getTrackSource(track) === 'local') {
     const album = musicStore.albums.value.find((item) =>
       item.tracks.some((albumTrack) => albumTrack.id === track.id)
@@ -1850,6 +1863,7 @@ async function openTrackAlbum(track: Track): Promise<void> {
     return
   }
   await selectDetailProvider(getTrackSource(track))
+  if (!isCurrentDetailNavigation(token, getTrackSource(track))) return
   await openAlbum({
     id: track.albumId,
     name: track.album,
@@ -1864,6 +1878,7 @@ function openTrackArtist(
   artist: TrackArtistRef | undefined = track.artists?.[0]
 ): void {
   if (getTrackSource(track) === 'local') {
+    detailNavigationToken += 1
     if (track.artist.trim()) emit('selectView', 'artists', `artist:${track.artist.trim()}`)
     return
   }
@@ -2008,21 +2023,18 @@ async function openArtist(
   }
 }
 
-let artistNavigationToken = 0
-
 async function openRequestedArtist(request: StreamingArtistNavigationRequest): Promise<void> {
   const providerId = request.providerId.trim().toLowerCase()
   const artistName = request.artistName.trim()
   if (!providerId || !artistName) return
-  const token = ++artistNavigationToken
+  const token = ++detailNavigationToken
 
   await providerStore.syncProviders().catch(() => undefined)
-  if (token !== artistNavigationToken) return
+  if (!isCurrentDetailNavigation(token)) return
   const provider = mediaProviders.get(providerId)
   // 带歌手 id 时搜索只用来补头图等展示字段，provider 没有 searchArtists 也能开页；
   // 只有回退到按名字定位才必须能搜。
   if (!provider?.fetchArtistTopSongs || (request.artistId == null && !provider.searchArtists)) {
-    if (token !== artistNavigationToken) return
     pushNotice({
       kind: 'error',
       message: `${provider?.name ?? providerId} 暂不支持歌手详情`
@@ -2031,6 +2043,7 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
   }
 
   await selectDetailProvider(providerId)
+  if (!isCurrentDetailNavigation(token, providerId)) return
 
   try {
     const searchResult = provider.searchArtists
@@ -2040,7 +2053,7 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
           return null
         })
       : null
-    if (token !== artistNavigationToken) return
+    if (!isCurrentDetailNavigation(token, providerId)) return
 
     if (request.artistId != null) {
       // 选人只认 id，所以同名歌手里挑出的一定是曲目实际标注的那位。搜索结果仅用于
@@ -2068,7 +2081,7 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
     }
     await openArtist(artist)
   } catch (error) {
-    if (token !== artistNavigationToken) return
+    if (!isCurrentDetailNavigation(token, providerId)) return
     pushNotice({ kind: 'error', message: friendlyStreamingError(error, '打开歌手页面失败') })
   }
 }
@@ -3264,6 +3277,10 @@ async function retryCurrentView(): Promise<void> {
   await ensureLibraryLoaded(true)
 }
 
+watch([searchQuery, searchType, searchSource, () => props.active], () => {
+  detailNavigationToken += 1
+})
+
 watch(isSearching, (searching, wasSearching) => {
   if (
     searching &&
@@ -3337,7 +3354,8 @@ watch(
 // on real changes.
 watch(activeProvider, async (provider, oldProvider) => {
   if (provider === oldProvider || props.active === false) return
-  resetDetail()
+  // Preserve the request that initiated an internal source switch.
+  resetDetail({ keepNavigationRequest: provider === detailNavigationProvider })
   if (provider !== detailNavigationProvider) clearSearch()
   recommendationRequestId += 1
   recommendationProviderId.value = ''

@@ -4,7 +4,7 @@ import test from 'node:test'
 import { stripTypeScriptTypes } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { compileStyle } from '@vue/compiler-sfc'
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { LocalLibraryRemoveResult } from '../../../../shared/localLibrary.ts'
 import type { Track, TrackArtistRef } from '../../types/music.ts'
 import type {
@@ -128,6 +128,8 @@ function createTrackMetadataNavigationHarness() {
   }
   const searchResults = ref([track])
   const searchQuery = ref('test song')
+  const searchType = ref('songs')
+  const searchSource = ref('all')
   const searchOffset = ref(60)
   const detailStack = ref<Array<{ view: { type: string } }>>([])
   const openedArtists: MediaProviderArtistSummary[] = []
@@ -143,10 +145,10 @@ function createTrackMetadataNavigationHarness() {
     watch,
     activeProvider: ref('other'),
     activeTab: ref('search'),
-    props: { active: true },
+    props: reactive({ active: true }),
     NCM_PROVIDER_ID: 'ncm',
     providerStore: {
-      syncProviders: async () => undefined,
+      syncProviders: async (): Promise<void> => undefined,
       getProvider: (id: string) => ({ supportedMethods: id === 'ncm' ? methods : [] })
     },
     mediaProviders: {
@@ -170,20 +172,23 @@ function createTrackMetadataNavigationHarness() {
     friendlyStreamingError: (error: Error) => error.message,
     openArtist: async (artist: MediaProviderArtistSummary) => {
       openedArtists.push(artist)
-      detailStack.value.push({ view: { type: 'artist' } })
+      runtime.pushDetail({ type: 'artist' })
     },
     openAlbum: async (album: MediaProviderAlbumSummary) => {
       openedAlbums.push(album)
-      detailStack.value.push({ view: { type: 'album' } })
+      runtime.pushDetail({ type: 'album' })
     },
     detailStack,
     detailLoadToken: 0,
     streamingTransitionName: ref(''),
     streamingContentRef: ref(null),
     applyDetailState() {},
-    resetDetail: () => {
-      detailStack.value = []
-    },
+    captureDetailState: () => ({}),
+    clearDetailState() {},
+    currentDetail: computed(() => detailStack.value.at(-1)?.view ?? null),
+    searchQuery,
+    searchType,
+    searchSource,
     clearSearch: () => {
       searchQuery.value = ''
       searchOffset.value = 0
@@ -204,8 +209,16 @@ function createTrackMetadataNavigationHarness() {
     source.indexOf('async function openAlbum(')
   )
   const artistResolution = source.slice(
-    source.indexOf('let artistNavigationToken = 0'),
+    source.indexOf('async function openRequestedArtist('),
     source.indexOf('async function openUserList(')
+  )
+  const push = source.slice(
+    source.indexOf('function pushDetail('),
+    source.indexOf('function replaceTopDetail(')
+  )
+  const reset = source.slice(
+    source.indexOf('function resetDetail('),
+    source.indexOf('function resetLikedTracksPaging(')
   )
   const back = source.slice(
     source.indexOf('function popDetail('),
@@ -215,9 +228,13 @@ function createTrackMetadataNavigationHarness() {
     source.indexOf('watch(activeProvider,'),
     source.indexOf('watch(activeTab,')
   )
+  const navigationWatcher = source.slice(
+    source.indexOf('watch([searchQuery, searchType, searchSource,'),
+    source.indexOf('watch(isSearching,')
+  )
   const runtime = runInNewContext(
     stripTypeScriptTypes(
-      `${handlers}\n${artistResolution}\n${back}\nconst stop = ${providerWatcher}\n;({ canOpenTrackArtist, canOpenTrackAlbum, openTrackArtist, openTrackAlbum, popDetail, stop })`
+      `let detailNavigationToken = 0\n${handlers}\n${artistResolution}\n${push}\n${back}\n${reset}\nconst stopProvider = ${providerWatcher}\nconst stopNavigation = ${navigationWatcher}\nconst stop = () => { stopProvider(); stopNavigation() }\n;({ canOpenTrackArtist, canOpenTrackAlbum, openTrackArtist, openTrackAlbum, pushDetail, popDetail, resetDetail, stop })`
     ),
     scope
   ) as {
@@ -225,7 +242,9 @@ function createTrackMetadataNavigationHarness() {
     canOpenTrackAlbum: (track: Track) => boolean
     openTrackArtist: (track: Track, artist?: TrackArtistRef) => void
     openTrackAlbum: (track: Track) => Promise<void>
+    pushDetail: (view: { type: string }) => void
     popDetail: () => void
+    resetDetail: () => void
     stop: () => void
   }
   return {
@@ -298,6 +317,120 @@ test('metadata navigation uses local library identities and exposes only support
   ])
   assert.equal(h.providerSelections.length, 0)
 })
+
+async function holdArtistNavigation(
+  h: ReturnType<typeof createTrackMetadataNavigationHarness>,
+  phase: 'providers' | 'search'
+): Promise<() => Promise<void>> {
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  if (phase === 'providers') h.scope.providerStore.syncProviders = () => pending
+  else {
+    const searchArtists = h.scope.mediaProviders.searchArtists
+    h.scope.mediaProviders.searchArtists = async () => {
+      await pending
+      return searchArtists()
+    }
+  }
+  h.runtime.openTrackArtist(h.track, h.track.artists![1])
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  return async () => {
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
+for (const phase of ['providers', 'search'] as const) {
+  for (const providerId of ['ncm', 'other']) {
+    test(`album navigation supersedes artist navigation pending ${phase} on ${providerId}`, async (t) => {
+      const h = createTrackMetadataNavigationHarness()
+      t.after(h.runtime.stop)
+      h.scope.providerStore.getProvider = () => ({
+        supportedMethods: ['fetchArtistTopSongs', 'searchArtists', 'fetchAlbumTracks']
+      })
+      const release = await holdArtistNavigation(h, phase)
+      await h.runtime.openTrackAlbum({ ...h.track, source: providerId, albumId: 'new-album' })
+      await release()
+      assert.equal(h.openedArtists.length, 0, 'the obsolete artist must never open or fetch tracks')
+      assert.equal(h.openedAlbums[0]?.id, 'new-album')
+      assert.equal(h.scope.activeProvider.value, providerId)
+      assert.equal(h.detailStack.value.at(-1)?.view.type, 'album')
+    })
+  }
+
+  for (const kind of ['artist', 'album'] as const) {
+    test(`local ${kind} navigation supersedes artist navigation pending ${phase}`, async (t) => {
+      const h = createTrackMetadataNavigationHarness()
+      t.after(h.runtime.stop)
+      const local = createTrack('local-file', 'local')
+      h.scope.musicStore.albums.value[0].tracks = [local]
+      const release = await holdArtistNavigation(h, phase)
+      if (kind === 'artist') h.runtime.openTrackArtist(local)
+      else await h.runtime.openTrackAlbum(local)
+      await release()
+      assert.equal(h.openedArtists.length, 0)
+      assert.equal(h.localViews[0]?.[0], 'selectView')
+      assert.equal(h.localViews[0]?.[1], kind === 'artist' ? 'artists' : 'albums')
+    })
+  }
+}
+
+for (const destination of ['back', 'root', 'playlist', 'query', 'source', 'hidden'] as const) {
+  test(`leaving an artist lookup for ${destination} ignores its late response`, async (t) => {
+    const h = createTrackMetadataNavigationHarness()
+    t.after(h.runtime.stop)
+    const release = await holdArtistNavigation(h, 'search')
+    switch (destination) {
+      case 'back':
+        h.runtime.popDetail()
+        break
+      case 'root':
+        h.runtime.resetDetail()
+        break
+      case 'playlist':
+        h.runtime.pushDetail({ type: 'playlist' })
+        break
+      case 'query':
+        h.scope.clearSearch()
+        break
+      case 'source':
+        h.scope.searchSource.value = 'local'
+        break
+      case 'hidden':
+        h.scope.props.active = false
+        break
+    }
+    await nextTick()
+    await release()
+    assert.equal(h.openedArtists.length, 0)
+    assert.equal(
+      h.detailStack.value.at(-1)?.view.type,
+      destination === 'playlist' ? 'playlist' : undefined
+    )
+  })
+}
+
+for (const phase of ['providers', 'search'] as const) {
+  test(`a newer artist request wins over an older lookup pending ${phase}`, async (t) => {
+    const h = createTrackMetadataNavigationHarness()
+    t.after(h.runtime.stop)
+    const syncProviders = h.scope.providerStore.syncProviders
+    const searchArtists = h.scope.mediaProviders.searchArtists
+    const release = await holdArtistNavigation(h, phase)
+    h.scope.providerStore.syncProviders = syncProviders
+    h.scope.mediaProviders.searchArtists = searchArtists
+    h.runtime.openTrackArtist(h.track, h.track.artists![0])
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await release()
+    assert.deepEqual(
+      h.openedArtists.map((artist) => artist.id),
+      [11]
+    )
+    assert.equal(h.scope.activeProvider.value, 'ncm')
+  })
+}
 
 test('streaming page keeps third-party providers on the generic provider library surface', () => {
   assert.doesNotMatch(source, /import BilibiliPage/)
