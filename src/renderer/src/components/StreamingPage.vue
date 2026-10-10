@@ -2944,7 +2944,7 @@ onUnmounted(ncmPlaylistEditor.dispose)
 const deletingNcmPlaylistId = ref<string | number | null>(null)
 
 const ownedUserPlaylists = computed(() =>
-  userPlaylistEntries.value.filter((playlist) => playlist.owned === true)
+  userPlaylists.value.filter((playlist) => playlist.owned === true)
 )
 
 const canMutateCurrentNcmPlaylist = computed(() => {
@@ -2957,6 +2957,24 @@ const canMutateCurrentNcmPlaylist = computed(() => {
 const canManageNcmPlaylists = computed(
   () => detailProviderId.value === NCM_PROVIDER_ID && isLoggedIn.value
 )
+
+watch([currentDetail, isLoggedIn], ([detail, loggedIn]) => {
+  if (
+    detail?.type !== 'album' ||
+    detail.providerId !== NCM_PROVIDER_ID ||
+    !loggedIn ||
+    libraryLoaded.value ||
+    libraryLoading.value
+  )
+    return
+  void fetchUserLibrary().catch((error) => {
+    if (currentDetail.value !== detail || !isLoggedIn.value) return
+    pushNotice({
+      kind: 'warning',
+      message: friendlyStreamingError(error, '加载网易云歌单失败')
+    })
+  })
+})
 
 function openCreateNcmPlaylistDialog(seedTracks: Track[] = []): void {
   ncmPlaylistEditor.openCreate(seedTracks)

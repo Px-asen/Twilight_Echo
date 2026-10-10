@@ -12,6 +12,7 @@ import type {
   MediaProviderArtistSummary
 } from '../../providers/mediaProvider.ts'
 import { appendUniqueTracks } from './streamingPageModel.ts'
+import { createNcmPlaylistEditor } from './ncmPlaylistEditor.ts'
 import { getTrackSource } from '../../utils/logicalTrackModel.ts'
 import {
   findStreamingArtistById,
@@ -23,6 +24,99 @@ const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url)
 const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import.meta.url), 'utf8')
 const providerHomeSource = readFileSync(new URL('./ProviderMusicHome.vue', import.meta.url), 'utf8')
 const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
+
+function createAlbumPlaylistHarness() {
+  const owned = source.match(/const ownedUserPlaylists = computed\([\s\S]*?\n\)/)?.[0]
+  assert.ok(owned)
+  const watcher = source.slice(
+    source.indexOf('watch([currentDetail, isLoggedIn]'),
+    source.indexOf('function openCreateNcmPlaylistDialog(')
+  )
+  assert.ok(watcher.startsWith('watch('))
+  const notices: Array<{ message: string }> = []
+  const externalPlaylist = { id: 222, name: 'QQ playlist', owned: true }
+  const scope = {
+    computed,
+    watch,
+    currentDetail: ref<{ type: string; providerId: string } | null>(null),
+    isLoggedIn: ref(true),
+    NCM_PROVIDER_ID: 'ncm',
+    libraryLoaded: ref(false),
+    libraryLoading: ref(false),
+    userPlaylists: ref<Array<{ id: number; name: string; owned: boolean }>>([]),
+    userPlaylistEntries: ref([externalPlaylist]),
+    fetchUserLibrary: async () => {},
+    pushNotice: (notice: { message: string }) => notices.push(notice),
+    friendlyStreamingError: (error: Error, fallback: string) => `${fallback}：${error.message}`
+  }
+  const runtime = runInNewContext(
+    `${stripTypeScriptTypes(owned)}\nconst stop = ${stripTypeScriptTypes(watcher)}\n;({ ownedUserPlaylists, stop })`,
+    scope
+  ) as {
+    ownedUserPlaylists: { value: Array<{ id: number; name: string; owned: boolean }> }
+    stop: () => void
+  }
+  return { scope, notices, runtime, externalPlaylist }
+}
+
+test('NetEase album playlist writes use the NetEase account library while browsing another source', async (t) => {
+  const h = createAlbumPlaylistHarness()
+  t.after(h.runtime.stop)
+  const ncmPlaylist = { id: 111, name: 'NCM playlist', owned: true }
+  const calls: number[] = []
+  h.scope.fetchUserLibrary = async () => {
+    calls.push(1)
+    h.scope.userPlaylists.value = [ncmPlaylist, { id: 333, name: 'Subscribed', owned: false }]
+    h.scope.libraryLoaded.value = true
+  }
+  assert.equal(h.runtime.ownedUserPlaylists.value.length, 0)
+  h.scope.currentDetail.value = { type: 'album', providerId: 'ncm' }
+  await nextTick()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(h.runtime.ownedUserPlaylists.value, [ncmPlaylist])
+  const writes: Array<[number | string, number[]]> = []
+  const editor = createNcmPlaylistEditor({
+    canManage: () => true,
+    captureContext: () => () => true,
+    create: async () => ({ id: 999 }),
+    add: async (id, ids) => {
+      writes.push([id, ids])
+    },
+    describeError: (error) => String(error)
+  })
+  t.after(editor.dispose)
+  assert.equal(editor.openAdd([{ ...createTrack('ncm:123', 'ncm'), ncmSongId: 123 }]), true)
+  await editor.confirmAdd(h.runtime.ownedUserPlaylists.value[0].id)
+  assert.deepEqual(writes, [[111, [123]]])
+  assert.notEqual(writes[0][0], h.externalPlaylist.id)
+})
+
+test('anonymous and local albums do not fetch the NetEase account library or surface obsolete failures', async (t) => {
+  const h = createAlbumPlaylistHarness()
+  t.after(h.runtime.stop)
+  let calls = 0
+  let rejectLibrary!: (error: Error) => void
+  h.scope.fetchUserLibrary = async () => {
+    calls++
+    return new Promise<void>((_resolve, reject) => {
+      rejectLibrary = reject
+    })
+  }
+  h.scope.isLoggedIn.value = false
+  h.scope.currentDetail.value = { type: 'album', providerId: 'ncm' }
+  await nextTick()
+  h.scope.currentDetail.value = { type: 'album', providerId: 'local' }
+  h.scope.isLoggedIn.value = true
+  await nextTick()
+  assert.equal(calls, 0)
+  h.scope.currentDetail.value = { type: 'album', providerId: 'ncm' }
+  await nextTick()
+  assert.equal(calls, 1)
+  h.scope.currentDetail.value = { type: 'album', providerId: 'local' }
+  rejectLibrary(new Error('late account failure'))
+  await nextTick()
+  assert.deepEqual(h.notices, [])
+})
 
 test('album search detail opens the result source, retries in place and ignores stale detail loads', async () => {
   const code = source.match(
