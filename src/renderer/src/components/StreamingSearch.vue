@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Track } from '../types/music'
+import type { Track, TrackArtistRef } from '../types/music'
 import type {
   MediaProviderPlaylistSummary,
   MediaProviderArtistSummary
@@ -35,6 +35,8 @@ const props = defineProps<{
   favoriteLabel?: string
   isTrackFavorited?: (track: Track) => boolean
   canAddToPlaylist?: boolean
+  canOpenTrackArtist?: (track: Track, artist?: TrackArtistRef) => boolean
+  canOpenTrackAlbum?: (track: Track) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,6 +45,8 @@ const emit = defineEmits<{
   likeTrack: [track: Track, event: MouseEvent]
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   openArtist: [artist: MediaProviderArtistSummary]
+  openTrackArtist: [track: Track, artist?: TrackArtistRef]
+  openTrackAlbum: [track: Track]
   pageChange: [event: PageState]
   retry: []
   batchFavorite: []
@@ -199,7 +203,35 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
                 </td>
                 <td class="col-info">
                   <div class="track-title">{{ track.title }}</div>
-                  <div class="track-artist">{{ track.artist }}</div>
+                  <div class="track-artist">
+                    <template v-if="track.artists?.length">
+                      <template v-for="(artist, artistIndex) in track.artists" :key="artistIndex">
+                        <span v-if="artistIndex > 0"> / </span>
+                        <button
+                          v-if="canOpenTrackArtist?.(track, artist)"
+                          type="button"
+                          class="metadata-link"
+                          :title="`查看歌手：${artist.name}`"
+                          @click.stop="emit('openTrackArtist', track, artist)"
+                          @dblclick.stop
+                        >
+                          {{ artist.name }}
+                        </button>
+                        <span v-else>{{ artist.name }}</span>
+                      </template>
+                    </template>
+                    <button
+                      v-else-if="canOpenTrackArtist?.(track)"
+                      type="button"
+                      class="metadata-link"
+                      :title="`查看歌手：${track.artist}`"
+                      @click.stop="emit('openTrackArtist', track)"
+                      @dblclick.stop
+                    >
+                      {{ track.artist }}
+                    </button>
+                    <span v-else>{{ track.artist }}</span>
+                  </div>
                 </td>
                 <td class="col-like">
                   <button
@@ -232,7 +264,19 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
                     ></i>
                   </button>
                 </td>
-                <td class="col-album">{{ track.album }}</td>
+                <td class="col-album">
+                  <button
+                    v-if="canOpenTrackAlbum?.(track)"
+                    type="button"
+                    class="metadata-link"
+                    :title="`查看专辑：${track.album}`"
+                    @click.stop="emit('openTrackAlbum', track)"
+                    @dblclick.stop
+                  >
+                    {{ track.album }}
+                  </button>
+                  <span v-else>{{ track.album }}</span>
+                </td>
                 <td class="col-duration">{{ formatTime(track.duration) }}</td>
               </tr>
             </tbody>
@@ -579,6 +623,10 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
   margin-top: 2px;
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: rgba(82, 90, 122, 0.58);
+}
+
+.track-artist .metadata-link {
+  display: inline;
 }
 
 .col-like,

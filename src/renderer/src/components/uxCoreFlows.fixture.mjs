@@ -224,12 +224,21 @@ window.runUxCoreTests = async () => {
     loading = ref(false)
   let opened = 0,
     activated = 0,
-    liked = 0
+    liked = 0,
+    rowClicks = 0
+  const artistRequests = []
+  const albumRequests = []
+  const activationMode = ref('doubleClick')
   const tracks = Array.from({ length: 61 }, (_, index) => ({
     id: String(index),
     title: `Song ${index}`,
     artist: 'Artist',
+    artists: [
+      { id: 101, name: 'Artist' },
+      { id: 202, name: 'Guest Artist' }
+    ],
     album: 'Album',
+    albumId: '303',
     duration: 180
   }))
   const props = () => ({
@@ -246,13 +255,18 @@ window.runUxCoreTests = async () => {
     searchLoading: loading.value,
     searchError: '',
     currentTrack: null,
-    trackActivationMode: 'doubleClick',
+    trackActivationMode: activationMode.value,
     likingTracks: new Set(),
     isTrackLiked: () => false,
     formatTime: () => '3:00',
     onPageChange: (event) => (offset.value = event.first),
     onOpenPlaylist: () => opened++,
     onOpenArtist: () => opened++,
+    canOpenTrackArtist: (track) => track.id !== '1',
+    canOpenTrackAlbum: (track) => Boolean(track.albumId),
+    onOpenTrackArtist: (track, artist) => artistRequests.push({ track, artist }),
+    onOpenTrackAlbum: (track) => albumRequests.push(track),
+    onSearchTrackClick: () => rowClicks++,
     onSearchTrackActivate: () => activated++,
     onLikeTrack: () => liked++
   })
@@ -320,9 +334,49 @@ window.runUxCoreTests = async () => {
   expect(activated === 2, 'song activation in double-click mode')
   await window.pressKey('ArrowDown')
   expect(document.activeElement === row.nextElementSibling, 'row arrow navigation')
-  row.querySelector('button').focus()
+  row.querySelector('.btn-like').focus()
   await window.pressKey('Space')
   expect(liked === 1 && activated === 2, 'favorite key bubbled into playback')
+
+  for (const mode of ['singleClick', 'doubleClick']) {
+    activationMode.value = mode
+    await settle()
+    const artistLink = row.querySelectorAll('.track-artist button')[1]
+    const albumLink = row.querySelector('.col-album button')
+    for (const link of [artistLink, albumLink]) {
+      link.click()
+      link.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      link.focus()
+      await window.pressKey('Enter')
+      await window.pressKey('Space')
+    }
+    expect(rowClicks === 0 && activated === 2, `${mode} metadata links triggered playback`)
+  }
+  expect(
+    artistRequests.length === 6 &&
+      artistRequests.every(({ track, artist }) => track.id === '0' && artist.id === 202),
+    'guest artist link opened the wrong artist or emitted duplicate requests'
+  )
+  expect(
+    albumRequests.length === 6 && albumRequests.every((track) => track.albumId === '303'),
+    'album link lost the track album identity'
+  )
+  expect(
+    row.nextElementSibling.querySelectorAll('.track-artist button').length === 0 &&
+      row.nextElementSibling.querySelector('.track-artist').textContent.includes('Guest Artist'),
+    'unsupported artist links must remain readable text'
+  )
+  delete tracks[0].artists
+  delete tracks[0].albumId
+  await mount(StreamingSearch, props)
+  const legacyRow = document.querySelector('.track-row')
+  legacyRow.querySelector('.track-artist button').click()
+  expect(artistRequests.at(-1).artist === undefined, 'legacy artist lookup must use the track name')
+  expect(
+    !legacyRow.querySelector('.col-album button') &&
+      legacyRow.querySelector('.col-album').textContent.trim() === 'Album',
+    'missing album IDs must remain readable text'
+  )
 
   const show = ref(true)
   const opener = document.querySelector('#opener')
