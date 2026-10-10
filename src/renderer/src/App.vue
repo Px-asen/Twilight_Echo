@@ -1083,6 +1083,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
               : null
           "
           @navigate-tab="enterStreamingMode($event)"
+          @select-view="onSelectView"
           @recent="navigation.navigate({ kind: 'recent', scope: 'platform', providerId: $event })"
           @login="handleStreamingLogin"
         />

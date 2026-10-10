@@ -4,10 +4,19 @@ import test from 'node:test'
 import { stripTypeScriptTypes } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { compileStyle } from '@vue/compiler-sfc'
+import { nextTick, ref, watch } from 'vue'
 import type { LocalLibraryRemoveResult } from '../../../../shared/localLibrary.ts'
-import type { Track } from '../../types/music.ts'
+import type { Track, TrackArtistRef } from '../../types/music.ts'
+import type {
+  MediaProviderAlbumSummary,
+  MediaProviderArtistSummary
+} from '../../providers/mediaProvider.ts'
 import { appendUniqueTracks } from './streamingPageModel.ts'
 import { getTrackSource } from '../../utils/logicalTrackModel.ts'
+import {
+  findStreamingArtistById,
+  matchStreamingArtistsByName
+} from '../../utils/streamingArtistResolution.ts'
 
 const source = readFileSync(new URL('../StreamingPage.vue', import.meta.url), 'utf8')
 const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url), 'utf8')
@@ -105,6 +114,189 @@ test('same-named artists are separated by provider artist id, never by search or
   assert.match(source, /candidates\.length > 1/)
   // 绝不能退回“搜索结果里第一个同名者即命中”——那正是同名歌手跳错页的成因。
   assert.doesNotMatch(source, /findBestStreamingArtistMatch\(artistName, result\.items\)/)
+})
+
+function createTrackMetadataNavigationHarness() {
+  const track: Track = {
+    ...createTrack('ncm:123', 'ncm'),
+    artist: 'First Artist / Shared Name',
+    artists: [
+      { id: 11, name: 'First Artist' },
+      { id: 22, name: 'Shared Name' }
+    ],
+    albumId: '456'
+  }
+  const searchResults = ref([track])
+  const searchQuery = ref('test song')
+  const searchOffset = ref(60)
+  const detailStack = ref<Array<{ view: { type: string } }>>([])
+  const openedArtists: MediaProviderArtistSummary[] = []
+  const openedAlbums: MediaProviderAlbumSummary[] = []
+  const localViews: unknown[][] = []
+  const providerSelections: Array<[string, boolean]> = []
+  const methods = ['fetchArtistTopSongs', 'searchArtists', 'fetchAlbumTracks']
+  const scope = {
+    getTrackSource,
+    findStreamingArtistById,
+    matchStreamingArtistsByName,
+    nextTick,
+    watch,
+    activeProvider: ref('other'),
+    activeTab: ref('search'),
+    props: { active: true },
+    NCM_PROVIDER_ID: 'ncm',
+    providerStore: {
+      syncProviders: async () => undefined,
+      getProvider: (id: string) => ({ supportedMethods: id === 'ncm' ? methods : [] })
+    },
+    mediaProviders: {
+      get: () => ({ name: 'NetEase', fetchArtistTopSongs() {}, searchArtists() {} }),
+      searchArtists: async () => ({
+        items: [
+          { id: 99, name: 'Shared Name', picUrl: null },
+          { id: 22, name: 'Shared Name', picUrl: 'artist-cover' }
+        ]
+      })
+    },
+    musicStore: { albums: { value: [{ id: 'local-release', tracks: [] as Track[] }] } },
+    selectProvider: (id: string, persist = true) => {
+      providerSelections.push([id, persist])
+      scope.activeProvider.value = id
+    },
+    emit: (...args: unknown[]) => localViews.push(args),
+    pushNotice: (notice: unknown) => {
+      throw new Error(JSON.stringify(notice))
+    },
+    friendlyStreamingError: (error: Error) => error.message,
+    openArtist: async (artist: MediaProviderArtistSummary) => {
+      openedArtists.push(artist)
+      detailStack.value.push({ view: { type: 'artist' } })
+    },
+    openAlbum: async (album: MediaProviderAlbumSummary) => {
+      openedAlbums.push(album)
+      detailStack.value.push({ view: { type: 'album' } })
+    },
+    detailStack,
+    detailLoadToken: 0,
+    streamingTransitionName: ref(''),
+    streamingContentRef: ref(null),
+    applyDetailState() {},
+    resetDetail: () => {
+      detailStack.value = []
+    },
+    clearSearch: () => {
+      searchQuery.value = ''
+      searchOffset.value = 0
+      searchResults.value = []
+    },
+    recommendationRequestId: 0,
+    recommendationProviderId: ref(''),
+    homeSectionDefinitions: ref([]),
+    recommendationTracks: ref({}),
+    recommendationErrors: ref({}),
+    recsError: ref(''),
+    recsLoading: ref(false),
+    recommendPlaylists: ref([]),
+    activeProviderRequiresLogin: ref(false)
+  }
+  const handlers = source.slice(
+    source.indexOf('function canOpenTrackArtist('),
+    source.indexOf('async function openAlbum(')
+  )
+  const artistResolution = source.slice(
+    source.indexOf('let artistNavigationToken = 0'),
+    source.indexOf('async function openUserList(')
+  )
+  const back = source.slice(
+    source.indexOf('function popDetail('),
+    source.indexOf('function removeDetailEntries(')
+  )
+  const providerWatcher = source.slice(
+    source.indexOf('watch(activeProvider,'),
+    source.indexOf('watch(activeTab,')
+  )
+  const runtime = runInNewContext(
+    stripTypeScriptTypes(
+      `${handlers}\n${artistResolution}\n${back}\nconst stop = ${providerWatcher}\n;({ canOpenTrackArtist, canOpenTrackAlbum, openTrackArtist, openTrackAlbum, popDetail, stop })`
+    ),
+    scope
+  ) as {
+    canOpenTrackArtist: (track: Track, artist?: TrackArtistRef) => boolean
+    canOpenTrackAlbum: (track: Track) => boolean
+    openTrackArtist: (track: Track, artist?: TrackArtistRef) => void
+    openTrackAlbum: (track: Track) => Promise<void>
+    popDetail: () => void
+    stop: () => void
+  }
+  return {
+    track,
+    searchQuery,
+    searchOffset,
+    searchResults,
+    detailStack,
+    openedArtists,
+    openedAlbums,
+    localViews,
+    providerSelections,
+    scope,
+    runtime
+  }
+}
+
+for (const kind of ['artist', 'album'] as const) {
+  test(`song search opens the result's ${kind} provider and returns to the same search page`, async (t) => {
+    const h = createTrackMetadataNavigationHarness()
+    t.after(h.runtime.stop)
+    const results = h.searchResults.value
+    if (kind === 'artist') {
+      h.runtime.openTrackArtist(h.track, h.track.artists![1])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(
+        h.openedArtists[0]?.id,
+        22,
+        'the selected guest must win over the first same-named search result'
+      )
+      assert.equal(h.openedArtists[0]?.picUrl, 'artist-cover')
+    } else {
+      await h.runtime.openTrackAlbum(h.track)
+      assert.equal(h.openedAlbums[0]?.id, '456')
+      assert.equal(h.openedAlbums[0]?.name, h.track.album)
+    }
+    assert.equal(h.scope.activeProvider.value, 'ncm')
+    assert.deepEqual(h.providerSelections, [['ncm', false]])
+    assert.equal(h.detailStack.value.at(-1)?.view.type, kind)
+    h.runtime.popDetail()
+    assert.equal(h.detailStack.value.length, 0)
+    assert.equal(h.searchQuery.value, 'test song')
+    assert.equal(h.searchOffset.value, 60)
+    assert.equal(h.searchResults.value, results)
+
+    h.scope.selectProvider('other')
+    await nextTick()
+    assert.equal(h.searchQuery.value, '', 'an explicit provider change must still reset search')
+  })
+}
+
+test('metadata navigation uses local library identities and exposes only supported online links', async (t) => {
+  const h = createTrackMetadataNavigationHarness()
+  t.after(h.runtime.stop)
+  assert.equal(h.runtime.canOpenTrackArtist(h.track), true)
+  assert.equal(h.runtime.canOpenTrackAlbum(h.track), true)
+  assert.equal(h.runtime.canOpenTrackAlbum({ ...h.track, albumId: undefined }), false)
+  assert.equal(h.runtime.canOpenTrackArtist({ ...h.track, source: 'unsupported' }), false)
+  assert.equal(h.runtime.canOpenTrackAlbum({ ...h.track, source: 'unsupported' }), false)
+
+  const local = { ...createTrack('local-file', 'local'), albumId: undefined }
+  h.scope.musicStore.albums.value[0].tracks = [local]
+  assert.equal(h.runtime.canOpenTrackArtist(local), true)
+  assert.equal(h.runtime.canOpenTrackAlbum(local), true)
+  h.runtime.openTrackArtist(local)
+  await h.runtime.openTrackAlbum(local)
+  assert.deepEqual(h.localViews, [
+    ['selectView', 'artists', 'artist:Test Artist'],
+    ['selectView', 'albums', 'album:local-release']
+  ])
+  assert.equal(h.providerSelections.length, 0)
 })
 
 test('streaming page keeps third-party providers on the generic provider library surface', () => {

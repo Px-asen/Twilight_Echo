@@ -12,7 +12,7 @@ import {
 } from 'vue'
 import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
-import type { Track } from '../types/music'
+import type { Track, TrackArtistRef } from '../types/music'
 import { copyTrackNames } from '../utils/copyTrackNames'
 import {
   useNcmStore,
@@ -636,6 +636,7 @@ const currentView = computed(() => visibleTabs.value.find((item) => item.tab ===
 
 const emit = defineEmits<{
   toggleMenu: []
+  selectView: [category: string, filter: string | null]
   navigateTab: [tab: 'home' | 'discover' | 'library' | 'cloud' | 'search']
   recent: [providerId: string]
   login: [providerId?: string | null]
@@ -1795,16 +1796,60 @@ async function loadMoreDetailTracks(): Promise<void> {
   await loadMoreLikedTracks()
 }
 
+function canOpenTrackArtist(track: Track, artist = track.artists?.[0]): boolean {
+  if (getTrackSource(track) === 'local') return Boolean(track.artist.trim())
+  const methods = providerStore.getProvider(getTrackSource(track))?.supportedMethods ?? []
+  return (
+    Boolean((artist?.name || track.artist).trim()) &&
+    methods.includes('fetchArtistTopSongs') &&
+    (artist?.id != null || methods.includes('searchArtists'))
+  )
+}
+
+function canOpenTrackAlbum(track: Track): boolean {
+  if (!track.album.trim()) return false
+  if (getTrackSource(track) === 'local') return true
+  return (
+    Boolean(track.albumId?.trim()) &&
+    (providerStore
+      .getProvider(getTrackSource(track))
+      ?.supportedMethods.includes('fetchAlbumTracks') ??
+      false)
+  )
+}
+
+let detailNavigationProvider: string | null = null
+
+async function selectDetailProvider(providerId: string): Promise<void> {
+  if (providerId === activeProvider.value) return
+  // A result may belong to a different source from the current library. Keep
+  // the query, page and results intact while switching to its detail provider.
+  detailNavigationProvider = providerId
+  try {
+    selectProvider(providerId, false)
+    await nextTick()
+  } finally {
+    detailNavigationProvider = null
+  }
+}
+
 async function openTrackAlbum(track: Track): Promise<void> {
+  if (getTrackSource(track) === 'local') {
+    const album = musicStore.albums.value.find((item) =>
+      item.tracks.some((albumTrack) => albumTrack.id === track.id)
+    )
+    if (album) emit('selectView', 'albums', `album:${album.id}`)
+    return
+  }
   if (!track.albumId) {
     pushNotice({ kind: 'info', message: '这首歌曲没有可用的专辑详情标识' })
     return
   }
-  const providerId = track.source || activeProvider.value
-  if (providerId !== activeProvider.value) {
-    selectProvider(providerId, false)
-    await nextTick()
+  if (!canOpenTrackAlbum(track)) {
+    pushNotice({ kind: 'info', message: '当前音源暂不支持这首歌曲的专辑详情' })
+    return
   }
+  await selectDetailProvider(getTrackSource(track))
   await openAlbum({
     id: track.albumId,
     name: track.album,
@@ -1814,11 +1859,17 @@ async function openTrackAlbum(track: Track): Promise<void> {
   })
 }
 
-function openTrackArtist(track: Track): void {
-  const artist = track.artists?.[0]
+function openTrackArtist(
+  track: Track,
+  artist: TrackArtistRef | undefined = track.artists?.[0]
+): void {
+  if (getTrackSource(track) === 'local') {
+    if (track.artist.trim()) emit('selectView', 'artists', `artist:${track.artist.trim()}`)
+    return
+  }
   void openRequestedArtist({
     key: Date.now(),
-    providerId: track.source || activeProvider.value,
+    providerId: getTrackSource(track),
     artistName: artist?.name || track.artist.split(' / ')[0],
     artistId: artist?.id
   })
@@ -1966,6 +2017,7 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
   const token = ++artistNavigationToken
 
   await providerStore.syncProviders().catch(() => undefined)
+  if (token !== artistNavigationToken) return
   const provider = mediaProviders.get(providerId)
   // 带歌手 id 时搜索只用来补头图等展示字段，provider 没有 searchArtists 也能开页；
   // 只有回退到按名字定位才必须能搜。
@@ -1978,10 +2030,7 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
     return
   }
 
-  if (activeProvider.value !== providerId) {
-    selectProvider(providerId, false)
-    await nextTick()
-  }
+  await selectDetailProvider(providerId)
 
   try {
     const searchResult = provider.searchArtists
@@ -3289,7 +3338,7 @@ watch(
 watch(activeProvider, async (provider, oldProvider) => {
   if (provider === oldProvider || props.active === false) return
   resetDetail()
-  clearSearch()
+  if (provider !== detailNavigationProvider) clearSearch()
   recommendationRequestId += 1
   recommendationProviderId.value = ''
   homeSectionDefinitions.value = []
@@ -3544,6 +3593,8 @@ onMounted(async () => {
             :favorite-label="selectionFavoriteLabel"
             :is-track-favorited="isStreamingTrackFavorited"
             :can-add-to-playlist="canManageNcmPlaylists"
+            :can-open-track-artist="canOpenTrackArtist"
+            :can-open-track-album="canOpenTrackAlbum"
             @search-track-click="onSearchTrackClickWithSelect"
             @search-track-activate="
               (track) => {
@@ -3554,6 +3605,8 @@ onMounted(async () => {
             @like-track="onLikeTrack"
             @open-playlist="openPlaylist"
             @open-artist="openArtist"
+            @open-track-artist="openTrackArtist"
+            @open-track-album="openTrackAlbum"
             @page-change="onPageChange"
             @retry="performSearch(searchQuery)"
             @batch-favorite="handleStreamingBatchFavorite"

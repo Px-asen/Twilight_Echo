@@ -1061,7 +1061,7 @@ test('artist songs keep paging when a short page reports more items', async () =
   }
 })
 
-test('search song normalization preserves legal bpm metadata', async () => {
+test('search song normalization preserves tempo and artist/album navigation identities', async () => {
   const provider = await activateProvider(async (path) => {
     const url = parseRequest(path)
     assert.equal(url.pathname, '/cloudsearch')
@@ -1070,7 +1070,12 @@ test('search song normalization preserves legal bpm metadata', async () => {
         songs: [
           {
             ...song(128),
-            bpm: '128.4'
+            bpm: '128.4',
+            ar: [
+              { id: 11, name: 'First Artist' },
+              { id: 22, name: 'Guest Artist' }
+            ],
+            al: { id: 456, name: 'Search Album' }
           }
         ],
         songCount: 1
@@ -1081,6 +1086,14 @@ test('search song normalization preserves legal bpm metadata', async () => {
   try {
     const result = await provider.searchSongs('tempo')
     assert.equal(result.items[0].bpm, 128.4)
+    assert.equal(result.items[0].source, 'ncm')
+    assert.equal(result.items[0].artist, 'First Artist / Guest Artist')
+    assert.deepEqual(result.items[0].artists, [
+      { id: 11, name: 'First Artist' },
+      { id: 22, name: 'Guest Artist' }
+    ])
+    assert.equal(result.items[0].albumId, '456')
+    assert.equal(result.items[0].album, 'Search Album')
   } finally {
     ncmProvider.deactivate()
   }
