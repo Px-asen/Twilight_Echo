@@ -212,9 +212,12 @@ function interval(event: Event): void {
       </p>
       <pre>{{ state.check.releaseNotes }}</pre>
     </details>
-    <div class="update-preferences">
-      <div class="update-auto-check">
-        <span id="update-auto-check-label">自动检查更新</span>
+    <div class="update-preferences setting-list">
+      <div class="setting-item">
+        <div class="setting-copy">
+          <strong id="update-auto-check-label">自动检查更新</strong>
+          <span>只提醒新版本，下载和安装由你决定。</span>
+        </div>
         <button
           type="button"
           class="toggle-switch"
@@ -226,10 +229,19 @@ function interval(event: Event): void {
           @click="updates.preferences({ autoCheck: !state.preferences.autoCheck })"
         />
       </div>
-      <label
-        >检查间隔
+      <div class="setting-item">
+        <div class="setting-copy">
+          <strong id="update-interval-label">检查间隔</strong>
+          <span id="update-interval-description">{{
+            state.preferences.autoCheck
+              ? '选择自动检查的频率。'
+              : '开启自动检查后可调整；仍可手动检查更新。'
+          }}</span>
+        </div>
         <select
           class="preview-select"
+          aria-labelledby="update-interval-label"
+          aria-describedby="update-interval-description"
           :value="state.preferences.checkIntervalHours"
           :disabled="busy || !state.preferences.autoCheck"
           @change="interval"
@@ -237,22 +249,28 @@ function interval(event: Event): void {
           <option :value="6">每 6 小时</option>
           <option :value="24">每天</option>
           <option :value="72">每 3 天</option>
-        </select></label
-      >
-      <label
-        >更新频道
+        </select>
+      </div>
+      <div class="setting-item">
+        <div class="setting-copy">
+          <strong id="update-channel-label">更新频道</strong>
+          <span id="update-channel-description"
+            >稳定版适合日常使用；测试版可能包含尚未稳定的功能。</span
+          >
+        </div>
         <select
           class="preview-select"
+          aria-labelledby="update-channel-label"
+          aria-describedby="update-channel-description"
           :value="state.preferences.channel"
           :disabled="busy"
           @change="channel"
         >
           <option value="stable">稳定版</option>
           <option value="preview">测试版（含预发布）</option>
-        </select></label
-      >
+        </select>
+      </div>
     </div>
-    <p class="update-hint">仅自动检查，不自动下载或安装。测试版可能不稳定。</p>
     <div v-if="state.check?.hasUpdate || state.readyVersion" class="update-reminders">
       <button class="soft-button" type="button" :disabled="busy" @click="updates.dismiss('later')">
         明天提醒
@@ -329,7 +347,6 @@ function interval(event: Event): void {
   background: color-mix(in srgb, var(--te-primary-500) 26%, transparent);
 }
 .update-transfer-label,
-.update-preferences,
 .update-reminders {
   display: flex;
   flex-wrap: wrap;
@@ -347,31 +364,15 @@ function interval(event: Event): void {
   height: 8px;
   accent-color: var(--te-primary-500);
 }
-.update-preferences label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--te-settings-text-muted);
+.update-preferences {
+  display: grid;
+  gap: 0;
 }
-.update-auto-check {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  font-size: 13px;
-  color: var(--te-settings-text);
-  margin-right: auto;
+.update-preferences .setting-item + .setting-item {
+  border-top: 1px solid var(--te-card-border);
 }
-.update-preferences select {
-  color: var(--te-settings-text);
-  background: var(--te-card-bg);
-  border: 1px solid var(--te-card-border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font: inherit;
-  width: auto;
-  box-shadow: none;
+.update-preferences select:disabled {
+  opacity: 0.5;
 }
 .update-preferences input {
   accent-color: var(--te-primary-500);
@@ -413,13 +414,6 @@ function interval(event: Event): void {
   .app-update-panel .update-actions {
     flex-basis: 100%;
     justify-content: flex-start;
-  }
-  .update-auto-check {
-    width: 100%;
-  }
-  .update-preferences label {
-    flex: 1 1 180px;
-    justify-content: space-between;
   }
 }
 </style>

@@ -205,7 +205,7 @@ window.runSettingsOrganizationTests = async () => {
     const target = await search(title)
     expect(target.getClientRects().length, title + ' stayed hidden')
     expect(
-      page.querySelector('[aria-current="location"]').textContent.includes(
+      page.querySelector('[aria-current="page"]').textContent.includes(
         {
           缓冲大小: '播放与音效',
           'VST3 搜索目录': '播放与音效',
@@ -233,6 +233,19 @@ window.runSettingsOrganizationTests = async () => {
     page.querySelector('.search-target-flash').dataset.settingId === 'dsp-master' &&
       !processing.value.dspEnabled,
     'DSP dependency search must explain and focus its master without enabling it'
+  )
+  expect(page.querySelector('.settings-inline-notice'), 'missing prerequisite explanation')
+  document.querySelector('[data-settings-category="general"]').click()
+  await settle()
+  expect(
+    !page.querySelector('.settings-inline-notice'),
+    'category retained unrelated search notice'
+  )
+  await search('Preamp')
+  await search('版本信息')
+  expect(
+    !page.querySelector('.settings-inline-notice'),
+    'new search retained stale prerequisite notice'
   )
   const genre = document.querySelector('[data-setting-id="genre-separators"] input')
   genre.value = '保留输入 / 未提交'
@@ -541,12 +554,13 @@ window.prepareSettingsEvidence = async (theme, section, material = 'solid') => {
   }
   pageToTop(section)
   await settle()
-  const active = document.querySelector('.settings-nav-categories [aria-current="location"]')
+  const active = document.querySelector('.settings-nav-categories [aria-current="page"]')
   const strip = document.querySelector('.settings-nav-categories')
   const activeRect = active.getBoundingClientRect(),
     stripRect = strip.getBoundingClientRect()
   expect(
-    activeRect.left >= stripRect.left - 2 && activeRect.right <= stripRect.right + 2,
+    !strip.getClientRects().length ||
+      (activeRect.left >= stripRect.left - 2 && activeRect.right <= stripRect.right + 2),
     'active category is clipped at ' + innerWidth + '/' + section
   )
   return [
@@ -581,12 +595,5 @@ window.checkSettingsSearchPopup = async () => {
   await settle()
 }
 function pageToTop(section) {
-  const page = document.querySelector('.settings-preview-page')
-  const target = document.querySelector('#' + section)
-  const nav = document.querySelector('.settings-preview-nav')
-  page.scrollTop +=
-    target.getBoundingClientRect().top -
-    page.getBoundingClientRect().top -
-    24 -
-    (getComputedStyle(nav).position === 'sticky' ? nav.getBoundingClientRect().height : 0)
+  document.querySelector('[data-settings-category="' + section + '"]').click()
 }

@@ -205,7 +205,7 @@ function removeBackgroundImage(): void {
 <template>
   <aside class="mini-customizer" :class="`is-${mode}`" aria-label="迷你播放器自定义">
     <header class="mini-customizer-header">
-      <strong>迷你播放器</strong>
+      <strong>独立迷你窗口</strong>
       <div class="mini-customizer-header-actions">
         <i v-if="saving" class="pi pi-spin pi-spinner" aria-label="正在保存"></i>
         <button

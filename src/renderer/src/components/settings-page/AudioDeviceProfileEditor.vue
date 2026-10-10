@@ -124,7 +124,7 @@ function changeBackend(): void {
       </select></label
     >
     <label
-      >SRC 质量<select v-model="draft.outputStage.resamplerQuality">
+      >重采样质量（SRC）<select v-model="draft.outputStage.resamplerQuality">
         <option
           v-for="option in DSP_RESAMPLER_QUALITY_OPTIONS"
           :key="option.value"
@@ -135,7 +135,7 @@ function changeBackend(): void {
       </select></label
     >
     <label
-      >Dither<select v-model="draft.outputStage.dither">
+      >量化抖动（Dither）<select v-model="draft.outputStage.dither">
         <option v-for="option in DSP_DITHER_MODE_OPTIONS" :key="option.value" :value="option.value">
           {{ option.label }}
         </option>
@@ -174,7 +174,7 @@ function changeBackend(): void {
         v-model="draft.processing.directMode"
         type="checkbox"
         @change="draft.processing.directMode && (draft.processing.dspEnabled = false)"
-      />Direct 直通</label
+      />直通（跳过 DSP）</label
     >
     <label class="check"
       ><input v-model="draft.processing.eqEnabled" type="checkbox" />启用均衡器</label
@@ -183,10 +183,10 @@ function changeBackend(): void {
       ><input v-model="draft.processing.convolverEnabled" type="checkbox" />启用卷积器</label
     >
     <label class="check"
-      ><input v-model="draft.processing.crossfeedEnabled" type="checkbox" />启用 Crossfeed</label
+      ><input v-model="draft.processing.crossfeedEnabled" type="checkbox" />启用耳机交叉馈送</label
     >
     <label
-      >Crossfeed 强度<input
+      >交叉馈送强度<input
         v-model.number="draft.processing.crossfeedStrength"
         type="number"
         min="0"
@@ -199,7 +199,7 @@ function changeBackend(): void {
         <option value="off">关闭</option>
         <option value="track">曲目 ReplayGain</option>
         <option value="album">专辑 ReplayGain</option>
-        <option value="loudnorm">实时响度归一化</option>
+        <option value="loudnorm">测量响度（Loudnorm）</option>
       </select></label
     >
     <label class="check wide"

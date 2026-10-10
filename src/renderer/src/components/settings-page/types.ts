@@ -82,14 +82,49 @@ export type BooleanSettingKey =
   | 'remoteControlEnabled'
   | 'developerMode'
 
-export const sections: { key: SectionKey; label: string; icon: string }[] = [
-  { key: 'general', label: '通用', icon: 'pi pi-sliders-h' },
-  { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
-  { key: 'playback', label: '播放与音效', icon: 'pi pi-volume-up' },
-  { key: 'lyrics', label: '歌词', icon: 'pi pi-align-left' },
-  { key: 'library', label: '媒体库与存储', icon: 'pi pi-database' },
-  { key: 'connections', label: '连接与控制', icon: 'pi pi-link' },
-  { key: 'system', label: '系统与关于', icon: 'pi pi-cog' }
+export const sections: { key: SectionKey; label: string; icon: string; description: string }[] = [
+  {
+    key: 'general',
+    label: '通用',
+    icon: 'pi pi-sliders-h',
+    description: '调整启动、窗口和日常操作习惯。'
+  },
+  {
+    key: 'appearance',
+    label: '外观',
+    icon: 'pi pi-palette',
+    description: '设置主题、背景、字体与播放器外观。'
+  },
+  {
+    key: 'playback',
+    label: '播放与音效',
+    icon: 'pi pi-volume-up',
+    description: '调整播放习惯、输出设备和声音处理。'
+  },
+  {
+    key: 'lyrics',
+    label: '歌词',
+    icon: 'pi pi-align-left',
+    description: '设置歌词来源与播放页、桌面上的显示方式。'
+  },
+  {
+    key: 'library',
+    label: '媒体库与存储',
+    icon: 'pi pi-database',
+    description: '管理本地媒体库、下载目录与缓存。'
+  },
+  {
+    key: 'connections',
+    label: '连接与控制',
+    icon: 'pi pi-link',
+    description: '配置系统集成、远程控制和快捷键。'
+  },
+  {
+    key: 'system',
+    label: '系统与关于',
+    icon: 'pi pi-cog',
+    description: '管理性能、插件、备份与软件更新。'
+  }
 ]
 
 export const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [

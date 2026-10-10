@@ -16,7 +16,7 @@ const preview = computed(
   <div class="download-options">
     <div data-setting-id="download-naming" id="setting-download-naming" class="setting-item">
       <div class="setting-copy">
-        <strong>下载文件命名</strong><span>{{ preview }}.m4a</span>
+        <strong>下载文件命名</strong><span>名称示例：{{ preview }}（文件后缀由音源决定）</span>
       </div>
       <select
         class="preview-select"

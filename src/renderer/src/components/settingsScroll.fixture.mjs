@@ -61,6 +61,13 @@ window.makeSettingsSection = (key) => () =>
     },
     [
       h('h2', key),
+      ...(key === 'system'
+        ? [
+            h('button', { 'data-setting-id': 'app-update' }, '检查更新'),
+            h('button', { 'data-setting-id': 'app-update-install' }, '下载更新'),
+            h('strong', { 'data-setting-id': 'app-version' }, 'Version 1.0.0')
+          ]
+        : []),
       h(
         'button',
         {
@@ -77,7 +84,7 @@ window.makeSettingsSection = (key) => () =>
       h(
         'div',
         { class: 'setting-list' },
-        Array.from({ length: 45 }, (_, index) =>
+        Array.from({ length: key === 'appearance' ? 2 : 45 }, (_, index) =>
           h(
             'div',
             {
@@ -106,7 +113,7 @@ window.makeSettingsSection = (key) => () =>
                   )
                 )
               ]),
-              h('input', { value: '保留的设置值', 'aria-label': `${key}-${index}` })
+              h('input', { defaultValue: '保留的设置值', 'aria-label': `${key}-${index}` })
             ]
           )
         )
@@ -127,241 +134,169 @@ window.runSettingsScrollTests = async () => {
       mounted.value
         ? h(SettingsPage, {
             initialSection: appNavigation.settingsInitialSection.value,
+            navigationTarget: appNavigation.settingsNavigationTarget.value,
             onSectionChange: appNavigation.rememberSettingsSection
           })
         : null
   })
   app.mount('#app')
   await settle()
-  expect(innerWidth === 1440, `unexpected desktop viewport: ${innerWidth}`)
   const page = document.querySelector('.settings-preview-page')
   const sections = [...page.querySelectorAll('.preview-section')]
-  const nav = (label) =>
-    [...page.querySelectorAll('.preview-nav-item')].find((button) =>
-      button.textContent.includes(label)
+  const nav = (key) => page.querySelector(`[data-settings-category="${key}"]`)
+  const visibleSections = () => sections.filter((section) => section.getClientRects().length)
+  const select = async (key) => {
+    const selector = page.querySelector('.settings-category-select')
+    if (selector.getClientRects().length) {
+      selector.value = key
+      selector.dispatchEvent(new Event('change', { bubbles: true }))
+    } else nav(key).click()
+    await settle()
+    expect(
+      visibleSections().length === 1 && visibleSections()[0].id === key,
+      'category did not select exactly one mounted panel: ' + key
     )
-  const visibleRows = () =>
-    [...page.querySelectorAll('.setting-item')].filter((row) =>
-      row.checkVisibility({ contentVisibilityAuto: true })
-    ).length
-  expect(sections.length === 7, 'missing section fixtures')
-  expect(
-    sections.every((section) => section.classList.contains('settings-section-measured')),
-    'rendering waited for settings IPC'
-  )
-  const skippedRows = page.querySelectorAll('.setting-item').length - visibleRows()
-  expect(
-    skippedRows >= 270,
-    `distant controls still participate in rendering: ${skippedRows} skipped`
-  )
-  const height = page.scrollHeight
-  page.classList.add('settings-resolving-navigation')
-  const fullHeight = page.scrollHeight
-  expect(
-    Math.abs(height - fullHeight) <= 2,
-    `skipping changed scroll height: ${height} vs ${fullHeight}`
-  )
-  page.classList.remove('settings-resolving-navigation')
-
+    expect(nav(key).getAttribute('aria-current') === 'page', 'active category missing: ' + key)
+  }
+  expect(sections.length === 7, 'missing seven mounted category fixtures')
+  await select('connections')
   resolveLoad()
   await settle()
-  nav('通用').click()
-  await settle()
+  expect(visibleSections()[0].id === 'connections', 'slow startup reset the selected category')
+  expect(appNavigation.session.value.settingsSection === 'connections', 'category not remembered')
+  await select('general')
   const general = document.querySelector('#general')
-  const fixedNavigation = page.querySelector('.settings-preview-nav')
-  const restingNavTop = fixedNavigation.getBoundingClientRect().top
-  const restingScrollTop = page.scrollTop
-  document.documentElement.dataset.teMotion = 'full'
-  for (const transition of ['settings-page-enter-active', 'settings-page-leave-active']) {
-    page.classList.add(transition)
-    // Inspect the settled nav transform while the page's transition layer still
-    // exists; elapsed timer samples can miss its containing-block change.
-    for (const animation of fixedNavigation.getAnimations()) {
-      animation.pause()
-      animation.currentTime = Number(animation.effect.getTiming().duration)
-    }
-    expect(
-      Math.abs(fixedNavigation.getBoundingClientRect().top - restingNavTop) <= 2,
-      `${transition} reanchored the fixed navigation`
-    )
-    page.scrollTo({ top: restingScrollTop + 80, behavior: 'instant' })
-    expect(
-      Math.abs(fixedNavigation.getBoundingClientRect().top - restingNavTop) <= 2,
-      `${transition} let page scrolling move the navigation`
-    )
-    page.classList.remove(transition)
-    page.scrollTo({ top: restingScrollTop, behavior: 'instant' })
-    expect(
-      Math.abs(fixedNavigation.getBoundingClientRect().top - restingNavTop) <= 2,
-      `${transition} completion rebounded the navigation`
-    )
-  }
-  document.documentElement.dataset.teMotion = 'off'
-  await settle()
-  const beforeExpansion = page.scrollHeight
+  const draft = general.querySelector('input')
+  draft.value = '未保存的输入'
   general.querySelector('.test-disclosure').click()
   await settle()
-  expect(page.scrollHeight >= beforeExpansion + 360, 'disclosure did not update section size')
-  const beforeWheel = page.scrollTop
-  const readRect = Element.prototype.getBoundingClientRect
-  let scrollGeometryReads = 0
-  Element.prototype.getBoundingClientRect = function () {
-    if (this === page || sections.includes(this)) scrollGeometryReads++
-    return readRect.call(this)
+  const before = page.scrollHeight
+  general.querySelector('.test-disclosure').click()
+  await settle()
+  expect(before >= page.scrollHeight + 360, 'disclosure did not update category height')
+  general.querySelector('.test-disclosure').click()
+  await settle()
+  const geometry = () => {
+    const rect = page.querySelector('.settings-preview-stack').getBoundingClientRect()
+    return [rect.left, rect.width]
   }
-  try {
-    for (let index = 0; index < 25; index++) {
-      page.scrollTop = beforeWheel + index * 8
-      page.dispatchEvent(new Event('scrollend'))
-      await new Promise((resolve) => requestAnimationFrame(resolve))
-      await new Promise((resolve) => requestAnimationFrame(resolve))
-    }
-    expect(
-      scrollGeometryReads <= sections.length,
-      `native scrollend repeatedly measured skipped sections: ${scrollGeometryReads} reads`
-    )
-    expect(nav('通用').getAttribute('aria-current') === 'location', 'scroll spy lost its section')
-    expect(
-      page.style.getPropertyValue('--te-workshop-scroll-y') === '',
-      'decoration scrolling invalidated the settings controls through inheritance'
-    )
-    expect(
-      page
-        .querySelector(':scope > .workshop-decoration')
-        ?.style.getPropertyValue('--te-workshop-scroll-y') === `${page.scrollTop}px`,
-      'decoration scroll attachment did not follow the native container'
-    )
-  } finally {
-    Element.prototype.getBoundingClientRect = readRect
-    page.scrollTop = beforeWheel
-  }
-  await settle()
-  general.querySelector('input').value = '未保存的输入'
-
-  nav('连接与控制').click()
-  await settle()
-  const shortcuts = document.querySelector('#connections')
+  expect(page.scrollHeight > page.clientHeight, 'long category did not overflow')
+  const generalGeometry = geometry()
+  await select('appearance')
   expect(
-    Math.abs(shortcuts.getBoundingClientRect().top - page.getBoundingClientRect().top - 24) <= 3,
-    'navigation missed distant card'
+    geometry().every((value, index) => Math.abs(value - generalGeometry[index]) <= 1),
+    'category switch changed horizontal geometry'
   )
+  await select('general')
   expect(
-    nav('连接与控制').getAttribute('aria-current') === 'location',
-    'navigation lost active section'
+    general.querySelector('input') === draft && draft.value === '未保存的输入',
+    'category switch remounted the draft control'
   )
+  expect(expanded.value, 'category switch reset disclosure state')
+  page.scrollTop = 300
+  page.dispatchEvent(new Event('scroll'))
+  await settle()
+  expect(nav('general').getAttribute('aria-current') === 'page', 'scroll changed category')
   expect(
-    appNavigation.session.value.settingsSection === 'connections',
-    'selected section was not remembered'
+    page.style.getPropertyValue('--te-workshop-scroll-y') === '',
+    'decoration scrolling invalidated controls through inheritance'
   )
 
-  // Remembered heights are now stale. Jumping to a section must first resolve
-  // every preceding card at the new width, including skipped cards.
-  await window.resizeTestWindow(760)
-  await settle()
-  expect(innerWidth === 760, `unexpected narrow viewport: ${innerWidth}`)
-  nav('系统与关于').click()
-  await settle()
-  const performance = document.querySelector('#system')
-  const navigation = page.querySelector('.settings-preview-nav')
-  const offset = 24 + navigation.getBoundingClientRect().height
-  expect(
-    Math.abs(performance.getBoundingClientRect().top - page.getBoundingClientRect().top - offset) <=
-      3,
-    `narrow navigation used stale card heights: top=${performance.getBoundingClientRect().top}, page=${page.getBoundingClientRect().top}, offset=${offset}, scroll=${page.scrollTop}, position=${getComputedStyle(navigation).position}`
-  )
-
-  const search = page.querySelector('#settings-search-input')
-  search.value = '硬件加速'
-  search.dispatchEvent(new Event('input', { bubbles: true }))
-  await settle()
-  page.querySelector('#settings-search-result-0').click()
-  await settle()
-  const target = page.querySelector('.search-target-flash')
-  expect(target?.textContent.includes('硬件加速'), 'search highlight missing')
-  const rect = target.getBoundingClientRect()
-  expect(
-    rect.top >= page.getBoundingClientRect().top + offset - 2 &&
-      rect.bottom <= page.getBoundingClientRect().bottom,
-    'search result is outside usable viewport'
-  )
-
-  nav('通用').click()
-  await settle()
-  expect(
-    general.querySelector('input').value === '未保存的输入',
-    'skipping remounted an edited control'
-  )
-  expect(expanded.value, 'skipping reset disclosure state')
-  for (const query of ['交叉淡化', 'crossfade']) {
-    search.value = query
-    search.dispatchEvent(new Event('input', { bubbles: true }))
+  const search = async (query) => {
+    const input = page.querySelector('#settings-search-input')
+    input.value = query
+    input.dispatchEvent(new Event('input', { bubbles: true }))
     await settle()
     const result = page.querySelector('#settings-search-result-0')
-    expect(result?.textContent.includes('无缝播放'), `${query} could not find crossfade controls`)
+    expect(result, 'missing search result: ' + query)
     result.click()
     await settle()
-    expect(
-      page.querySelector('.search-target-flash')?.textContent.includes('无缝播放'),
-      `${query} did not locate playback controls`
-    )
+    const target = page.querySelector('.search-target-flash')
+    expect(target?.getClientRects().length, 'search target stayed hidden: ' + query)
+    return target
   }
-  await window.resizeTestWindow(1440)
-  await settle()
-  nav('播放与音效').click()
-  await settle()
-
-  // Native scroll events must use the position cache, with no card measurements
-  // on each frame once the layout is stable.
-  let reads = 0
-  for (const section of sections) {
-    const read = section.getBoundingClientRect.bind(section)
-    section.getBoundingClientRect = () => {
-      reads++
-      return read()
+  for (const [query, id] of [
+    ['检查更新', 'app-update'],
+    ['版本信息', 'app-version'],
+    ['下载 / 安装更新', 'app-update-install']
+  ]) {
+    const target = await search(query)
+    expect(target.dataset.settingId === id, 'search alias fell back to category: ' + query)
+    if (target.tagName === 'BUTTON') {
+      expect(document.activeElement === target, 'native target not focused: ' + query)
+      expect(
+        target.tabIndex === 0 && !target.hasAttribute('tabindex'),
+        'search removed the native button from Tab order: ' + query
+      )
     }
   }
-  for (let frame = 0; frame < 8; frame++) {
-    page.dispatchEvent(new Event('scroll'))
-    await new Promise((resolve) => requestAnimationFrame(resolve))
+  for (const query of ['交叉淡化', 'crossfade']) {
+    const target = await search(query)
+    expect(target.dataset.settingId === 'gapless', 'legacy playback alias lost: ' + query)
   }
-  expect(reads === 0, `scroll frames measured ${reads} section boxes`)
-
-  document.documentElement.dataset.teMotion = 'full'
-  nav('关于').click()
-  nav('通用').click()
-  await new Promise((resolve) => setTimeout(resolve, 1000))
+  for (const width of [760, 1000, 1440]) {
+    await window.resizeTestWindow(width)
+    await settle()
+    await select('system')
+    const target = await search('硬件加速')
+    const rect = target.getBoundingClientRect(),
+      pageRect = page.getBoundingClientRect()
+    const navigation = page.querySelector('.settings-preview-nav').getBoundingClientRect()
+    const usableTop = pageRect.top + (width <= 900 ? navigation.height : 0)
+    expect(
+      rect.top >= usableTop - 2 && rect.bottom <= pageRect.bottom,
+      'search result outside usable viewport at ' + width
+    )
+    expect(page.scrollWidth <= page.clientWidth + 1, 'horizontal overflow at ' + width)
+    await select('general')
+    expect(general.querySelector('input').value === '未保存的输入', 'resize lost draft')
+  }
+  // End must reveal a focused item inside the sidebar's own scroll container.
+  await window.resizeTestWindow(1000, 480)
+  await settle()
+  await select('general')
+  nav('general').focus({ preventScroll: true })
+  nav('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+  await settle()
+  const strip = page.querySelector('.settings-nav-categories')
+  const itemRect = nav('system').getBoundingClientRect(),
+    stripRect = strip.getBoundingClientRect()
+  expect(strip.scrollHeight > strip.clientHeight, 'short viewport did not exercise sidebar scroll')
   expect(
-    !page.classList.contains('settings-resolving-navigation'),
-    'interrupted smooth navigation kept all cards rendered'
+    document.activeElement === nav('system') && visibleSections()[0].id === 'system',
+    'End did not focus and select the last category'
   )
-  nav('关于').click()
+  expect(
+    itemRect.top >= stripRect.top - 1 && itemRect.bottom <= stripRect.bottom + 1,
+    'focused category remained clipped in the sidebar'
+  )
+  nav('system').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+  await settle()
+  expect(
+    document.activeElement === nav('general') && strip.scrollTop === 0,
+    'Home did not reveal the first category'
+  )
+  expect(
+    [...strip.querySelectorAll('button')].filter((button) => button.tabIndex === 0).length === 1,
+    'category navigation does not have one Tab stop'
+  )
+
+  await select('system')
   persistence.stop()
   mounted.value = false
   await settle()
-  expect(
-    !page.classList.contains('settings-resolving-navigation'),
-    'unmount retained navigation rendering mode'
-  )
-  expect(
-    sections.every((section) => !section.classList.contains('settings-section-measured')),
-    'unmount retained rendering observers'
-  )
   appNavigation = useAppNavigation()
   persistence = createNavigationSessionPersistence(appNavigation)
-  expect(
-    persistence.restored && appNavigation.showSettingsPage.value,
-    'settings page was not restored'
-  )
-  expect(appNavigation.settingsInitialSection.value === 'system', 'last section was not restored')
+  expect(persistence.restored && appNavigation.showSettingsPage.value, 'settings not restored')
+  expect(appNavigation.settingsInitialSection.value === 'system', 'saved category not restored')
   mounted.value = true
   await settle()
-  const reopenedPage = document.querySelector('.settings-preview-page')
   expect(
-    reopenedPage.querySelector('[aria-current="location"]').textContent.includes('关于'),
-    'reopened settings did not navigate to the saved section'
+    document.querySelector('[aria-current="page"]').textContent.includes('系统与关于'),
+    'reopened settings selected wrong category'
   )
   persistence.stop()
   app.unmount()
   removeDecorations()
-  return `SETTINGS_SCROLL_OK: ${skippedRows}/405 rows skipped; stable height; resize/search/disclosure/input/navigation/cleanup/page restore verified`
+  return 'SETTINGS_SCROLL_OK: seven panels; startup/drafts/geometry/search/Tab/sidebar keyboard/restore verified'
 }

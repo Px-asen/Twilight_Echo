@@ -826,14 +826,6 @@ html:is(
   padding: 24px;
 }
 
-/* Keep controls mounted/searchable, but skip layout and painting of distant cards.
-   The observer seeds real heights before enabling this, preserving the scrollbar.
-   Navigation briefly lays out every card so deep links use current geometry. */
-.settings-preview-page:not(.settings-resolving-navigation) .settings-section-measured {
-  content-visibility: auto;
-  contain-intrinsic-block-size: var(--settings-section-height);
-}
-
 .section-title-row {
   display: flex;
   align-items: center;

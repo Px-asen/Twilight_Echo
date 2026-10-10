@@ -27,7 +27,7 @@ const sectionKeys: Record<string, string> = {
   About: 'about'
 }
 
-test('settings preserve transition navigation geometry and skip distant content without scroll shifts', async () => {
+test('settings category navigation preserves drafts, geometry, search focus and keyboard visibility', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-settings-scroll-'))
   try {
     const app = parse(await readFile(join(workspace, 'src/renderer/src/App.vue'), 'utf8'))
@@ -107,23 +107,23 @@ app.setPath('userData',require('node:path').join(__dirname,'profile'));
 app.commandLine.appendSwitch('force-device-scale-factor','1');
 app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,width:1024,height:768,useContentSize:true,webPreferences:{nodeIntegration:true,contextIsolation:false,backgroundThrottling:false,offscreen:true}});
- const resizeViewport=async width=>{
+ const resizeViewport=async (width,height=900)=>{
   // Windows limits the initial hidden window to the runner's 1024px display.
   // An explicit resize after loading can exceed the display's work area.
-  win.setContentSize(width,900);
+  win.setContentSize(width,height);
   const deadline=Date.now()+3000;
   while(Date.now()<deadline){
    const viewport=await win.webContents.executeJavaScript('[innerWidth,innerHeight]');
-   if(viewport[0]===width&&viewport[1]===900)return;
+   if(viewport[0]===width&&viewport[1]===height)return;
    await new Promise(resolve=>setTimeout(resolve,20));
   }
-  throw new Error('settings viewport did not reach '+width+'x900');
+  throw new Error('settings viewport did not reach '+width+'x'+height);
  };
- ipcMain.handle('settings:resize',(_event,width)=>resizeViewport(width));
+ ipcMain.handle('settings:resize',(_event,width,height)=>resizeViewport(width,height));
  try {
   await win.loadFile(require('node:path').join(__dirname,'index.html'));
   await resizeViewport(1440);
-  await win.webContents.executeJavaScript("window.resizeTestWindow=width=>require('electron').ipcRenderer.invoke('settings:resize',width);void 0");
+  await win.webContents.executeJavaScript("window.resizeTestWindow=(width,height)=>require('electron').ipcRenderer.invoke('settings:resize',width,height);void 0");
   console.log(await win.webContents.executeJavaScript('window.runSettingsScrollTests()'));
   app.exit(0);
  }catch(error){console.error(error.stack);app.exit(1)}
