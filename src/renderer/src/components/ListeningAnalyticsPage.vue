@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useMusicStore } from '@renderer/stores/useMusicStore'
@@ -214,7 +215,7 @@ async function clearStats(range: ListeningStatsClearRange): Promise<void> {
           class="an-button an-button-primary"
           @click="emit('select-view', 'allSongs', null)"
         >
-          <i class="ph ph-play" aria-hidden="true"></i> 去音乐库，听一首
+          <PlaybackIcon name="play" aria-hidden="true" /> 去音乐库，听一首
         </button>
         <span class="empty-note">不需要打卡，也没有目标。只管享受音乐。</span>
       </section>
@@ -267,7 +268,7 @@ async function clearStats(range: ListeningStatsClearRange): Promise<void> {
                 :aria-label="`再听一次 ${favorite.title}`"
                 @click="playDashboardTrack(favorite.resolvedTrack)"
               >
-                <i class="ph ph-play" aria-hidden="true"></i> 再听一次
+                <PlaybackIcon name="play" aria-hidden="true" /> 再听一次
                 <span>{{ formatListeningDuration(favorite.seconds) }}</span>
               </button>
               <span v-else class="favorite-unavailable">音源暂不可用 · 回响仍在</span>

@@ -144,7 +144,8 @@
   box-sizing: border-box;
   width: min(100%, 1280px);
   margin: 0 auto;
-  padding: 32px clamp(24px, 3.4vw, 48px) 120px;
+  padding: calc(var(--te-home-titlebar-clearance, var(--te-titlebar-inset, 35px)) + 32px)
+    clamp(24px, 3.4vw, 48px) 120px;
 }
 
 /* Returning home is frequent; keep content and keyboard targets immediate. */
@@ -616,57 +617,42 @@
   transform: scale(var(--te-motion-press-scale));
 }
 
+/* The same quiet capsule as the standard bar, including explicit theme colors. */
 .home .transport-button.transport-play {
-  width: 56px;
-  height: 56px;
+  width: 72px;
+  height: 44px;
   border: none;
   font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
-  color: var(--home-card);
+  color: var(--te-player-bar-play-text, var(--te-transport-play-text));
   -webkit-text-fill-color: currentColor;
-  background: var(--te-player-bar-play-surface, var(--home-ink));
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--home-ink) 26%, transparent);
+  background: var(--te-player-bar-play-surface, var(--te-transport-play-surface));
+  box-shadow: none;
 }
 
 .home .transport-button.transport-play:hover {
+  transform: none;
+  color: var(
+    --te-player-bar-play-hover-text,
+    var(--te-player-bar-play-text, var(--te-transport-play-text))
+  );
   background: var(
     --te-player-bar-play-hover-surface,
-    var(--te-player-bar-play-surface, color-mix(in srgb, var(--home-ink) 84%, var(--home-accent)))
+    var(--te-player-bar-play-surface, var(--te-transport-play-hover-surface))
   );
 }
 
-.hero-ghost-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 20px;
-  border: 1px solid color-mix(in srgb, var(--home-ink) 18%, transparent);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--home-ink);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    border-color var(--te-motion-hover),
-    background var(--te-motion-hover),
-    transform var(--te-motion-hover) var(--te-ease-soft);
+.home .transport-button.transport-play:active {
+  transform: scale(var(--te-motion-press-scale));
 }
 
-.home .hero-ghost-action.hero-primary-action {
-  border-color: transparent;
-  color: var(--home-card);
-  -webkit-text-fill-color: currentColor;
-  background: var(--home-ink);
+.home .transport-button.transport-play:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
 }
 
-.home .hero-ghost-action.hero-primary-action:hover {
-  background: color-mix(in srgb, var(--home-ink) 90%, var(--home-accent));
-}
-
-.hero-ghost-action:hover {
-  border-color: color-mix(in srgb, var(--home-ink) 34%, transparent);
-  background: var(--home-hover);
+.home .transport-button.transport-play .playback-icon {
+  width: 21px;
+  height: 21px;
 }
 
 /* Hero art: offset echo + big cover */
@@ -977,7 +963,7 @@
   align-items: stretch;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: none !important;
   -ms-overflow-style: none;
 }
 
@@ -1232,7 +1218,7 @@
   height: 36px;
   border-radius: 999px;
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: var(--te-neutral-900);
+  color: #111827;
   background: color-mix(in srgb, #ffffff 92%, transparent);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--te-neutral-900) 30%, transparent);
   opacity: 0;
@@ -1692,7 +1678,7 @@
   height: 40px;
   border-radius: 999px;
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  color: var(--te-neutral-900);
+  color: #111827;
   background: color-mix(in srgb, #ffffff 92%, transparent);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--te-neutral-900) 30%, transparent);
   opacity: 0;
@@ -2441,7 +2427,6 @@
   transition: none;
 }
 
-.hero-ghost-action:active:not(:focus-visible),
 .block-more:active:not(:focus-visible) {
   transform: scale(0.97);
 }

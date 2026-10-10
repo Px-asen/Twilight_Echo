@@ -277,7 +277,7 @@ function setPressOrigin(event: PointerEvent): void {
   position: fixed;
   display: flex;
   flex-direction: column;
-  top: 32px;
+  top: var(--te-titlebar-inset, 45px);
   left: 0;
   /* App.vue measures how much of the bottom edge the playbar covers and publishes
      it on `.app-shell-navigation`; the menu ends above the bar instead of running
@@ -318,14 +318,14 @@ function setPressOrigin(event: PointerEvent): void {
 
 :global(html[data-te-navigation-style='expanded']) {
   --te-menu-width: clamp(
-    calc(var(--te-font-size-body, 14px) * 180 / 14),
+    calc(var(--te-font-size-body, 14px) * 224 / 14),
     18vw,
-    calc(var(--te-font-size-body, 14px) * 216 / 14)
+    calc(var(--te-font-size-body, 14px) * 260 / 14)
   ) !important;
 }
 
 :global(html[data-te-navigation-style='compact']) {
-  --te-menu-width: calc(var(--te-font-size-body, 14px) * 164 / 14) !important;
+  --te-menu-width: calc(var(--te-font-size-body, 14px) * 192 / 14) !important;
 }
 
 :global(html[data-te-navigation-style='rail']) {
@@ -370,7 +370,7 @@ function setPressOrigin(event: PointerEvent): void {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 16px 12px max(16px, var(--te-side-menu-tools-clearance, 0px)) 4px;
+  padding: 16px 12px max(16px, var(--te-side-menu-tools-clearance, 0px));
 }
 
 .menu-nav {
@@ -417,14 +417,14 @@ function setPressOrigin(event: PointerEvent): void {
   position: absolute;
   top: 8px;
   bottom: 12px;
-  left: 34px;
+  left: 23px;
   width: 1px;
   background: var(--te-navigation-border);
 }
 
 .menu-item.menu-child {
-  width: calc(100% - 44px);
-  margin-left: 44px;
+  width: calc(100% - 32px);
+  margin-left: 32px;
   padding-inline: 10px;
   gap: 10px;
   height: 36px;
@@ -464,13 +464,13 @@ function setPressOrigin(event: PointerEvent): void {
   flex-shrink: 0;
   align-items: center;
   height: 40px;
-  width: calc(100% - 8px);
-  padding: 0 12px 0 16px;
-  margin-left: 8px;
+  width: 100%;
+  padding: 0 12px;
+  margin-left: 0;
   border: 0;
   cursor: pointer;
   border-radius: var(--te-radius-global);
-  gap: 14px;
+  gap: 10px;
   white-space: nowrap;
   color: var(--te-chrome-text, var(--te-navigation-text));
   background: transparent;
@@ -502,7 +502,7 @@ function setPressOrigin(event: PointerEvent): void {
 .menu-item.active::before {
   content: '';
   position: absolute;
-  left: -8px;
+  left: -6px;
   top: 10px;
   bottom: 10px;
   width: 2px;

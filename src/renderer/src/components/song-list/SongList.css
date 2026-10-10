@@ -182,7 +182,7 @@
     color 0.18s;
 }
 
-.btn-play-all i {
+.btn-play-all :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 1);
 }
 
@@ -1582,14 +1582,14 @@
 }
 
 .menu-item.danger,
-.menu-item.danger i {
+.menu-item.danger :is(i, .playback-icon) {
   color: #b42318;
 }
 
 .menu-item.danger:hover {
   background: rgba(180, 35, 24, 0.1);
 }
-.menu-item i {
+.menu-item :is(i, .playback-icon) {
   margin-right: 10px;
   font-size: calc(var(--te-font-size-body, 14px) * 1);
   color: #666;

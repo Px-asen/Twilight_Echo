@@ -7,6 +7,7 @@ import { compileStyle } from '@vue/compiler-sfc'
 import { DEFAULT_PLAYER_BAR_LAYOUT } from '../../../../shared/playerBarLayout.ts'
 
 const playerBar = readFileSync(new URL('../PlayerBar.vue', import.meta.url), 'utf8')
+const seekProgress = readFileSync(new URL('./PlayerSeekProgress.vue', import.meta.url), 'utf8')
 const playerBarCss = readFileSync(new URL('./PlayerBar.css', import.meta.url), 'utf8')
 /**
  * Same source with comments removed. An assertion that a rule does *not* set
@@ -170,12 +171,9 @@ test('the mini shape drops cover and the standard inline progress row', () => {
   assert.match(playerBar, /v-else-if="control === 'trackInfo'" class="player-track-info"/)
   // The inline progress row belongs to the standard shape alone: mini has its
   // long middle rail and compact its top-edge line.
-  assert.match(
-    playerBar,
-    /v-if="region\.name === 'center' && isStandard"[\s\S]{0,200}class="progress-area"/
-  )
+  assert.match(playerBar, /<PlayerSeekProgress\s+v-if="region\.name === 'center' && isStandard"/)
   // Standard time labels live inside .progress-area, so gating that block removes them too.
-  const progressBlock = playerBar.slice(playerBar.indexOf('class="progress-area"'))
+  const progressBlock = seekProgress.slice(seekProgress.indexOf('class="progress-area"'))
   assert.match(progressBlock.slice(0, 600), /class="time-label"/)
   // A third metadata line has no room on a 40px strip, whoever places trackInfo.
   assert.match(

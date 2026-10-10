@@ -193,7 +193,7 @@ html[data-te-preset-layout='studio-split'] body .home .home-sky {
 html[data-te-preset-layout='studio-split'] body .home .home-inner {
   max-width: none;
   gap: 12px;
-  padding: calc(32px + 14px) 14px 130px;
+  padding: calc(var(--te-home-titlebar-clearance, var(--te-titlebar-inset, 35px)) + 14px) 14px 130px;
   counter-reset: ss-sec;
 }
 

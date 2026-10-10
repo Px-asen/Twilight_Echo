@@ -759,6 +759,20 @@ function applyProfileModeVariables(
   tokens: Record<string, string>,
   variables: Record<string, string>
 ): void {
+  // Runtime tokens are inline !important, so navigation modes must resolve
+  // their width here as well as in the first-frame stylesheet fallback.
+  if (modes.navigation?.style === 'rail') {
+    variables['--te-menu-width'] = '72px'
+  } else if (modes.navigation?.style === 'compact') {
+    variables['--te-menu-width'] = 'calc(var(--te-font-size-body, 14px) * 192 / 14)'
+  } else if (
+    tokens['layout.menuWidth'] ===
+      TWILIGHT_DEFAULT_THEME.variants[tone].tokens['layout.menuWidth'] ||
+    tokens['layout.menuWidth'] === 'clamp(132px, 18vw, 216px)'
+  ) {
+    variables['--te-menu-width'] =
+      'clamp(calc(var(--te-font-size-body, 14px) * 224 / 14), 18vw, calc(var(--te-font-size-body, 14px) * 260 / 14))'
+  }
   const background =
     tokens['surface.app'] ?? TWILIGHT_DEFAULT_THEME.variants[tone].tokens['surface.app']
   if (modes.appearance?.accentSource === 'cover' && adaptiveAccentColor.value) {

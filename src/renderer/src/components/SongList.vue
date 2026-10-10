@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
@@ -2169,7 +2170,7 @@ function finishViewSwitchAndRestoreScroll(): void {
               :disabled="displayTracks.length === 0"
               @click="playAllTracks"
             >
-              <i class="ph ph-play"></i>
+              <PlaybackIcon name="play" />
               <span>播放全部</span>
             </button>
             <button
@@ -2497,7 +2498,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                   data-te-interactive
                   @click="handlePlayNext"
                 >
-                  <i class="pi pi-step-forward"></i>
+                  <PlaybackIcon name="next" />
                   <span>下一首播放</span>
                 </div>
                 <div

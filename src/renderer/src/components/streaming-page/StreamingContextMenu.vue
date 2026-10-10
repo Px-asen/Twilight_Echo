@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import type { MediaProviderPlaylistSummary } from '../../providers/mediaProvider'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import type { ProviderDownloadQuality } from '../../../../shared/providerDownloads.ts'
@@ -60,7 +61,7 @@ const emit = defineEmits<{
         @keydown.enter.prevent="emit('play')"
         @keydown.space.prevent="emit('play')"
       >
-        <i class="pi pi-play"></i>
+        <PlaybackIcon name="play" />
         <span>播放</span>
       </div>
       <div
@@ -72,7 +73,7 @@ const emit = defineEmits<{
         @keydown.enter.prevent="emit('playNext')"
         @keydown.space.prevent="emit('playNext')"
       >
-        <i class="pi pi-step-forward"></i><span>下一首播放</span>
+        <PlaybackIcon name="next" /><span>下一首播放</span>
       </div>
       <div
         class="menu-item"
@@ -304,7 +305,7 @@ const emit = defineEmits<{
 }
 
 .streaming-context-menu .menu-item.danger,
-.streaming-context-menu .menu-item.danger i {
+.streaming-context-menu .menu-item.danger :is(i, .playback-icon) {
   color: #b42318;
 }
 
@@ -312,7 +313,7 @@ const emit = defineEmits<{
   background: rgba(180, 35, 24, 0.1);
 }
 
-.streaming-context-menu .menu-item i {
+.streaming-context-menu .menu-item :is(i, .playback-icon) {
   margin-right: 10px;
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   color: var(--te-neutral-500, #64748b);

@@ -342,7 +342,7 @@
   font-weight: 600 !important;
 }
 
-.nh-play i {
+.nh-play :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
 

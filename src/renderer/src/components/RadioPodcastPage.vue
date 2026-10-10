@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRadioStore, radioStationToTrack } from '../stores/useRadioStore'
 import { usePodcastStore, podcastEpisodeToTrack } from '../stores/usePodcastStore'
@@ -446,7 +447,7 @@ function formatDuration(seconds: number): string {
             </div>
             <div class="station-actions">
               <button type="button" class="primary" @click="playStation(station.id)">
-                <i class="pi pi-play"></i>
+                <PlaybackIcon name="play" />
                 播放
               </button>
               <button
@@ -571,7 +572,7 @@ function formatDuration(seconds: number): string {
                   class="primary"
                   @click="playEpisode(selectedPodcast, episode.guid)"
                 >
-                  <i class="pi pi-play"></i>
+                  <PlaybackIcon name="play" />
                   播放
                 </button>
               </div>

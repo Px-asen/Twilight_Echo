@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProviderStore } from '@renderer/stores/useProviderStore'
 import { usePlayerStore } from '@renderer/stores/usePlayerStore'
@@ -176,7 +177,7 @@ function play(track: Track): void {
             ><small>{{ track.artist }} · {{ track.album }}</small>
           </div>
           <button type="button" :aria-label="`播放${track.title}`" @click="play(track)">
-            <i class="pi pi-play" aria-hidden="true"></i>
+            <PlaybackIcon name="play" aria-hidden="true" />
           </button>
         </div>
         <nav v-if="history.tracks.value.length > 50" aria-label="平台历史分页">

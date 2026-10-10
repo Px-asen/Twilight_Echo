@@ -338,10 +338,9 @@ void editorPaneRef.value
           <div class="live-preview-canvas" :style="previewCanvasStyle" inert aria-hidden="true">
             <TitleBar
               preview
+              :immersive="previewSurface === 'player'"
               :menu-open="previewNavigationOpen"
-              :glass="previewSurface === 'player'"
               :streaming="false"
-              :hide-start="false"
               title-surface="default"
             />
             <SideMenu

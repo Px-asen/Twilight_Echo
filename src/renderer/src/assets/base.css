@@ -1,4 +1,13 @@
 :root {
+  --te-titlebar-height: 45px;
+  --te-titlebar-inset: 45px;
+  --te-transport-play-text: var(--te-shell-control-text);
+  --te-transport-play-surface: color-mix(in srgb, var(--te-transport-play-text) 8%, transparent);
+  --te-transport-play-hover-surface: color-mix(
+    in srgb,
+    var(--te-transport-play-text) 13%,
+    transparent
+  );
   --te-on-accent: #ffffff;
   --te-appearance-mask: #000000;
   --te-appearance-preview-cover: linear-gradient(135deg, #39526a, #906376);
@@ -49,7 +58,7 @@
   --te-motion-press-scale: 0.97;
   --te-motion-hover-translate: -1px;
   --te-ui-scale: 0.94;
-  --te-menu-width: clamp(132px, 18vw, 216px);
+  --te-menu-width: clamp(224px, 18vw, 260px);
   --te-radius-global: 10px;
   --te-surface-opacity: 100%;
   /* Latin: Inter. CJK: packaged MiSans unicode-range subsets. */
@@ -273,8 +282,8 @@
   --te-warning-soft-fg: #d97706;
   --te-danger-soft-bg: #fef2f2;
   --te-danger-soft-fg: #b91c1c;
-  --te-scrollbar-thumb: rgba(71, 85, 105, 0.34);
-  --te-scrollbar-thumb-hover: rgba(51, 65, 85, 0.56);
+  --te-scrollbar-thumb: rgba(71, 85, 105, 0.28);
+  --te-scrollbar-thumb-hover: rgba(51, 65, 85, 0.48);
   --te-back-button-bg: rgba(255, 255, 255, 0.9);
   --te-back-button-bg-hover: #ffffff;
   --te-back-button-border: rgba(15, 23, 42, 0.12);
@@ -294,8 +303,15 @@
 }
 
 :where(*)::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  /* Keep a fixed pointer target; only the painted thumb changes width. */
+  width: 10px !important;
+  height: 10px !important;
+}
+
+:where(*)::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 :where(*)::-webkit-scrollbar-track,
@@ -305,7 +321,7 @@
 
 :where(*)::-webkit-scrollbar-thumb {
   border: 3px solid transparent !important;
-  border-radius: 999px;
+  border-radius: 999px !important;
   background: transparent !important;
   background-clip: content-box !important;
   transition:
@@ -321,18 +337,33 @@
   .te-auto-scrollbar.is-scrollbar-near,
   .te-auto-scrollbar.is-scrollbar-active
 )::-webkit-scrollbar-thumb {
-  border-width: 2px !important;
+  border-width: 3px !important;
   background: var(--te-scrollbar-thumb) !important;
   background-clip: content-box !important;
+}
+
+:where(.te-auto-scrollbar.is-scrollbar-near)::-webkit-scrollbar-thumb {
+  border-width: 2px !important;
 }
 
 :where(
     .te-auto-scrollbar.is-scrollbar-near,
     .te-auto-scrollbar.is-scrollbar-active
   )::-webkit-scrollbar-thumb:hover {
-  border-width: 1px !important;
+  border-width: 2px !important;
   background: var(--te-scrollbar-thumb-hover) !important;
   background-clip: content-box !important;
+}
+
+/* Chromium ignores custom thumb geometry when the standard properties are
+   non-auto. Use the rounded painter here, retaining the standard fallback above.
+   Explicit `none !important` surfaces (lyrics, onboarding, compact navigation)
+   still opt out without changing their layout or scrolling behavior. */
+@supports selector(::-webkit-scrollbar) {
+  :where(*) {
+    scrollbar-color: auto !important;
+    scrollbar-width: auto !important;
+  }
 }
 
 /* Back controls use quiet neutral surfaces and a restrained blue navigation cue. */
@@ -600,8 +631,8 @@ html[data-te-motion='off'] *::after {
   --te-hover-bg: rgba(255, 255, 255, 0.065);
   --te-active-bg: rgba(245, 158, 11, 0.16);
   --te-shell-control-text: #f7f7f2;
-  --te-scrollbar-thumb: rgba(212, 212, 216, 0.34);
-  --te-scrollbar-thumb-hover: rgba(244, 244, 245, 0.58);
+  --te-scrollbar-thumb: rgba(212, 212, 216, 0.28);
+  --te-scrollbar-thumb-hover: rgba(244, 244, 245, 0.5);
   --te-back-button-bg: rgba(24, 24, 27, 0.88);
   --te-back-button-bg-hover: rgba(39, 39, 42, 0.96);
   --te-back-button-border: rgba(255, 255, 255, 0.14);
@@ -1254,7 +1285,7 @@ html[data-theme='pureWhite'] .more-drawer:not(.drawer-glass) {
   -webkit-backdrop-filter: blur(12px) saturate(120%);
 }
 
-html[data-theme='pureWhite'] .ctrl-btn:hover,
+html[data-theme='pureWhite'] .ctrl-btn:not(.btn-play):hover,
 html[data-theme='pureWhite'] .icon-btn:hover,
 html[data-theme='pureWhite'] .icon-btn.active,
 html[data-theme='pureWhite'] .more-action:hover,
@@ -1820,13 +1851,13 @@ html[data-theme='dark'] .audio-device-mini-select {
   color: rgba(203, 213, 225, 0.88);
 }
 
-html[data-theme='dark'] .ctrl-btn,
+html[data-theme='dark'] .ctrl-btn:not(.btn-play),
 html[data-theme='dark'] .icon-btn,
 html[data-theme='dark'] .mode-btn-right {
   color: rgba(203, 213, 225, 0.82);
 }
 
-html[data-theme='dark'] .ctrl-btn:hover,
+html[data-theme='dark'] .ctrl-btn:not(.btn-play):hover,
 html[data-theme='dark'] .icon-btn:hover,
 html[data-theme='dark'] .icon-btn.active,
 html[data-theme='dark'] .mode-btn-right:hover {
@@ -1834,7 +1865,7 @@ html[data-theme='dark'] .mode-btn-right:hover {
   color: rgba(248, 250, 252, 0.94);
 }
 
-html[data-theme='dark'] .player-bar:not(.player-bar-glass) .ctrl-btn img,
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .ctrl-btn:not(.btn-play) img,
 html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
   filter: invert(1);
   opacity: 0.68;
@@ -1842,7 +1873,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
 
 /* Pressed and toggled-on playbar controls must stay visible on the dark bar:
    the old 7.5% white wash made active/pressed buttons melt into the surface. */
-html[data-theme='dark'] .ctrl-btn:active,
+html[data-theme='dark'] .ctrl-btn:not(.btn-play):active,
 html[data-theme='dark'] .icon-btn:active,
 html[data-theme='dark'] .mode-btn-right:active {
   background: rgba(255, 255, 255, 0.18);
@@ -2934,8 +2965,7 @@ html[data-window-transparent='on'] body.te-settings-surface {
 html[data-window-transparent='on'] .title-bar,
 html[data-window-transparent='on'] .title-bar.title-bar-streaming,
 html[data-window-transparent='on'] .title-bar.title-bar-menu-open,
-html[data-window-transparent='on'] .title-bar.title-bar-glass,
-html[data-window-transparent='on'] .title-bar-background {
+html[data-window-transparent='on'] .title-bar.title-bar-glass {
   background-color: transparent !important;
   background-image: none !important;
   backdrop-filter: none !important;

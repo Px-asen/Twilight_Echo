@@ -309,10 +309,10 @@ test('phase three icon, navigation, and library modes use static host-owned pres
   assert.match(sideMenu, /--te-menu-width: 72px !important/)
   assert.match(obsidianGlassLayout, /data-te-navigation-style='rail'/)
   assert.match(obsidianGlassLayout, /width: 44px/)
-  assert.match(obsidianGlassLayout, /--te-titlebar-height: 44px/)
+  assert.doesNotMatch(obsidianGlassLayout, /--te-titlebar-height:/)
   assert.match(obsidianGlassLayout, /streaming-sidebar-inner/)
   assert.match(obsidianGlassLayout, /streaming-menu-label[\s\S]*display: none/)
-  assert.match(obsidianGlassLayout, /\.title-bar-start\s*\{\s*transform: translateY\(-4px\)/)
+  assert.match(obsidianGlassLayout, /\.title-bar-start\s*\{\s*transform: none/)
   assert.match(paperLightLayout, /\.side-menu\s*\{[\s\S]*border-radius: 0 26px 26px 0/)
   assert.match(paperLightLayout, /\.side-menu \.menu-item\s*\{[\s\S]*border-radius: 13px/)
   assert.match(

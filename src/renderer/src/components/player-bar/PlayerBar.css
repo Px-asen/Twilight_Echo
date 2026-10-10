@@ -36,12 +36,6 @@
   z-index: 999;
 }
 
-.player-bar-shell.menu-open .player-bar {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-}
-
 .player-panel-dismiss {
   position: fixed;
   inset: 0;
@@ -841,6 +835,29 @@
     box-shadow 0.3s;
 }
 
+/* Keep transport and seeking together in the middle column, with concentric
+   artwork corners and clear padding inside the rounded panel. */
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) {
+  --te-player-progress-height: 5px;
+  --te-standard-bar-height: calc(
+    max(var(--te-player-play-size, 44px), var(--te-player-control-size, 32px)) +
+      max(24px, calc(var(--te-font-size-body, 14px) * 11 / 14 * 1.65 + 6px)) + 24px
+  );
+  --te-standard-cover-size: calc(var(--te-standard-bar-height) - 24px);
+  --te-standard-cover-radius: 10px;
+  height: var(--te-standard-bar-height);
+  padding-inline: 11px;
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) > .player-center {
+  padding-top: 8px;
+  transform: none;
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .player-controls {
+  transform: none;
+}
+
 .player-bar > .player-left {
   grid-area: 1 / 1;
 }
@@ -907,7 +924,7 @@
   filter: brightness(0) invert(1);
   opacity: 0.55;
 }
-.player-bar-glass .time-label {
+.player-bar-glass :deep(.time-label) {
   color: rgba(255, 255, 255, 0.5);
 }
 .player-bar-glass .player-cover-placeholder {
@@ -937,15 +954,15 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
-.player-bar-glass .progress-track {
+.player-bar-glass :deep(.progress-track) {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
 }
 
-.player-bar-glass .progress-fill {
+.player-bar-glass :deep(.progress-fill) {
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7));
 }
 
-.player-bar-glass .progress-fill.live {
+.player-bar-glass :deep(.progress-fill).live {
   background: var(
     --te-player-bar-progress-fill,
     linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.85))
@@ -961,20 +978,20 @@
   max-width: 100%;
 }
 .player-cover-slot {
-  width: 48px;
-  height: 48px;
+  width: var(--te-standard-cover-size, 48px);
+  height: var(--te-standard-cover-size, 48px);
   flex-shrink: 0;
   cursor: pointer;
-  border-radius: 12px;
+  border-radius: var(--te-standard-cover-radius, 12px);
   overflow: hidden;
   background: rgba(15, 23, 42, 0.04);
 }
 .player-cover-slot img.player-cover,
 .player-cover-slot :deep(img.player-cover),
 .player-cover {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: var(--te-standard-cover-size, 48px);
+  height: var(--te-standard-cover-size, 48px);
+  border-radius: var(--te-standard-cover-radius, 12px);
   object-fit: cover;
   flex-shrink: 0;
   cursor: pointer;
@@ -993,9 +1010,9 @@
   filter: saturate(1.08);
 }
 .player-cover-placeholder {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: var(--te-standard-cover-size, 48px);
+  height: var(--te-standard-cover-size, 48px);
+  border-radius: var(--te-standard-cover-radius, 12px);
   background:
     radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
     linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(13, 148, 136, 0.12));
@@ -1340,43 +1357,46 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 /* ===== Progress ===== */
-.progress-area {
+:deep(.progress-area) {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 24px;
+  min-width: 0;
 }
-.time-label {
+:deep(.time-label) {
   font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   color: #999;
   min-width: 36px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.progress-slider-wrap {
+:deep(.progress-slider-wrap) {
   position: relative;
   flex: 1;
-  display: flex;
-  align-items: center;
+  height: 22px;
   min-width: 0;
-  height: 24px;
+  z-index: 3;
 }
 /* Real DOM track/fill — Chromium does not reliably repaint
    ::-webkit-slider-runnable-track when only a CSS custom property changes. */
-.progress-track {
+:deep(.progress-track) {
   position: absolute;
   left: 0;
   right: 0;
   top: 50%;
-  height: 6px;
-  transform: translateY(-50%);
+  height: 5px;
+  transform: translateY(-50%) scaleY(0.6);
+  transform-origin: center;
+  transition: transform 120ms ease-out;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
 }
-.progress-fill {
+:deep(.progress-fill) {
   height: 100%;
   width: 100%;
   border-radius: 999px;
@@ -1386,36 +1406,78 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   will-change: transform;
   transition: none;
 }
-.progress-fill.live {
+:deep(.progress-fill).live {
   background: linear-gradient(90deg, #38bdf8, #0ea5e9 50%, #6366f1);
 }
-.ab-loop-range {
+:deep(.ab-loop-range) {
   position: absolute;
   left: 0;
   top: 50%;
-  height: 6px;
-  transform: translateY(-50%);
+  height: 5px;
+  transform: translateY(-50%) scaleY(0.6);
+  transform-origin: center;
+  transition: transform 120ms ease-out;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-color, #f59e0b) 55%, transparent);
   pointer-events: none;
   z-index: 1;
 }
-.progress-slider {
-  flex: 1;
+:deep(.progress-slider) {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: 24px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
-  position: relative;
+  touch-action: none;
   z-index: 2;
 }
-.progress-slider.live {
+
+:deep(.progress-slider-wrap:not(.is-disabled):hover .progress-track),
+:deep(.progress-area.is-keyboard-focus .progress-track),
+:deep(.progress-area.is-scrubbing .progress-track),
+:deep(.progress-slider-wrap:not(.is-disabled):hover .ab-loop-range),
+:deep(.progress-area.is-scrubbing .ab-loop-range) {
+  transform: translateY(-50%) scaleY(1);
+}
+
+:deep(.progress-slider:focus) {
+  outline: none;
+}
+
+:deep(.progress-area.is-keyboard-focus .progress-track) {
+  outline: 2px solid var(--accent-color, #2563eb);
+  outline-offset: 3px;
+}
+
+:deep(.progress-slider:disabled) {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :deep(.progress-track),
+  :deep(.ab-loop-range) {
+    transition: none;
+  }
+}
+
+html[data-te-motion='reduced'] .player-bar :deep(.progress-track),
+html[data-te-motion='off'] .player-bar :deep(.progress-track),
+html[data-te-motion='reduced'] .player-bar :deep(.ab-loop-range),
+html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
+  transition: none;
+}
+
+:deep(.progress-slider).live {
   cursor: default;
   opacity: 0.85;
 }
-.progress-slider.live:disabled {
+:deep(.progress-slider).live:disabled {
   cursor: default;
 }
 
@@ -1482,33 +1544,33 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   color: #fff;
 }
 
-/* Transparent native track — fill is drawn by .progress-fill above. */
-.progress-slider::-webkit-slider-runnable-track {
+/* Transparent native track — fill is drawn by :deep(.progress-fill) above. */
+:deep(.progress-slider)::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 999px;
   background: transparent;
 }
 
-.progress-slider::-webkit-slider-thumb {
+:deep(.progress-slider)::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
   width: 0;
   height: 0;
 }
 
-.progress-slider::-moz-range-track {
+:deep(.progress-slider)::-moz-range-track {
   height: 6px;
   border-radius: 999px;
   background: transparent;
 }
 
-.progress-slider::-moz-range-progress {
+:deep(.progress-slider)::-moz-range-progress {
   height: 6px;
   border-radius: 999px;
   background: transparent;
 }
 
-.progress-slider::-moz-range-thumb {
+:deep(.progress-slider)::-moz-range-thumb {
   width: 0;
   height: 0;
   border: 0;
@@ -1664,7 +1726,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     gap: 2px;
   }
 
-  .progress-area {
+  :deep(.progress-area) {
     gap: 6px;
   }
 }
@@ -1683,7 +1745,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     margin-top: 0;
   }
 
-  .time-label {
+  :deep(.time-label) {
     min-width: 32px;
   }
 }
@@ -1842,23 +1904,55 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   height: var(--te-player-play-size, 44px);
 }
 
-.player-bar .progress-track {
+/* Keep the Windows transport easy to hit without a prominent colored disc. */
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play {
+  width: calc(var(--te-player-play-size, 44px) * 18 / 11);
+  border: 0;
+  border-radius: 999px;
+  background: var(--te-player-bar-play-surface, var(--te-transport-play-surface));
+  color: var(--te-player-bar-play-text, var(--te-transport-play-text));
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact).player-bar-glass {
+  --te-transport-play-text: #fff;
+  --te-transport-play-surface: rgba(255, 255, 255, 0.08);
+  --te-transport-play-hover-surface: rgba(255, 255, 255, 0.13);
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:hover,
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:active {
+  background: var(
+    --te-player-bar-play-hover-surface,
+    var(--te-player-bar-play-surface, var(--te-transport-play-hover-surface))
+  );
+  color: var(
+    --te-player-bar-play-hover-text,
+    var(--te-player-bar-play-text, var(--te-transport-play-text))
+  );
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
+}
+
+.player-bar :deep(.progress-track) {
   height: var(--te-player-progress-height, 6px);
   border-radius: var(--te-player-progress-radius, 999px);
   background: var(--te-player-bar-progress-track, var(--te-player-progress-track));
 }
 
-.player-bar .progress-fill {
+.player-bar :deep(.progress-fill) {
   border-radius: var(--te-player-progress-radius, 999px);
   background: var(--te-player-bar-progress-fill, var(--te-player-progress-fill));
 }
 
-.player-bar .progress-slider::-webkit-slider-runnable-track {
+.player-bar :deep(.progress-slider)::-webkit-slider-runnable-track {
   height: var(--te-player-progress-height, 6px);
   border-radius: var(--te-player-progress-radius, 999px);
 }
 
-.player-bar .time-label {
+.player-bar :deep(.time-label) {
   padding: 3px 6px;
   border-radius: var(--te-player-time-radius, 8px);
   background: color-mix(
@@ -2338,7 +2432,7 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   pointer-events: auto;
 }
 
-/* Real DOM track/fill for the same reason as .progress-track: Chromium does not
+/* Real DOM track/fill for the same reason as :deep(.progress-track): Chromium does not
    reliably repaint ::-webkit-slider-runnable-track on a custom-property change. */
 .mini-progress-track {
   position: absolute;
@@ -2517,6 +2611,34 @@ html[data-theme='dark'] .player-bar-mini .mini-progress-track {
 .player-bar-glass .compact-progress-fill,
 .player-bar-glass .mini-progress-fill {
   background: var(--te-player-bar-progress-fill, rgba(255, 255, 255, 0.9));
+}
+
+/* Shared transport glyphs inherit color directly; SVG images' invert filters do not apply. */
+.player-controls .playback-icon {
+  width: 18px;
+  height: 18px;
+  opacity: 0.8;
+}
+
+.player-controls .btn-play .playback-icon {
+  width: 21px;
+  height: 21px;
+  color: inherit;
+  opacity: 1;
+}
+
+.mini-play-button .playback-icon {
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+}
+
+.player-bar-compact .player-controls .ctrl-btn .playback-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.player-bar-compact .player-controls .btn-play .playback-icon {
+  width: 16px;
+  height: 16px;
 }
 
 /* Dark themes park the card colour a step or two from the page background —
@@ -2736,7 +2858,7 @@ html[data-theme='dark']
 /* ===== Compact top-edge progress rail =====
 
    The visible line is 2px; the wrapper is taller so seeking has a real hit
-   target. Real DOM track/fill for the same reason as `.progress-track` and
+   target. Real DOM track/fill for the same reason as `:deep(.progress-track)` and
    `.mini-progress-track`: Chromium does not reliably repaint
    ::-webkit-slider-runnable-track when only a custom property changes. */
 .player-bar.player-bar-compact > .compact-progress-rail {
@@ -3198,7 +3320,7 @@ html[data-te-motion='reduced']
     gap: 2px;
   }
 
-  .progress-area {
+  :deep(.progress-area) {
     gap: 6px;
   }
 }

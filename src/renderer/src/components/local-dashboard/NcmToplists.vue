@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import CoverImg from '../CoverImg.vue'
 import { useProviderStore } from '@renderer/stores/useProviderStore'
@@ -211,7 +212,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
             :aria-label="`播放${chart.name}`"
             @click="openChart(chart, true)"
           >
-            <i class="ph ph-play" aria-hidden="true"></i><span>播放榜单</span>
+            <PlaybackIcon name="play" aria-hidden="true" /><span>播放榜单</span>
           </button>
         </footer>
       </article>
@@ -264,8 +265,10 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
               :disabled="!tracks.length || detailLoading || pendingPlay"
               @click="playAll"
             >
-              <i :class="pendingPlay ? 'ph ph-hourglass' : 'ph ph-play'" aria-hidden="true"></i
-              >{{ pendingPlay ? '正在准备…' : '播放全部' }}
+              <i v-if="pendingPlay" class="ph ph-hourglass" aria-hidden="true"></i
+              ><PlaybackIcon v-else name="play" aria-hidden="true" />{{
+                pendingPlay ? '正在准备…' : '播放全部'
+              }}
             </button>
           </div>
           <div v-if="detailError || actionError" class="toplists-notice" role="status">
@@ -311,7 +314,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
                     ><small :title="track.artist">{{ track.artist }}</small></span
                   >
                   <span class="toplist-song-duration">{{ duration(track.duration) }}</span
-                  ><i :class="playing(track) ? 'ph ph-pause' : 'ph ph-play'" aria-hidden="true"></i>
+                  ><PlaybackIcon :name="playing(track) ? 'pause' : 'play'" aria-hidden="true" />
                 </button>
               </li>
             </ol>

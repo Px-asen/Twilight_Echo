@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import type { MediaProviderPlaylistSummary } from '../providers/mediaProvider'
@@ -295,7 +296,7 @@ function playPersonalizedStream(section: RecSection | null): void {
             <p class="hero-desc">来自 {{ providerLabel }} 的个性化内容，随你的收听偏好持续更新。</p>
             <div class="hero-actions">
               <button type="button" class="hero-play" @click="playDailyAll">
-                <i class="pi pi-play"></i>
+                <PlaybackIcon name="play" />
                 播放全部
               </button>
               <button type="button" class="hero-open" @click="openDaily">
@@ -432,7 +433,7 @@ function playPersonalizedStream(section: RecSection | null): void {
               <span v-else class="chart-cover-empty"><i class="pi pi-volume-up"></i></span>
               <span class="chart-cover-action" aria-hidden="true">
                 <span v-if="isPlayingTrack(track)" class="chart-eq"> <i></i><i></i><i></i> </span>
-                <i v-else class="pi pi-play"></i>
+                <PlaybackIcon name="play" v-else />
               </span>
             </span>
             <span class="chart-meta">
@@ -470,7 +471,7 @@ function playPersonalizedStream(section: RecSection | null): void {
               <span v-else class="shelf-cover-empty"><i class="pi pi-list"></i></span>
               <span class="shelf-scrim" aria-hidden="true"></span>
               <span class="shelf-count">{{ playlist.trackCount }} 首</span>
-              <span class="shelf-open" aria-hidden="true"><i class="pi pi-play"></i></span>
+              <span class="shelf-open" aria-hidden="true"><PlaybackIcon name="play" /></span>
             </span>
             <span class="shelf-name">{{ playlist.name }}</span>
           </button>
@@ -694,7 +695,7 @@ function playPersonalizedStream(section: RecSection | null): void {
     background var(--te-motion-hover);
 }
 
-.hero-play i {
+.hero-play :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 

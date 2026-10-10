@@ -182,7 +182,7 @@ test('shape chrome renders after whatever the layout placed, never instead of it
   assert.ok(loopEnd > 0, 'the control loop must close')
   for (const marker of [
     'class="resume-offer"',
-    'class="progress-area"',
+    '<PlayerSeekProgress',
     'class="mini-progress-rail"'
   ]) {
     assert.ok(

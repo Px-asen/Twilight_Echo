@@ -28,6 +28,8 @@ test('explicit player colors follow the edited tone without inheriting preset ge
         'playback.progress.fill': 'linear-gradient(90deg, #ff0000, #00ff00)',
         'playback.control.surface': '#654321',
         'playback.control.hoverSurface': '#abcdef',
+        'playback.control.text': '#ffffff',
+        'playback.control.hoverText': '#112233',
         'playback.control.playSize': '64px',
         'playback.progress.height': '14px'
       },
@@ -39,6 +41,8 @@ test('explicit player colors follow the edited tone without inheriting preset ge
   assert.match(light, /--te-player-bar-progress-fill: linear-gradient\(90deg, #ff0000, #00ff00\);/)
   assert.match(light, /--te-player-bar-play-surface: #654321;/)
   assert.match(light, /--te-player-bar-play-hover-surface: #abcdef;/)
+  assert.match(light, /--te-player-bar-play-text: #ffffff;/)
+  assert.match(light, /--te-player-bar-play-hover-text: #112233;/)
   assert.match(light, /--te-player-play-size: 44px;/)
   assert.match(light, /--te-player-progress-height: 6px;/)
   const dark = sharedPlayerBarStylesheet('dark', profile)

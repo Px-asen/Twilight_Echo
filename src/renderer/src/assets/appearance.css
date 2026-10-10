@@ -133,7 +133,6 @@
       .side-menu,
       .streaming-sidebar,
       .title-bar,
-      .title-bar-background,
       .main-content,
       .home,
       .song-list,
@@ -190,7 +189,6 @@
   html[data-te-surface-material='transparent']
     :is(
       .player-bar-warp,
-      .title-bar-background,
       .player-bar-specular,
       .player-bar-rim,
       .liquid-glass-warp,

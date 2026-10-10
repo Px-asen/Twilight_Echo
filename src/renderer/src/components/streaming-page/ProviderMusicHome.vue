@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import '../contentArrival.css'
 import { computed } from 'vue'
 import CoverImg from '@renderer/components/CoverImg.vue'
@@ -129,7 +130,7 @@ function count(value: number | undefined): string {
               type="button"
               @click="play(hero)"
             >
-              <i class="pi pi-play"></i> 播放全部
+              <PlaybackIcon name="play" /> 播放全部
             </button>
             <button
               v-else
@@ -216,7 +217,7 @@ function count(value: number | undefined): string {
                 :cover="track.cover"
                 :cover-source="track.coverSource"
                 alt=""
-                loading="lazy" /><i class="pi pi-play"></i
+                loading="lazy" /><span class="music-track-play"><PlaybackIcon name="play" /></span
             ></span>
             <span class="music-track-meta"
               ><strong>{{ track.title }}</strong
@@ -278,7 +279,7 @@ function count(value: number | undefined): string {
                 loading="lazy" /></span
             ><strong
               >{{ track.title }}<small>{{ track.artist }}</small></strong
-            ><i class="pi pi-play"></i>
+            ><PlaybackIcon name="play" />
           </button>
           <button
             v-if="section.tracks.length"
@@ -312,7 +313,7 @@ function count(value: number | undefined): string {
                 :cover-source="playlist.coverSmallSource || playlist.coverSource"
                 alt=""
                 loading="lazy"
-              /><span class="music-playlist-symbol"><i class="pi pi-play"></i></span
+              /><span class="music-playlist-symbol"><PlaybackIcon name="play" /></span
               ><span
                 v-if="playlist.playCount || playlist.trackCount"
                 class="music-playlist-count"

@@ -429,7 +429,7 @@ body.te-no-blur .onb-scene-no-leave-to {
   box-sizing: border-box;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-width: none !important;
   text-align: center;
 }
 

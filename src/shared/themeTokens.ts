@@ -1083,8 +1083,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'layout',
     'sidebar',
     'length',
-    'clamp(132px, 18vw, 216px)',
-    'clamp(132px, 18vw, 216px)'
+    'clamp(224px, 18vw, 260px)',
+    'clamp(224px, 18vw, 260px)'
   ),
   token(
     'playback.text.page',

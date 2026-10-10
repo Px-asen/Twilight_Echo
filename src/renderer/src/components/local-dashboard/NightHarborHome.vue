@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
@@ -122,8 +123,10 @@ function openActivity(): void {
               </p>
               <div class="nh-deck-actions">
                 <button v-if="hero" type="button" class="nh-play" @click="emit('play', hero)">
-                  <i :class="heroIsPlaying ? 'ph ph-pause' : 'ph ph-play'" aria-hidden="true"></i
-                  ><span>{{ heroIsPlaying ? '暂停播放' : '开始聆听' }}</span>
+                  <PlaybackIcon
+                    :name="heroIsPlaying ? 'pause' : 'play'"
+                    aria-hidden="true"
+                  /><span>{{ heroIsPlaying ? '暂停播放' : '开始聆听' }}</span>
                 </button>
                 <button v-else type="button" class="nh-play" @click="emit('open-library-settings')">
                   <i class="ph ph-folder-simple-plus" aria-hidden="true"></i><span>添加音乐</span>
@@ -262,10 +265,8 @@ function openActivity(): void {
             >
             <span class="nh-track-duration">{{ formatTime(track.duration) }}</span>
             <span class="nh-track-action" aria-hidden="true"
-              ><i
-                :class="currentTrackId === track.id && isPlaying ? 'ph ph-pause' : 'ph ph-play'"
-              ></i
-            ></span>
+              ><PlaybackIcon :name="currentTrackId === track.id && isPlaying ? 'pause' : 'play'"
+            /></span>
           </button>
         </div>
         <div v-else class="nh-empty-activity">

@@ -285,10 +285,18 @@ test('login page can open with an initial streaming provider', () => {
   assert.equal(navigation.loginPageMode.value, 'login')
 })
 
-test('login page hides the title bar start actions', () => {
-  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
-
-  assert.match(appSource, /:hide-start="showThemeStudioPage \|\| showLoginPage"/)
+test('persistent title menu returns from login, theme studio and playback to navigation', () => {
+  for (const overlay of ['login', 'themeStudio', 'playing']) {
+    const navigation = useAppNavigation()
+    if (overlay === 'login') navigation.openLoginPage()
+    else if (overlay === 'themeStudio') navigation.openThemeStudioPage('player')
+    else navigation.openPlayingPage()
+    navigation.createToggleMenuHandler()()
+    assert.equal(navigation.showLoginPage.value, false)
+    assert.equal(navigation.showThemeStudioPage.value, false)
+    assert.equal(navigation.showPlayingPage.value, false)
+    assert.equal(navigation.menuOpen.value, true)
+  }
 })
 
 test('login page can open directly in profile mode for a provider', () => {

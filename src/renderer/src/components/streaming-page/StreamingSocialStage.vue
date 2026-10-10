@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed } from 'vue'
 import type { Track } from '../../types/music'
 import CoverImg from '../CoverImg.vue'
@@ -264,7 +265,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
               :disabled="!canPlay"
               @click="emit('playAll')"
             >
-              <i class="pi pi-play"></i>
+              <PlaybackIcon name="play" />
               <span>播放全部</span>
             </button>
             <button
@@ -494,7 +495,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
                 <span class="row-index-num">{{
                   String(trackIndex(index) + 1).padStart(2, '0')
                 }}</span>
-                <i class="pi pi-play row-play-icon"></i>
+                <PlaybackIcon name="play" class="row-play-icon" />
               </button>
             </div>
 

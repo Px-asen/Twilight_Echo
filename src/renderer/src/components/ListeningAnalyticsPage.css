@@ -332,7 +332,7 @@
   padding: 0;
   font-size: 11px;
 }
-.analytics-page .favorite-play > i {
+.analytics-page .favorite-play > :is(i, .playback-icon) {
   display: grid;
   place-items: center;
   width: 26px;

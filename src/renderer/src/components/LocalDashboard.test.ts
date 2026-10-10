@@ -15,12 +15,18 @@ test('dashboard prioritizes active and last-played tracks over recommendations',
   assert.doesNotMatch(source, /return '为你推荐'/)
 })
 
-test('dashboard primary transport keeps its icon visible on the ink surface', () => {
+test('dashboard primary transport keeps its icon visible on the playbar surface', () => {
   const styles = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
 
+  const playRule = styles.match(/\.home \.transport-button\.transport-play\s*\{([^}]+)\}/)![1]
   assert.match(
-    styles,
-    /\.home \.transport-button\.transport-play\s*\{[\s\S]*?color:\s*var\(--home-card\);[\s\S]*?-webkit-text-fill-color:\s*currentColor/
+    playRule,
+    /color:\s*var\(--te-player-bar-play-text, var\(--te-transport-play-text\)\)/
+  )
+  assert.match(playRule, /-webkit-text-fill-color:\s*currentColor/)
+  assert.match(
+    playRule,
+    /background:\s*var\(--te-player-bar-play-surface, var\(--te-transport-play-surface\)\)/
   )
 })
 

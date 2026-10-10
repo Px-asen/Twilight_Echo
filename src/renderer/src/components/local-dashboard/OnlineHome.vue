@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed } from 'vue'
 import CoverImg from '../CoverImg.vue'
 import type { ProviderInfo } from '../../stores/useProviderStore'
@@ -93,7 +94,7 @@ const primaryLabel = computed(() => {
           </p>
           <div class="online-actions">
             <button v-if="hero" class="online-primary" type="button" @click="emit('play-hero')">
-              <i :class="heroPlaying ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true"></i>
+              <PlaybackIcon :name="heroPlaying ? 'pause' : 'play'" aria-hidden="true" />
               {{ heroPlaying ? '暂停播放' : '开始收听' }}
             </button>
             <button v-else class="online-primary" type="button" @click="primaryAction">
@@ -184,10 +185,10 @@ const primaryLabel = computed(() => {
               ><strong>{{ track.title }}</strong
               ><small>{{ track.artist }}</small></span
             >
-            <i
-              :class="currentTrackId === track.id && isPlaying ? 'pi pi-pause' : 'pi pi-play'"
+            <PlaybackIcon
+              :name="currentTrackId === track.id && isPlaying ? 'pause' : 'play'"
               aria-hidden="true"
-            ></i>
+            />
           </button>
         </div>
       </section>
@@ -290,10 +291,10 @@ const primaryLabel = computed(() => {
                 <span class="online-track-info"
                   ><strong>{{ track.title }}</strong
                   ><small>{{ track.artist }}</small></span
-                ><i
-                  :class="currentTrackId === track.id && isPlaying ? 'pi pi-pause' : 'pi pi-play'"
+                ><PlaybackIcon
+                  :name="currentTrackId === track.id && isPlaying ? 'pause' : 'play'"
                   aria-hidden="true"
-                ></i>
+                />
               </button>
             </div>
           </div>
@@ -327,13 +328,11 @@ const primaryLabel = computed(() => {
                       ><i class="pi pi-headphones" aria-hidden="true"></i></template></CoverImg
                   ><span class="online-playlist-play"
                     ><i
-                      :class="
-                        pendingPlaylist === String(playlist.id)
-                          ? 'pi pi-spin pi-spinner'
-                          : 'pi pi-play'
-                      "
+                      v-if="pendingPlaylist === String(playlist.id)"
+                      class="pi pi-spin pi-spinner"
                       aria-hidden="true"
-                    ></i></span
+                    ></i
+                    ><PlaybackIcon v-else name="play" aria-hidden="true" /></span
                 ></span>
                 <strong>{{ playlist.name }}</strong
                 ><small>{{

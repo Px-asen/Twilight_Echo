@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
 import { computed, shallowRef, nextTick, watch } from 'vue'
@@ -300,7 +301,7 @@ const infoTrack = shallowRef<Track | null>(null)
               :disabled="!canPlay"
               @click="emit('playAll')"
             >
-              <i class="pi pi-play"></i>
+              <PlaybackIcon name="play" />
               <span>{{
                 likedFooter?.paged && likedFooter.hasMore ? '播放已加载' : '播放全部'
               }}</span>
@@ -473,7 +474,7 @@ const infoTrack = shallowRef<Track | null>(null)
               <span class="row-index-num">{{
                 String(trackIndex(index) + 1).padStart(2, '0')
               }}</span>
-              <i class="pi pi-play row-play-icon"></i>
+              <PlaybackIcon name="play" class="row-play-icon" />
             </button>
           </div>
 

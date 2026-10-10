@@ -291,7 +291,7 @@
   transition: transform var(--te-motion-hover) ease-out;
 }
 
-.sf-icon-button i {
+.sf-icon-button :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
 }
 
@@ -302,12 +302,8 @@
   background: var(--sf-console-ink);
 }
 
-.sf-play-button i {
+.sf-play-button :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
-}
-
-.sf-play-button .ph-play {
-  margin-left: 3px;
 }
 
 .sf-add-music {
@@ -647,7 +643,7 @@
     monospace;
 }
 
-.sf-track-index > i {
+.sf-track-index > :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
   color: var(--sf-accent);
 }

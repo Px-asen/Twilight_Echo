@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import PlayerControlIcon from '@renderer/components/player-bar/PlayerControlIcon.vue'
 import { clampVolumePercent, createVolumeWheelStepper } from './player-bar/volumeWheel'
 import type { Track } from '@renderer/types/music'
@@ -21,16 +22,13 @@ import {
 import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import SmoothedProgressFill from './SmoothedProgressFill.vue'
+import PlayerSeekProgress from './player-bar/PlayerSeekProgress.vue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import { resolveReasonCode } from '../../../shared/audio/reasonCodes.ts'
 import { useLocale } from '../app/useLocale.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
-import nextTrackIcon from '../assets/icons/next-track.svg'
-import pauseIcon from '../assets/icons/pause.svg'
-import playIcon from '../assets/icons/play.svg'
-import previousTrackIcon from '../assets/icons/previous-track.svg'
 import repeatIcon from '../assets/icons/single-song-repeat.svg'
 import listLoopIcon from '../assets/icons/list-loop-repeat.svg'
 import sequentialIcon from '../assets/icons/sequential-playback.svg'
@@ -374,12 +372,6 @@ function onTrackTitleClick(event: Event): void {
   emitOpenPlayingPage(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
 }
 
-function onProgressInput(event: Event): void {
-  if (isLiveStream.value) return
-  const target = event.target as HTMLInputElement
-  seek(Number(target.value))
-}
-
 /**
  * The flat rails carry a 0..1 ratio so their width never has to match the
  * timeline. Shared by mini's long middle rail and compact's top-edge hairline.
@@ -458,16 +450,6 @@ function cyclePlaybackRate(): void {
   const next = RATE_PRESETS[(idx + 1) % RATE_PRESETS.length] ?? 1
   void setPlaybackRate(next)
 }
-
-const abLoopRangeStyle = computed(() => {
-  const total = effectiveDuration.value || 1
-  const a = Math.max(0, Math.min(abLoopA.value ?? 0, total))
-  const b = Math.max(a, Math.min(abLoopB.value ?? a, total))
-  return {
-    left: `${(a / total) * 100}%`,
-    width: `${((b - a) / total) * 100}%`
-  }
-})
 
 const activeResumeOffer = computed(() => {
   const offer = resumeOffer.value
@@ -1644,7 +1626,7 @@ onBeforeUnmount(() => {
                     :aria-label="`将 ${item.title} 设为下一首`"
                     @click="playQueueEntryNext(item.queueEntryId)"
                   >
-                    <i class="pi pi-step-forward" aria-hidden="true"></i>
+                    <PlaybackIcon name="next" aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -1842,18 +1824,18 @@ onBeforeUnmount(() => {
 
           <div v-else-if="control === 'transport'" class="player-controls">
             <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
-              <img :src="previousTrackIcon" alt="上一首" />
+              <PlaybackIcon name="previous" />
             </button>
             <button
               class="ctrl-btn btn-play"
               :class="{ 'is-playing': isPlaying }"
-              aria-label="播放/暂停"
+              :aria-label="isPlaying ? '暂停' : '播放'"
               @click="togglePlay"
             >
-              <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
+              <PlaybackIcon :name="isPlaying ? 'pause' : 'play'" />
             </button>
             <button class="ctrl-btn next-button" aria-label="下一首" @click="next">
-              <img :src="nextTrackIcon" alt="下一首" />
+              <PlaybackIcon name="next" />
             </button>
           </div>
 
@@ -1866,7 +1848,7 @@ onBeforeUnmount(() => {
             :aria-label="isPlaying ? '暂停' : '播放'"
             @click="togglePlay"
           >
-            <i :class="isPlaying ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true"></i>
+            <PlaybackIcon :name="isPlaying ? 'pause' : 'play'" aria-hidden="true" />
           </button>
 
           <span
@@ -2040,46 +2022,19 @@ onBeforeUnmount(() => {
           <button type="button" class="resume-offer__action" @click="onAcceptResume">继续</button>
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
-        <div
+        <PlayerSeekProgress
           v-if="region.name === 'center' && isStandard"
           :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`"
-          class="progress-area"
+          :position="currentTime"
+          :duration="effectiveDuration"
+          :live="isLiveStream"
+          :ab-start="abLoopA"
+          :ab-end="abLoopB"
+          :format-time="formatTime"
           :data-track-id="currentTrack.id"
           :data-entry-id="currentTrack.queueEntryId || ''"
-        >
-          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(currentTime) }}</span>
-          <div class="progress-slider-wrap">
-            <div class="progress-track" aria-hidden="true">
-              <SmoothedProgressFill
-                class="progress-fill"
-                :class="{ live: isLiveStream }"
-                :percent="progressPercent"
-              />
-            </div>
-            <div
-              v-if="abLoopA != null && abLoopB != null && effectiveDuration > 0 && !isLiveStream"
-              class="ab-loop-range"
-              :style="abLoopRangeStyle"
-              aria-hidden="true"
-            ></div>
-            <input
-              type="range"
-              :value="isLiveStream ? 0 : currentTime"
-              min="0"
-              :max="effectiveDuration || 1"
-              step="0.1"
-              class="progress-slider"
-              :class="{ live: isLiveStream }"
-              :disabled="isLiveStream"
-              :aria-valuenow="isLiveStream ? 0 : currentTime"
-              :aria-valuetext="isLiveStream ? 'LIVE' : formatTime(currentTime)"
-              @input="onProgressInput"
-            />
-          </div>
-          <span class="time-label">{{
-            isLiveStream ? 'LIVE' : formatTime(effectiveDuration)
-          }}</span>
-        </div>
+          @seek="seek"
+        />
         <div v-if="region.name === 'center' && isMini" class="mini-progress-rail">
           <div class="mini-progress-track" aria-hidden="true">
             <SmoothedProgressFill class="mini-progress-fill" :percent="progressPercent" />

@@ -62,8 +62,13 @@ const emit = defineEmits<{
 
 <style scoped>
 .local-home-layout {
+  --te-home-titlebar-clearance: var(--te-titlebar-inset, 35px);
   width: 100%;
   height: 100%;
   min-width: 0;
+}
+/* Custom shells already place content below their titlebar grid row. */
+:global(html[data-te-shell-layout='custom']) .local-home-layout {
+  --te-home-titlebar-clearance: 0px;
 }
 </style>

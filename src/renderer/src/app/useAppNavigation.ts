@@ -317,7 +317,6 @@ export function useAppNavigation() {
   }
   function createToggleMenuHandler(): () => void {
     return () => {
-      if (showThemeStudioPage.value || showLoginPage.value) return
       if (overlay.value) {
         overlay.value = null
         overlayHistory.length = 0

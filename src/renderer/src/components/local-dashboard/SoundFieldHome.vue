@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '@renderer/types/music'
 import SoundFieldArtwork from '@renderer/components/local-dashboard/SoundFieldArtwork.vue'
@@ -270,7 +271,7 @@ function seekFromInput(event: Event): void {
                   :disabled="!featuredIsCurrent"
                   @click="emit('previous')"
                 >
-                  <i class="ph ph-skip-back" aria-hidden="true"></i>
+                  <PlaybackIcon name="previous" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -279,10 +280,7 @@ function seekFromInput(event: Event): void {
                   :aria-label="featuredIsPlaying ? '暂停' : '播放'"
                   @click="emit('play', featured)"
                 >
-                  <i
-                    :class="featuredIsPlaying ? 'ph ph-pause' : 'ph ph-play'"
-                    aria-hidden="true"
-                  ></i>
+                  <PlaybackIcon :name="featuredIsPlaying ? 'pause' : 'play'" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -292,7 +290,7 @@ function seekFromInput(event: Event): void {
                   :disabled="!featuredIsCurrent"
                   @click="emit('next')"
                 >
-                  <i class="ph ph-skip-forward" aria-hidden="true"></i>
+                  <PlaybackIcon name="next" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -557,11 +555,11 @@ function seekFromInput(event: Event): void {
                   track.album || '未知专辑'
                 }}</span>
                 <span class="sf-track-duration">{{ formatTime(track.duration) }}</span>
-                <i
-                  :class="track.id === currentTrackId && isPlaying ? 'ph ph-pause' : 'ph ph-play'"
+                <PlaybackIcon
+                  :name="track.id === currentTrackId && isPlaying ? 'pause' : 'play'"
                   class="sf-track-action"
                   aria-hidden="true"
-                ></i>
+                />
               </button>
             </div>
             <div v-else class="sf-empty-tracks">

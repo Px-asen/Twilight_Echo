@@ -144,7 +144,7 @@
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14) !important;
   font-weight: 650 !important;
 }
-.music-primary i {
+.music-primary :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
 .music-hero-open {
@@ -334,7 +334,7 @@
   object-fit: cover;
   display: block;
 }
-.music-track-cover i {
+.music-track-cover :is(i, .music-track-play) {
   display: grid;
   place-items: center;
   position: absolute;
@@ -658,7 +658,7 @@
 .is-current {
   background: color-mix(in srgb, var(--provider-accent) 10%, transparent);
 }
-.is-current .music-track-cover i {
+.is-current .music-track-cover :is(i, .music-track-play) {
   opacity: 1;
 }
 
@@ -671,12 +671,12 @@
   .music-primary:not(:disabled):hover {
     background: var(--music-hero-button-hover);
   }
-  .music-track:hover .music-track-cover i,
+  .music-track:hover .music-track-cover :is(i, .music-track-play),
   .music-playlist:hover .music-playlist-symbol {
     opacity: 1;
   }
 }
-.music-track:focus-visible .music-track-cover i,
+.music-track:focus-visible .music-track-cover :is(i, .music-track-play),
 .music-playlist:focus-visible .music-playlist-symbol {
   opacity: 1;
 }

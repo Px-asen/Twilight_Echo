@@ -17,7 +17,9 @@ const PLAYER_BAR_COLOR_VARIABLES = {
   'playback.progress.track': '--te-player-bar-progress-track',
   'playback.progress.fill': '--te-player-bar-progress-fill',
   'playback.control.surface': '--te-player-bar-play-surface',
-  'playback.control.hoverSurface': '--te-player-bar-play-hover-surface'
+  'playback.control.hoverSurface': '--te-player-bar-play-hover-surface',
+  'playback.control.text': '--te-player-bar-play-text',
+  'playback.control.hoverText': '--te-player-bar-play-hover-text'
 } as const
 
 /** Shared explicit edits; each playback surface keeps its own default colors. */

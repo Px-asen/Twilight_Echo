@@ -7,7 +7,6 @@
    ==========================================================================*/
 
 html[data-te-preset-layout='obsidian-glass'] {
-  --te-titlebar-height: 44px;
   --og-hairline: color-mix(in oklab, var(--te-neutral-900) 13%, transparent);
   --og-hairline-strong: color-mix(in oklab, var(--te-neutral-900) 24%, transparent);
   --og-ink: var(--te-neutral-900);
@@ -832,7 +831,7 @@ html[data-te-preset-layout='obsidian-glass']
 }
 
 html[data-te-preset-layout='obsidian-glass'] .title-bar-start {
-  transform: translateY(-4px);
+  transform: none;
 }
 
 html[data-te-preset-layout='obsidian-glass'] .side-menu {

@@ -566,7 +566,7 @@
   color: var(--te-neutral-50);
   font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
 }
-.archive-resume-play i {
+.archive-resume-play :is(i, .playback-icon) {
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
 .archive-albums {

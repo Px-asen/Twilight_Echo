@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import { usePlaylistLibraryView } from '@renderer/components/streaming-page/usePlaylistLibraryView'
@@ -382,7 +383,7 @@ function deleteMenuPlaylist(): void {
           <h2>{{ likedSummary.name || '我喜欢' }}</h2>
           <p>{{ likedSummary.trackCount }} 首歌曲</p>
           <button class="btn-play" @click.stop="emit('playLikedSongs')">
-            <i class="pi pi-play-fill"></i>
+            <PlaybackIcon name="play" />
             播放全部
           </button>
         </div>

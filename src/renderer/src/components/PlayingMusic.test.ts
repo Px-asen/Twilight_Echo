@@ -423,7 +423,13 @@ test('player bar smooths progress between player store ticks and snaps large jum
   // The per-frame smoothed value must not be read by the player bar itself,
   // otherwise its whole template re-renders on every animation frame.
   assert.doesNotMatch(source, /useSmoothedValue/)
-  assert.equal(source.match(/<SmoothedProgressFill[^>]*:percent="progressPercent"/g)?.length, 3)
+  assert.equal(source.match(/<SmoothedProgressFill[^>]*:percent="progressPercent"/g)?.length, 2)
+  const seekProgress = readFileSync(
+    new URL('./player-bar/PlayerSeekProgress.vue', import.meta.url),
+    'utf8'
+  )
+  assert.match(source, /<PlayerSeekProgress[\s\S]*?:position="currentTime"/)
+  assert.match(seekProgress, /<SmoothedProgressFill[^>]*:percent="percent"/)
 })
 
 test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {

@@ -113,6 +113,10 @@ function createFixture(baseCss: string, controller: string): string {
   #panel { left: 54vw; top: 0; width: 20vw; height: 400px; }
   #tiny { left: 76vw; top: 0; width: 18vw; height: 200px; }
   #optout { left: 76vw; top: 220px; width: 18vw; height: 400px; }
+  /* A later page rule must not replace the shared Chromium painter. */
+  .probe { scrollbar-width: thin; scrollbar-color: purple yellow; }
+  .probe::-webkit-scrollbar { width: 6px; }
+  #tiny { scrollbar-width: none !important; }
   .filler { height: 5000px; }
   /* Mirrors PlayerBar.css: the shell keeps its box and stays click-through, the
      bar inside it takes the clicks, and auto-hide tucks only the bar away. */
@@ -191,6 +195,35 @@ window.runScrollTopChecks = async () => {
   const stopButton = window.installScrollToTopButton()
   const stopScrollbars = window.installAutoHideScrollbars()
   if (control()) fail('the control was created before anything had scrolled')
+
+  const thumbStyle = () => getComputedStyle(page, '::-webkit-scrollbar-thumb')
+  const initialWidth = page.clientWidth
+  const borderTolerance = Math.min(0.75, 1 / window.devicePixelRatio)
+  if (getComputedStyle(page).scrollbarWidth !== 'auto') fail('page rule replaced the custom painter')
+  if (getComputedStyle(page).scrollbarColor !== 'auto') fail('standard color replaced the custom painter')
+  if (getComputedStyle(page, '::-webkit-scrollbar').width !== '10px') fail('gutter width is inconsistent')
+  if (thumbStyle().backgroundColor !== 'rgba(0, 0, 0, 0)') fail('idle thumb is visible')
+  if (thumbStyle().borderRadius !== '999px') fail('thumb is not rounded')
+  if (getComputedStyle(tiny).scrollbarWidth !== 'none') fail('permanently hidden surface lost its opt-out')
+  for (const tone of ['dark', 'pureWhite']) {
+    html.dataset.theme = tone
+    page.dispatchEvent(new Event('scroll'))
+    await settle()
+    if (thumbStyle().backgroundColor === 'rgba(0, 0, 0, 0)') fail('scrolling thumb is hidden in ' + tone)
+    if (Math.abs(parseFloat(thumbStyle().borderLeftWidth) - 3) > borderTolerance) fail('scrolling thumb is not 4px wide')
+    const rect = page.getBoundingClientRect()
+    page.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, clientX: rect.right - 4, clientY: rect.top + 100
+    }))
+    await settle()
+    if (Math.abs(parseFloat(thumbStyle().borderLeftWidth) - 2) > borderTolerance) fail('edge target did not reveal the 6px thumb')
+    if (page.clientWidth !== initialWidth) fail('revealing the scrollbar shifted page content')
+    hover(page)
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    if (thumbStyle().backgroundColor !== 'rgba(0, 0, 0, 0)') fail('idle thumb did not hide in ' + tone)
+  }
+  delete html.dataset.theme
 
   page.scrollTop = revealFor(page) - 40
   await settle()

@@ -11,9 +11,9 @@ const props = withDefaults(
   defineProps<{
     menuOpen: boolean
     glass?: boolean
+    immersive?: boolean
     liquidMaterial?: boolean
     streaming?: boolean
-    hideStart?: boolean
     titleSurface?: 'default' | 'settings' | 'streaming'
     activeTool?: 'settings' | 'plugins' | null
     preview?: boolean
@@ -31,7 +31,6 @@ defineEmits<{
   login: [providerId?: string | null]
   settings: []
   plugins: []
-  commands: []
   library: []
   notifications: [event: MouseEvent]
 }>()
@@ -109,15 +108,43 @@ function close(): void {
       'drag-region': !preview,
       'no-drag': preview,
       'title-bar-glass': glass,
-      'title-bar-liquid': liquidMaterial,
+      'title-bar-liquid': liquidMaterial && !immersive,
+      'title-bar-immersive': immersive,
       'title-bar-settings': titleSurface === 'settings',
       'title-bar-streaming': titleSurface === 'streaming',
       'title-bar-menu-open': menuOpen
     }"
   >
     <div class="title-bar-background" aria-hidden="true"></div>
-    <!-- Keep the existing back affordance at the left edge, visible only while
-         the active surface has a return handler. -->
+    <div class="title-bar-start no-drag" @pointerdown="setPressOrigin">
+      <button
+        type="button"
+        aria-label="菜单"
+        class="menu-btn"
+        :title="menuOpen ? '收起导航' : '展开导航'"
+        :aria-expanded="menuOpen"
+        @click="$emit('toggleMenu')"
+      >
+        <TitleBarIcon name="navigation" />
+      </button>
+      <button
+        type="button"
+        :aria-label="loginLabel"
+        class="login-btn"
+        :title="loginLabel"
+        @click="$emit('login', loginProvider?.id ?? null)"
+      >
+        <img
+          v-if="showNcmProfile && profile?.avatarUrl && !avatarLoadFailed"
+          :src="profile.avatarUrl"
+          class="user-avatar"
+          alt=""
+          @error="avatarLoadFailed = true"
+        />
+        <TitleBarIcon v-else name="person" />
+      </button>
+    </div>
+    <!-- Keep commands anchored when a return handler becomes available. -->
     <div
       class="title-bar-back"
       :class="{
@@ -140,134 +167,99 @@ function close(): void {
         </button>
       </Transition>
     </div>
-    <div v-if="!glass && !hideStart" class="title-bar-start no-drag" @pointerdown="setPressOrigin">
-      <button
-        type="button"
-        aria-label="菜单"
-        class="menu-btn"
-        :title="menuOpen ? '收起导航' : '展开导航'"
-        :aria-expanded="menuOpen"
-        @click="$emit('toggleMenu')"
-      >
-        <TitleBarIcon name="navigation" />
-      </button>
-      <button
-        type="button"
-        class="settings-btn command-palette-trigger"
-        title="命令面板 (Ctrl+K / ⌘K)"
-        aria-label="打开命令面板"
-        aria-keyshortcuts="Control+K Meta+K"
-        @click="$emit('commands')"
-      >
-        <TitleBarIcon name="search" />
-      </button>
-      <button
-        type="button"
-        aria-label="设置"
-        :aria-pressed="activeTool === 'settings'"
-        class="settings-btn"
-        title="设置"
-        @click="$emit('settings')"
-      >
-        <TitleBarIcon name="settings" />
-      </button>
-      <button
-        type="button"
-        aria-label="扩展中心"
-        :aria-pressed="activeTool === 'plugins'"
-        class="plugins-btn"
-        title="扩展中心"
-        @click="$emit('plugins')"
-      >
-        <TitleBarIcon name="puzzle_piece" />
-      </button>
-      <button
-        type="button"
-        :aria-label="loginLabel"
-        v-if="streaming"
-        class="login-btn"
-        :title="loginLabel"
-        @click="$emit('login', loginProvider?.id ?? null)"
-      >
-        <img
-          v-if="showNcmProfile && profile?.avatarUrl && !avatarLoadFailed"
-          :src="profile.avatarUrl"
-          class="user-avatar"
-          alt=""
-          @error="avatarLoadFailed = true"
-        />
-        <TitleBarIcon v-else name="person" />
-      </button>
-    </div>
     <div class="title-bar-controls no-drag" @pointerdown="setPressOrigin">
-      <button
-        v-if="!preview"
-        type="button"
-        class="control-btn notification-btn"
-        :aria-label="`任务与通知${doNotDisturb ? ' · 勿扰模式已开启' : ''}（${activeTaskCount} 项进行中，${unreadCount} 条未读）`"
-        :title="
-          doNotDisturb
-            ? '任务与通知 · 勿扰模式已开启'
-            : activeTaskCount
-              ? `任务与通知 · ${activeTaskCount} 项进行中`
-              : '任务与通知'
-        "
-        :aria-expanded="notificationsOpen"
-        aria-controls="app-notice-history"
-        @click="$emit('notifications', $event)"
-      >
-        <svg class="notification-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-          <path v-if="doNotDisturb" d="m3 3 18 18" />
-        </svg>
-        <span v-if="activeTaskCount" class="notification-task-count" aria-hidden="true">{{
-          activeTaskCount
-        }}</span>
-        <Transition name="notification-dot">
-          <span
-            v-if="unreadCount && !doNotDisturb"
-            class="notification-dot"
-            aria-hidden="true"
-          ></span>
-        </Transition>
-      </button>
-      <button
-        type="button"
-        :disabled="preview"
-        aria-label="最小化"
-        class="control-btn minimize"
-        title="最小化"
-        @click="minimize"
-      >
-        <svg class="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-          <path d="M1 6.5h10" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        :aria-label="maximized ? '还原窗口' : '最大化窗口'"
-        class="control-btn maximize"
-        :title="maximized ? '还原窗口' : '最大化窗口'"
-        :disabled="preview"
-        @click="toggleMaximize"
-      >
-        <svg class="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-          <path v-if="maximized" d="M3.5 3.5v-2h7v7h-2M1.5 3.5h7v7h-7Z" />
-          <rect v-else x="1.5" y="1.5" width="9" height="9" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        :disabled="preview"
-        class="control-btn close"
-        title="关闭窗口"
-        aria-label="关闭窗口"
-        @click="close"
-      >
-        <svg class="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-          <path d="m1.5 1.5 9 9m0-9-9 9" />
-        </svg>
-      </button>
+      <div class="title-bar-tools" role="group" aria-label="应用工具">
+        <button
+          type="button"
+          aria-label="扩展中心"
+          :aria-pressed="activeTool === 'plugins'"
+          class="plugins-btn"
+          title="扩展中心"
+          @click="$emit('plugins')"
+        >
+          <TitleBarIcon name="puzzle_piece" />
+        </button>
+        <button
+          type="button"
+          aria-label="设置"
+          :aria-pressed="activeTool === 'settings'"
+          class="settings-btn"
+          title="设置"
+          @click="$emit('settings')"
+        >
+          <TitleBarIcon name="settings" />
+        </button>
+        <button
+          type="button"
+          :disabled="preview"
+          class="control-btn notification-btn"
+          :aria-label="`任务与通知${doNotDisturb ? ' · 勿扰模式已开启' : ''}（${activeTaskCount} 项进行中，${unreadCount} 条未读）`"
+          :title="
+            doNotDisturb
+              ? '任务与通知 · 勿扰模式已开启'
+              : activeTaskCount
+                ? `任务与通知 · ${activeTaskCount} 项进行中`
+                : '任务与通知'
+          "
+          :aria-expanded="notificationsOpen"
+          aria-controls="app-notice-history"
+          @click="$emit('notifications', $event)"
+        >
+          <svg class="notification-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+            <path v-if="doNotDisturb" d="m3 3 18 18" />
+          </svg>
+          <span v-if="activeTaskCount" class="notification-task-count" aria-hidden="true">{{
+            activeTaskCount
+          }}</span>
+          <Transition name="notification-dot">
+            <span
+              v-if="unreadCount && !doNotDisturb"
+              class="notification-dot"
+              aria-hidden="true"
+            ></span>
+          </Transition>
+        </button>
+      </div>
+      <div class="title-bar-window-controls" role="group" aria-label="窗口控制">
+        <button
+          type="button"
+          :disabled="preview"
+          aria-label="最小化"
+          class="control-btn minimize"
+          title="最小化"
+          @click="minimize"
+        >
+          <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 8.5h12" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          :aria-label="maximized ? '还原窗口' : '最大化窗口'"
+          class="control-btn maximize"
+          :title="maximized ? '还原窗口' : '最大化窗口'"
+          :disabled="preview"
+          @click="toggleMaximize"
+        >
+          <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path v-if="maximized" d="M4.5 4.5v-2h9v9h-2M2.5 4.5h9v9h-9Z" />
+            <rect v-else x="2.5" y="2.5" width="11" height="11" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          :disabled="preview"
+          class="control-btn close"
+          title="关闭窗口"
+          aria-label="关闭窗口"
+          @click="close"
+        >
+          <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="m2.5 2.5 11 11m0-11-11 11" />
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -294,8 +286,8 @@ function close(): void {
   background: var(--te-shell-control-hover);
 }
 .notification-icon {
-  width: 17px;
-  height: 17px;
+  width: var(--te-titlebar-icon-size, 16px);
+  height: var(--te-titlebar-icon-size, 16px);
   stroke: currentColor;
   stroke-width: 1.65;
   stroke-linecap: round;
@@ -335,14 +327,23 @@ function close(): void {
   color: var(--te-primary-500);
 }
 .title-bar {
+  --te-titlebar-height: 45px;
+  --te-titlebar-material-surface: var(--te-app-bg);
+  --te-titlebar-material-ink: var(--te-shell-control-text);
+  --te-titlebar-icon-size: 16px;
+  --te-titlebar-control-width: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--te-titlebar-height, 35px);
+  height: 45px;
+  min-height: 45px;
+  max-height: 45px;
+  box-sizing: border-box;
   flex-shrink: 0;
   background: transparent !important;
   user-select: none;
   position: fixed;
+  isolation: isolate;
   top: 0;
   left: 0;
   right: 0;
@@ -365,50 +366,45 @@ function close(): void {
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  background: transparent !important;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--te-titlebar-material-ink) 4%, transparent),
+      transparent
+    ),
+    color-mix(in srgb, var(--te-titlebar-material-surface) 66%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--te-titlebar-material-ink) 8%, transparent);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
 }
 
 .title-bar::before {
   display: none;
 }
 
-.title-bar-glass,
-.title-bar.title-bar-streaming,
-.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
-.title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: transparent !important;
-  border-bottom-color: transparent;
+.title-bar-glass {
+  --te-titlebar-material-surface: #17181a;
+  --te-titlebar-material-ink: #fff;
+}
+
+/* Playback paints one continuous backdrop, including the caption strip. */
+.title-bar-immersive {
+  --te-shell-control-text: var(--te-playback-page-text, #f4f7fb);
+  --te-shell-control-hover: color-mix(in srgb, var(--te-shell-control-text) 8%, transparent);
+  --te-titlebar-material-surface: var(--te-player-bg);
+  --te-titlebar-material-ink: var(--te-shell-control-text);
+}
+
+.title-bar-immersive .title-bar-background {
+  background: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.title-bar.title-bar-settings::before,
-.title-bar.title-bar-glass::before {
-  display: none;
-}
-
-/* The settings title strip stays transparent: the settings overlay below it is
-   the single wallpaper painter and spans the full window, so the image reads as
-   one continuous surface through the strip. The bar keeps its own higher
-   stacking context, so the controls remain clickable. */
-.title-bar.title-bar-settings,
-.title-bar.title-bar-settings .title-bar-background {
-  background: transparent !important;
-}
-
-/* Dark tone must not wrap the whole chain in `:global()`: Vue's scoped transform
-   rewrites only the last compound, so `:global(html .title-bar…)` compiles to the
-   bare ancestor and the declarations land on <html> instead of this component.
-   Both compounds here belong to this component; scoping appends the id to the
-   subject and leaves the document-level ancestor alone — same contract as the
-   playbar glass rules in PlayerBar.css. */
-html[data-theme='dark'] .title-bar,
-html[data-theme='dark'] .title-bar.title-bar-streaming,
-html[data-theme='dark']
-  .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
-html[data-theme='dark'] .title-bar.title-bar-glass {
-  background: transparent !important;
+.title-bar-start,
+.title-bar-back,
+.title-bar-tools {
+  --te-titlebar-icon-size: 18px;
 }
 
 .title-bar-start {
@@ -422,25 +418,24 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
 .title-bar-back {
   display: flex;
   align-items: center;
-  width: 0;
+  width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   overflow: hidden;
   position: relative;
   z-index: 1;
   flex-shrink: 0;
-  transition: width 0.2s var(--te-ease-soft, ease);
 }
 
 .title-bar-back-visible {
-  width: 36px;
+  overflow: visible;
 }
 
 .back-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  min-width: 36px;
+  width: var(--te-titlebar-control-width, 46px);
+  min-width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   border: none;
   background: transparent;
@@ -477,7 +472,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   border: none;
   background: transparent;
@@ -496,7 +491,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   border: none;
   background: transparent;
@@ -516,7 +511,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   border: none;
   background: transparent;
@@ -536,7 +531,7 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   border: none;
   background: transparent;
@@ -552,18 +547,36 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   background: var(--te-shell-control-hover);
 }
 
+/* Use a neutral wash for dark caption feedback so album accents cannot tint the chrome. */
+html[data-theme='dark']
+  .title-bar
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):not(
+    .close
+  ):hover {
+  background: color-mix(in srgb, var(--te-shell-control-text) 6%, transparent);
+}
+
+html[data-theme='dark'] .title-bar :is(.settings-btn, .plugins-btn)[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--te-shell-control-text) 8%, transparent);
+  color: var(--te-primary-400);
+}
+
+html[data-theme='dark'] .title-bar :is(.settings-btn, .plugins-btn)[aria-pressed='true']:hover {
+  background: color-mix(in srgb, var(--te-shell-control-text) 11%, transparent);
+}
+
 .user-avatar {
-  width: 16px;
-  height: 16px;
+  width: var(--te-titlebar-icon-size, 18px);
+  height: var(--te-titlebar-icon-size, 18px);
   border-radius: 50%;
   object-fit: cover;
 }
 
-.title-bar-glass .settings-btn {
+.title-bar-glass :is(.menu-btn, .settings-btn, .plugins-btn) {
   color: #fff;
 }
 
-.title-bar-glass .settings-btn:hover {
+.title-bar-glass :is(.menu-btn, .settings-btn, .plugins-btn):hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -584,12 +597,36 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   z-index: 1;
 }
 
+.title-bar-tools,
+.title-bar-window-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.title-bar-window-controls {
+  margin-left: 12px;
+}
+
+.title-bar-tools::after {
+  content: '';
+  width: 1px;
+  height: 16px;
+  background: color-mix(in srgb, var(--te-shell-control-text) 12%, transparent);
+  pointer-events: none;
+}
+
+.title-bar :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn):focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: -3px;
+}
+
 .control-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  min-width: 46px;
+  width: var(--te-titlebar-control-width, 46px);
+  min-width: var(--te-titlebar-control-width, 46px);
   height: 100%;
   flex-shrink: 0;
   border: none;
@@ -616,8 +653,8 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
 
 .window-control-icon {
   display: block;
-  width: 12px;
-  height: 12px;
+  width: var(--te-titlebar-icon-size, 16px);
+  height: var(--te-titlebar-icon-size, 16px);
   flex-shrink: 0;
   fill: none;
   stroke: currentColor;
@@ -643,6 +680,30 @@ html[data-theme='pureWhite'] .title-bar .control-btn.close:hover,
 .title-bar-liquid .control-btn.close:hover {
   background: #e81123;
   color: #fff;
+}
+
+html
+  .title-bar-immersive
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
+  color: var(--te-shell-control-text);
+  /* Match the playback surface as soon as it appears, without a light-theme tween. */
+  transition-property: background-color;
+}
+
+html
+  .title-bar-immersive
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):not(
+    .close
+  ):hover {
+  background: var(--te-shell-control-hover);
+  color: var(--te-shell-control-text);
+  transform: none;
+}
+
+html
+  .title-bar-immersive
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):focus-visible {
+  outline-color: var(--te-shell-control-text);
 }
 
 .title-bar-liquid {
@@ -672,19 +733,6 @@ html[data-theme='pureWhite'] .title-bar .control-btn.close:hover,
       transparent 82%
     ),
     var(--te-lg-context-material) !important;
-}
-
-html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--te-lg-context-rim) 24%, transparent),
-      transparent 66%
-    ),
-    color-mix(in srgb, var(--te-lg-context-surface) 72%, transparent) !important;
-  box-shadow:
-    inset 0 -1px 0 color-mix(in srgb, var(--te-lg-context-label) 13%, transparent),
-    0 6px 18px color-mix(in srgb, var(--te-lg-context-label) 8%, transparent);
 }
 
 .title-bar-liquid :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
@@ -720,6 +768,11 @@ html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .title-bar-background {
+    background: var(--te-titlebar-material-surface) !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
   .title-bar-liquid .title-bar-background {
     background: var(--te-lg-context-surface-solid) !important;
     border-bottom: 1px solid var(--te-lg-context-label);
@@ -729,7 +782,7 @@ html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background
 }
 
 @media (forced-colors: active) {
-  .title-bar-liquid .title-bar-background {
+  .title-bar .title-bar-background {
     background: Canvas !important;
     border-bottom: 1px solid CanvasText;
     box-shadow: none;

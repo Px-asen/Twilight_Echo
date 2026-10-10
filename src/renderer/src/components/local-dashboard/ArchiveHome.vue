@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
@@ -247,10 +248,9 @@ function trackFormat(track: Track): string {
                 /><span
                   class="archive-record-play"
                   :class="{ 'is-current': currentTrackId === track.id }"
-                  ><i
-                    :class="isPlaying && currentTrackId === track.id ? 'ph ph-pause' : 'ph ph-play'"
-                    aria-hidden="true"
-                  ></i></span
+                  ><PlaybackIcon
+                    :name="isPlaying && currentTrackId === track.id ? 'pause' : 'play'"
+                    aria-hidden="true" /></span
                 ><span class="archive-record-format">{{ trackFormat(track) }}</span></span
               >
               <strong :title="track.title">{{ track.title }}</strong
@@ -271,8 +271,9 @@ function trackFormat(track: Track): string {
                     : emit('open-library-settings')
                 "
               >
-                <i
-                  :class="summary.tracks ? 'ph ph-play' : 'ph ph-folder-simple-plus'"
+                <PlaybackIcon v-if="summary.tracks" name="play" aria-hidden="true" /><i
+                  v-else
+                  class="ph ph-folder-simple-plus"
                   aria-hidden="true"
                 ></i
                 >{{ activity === 'recent' && summary.tracks ? '开始聆听' : '添加音乐文件夹' }}
@@ -324,8 +325,9 @@ function trackFormat(track: Track): string {
                   · {{ Number((hero.sampleRate / 1000).toFixed(1)) }} kHz</template
                 ></span
               ><button class="archive-resume-play" type="button" @click="emit('play', hero)">
-                <i :class="isPlaying ? 'ph ph-pause' : 'ph ph-play'" aria-hidden="true"></i
-                >{{ isPlaying ? '暂停播放' : '播放音乐' }}
+                <PlaybackIcon :name="isPlaying ? 'pause' : 'play'" aria-hidden="true" />{{
+                  isPlaying ? '暂停播放' : '播放音乐'
+                }}
               </button>
             </div>
           </div>

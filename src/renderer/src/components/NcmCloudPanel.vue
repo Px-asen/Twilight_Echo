@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed } from 'vue'
 import type { NcmCloudSelectedFile } from '../../../shared/ncmCloud.ts'
 import type { NcmCloudSong, NcmCloudTransferTask } from '../stores/useNcmStore.ts'
@@ -206,7 +207,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
           <span>已加载 {{ songs.length }} / {{ total }}</span>
         </div>
         <button type="button" class="cloud-button primary" @click="emit('playAll')">
-          <i class="pi pi-play"></i>
+          <PlaybackIcon name="play" />
           播放全部
         </button>
       </div>
@@ -226,7 +227,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
           <span class="song-cover">
             <img v-if="song.track.cover" :src="song.track.cover" alt="" />
             <i v-else class="pi pi-music"></i>
-            <span class="cover-play"><i class="pi pi-play"></i></span>
+            <span class="cover-play"><PlaybackIcon name="play" /></span>
           </span>
           <span class="song-main">
             <strong>{{ song.track.title }}</strong>

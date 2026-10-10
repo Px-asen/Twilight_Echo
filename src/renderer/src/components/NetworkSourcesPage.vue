@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBackHandler } from '../app/useBackStack.ts'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -583,7 +584,7 @@ onBeforeUnmount(() => {
             :disabled="audioEntries.length === 0 || browsing"
             @click="playAllInDirectory"
           >
-            <i class="pi pi-play"></i>播放全部（{{ audioEntries.length }}）
+            <PlaybackIcon name="play" />播放全部（{{ audioEntries.length }}）
           </button>
           <button
             type="button"

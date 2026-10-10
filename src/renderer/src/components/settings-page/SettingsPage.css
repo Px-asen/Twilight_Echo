@@ -3244,7 +3244,7 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   .settings-nav-categories {
     flex-direction: row;
     overflow-x: auto;
-    scrollbar-width: none;
+    scrollbar-width: none !important;
     padding: 3px 0;
   }
 

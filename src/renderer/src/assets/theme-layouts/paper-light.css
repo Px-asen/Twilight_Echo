@@ -3,7 +3,7 @@ html[data-te-preset-layout='paper-light'] {
 }
 
 html[data-te-preset-layout='paper-light'] .title-bar.drag-region {
-  min-height: 54px;
+  min-height: 45px;
   border-bottom: 0;
   background: var(--te-app-bg);
   box-shadow: none !important;

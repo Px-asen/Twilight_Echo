@@ -22,7 +22,7 @@ defineProps<{ name: keyof typeof titleBarIconPaths }>()
 .title-bar-icon {
   display: block;
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: var(--te-titlebar-icon-size, 16px);
+  height: var(--te-titlebar-icon-size, 16px);
 }
 </style>

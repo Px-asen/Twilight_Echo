@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, ref } from 'vue'
 import CoverImg from '@renderer/components/CoverImg.vue'
 import type {
@@ -60,7 +61,7 @@ function isCurrent(track: Track | null): boolean {
         title="播放榜单中可用的曲目"
         @click="emit('play-list')"
       >
-        <i class="ph ph-play" aria-hidden="true"></i>
+        <PlaybackIcon name="play" aria-hidden="true" />
       </button>
     </header>
     <div class="ranking-controls">
@@ -112,9 +113,8 @@ function isCurrent(track: Track | null): boolean {
               v-if="track.resolvedTrack"
               class="ranking-play-overlay"
               aria-hidden="true"
-              ><i
-                :class="isCurrent(track.resolvedTrack) ? 'ph ph-speaker-high' : 'ph ph-play'"
-              ></i></span
+              ><i v-if="isCurrent(track.resolvedTrack)" class="ph ph-speaker-high"></i
+              ><PlaybackIcon v-else name="play" /></span
           ></span>
           <span class="ranking-meta"
             ><strong>{{ track.title }}</strong
@@ -214,7 +214,7 @@ function isCurrent(track: Track | null): boolean {
 .rankings-panel .ranking-play-all:hover:not(:disabled) {
   background: var(--an-secondary);
 }
-.ranking-play-all i {
+.ranking-play-all :is(i, .playback-icon) {
   color: inherit;
 }
 .ranking-controls {

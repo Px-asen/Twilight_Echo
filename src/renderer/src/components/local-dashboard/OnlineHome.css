@@ -349,7 +349,7 @@
   color: var(--online-muted);
   margin-top: 6px;
 }
-.online-track > i {
+.online-track > :is(i, .playback-icon) {
   font-size: 11px;
   color: var(--online-muted);
 }

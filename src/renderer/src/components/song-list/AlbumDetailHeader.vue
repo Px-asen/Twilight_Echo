@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { LibraryItem } from '../../stores/library/musicStoreTypes'
 import AlbumArtwork from './AlbumArtwork.vue'
@@ -62,7 +63,7 @@ onBeforeUnmount(() => {
           :disabled="!canPlay"
           @click="$emit('play')"
         >
-          <i class="pi pi-play" aria-hidden="true"></i>播放全部
+          <PlaybackIcon name="play" aria-hidden="true" />播放全部
         </button>
         <button
           type="button"
