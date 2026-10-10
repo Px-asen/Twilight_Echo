@@ -41,6 +41,72 @@ test('extracts provider prefixes from source or track id', () => {
   assert.equal(getProviderLocalId('ncm:12345', 'bili'), null)
 })
 
+test('album search registration follows advertised methods and forwards cancellation through the bridge', async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const { syncPluginProviders, useMediaProviders } = await import('./index.ts')
+  let methods: string[] = []
+  let rejectPending: ((reason: Error) => void) | undefined
+  const calls: unknown[][] = []
+  const cancelled: string[] = []
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        providers: {
+          list: async () => [
+            {
+              id: 'album-test',
+              name: 'Albums',
+              capabilities: ['search'],
+              supportedMethods: methods
+            }
+          ],
+          call: async (
+            id: string,
+            method: string,
+            args: unknown[],
+            options?: { requestId?: string }
+          ) => {
+            calls.push([id, method, args, options])
+            if (options?.requestId)
+              return new Promise((_resolve, reject) => {
+                rejectPending = reject
+              })
+            return { items: [{ id: '1', name: 'Album', cover: null, trackCount: 1 }], total: 1 }
+          },
+          cancel: (requestId: string) => {
+            cancelled.push(requestId)
+            rejectPending?.(new Error('cancelled'))
+          }
+        }
+      }
+    }
+  })
+  const registry = useMediaProviders()
+  t.after(async () => {
+    await syncPluginProviders()
+    registry.unregister('album-test')
+    if (previous) Object.defineProperty(globalThis, 'window', previous)
+    else Reflect.deleteProperty(globalThis, 'window')
+  })
+  await syncPluginProviders()
+  assert.equal(registry.get('album-test')?.searchAlbums, undefined)
+  methods = ['searchAlbums']
+  await syncPluginProviders()
+  assert.equal((await registry.searchAlbums('album-test', 'Album', 30, 60)).total, 1)
+  assert.deepEqual(calls[0].slice(0, 3), ['album-test', 'searchAlbums', ['Album', 30, 60]])
+  const controller = new AbortController()
+  const pending = registry.searchAlbums('album-test', 'Album', 30, 0, { signal: controller.signal })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  controller.abort()
+  await assert.rejects(pending, /cancelled/)
+  assert.equal(cancelled.length, 1)
+  assert.equal(cancelled[0], (calls[1][3] as { requestId: string }).requestId)
+  methods = []
+  await syncPluginProviders()
+  assert.equal(registry.get('album-test')?.searchAlbums, undefined)
+})
+
 test('resolveLyricsAcrossProviders fans out to NCM for local tracks', async () => {
   const registry = new MediaProviderRegistry()
   let ncmSearchCalls = 0

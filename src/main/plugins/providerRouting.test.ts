@@ -7,6 +7,7 @@ const {
   findProviderRoute,
   getProviderCallTimeoutMs,
   getProviderMethodStats,
+  isTwilightMediaProviderMethod,
   normalizeProviderHealth,
   normalizeProviderUi,
   providerSupportsMethod
@@ -52,6 +53,20 @@ const fullProvider: TestRunningProvider = {
     }
   ]
 }
+
+test('album search is an optional routed search method with the standard search timeout', () => {
+  const provider = {
+    id: 'ncm',
+    name: 'NCM',
+    capabilities: ['search' as const],
+    supportedMethods: ['searchAlbums' as const]
+  }
+  assert.equal(isTwilightMediaProviderMethod('searchAlbums'), true)
+  assert.equal(providerSupportsMethod(provider, 'searchAlbums'), true)
+  assert.equal(providerSupportsMethod({ ...provider, supportedMethods: [] }, 'searchAlbums'), false)
+  assert.equal(providerSupportsMethod({ ...provider, capabilities: [] }, 'searchAlbums'), false)
+  assert.equal(getProviderCallTimeoutMs('searchAlbums'), getProviderCallTimeoutMs('searchSongs'))
+})
 
 test('playlist paging requires an advertised handler and playlist capability through host routing', () => {
   const provider: TestRunningProvider['providers'][number] = {

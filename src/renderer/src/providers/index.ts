@@ -4,6 +4,7 @@ import {
   toProviderIpcArgs
 } from './mediaProvider.ts'
 import type {
+  MediaProvider,
   MediaProviderArtistSummary,
   MediaProviderAlbumSummary,
   MediaProviderDiscoveryPlaylistPage,
@@ -91,15 +92,6 @@ export async function syncPluginProviders(): Promise<void> {
         (provider) => provider.source === 'plugin' && !activePluginProviderIds.has(provider.id)
       )
       for (const provider of providers) {
-        if (mediaProviders.get(provider.id)) {
-          mediaProviders.update(provider.id, {
-            name: provider.name,
-            capabilities: provider.capabilities,
-            health: provider.health as MediaProviderHealth | undefined,
-            isEnabled: () => isPluginProviderEnabled(provider.health)
-          })
-          continue
-        }
         const callProvider = async <T>(
           method: string,
           args: unknown[] = [],
@@ -135,6 +127,25 @@ export async function syncPluginProviders(): Promise<void> {
         type SupportedMethod = NonNullable<(typeof provider)['supportedMethods']>[number]
         const supports = (method: SupportedMethod): boolean =>
           provider.supportedMethods?.includes(method) === true
+        const searchAlbums: MediaProvider['searchAlbums'] =
+          provider.capabilities.includes('search') && supports('searchAlbums')
+            ? (keywords, limit, offset, options) =>
+                callProvider<MediaProviderSearchResult<MediaProviderAlbumSummary>>(
+                  'searchAlbums',
+                  [keywords, limit, offset],
+                  options
+                )
+            : undefined
+        if (mediaProviders.get(provider.id)) {
+          mediaProviders.update(provider.id, {
+            name: provider.name,
+            capabilities: provider.capabilities,
+            health: provider.health as MediaProviderHealth | undefined,
+            isEnabled: () => isPluginProviderEnabled(provider.health),
+            searchAlbums
+          })
+          continue
+        }
         mediaProviders.register({
           id: provider.id,
           name: provider.name,
@@ -161,6 +172,7 @@ export async function syncPluginProviders(): Promise<void> {
                   options
                 )
             : undefined,
+          searchAlbums,
           searchPlaylists: provider.capabilities.includes('playlist')
             ? (keywords, limit, offset) =>
                 callProvider<MediaProviderSearchResult<MediaProviderPlaylistSummary>>(

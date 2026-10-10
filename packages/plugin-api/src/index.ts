@@ -259,6 +259,7 @@ export interface PlaylistSummary {
 export interface AlbumSummary {
   id: string | number
   name: string
+  artist?: string
   cover?: string | null
   trackCount?: number
   publishTime?: number
@@ -411,6 +412,12 @@ export interface TwilightMediaProviderRegistration {
     offset?: number,
     context?: TwilightProviderRequestContext
   ): Promise<{ items: Track[]; total: number }>
+  searchAlbums?(
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    context?: TwilightProviderRequestContext
+  ): Promise<{ items: AlbumSummary[]; total: number }>
   searchPlaylists?(
     keywords: string,
     limit?: number,

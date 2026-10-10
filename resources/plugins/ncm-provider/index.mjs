@@ -84,6 +84,7 @@ export async function activate(context) {
     getPlaybackUrl,
     getLyrics,
     searchSongs,
+    searchAlbums,
     searchPlaylists,
     searchArtists,
     fetchPlaylistTracks,
@@ -751,9 +752,16 @@ function normalizePlaylist(playlist, ownerUid) {
 
 function normalizeAlbum(album) {
   const rawCover = album.picUrl || album.blurPicUrl || null
+  const artists = Array.isArray(album.artists) ? album.artists : [album.artist]
+  const artist =
+    artists
+      .map((item) => item?.name)
+      .filter(Boolean)
+      .join(' / ') || album.artistName
   return {
     id: Number(album.id),
     name: album.name || '未命名专辑',
+    ...(artist ? { artist } : {}),
     cover: normalizeRemoteAssetUrl(rawCover),
     coverSmall: normalizeNcmCoverSize(rawCover, 140),
     trackCount: typeof album.size === 'number' ? album.size : (album.songCount ?? 0),
@@ -2211,6 +2219,29 @@ async function searchSongs(keywords, limit = 30, offset = 0) {
   return { items: songs.map(normalizeTrack), total }
 }
 
+async function searchAlbums(keywords, limit = 30, offset = 0, requestContext) {
+  const data = await requestOptionalAuth(
+    `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=10&limit=${limit}&offset=${offset}`,
+    requestContext
+  )
+  if (data.code != null && Number(data.code) !== 200) {
+    throw new Error(describeApiError(Number(data.code), data))
+  }
+  const result = data.result ?? data.data?.result
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    (result.albums != null && !Array.isArray(result.albums))
+  ) {
+    throw new Error('网易云返回了无效的专辑搜索结果')
+  }
+  const albums = (result.albums ?? []).filter(
+    (album) => Number.isSafeInteger(Number(album?.id)) && Number(album.id) > 0
+  )
+  const total = Number.isFinite(result.albumCount) ? Math.max(0, result.albumCount) : albums.length
+  return { items: albums.map(normalizeAlbum), total }
+}
+
 async function searchPlaylists(keywords, limit = 30, offset = 0) {
   const data = await requestAuthed(
     `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1000&limit=${limit}&offset=${offset}`
@@ -2320,8 +2351,14 @@ async function fetchArtistFollowState(artistId) {
   return null
 }
 
-async function fetchAlbumTracks(albumId) {
-  const data = await requestAuthed(`/album?id=${encodeURIComponent(String(albumId))}`)
+async function fetchAlbumTracks(albumId, requestContext) {
+  const data = await requestOptionalAuth(
+    `/album?id=${encodeURIComponent(String(albumId))}`,
+    requestContext
+  )
+  if (data.code != null && Number(data.code) !== 200) {
+    throw new Error(describeApiError(Number(data.code), data))
+  }
   return getSongItems(data).map(normalizeTrack)
 }
 

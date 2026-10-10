@@ -15,8 +15,9 @@ import type {
 } from '../../providers/mediaProvider'
 import type { PageState } from './types'
 import { friendlyStreamingError } from './friendlyStreamingError.ts'
+import type { AlbumSearchItem } from './albumSearch.ts'
 
-export type SearchType = 'songs' | 'playlists' | 'artists'
+export type SearchType = 'songs' | 'albums' | 'playlists' | 'artists'
 export type SearchSource = 'all' | 'local' | string
 
 export interface SearchSourceOption {
@@ -28,6 +29,24 @@ export interface SearchSourceOption {
 }
 
 type UseStreamingSearchOptions = {
+  searchAlbums?: (
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    options?: { signal?: AbortSignal }
+  ) => Promise<{ albums: AlbumSearchItem[]; total: number }>
+  searchLocalAlbums?: (
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ) => Promise<{ albums: AlbumSearchItem[]; total: number }>
+  searchProviderAlbums?: (
+    providerId: string,
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    options?: { signal?: AbortSignal }
+  ) => Promise<{ albums: AlbumSearchItem[]; total: number }>
   searchSongs: (
     keywords: string,
     limit?: number,
@@ -103,6 +122,9 @@ interface SearchRequestSnapshot {
 }
 
 export function useStreamingSearch({
+  searchAlbums,
+  searchLocalAlbums,
+  searchProviderAlbums,
   searchSongs,
   searchUnifiedSongs,
   searchPlaylists,
@@ -120,6 +142,7 @@ export function useStreamingSearch({
   searchType: Ref<SearchType>
   searchSource: Ref<SearchSource>
   searchResults: Ref<Track[]>
+  searchAlbumsResults: Ref<AlbumSearchItem[]>
   searchPlaylistsResults: Ref<MediaProviderPlaylistSummary[]>
   searchArtistsResults: Ref<MediaProviderArtistSummary[]>
   searchTotal: Ref<number>
@@ -138,6 +161,7 @@ export function useStreamingSearch({
   const searchType = ref<SearchType>('songs')
   const searchSource = ref<SearchSource>('all')
   const searchResults = shallowRef<Track[]>([])
+  const searchAlbumsResults = shallowRef<AlbumSearchItem[]>([])
   const searchPlaylistsResults = shallowRef<MediaProviderPlaylistSummary[]>([])
   const searchArtistsResults = shallowRef<MediaProviderArtistSummary[]>([])
   const searchTotal = ref(0)
@@ -170,6 +194,7 @@ export function useStreamingSearch({
     }
     searchQuery.value = ''
     searchResults.value = []
+    searchAlbumsResults.value = []
     searchPlaylistsResults.value = []
     searchArtistsResults.value = []
     searchTotal.value = 0
@@ -177,6 +202,23 @@ export function useStreamingSearch({
     searchLoading.value = false
     searchError.value = ''
     lastRequestFingerprint = ''
+  }
+
+  async function resolveAlbumsSearch(
+    source: SearchSource,
+    keywords: string,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal
+  ): Promise<{ albums: AlbumSearchItem[]; total: number }> {
+    if (source === 'all' && searchAlbums) return searchAlbums(keywords, limit, offset, { signal })
+    if (source === 'local') {
+      return searchLocalAlbums?.(keywords, limit, offset) ?? { albums: [], total: 0 }
+    }
+    if (source !== 'all' && searchProviderAlbums) {
+      return searchProviderAlbums(source, keywords, limit, offset, { signal })
+    }
+    return { albums: [], total: 0 }
   }
 
   async function resolveSongsSearch(
@@ -249,9 +291,12 @@ export function useStreamingSearch({
       latestRequestId += 1
       cancelActiveSearch()
       searchResults.value = []
+      searchAlbumsResults.value = []
       searchPlaylistsResults.value = []
       searchArtistsResults.value = []
       searchTotal.value = 0
+      searchLoading.value = false
+      searchError.value = ''
       return
     }
     cancelActiveSearch()
@@ -278,6 +323,25 @@ export function useStreamingSearch({
         )
         if (snapshot.requestId === latestRequestId) {
           searchResults.value = tracks
+          searchTotal.value = total
+        }
+      } else if (snapshot.type === 'albums') {
+        const { albums, total } = await resolveAlbumsSearch(
+          snapshot.source,
+          snapshot.query,
+          30,
+          snapshot.offset,
+          controller.signal
+        )
+        if (snapshot.requestId === latestRequestId) {
+          if (snapshot.offset > 0 && snapshot.offset >= total) {
+            searchOffset.value = total > 0 ? Math.floor((total - 1) / 30) * 30 : 0
+            if (total > 0) {
+              await performSearch(snapshot.query)
+              return
+            }
+          }
+          searchAlbumsResults.value = albums
           searchTotal.value = total
         }
       } else if (snapshot.type === 'playlists') {
@@ -309,6 +373,7 @@ export function useStreamingSearch({
       if (snapshot.requestId === latestRequestId) {
         searchError.value = friendlyStreamingError(e, '搜索失败')
         searchResults.value = []
+        searchAlbumsResults.value = []
         searchPlaylistsResults.value = []
         searchArtistsResults.value = []
         searchTotal.value = 0
@@ -330,6 +395,7 @@ export function useStreamingSearch({
         latestRequestId += 1
         cancelActiveSearch()
         searchResults.value = []
+        searchAlbumsResults.value = []
         searchPlaylistsResults.value = []
         searchArtistsResults.value = []
         searchTotal.value = 0
@@ -350,6 +416,13 @@ export function useStreamingSearch({
         })
         if (nextFingerprint === lastRequestFingerprint) return
         latestRequestId += 1
+        cancelActiveSearch()
+        searchResults.value = []
+        searchAlbumsResults.value = []
+        searchPlaylistsResults.value = []
+        searchArtistsResults.value = []
+        searchTotal.value = 0
+        searchError.value = ''
         searchLoading.value = true
         searchDebounceTimer = setTimeout(() => {
           searchDebounceTimer = null
@@ -388,6 +461,7 @@ export function useStreamingSearch({
     searchType,
     searchSource,
     searchResults,
+    searchAlbumsResults,
     searchPlaylistsResults,
     searchArtistsResults,
     searchTotal,

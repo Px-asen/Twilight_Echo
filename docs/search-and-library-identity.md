@@ -2,8 +2,8 @@
 
 ## Search Requests
 
-The independent Search page uses the existing streaming search controller for songs, playlists
-and artists. Its source choices are All, Local, and enabled providers that implement the selected
+The independent Search page uses the existing streaming search controller for songs, albums,
+playlists and artists. Its source choices are All, Local, and enabled providers that implement the selected
 search method. All-source songs retain logical-track grouping; collections retain provider IDs.
 Partial collection failures keep successful sources visible and name the failed providers. Each
 collection page shares one global offset, with local results followed by providers in registry
@@ -51,6 +51,16 @@ existing conflicting global bindings remain saved but are not registered, and se
 the conflict instead of dispatching two actions.
 
 ## Album Identity
+
+Album search reuses the local library's derived album groups, matching album names and album
+artists, including pinyin initials and multiple whitespace-separated terms. Online providers
+opt in with the optional `searchAlbums` method; NetEase uses `/cloudsearch` with `type=10`.
+Results retain the provider ID and release ID, display artist and source labels, and share the
+collection paginator. Equal names or IDs from different sources are never merged automatically.
+Album detail loads use the result's source rather than the currently selected streaming provider;
+local details retain the library's disc/track order. Opening a result keeps the search query,
+source and page intact for back navigation. NetEase album search and detail reads support
+anonymous requests and attach the existing cookie when signed in.
 
 The album display name is not an identity. Local-library album groups use `albumId` when
 available. Otherwise they use the normalized `albumArtist + album` tuple, with `artist` as the
