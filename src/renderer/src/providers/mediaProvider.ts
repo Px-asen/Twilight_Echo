@@ -90,6 +90,7 @@ export interface MediaProviderHighQualityPlaylistPage {
 export interface MediaProviderAlbumSummary {
   id: number | string
   name: string
+  artist?: string
   cover: string | null
   coverSource?: string | null
   coverSmall?: string | null
@@ -186,6 +187,12 @@ export interface MediaProvider {
     offset?: number,
     options?: MediaProviderCallOptions
   ) => Promise<MediaProviderSearchResult<Track>>
+  searchAlbums?: (
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    options?: MediaProviderCallOptions
+  ) => Promise<MediaProviderSearchResult<MediaProviderAlbumSummary>>
   searchPlaylists?: (
     keywords: string,
     limit?: number,
@@ -365,6 +372,19 @@ export class MediaProviderRegistry {
     if (!provider?.searchSongs) return { items: [], total: 0 }
     await assertProviderEnabled(provider)
     return provider.searchSongs(keywords, limit, offset, options)
+  }
+
+  async searchAlbums(
+    providerId: string,
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    options?: MediaProviderCallOptions
+  ): Promise<MediaProviderSearchResult<MediaProviderAlbumSummary>> {
+    const provider = this.get(providerId)
+    if (!provider?.searchAlbums) return { items: [], total: 0 }
+    await assertProviderEnabled(provider)
+    return provider.searchAlbums(keywords, limit, offset, options)
   }
 
   async searchPlaylists(

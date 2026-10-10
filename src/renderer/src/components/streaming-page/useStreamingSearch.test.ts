@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { SearchSourceOption } from './useStreamingSearch.ts'
 
 const { useStreamingSearch } = (await import(
@@ -51,6 +51,146 @@ const defaultSources = ref<SearchSourceOption[]>([
     supportedTypes: ['songs', 'playlists', 'artists']
   }
 ])
+
+const albumSources = ref<SearchSourceOption[]>(
+  ['all', 'local', 'ncm'].map((id) => ({
+    id,
+    label: id,
+    available: true,
+    supportedTypes: ['songs', 'albums']
+  }))
+)
+
+test('album search routes all, local and provider requests with independent pagination', async (t) => {
+  const calls: Array<[string, number]> = []
+  const page = (source: string, offset = 0) => {
+    calls.push([source, offset])
+    return {
+      albums: [
+        {
+          id: String(offset),
+          name: 'Album',
+          cover: null,
+          trackCount: 2,
+          providerId: source,
+          providerName: source
+        }
+      ],
+      total: 61
+    }
+  }
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchAlbums: async (_query, _limit, offset) => page('all', offset),
+    searchLocalAlbums: async (_query, _limit, offset) => page('local', offset),
+    searchProviderAlbums: async (id, _query, limit, offset, options) => {
+      assert.equal(limit, 30)
+      assert.ok(options?.signal)
+      return page(id, offset)
+    },
+    searchSources: albumSources,
+    playTrack: () => assert.fail('search must not start playback')
+  })
+  t.after(search.clearSearch)
+  search.searchType.value = 'albums'
+  search.searchQuery.value = 'Album'
+  for (const source of ['all', 'local', 'ncm']) {
+    search.searchSource.value = source
+    await nextTick()
+    await search.performSearch('Album')
+    search.onPageChange({ first: 30 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(search.searchAlbumsResults.value[0].id, '30')
+    assert.equal(search.searchAlbumsResults.value[0].providerId, source)
+  }
+  assert.deepEqual(calls, [
+    ['all', 0],
+    ['all', 30],
+    ['local', 0],
+    ['local', 30],
+    ['ncm', 0],
+    ['ncm', 30]
+  ])
+})
+
+test('album paging recovers a valid page when a failed source leaves fewer results', async (t) => {
+  const calls: number[] = []
+  let offline = false
+  const localAlbum = {
+    id: 'local:album',
+    name: 'Album',
+    cover: null,
+    trackCount: 1,
+    providerId: 'local',
+    providerName: '本地音乐'
+  }
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchAlbums: async (_query, _limit, offset = 0) => {
+      calls.push(offset)
+      return {
+        albums: offset === 0 ? [localAlbum] : [],
+        total: offline ? 1 : 61
+      }
+    },
+    searchSources: albumSources,
+    playTrack: () => {}
+  })
+  t.after(search.clearSearch)
+  search.searchType.value = 'albums'
+  search.searchQuery.value = 'Album'
+  await nextTick()
+  await search.performSearch('Album')
+  offline = true
+  search.searchOffset.value = 30
+  await search.performSearch('Album')
+  assert.equal(search.searchOffset.value, 0)
+  assert.equal(search.searchTotal.value, 1)
+  assert.deepEqual(search.searchAlbumsResults.value, [localAlbum])
+  assert.equal(search.searchLoading.value, false)
+  assert.equal(search.searchError.value, '')
+  assert.deepEqual(calls, [0, 30, 0])
+})
+
+test('switching away from an album request cancels it and ignores its late failure', async (t) => {
+  let signal!: AbortSignal
+  let rejectOld!: (reason: Error) => void
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [localTrack], total: 1 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchProviderAlbums: async (_id, _query, _limit, _offset, options) => {
+      signal = options!.signal!
+      return new Promise((_resolve, reject) => {
+        rejectOld = reject
+      })
+    },
+    searchSources: albumSources,
+    playTrack: () => {}
+  })
+  t.after(search.clearSearch)
+  search.searchSource.value = 'ncm'
+  search.searchType.value = 'albums'
+  search.searchQuery.value = 'Album'
+  await nextTick()
+  const old = search.performSearch('Album')
+  search.searchSource.value = 'all'
+  search.searchType.value = 'songs'
+  await nextTick()
+  assert.equal(signal.aborted, true)
+  assert.deepEqual(search.searchAlbumsResults.value, [])
+  await search.performSearch('Album')
+  rejectOld(new Error('late album failure'))
+  await old
+  assert.equal(search.searchResults.value[0].id, localTrack.id)
+  assert.equal(search.searchTotal.value, 1)
+  assert.equal(search.searchError.value, '')
+  assert.equal(search.searchLoading.value, false)
+})
 
 test('song search uses unified local and provider results when available', async () => {
   let legacySearchCalls = 0

@@ -1,9 +1,22 @@
 import type { Track } from '../../types/music'
 import type {
+  MediaProviderAlbumSummary,
   MediaProviderArtistSummary,
   MediaProviderPlaylistSummary
 } from '../../providers/mediaProvider'
 import { getTrackSearchBlob } from '../../utils/localLibrarySearch.ts'
+import { getPinyinInitials } from '@renderer/utils/pinyinInitials.ts'
+
+export interface LocalAlbumSearchItem {
+  id?: string
+  name: string
+  artist?: string
+  cover: string | null
+  coverSource?: string | null
+  trackCount: number
+}
+
+const albumSearchText = new WeakMap<LocalAlbumSearchItem, string>()
 
 export interface LocalPlaylistSearchItem {
   id: number | string
@@ -101,6 +114,45 @@ export function searchLocalStreamingPlaylists(
   )
 
   return { playlists: result.items, total: result.total }
+}
+
+export function searchLocalStreamingAlbums(
+  albums: readonly LocalAlbumSearchItem[],
+  keywords: string,
+  limit?: number,
+  offset?: number
+): { albums: MediaProviderAlbumSummary[]; total: number } {
+  const queries = keywords.trim().split(/\s+/u).map(normalizeLocalStreamingQuery).filter(Boolean)
+  if (!queries.length) return { albums: [], total: 0 }
+  const result = collectPagedMatches(
+    albums,
+    keywords,
+    limit,
+    offset,
+    (album) => {
+      if (!album.id) return false
+      let text = albumSearchText.get(album)
+      if (text === undefined) {
+        text = [
+          normalizeLocalStreamingQuery(album.name),
+          normalizeLocalStreamingQuery(album.artist ?? ''),
+          getPinyinInitials(album.name),
+          getPinyinInitials(album.artist ?? '')
+        ].join('\u0000')
+        albumSearchText.set(album, text)
+      }
+      return queries.every((query) => text.includes(query))
+    },
+    (album): MediaProviderAlbumSummary => ({
+      id: album.id!,
+      name: album.name,
+      artist: album.artist,
+      cover: album.cover,
+      coverSource: album.coverSource,
+      trackCount: album.trackCount
+    })
+  )
+  return { albums: result.items, total: result.total }
 }
 
 export function searchLocalStreamingArtists(

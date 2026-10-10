@@ -210,9 +210,13 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
   控件必须隐藏。用户切换音源后，旧 provider 的迟到响应不得覆盖新页面状态。
   上游不支持排序时可声明 `ui.streamingDiscovery.supportsSort: false`。
   未返回总数的分页响应用 `total: 0` 与真实 `hasMore`，宿主仅显示当前页和前后翻页按钮，不推算总页数。
+- `search` 能力可选提供 `searchAlbums(keywords, limit?, offset?, context?)`，返回
+  `{ items: AlbumSummary[], total: number }`；`AlbumSummary.artist` 是可选展示字段。
+  宿主仅对实际注册此方法的音源开放专辑搜索，并通过 request context 传递取消信号。
 - 网易云音乐是 Twilight Echo 自带基础 `MediaProvider` 插件：插件 ID 为
   `com.twilightecho.provider.ncm`，provider 前缀固定为 `ncm`，随软件分发并默认启用；
   用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。
+  内置网易云支持未登录的专辑搜索和曲目读取；已有登录 Cookie 时继续随请求携带。
   启动恢复登录须等待音源注册完成；登录检查失败或未返回用户资料时保留加密 Cookie，
   供后续检查重试，仅显式退出登录时删除凭据。
   `library` 能力可选提供 `fetchSavedAlbums()` / `fetchSavedArtists()`，返回标准

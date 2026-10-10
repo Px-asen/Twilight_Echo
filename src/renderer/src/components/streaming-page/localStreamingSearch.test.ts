@@ -4,6 +4,7 @@ import type { Track } from '../../types/music'
 
 const {
   normalizeLocalStreamingQuery,
+  searchLocalStreamingAlbums,
   searchLocalStreamingArtists,
   searchLocalStreamingPlaylists,
   searchLocalStreamingSongs
@@ -27,6 +28,44 @@ function track(id: string, patch: Partial<Track> = {}): Track {
     ...patch
   }
 }
+
+test('album search preserves release identities and matches album artists and pinyin initials', () => {
+  const albums = [
+    { id: 'id:1', name: '范特西', artist: '周杰伦', trackCount: 10, cover: null },
+    { id: 'dir:other', name: '范特西', artist: '另一位歌手', trackCount: 4, cover: null },
+    { id: 'id:3', name: '其他专辑', artist: '周杰伦', trackCount: 8, cover: null },
+    { name: '范特西', artist: '缺少标识', trackCount: 1, cover: null }
+  ]
+  assert.deepEqual(
+    searchLocalStreamingAlbums(albums, '范特西').albums.map((item) => item.id),
+    ['id:1', 'dir:other']
+  )
+  assert.deepEqual(
+    searchLocalStreamingAlbums(albums, 'zjl ftx').albums.map((item) => item.id),
+    ['id:1']
+  )
+  assert.equal(searchLocalStreamingAlbums(albums, '周杰伦').total, 2)
+  assert.deepEqual(searchLocalStreamingAlbums(albums, '  !  '), { albums: [], total: 0 })
+  assert.equal(searchLocalStreamingAlbums(albums, '周杰伦范特西').total, 0)
+})
+
+test('local album search returns only its page and retains durable artwork origins', () => {
+  const albums = Array.from({ length: 65 }, (_, index) => ({
+    id: `release:${index}`,
+    name: `Album ${index}`,
+    artist: 'Singer',
+    trackCount: index + 1,
+    cover: 'twilight-media://cover/token',
+    coverSource: 'https://example.test/artwork.jpg'
+  }))
+  const page = searchLocalStreamingAlbums(albums, 'album', 30, 30)
+  assert.equal(page.total, 65)
+  assert.equal(page.albums.length, 30)
+  assert.equal(page.albums[0].id, 'release:30')
+  assert.equal(page.albums.at(-1)?.id, 'release:59')
+  assert.equal(page.albums[0].coverSource, albums[0].coverSource)
+  assert.equal(searchLocalStreamingAlbums(albums, 'album', 30, 60).albums.length, 5)
+})
 
 test('normalizeLocalStreamingQuery keeps searchable letters and numbers', () => {
   assert.equal(normalizeLocalStreamingQuery(' Moon-River 2024! '), 'moonriver2024')

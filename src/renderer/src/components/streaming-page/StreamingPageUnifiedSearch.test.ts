@@ -14,6 +14,99 @@ const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url)
 const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import.meta.url), 'utf8')
 const providerHomeSource = readFileSync(new URL('./ProviderMusicHome.vue', import.meta.url), 'utf8')
 const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
+
+test('album search detail opens the result source, retries in place and ignores stale detail loads', async () => {
+  const code = source.match(
+    /async function openSearchAlbum[\s\S]*?(?=\nasync function openArtist)/
+  )?.[0]
+  assert.ok(code)
+  assert.match(source, /@open-album="openSearchAlbum"/)
+  const stack: Array<{ providerId: string }> = []
+  const local = [createTrack('local:1', 'local')]
+  let finishRemote!: (tracks: Track[]) => void
+  let token = 0
+  const calls: Array<{ providerId: string; id: string }> = []
+  const scope = {
+    activeProvider: { value: 'another-provider' },
+    beginDetailTransition: () => {},
+    pushDetail: (view: { providerId: string }) => stack.push(view),
+    replaceTopDetail: (view: { providerId: string }) => {
+      stack[stack.length - 1] = view
+    },
+    beginDetailLoad: () => {
+      scope.detailLoading.value = true
+      return ++token
+    },
+    isActiveDetailLoad: (request: number) => request === token,
+    albumSearch: {
+      loadAlbumTracks: async (album: { providerId: string; id: string }) => {
+        calls.push(album)
+        if (album.providerId === 'local') return local
+        return new Promise<Track[]>((resolve) => {
+          finishRemote = resolve
+        })
+      }
+    },
+    detailTracks: { value: [] as Track[] },
+    detailLoading: { value: false },
+    detailError: { value: '' },
+    friendlyStreamingError: (error: Error) => error.message
+  }
+  const handlers = runInNewContext(
+    `${stripTypeScriptTypes(code)}\n({openSearchAlbum, openAlbum})`,
+    scope
+  )
+  const album = {
+    id: '1',
+    name: 'Album',
+    trackCount: 1,
+    cover: null,
+    providerName: 'Local',
+    providerId: 'local'
+  }
+  const remote = handlers.openSearchAlbum({ ...album, providerId: 'ncm' })
+  await handlers.openSearchAlbum(album)
+  finishRemote([createTrack('ncm:1', 'ncm')])
+  await remote
+  assert.equal(scope.detailTracks.value, local)
+  assert.equal(scope.activeProvider.value, 'another-provider')
+  assert.equal(scope.detailLoading.value, false)
+  assert.equal(scope.detailError.value, '')
+  assert.equal(stack.at(-1)?.providerId, 'local')
+  const depth = stack.length
+  await handlers.openAlbum(album, 'local', true)
+  assert.equal(stack.length, depth)
+  assert.deepEqual(
+    calls.map((call) => call.providerId),
+    ['ncm', 'local', 'local']
+  )
+})
+test('album links in track rows retain local release identity and online source', async () => {
+  const code = source.match(
+    /async function openTrackAlbum[\s\S]*?(?=\nfunction openTrackArtist)/
+  )?.[0]
+  assert.ok(code)
+  const track = createTrack('local:1', 'local')
+  const opened: Array<{ providerId: string; id: string | number }> = []
+  const handler = runInNewContext(`${stripTypeScriptTypes(code)}\nopenTrackAlbum`, {
+    detailProviderId: { value: 'another-provider' },
+    musicStore: {
+      albums: {
+        value: [{ id: 'release:1', name: 'Album', tracks: [track], cover: null, trackCount: 1 }]
+      }
+    },
+    openAlbum: async (album: { id: string | number }, providerId: string) =>
+      opened.push({ providerId, id: album.id }),
+    pushNotice: () => assert.fail('the local library supplies the album identity')
+  })
+  await handler(track)
+  await handler({ ...createTrack('ncm:1', 'ncm'), albumId: 1 })
+  assert.deepEqual(opened, [
+    { providerId: 'local', id: 'release:1' },
+    { providerId: 'ncm', id: 1 }
+  ])
+})
+
 const providerSwitcherSource = readFileSync(
   new URL('./StreamingProviderSwitcher.vue', import.meta.url),
   'utf8'

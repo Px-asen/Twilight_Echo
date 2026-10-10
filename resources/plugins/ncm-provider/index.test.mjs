@@ -70,6 +70,102 @@ function parseRequest(path) {
   return new URL(path, 'http://twilight.local')
 }
 
+test('album search is anonymous-capable and preserves totals, artist credits and cancellation', async () => {
+  const controller = new AbortController()
+  const provider = await activateProvider(async (path, cookie, options) => {
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    assert.equal(url.searchParams.get('type'), '10')
+    assert.equal(url.searchParams.get('keywords'), '范特西 & Live')
+    assert.equal(url.searchParams.get('limit'), '2')
+    assert.equal(url.searchParams.get('offset'), '30')
+    assert.ok(!cookie)
+    assert.equal(options.signal, controller.signal)
+    return {
+      code: 200,
+      data: {
+        result: {
+          albumCount: 48,
+          albums: [
+            {
+              ...album(1),
+              artists: [{ name: '周杰伦' }, { name: 'Guest' }],
+              picUrl: 'https://p1.music.126.net/album.jpg',
+              publishTime: '1600000000000'
+            },
+            { ...album(2), artist: { name: 'Other artist' } }
+          ]
+        }
+      }
+    }
+  }, new Map())
+  try {
+    const result = await provider.searchAlbums('范特西 & Live', 2, 30, {
+      signal: controller.signal
+    })
+    assert.equal(result.total, 48)
+    assert.deepEqual(
+      result.items.map((item) => item.id),
+      [1, 2]
+    )
+    assert.equal(result.items[0].artist, '周杰伦 / Guest')
+    assert.equal(result.items[1].artist, 'Other artist')
+    assert.equal(result.items[0].publishTime, 1600000000000)
+    assert.match(result.items[0].cover, /^https:/)
+    controller.abort(new Error('cancelled album request'))
+    await assert.rejects(
+      provider.searchAlbums('unused', 2, 30, { signal: controller.signal }),
+      /cancelled/
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('album search distinguishes empty pages from invalid or failed responses', async () => {
+  let response = { code: 200, result: { albumCount: 0 } }
+  const provider = await activateProvider(async () => response, new Map())
+  try {
+    assert.deepEqual(await provider.searchAlbums('empty'), { items: [], total: 0 })
+    response = { code: 503, message: 'upstream unavailable' }
+    await assert.rejects(provider.searchAlbums('failure'))
+    response = { code: 200, result: { albums: 'invalid' } }
+    await assert.rejects(provider.searchAlbums('malformed'), /无效的专辑搜索结果/)
+    response = { code: 200 }
+    await assert.rejects(provider.searchAlbums('missing result'), /无效的专辑搜索结果/)
+    response = {
+      code: 200,
+      result: { albums: [null, { id: Infinity }, { id: -1 }, album(1)], albumCount: 1 }
+    }
+    assert.deepEqual(
+      (await provider.searchAlbums('valid ids')).items.map((item) => item.id),
+      [1]
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('album tracks can be opened after anonymous search without changing their order', async () => {
+  const provider = await activateProvider(async (path, cookie) => {
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/album')
+    assert.equal(url.searchParams.get('id'), '123')
+    assert.ok(!cookie)
+    return { code: 200, songs: [song(9), song(3)] }
+  }, new Map())
+  try {
+    const tracks = await provider.fetchAlbumTracks('123')
+    assert.deepEqual(
+      tracks.map((track) => track.id),
+      ['ncm:9', 'ncm:3']
+    )
+    assert.ok(tracks.every((track) => track.source === 'ncm'))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('AutoMix identity describes the authorized actual format and survives URL cache and force refresh', async () => {
   let calls = 0
   const provider = await activateProvider(async () => ({

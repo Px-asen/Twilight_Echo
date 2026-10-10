@@ -64,6 +64,27 @@ function onSourceMenuFocusOut(event: FocusEvent): void {
         class="search-tab-pill"
         data-te-interactive
         role="button"
+        :tabindex="availableSearchTypes.includes('albums') ? 0 : -1"
+        :aria-pressed="searchType === 'albums'"
+        :aria-disabled="!availableSearchTypes.includes('albums')"
+        :class="{
+          active: searchType === 'albums',
+          disabled: !availableSearchTypes.includes('albums')
+        }"
+        @click="availableSearchTypes.includes('albums') && emit('update:searchType', 'albums')"
+        @keydown.enter.prevent="
+          availableSearchTypes.includes('albums') && emit('update:searchType', 'albums')
+        "
+        @keydown.space.prevent="
+          availableSearchTypes.includes('albums') && emit('update:searchType', 'albums')
+        "
+      >
+        专辑
+      </div>
+      <div
+        class="search-tab-pill"
+        data-te-interactive
+        role="button"
         :tabindex="availableSearchTypes.includes('playlists') ? 0 : -1"
         :aria-pressed="searchType === 'playlists'"
         :aria-disabled="!availableSearchTypes.includes('playlists')"

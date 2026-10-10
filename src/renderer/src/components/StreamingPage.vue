@@ -36,6 +36,11 @@ import {
   providerFavoriteTrackKey
 } from '../providers/providerFavoriteChanges'
 import { searchUnifiedCollections } from '@renderer/components/streaming-page/unifiedCollectionSearch.ts'
+import {
+  createAlbumSearch,
+  supportsAlbumSearch,
+  type AlbumSearchItem
+} from '@renderer/components/streaming-page/albumSearch.ts'
 import { BUILTIN_NAVIGATION_PAGES } from '@renderer/app/navigationPages.ts'
 import type {
   MediaProviderAlbumSummary,
@@ -149,7 +154,7 @@ type ArtistDetailTab = 'songs' | 'albums' | 'playlists'
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
-  | { type: 'album'; album: MediaProviderAlbumSummary }
+  | { type: 'album'; album: MediaProviderAlbumSummary; providerId: string }
   | { type: 'rec'; section: RecSection }
   | { type: 'artist'; artist: MediaProviderArtistSummary; user?: NcmUserSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
@@ -208,7 +213,7 @@ const streamingViewKey = computed(() => {
     case 'playlist':
       return `detail:playlist:${detail.playlist.id}`
     case 'album':
-      return `detail:album:${detail.album.id}`
+      return `detail:album:${detail.providerId}:${detail.album.id}`
     case 'rec':
       return `detail:rec:${detail.section.key}`
     case 'artist':
@@ -380,6 +385,9 @@ const activeProvider = computed<string>(() => {
 })
 
 const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
+const detailProviderId = computed(() =>
+  currentDetail.value?.type === 'album' ? currentDetail.value.providerId : activeProvider.value
+)
 const activeExternalState = computed<ExternalProviderState | null>(() =>
   isExternalActive.value ? (externalStates[activeProvider.value] ?? null) : null
 )
@@ -677,7 +685,6 @@ const {
   fetchArtistAlbums,
   fetchArtistIntro,
   fetchArtistFollowState,
-  fetchAlbumTracks,
   fetchArtistPlaylists,
   fetchUserFollows,
   fetchUserFolloweds,
@@ -838,6 +845,15 @@ async function searchLocalArtists(
   return searchLocalStreamingArtists(musicStore.artists.value, keywords, limit, offset)
 }
 
+const albumSearch = createAlbumSearch({
+  localAlbums: () => musicStore.albums.value,
+  providers: () => providerStore.providers.value,
+  searchProvider: (id, query, limit, offset, options) =>
+    mediaProviders.searchAlbums(id, query, limit, offset, options),
+  getProvider: (id) => mediaProviders.get(id),
+  reportError: (message) => pushNotice({ kind: 'warning', message: '部分音源搜索失败：' + message })
+})
+
 const searchSources = computed<SearchSourceOption[]>(() => {
   const sources: SearchSourceOption[] = [
     {
@@ -845,14 +861,14 @@ const searchSources = computed<SearchSourceOption[]>(() => {
       label: '全部音源',
       icon: 'pi pi-bolt',
       available: true,
-      supportedTypes: ['songs', 'playlists', 'artists']
+      supportedTypes: ['songs', 'albums', 'playlists', 'artists']
     },
     {
       id: 'local',
       label: '本地音乐',
       icon: 'pi pi-desktop',
       available: true,
-      supportedTypes: ['songs', 'playlists', 'artists']
+      supportedTypes: ['songs', 'albums', 'playlists', 'artists']
     }
   ]
   for (const provider of providerStore.providers.value) {
@@ -860,6 +876,7 @@ const searchSources = computed<SearchSourceOption[]>(() => {
     const hasPlaylist = provider.capabilities.includes('playlist')
     const supportedTypes: SearchSourceOption['supportedTypes'] = []
     if (hasSearch && provider.supportedMethods.includes('searchSongs')) supportedTypes.push('songs')
+    if (supportsAlbumSearch(provider)) supportedTypes.push('albums')
     if (hasSearch && provider.supportedMethods.includes('searchArtists'))
       supportedTypes.push('artists')
     if (hasPlaylist && provider.supportedMethods.includes('searchPlaylists'))
@@ -881,6 +898,7 @@ const {
   searchType,
   searchSource,
   searchResults,
+  searchAlbumsResults,
   searchPlaylistsResults,
   searchArtistsResults,
   searchTotal,
@@ -894,6 +912,9 @@ const {
   onPageChange,
   onSearchTrackClick
 } = useStreamingSearch({
+  searchAlbums: albumSearch.searchAlbums,
+  searchLocalAlbums: albumSearch.searchLocalAlbums,
+  searchProviderAlbums: albumSearch.searchProviderAlbums,
   searchSongs,
   searchUnifiedSongs,
   searchPlaylists: async (query, limit = 30, offset = 0, options) => {
@@ -1140,6 +1161,7 @@ const isExternalHome = computed(
 )
 
 const headerTitle = computed(() => {
+  if (currentDetail.value?.type === 'album') return currentDetail.value.album.name
   if (!currentDetail.value && activeTab.value === 'search')
     return searchQuery.value.trim() ? '搜索: ' + searchQuery.value.trim() : '搜索'
   if (!currentDetail.value && activeTab.value === 'library') return '音乐库'
@@ -1153,7 +1175,6 @@ const headerTitle = computed(() => {
   if (currentDetail.value?.type === 'recent') return '最近播放'
   if (currentDetail.value?.type === 'ranking') return '听歌排行'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
-  if (currentDetail.value?.type === 'album') return currentDetail.value.album.name
   return currentView.value?.label ?? '流媒体'
 })
 const headerSubtitle = computed(() => {
@@ -1299,7 +1320,15 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
       title: currentDetail.value.album.name,
       cover: currentDetail.value.album.cover,
       coverSource: currentDetail.value.album.coverSource ?? null,
-      desc: `共 ${detailTracks.value.length || currentDetail.value.album.trackCount} 首歌曲`,
+      desc: [
+        currentDetail.value.album.artist,
+        currentDetail.value.providerId === 'local'
+          ? '本地音乐'
+          : providerStore.getProvider(currentDetail.value.providerId)?.name,
+        `共 ${detailTracks.value.length || currentDetail.value.album.trackCount} 首歌曲`
+      ]
+        .filter(Boolean)
+        .join(' · '),
       icon: 'pi pi-clone'
     }
   }
@@ -1796,22 +1825,31 @@ async function loadMoreDetailTracks(): Promise<void> {
 }
 
 async function openTrackAlbum(track: Track): Promise<void> {
+  const providerId = track.source || detailProviderId.value
+  if (providerId === 'local' || detailProviderId.value === 'local') {
+    const album = musicStore.albums.value.find((item) =>
+      item.tracks.some((itemTrack) => itemTrack.id === track.id)
+    )
+    if (album?.id) {
+      await openAlbum({ ...album, id: album.id }, 'local')
+      return
+    }
+  }
   if (!track.albumId) {
     pushNotice({ kind: 'info', message: '这首歌曲没有可用的专辑详情标识' })
     return
   }
-  const providerId = track.source || activeProvider.value
-  if (providerId !== activeProvider.value) {
-    selectProvider(providerId, false)
-    await nextTick()
-  }
-  await openAlbum({
-    id: track.albumId,
-    name: track.album,
-    cover: track.cover,
-    coverSource: track.coverSource,
-    trackCount: 0
-  })
+  await openAlbum(
+    {
+      id: track.albumId,
+      name: track.album,
+      artist: track.albumArtist || track.artist,
+      cover: track.cover,
+      coverSource: track.coverSource,
+      trackCount: 0
+    },
+    providerId
+  )
 }
 
 function openTrackArtist(track: Track): void {
@@ -1824,18 +1862,23 @@ function openTrackArtist(track: Track): void {
   })
 }
 
-async function openAlbum(album: MediaProviderAlbumSummary): Promise<void> {
+async function openSearchAlbum(album: AlbumSearchItem): Promise<void> {
+  await openAlbum(album, album.providerId)
+}
+
+async function openAlbum(
+  album: MediaProviderAlbumSummary,
+  providerId = activeProvider.value,
+  replace = false
+): Promise<void> {
   beginDetailTransition()
-  pushDetail({ type: 'album', album })
+  const view: DetailView = { type: 'album', album, providerId }
+  if (replace) replaceTopDetail(view)
+  else pushDetail(view)
   const token = beginDetailLoad()
 
   try {
-    const provider = mediaProviders.get(activeProvider.value)
-    const tracks = isExternalActive.value
-      ? provider?.fetchAlbumTracks
-        ? await provider.fetchAlbumTracks(album.id)
-        : []
-      : await fetchAlbumTracks(Number(album.id))
+    const tracks = await albumSearch.loadAlbumTracks({ id: album.id, providerId })
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
@@ -2854,7 +2897,9 @@ const canMutateCurrentNcmPlaylist = computed(() => {
   return detail.playlist.owned === true
 })
 
-const canManageNcmPlaylists = computed(() => !isExternalActive.value && isLoggedIn.value)
+const canManageNcmPlaylists = computed(
+  () => detailProviderId.value === NCM_PROVIDER_ID && isLoggedIn.value
+)
 
 function openCreateNcmPlaylistDialog(seedTracks: Track[] = []): void {
   ncmPlaylistEditor.openCreate(seedTracks)
@@ -3192,7 +3237,7 @@ async function retryCurrentView(): Promise<void> {
     return
   }
   if (currentDetail.value?.type === 'album') {
-    await openAlbum(currentDetail.value.album)
+    await openAlbum(currentDetail.value.album, currentDetail.value.providerId, true)
     return
   }
   if (currentDetail.value?.type === 'artist') {
@@ -3518,7 +3563,7 @@ onMounted(async () => {
         >
           <StreamingPlaceholder
             v-if="!isSearching"
-            title="搜索歌曲、歌单和歌手"
+            title="搜索歌曲、专辑、歌单和歌手"
             hint="输入关键词，可搜索全部来源、本地或指定平台。"
             icon="pi pi-search"
           />
@@ -3526,6 +3571,7 @@ onMounted(async () => {
             v-else
             :search-type="searchType"
             :search-results="searchResults"
+            :search-albums-results="searchAlbumsResults"
             :search-playlists-results="searchPlaylistsResults"
             :search-artists-results="searchArtistsResults"
             :search-total="searchTotal"
@@ -3553,6 +3599,7 @@ onMounted(async () => {
             "
             @like-track="onLikeTrack"
             @open-playlist="openPlaylist"
+            @open-album="openSearchAlbum"
             @open-artist="openArtist"
             @page-change="onPageChange"
             @retry="performSearch(searchQuery)"
@@ -3717,7 +3764,7 @@ onMounted(async () => {
                 @refresh="retryCurrentView"
                 :current-track-id="currentTrack?.id ?? null"
                 :track-activation-mode="settingsStore.settings.value.trackActivationMode"
-                :is-external="isExternalActive"
+                :is-external="detailProviderId !== NCM_PROVIDER_ID"
                 :show-track-likes="showBilibiliTrackLikes"
                 :favorite-provider-label="showBilibiliTrackLikes ? 'Bilibili' : '网易云'"
                 :loading="detailLoading && detailTracks.length === 0"
