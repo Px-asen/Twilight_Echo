@@ -2,8 +2,8 @@
  * Player bar presentation — shared contract.
  *
  * The playbar has three shapes. `standard` is the full bar (cover, inline
- * progress, time labels). `mini` is a compact control strip: play/pause at the
- * far left, a long flat progress rail in the middle and utility tools on the
+ * progress, time labels). `mini` is a compact control strip: mode, previous /
+ * play / next and volume at the left, a long progress rail in the middle and tools on the
  * right. `compact` spans the window edge to edge flush with the bottom, keeping
  * a single row of controls with the progress readout as a hairline along its
  * own top edge.

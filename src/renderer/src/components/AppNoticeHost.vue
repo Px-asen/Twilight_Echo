@@ -17,6 +17,8 @@ const DownloadResultActions = defineAsyncComponent(
 )
 
 const emit = defineEmits<{ library: [] }>()
+const props = defineProps<{ historyTarget?: HTMLElement | null; historyEmbedded?: boolean }>()
+const embeddedHistory = computed(() => props.historyEmbedded === true || !!props.historyTarget)
 
 const {
   notices,
@@ -35,6 +37,7 @@ const {
 } = useAppNoticeStore()
 const historyPanel = ref<HTMLElement | null>(null)
 const filter = ref<'all' | 'active' | 'attention'>('all')
+const showAllHistory = ref(false)
 const visibleTaskCount = ref(0)
 const taskCenter = ref<InstanceType<typeof TaskCenter> | null>(null)
 function clearRecords(): void {
@@ -56,6 +59,12 @@ const history = computed(() =>
           !!notice.action)
     )
 )
+const displayedHistory = computed(() =>
+  embeddedHistory.value && !showAllHistory.value ? history.value.slice(0, 3) : history.value
+)
+watch(filter, () => {
+  showAllHistory.value = false
+})
 const downloadResults = computed(
   () =>
     new Map(
@@ -109,6 +118,7 @@ function dismissOutside(event: PointerEvent): void {
   const target = event.target
   if (
     historyOpen.value &&
+    !embeddedHistory.value &&
     target instanceof Node &&
     !historyPanel.value?.contains(target) &&
     !historyTrigger?.contains(target)
@@ -126,9 +136,14 @@ function focusOut(event: FocusEvent, id: number): void {
 function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
-watch([historyOpen, history], () => {
-  if (historyOpen.value)
-    markHistoryRead(history.value.filter((notice) => !notice.read).map((notice) => notice.id))
+watch([historyOpen, displayedHistory, () => props.historyTarget], () => {
+  if (historyOpen.value && (!embeddedHistory.value || props.historyTarget))
+    markHistoryRead(
+      displayedHistory.value.filter((notice) => !notice.read).map((notice) => notice.id)
+    )
+})
+watch(historyOpen, (open) => {
+  if (!open) showAllHistory.value = false
 })
 watch([historyOpen, notices], () => {
   for (const notice of notices.value) {
@@ -139,8 +154,9 @@ watch([historyOpen, notices], () => {
     } else resumeNotice(notice.id, 'history')
   }
 })
-useEscapeToClose(historyOpen, closeHistory)
-useFocusTrap(historyPanel, historyOpen)
+const floatingHistoryOpen = computed(() => historyOpen.value && !embeddedHistory.value)
+useEscapeToClose(floatingHistoryOpen, closeHistory)
+useFocusTrap(historyPanel, floatingHistoryOpen)
 onMounted(() => document.addEventListener('pointerdown', dismissOutside))
 onBeforeUnmount(() => {
   historyOpen.value = false
@@ -197,124 +213,138 @@ defineExpose({ historyOpen, toggleHistory })
       </button>
     </div>
   </TransitionGroup>
-  <Transition name="notice-panel" :css="pointerOpened">
-    <section
-      v-show="historyOpen"
-      id="app-notice-history"
-      ref="historyPanel"
-      class="notice-history"
-      :style="{ transformOrigin: panelOrigin }"
-      tabindex="-1"
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="notice-history-title"
-    >
-      <header class="notice-history-header">
-        <div>
-          <h2 id="notice-history-title">任务与通知</h2>
-          <p v-if="activeTaskCount">{{ activeTaskCount }} 项任务进行中</p>
-        </div>
-        <div class="notice-header-actions">
-          <button
-            type="button"
-            role="switch"
-            class="notice-icon-button notice-dnd-toggle"
-            aria-label="勿扰模式"
-            :title="doNotDisturb ? '关闭勿扰模式' : '开启勿扰模式，通知仍会保留'"
-            :aria-checked="doNotDisturb"
-            @click="setDoNotDisturb(!doNotDisturb)"
-          >
-            <i class="pi pi-moon" aria-hidden="true"></i>
-          </button>
-          <button
-            type="button"
-            class="notice-icon-button"
-            aria-label="关闭任务与通知"
-            @click="closeHistory()"
-          >
-            <i class="pi pi-times" aria-hidden="true"></i>
-          </button>
-        </div>
-      </header>
-      <div class="notice-filters" role="group" aria-label="筛选任务与通知">
-        <button
-          v-for="item in [
-            { value: 'all', label: '全部' },
-            { value: 'active', label: '进行中' },
-            { value: 'attention', label: '需处理' }
-          ] as const"
-          :key="item.value"
-          type="button"
-          :aria-pressed="filter === item.value"
-          @click="filter = item.value"
-        >
-          {{ item.label }}
-        </button>
-      </div>
-      <div class="notice-history-body">
-        <TaskCenter
-          ref="taskCenter"
-          :active="historyOpen"
-          :filter="filter"
-          @visible-count="visibleTaskCount = $event"
-          @library="openLibrary"
-        />
-        <Transition name="notice-empty">
-          <div v-if="!history.length && !visibleTaskCount" class="notice-empty">
-            <span class="notice-empty-symbol"><i class="pi pi-bell" aria-hidden="true"></i></span>
-            <h3>{{ emptyLabel }}</h3>
-            <p v-if="filter === 'all'">新的通知会出现在这里</p>
+  <Teleport :to="historyTarget ?? 'body'" :disabled="!historyTarget">
+    <Transition name="notice-panel" :css="pointerOpened && !embeddedHistory">
+      <section
+        v-show="historyOpen && (!embeddedHistory || historyTarget)"
+        id="app-notice-history"
+        ref="historyPanel"
+        class="notice-history"
+        :class="{ 'notice-history--embedded': embeddedHistory }"
+        :style="{ transformOrigin: panelOrigin }"
+        :tabindex="embeddedHistory ? undefined : -1"
+        :role="embeddedHistory ? 'region' : 'dialog'"
+        :aria-modal="embeddedHistory ? undefined : false"
+        aria-labelledby="notice-history-title"
+      >
+        <header class="notice-history-header">
+          <div>
+            <h2 id="notice-history-title">{{ embeddedHistory ? '活动' : '任务与通知' }}</h2>
+            <p v-if="activeTaskCount">{{ activeTaskCount }} 项任务进行中</p>
           </div>
-        </Transition>
-        <h3 v-if="history.length && visibleTaskCount" class="notice-group-title">通知记录</h3>
-        <TransitionGroup tag="div" name="notice-record" class="notice-records">
-          <article
-            v-for="notice in history"
-            :key="notice.id"
-            class="notice-record"
-            :class="`notice-${notice.kind}`"
+          <div class="notice-header-actions">
+            <button
+              type="button"
+              role="switch"
+              class="notice-icon-button notice-dnd-toggle"
+              aria-label="勿扰模式"
+              :title="doNotDisturb ? '关闭勿扰模式' : '开启勿扰模式，通知仍会保留'"
+              :aria-checked="doNotDisturb"
+              @click="setDoNotDisturb(!doNotDisturb)"
+            >
+              <i class="pi pi-moon" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="!embeddedHistory"
+              type="button"
+              class="notice-icon-button"
+              aria-label="关闭任务与通知"
+              @click="closeHistory()"
+            >
+              <i class="pi pi-times" aria-hidden="true"></i>
+            </button>
+          </div>
+        </header>
+        <div class="notice-filters" role="group" aria-label="筛选任务与通知">
+          <button
+            v-for="item in [
+              { value: 'all', label: '全部' },
+              { value: 'active', label: '进行中' },
+              { value: 'attention', label: '需处理' }
+            ] as const"
+            :key="item.value"
+            type="button"
+            :aria-pressed="filter === item.value"
+            @click="filter = item.value"
           >
-            <span class="notice-symbol"
-              ><i class="pi" :class="intents[notice.kind].icon" aria-hidden="true"></i
-            ></span>
-            <div class="notice-content">
-              <div class="notice-record-meta">
-                <span class="notice-label">{{ intents[notice.kind].label }}</span
-                ><time :datetime="new Date(notice.createdAt).toISOString()">{{
-                  timeLabel(notice.createdAt)
-                }}</time>
-              </div>
-              <p class="notice-message">{{ notice.message }}</p>
-              <button
-                v-if="notice.action"
-                type="button"
-                class="notice-action"
-                :disabled="pendingActions.has(notice.id)"
-                @click="runNoticeAction(notice.id)"
-              >
-                {{ notice.action.label }} <i class="pi pi-arrow-right" aria-hidden="true"></i>
-              </button>
-              <DownloadResultActions
-                v-if="notice.downloadTaskId && downloadResults.has(notice.downloadTaskId)"
-                :task="downloadResults.get(notice.downloadTaskId)!"
-              />
+            {{ item.label }}
+          </button>
+        </div>
+        <div class="notice-history-body">
+          <TaskCenter
+            ref="taskCenter"
+            :active="historyOpen"
+            :filter="filter"
+            :compact="embeddedHistory"
+            @visible-count="visibleTaskCount = $event"
+            @library="openLibrary"
+          />
+          <Transition name="notice-empty">
+            <div v-if="!history.length && !visibleTaskCount" class="notice-empty">
+              <span class="notice-empty-symbol"><i class="pi pi-bell" aria-hidden="true"></i></span>
+              <h3>{{ emptyLabel }}</h3>
+              <p v-if="filter === 'all'">新的通知会出现在这里</p>
             </div>
-          </article>
-        </TransitionGroup>
-      </div>
-      <footer class="notice-history-footer">
-        <span>最近 50 条 · 待处理记录保留</span
-        ><button
-          type="button"
-          class="notice-clear"
-          :disabled="!noticeHistory.length && !visibleTaskCount"
-          @click="clearRecords"
-        >
-          清空记录
-        </button>
-      </footer>
-    </section>
-  </Transition>
+          </Transition>
+          <h3 v-if="history.length && visibleTaskCount" class="notice-group-title">通知记录</h3>
+          <TransitionGroup tag="div" name="notice-record" class="notice-records">
+            <article
+              v-for="notice in displayedHistory"
+              :key="notice.id"
+              class="notice-record"
+              :class="`notice-${notice.kind}`"
+            >
+              <span class="notice-symbol"
+                ><i class="pi" :class="intents[notice.kind].icon" aria-hidden="true"></i
+              ></span>
+              <div class="notice-content">
+                <div class="notice-record-meta">
+                  <span class="notice-label">{{ intents[notice.kind].label }}</span
+                  ><time :datetime="new Date(notice.createdAt).toISOString()">{{
+                    timeLabel(notice.createdAt)
+                  }}</time>
+                </div>
+                <p class="notice-message">{{ notice.message }}</p>
+                <button
+                  v-if="notice.action"
+                  type="button"
+                  class="notice-action"
+                  :disabled="pendingActions.has(notice.id)"
+                  @click="runNoticeAction(notice.id)"
+                >
+                  {{ notice.action.label }} <i class="pi pi-arrow-right" aria-hidden="true"></i>
+                </button>
+                <DownloadResultActions
+                  v-if="notice.downloadTaskId && downloadResults.has(notice.downloadTaskId)"
+                  :task="downloadResults.get(notice.downloadTaskId)!"
+                />
+              </div>
+            </article>
+          </TransitionGroup>
+        </div>
+        <footer v-if="!embeddedHistory || history.length" class="notice-history-footer">
+          <button
+            v-if="embeddedHistory && history.length > 3"
+            type="button"
+            class="notice-history-more"
+            :aria-expanded="showAllHistory"
+            @click="showAllHistory = !showAllHistory"
+          >
+            {{ showAllHistory ? '收起记录' : `查看全部 ${history.length} 条` }}
+          </button>
+          <span v-else>{{ embeddedHistory ? `${history.length} 条记录` : '最近 50 条记录' }}</span>
+          <button
+            type="button"
+            class="notice-clear"
+            :disabled="!noticeHistory.length && !visibleTaskCount"
+            @click="clearRecords"
+          >
+            清空记录
+          </button>
+        </footer>
+      </section>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -452,7 +482,7 @@ defineExpose({ historyOpen, toggleHistory })
   background: color-mix(in srgb, var(--notice-intent) 18%, transparent);
 }
 button:focus-visible {
-  outline: 2px solid var(--notice-accent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 .notice-history {
@@ -469,6 +499,152 @@ button:focus-visible {
   backdrop-filter: blur(28px);
   overflow: hidden;
   outline: none;
+}
+.notice-history.notice-history--embedded {
+  --notice-text: var(--te-material-ink, var(--te-text, #172033));
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+  font-size: var(--te-type-body, 15px);
+  line-height: 1.5;
+}
+.notice-history--embedded .notice-history-header {
+  padding: 0 0 12px;
+  align-items: flex-start;
+  border: 0;
+}
+.notice-history--embedded .notice-history-body {
+  overflow: visible;
+}
+.notice-history--embedded .notice-history-footer {
+  padding: 8px 0 0;
+  border: 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: var(--te-type-caption, 13px);
+}
+.notice-history--embedded .notice-history-header h2 {
+  font-size: var(--te-type-headline, 17px);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+}
+.notice-history--embedded .notice-filters {
+  padding: 0 0 8px;
+  border: 0;
+  gap: 4px;
+}
+.notice-history--embedded .notice-filters button {
+  min-height: var(--te-control-height-md, 34px);
+  padding: 6px 10px;
+  color: var(--notice-muted);
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.notice-history--embedded .notice-filters button[aria-pressed='true'] {
+  background: var(--te-subtle-bg);
+  color: var(--notice-text);
+  font-weight: 500;
+}
+.notice-history--embedded .notice-records {
+  padding: 0;
+}
+.notice-history--embedded .notice-group-title {
+  margin-inline: 0;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.notice-history--embedded .notice-record {
+  padding: 12px 0;
+  gap: 10px;
+}
+.notice-history--embedded .notice-symbol {
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+  background: transparent;
+  font-size: 17px;
+}
+.notice-history--embedded .notice-record-meta {
+  justify-content: flex-start;
+  min-height: 20px;
+  align-items: center;
+}
+.notice-history--embedded :is(.notice-record time, .notice-label, .notice-history-header p) {
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.notice-history--embedded .notice-message {
+  margin: 4px 0 0;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.55;
+  font-weight: 400;
+}
+.notice-history--embedded .notice-action {
+  min-height: var(--te-control-height-md, 34px);
+  margin-top: 4px;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--notice-muted);
+  font-weight: 400;
+  font-size: var(--te-type-caption, 13px);
+}
+.notice-history-more {
+  min-height: 28px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--notice-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.notice-history--embedded .notice-empty {
+  min-height: 0;
+  align-items: flex-start;
+  padding: 12px 0;
+}
+.notice-history--embedded .notice-empty-symbol {
+  display: none;
+}
+.notice-history--embedded .notice-empty h3 {
+  margin-top: 0;
+  font-size: var(--te-type-caption, 13px);
+}
+.notice-history--embedded .notice-empty p {
+  font-size: var(--te-type-caption, 13px);
+}
+.notice-history--embedded :is(.notice-clear, .notice-history-more) {
+  min-height: var(--te-control-height-md, 34px);
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.notice-history--embedded :deep(.task-record) {
+  padding: 12px 0;
+}
+.notice-history--embedded :deep(.task-meta strong),
+.notice-history--embedded :deep(.task-meta span),
+.notice-history--embedded :deep(.task-group-title),
+.notice-history--embedded :deep(.task-record p),
+.notice-history--embedded :deep(.task-actions button) {
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.notice-history--embedded :deep(.task-actions button) {
+  min-height: var(--te-control-height-md, 34px);
+}
+.notice-history--embedded .notice-icon-button {
+  min-width: max(var(--te-control-height-md, 34px), 1.5em);
+  min-height: max(var(--te-control-height-md, 34px), 1.5em);
+  font-size: var(--te-type-icon, 16px);
 }
 .notice-history-header {
   flex-shrink: 0;
@@ -723,13 +899,15 @@ button:focus-visible {
   transform: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  .notice-history,
-  .app-notice,
-  .notice-record,
-  .notice-empty {
-    transition-property: opacity !important;
-    transition-duration: 120ms !important;
-    transform: none !important;
+  @scope (:root:not([data-te-motion='full'])) {
+    .notice-history,
+    .app-notice,
+    .notice-record,
+    .notice-empty {
+      transition-property: opacity !important;
+      transition-duration: 120ms !important;
+      transform: none !important;
+    }
   }
 }
 @media (max-height: 420px) {

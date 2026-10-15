@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "attribute": "data-te-material",
+  "modes": [
+    "standard",
+    "transparent",
+    "liquidGlass"
+  ],
+  "roles": [
+    {
+      "id": "canvas",
+      "purpose": "Page backdrop; no foreground optics",
+      "optical": false,
+      "transparent": true,
+      "variables": [
+        "--te-material-canvas-ink",
+        "--te-material-canvas-border",
+        "--te-material-canvas-shadow",
+        "--te-material-canvas-filter",
+        "--te-material-canvas-background",
+        "--te-material-canvas-solid"
+      ]
+    },
+    {
+      "id": "content",
+      "purpose": "Readable content cards; existing editor inputs remain authoritative",
+      "optical": false,
+      "transparent": true,
+      "variables": [
+        "--te-material-content-ink",
+        "--te-material-content-border",
+        "--te-material-content-shadow",
+        "--te-material-content-filter",
+        "--te-material-content-background",
+        "--te-material-content-solid"
+      ]
+    },
+    {
+      "id": "navigation",
+      "purpose": "Attached window navigation and playback queue",
+      "optical": true,
+      "transparent": true,
+      "variables": [
+        "--te-material-navigation-ink",
+        "--te-material-navigation-border",
+        "--te-material-navigation-shadow",
+        "--te-material-navigation-filter",
+        "--te-material-navigation-background",
+        "--te-material-navigation-solid"
+      ]
+    },
+    {
+      "id": "titlebar",
+      "purpose": "Attached window chrome; no extra border or elevation",
+      "optical": true,
+      "transparent": true,
+      "variables": [
+        "--te-material-titlebar-ink",
+        "--te-material-titlebar-border",
+        "--te-material-titlebar-shadow",
+        "--te-material-titlebar-filter",
+        "--te-material-titlebar-background",
+        "--te-material-titlebar-solid"
+      ]
+    },
+    {
+      "id": "panel",
+      "purpose": "Account subpage and readable floating panels",
+      "optical": false,
+      "transparent": false,
+      "variables": [
+        "--te-material-panel-ink",
+        "--te-material-panel-border",
+        "--te-material-panel-shadow",
+        "--te-material-panel-filter",
+        "--te-material-panel-background",
+        "--te-material-panel-solid"
+      ]
+    },
+    {
+      "id": "popover",
+      "purpose": "Anchored tools and secondary filters",
+      "optical": false,
+      "transparent": false,
+      "variables": [
+        "--te-material-popover-ink",
+        "--te-material-popover-border",
+        "--te-material-popover-shadow",
+        "--te-material-popover-filter",
+        "--te-material-popover-background",
+        "--te-material-popover-solid"
+      ]
+    },
+    {
+      "id": "dialog",
+      "purpose": "Modal decisions; opaque and readable in every material mode",
+      "optical": false,
+      "transparent": false,
+      "variables": [
+        "--te-material-dialog-ink",
+        "--te-material-dialog-border",
+        "--te-material-dialog-shadow",
+        "--te-material-dialog-filter",
+        "--te-material-dialog-background",
+        "--te-material-dialog-solid"
+      ]
+    },
+    {
+      "id": "transport",
+      "purpose": "Standard floating playback; mini/compact remain flat",
+      "optical": true,
+      "transparent": true,
+      "variables": [
+        "--te-material-transport-ink",
+        "--te-material-transport-border",
+        "--te-material-transport-shadow",
+        "--te-material-transport-filter",
+        "--te-material-transport-background",
+        "--te-material-transport-solid"
+      ]
+    },
+    {
+      "id": "control",
+      "purpose": "Fields and compact controls without additional glass layers",
+      "optical": false,
+      "transparent": false,
+      "variables": [
+        "--te-material-control-ink",
+        "--te-material-control-border",
+        "--te-material-control-shadow",
+        "--te-material-control-filter",
+        "--te-material-control-background",
+        "--te-material-control-solid"
+      ]
+    }
+  ],
+  "inputs": [
+    "theme tokens",
+    "card appearance",
+    "liquid glass settings",
+    "background context"
+  ],
+  "fallback": "Opaque standard material when effects, transparency or contrast require it. Forced colors use system colors.",
+  "ownership": "Host owns recipes. Plugins consume roles and theme inputs; geometry and artwork remain component-owned."
+}

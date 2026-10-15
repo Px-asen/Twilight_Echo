@@ -25,6 +25,38 @@ const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import
 const providerHomeSource = readFileSync(new URL('./ProviderMusicHome.vue', import.meta.url), 'utf8')
 const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
 
+test('search-only providers remain selectable for advertised playlist search', () => {
+  const block = source.slice(
+    source.indexOf('const searchSources = computed'),
+    source.indexOf('\nconst {\n  searchQuery', source.indexOf('const searchSources = computed'))
+  )
+  assert.ok(block.startsWith('const searchSources = computed'))
+  const providers = ref([
+    {
+      id: 'search-only',
+      name: 'Collection search',
+      capabilities: ['search'],
+      supportedMethods: ['searchPlaylists'],
+      health: { available: true }
+    }
+  ])
+  const result = runInNewContext(`${stripTypeScriptTypes(block)}\nsearchSources`, {
+    computed,
+    providerStore: { providers },
+    supportsAlbumSearch: () => false
+  }) as { value: Array<{ id: string; supportedTypes: string[]; available: boolean }> }
+  const sourceOption = result.value.find((option) => option.id === 'search-only')
+  assert.ok(sourceOption)
+  assert.deepEqual(Array.from(sourceOption.supportedTypes), ['playlists'])
+  providers.value[0].health.available = false
+  assert.equal(result.value.find((option) => option.id === 'search-only')?.available, false)
+  providers.value[0].supportedMethods = []
+  assert.equal(
+    result.value.some((option) => option.id === 'search-only'),
+    false
+  )
+})
+
 function createAlbumPlaylistHarness() {
   const owned = source.match(/const ownedUserPlaylists = computed\([\s\S]*?\n\)/)?.[0]
   assert.ok(owned)
@@ -242,7 +274,7 @@ test('streaming page exposes unified song search beyond the NetEase-only surface
   assert.doesNotMatch(source, /const showNcmSearch = computed/)
 })
 
-test('streaming detail, social, and HiFi surfaces compile working dark-theme selectors', () => {
+test('streaming theme roles stay component-scoped alongside existing HiFi dark selectors', () => {
   const detailStyles = readFileSync(new URL('./StreamingDetailStage.css', import.meta.url), 'utf8')
   const socialStyles = readFileSync(new URL('./StreamingSocialStage.css', import.meta.url), 'utf8')
   const hifiSource = readFileSync(new URL('../player-bar/HiFiSidebar.css', import.meta.url), 'utf8')
@@ -268,12 +300,9 @@ test('streaming detail, social, and HiFi surfaces compile working dark-theme sel
 
   assert.match(
     detailCode,
-    /html\[data-theme=['"]dark['"]\] \.detail-stage\[[^\]]+\]\s*\{[^}]*--stage-paper-raised:\s*#1c1917/
+    /\.detail-stage\[data-v-streaming-detail-dark\]\s*\{[^}]*--stage-paper-raised:\s*var\(--te-card-bg\)/
   )
-  assert.match(
-    socialCode,
-    /html\[data-theme=['"]dark['"]\] \.social-stage \.stage-person-card\[[^\]]+\]:hover/
-  )
+  assert.match(socialCode, /\.stage-tabs\[data-v-streaming-social-dark\]/)
   assert.match(hifiCode, /html\[data-theme=['"]dark['"]\] \.deck\[[^\]]+\]\s*\{[^}]*--d-card:/)
   assert.match(hifiCode, /html\[data-theme=['"]dark['"]\] \.deck \.deck-display\[[^\]]+\]/)
   assert.doesNotMatch(

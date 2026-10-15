@@ -356,7 +356,7 @@ function interval(event: Event): void {
 .update-transfer-label {
   justify-content: space-between;
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   font-variant-numeric: tabular-nums;
 }
 .update-transfer progress {
@@ -380,13 +380,13 @@ function interval(event: Event): void {
 .update-hint,
 .update-reminders span {
   color: var(--te-settings-text-muted);
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   line-height: 1.6;
   margin: 0;
 }
 .update-notes summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text);
   padding: 10px 0;
 }
@@ -396,7 +396,7 @@ function interval(event: Event): void {
   max-height: 260px;
   overflow: auto;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--te-type-caption);
   line-height: 1.7;
 }
 .app-update-panel button:disabled {
@@ -404,7 +404,7 @@ function interval(event: Event): void {
   cursor: default;
 }
 .app-update-panel :is(button, select, input, summary):focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 @media (max-width: 640px) {

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from 'vue'
-import { useThemeStore } from '@renderer/stores/useThemeStore'
+import { defineAsyncComponent, computed } from 'vue'
 import { useMusicStore } from '@renderer/stores/useMusicStore'
+import { usePlayerStore } from '@renderer/stores/usePlayerStore'
+import OnlineHome from './OnlineHome.vue'
+import { useThemeStore } from '@renderer/stores/useThemeStore'
 import type { StreamingPageTab } from '@renderer/app/navigationPages'
 
 const OnlineDashboard = defineAsyncComponent(() => import('./OnlineDashboard.vue'))
 defineProps<{ preview?: boolean }>()
-const { tracks } = useMusicStore()
 
 const LocalDashboard = defineAsyncComponent(() => import('@renderer/components/LocalDashboard.vue'))
 const ArchiveDashboard = defineAsyncComponent(
@@ -19,6 +20,9 @@ const SoundFieldDashboard = defineAsyncComponent(
   () => import('@renderer/components/local-dashboard/SoundFieldDashboard.vue')
 )
 const { presetLayout } = useThemeStore()
+const { tracks } = useMusicStore()
+const player = usePlayerStore()
+const previewTracks = computed(() => tracks.value.slice(-6).reverse())
 
 const emit = defineEmits<{
   'select-view': [category: string, filter: string | null]
@@ -32,8 +36,31 @@ const emit = defineEmits<{
 
 <template>
   <div class="local-home-layout">
+    <OnlineHome
+      v-if="
+        preview && !['aurora-reference', 'obsidian-glass', 'paper-light'].includes(presetLayout)
+      "
+      :providers="[]"
+      :provider="null"
+      :loading="false"
+      :logged-in="false"
+      error=""
+      :tracks="[]"
+      :playlists="[]"
+      section-title=""
+      playlist-title=""
+      :recent="[]"
+      :local-tracks="previewTracks"
+      :local-count="tracks.length"
+      :hero="player.currentTrack.value ?? previewTracks[0] ?? null"
+      :current-track-id="player.currentTrack.value?.id"
+      :is-playing="player.isPlaying.value"
+      :pending-playlist="null"
+    />
     <OnlineDashboard
-      v-if="!preview && tracks.length === 0"
+      v-else-if="
+        !preview && !['aurora-reference', 'obsidian-glass', 'paper-light'].includes(presetLayout)
+      "
       @select-view="(category, filter) => emit('select-view', category, filter)"
       @open-library-settings="emit('open-library-settings')"
       @open-streaming="emit('open-streaming', $event)"

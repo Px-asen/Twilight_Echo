@@ -1,26 +1,103 @@
 @import './primeicons.css';
 @import './fonts.css';
 @import './base.css';
+@import './typography.css';
+@import './materials.css';
 @import './bohr.css';
 @import './theme-layouts/index.css';
 @import './appearance.css';
+@import './appearance-layers.css';
+@import './ui-motion.css';
+@import './overlay-sidebars.css';
+@import './page-spacing.css';
 
 /* Windows owns the outer window corners; only inset content surfaces are clipped. */
 .app-shell {
   /* Fixed page surfaces still need a full-height host for theme layers. */
   height: 100vh;
+  /* One continuous window base under the attached chrome and inset content.
+     Wallpaper stays on its existing single painter below this translucent tint. */
+  background: var(--te-window-base-background);
   --te-window-surface-radius: 8px;
-  --te-window-surface-inset: 4px;
+  --te-window-surface-inset: 6px;
   --te-window-inner-radius: var(--te-window-surface-radius);
-  --te-window-content-top: calc(var(--te-titlebar-inset, 44px) + 4px);
+  --te-window-content-top: calc(var(--te-titlebar-inset, 40px) + var(--te-window-surface-inset));
   --te-window-content-bottom: var(--te-window-surface-inset);
+  /* Local library is the reference painter for the inset panel. */
+  --te-content-panel-tint: transparent;
+  /* Define the inset well by its edge, without recolouring the shared base. */
+  --te-window-content-edge: color-mix(in srgb, var(--te-shell-control-text) 8%, transparent);
+  --te-window-content-shadow: 0 1px 4px rgb(0 0 0 / 14%), inset 0 1px 0 rgb(255 255 255 / 2%);
+  --te-content-panel-solid: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--te-app-bg) 96%, var(--te-shell-control-text)) 18%,
+    var(--te-local-bg)
+  );
 }
 
-/* Chrome samples one wallpaper; an inset frame would draw a seam below the
-   caption and along navigation even when the surfaces share their material. */
+/* Leave wallpaper beneath the title strip so its existing blur can sample it. */
 .app-shell::before,
 .app-shell::after {
-  display: none;
+  content: '';
+  position: fixed;
+  inset: var(--te-window-content-top) var(--te-window-surface-inset) var(--te-window-content-bottom);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--te-window-inner-radius);
+}
+
+.app-shell.appearance-editor-active::after {
+  border: 0;
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .app-shell.appearance-editor-active {
+  --te-primary-500: #dedede;
+  --te-primary-400: #ececec;
+  --te-primary-300: #bdbdbd;
+  --te-primary-rgb: 222, 222, 222;
+  --te-control-accent: #dedede;
+  --te-control-focus-color: #dedede;
+  --te-navigation-indicator: #dedede;
+  --te-on-accent: #181818;
+  --te-control-on-accent: #181818;
+}
+
+.app-shell::before {
+  background: var(--te-content-panel-tint);
+  /* A single neutral wash around the inset well makes the foundation deeper.
+     The same wash sits under the sidebar; the content image is not recoloured. */
+  box-shadow: 0 0 0 100vmax var(--te-window-foundation-tint);
+}
+
+html[data-theme='pureWhite']:not([data-te-local-custom-background='on']) .app-shell {
+  --te-content-panel-solid: var(--te-library-light-panel-bg, #ffffff);
+}
+
+/* Built-in streaming surfaces share the library's final panel color. Explicit
+   background drafts and theme-authored shells retain their own painters. */
+html:not([data-te-shell-layout='custom']):not([data-te-streaming-custom-background='on']):not(
+    [data-window-transparent='on']
+  )
+  .app-shell:not(.is-immersive)
+  .streaming-page {
+  background-color: var(--te-content-panel-solid) !important;
+}
+
+/* The edge sits above page paint, below the separate floating player. */
+.app-shell::after {
+  z-index: 1001;
+  border: 1px solid var(--te-window-content-edge);
+  box-shadow: var(--te-window-content-shadow);
+}
+
+html[data-window-transparent='on'] .app-shell::before {
+  background: var(--te-window-transparent-foundation);
+}
+
+html:is([data-window-transparent='on'], [data-te-surface-material='transparent']) .app-shell,
+.app-shell.is-immersive {
+  background: transparent;
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .app-shell-content {
@@ -28,43 +105,6 @@ html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .app-she
   inset: var(--te-window-content-top) var(--te-window-surface-inset) var(--te-window-content-bottom);
   overflow: hidden;
   border-radius: var(--te-window-inner-radius);
-}
-
-/* A frosted caption needs page pixels behind it. These scrolling pages keep
-   their initial caption clearance inside the scrollport instead of clipping
-   the whole page below the caption. Fixed page chrome retains its inset box. */
-html:not([data-te-shell-layout='custom'])
-  .app-shell:not(.is-immersive)
-  .app-shell-content:has(> .main-content > .local-home-layout > .home),
-html:not([data-te-shell-layout='custom'])
-  .app-shell:not(.is-immersive)
-  .app-shell-content:has(
-    > .main-content
-      > :is(
-        .song-list,
-        .streaming-page,
-        .analytics-page,
-        .radio-podcast-page,
-        .network-sources-page
-      )
-  ) {
-  --te-scroll-caption-clearance: var(--te-window-content-top);
-  top: 0;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-}
-
-html:not([data-te-shell-layout='custom'])
-  .app-shell
-  :is(
-    .home,
-    .song-list,
-    .streaming-content,
-    .analytics-page,
-    .radio-podcast-page,
-    .network-sources-page
-  ) {
-  scroll-padding-top: var(--te-scroll-caption-clearance, 0px);
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .main-content {
@@ -90,44 +130,136 @@ html .app-shell:not(.is-immersive) .streaming-content {
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell .local-home-layout {
-  --te-home-titlebar-clearance: var(--te-scroll-caption-clearance, 0px);
-}
-
-html:not([data-te-shell-layout='custom']) .app-shell .streaming-content {
-  padding-top: var(--te-scroll-caption-clearance, 0px);
-}
-
-html:not([data-te-shell-layout='custom']) .app-shell .streaming-content.without-header {
-  padding-top: calc(
-    var(--te-scroll-caption-clearance, 0px) + var(--te-titlebar-inset, 40px) + 20px
-  );
-}
-
-html:not([data-te-shell-layout='custom']) .app-shell .streaming-content.has-search-tabs {
-  padding-top: var(--te-scroll-caption-clearance, 0px) !important;
+  --te-home-titlebar-clearance: 0px;
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell .streaming-content-header {
-  margin-top: 16px;
+  margin-top: var(--te-page-top, 32px);
 }
 
 html:not([data-te-shell-layout='custom'])
   .app-shell
   .main-content
   > :is(.song-list, .analytics-page, .radio-podcast-page, .network-sources-page) {
-  padding-top: calc(var(--te-scroll-caption-clearance, 0px) + 24px);
+  padding-top: var(--te-page-top, 32px);
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell .recent-scope-tabs {
-  padding-top: 12px;
+  padding-top: var(--te-page-top, 24px);
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell .playlist-tabs {
-  padding-top: 12px;
+  padding-top: var(--te-page-top, 24px);
 }
 
 html:not([data-te-shell-layout='custom']) .app-shell .plugin-extension-page {
-  padding-top: 24px;
+  padding-top: var(--te-page-top, 32px);
+}
+
+html[data-te-shell-layout='custom'] .app-shell-content {
+  margin: var(--te-window-surface-inset);
+  clip-path: inset(0 round var(--te-window-inner-radius));
+}
+
+/* Now playing keeps its original edge-to-edge immersive surface. */
+.app-shell.is-immersive::before,
+.app-shell.is-immersive::after {
+  display: none;
+}
+
+html .app-shell.is-immersive .app-shell-content {
+  margin: 0;
+  clip-path: none;
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell.is-immersive .app-shell-title .title-bar {
+  inset: 0 0 auto;
+  border-radius: 0;
+}
+
+/* Windows owns the outer window corners; only inset content surfaces are clipped. */
+.app-shell {
+  /* Fixed page surfaces still need a full-height host for theme layers. */
+  height: 100vh;
+  --te-window-surface-radius: 8px;
+  --te-window-surface-inset: 6px;
+  --te-window-inner-radius: var(--te-window-surface-radius);
+  --te-window-content-top: calc(var(--te-titlebar-inset, 40px) + var(--te-window-surface-inset));
+  --te-window-content-bottom: var(--te-window-surface-inset);
+}
+
+/* Leave wallpaper beneath the title strip so its existing blur can sample it. */
+.app-shell::before,
+.app-shell::after {
+  content: '';
+  position: fixed;
+  inset: var(--te-window-content-top) var(--te-window-surface-inset) var(--te-window-content-bottom);
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--te-window-inner-radius);
+}
+
+/* The edge sits above page paint, below the separate floating player. */
+.app-shell::after {
+  z-index: 1001;
+  border: 1px solid var(--te-window-content-edge);
+  box-shadow: var(--te-window-content-shadow);
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .app-shell-content {
+  position: fixed;
+  inset: var(--te-window-content-top) var(--te-window-surface-inset) var(--te-window-content-bottom);
+  overflow: hidden;
+  border-radius: var(--te-window-inner-radius);
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .main-content {
+  height: 100%;
+  min-height: 0 !important;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+html .app-shell:not(.is-immersive) .main-content > *,
+html .app-shell:not(.is-immersive) .local-home-layout > * {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell:not(.is-immersive) .streaming-page {
+  position: absolute;
+  inset: 0;
+}
+
+html .app-shell:not(.is-immersive) .streaming-content {
+  height: 100%;
+  min-height: 0;
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell .local-home-layout {
+  --te-home-titlebar-clearance: 0px;
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell .streaming-content-header {
+  margin-top: var(--te-page-top, 24px);
+}
+
+html:not([data-te-shell-layout='custom'])
+  .app-shell
+  .main-content
+  > :is(.song-list, .analytics-page, .radio-podcast-page, .network-sources-page) {
+  padding-top: var(--te-page-top, 24px);
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell .recent-scope-tabs {
+  padding-top: var(--te-page-top, 24px);
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell .playlist-tabs {
+  padding-top: var(--te-page-top, 24px);
+}
+
+html:not([data-te-shell-layout='custom']) .app-shell .plugin-extension-page {
+  padding-top: var(--te-page-top, 32px);
 }
 
 html[data-te-shell-layout='custom'] .app-shell-content {
@@ -166,6 +298,16 @@ html .app-shell.is-immersive .app-shell-content {
 html:not([data-te-shell-layout='custom']) .app-shell.is-immersive .app-shell-title .title-bar {
   inset: 0 0 auto;
   border-radius: 0;
+}
+
+/* Carry the existing caption painter over the inset foundation gap. The
+   caption hit area stays 40px; only its non-interactive backdrop extends. */
+html:not([data-te-shell-layout='custom'])
+  .app-shell:not(.is-immersive)
+  .app-shell-title
+  .title-bar {
+  --te-titlebar-base-extension: var(--te-window-surface-inset);
+  overflow: visible;
 }
 
 /* Active lyrics are text-led, not cards. Keep this invariant after every

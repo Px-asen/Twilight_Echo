@@ -35,6 +35,106 @@
     transparent
   );
 }
+.app-background-layer--reading[data-background-image-state='ready'] > .app-background-image {
+  filter: blur(calc(var(--appearance-blur, 0px) + var(--te-reading-blur, 12px)))
+    brightness(var(--appearance-brightness, 100%));
+  inset: calc(-3 * (var(--appearance-blur, 0px) + var(--te-reading-blur, 12px)));
+}
+.app-background-reading-wash {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--te-image-control-surface, var(--te-app-bg));
+  opacity: var(--te-reading-fade, 0.8);
+}
+.app-background-layer--reading[data-background-image-state='ready'] > .app-background-reading-wash {
+  display: block;
+}
+html[data-te-effects-mode='reduced'] .app-background-layer--reading > .app-background-image,
+body.te-no-blur .app-background-layer--reading > .app-background-image {
+  filter: brightness(var(--appearance-brightness, 100%));
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .app-background-layer--reading[data-background-image-state='ready'] > .app-background-image {
+    filter: none;
+  }
+  .app-background-layer--reading > .app-background-reading-wash {
+    opacity: 1;
+  }
+}
+/* Artwork is content, and keeps its opaque paper even when its containing card is glass. */
+.online-record-sleeve {
+  --te-card-bg: var(--te-card-bg-solid);
+}
+/* A missing image leaves the selected fallback color untouched. The persisted
+   image tuning becomes active again as soon as a valid image finishes loading. */
+:is(.app-background-layer, .appearance-window-background):is(
+    [data-background-image-state='loading'],
+    [data-background-image-state='error']
+  )
+  > .app-background-image {
+  background-image: none !important;
+  filter: none !important;
+  transform: none !important;
+}
+:is(.app-background-layer, .appearance-window-background):is(
+    [data-background-image-state='loading'],
+    [data-background-image-state='error']
+  )
+  > .app-background-dim {
+  display: none !important;
+}
+/* Cached image colors must follow the visible fallback after a loading error.
+   Explicit text-tone choices remain authoritative. */
+html[data-te-local-image-fallback-tone='dark'][data-te-local-text-tone-source='auto']
+  body.te-local-surface:not(.te-settings-surface, .te-streaming-surface) {
+  --te-local-background-text: #000000;
+  --te-local-background-muted: #000000;
+}
+html[data-te-local-image-fallback-tone='light'][data-te-local-text-tone-source='auto']
+  body.te-local-surface:not(.te-settings-surface, .te-streaming-surface) {
+  --te-local-background-text: #ffffff;
+  --te-local-background-muted: #ffffff;
+}
+html[data-te-streaming-image-fallback-tone='dark'][data-te-streaming-text-tone-source='auto']
+  body.te-streaming-surface {
+  --te-streaming-background-text: #000000;
+  --te-streaming-background-muted: #000000;
+}
+html[data-te-streaming-image-fallback-tone='light'][data-te-streaming-text-tone-source='auto']
+  body.te-streaming-surface {
+  --te-streaming-background-text: #ffffff;
+  --te-streaming-background-muted: #ffffff;
+}
+html[data-te-settings-image-fallback-tone='dark'][data-te-settings-text-tone-source='auto']
+  body.te-settings-surface {
+  --te-settings-background-text: #000000;
+  --te-settings-background-muted: #000000;
+}
+html[data-te-settings-image-fallback-tone='light'][data-te-settings-text-tone-source='auto']
+  body.te-settings-surface {
+  --te-settings-background-text: #ffffff;
+  --te-settings-background-muted: #ffffff;
+}
+html[data-te-player-image-fallback-tone='dark'][data-te-player-text-tone-source='auto'] body {
+  --te-player-background-text: #000000;
+  --te-player-background-muted: #000000;
+  --te-playback-icon-filter: none !important;
+}
+html[data-te-player-image-fallback-tone='light'][data-te-player-text-tone-source='auto'] body {
+  --te-player-background-text: #ffffff;
+  --te-player-background-muted: #ffffff;
+  --te-playback-icon-filter: brightness(0) invert(1) !important;
+}
+html[data-te-player-image-fallback-tone='dark'][data-te-player-text-tone-source='auto']
+  :is(.playing-music, .player-bar-glass) {
+  --te-playback-icon-filter: none !important;
+}
+html[data-te-player-image-fallback-tone='light'][data-te-player-text-tone-source='auto']
+  :is(.playing-music, .player-bar-glass) {
+  --te-playback-icon-filter: brightness(0) invert(1) !important;
+}
 .app-background-layer--preview {
   display: block;
   position: absolute;
@@ -47,22 +147,7 @@
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background:
-    radial-gradient(
-      ellipse 520px 520px at 80px 40px,
-      color-mix(in srgb, var(--te-primary-500) 6%, transparent),
-      transparent 72%
-    ),
-    radial-gradient(
-      ellipse 420px 420px at calc(100% - 20px) 300px,
-      color-mix(in srgb, var(--te-accent-cyan) 4%, transparent),
-      transparent 72%
-    ),
-    radial-gradient(
-      ellipse 360px 360px at 45% 840px,
-      color-mix(in srgb, var(--te-favorite-500) 3%, transparent),
-      transparent 72%
-    );
+  background: var(--te-home-ambient-surface);
 }
 
 html[data-theme='dark'] .app-background-ambient {
@@ -86,6 +171,301 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
   --te-overlay-settings-muted: var(--te-settings-text-muted);
   --te-overlay-control-text: var(--te-control-fg);
   --te-overlay-control-muted: var(--te-control-fg-muted);
+  /* Resolve this opaque action pair before page background text overrides. */
+  --te-home-action-surface: var(--te-neutral-900);
+  --te-home-action-ink: var(--te-neutral-50);
+}
+
+/* A local image contributes a coordinated control palette only in its page.
+   Detached menus and dialogs keep their own opaque, readable surfaces. */
+html[data-te-local-image-palette='on']
+  body.te-local-surface:not(.te-settings-surface, .te-streaming-surface) {
+  --te-image-control-surface: var(--te-local-background-control-surface);
+  --te-image-control-hover: var(--te-local-background-control-hover);
+  --te-image-control-active: var(--te-local-background-control-active);
+  --te-image-control-text: var(--te-local-background-control-text);
+  --te-image-control-muted: var(--te-local-background-control-muted);
+  --te-image-control-border: var(--te-local-background-control-border);
+  --te-image-control-accent: var(--te-local-background-control-accent);
+  --te-image-control-on-accent: var(--te-local-background-control-on-accent);
+}
+html[data-te-streaming-image-palette='on'] body.te-streaming-surface {
+  --te-image-control-surface: var(--te-streaming-background-control-surface);
+  --te-image-control-hover: var(--te-streaming-background-control-hover);
+  --te-image-control-active: var(--te-streaming-background-control-active);
+  --te-image-control-text: var(--te-streaming-background-control-text);
+  --te-image-control-muted: var(--te-streaming-background-control-muted);
+  --te-image-control-border: var(--te-streaming-background-control-border);
+  --te-image-control-accent: var(--te-streaming-background-control-accent);
+  --te-image-control-on-accent: var(--te-streaming-background-control-on-accent);
+}
+html[data-te-settings-image-palette='on'] body.te-settings-surface {
+  --te-image-control-surface: var(--te-settings-background-control-surface);
+  --te-image-control-hover: var(--te-settings-background-control-hover);
+  --te-image-control-active: var(--te-settings-background-control-active);
+  --te-image-control-text: var(--te-settings-background-control-text);
+  --te-image-control-muted: var(--te-settings-background-control-muted);
+  --te-image-control-border: var(--te-settings-background-control-border);
+  --te-image-control-accent: var(--te-settings-background-control-accent);
+  --te-image-control-on-accent: var(--te-settings-background-control-on-accent);
+}
+html[data-te-player-image-palette='on'] .playing-music {
+  --te-image-control-surface: var(--te-player-background-control-surface);
+  --te-image-control-hover: var(--te-player-background-control-hover);
+  --te-image-control-active: var(--te-player-background-control-active);
+  --te-image-control-text: var(--te-player-background-control-text);
+  --te-image-control-muted: var(--te-player-background-control-muted);
+  --te-image-control-border: var(--te-player-background-control-border);
+  --te-image-control-accent: var(--te-player-background-control-accent);
+  --te-image-control-on-accent: var(--te-player-background-control-on-accent);
+}
+
+/* DSP paints the app backdrop, including when hosted in its own window. Do not
+   inherit the currently browsed local/settings page's image palette. */
+html[data-te-app-image-palette='on'] .audio-workspace {
+  --te-image-control-surface: var(--te-app-background-control-surface);
+  --te-image-control-hover: var(--te-app-background-control-hover);
+  --te-image-control-active: var(--te-app-background-control-active);
+  --te-image-control-text: var(--te-app-background-control-text);
+  --te-image-control-muted: var(--te-app-background-control-muted);
+  --te-image-control-border: var(--te-app-background-control-border);
+  --te-image-control-accent: var(--te-app-background-control-accent);
+  --te-image-control-on-accent: var(--te-app-background-control-on-accent);
+}
+html[data-theme='dark'] :is(.audio-workspace, .settings-preview-page) {
+  --te-image-color-scheme: dark;
+}
+
+/* Reading washes change the visible backdrop; raw-image ink belongs only to
+   the unwashed chrome and preview, not the configuration page beneath it. */
+html[data-te-settings-image-palette='on']:not([data-te-settings-image-fallback-tone])
+  :is(.settings-preview-page, .plugin-page, body.te-settings-surface .title-bar-settings) {
+  --te-settings-background-text: var(--te-settings-background-reading-text);
+  --te-settings-background-muted: var(--te-settings-background-reading-muted);
+}
+html[data-te-app-image-palette='on']:not([data-te-app-image-fallback-tone]) .audio-workspace {
+  --te-app-background-text: var(--te-app-background-reading-text);
+  --te-app-background-muted: var(--te-app-background-reading-muted);
+}
+html[data-te-app-image-fallback-tone='dark'][data-te-app-text-tone-source='auto'] .audio-workspace {
+  --te-app-background-text: #000000;
+  --te-app-background-muted: #000000;
+}
+html[data-te-app-image-fallback-tone='light'][data-te-app-text-tone-source='auto']
+  .audio-workspace {
+  --te-app-background-text: #ffffff;
+  --te-app-background-muted: #ffffff;
+}
+html[data-te-local-image-palette='on']:not([data-te-local-image-fallback-tone])
+  body.te-local-surface:not(.te-settings-surface, .te-streaming-surface)
+  .title-bar-reading {
+  --te-shell-control-text: var(--te-local-background-reading-text) !important;
+}
+html[data-te-settings-image-palette='on']:not([data-te-settings-image-fallback-tone])
+  body.te-settings-surface
+  .title-bar-reading {
+  --te-shell-control-text: var(--te-settings-background-reading-text) !important;
+}
+html[data-te-streaming-image-palette='on']:not([data-te-streaming-image-fallback-tone])
+  body.te-streaming-surface
+  .title-bar-reading {
+  --te-shell-control-text: var(--te-streaming-background-reading-text) !important;
+}
+html:not([data-theme='dark']) :is(.audio-workspace, .settings-preview-page) {
+  --te-image-color-scheme: light;
+}
+
+@layer te-appearance {
+  :is(
+      html[data-te-local-image-palette='on']
+        body.te-local-surface:not(.te-settings-surface, .te-streaming-surface),
+      html[data-te-streaming-image-palette='on'] body.te-streaming-surface,
+      html[data-te-settings-image-palette='on'] body.te-settings-surface
+    )
+    :is(
+      .home,
+      .online-home,
+      .song-list,
+      .streaming-page,
+      .settings-preview-page,
+      .plugin-page,
+      .playing-music,
+      .title-bar,
+      .side-menu,
+      .sidebar-bookmark,
+      .playback-queue-sidebar,
+      .player-bar
+    ),
+  html[data-te-player-image-palette='on'] .playing-music,
+  html[data-te-app-image-palette='on'] .audio-workspace {
+    --te-control-bg: var(--te-image-control-surface) !important;
+    --te-control-bg-hover: var(--te-image-control-hover) !important;
+    --te-control-bg-active: var(--te-image-control-active) !important;
+    --te-control-fg: var(--te-image-control-text) !important;
+    --te-control-fg-muted: var(--te-image-control-muted) !important;
+    --te-control-border: var(--te-image-control-border) !important;
+    --te-control-accent: var(--te-image-control-accent) !important;
+    --te-control-on-accent: var(--te-image-control-on-accent) !important;
+    --te-navigation-bg: var(--te-image-control-surface) !important;
+    --te-navigation-hover: var(--te-image-control-hover) !important;
+    --te-navigation-active: var(--te-image-control-active) !important;
+    --te-navigation-active-text: var(--te-image-control-text) !important;
+    --te-navigation-indicator: var(--te-image-control-accent) !important;
+    --te-navigation-border: var(--te-image-control-border) !important;
+    --te-chrome-material-solid: var(--te-image-control-surface) !important;
+    --te-chrome-material-surface: color-mix(
+      in srgb,
+      var(--te-image-control-surface) 72%,
+      transparent
+    ) !important;
+    --te-chrome-navigation-surface: color-mix(
+      in srgb,
+      var(--te-image-control-surface) 76%,
+      transparent
+    ) !important;
+    --te-titlebar-material-surface: var(--te-image-control-surface) !important;
+    --te-playback-control-surface: var(--te-image-control-surface) !important;
+    --te-playback-control-text: var(--te-image-control-text) !important;
+    --te-transport-play-text: var(--te-image-control-text) !important;
+    --te-transport-play-surface: var(--te-image-control-active) !important;
+    --te-transport-play-hover-surface: var(--te-image-control-hover) !important;
+    --te-flat-bar-glass-bg: var(--te-image-control-surface) !important;
+    --te-flat-bar-dark-lift: var(--te-image-control-surface) !important;
+    --te-flat-bar-control: var(--te-image-control-text) !important;
+    --te-flat-bar-control-hover-bg: var(--te-image-control-hover) !important;
+    --te-flat-bar-control-hover-text: var(--te-image-control-text) !important;
+    --te-player-progress-fill: var(--te-image-control-accent) !important;
+  }
+  html[data-te-settings-image-palette='on'] .plugin-page {
+    --te-subtle-bg: var(--te-image-control-surface);
+    --te-hover-bg: var(--te-image-control-hover);
+    --te-active-bg: var(--te-image-control-active);
+  }
+
+  /* These controls have their own painted surfaces; wallpaper ink cannot be
+     inherited across that boundary when the selected mode has the other tone. */
+  :is(
+      html[data-te-local-image-palette='on'] body.te-local-surface,
+      html[data-te-settings-image-palette='on'] body.te-settings-surface,
+      html[data-te-streaming-image-palette='on'] body.te-streaming-surface
+    )
+    :is(.side-menu, .playback-queue-sidebar, .player-bar) {
+    --te-neutral-900: var(--te-image-control-text);
+    --te-neutral-500: var(--te-image-control-muted);
+    --te-chrome-text: var(--te-image-control-text);
+    --te-navigation-text: var(--te-image-control-text) !important;
+    --te-navigation-icon: var(--te-image-control-muted) !important;
+    --te-navigation-hover-text: var(--te-image-control-text) !important;
+    --te-flat-bar-glass-text: var(--te-image-control-text) !important;
+    --te-flat-bar-muted: var(--te-image-control-muted) !important;
+    color: var(--te-image-control-text) !important;
+  }
+  html[data-te-app-image-palette='on'] .audio-workspace :is(.sliders-board, .band-inspector) {
+    --te-neutral-900: var(--te-image-control-text);
+    --te-neutral-500: var(--te-image-control-muted);
+    --eq-text: var(--te-image-control-text);
+    --eq-text-muted: var(--te-image-control-muted);
+    --eq-text-subtle: var(--te-image-control-muted);
+    color: var(--te-image-control-text);
+  }
+
+  html[data-te-app-text-tone='light'] .audio-workspace,
+  html[data-te-app-text-tone='dark'] .audio-workspace {
+    --te-text-primary: var(--te-app-background-text);
+    --te-settings-text: var(--te-app-background-text);
+    --te-settings-text-muted: var(--te-app-background-muted);
+    --te-neutral-900: var(--te-app-background-text);
+    --te-neutral-800: var(--te-app-background-text);
+    --te-neutral-700: var(--te-app-background-muted);
+    --te-neutral-600: var(--te-app-background-muted);
+    --te-neutral-500: var(--te-app-background-muted);
+    --te-neutral-400: var(--te-app-background-muted);
+    color: var(--te-app-background-text) !important;
+  }
+
+  html[data-te-app-image-palette='on'] .audio-workspace {
+    --te-settings-control-bg: var(--te-image-control-surface);
+    --te-settings-control-border: var(--te-image-control-border);
+    --te-settings-search-bg: var(--te-image-control-surface);
+    --te-equalizer-panel-bg: var(--te-image-control-surface);
+    --te-equalizer-panel-border: var(--te-image-control-border);
+    --te-equalizer-button-bg: var(--te-image-control-surface);
+    --te-subtle-bg: var(--te-image-control-surface);
+    --te-hover-bg: var(--te-image-control-hover);
+    --te-active-bg: var(--te-image-control-active);
+  }
+  html[data-te-app-image-palette='on'] .audio-workspace .parametric-workspace {
+    --eq-color-scheme: var(--te-image-color-scheme) !important;
+  }
+  html[data-te-app-image-palette='on'] .audio-workspace :is(input, select, textarea) {
+    color-scheme: var(--te-image-color-scheme) !important;
+  }
+
+  /* Settings fields use their own tokens; keep their opaque surface and ink paired. */
+  html[data-te-settings-image-palette='on']
+    body.te-settings-surface
+    .settings-preview-page:not([data-appearance-workspace='customize']) {
+    --te-settings-control-bg: var(--te-image-control-surface) !important;
+    --te-settings-control-border: var(--te-image-control-border) !important;
+    --te-settings-search-bg: var(--te-image-control-surface) !important;
+  }
+  html[data-te-settings-image-palette='on']
+    body.te-settings-surface
+    .settings-preview-page:not([data-appearance-workspace='customize'])
+    :is(
+      select,
+      textarea,
+      input:not(.theme-selection-search input):not(
+          [type='checkbox'],
+          [type='radio'],
+          [type='range'],
+          [type='color'],
+          [type='button'],
+          [type='submit'],
+          [type='reset'],
+          [type='hidden']
+        ),
+      .settings-market-search,
+      .settings-search-box
+    ) {
+    --te-settings-text: var(--te-image-control-text);
+    --te-settings-text-muted: var(--te-image-control-muted);
+    background: var(--te-image-control-surface) !important;
+    color: var(--te-image-control-text) !important;
+    border-color: var(--te-image-control-border) !important;
+    color-scheme: var(--te-image-color-scheme) !important;
+  }
+  html[data-te-settings-image-palette='on']
+    body.te-settings-surface
+    .settings-preview-page:not([data-appearance-workspace='customize'])
+    :is(input, textarea)::placeholder {
+    color: var(--te-image-control-muted) !important;
+    opacity: 1;
+  }
+  html[data-te-settings-image-palette='on']
+    body.te-settings-surface
+    .settings-preview-page:not([data-appearance-workspace='customize'])
+    :is(input, select, textarea):is(:disabled, [aria-disabled='true']) {
+    color: var(--te-image-control-muted) !important;
+    opacity: 0.55;
+  }
+
+  /* Keep ordinary cards coordinated; an explicitly edited card remains authoritative. */
+  :is(
+      html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,
+      html[data-te-streaming-image-palette='on'][data-te-card-custom='off']
+        body.te-streaming-surface
+    )
+    :is(.home, .online-home, .song-list, .streaming-page),
+  html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace {
+    --te-card-bg: color-mix(in srgb, var(--te-image-control-surface) 72%, transparent) !important;
+    --te-card-bg-solid: var(--te-image-control-surface) !important;
+    --te-card-border: var(--te-image-control-border) !important;
+    --te-hover-bg: var(--te-image-control-hover) !important;
+    --te-active-bg: var(--te-image-control-active) !important;
+    --te-subtle-bg: var(--te-image-control-surface) !important;
+  }
+  /* Card paint and accessibility fallbacks share the generated surface registry. */
 }
 
 /* Important declarations in this layer take precedence over unlayered preset
@@ -141,6 +521,8 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
       .playlist-card,
       .glass-card,
       .feature-card,
+      .online-hero,
+      .online-playlist,
       .folder-card,
       .playlist-tile,
       .track-table-wrapper,
@@ -154,8 +536,8 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
     border: var(--te-card-border-width) solid var(--te-card-border) !important;
     border-radius: var(--te-card-radius) !important;
     box-shadow: var(--te-card-shadow), var(--te-card-glass-highlight) !important;
-    backdrop-filter: blur(var(--te-card-blur)) saturate(var(--te-card-saturate)) !important;
-    -webkit-backdrop-filter: blur(var(--te-card-blur)) saturate(var(--te-card-saturate)) !important;
+    backdrop-filter: var(--te-material-content-filter) !important;
+    -webkit-backdrop-filter: var(--te-material-content-filter) !important;
   }
   @media (hover: hover) and (pointer: fine) {
     html[data-te-card-custom='on']
@@ -164,9 +546,11 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
         .album-card,
         .playlist-card,
         .feature-card,
+        .online-hero,
+        .online-playlist,
         .folder-card,
         .playlist-tile
-      ):hover {
+      ):is(button, a[href], [role='button']):not(:disabled, [aria-disabled='true']):hover {
       transform: var(--te-card-hover-transform) !important;
       box-shadow: var(--te-card-hover-shadow), var(--te-card-glass-highlight) !important;
     }
@@ -191,6 +575,8 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
       .playlist-card,
       .glass-card,
       .feature-card,
+      .online-hero,
+      .online-playlist,
       .folder-card,
       .playlist-tile,
       .favorites-card,
@@ -225,6 +611,8 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
       .player-bar-liquid,
       .glass-card,
       .feature-card,
+      .online-hero,
+      .online-playlist,
       .artist-card,
       .album-card,
       .playlist-card,
@@ -232,7 +620,16 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
       .table-view
     )::before,
   html[data-te-surface-material='transparent']
-    :is(.side-menu, .title-bar, .player-bar, .player-bar-liquid, .glass-card, .feature-card)::after,
+    :is(
+      .side-menu,
+      .title-bar,
+      .player-bar,
+      .player-bar-liquid,
+      .glass-card,
+      .feature-card,
+      .online-hero,
+      .online-playlist
+    )::after,
   html[data-te-surface-material='transparent']
     :is(
       .player-bar-warp,
@@ -252,6 +649,17 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
     background: color-mix(in srgb, var(--te-primary-500) 8%, transparent) !important;
     transform: none !important;
   }
+  @media (hover: hover) and (pointer: fine) {
+    html[data-te-surface-material='transparent']
+      .online-playlist:is(button, a[href], [role='button']):not(
+        :disabled,
+        [aria-disabled='true']
+      ):hover {
+      background: var(--te-library-row-hover) !important;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+  }
 
   /* The hero's cover wash is a second surface, even when its outer card is clear.
      A transparent photo recipe shows the fixed wallpaper behind the copy. */
@@ -261,8 +669,10 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
     display: none !important;
   }
 
-  html[data-te-local-text-tone='light'] :is(.home, .song-list, .side-menu, .player-bar, .title-bar),
-  html[data-te-local-text-tone='dark'] :is(.home, .song-list, .side-menu, .player-bar, .title-bar) {
+  html[data-te-local-text-tone='light']
+    :is(.home, .online-home, .song-list, .side-menu, .player-bar, .title-bar),
+  html[data-te-local-text-tone='dark']
+    :is(.home, .online-home, .song-list, .side-menu, .player-bar, .title-bar) {
     --appearance-text: var(--te-local-background-text);
     --appearance-muted: var(--te-local-background-muted);
     --te-neutral-900: var(--appearance-text);
@@ -283,6 +693,28 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
     --home-ink: var(--appearance-text);
     --home-muted: var(--appearance-muted);
     color: var(--appearance-text) !important;
+  }
+  html[data-te-local-text-tone='light'] .online-home .online-primary,
+  html[data-te-local-text-tone='dark'] .online-home .online-primary {
+    background: var(--te-home-action-surface) !important;
+    border-color: var(--te-home-action-surface) !important;
+    color: var(--te-home-action-ink) !important;
+  }
+  html[data-te-local-text-tone='light']
+    .online-home
+    :is(.online-playlist-play, .home-local-art > .playback-icon),
+  html[data-te-local-text-tone='dark']
+    .online-home
+    :is(.online-playlist-play, .home-local-art > .playback-icon) {
+    background: var(--te-home-action-ink) !important;
+    color: var(--te-home-action-surface) !important;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    html[data-te-local-text-tone='light'] .online-home .online-playlist:hover .online-playlist-play,
+    html[data-te-local-text-tone='dark'] .online-home .online-playlist:hover .online-playlist-play {
+      background: var(--te-home-action-surface) !important;
+      color: var(--te-home-action-ink) !important;
+    }
   }
   html:is([data-te-local-text-tone='light'], [data-te-local-text-tone='dark'])
     .home
@@ -344,9 +776,9 @@ html[data-te-surface-material='transparent'] .app-background-ambient {
     color: var(--te-streaming-background-text) !important;
   }
   html[data-te-settings-text-tone='light']
-    :is(.settings-preview-page, body.te-settings-surface .title-bar-settings),
+    :is(.settings-preview-page, .plugin-page, body.te-settings-surface .title-bar-settings),
   html[data-te-settings-text-tone='dark']
-    :is(.settings-preview-page, body.te-settings-surface .title-bar-settings) {
+    :is(.settings-preview-page, .plugin-page, body.te-settings-surface .title-bar-settings) {
     --te-settings-text: var(--te-settings-background-text);
     --te-settings-text-muted: var(--te-settings-background-muted);
     --te-settings-nav-text: var(--te-settings-background-text);

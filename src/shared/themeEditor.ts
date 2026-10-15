@@ -1,20 +1,13 @@
-import { THEME_TOKEN_DEFINITIONS, type ThemeTone } from './theme.ts'
+import {
+  THEME_ICON_SLOTS,
+  THEME_TOKEN_DEFINITIONS,
+  type ThemeIconSlot,
+  type ThemeTone
+} from './theme.ts'
 
-export const WORKSHOP_IMAGE_SLOTS = {
-  'navigation.home': '[data-theme-icon-slot="navigation.home"]',
-  'navigation.songs': '[data-theme-icon-slot="navigation.songs"]',
-  'navigation.artists': '[data-theme-icon-slot="navigation.artists"]',
-  'navigation.albums': '[data-theme-icon-slot="navigation.albums"]',
-  'navigation.genres': '[data-theme-icon-slot="navigation.genres"]',
-  'navigation.playlists': '[data-theme-icon-slot="navigation.playlists"]',
-  'navigation.folders': '[data-theme-icon-slot="navigation.folders"]',
-  'navigation.recent': '[data-theme-icon-slot="navigation.recent"]',
-  'navigation.analytics': '[data-theme-icon-slot="navigation.analytics"]',
-  'navigation.streaming': '[data-theme-icon-slot="navigation.streaming"]',
-  'navigation.radio': '[data-theme-icon-slot="navigation.radio"]',
-  'navigation.import': '[data-theme-icon-slot="navigation.import"]',
-  'library.empty': '[data-theme-icon-slot="library.empty"]'
-} as const
+export const WORKSHOP_IMAGE_SLOTS = Object.freeze(
+  Object.fromEntries(THEME_ICON_SLOTS.map((slot) => [slot, `[data-theme-icon-slot="${slot}"]`]))
+) as Readonly<Record<ThemeIconSlot, string>>
 
 export interface ThemeEditorControl {
   id: string

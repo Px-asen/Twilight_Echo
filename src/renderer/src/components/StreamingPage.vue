@@ -12,7 +12,11 @@ import {
 } from 'vue'
 import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
-import type { Track, TrackArtistRef } from '../types/music'
+import type { Track, TrackArtistRef, QueuePlaybackOrigin } from '../types/music'
+import {
+  withQueuePlaybackOrigin,
+  type StreamingCollectionNavigationRequest
+} from '../utils/queuePlaybackOrigin.ts'
 import { copyTrackNames } from '../utils/copyTrackNames'
 import {
   useNcmStore,
@@ -189,6 +193,8 @@ const props = defineProps<{
   initialTab?: StreamingTab
   rootNavigationRevision?: number
   artistNavigationRequest?: StreamingArtistNavigationRequest | null
+  collectionNavigationRequest?: StreamingCollectionNavigationRequest | null
+  searchNavigationRequest?: { key: number; query: string } | null
 }>()
 
 const activeTab = ref<StreamingTab>(props.initialTab ?? 'home')
@@ -648,6 +654,7 @@ const emit = defineEmits<{
   navigateTab: [tab: 'home' | 'discover' | 'library' | 'cloud' | 'search']
   recent: [providerId: string]
   login: [providerId?: string | null]
+  searchQueryChange: [query: string]
 }>()
 
 const {
@@ -874,13 +881,12 @@ const searchSources = computed<SearchSourceOption[]>(() => {
   ]
   for (const provider of providerStore.providers.value) {
     const hasSearch = provider.capabilities.includes('search')
-    const hasPlaylist = provider.capabilities.includes('playlist')
     const supportedTypes: SearchSourceOption['supportedTypes'] = []
     if (hasSearch && provider.supportedMethods.includes('searchSongs')) supportedTypes.push('songs')
     if (supportsAlbumSearch(provider)) supportedTypes.push('albums')
     if (hasSearch && provider.supportedMethods.includes('searchArtists'))
       supportedTypes.push('artists')
-    if (hasPlaylist && provider.supportedMethods.includes('searchPlaylists'))
+    if (hasSearch && provider.supportedMethods.includes('searchPlaylists'))
       supportedTypes.push('playlists')
     if (supportedTypes.length === 0) continue
     sources.push({
@@ -1114,6 +1120,22 @@ const activeLoggedIn = computed(() => {
   if (!activeProviderRequiresLogin.value) return true
   return isExternalActive.value ? (activeExternalState.value?.loggedIn ?? false) : isLoggedIn.value
 })
+const libraryViewState = ref<{
+  collection: 'playlists' | 'albums' | 'artists'
+  category: 'all' | 'owned' | 'saved'
+  limit: number
+}>({ collection: 'playlists', category: 'all', limit: 48 })
+watch(
+  [
+    activeProvider,
+    () => (activeProfile.value?.userId == null ? null : String(activeProfile.value.userId)),
+    activeLoggedIn
+  ],
+  () => {
+    libraryViewState.value = { collection: 'playlists', category: 'all', limit: 48 }
+  },
+  { flush: 'sync' }
+)
 const activeProviderSupportsCategories = computed(
   () => activeProviderInfo.value?.supportedMethods.includes('fetchPlaylistCategories') === true
 )
@@ -1163,8 +1185,7 @@ const isExternalHome = computed(
 
 const headerTitle = computed(() => {
   if (currentDetail.value?.type === 'album') return currentDetail.value.album.name
-  if (!currentDetail.value && activeTab.value === 'search')
-    return searchQuery.value.trim() ? '搜索: ' + searchQuery.value.trim() : '搜索'
+  if (!currentDetail.value && activeTab.value === 'search') return '搜索'
   if (!currentDetail.value && activeTab.value === 'library') return '音乐库'
   if (isExternalHome.value) return '主页'
   if (isExternalActive.value && currentDetail.value?.type === 'playlist')
@@ -2123,6 +2144,33 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
   }
 }
 
+async function openRequestedCollection(
+  request: StreamingCollectionNavigationRequest
+): Promise<void> {
+  const origin = request.origin
+  const providerId = origin.providerId.trim()
+  if (!providerId || !origin.id.trim() || !origin.name.trim()) return
+  const token = ++detailNavigationToken
+  await providerStore.syncProviders().catch(() => undefined)
+  if (!isCurrentDetailNavigation(token)) return
+  const provider = mediaProviders.get(providerId)
+  const supported =
+    origin.kind === 'album'
+      ? Boolean(provider?.fetchAlbumTracks)
+      : Boolean(provider?.fetchPlaylistTracks || provider?.fetchPlaylistTracksPage)
+  if (!supported) {
+    pushNotice({ kind: 'error', message: `${provider?.name ?? providerId} 暂不支持此播放来源` })
+    return
+  }
+  await selectDetailProvider(providerId)
+  if (!isCurrentDetailNavigation(token, providerId)) return
+  if (origin.kind === 'album') {
+    await openAlbum({ id: origin.id, name: origin.name, cover: null, trackCount: 0 }, providerId)
+  } else {
+    await openPlaylist({ id: origin.id, name: origin.name, cover: null, trackCount: 0 })
+  }
+}
+
 async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
   if (!profile.value) return
   beginDetailTransition()
@@ -2430,8 +2478,10 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
 async function handleContextPlayTrack(): Promise<void> {
   const track = streamingContextMenuTrack.value
   if (!track) return
-  const list = currentDetail.value ? await resolveDetailPlaybackQueue() : streamingListTracks.value
-  playStreamingTrack(track, list)
+  const fromDetail = currentDetail.value !== null
+  const detail = fromDetail ? await resolveCurrentDetailPlayback() : null
+  if (fromDetail && !detail) return
+  playStreamingTrack(track, detail?.tracks ?? streamingListTracks.value, detail?.origin ?? null)
   closeStreamingContextMenu()
 }
 
@@ -2439,7 +2489,7 @@ function handleContextPlayNext(): void {
   const track = streamingContextMenuTrack.value
   closeStreamingContextMenu()
   if (!track) return
-  playbackStore.playNextTrack(track)
+  playbackStore.playNextTrack(withQueuePlaybackOrigin(track, currentQueuePlaybackOrigin()))
   pushNotice({ kind: 'success', message: `下一首播放：${track.title}` })
 }
 
@@ -2610,16 +2660,66 @@ function getHeartModePlaylistId(): number | null {
   return id != null && Number.isFinite(Number(id)) && Number(id) > 0 ? Number(id) : null
 }
 
-function playStreamingTrack(track: Track, tracks: Track[]): void {
+function currentQueuePlaybackOrigin(): QueuePlaybackOrigin | null {
+  const detail = currentDetail.value
+  if (detail?.type === 'album') {
+    return {
+      kind: 'album',
+      scope: 'provider',
+      providerId: detail.providerId,
+      id: String(detail.album.id),
+      name: detail.album.name
+    }
+  }
+  const playlist =
+    detail?.type === 'playlist'
+      ? detail.playlist
+      : detail?.type === 'liked'
+        ? isExternalActive.value
+          ? activeExternalState.value?.likedPlaylist
+          : likedPlaylist.value
+        : null
+  return playlist
+    ? {
+        kind: 'playlist',
+        scope: 'provider',
+        providerId: activeProvider.value,
+        id: String(playlist.id),
+        name: playlist.name
+      }
+    : null
+}
+
+function playStreamingTrack(
+  track: Track,
+  tracks: Track[],
+  origin: QueuePlaybackOrigin | null = currentQueuePlaybackOrigin()
+): void {
   playTrack(track, tracks.length > 0 ? tracks : [track], {
-    heartModePlaylistId: getHeartModePlaylistId()
+    heartModePlaylistId: getHeartModePlaylistId(),
+    queuePlaybackOrigin: origin
   })
 }
 
-async function playTrackFromCurrentDetail(track: Track): Promise<void> {
+async function resolveCurrentDetailPlayback(): Promise<{
+  tracks: Track[]
+  origin: QueuePlaybackOrigin | null
+} | null> {
+  const token = detailLoadToken
+  const view = currentDetail.value
+  const origin = currentQueuePlaybackOrigin()
   const tracks = await resolveDetailPlaybackQueue()
+  return token === detailLoadToken && view === currentDetail.value && props.active !== false
+    ? { tracks, origin }
+    : null
+}
+
+async function playTrackFromCurrentDetail(track: Track): Promise<void> {
+  const playback = await resolveCurrentDetailPlayback()
+  if (!playback) return
+  const { tracks, origin } = playback
   const resolvedTrack = tracks.find((item) => item.id === track.id) ?? track
-  playStreamingTrack(resolvedTrack, tracks)
+  playStreamingTrack(resolvedTrack, tracks, origin)
 }
 
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
@@ -2672,16 +2772,20 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
 }
 
 async function playAllDetailTracks(): Promise<void> {
-  const tracks = await resolveDetailPlaybackQueue()
+  const playback = await resolveCurrentDetailPlayback()
+  if (!playback) return
+  const { tracks, origin } = playback
   if (tracks.length === 0) return
-  playStreamingTrack(tracks[0], tracks)
+  playStreamingTrack(tracks[0], tracks, origin)
 }
 
 async function shufflePlayDetailTracks(): Promise<void> {
-  const tracks = await resolveDetailPlaybackQueue()
+  const playback = await resolveCurrentDetailPlayback()
+  if (!playback) return
+  const { tracks, origin } = playback
   if (tracks.length === 0) return
   const shuffled = shuffleArray(tracks)
-  playStreamingTrack(shuffled[0], shuffled)
+  playStreamingTrack(shuffled[0], shuffled, origin)
 }
 
 function isDetailRowLiking(track: Track): boolean {
@@ -3391,6 +3495,48 @@ watch(
   { immediate: true }
 )
 
+let lastCollectionNavigationKey = 0
+watch(
+  [() => props.collectionNavigationRequest?.key, () => props.active],
+  () => {
+    const request = props.collectionNavigationRequest
+    if (props.active !== false && request && request.key !== lastCollectionNavigationKey) {
+      lastCollectionNavigationKey = request.key
+      void openRequestedCollection(request)
+    }
+  },
+  { immediate: true }
+)
+
+let lastSearchNavigationKey = 0
+watch(
+  [() => props.searchNavigationRequest?.key, () => props.active],
+  () => {
+    const request = props.searchNavigationRequest
+    if (
+      props.active === false ||
+      props.initialTab !== 'search' ||
+      !request ||
+      request.key === lastSearchNavigationKey
+    )
+      return
+    lastSearchNavigationKey = request.key
+    const query = request.query.trim()
+    resetDetail({ animate: false })
+    searchOffset.value = 0
+    if (!query) {
+      clearSearch()
+      return
+    }
+    searchQuery.value = query
+    void performSearch(query)
+  },
+  { immediate: true }
+)
+watch(searchQuery, (query) => {
+  if (props.initialTab === 'search' && props.active !== false) emit('searchQueryChange', query)
+})
+
 watch(
   () =>
     [
@@ -3414,7 +3560,9 @@ watch(activeProvider, async (provider, oldProvider) => {
   if (provider === oldProvider || props.active === false) return
   // Preserve the request that initiated an internal source switch.
   resetDetail({ keepNavigationRequest: provider === detailNavigationProvider })
-  if (provider !== detailNavigationProvider) clearSearch()
+  // Unified search owns its source filter; discovering or removing a provider
+  // must not erase a query submitted from the title bar.
+  if (provider !== detailNavigationProvider && !showUnifiedSearch.value) clearSearch()
   recommendationRequestId += 1
   recommendationProviderId.value = ''
   homeSectionDefinitions.value = []
@@ -3608,8 +3756,9 @@ onMounted(async () => {
         :is-detail="!!currentDetail"
         :is-searching="isSearching && !currentDetail"
         :show-subtitle="
-          (activeTab === 'home' && !currentDetail && !isSearching) ||
-          (isExternalActive && !currentDetail && !isSearching)
+          !showUnifiedSearch &&
+          ((activeTab === 'home' && !currentDetail && !isSearching) ||
+            (isExternalActive && !currentDetail && !isSearching))
         "
         :title="headerTitle"
         :subtitle="headerSubtitle"
@@ -3642,17 +3791,13 @@ onMounted(async () => {
         <div
           v-if="showUnifiedSearch && !currentDetail"
           key="search-results"
-          class="streaming-content-body stream-view-panel"
-          :class="{ 'has-search-tabs': isSearching }"
+          class="streaming-content-body stream-view-panel has-search-tabs"
         >
-          <StreamingPlaceholder
-            v-if="!isSearching"
-            title="搜索歌曲、专辑、歌单和歌手"
-            hint="输入关键词，可搜索全部来源、本地或指定平台。"
-            icon="pi pi-search"
-          />
           <StreamingSearch
-            v-else
+            :query-active="isSearching"
+            :search-source-label="
+              searchSources.find((source) => source.id === searchSource)?.label ?? '全部音源'
+            "
             :search-type="searchType"
             :search-results="searchResults"
             :search-albums-results="searchAlbumsResults"
@@ -3757,7 +3902,7 @@ onMounted(async () => {
             :total="discovery.total.value"
             :offset="discovery.offset.value"
             :has-more="discovery.hasMore.value"
-            :list-loading="discovery.listLoading.value"
+            :list-loading="discovery.listLoading.value || !discovery.hasRequested.value"
             :list-error="discovery.listError.value"
             :loading-more="discovery.loadingMore.value"
             @select-tag="discovery.selectTag"
@@ -3814,12 +3959,12 @@ onMounted(async () => {
           />
 
           <div v-else-if="currentDetail" class="detail-view">
-            <div v-if="showDetailOverlayLoading" class="detail-loading-overlay" aria-live="polite">
-              <i class="pi pi-spin pi-spinner"></i>
+            <div v-if="showDetailOverlayLoading" class="detail-loading-overlay" role="status">
+              <i class="pi pi-spin pi-spinner" aria-hidden="true"></i>
               <span>正在加载</span>
             </div>
 
-            <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
+            <!-- Shared collection details preserve the active source and queue origin. -->
             <template v-if="showTrackDetailStage">
               <StreamingPlaceholder
                 v-if="detailError"
@@ -3962,6 +4107,7 @@ onMounted(async () => {
 
           <StreamingLibrary
             v-else-if="activeTab === 'library' && !currentDetail"
+            v-model:view-state="libraryViewState"
             :is-logged-in="activeLoggedIn"
             :provider-label="activeProviderLabel"
             :profile="activeProfile"

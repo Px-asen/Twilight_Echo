@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, useId } from 'vue'
 import type { DspNodeType, DspScene, DspSceneState } from '../../../../shared/dspGraph.ts'
 import { nodeCatalog, nodeLabel } from '@renderer/utils/dspNodeParams'
 
@@ -31,6 +31,35 @@ const emit = defineEmits<{
 }>()
 
 const draggedNodeId = ref<string | null>(null)
+const keyboardHintId = useId()
+const keyboardStatus = ref('')
+
+function onNodeKeydown(event: KeyboardEvent, id: string): void {
+  if (event.target !== event.currentTarget || event.ctrlKey || event.metaKey || event.shiftKey)
+    return
+  if ((event.key === 'Enter' || event.key === ' ') && !event.altKey) {
+    event.preventDefault()
+    if (!event.repeat) emit('selectNode', id)
+    return
+  }
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  event.preventDefault()
+  const nodes = scene.value?.graph.nodes ?? []
+  const index = nodes.findIndex((node) => node.id === id)
+  const destination = nodes[index + (event.key === 'ArrowUp' ? -1 : 1)]
+  if (!destination) return
+  const current = event.currentTarget as HTMLElement
+  if (event.altKey) {
+    emit('moveNode', id, destination.id)
+    keyboardStatus.value = `${nodeLabel(nodes[index].type)}，第 ${index + (event.key === 'ArrowUp' ? 0 : 2)} 个节点`
+    void nextTick(() => current.focus({ preventScroll: true }))
+  } else {
+    const slots = current.parentElement?.parentElement?.children
+    const next =
+      slots?.[index + (event.key === 'ArrowUp' ? -1 : 1)]?.querySelector<HTMLElement>('.graph-node')
+    next?.focus()
+  }
+}
 
 function onDrop(destinationId: string): void {
   if (draggedNodeId.value) emit('moveNode', draggedNodeId.value, destinationId)
@@ -53,7 +82,7 @@ function onDrop(destinationId: string): void {
           :class="{ selected: isPinned }"
           @click="emit('togglePin')"
         >
-          <i class="pi pi-thumbtack"></i>{{ isPinned ? '取消 Pin' : 'Pin 场景' }}
+          <i class="pi pi-thumbtack"></i>{{ isPinned ? '取消固定' : '固定场景' }}
         </button>
         <button type="button" class="icon-text-button" @click="emit('toggleSnapshot')">
           <i class="pi pi-clone"></i>{{ snapshotA ? '恢复 A' : '记录 A' }}
@@ -94,12 +123,12 @@ function onDrop(destinationId: string): void {
 
       <section class="output-stage">
         <label
-          >Output rate
+          >输出采样率
           <select
             :value="String(scene.graph.outputStage.targetSampleRate)"
             @change="emit('setOutputTarget', ($event.target as HTMLSelectElement).value)"
           >
-            <option value="device">Device</option>
+            <option value="device">跟随设备</option>
             <option value="44100">44.1 kHz</option>
             <option value="48000">48 kHz</option>
             <option value="88200">88.2 kHz</option>
@@ -109,14 +138,14 @@ function onDrop(destinationId: string): void {
           </select>
         </label>
         <label
-          >SRC
+          >重采样质量
           <select
             :value="scene.graph.outputStage.resamplerQuality"
             @change="emit('setOutputQuality', ($event.target as HTMLSelectElement).value)"
           >
-            <option value="native">Native</option>
-            <option value="high">High</option>
-            <option value="ultra">Ultra</option>
+            <option value="native">原生</option>
+            <option value="high">高</option>
+            <option value="ultra">极高</option>
             <option value="soxrHq">
               SoX HQ{{ soxrFallbackActive ? '（不可用，回退 Ultra）' : '' }}
             </option>
@@ -126,31 +155,46 @@ function onDrop(destinationId: string): void {
           </select>
         </label>
         <label
-          >Dither
+          >抖动处理
           <select
             :value="scene.graph.outputStage.dither"
             @change="emit('setOutputDither', ($event.target as HTMLSelectElement).value)"
           >
-            <option value="off">Off</option>
+            <option value="off">关闭</option>
             <option value="tpdf">TPDF</option>
             <option value="highpassTpdf">High-pass TPDF</option>
             <option value="noiseShaped">Noise-shaped</option>
           </select>
         </label>
         <label class="switch-field"
-          ><input v-model="scene.graph.outputStage.safetyClamp" type="checkbox" /> Safety
-          clamp</label
+          ><input v-model="scene.graph.outputStage.safetyClamp" type="checkbox" /> 输出安全保护</label
         >
       </section>
 
-      <TransitionGroup name="dsp-node" tag="div" class="node-list" aria-label="DSP graph nodes">
+      <p :id="keyboardHintId" class="graph-keyboard-hint">
+        Enter 选择节点 · ↑↓ 移动焦点 · Alt + ↑↓ 调整顺序
+      </p>
+      <p class="graph-keyboard-status" role="status" aria-live="polite">{{ keyboardStatus }}</p>
+      <TransitionGroup
+        name="dsp-node"
+        tag="div"
+        class="node-list"
+        role="list"
+        aria-label="DSP 处理节点"
+      >
         <div v-for="node in scene.graph.nodes" :key="node.id" class="dsp-node-slot">
           <article
             draggable="true"
             class="graph-node"
+            role="listitem"
+            tabindex="0"
+            :aria-label="`${nodeLabel(node.type)}${node.id === selectedNodeId ? '，已选择' : ''}${node.enabled ? '' : '，已旁路'}`"
+            :aria-describedby="keyboardHintId"
             data-te-interactive
             :class="{ selected: node.id === selectedNodeId, bypassed: !node.enabled }"
             @dragstart="draggedNodeId = node.id"
+            @dragend="draggedNodeId = null"
+            @keydown="onNodeKeydown($event, node.id)"
             @dragover.prevent
             @drop="onDrop(node.id)"
             @click="emit('selectNode', node.id)"
@@ -161,7 +205,7 @@ function onDrop(destinationId: string): void {
             ></i>
             <div>
               <strong>{{ nodeLabel(node.type) }}</strong
-              ><small>{{ node.id }}</small>
+              ><small>{{ node.enabled ? '已启用' : '已旁路' }}</small>
             </div>
             <button
               type="button"
@@ -192,6 +236,28 @@ function onDrop(destinationId: string): void {
 <style scoped>
 .dsp-node-move {
   transition: transform var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.graph-keyboard-hint {
+  margin: 0 0 12px;
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+}
+
+.graph-keyboard-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.graph-node:focus-visible {
+  outline: 2px solid var(--te-control-focus-color, var(--te-primary-500));
+  outline-offset: -2px;
 }
 
 html[data-te-motion='reduced'] .dsp-node-slot {

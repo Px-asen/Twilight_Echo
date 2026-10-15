@@ -1,6 +1,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { normalizeAppearanceLayers } from '../../../../shared/appearanceLayers'
 import {
   matchesStudioSearch,
+  isStudioTokenEditable,
   studioModeLabels,
   studioTokenGroup,
   studioTokenLabel
@@ -12,6 +14,7 @@ import {
   THEME_ACCENT_PALETTES,
   THEME_BACKGROUND_PALETTES,
   THEME_MODE_DEFINITIONS,
+  THEME_ICON_SLOTS,
   THEME_TOKEN_DEFINITIONS,
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
@@ -27,6 +30,7 @@ import {
   type BuiltInThemePresetId,
   type ThemeAssetBindings,
   type ThemeAssetType,
+  type ThemeIconSlot,
   type ThemeModes,
   type ThemePlayerLayout,
   type ThemeProfileHistoryEntry,
@@ -41,6 +45,7 @@ import { useExtensionRegistry, type ThemeContribution } from '@renderer/extensio
 import { getPluginThemeKey } from '@renderer/extensions/themeSelection'
 import { useThemeStore } from '@renderer/stores/useThemeStore'
 import { createThemePreviewScheduler } from '@renderer/utils/themePreviewScheduler'
+import { readThemeStudioRecovery, storeThemeStudioRecovery } from './themeStudioRecovery'
 
 export type { BuiltInThemePresetId } from '../../../../shared/theme.ts'
 export type ThemePreviewSurface = 'dashboard' | 'player' | 'equalizer'
@@ -58,6 +63,9 @@ export type ThemeStudioDomain =
 
 type ThemeStudioEditorOptions = {
   initialDomain?: ThemeStudioDomain
+  initialKey?: string
+  editable?: boolean
+  iconContext?: () => string
   onBack: () => void
 }
 
@@ -79,7 +87,14 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   const history = ref<ThemeProfileV2[]>([])
   const historyIndex = ref(-1)
   const localError = ref('')
+  const selectedIconSlot = ref<ThemeIconSlot | null>(null)
+  const iconImporting = ref(false)
+  let iconImportRevision = 0
   const notice = ref('')
+  const initializing = ref(true)
+  let disposed = false
+  let leaveApproved = false
+  let recoveryTimer: ReturnType<typeof setTimeout> | undefined
   let originalTone: ThemeTone = 'pureWhite'
   const previewScheduler = createThemePreviewScheduler((profile: ThemeProfileV2) =>
     themeStore.preview(profile)
@@ -366,9 +381,29 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   const isUnsavedDraft = computed(
     () => draft.value != null && !profiles.value.some((profile) => profile.id === draft.value?.id)
   )
-  const isDirty = computed(() =>
-    draft.value ? JSON.stringify(draft.value) !== savedDraft.value : false
-  )
+  const draftJson = computed(() => (draft.value ? JSON.stringify(draft.value) : ''))
+  const isDirty = computed(() => !!draft.value && draftJson.value !== savedDraft.value)
+  function preserveRecovery(): void {
+    if (!options.editable || initializing.value || leaveApproved) return
+    storeThemeStudioRecovery(
+      draft.value && isDirty.value
+        ? {
+            draft: JSON.parse(draftJson.value) as ThemeProfileV2,
+            selectedKey: selectedKey.value,
+            tone: tone.value,
+            dirty: true,
+            savedDraft: savedDraft.value
+          }
+        : null
+    )
+  }
+  watch([draftJson, selectedKey, tone], () => {
+    if (initializing.value) return
+    leaveApproved = false
+    clearTimeout(recoveryTimer)
+    if (!isDirty.value) preserveRecovery()
+    else recoveryTimer = setTimeout(preserveRecovery, 500)
+  })
   const canUndo = computed(() => historyIndex.value > 0)
   const canRedo = computed(
     () => historyIndex.value >= 0 && historyIndex.value < history.value.length - 1
@@ -488,6 +523,14 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     history.value = []
     historyIndex.value = -1
     await themeStore.previewTheme({ kind: 'builtin', id: presetId })
+    if (options.editable) {
+      const preset = getBuiltInThemePreset(presetId)
+      if (preset) {
+        // A local draft enables direct editing without saving a copy merely by opening Appearance.
+        draft.value = themeStore.createProfile(`${preset.name} 自定义`, preset)
+        resetHistory(draft.value)
+      }
+    }
   }
 
   async function selectProfile(profile: ThemeProfileV2): Promise<void> {
@@ -509,6 +552,12 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   async function selectThemeKey(event: Event): Promise<void> {
     const key = (event.target as HTMLSelectElement).value
+    await selectKey(key)
+  }
+
+  async function selectKey(key: string): Promise<void> {
+    if (iconImporting.value) return
+    await themeStore.setPreviewTone(tone.value)
     if (key.startsWith('preset:')) {
       const presetId = key.slice('preset:'.length)
       if (getBuiltInThemePreset(presetId)) await selectBuiltIn(presetId as BuiltInThemePresetId)
@@ -551,6 +600,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   async function duplicateSelected(): Promise<void> {
+    if (iconImporting.value) return
     previewScheduler.cancel()
     const sourceProfileId = draft.value?.id
     const source = draft.value
@@ -586,6 +636,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   async function importAsset(type: ThemeAssetType): Promise<void> {
+    if (iconImporting.value) return
     if (!draft.value) return
     try {
       const asset = await themeStore.importAsset(draft.value.id, type)
@@ -613,6 +664,72 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         }
       }
     })
+  }
+
+  function selectIconSlot(slot: ThemeIconSlot | null): void {
+    selectedIconSlot.value = slot && THEME_ICON_SLOTS.includes(slot) ? slot : null
+  }
+
+  function setIconBinding(slot: ThemeIconSlot, assetId = ''): void {
+    if (iconImporting.value || !THEME_ICON_SLOTS.includes(slot)) return
+    if (
+      assetId &&
+      !draft.value?.assets?.some((asset) => asset.id === assetId && asset.type === 'image')
+    )
+      return
+    if ((draft.value?.iconBindings?.[slot] ?? '') === assetId) return
+    updateDraft((profile) => {
+      const bindings = { ...profile.iconBindings }
+      if (assetId) bindings[slot] = assetId
+      else delete bindings[slot]
+      profile.iconBindings = Object.keys(bindings).length ? bindings : undefined
+    })
+  }
+
+  watch(
+    () => [draft.value?.id, tone.value, selectedIconSlot.value, options.iconContext?.()],
+    () => {
+      iconImportRevision++
+      iconImporting.value = false
+    },
+    { flush: 'sync' }
+  )
+
+  async function importIconAsset(slot: ThemeIconSlot): Promise<void> {
+    if (!draft.value || iconImporting.value || themeStore.saving.value || initializing.value) return
+    if (!THEME_ICON_SLOTS.includes(slot) || selectedIconSlot.value !== slot) return
+    const profileId = draft.value.id
+    const currentTone = tone.value
+    const context = options.iconContext?.()
+    const fingerprint = JSON.stringify(draft.value)
+    const revision = ++iconImportRevision
+    const isCurrent = (): boolean =>
+      !disposed &&
+      revision === iconImportRevision &&
+      draft.value?.id === profileId &&
+      tone.value === currentTone &&
+      selectedIconSlot.value === slot &&
+      options.iconContext?.() === context &&
+      JSON.stringify(draft.value) === fingerprint
+    localError.value = ''
+    iconImporting.value = true
+    try {
+      const asset = await themeStore.importAsset(profileId, 'image')
+      if (!asset || !isCurrent()) return
+      if (asset.type !== 'image' || !/\.(png|webp)$/i.test(asset.path))
+        throw new Error('请选择 PNG 或 WebP 图标图片')
+      // Release this import's own lock before the synchronous draft commit.
+      iconImporting.value = false
+      updateDraft((profile) => {
+        profile.assets = [...(profile.assets ?? []).filter((entry) => entry.id !== asset.id), asset]
+        profile.iconBindings = { ...profile.iconBindings, [slot]: asset.id }
+      })
+    } catch (cause) {
+      if (isCurrent())
+        localError.value = cause instanceof Error ? cause.message : '图标图片导入失败'
+    } finally {
+      if (revision === iconImportRevision) iconImporting.value = false
+    }
   }
 
   type ThemeMiniPlayerDefaultKey = keyof NonNullable<ThemeWindowDefaults['miniPlayer']>
@@ -738,15 +855,20 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     return draft.value?.assetBindings?.[key] ? '已选择图片' : '跟随主题'
   }
 
-  function updateDraft(mutator: (profile: ThemeProfileV2) => void): void {
-    if (!draft.value) return
+  function updateDraft(mutator: (profile: ThemeProfileV2) => void, refreshPreview = true): void {
+    if (!draft.value || iconImporting.value) return
     notice.value = ''
     const next = cloneProfile(draft.value)
     mutator(next)
     next.updatedAt = new Date().toISOString()
     draft.value = next
     pushHistory(next)
-    previewScheduler.schedule(next)
+    if (refreshPreview) previewScheduler.schedule(next)
+  }
+  function updateAppearanceLayers(layers: unknown): void {
+    updateDraft((profile) => {
+      profile.appearanceLayers = normalizeAppearanceLayers(layers)
+    })
   }
 
   function updateToken(definition: ThemeTokenDefinition, raw: string): void {
@@ -1054,9 +1176,11 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     })
   }
 
-  function resetGroup(): void {
+  function resetGroup(options?: { preserveStructure?: boolean }): void {
     updateDraft((profile) => {
-      for (const definition of definitions.value)
+      for (const definition of definitions.value.filter(
+        (entry) => !options?.preserveStructure || isStudioTokenEditable(entry.id)
+      ))
         delete profile.overrides[tone.value][definition.id]
       if (domain.value === 'personalization') {
         profile.modes.appearance = undefined
@@ -1083,7 +1207,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         for (const binding of fontBindings) delete profile.overrides[tone.value][binding.tokenId]
       }
       if (domain.value === 'navigation') {
-        profile.modes.navigation = undefined
+        const iconScale = profile.modes.navigation?.iconScale
+        profile.modes.navigation =
+          options?.preserveStructure && iconScale ? { iconScale } : undefined
         profile.modes.icons = undefined
       }
       if (domain.value === 'library') profile.modes.library = undefined
@@ -1093,7 +1219,13 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         profile.modes.equalizer = undefined
         profile.modes.visibility = undefined
       }
-      if (domain.value === 'windows') profile.windowDefaults = undefined
+      if (domain.value === 'windows') {
+        const cornerRadius = profile.windowDefaults?.miniPlayer?.cornerRadius
+        profile.windowDefaults =
+          options?.preserveStructure && cornerRadius != null
+            ? { miniPlayer: { cornerRadius } }
+            : undefined
+      }
       if (
         profile.assetBindings &&
         (domain.value === 'personalization' || domain.value === 'typography')
@@ -1116,6 +1248,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
       profile.toneSchedule = undefined
       profile.windowDefaults = undefined
       profile.assetBindings = undefined
+      profile.iconBindings = undefined
     })
   }
 
@@ -1144,33 +1277,36 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   }
 
   function undo(): void {
-    if (!canUndo.value) return
+    if (iconImporting.value || !canUndo.value) return
     historyIndex.value -= 1
     draft.value = cloneProfile(history.value[historyIndex.value])
     previewScheduler.schedule(draft.value)
   }
 
   function redo(): void {
-    if (!canRedo.value) return
+    if (iconImporting.value || !canRedo.value) return
     historyIndex.value += 1
     draft.value = cloneProfile(history.value[historyIndex.value])
     previewScheduler.schedule(draft.value)
   }
 
   async function applySelected(): Promise<void> {
+    if (iconImporting.value) return
     localError.value = ''
     notice.value = ''
     try {
       await previewScheduler.flush()
-      if (draft.value) {
+      if (options.editable && draft.value && !isUnsavedDraft.value && !isDirty.value) {
+        await themeStore.setActive({ kind: 'user', id: draft.value.id })
+      } else if (draft.value && (!options.editable || isDirty.value || !isUnsavedDraft.value)) {
         const toSave = cloneProfile(draft.value)
         const saved = await themeStore.saveProfile(toSave)
         const persisted = saved.data.profiles.find((profile) => profile.id === toSave.id)
         if (!persisted) throw new Error('保存后的主题档案不可用')
         draft.value = cloneProfile(persisted)
         resetHistory(draft.value)
-        await themeStore.setActive({ kind: 'user', id: draft.value.id })
         selectedKey.value = `profile:${draft.value.id}`
+        await themeStore.setActive({ kind: 'user', id: draft.value.id })
       } else if (selectedPluginTheme.value) {
         await themeStore.setActive({
           kind: 'plugin',
@@ -1183,6 +1319,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
           id: selectedBuiltInPreset.value.id as BuiltInThemePresetId
         })
       }
+      // Activating a new theme clears the store's transient preview tone.
+      // Keep this editing session on the variant that was just saved.
+      await themeStore.setPreviewTone(tone.value)
       notice.value = '主题已应用'
     } catch (cause) {
       localError.value = cause instanceof Error ? cause.message : '主题保存失败'
@@ -1238,13 +1377,14 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
 
   function changeName(event: Event): void {
     const name = (event.target as HTMLInputElement).value.trim().slice(0, 80)
-    if (!name) return
+    if (!name || name === draft.value?.name) return
     updateDraft((profile) => {
       profile.name = name
-    })
+    }, false)
   }
 
   async function setTone(nextTone: ThemeTone): Promise<void> {
+    if (iconImporting.value) return
     await previewScheduler.flush()
     tone.value = nextTone
     await themeStore.setPreviewTone(nextTone)
@@ -1264,9 +1404,18 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     return previewCleanup
   }
 
-  function closeStudio(): void {
-    if (isDirty.value && !window.confirm('放弃尚未应用的主题修改？')) return
-    void clearStudioPreview()
+  async function prepareLeave(): Promise<boolean> {
+    if (initializing.value || themeStore.saving.value || iconImporting.value) return false
+    if (isDirty.value && !window.confirm('放弃尚未应用的主题修改？')) return false
+    leaveApproved = true
+    clearTimeout(recoveryTimer)
+    if (options.editable) storeThemeStudioRecovery(null)
+    await clearStudioPreview()
+    return true
+  }
+
+  async function closeStudio(): Promise<void> {
+    if (!(await prepareLeave())) return
     options.onBack()
   }
 
@@ -1290,31 +1439,73 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     }
   }
 
+  watch(
+    previewViewportRef,
+    (viewport, previous) => {
+      if (previous) previewResizeObserver?.unobserve(previous)
+      if (viewport) previewResizeObserver?.observe(viewport)
+      updateLivePreviewScale()
+    },
+    { flush: 'post' }
+  )
+
   onMounted(async () => {
+    const recovery = options.editable ? readThemeStudioRecovery() : null
     previewResizeObserver = new ResizeObserver(updateLivePreviewScale)
     if (previewViewportRef.value) previewResizeObserver.observe(previewViewportRef.value)
     window.addEventListener('resize', updateLivePreviewScale)
     window.requestAnimationFrame(updateLivePreviewScale)
-    await Promise.all([themeStore.load(), syncExtensions()])
-    originalTone = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
-    tone.value = originalTone
-    await themeStore.setPreviewTone(originalTone)
-    if (domain.value === 'player' || domain.value === 'typography') previewSurface.value = 'player'
-    const active = themeStore.activeTheme.value
-    if (active.kind === 'user') {
-      const profile = profiles.value.find((entry) => entry.id === active.id)
-      if (profile) await selectProfile(profile)
-    } else if (active.kind === 'plugin') {
-      const theme = themeContributions.value.find(
-        (entry) => entry.pluginId === active.pluginId && entry.id === active.themeId
-      )
-      if (theme) await selectPlugin(theme)
-    } else {
-      await selectBuiltIn(active.id)
+    try {
+      await Promise.all([themeStore.load(), syncExtensions()])
+      if (disposed) return
+      originalTone = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
+      tone.value = originalTone
+      await themeStore.setPreviewTone(originalTone)
+      if (disposed) {
+        await clearStudioPreview()
+        return
+      }
+      if (domain.value === 'player' || domain.value === 'typography')
+        previewSurface.value = 'player'
+      const active = themeStore.activeTheme.value
+      if (options.initialKey) {
+        await selectKey(options.initialKey)
+      } else if (active.kind === 'user') {
+        const profile = profiles.value.find((entry) => entry.id === active.id)
+        if (profile) await selectProfile(profile)
+      } else if (active.kind === 'plugin') {
+        const theme = themeContributions.value.find(
+          (entry) => entry.pluginId === active.pluginId && entry.id === active.themeId
+        )
+        if (theme) await selectPlugin(theme)
+      } else {
+        await selectBuiltIn(active.id)
+      }
+      if (!disposed && recovery) {
+        selectedKey.value = recovery.selectedKey
+        draft.value = cloneProfile(recovery.draft)
+        savedDraft.value = recovery.savedDraft ?? ''
+        history.value = [cloneProfile(recovery.draft)]
+        historyIndex.value = 0
+        tone.value = recovery.tone
+        await themeStore.setPreviewTone(recovery.tone)
+        await themeStore.preview(draft.value)
+        notice.value = '已恢复未应用的主题草稿'
+      }
+      if (disposed) await clearStudioPreview()
+    } catch (cause) {
+      localError.value = cause instanceof Error ? cause.message : '主题未能加载，请重试。'
+    } finally {
+      initializing.value = false
     }
   })
 
   onBeforeUnmount(() => {
+    clearTimeout(recoveryTimer)
+    preserveRecovery()
+    disposed = true
+    iconImportRevision++
+    iconImporting.value = false
     window.removeEventListener('resize', updateLivePreviewScale)
     previewResizeObserver?.disconnect()
     previewResizeObserver = null
@@ -1339,6 +1530,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     canUndo,
     changeName,
     closeStudio,
+    prepareLeave,
     contrastWarnings,
     deleteSelected,
     derivePreset,
@@ -1357,6 +1549,8 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     getPluginThemeKey,
     historyLabel,
     imageAssets,
+    iconImporting,
+    importIconAsset,
     importAsset,
     importTheme,
     isDirty,
@@ -1382,12 +1576,17 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     restoreVersion,
     scheduleTime,
     selectedKey,
+    selectedIconSlot,
+    selectIconSlot,
     selectedPluginTheme,
     selectBuiltIn,
     selectProfile,
     selectThemeKey,
+    selectKey,
+    ready: computed(() => !initializing.value),
     setPlayerLayout,
     setTone,
+    setIconBinding,
     sourceFor,
     tokenHint,
     tokenUnavailable,
@@ -1398,6 +1597,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     tone,
     undo,
     updateAppearanceMode,
+    updateAppearanceLayers,
     updateArtworkMode,
     updateAssetBinding,
     updateEqualizerMode,

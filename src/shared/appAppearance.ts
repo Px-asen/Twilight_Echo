@@ -1,20 +1,28 @@
 import type {
   AppBackgroundColorPair,
   AppBackgroundEffect,
+  AppBackgroundImagePalette,
   AppBackgroundPage,
   AppBackgroundSettings,
   AppSettings,
   BackgroundEffectSettings,
+  BackgroundTextTone,
   CardAppearanceSettings,
   CardAppearanceTheme
 } from './appSettings.ts'
 import { normalizeLiquidGlass, normalizeSurfaceMaterial } from './liquidGlass.ts'
+import { normalizeNavigationPagePreferences } from './navigationPages.ts'
+import { normalizePlayerBarSettings } from './playerBar.ts'
+import { normalizeAppearanceLayers } from './appearanceLayers.ts'
+import { ensureThemeTextContrast, themeContrastRatio } from './theme.ts'
+import { MIN_READING_FADE } from './materials.ts'
 import { backgroundDisplayUrl } from './backgroundDisplay.ts'
 
 export type AppearanceDraft = Pick<
   AppSettings,
   'appBackground' | 'cardAppearance' | 'surfaceMaterial' | 'liquidGlass'
->
+> &
+  Partial<Pick<AppSettings, 'navigationPages' | 'playerBar' | 'appearanceLayers'>>
 export type AppearanceTone = 'light' | 'dark'
 export type AppearancePreset = 'theme' | 'transparent' | 'frosted' | 'liquidGlass'
 export const BACKGROUND_PAGES: readonly AppBackgroundPage[] = [
@@ -55,6 +63,27 @@ function hex(value: unknown, fallback: string): string {
   return typeof value === 'string' && /^#?[a-f\d]{6}$/i.test(value.trim())
     ? `#${value.trim().replace(/^#/, '').toLowerCase()}`
     : fallback
+}
+export function normalizeBackgroundImagePalette(
+  raw: unknown,
+  image: string
+): AppBackgroundImagePalette | undefined {
+  const value = object(raw)
+  if (
+    !/^background:\/\/[a-zA-Z0-9._-]+$/.test(image) ||
+    value.image !== image ||
+    typeof value.average !== 'string' ||
+    !/^#[a-f\d]{6}$/i.test(value.average) ||
+    typeof value.accent !== 'string' ||
+    !/^#[a-f\d]{6}$/i.test(value.accent)
+  )
+    return undefined
+  return {
+    image,
+    average: value.average.toLowerCase(),
+    accent: value.accent.toLowerCase(),
+    opacity: number(value.opacity, 0, 1, 1)
+  }
 }
 export function normalizeBackgroundEffect(raw: unknown): AppBackgroundEffect {
   const value = object(raw)
@@ -97,18 +126,23 @@ export function normalizeAppBackgroundSettings(
     const source = object(rawPair)
     const defaults = defaultBackground(page)
     const effects = object(source.effects)
+    const followsTheme = source.kind === 'theme' || source.kind === 'none'
+    const image =
+      typeof source.image === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(source.image)
+        ? source.image
+        : ''
+    const imagePalette = normalizeBackgroundImagePalette(source.imagePalette, image)
     return {
       light: hex(source.light, defaults.light),
       dark: hex(source.dark, defaults.dark),
-      kind: source.kind === 'image' ? 'image' : 'color',
-      image:
-        typeof source.image === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(source.image)
-          ? source.image
-          : '',
+      kind: followsTheme ? 'theme' : source.kind === 'image' ? 'image' : 'color',
+      image,
+      ...(imagePalette ? { imagePalette } : {}),
       customized:
-        source.customized === true ||
-        hex(source.light, defaults.light) !== defaults.light ||
-        hex(source.dark, defaults.dark) !== defaults.dark,
+        !followsTheme &&
+        (source.customized === true ||
+          hex(source.light, defaults.light) !== defaults.light ||
+          hex(source.dark, defaults.dark) !== defaults.dark),
       effects: {
         light: normalizeBackgroundEffect(
           effects.light ?? (source.effects == null && legacy?.enabled ? legacy.light : undefined)
@@ -143,6 +177,180 @@ export function backgroundEffect(
 ): AppBackgroundEffect {
   return normalizeBackgroundEffect(background.effects?.[tone])
 }
+
+export function hasBackgroundImage(background: AppBackgroundColorPair): boolean {
+  return background.kind === 'image' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(background.image)
+}
+
+/** Image tuning stays saved while a solid color or the theme is being shown. */
+export function effectiveBackgroundEffect(
+  background: AppBackgroundColorPair,
+  tone: AppearanceTone
+): AppBackgroundEffect {
+  const configured = backgroundEffect(background, tone)
+  return hasBackgroundImage(background)
+    ? configured
+    : { ...defaultBackgroundEffect(), textTone: configured.textTone }
+}
+
+export interface ResolvedBackgroundAppearance {
+  background: AppBackgroundColorPair
+  effect: AppBackgroundEffect
+  hasImage: boolean
+  colorOverride: boolean
+  imageOverride: boolean
+  customBackground: boolean
+}
+
+/** One ownership decision for the live renderer and the isolated editor preview. */
+export function resolveBackgroundAppearance(
+  settings: AppBackgroundSettings,
+  page: 'app' | AppBackgroundPage,
+  tone: AppearanceTone
+): ResolvedBackgroundAppearance {
+  const background = page === 'app' ? settings.global : resolveBackground(settings, page)
+  const hasImage = hasBackgroundImage(background)
+  const independent = page !== 'app' && !settings.pages[page].inherit
+  const explicitColor =
+    background.kind === 'color' && (background.customized === true || independent)
+  const customBackground = explicitColor || hasImage
+  return {
+    background,
+    effect: customBackground
+      ? effectiveBackgroundEffect(background, tone)
+      : defaultBackgroundEffect(),
+    hasImage,
+    colorOverride: customBackground,
+    imageOverride: customBackground,
+    customBackground
+  }
+}
+type BackgroundRgb = [number, number, number]
+function backgroundRgb(color: string): BackgroundRgb {
+  return [1, 3, 5].map((offset) =>
+    Number.parseInt(color.slice(offset, offset + 2), 16)
+  ) as BackgroundRgb
+}
+function backgroundHex(color: BackgroundRgb): string {
+  return `#${color
+    .map((channel) =>
+      Math.round(Math.max(0, Math.min(255, channel)))
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`
+}
+function mixBackgroundColor(base: string, color: string, amount: number): string {
+  const rgb = backgroundRgb(color)
+  return backgroundHex(
+    backgroundRgb(base).map(
+      (channel, index) => channel * (1 - amount) + rgb[index] * amount
+    ) as BackgroundRgb
+  )
+}
+export interface ResolvedBackgroundPalette {
+  textTone: 'light' | 'dark'
+  text: string
+  muted: string
+  background: string
+  controlBackground: string
+  controlHover: string
+  controlActive: string
+  controlForeground: string
+  controlMuted: string
+  controlBorder: string
+  readingText: string
+  readingMuted: string
+  accent: string
+  onAccent: string
+}
+/** Re-evaluate the saved local sample when brightness, dimming or the solid base changes. */
+export function resolveBackgroundPalette(
+  background: AppBackgroundColorPair,
+  tone: AppearanceTone
+): ResolvedBackgroundPalette | null {
+  if (background.kind !== 'image') return null
+  const palette = normalizeBackgroundImagePalette(background.imagePalette, background.image)
+  if (!palette) return null
+  const effect = effectiveBackgroundEffect(background, tone)
+  const composited = mixBackgroundColor(
+    hex(background[tone], tone === 'dark' ? '#17181a' : '#f4f4f7'),
+    palette.average,
+    palette.opacity ?? 1
+  )
+  const sampledBackground = backgroundHex(
+    backgroundRgb(composited).map(
+      (channel) => Math.min(255, (channel * effect.brightness) / 100) * (1 - effect.dim / 100)
+    ) as BackgroundRgb
+  )
+  const light = '#f4f7fb'
+  const dark = '#1a202c'
+  const automaticTone =
+    (themeContrastRatio(light, sampledBackground) ?? 0) >
+    (themeContrastRatio(dark, sampledBackground) ?? 0)
+      ? 'light'
+      : 'dark'
+  const textTone = effect.textTone === 'theme' ? automaticTone : effect.textTone
+  const preferredText = textTone === 'light' ? light : dark
+  const text =
+    effect.textTone === 'theme'
+      ? ensureThemeTextContrast(preferredText, sampledBackground)
+      : preferredText
+  const muted =
+    effect.textTone === 'theme'
+      ? ensureThemeTextContrast(textTone === 'light' ? '#c4cbd5' : '#4b5563', sampledBackground)
+      : textTone === 'light'
+        ? '#c4cbd5'
+        : '#4b5563'
+  // Images choose the tint and the ink directly over the wallpaper. Painted
+  // surfaces retain the selected day/night mode, independently of that ink.
+  const controlBackground = mixBackgroundColor(
+    tone === 'dark' ? '#1c1d20' : '#f4f5f7',
+    palette.accent,
+    0.035
+  )
+  const controlForeground = ensureThemeTextContrast(
+    tone === 'dark' ? light : dark,
+    controlBackground
+  )
+  const accent = ensureThemeTextContrast(palette.accent, controlBackground, 3)
+  // Reading pages fade the image toward the mode's surface. Validate against
+  // its least favourable pixel, not the average of the unwashed wallpaper.
+  const readingLimit = mixBackgroundColor(
+    tone === 'dark' ? '#ffffff' : '#000000',
+    controlBackground,
+    MIN_READING_FADE
+  )
+  return {
+    textTone,
+    text,
+    muted,
+    background: sampledBackground,
+    controlBackground,
+    controlHover: mixBackgroundColor(controlBackground, controlForeground, 0.08),
+    controlActive: mixBackgroundColor(controlBackground, controlForeground, 0.14),
+    controlForeground,
+    controlMuted: ensureThemeTextContrast(
+      tone === 'dark' ? '#c4cbd5' : '#4b5563',
+      controlBackground
+    ),
+    controlBorder: mixBackgroundColor(controlBackground, controlForeground, 0.2),
+    readingText: ensureThemeTextContrast(controlForeground, readingLimit),
+    readingMuted: ensureThemeTextContrast(tone === 'dark' ? '#c4cbd5' : '#4b5563', readingLimit),
+    accent,
+    onAccent: ensureThemeTextContrast('#ffffff', accent)
+  }
+}
+/** Effective marker for the existing page foreground rules; explicit user choices win. */
+export function resolveBackgroundTextTone(
+  background: AppBackgroundColorPair,
+  tone: AppearanceTone
+): BackgroundTextTone {
+  const selected = backgroundEffect(background, tone).textTone
+  return selected === 'theme'
+    ? (resolveBackgroundPalette(background, tone)?.textTone ?? 'theme')
+    : selected
+}
 export const BACKGROUND_TEXT_PALETTES = {
   light: { text: '#f4f7fb', muted: '#c4cbd5' },
   dark: { text: '#1a202c', muted: '#4b5563' }
@@ -152,22 +360,35 @@ export function backgroundCssVariables(
   background: AppBackgroundColorPair,
   tone: AppearanceTone
 ): Record<string, string> {
-  const effect = backgroundEffect(background, tone)
+  const effect = effectiveBackgroundEffect(background, tone)
+  const palette = resolveBackgroundPalette(background, tone)
   const textLight = effect.textTone === 'theme' ? tone === 'dark' : effect.textTone === 'light'
-  const palette = BACKGROUND_TEXT_PALETTES[textLight ? 'light' : 'dark']
   return {
     '--appearance-color': background[tone],
-    '--appearance-image':
-      background.kind === 'image' && background.image
-        ? `url("${backgroundDisplayUrl(background.image).replace(/["\\\n\r]/g, '')}")`
-        : 'none',
+    '--appearance-image': hasBackgroundImage(background)
+      ? `url("${backgroundDisplayUrl(background.image).replace(/["\\\n\r]/g, '')}")`
+      : 'none',
     '--appearance-blur': `${effect.blur}px`,
     '--appearance-brightness': `${effect.brightness}%`,
     '--appearance-dim': `${effect.dim / 100}`,
     '--appearance-scale': `${effect.scale}`,
     '--appearance-position': `${effect.positionX}% ${effect.positionY}%`,
-    '--appearance-text': palette.text,
-    '--appearance-muted': palette.muted
+    '--appearance-text': palette?.text ?? (textLight ? '#f4f7fb' : '#1a202c'),
+    '--appearance-muted': palette?.muted ?? (textLight ? '#c4cbd5' : '#4b5563'),
+    ...(palette
+      ? {
+          '--appearance-control-surface': palette.controlBackground,
+          '--appearance-control-hover': palette.controlHover,
+          '--appearance-control-active': palette.controlActive,
+          '--appearance-control-text': palette.controlForeground,
+          '--appearance-control-muted': palette.controlMuted,
+          '--appearance-control-border': palette.controlBorder,
+          '--appearance-control-accent': palette.accent,
+          '--appearance-control-on-accent': palette.onAccent,
+          '--appearance-reading-text': palette.readingText,
+          '--appearance-reading-muted': palette.readingMuted
+        }
+      : {})
   }
 }
 export function defaultCardTheme(tone: AppearanceTone): CardAppearanceTheme {
@@ -209,7 +430,12 @@ export function cloneAppearance(settings: AppearanceDraft): AppearanceDraft {
       background: { ...defaultCardAppearance().background }
     },
     surfaceMaterial: normalizeSurfaceMaterial(settings.surfaceMaterial),
-    liquidGlass: normalizeLiquidGlass(settings.liquidGlass)
+    liquidGlass: normalizeLiquidGlass(settings.liquidGlass),
+    appearanceLayers: normalizeAppearanceLayers(settings.appearanceLayers),
+    ...(settings.navigationPages
+      ? { navigationPages: normalizeNavigationPagePreferences(settings.navigationPages) }
+      : {}),
+    ...(settings.playerBar ? { playerBar: normalizePlayerBarSettings(settings.playerBar) } : {})
   }
 }
 export function applyAppearancePreset(
@@ -242,7 +468,7 @@ export function cardCssVariables(card: CardAppearanceTheme): Record<string, stri
       .toString(16)
       .padStart(2, '0')}`
   const shadows = {
-    none: 'none',
+    none: '0 0 0 transparent',
     subtle: '0 4px 16px #00000012',
     medium: '0 12px 32px #00000024',
     strong: '0 20px 48px #00000040'
@@ -264,7 +490,7 @@ export function cardCssVariables(card: CardAppearanceTheme): Record<string, stri
           ? 'scale(1.02)'
           : 'none',
     '--te-card-hover-shadow':
-      card.hoverEffect === 'glow' ? '0 0 24px rgba(var(--te-primary-rgb), .24)' : shadow,
+      card.hoverEffect === 'glow' ? `${shadow}, 0 0 24px rgba(var(--te-primary-rgb), .24)` : shadow,
     '--te-card-glass-highlight': card.glassHighlight
       ? 'inset 0 1px 0 #ffffff25'
       : '0 0 0 transparent'

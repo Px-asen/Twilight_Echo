@@ -10,12 +10,25 @@ const streamingCss = readFileSync(
   new URL('./streaming-page/StreamingPage.css', import.meta.url),
   'utf8'
 )
+const overlayCss = readFileSync(new URL('../assets/overlay-sidebars.css', import.meta.url), 'utf8')
 
-test('local sidebar opening uses one transform transition without material changes', () => {
-  assert.match(sideMenu, /transition:\s*transform var\(--te-motion-panel\) var\(--te-ease-soft\);/)
-  assert.doesNotMatch(sideMenu, /box-shadow var\(--te-motion-panel\)/)
+test('overlay navigation owns its panel motion while page transitions keep their timing', () => {
+  assert.match(sideMenu, /transition: transform var\(--te-motion-panel\) var\(--te-ease-soft\);/)
   assert.doesNotMatch(sideMenu, /side-menu-item-in/)
-  assert.match(app, /transition: padding-left var\(--te-motion-panel\) var\(--te-ease-soft\);/)
+  assert.match(sideMenu, /class="side-menu overlay-side-panel"/)
+  const overlayRule = overlayCss.match(
+    /html body \.app-shell :is\(\.side-menu, \.queue-sidebar\)\.overlay-side-panel\s*\{([^}]*)\}/
+  )
+  assert.ok(overlayRule, 'navigation and queue must share a viewport overlay surface')
+  assert.match(overlayRule[1], /position:\s*fixed;/)
+  assert.match(overlayRule[1], /top:\s*var\(--te-window-content-top\);/)
+  assert.match(overlayRule[1], /bottom:\s*var\(--te-window-content-bottom\);/)
+  assert.match(overlayRule[1], /width:\s*var\(--te-overlay-panel-width\);/)
+  assert.match(sideMenu, /\.side-menu\.open\s*\{\s*transform:\s*translate3d\(0, 0, 0\);\s*\}/)
+  assert.match(
+    overlayCss,
+    /\.side-menu\.overlay-side-panel:not\(\.open\)\s*\{[^}]*transform:\s*translate3d\(calc\(-100% - var\(--te-window-surface-inset\)\), 0, 0\)/
+  )
   assert.match(app, /opacity 0\.18s ease,\s*transform 0\.24s var\(--te-ease-out-strong\)/)
   assert.match(app, /translate3d\(0, 16px, 0\)/)
   assert.match(app, /opacity 0\.14s ease,\s*transform 0\.18s var\(--te-ease-enter\)/)
@@ -23,45 +36,45 @@ test('local sidebar opening uses one transform transition without material chang
 })
 
 /**
- * Every surface that clears the open side menu keeps its right edge pinned to the
- * window and moves only its left one. `transform` cannot express that — it carries
- * both edges — so animating it snapped the right edge inward by the clearance on
- * the first frame and swept it back over the rest, which read as the page flinching
- * on its right side. The clearance property itself has to be the animated one, on
- * the content surfaces, even though each frame costs a layout pass. The player
- * keeps its viewport geometry and paints over navigation on desktop.
- *
- * The 0.32s duration is what pins these to the *clearance* animation specifically;
- * the page-transition transforms in the same files run on their own curves.
+ * Navigation slides over a stable content box. Resizing either content surface
+ * during a menu toggle would move cards and scrollbars on every animation frame.
+ * These base rules are separate from the page enter/leave transitions above.
  */
-test('side-menu clearance animates the inset, never a transform', () => {
-  const surfaces: [name: string, source: string, property: 'padding-left' | 'left'][] = [
-    ['App.vue .main-content', app, 'padding-left'],
-    ['StreamingPage.css .streaming-content', streamingCss, 'padding-left']
+test('content surfaces retain full width without a menu-clearance animation', () => {
+  const surfaces: [name: string, source: string, rule: RegExp][] = [
+    ['App.vue .main-content', app, /^\.main-content\s*\{([^}]*)\}/m],
+    ['StreamingPage.css .streaming-content', streamingCss, /^\.streaming-content\s*\{([^}]*)\}/m]
   ]
-  for (const [name, source, property] of surfaces) {
-    assert.match(
-      source,
-      new RegExp(`transition: ${property} var\\(--te-motion-panel\\) var\\(--te-ease-soft\\);`),
-      `${name} must animate ${property} to keep its right edge pinned`
+  for (const [name, source, rule] of surfaces) {
+    const body = source.match(rule)?.[1]
+    assert.ok(body, `${name} must define its stable content geometry`)
+    assert.match(body, /width:\s*100%;/, `${name} must keep the full content width`)
+    assert.equal(
+      body.match(/padding-left:\s*([^;]+);/)?.[1].trim() ?? '0',
+      '0',
+      `${name} must not reserve an overlay inset`
     )
     assert.doesNotMatch(
-      source,
-      /transition: transform var\(--te-motion-panel\) var\(--te-ease-soft\);/,
-      `${name} must not animate transform for the clearance — it moves the right edge too`
+      body,
+      /transition(?:-property)?:[^;]*(?:padding|margin|left|width|flex-basis|transform)/,
+      `${name} must not animate its geometry when navigation slides`
     )
   }
+  const openContent = app.match(/^\.main-content\.menu-open\s*\{([^}]*)\}/m)
+  assert.ok(openContent, 'local content must declare its open-menu geometry')
+  assert.match(openContent[1], /^\s*padding-left:\s*0;\s*$/)
+  const customContent = app.match(
+    /html\[data-te-shell-layout='custom'\] \.app-shell-content \.main-content,\s*html\[data-te-shell-layout='custom'\] \.app-shell-content \.main-content\.menu-open\s*\{([^}]*)\}/
+  )
+  assert.ok(customContent, 'custom shells must share content geometry across menu states')
+  assert.match(customContent[1], /padding-left:\s*0;/)
 })
 
 /**
- * The streaming sidebar's give-way lives in a sibling rule rather than an `.open`
- * class on the content. It used to narrow the box *and* translate it into place,
- * which is the same right-edge sweep in two properties instead of one. Padding
- * leaves the border box — and the scrollbar riding its right edge — where it was.
+ * The streaming menu state is a sibling rule. It must retain the same inset as
+ * the closed state rather than narrow or translate the scroller behind the overlay.
  */
-test('the streaming content gives way by padding, not by narrowing and translating', () => {
-  /** Property names only. `var(--te-menu-width)` is a *value* — matching the raw
-   *  text for "width" would flag the correct declaration. */
+test('opening streaming navigation leaves its scroller and scrollbar in place', () => {
   function declaredProperties(body: string): string[] {
     return body
       .split(';')
@@ -72,17 +85,21 @@ test('the streaming content gives way by padding, not by narrowing and translati
   const rules = [
     ...app.matchAll(/^\.streaming-page\.menu-open \.streaming-content\s*\{([^}]*)\}/gm)
   ]
-  assert.ok(rules.length >= 1, 'the streaming give-way sibling rule must exist')
+  assert.ok(rules.length >= 1, 'the streaming open-menu sibling rule must exist')
   for (const [, body] of rules) {
-    assert.match(body, /padding-left:\s*var\(--te-menu-width\)/)
+    assert.match(body, /padding-left:\s*0;/)
     const properties = declaredProperties(body)
     assert.deepEqual(
       properties.filter((property) => property !== 'padding-left'),
       [],
-      'padding alone clears the sidebar: a translate sweeps the right edge back in, ' +
-        'and width/flex-basis drag the scroller’s scrollbar inward with it'
+      'opening an overlay must not add translation, width or flex-basis changes to the scroller'
     )
   }
+  const customContent = app.match(
+    /html\[data-te-shell-layout='custom'\] \.streaming-page \.streaming-content\s*\{([^}]*)\}/
+  )
+  assert.ok(customContent, 'custom streaming shells must retain the same content inset')
+  assert.match(customContent[1], /^\s*padding-left:\s*0;\s*$/)
 })
 
 /**

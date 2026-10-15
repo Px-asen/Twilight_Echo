@@ -36,10 +36,13 @@ const emit = defineEmits<{
         <div class="slider-thumb" :style="{ top: getThumbTop(props.preamp, 24) }"></div>
         <input
           type="range"
+          aria-orientation="vertical"
           min="-24"
           max="24"
           step="0.1"
           :value="props.preamp"
+          aria-label="前置增益（dB）"
+          :aria-valuetext="`${props.preamp.toFixed(1)} dB`"
           @input="emit('preview-preamp', Number(($event.target as HTMLInputElement).value))"
           @change="emit('commit')"
           class="invisible-range"
@@ -57,10 +60,13 @@ const emit = defineEmits<{
         <div class="slider-thumb" :style="{ top: getThumbTop(band.gain, 12) }"></div>
         <input
           type="range"
+          aria-orientation="vertical"
           min="-12"
           max="12"
           step="0.1"
           :value="band.gain"
+          :aria-label="`频段 ${index + 1} · ${formatFrequency(band.frequency)} 增益（dB）`"
+          :aria-valuetext="`${band.gain.toFixed(1)} dB`"
           :disabled="isGainDisabled(band)"
           @input="
             emit('preview-band', index, { gain: Number(($event.target as HTMLInputElement).value) })
@@ -92,10 +98,11 @@ const emit = defineEmits<{
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  background: var(--te-glass-bg);
-  padding: 30px 40px;
-  border-radius: 20px;
-  border: 1px solid var(--te-glass-border);
+  min-width: 0;
+  overflow-x: auto;
+  padding: 24px 8px;
+  background: transparent;
+  border-top: 1px solid var(--te-control-border);
 }
 .slider-column {
   display: flex;
@@ -103,15 +110,14 @@ const emit = defineEmits<{
   align-items: center;
   gap: 16px;
   flex: 1;
+  min-width: 48px;
 }
 .slider-gain {
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
-  color: var(--te-primary-500);
-  background: var(--te-card-bg);
-  padding: 4px 10px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+  font-weight: 500;
+  color: var(--te-neutral-900);
+  font-variant-numeric: tabular-nums;
+  padding: 4px 0;
 }
 .slider-freq {
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
@@ -120,7 +126,7 @@ const emit = defineEmits<{
 }
 .slider-track {
   width: 6px;
-  height: 180px;
+  height: var(--te-graphic-slider-height, 180px);
   background: rgba(15, 23, 42, 0.06);
   border-radius: 999px;
   position: relative;
@@ -129,7 +135,7 @@ const emit = defineEmits<{
   position: absolute;
   left: 0;
   width: 100%;
-  background: linear-gradient(to top, var(--te-primary-500), #818cf8);
+  background: var(--te-control-accent);
   border-radius: 999px;
   z-index: 1;
 }
@@ -141,7 +147,7 @@ const emit = defineEmits<{
   position: absolute;
   left: 50%;
   transform: translate(-50%, -50%);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
   border: 2px solid var(--te-primary-500);
   cursor: grab;
   transition: transform 0.1s;
@@ -153,7 +159,7 @@ const emit = defineEmits<{
 
 .invisible-range {
   position: absolute;
-  width: 180px;
+  width: var(--te-graphic-slider-height, 180px);
   height: 24px;
   top: 50%;
   left: 50%;
@@ -166,19 +172,24 @@ const emit = defineEmits<{
   z-index: 3;
 }
 
+.slider-track:has(.invisible-range:focus-visible) {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 6px;
+}
+
 .master-column {
   padding-right: 20px;
   margin-right: 10px;
-  border-right: 2px dashed rgba(15, 23, 42, 0.08);
+  border-right: 1px solid var(--te-control-border);
 }
 .master-column .slider-gain {
-  color: #ec4899;
+  color: var(--te-neutral-900);
 }
 .master-column .slider-fill {
-  background: linear-gradient(to top, #ec4899, #f472b6);
+  background: var(--te-control-accent);
 }
 .master-column .slider-thumb {
-  border-color: #ec4899;
+  border-color: var(--te-control-accent);
 }
 
 :global(html[data-te-equalizer-slider] .slider-track) {

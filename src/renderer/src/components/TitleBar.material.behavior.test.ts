@@ -10,7 +10,7 @@ import { compileStyle, parse } from '@vue/compiler-sfc'
 
 const require = createRequire(import.meta.url)
 
-test('caption shares the player frosted material and stays transparent on immersive pages', async () => {
+test('ordinary captions diffuse their backdrop while immersive captions inherit playback', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-caption-material-'))
   try {
     const read = (path: string): Promise<string> => readFile(new URL(path, import.meta.url), 'utf8')
@@ -22,20 +22,28 @@ test('caption shares the player frosted material and stays transparent on immers
       scoped: true
     })
     assert.deepEqual(compiled.errors, [])
-    const playerStyle = compileStyle({
-      source: await read('./player-bar/PlayerBar.css'),
-      filename: 'PlayerBar.css',
-      id: 'data-v-caption',
-      scoped: true
-    })
-    assert.deepEqual(playerStyle.errors, [])
+    const attached = await Promise.all(
+      ['SideMenu.vue', 'SidebarBookmark.vue'].map(async (filename) => {
+        const descriptor = parse(await read('./' + filename)).descriptor
+        const result = compileStyle({
+          source: descriptor.styles[0].content,
+          filename,
+          id: 'data-v-caption',
+          scoped: true
+        })
+        assert.deepEqual(result.errors, [])
+        return result.code
+      })
+    )
     const styles = [
       await read('../assets/base.css'),
-      await read('../assets/bohr.css'),
+      await read('../assets/materials.css'),
       await read('../assets/appearance.css'),
+      (await read('../assets/main.css')).replace(/^@import[^;]+;/gm, ''),
+      await read('../assets/overlay-sidebars.css'),
       ...parse(await read('../App.vue')).descriptor.styles.map((style) => style.content),
-      playerStyle.code,
-      compiled.code
+      compiled.code,
+      ...attached
     ].join('\n')
     await writeFile(
       join(directory, 'index.html'),
@@ -45,38 +53,38 @@ test('caption shares the player frosted material and stays transparent on immers
       body{background:#16181b}
       .sample-backdrop{position:fixed;inset:0;background:repeating-linear-gradient(90deg,#e64343 0 6px,#2059b8 6px 12px);pointer-events:none}
       .app-shell-title{z-index:2100}
-      .player-bar{position:fixed;top:200px;left:24px;right:24px}
-      .title-bar{--te-app-bg:#17181a;--te-player-bg:#08121d;--te-shell-control-text:#f4f7fb;
+      .app-shell{position:relative;isolation:isolate;--te-app-bg:#17181a;--te-player-bg:#08121d;--te-shell-control-text:#f4f7fb;
         --te-lg-context-material:rgb(18 28 45 / 38%);--te-lg-context-surface-solid:#121c2d;
         --te-lg-context-label:#f8fafc;--te-lg-context-diffusion:20px}
       .title-bar-start button{width:46px;height:40px;color:inherit;border:0;background:transparent}
       *,*::before,*::after{transition:none!important}
       </style></head><body><div class="sample-backdrop"></div><div class="app-shell"><div class="app-shell-title">
-      <div class="title-bar" data-v-caption><div class="title-bar-background" data-v-caption></div>
+      <div data-te-material="titlebar" class="title-bar" data-v-caption><div class="title-bar-background" data-v-caption></div>
       <div class="title-bar-start" data-v-caption><button class="menu-btn" data-v-caption aria-label="导航">☰</button></div>
       <div class="title-bar-controls" data-v-caption><div class="title-bar-tools" data-v-caption>
       <button class="settings-btn" data-v-caption aria-pressed="true" aria-label="设置">⚙</button>
-      <button class="plugins-btn" data-v-caption aria-pressed="true" aria-label="扩展">◇</button>
+      <button class="settings-btn appearance-btn" data-v-caption aria-pressed="true" aria-label="外观">◇</button>
       <button class="control-btn notification-btn" data-v-caption aria-expanded="true" aria-label="通知">♧</button>
       </div><div class="title-bar-window-controls" data-v-caption><button class="control-btn close" data-v-caption aria-label="关闭">×</button></div></div>
-      </div></div></div><div class="player-bar" data-v-caption></div><script>
-      const title=document.querySelector('.title-bar'),painter=document.querySelector('.title-bar-background');
+      </div></div><aside class="side-menu overlay-side-panel open" data-te-material="navigation" data-v-caption></aside><button class="sidebar-bookmark" data-v-caption tabindex="-1"></button></div><script>
+      const title=document.querySelector('.title-bar'),painter=document.querySelector('.title-bar-background'),nav=document.querySelector('.side-menu'),bookmark=document.querySelector('.sidebar-bookmark');
       window.prepare=(tone,page,liquid)=>{
         document.documentElement.dataset.theme=tone;
         document.documentElement.dataset.teLiquidGlassSource='solid';
         title.className='title-bar'+(page==='playing'?' title-bar-immersive':page==='settings'?' title-bar-settings':page==='streaming'?' title-bar-streaming':'')+(liquid&&page!=='playing'?' title-bar-liquid':'');
+        nav.classList.toggle('side-menu-liquid',liquid);bookmark.classList.toggle('sidebar-bookmark-liquid',liquid);
         document.querySelector('.sample-backdrop').style.background='repeating-linear-gradient(90deg,#e64343 0 6px,#2059b8 6px 12px)';
         const style=getComputedStyle(painter),host=getComputedStyle(title),rect=title.getBoundingClientRect();
-        if(page==='playing' ? style.backdropFilter!=='none' : !style.backdropFilter.includes('blur('))throw Error('wrong caption material: '+tone+'/'+page+'/'+liquid);
+        const navigation=getComputedStyle(nav,liquid?'::before':null),handle=getComputedStyle(bookmark,'::before'),base=getComputedStyle(document.querySelector('.app-shell'));
+        if(page!=='playing'&&((liquid&&navigation.backgroundColor!==style.backgroundColor)||navigation.backdropFilter!==style.backdropFilter||handle.backgroundColor!==navigation.backgroundColor||handle.backdropFilter!==navigation.backdropFilter))throw Error('attached sidebar, bookmark and title use different materials: '+JSON.stringify({liquid,title:[style.backgroundColor,style.backdropFilter],nav:[navigation.backgroundColor,navigation.backdropFilter],handle:[handle.backgroundColor,handle.backdropFilter]}));
+        if(getComputedStyle(nav).boxShadow!=='none')throw Error('attached sidebar creates floating panel elevation');
+        if(base.backgroundColor==='rgba(0, 0, 0, 0)'||base.backgroundImage!=='none')throw Error('window loses its continuous base or duplicates the wallpaper');
+        if(page==='playing'){
+          if(style.backdropFilter!=='none'||style.backgroundColor!=='rgba(0, 0, 0, 0)')throw Error('immersive caption adds a separate material');
+        }else if(!style.backdropFilter.includes('blur('))throw Error('missing diffusion: '+tone+'/'+page+'/'+liquid);
         if(style.backgroundImage!=='none'||style.boxShadow!=='none'||host.boxShadow!=='none')throw Error('caption creates a second decorative band');
         if(host.backgroundImage!=='none'||host.backgroundColor!=='rgba(0, 0, 0, 0)')throw Error('caption host masks its backdrop');
-        const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d');x.fillStyle=style.backgroundColor;x.fillRect(0,0,1,1);const alpha=x.getImageData(0,0,1,1).data[3]/255;
-        if(page==='playing' ? alpha!==0 : liquid ? alpha>.31||alpha<.2 : alpha>.81||alpha<.7)throw Error('caption loses its translucent material: '+alpha);
-        if(page!=='playing'){
-          const player=getComputedStyle(document.querySelector('.player-bar'));
-          if(style.backdropFilter!==player.backdropFilter)throw Error('caption and player diffusion differ');
-          if(!liquid&&style.backgroundColor!==player.backgroundColor)throw Error('caption and player surfaces differ');
-        }
+        const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d');x.fillStyle=style.backgroundColor;x.fillRect(0,0,1,1);const alpha=x.getImageData(0,0,1,1).data[3]/255;if(page!=='playing'&&(liquid?alpha>.31||alpha<.2:alpha!==0))throw Error('caption duplicates the window-base tint: '+alpha);
         if(rect.height!==40||rect.left!==0||rect.right!==innerWidth)throw Error('caption geometry changed');
         if(document.elementFromPoint(22,20)?.closest('button')===null)throw Error('material intercepts navigation input');
         for(const button of title.querySelectorAll('.title-bar-tools button')){
@@ -140,9 +148,12 @@ test('caption shares the player frosted material and stays transparent on immers
             const blurred=await capture();
             await js('document.querySelector(".title-bar-background").style.backdropFilter="none"');await settle();
             const sharp=await capture();
-            if(page==='playing' ? difference(blurred,sharp)>.5 : difference(blurred,sharp)<4)throw Error('caption does not preserve its page material: '+tone+'/'+page+'/'+liquid);
+            if(page==='playing'){
+              if(difference(blurred,sharp)>.1)throw Error('immersive caption applies a second diffusion');
+            }else if(difference(blurred,sharp)<4)throw Error('blur property does not diffuse actual backdrop pixels: '+tone+'/'+page+'/'+liquid);
             await js('document.querySelector(".title-bar-background").style.backdropFilter="";document.querySelector(".sample-backdrop").style.background="#44ab62"');await settle();
             if(difference(blurred,await capture())<10)throw Error('caption hides backdrop colour');
+            if(page==='home'&&!liquid){const pixels=await capture(),at=y=>[0,1,2].map(channel=>pixels[(y*800+400)*4+channel]),title=at(20),gap=at(42),inner=at(65);if(gap.some((value,channel)=>Math.abs(value-title[channel])>3))throw Error('title and outer foundation have different colours: '+JSON.stringify({tone,title,gap}));const lift=inner.reduce((sum,value,channel)=>sum+value-title[channel],0)/3;if(lift<5||lift>24||inner.some((value,channel)=>value<title[channel]-3))throw Error('outer foundation is not subtly deeper than content: '+JSON.stringify({tone,title,inner,lift}));}
             for(const kind of ['effects','blur','transparent'])await js('checkFallback('+JSON.stringify(kind)+')');
             for(const [name,value] of [['prefers-reduced-transparency','reduce'],['prefers-contrast','more'],['forced-colors','active']]){
               await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name,value}]});

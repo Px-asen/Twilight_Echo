@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
+  BUILT_IN_THEME_PRESET_IDS,
   TWILIGHT_DEFAULT_THEME_ID,
   createDefaultThemeLibraryDocument,
   resolveThemeProfileTokens,
@@ -52,6 +53,65 @@ test('theme library migrates initial selection and protects every write with rev
       /默认主题不能删除/
     )
   } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('every built-in theme rejects deletion without changing the persisted library', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'twilight-theme-delete-protection-'))
+  const file = join(directory, 'themes.json')
+  try {
+    const repository = new ThemeLibraryRepository(file, createDefaultThemeLibraryDocument)
+    const saved = await repository.saveProfile(createProfile('user:retained'), 0)
+    const content = readFileSync(file, 'utf8')
+    for (const id of BUILT_IN_THEME_PRESET_IDS) {
+      await assert.rejects(
+        () => repository.deleteProfile(id, saved.revision),
+        id === TWILIGHT_DEFAULT_THEME_ID ? /默认主题不能删除/ : /内置主题不能删除/
+      )
+      assert.equal(readFileSync(file, 'utf8'), content)
+      assert.deepEqual(await repository.load(), saved)
+    }
+  } finally {
+    assert.ok(directory.startsWith(join(tmpdir(), 'twilight-theme-delete-protection-')))
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('deleting another personal theme preserves the active choice and removes only its history', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'twilight-theme-delete-inactive-'))
+  const file = join(directory, 'themes.json')
+  try {
+    const repository = new ThemeLibraryRepository(file, createDefaultThemeLibraryDocument)
+    const retained = createProfile('user:active')
+    const removed = createProfile('user:removed')
+    let snapshot = await repository.saveProfile(retained, 0)
+    snapshot = await repository.saveProfile(removed, snapshot.revision)
+    snapshot = await repository.saveProfile(
+      { ...removed, name: 'Edited personal theme' },
+      snapshot.revision
+    )
+    assert.equal(snapshot.data.profileHistory[removed.id].length, 1)
+    const previousRevision = snapshot.revision
+    snapshot = await repository.setActive({ kind: 'user', id: retained.id }, snapshot.revision)
+    await assert.rejects(
+      () => repository.deleteProfile(removed.id, previousRevision),
+      PersistentDataRevisionConflictError
+    )
+    assert.deepEqual(await repository.load(), snapshot)
+    const deleted = await repository.deleteProfile(removed.id, snapshot.revision)
+    assert.equal(deleted.revision, snapshot.revision + 1)
+    assert.deepEqual(deleted.data.activeTheme, { kind: 'user', id: retained.id })
+    assert.deepEqual(deleted.data.profiles, [
+      snapshot.data.profiles.find((p) => p.id === retained.id)
+    ])
+    assert.equal(deleted.data.profileHistory[removed.id], undefined)
+    assert.deepEqual(
+      await new ThemeLibraryRepository(file, createDefaultThemeLibraryDocument).load(),
+      deleted
+    )
+  } finally {
+    assert.ok(directory.startsWith(join(tmpdir(), 'twilight-theme-delete-inactive-')))
     rmSync(directory, { recursive: true, force: true })
   }
 })

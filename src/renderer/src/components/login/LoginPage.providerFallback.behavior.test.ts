@@ -58,7 +58,8 @@ test('login and title bar recover from disabled providers in real Electron rende
       baseStyle,
       appearanceStyle,
       themeIcon,
-      themeIconStyle
+      themeIconStyle,
+      materialStyle
     ] = await Promise.all([
       readFile(require.resolve('vue/dist/vue.global.prod.js'), 'utf8'),
       component('../LoginPage.vue'),
@@ -73,11 +74,12 @@ test('login and title bar recover from disabled providers in real Electron rende
       readFile(new URL('../../assets/base.css', import.meta.url), 'utf8'),
       readFile(new URL('../../assets/appearance.css', import.meta.url), 'utf8'),
       component('../ThemeIcon.vue'),
-      componentStyle('../ThemeIcon.vue')
+      componentStyle('../ThemeIcon.vue'),
+      readFile(new URL('../../assets/materials.css', import.meta.url), 'utf8')
     ])
     await writeFile(
       join(directory, 'index.html'),
-      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}</style><div id="title"></div><div id="app"></div>
+      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${materialStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}\n${await componentStyle('../LoginPage.vue')}</style><div id="title"></div><div id="app"></div>
       <script>${vue}</script><script>${runtime}</script>
       <script>
         const load = source => {
@@ -154,7 +156,7 @@ const { createApp, h, nextTick, ref } = Vue;
 const expect = (condition, message) => { if (!condition) throw new Error(message); };
 const settle = async () => {
   for (let i = 0; i < 12; i++) { await nextTick(); await Promise.resolve(); }
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await new Promise(resolve => setTimeout(resolve, 450));
 };
 const ncm = { id: 'ncm', name: '网易云音乐', capabilities: ['login'], supportedMethods: [] };
 const bili = { id: 'bili', name: '哔哩哔哩', capabilities: ['login'], supportedMethods: [] };
@@ -250,11 +252,11 @@ window.fixtureRequire = id => {
 };
 const store = () => window.providerStoreModule.useProviderStore();
 const replaceProviders = async providers => { available = providers; changed(); await settle(); };
-const mountLogin = async (providers, initialProviderId = 'ncm', forceProfile = false, custom) => {
+const mountLogin = async (providers, initialProviderId = 'ncm', forceProfile = false, custom, embedded = false, compactProfile = false) => {
   loginApp?.unmount();
   available = providers; handler = custom; calls = []; success = 0; configure = 0;
   await store().syncProviders();
-  loginApp = createApp({ render: () => h(window.LoginPage, { initialProviderId, forceProfile, onLoginSuccess: () => success++, onConfigure: () => configure++ }) });
+  loginApp = createApp({ render: () => h(window.LoginPage, { initialProviderId, forceProfile, embedded, compactProfile, onLoginSuccess: () => success++, onConfigure: () => configure++ }) });
   loginApp.mount('#app'); await settle();
 };
 const text = () => document.querySelector('#app').textContent;
@@ -332,16 +334,35 @@ window.runProviderFallbackTests = async () => {
   await mountLogin([bili, server], 'ncm', true, (id, method) => method === 'checkLogin' ? { loggedIn: id === 'jellyfin', profile: id === 'jellyfin' ? { userId: 42, nickname: '已连接账号' } : null } : undefined);
   expect(text().includes('已连接账号') && !calls.some(call => call.method === 'getQrLogin'), 'profile fallback ignored connected account');
 
+  // The avatar child keeps real account actions in a compact identity layout at both tones.
+  await mountLogin([server], 'jellyfin', true, (_id, method) => method === 'checkLogin' ? { loggedIn: true, profile: { userId: 42, nickname: '已连接账号', follows: 3, followeds: 4 } } : undefined, true);
+  document.querySelector('#app').style.width='280px';
+  for(const tone of ['pureWhite','dark']) {
+    document.documentElement.dataset.theme=tone;await settle();
+    const card=document.querySelector('.id-card'),box=card.getBoundingClientRect(),identity=document.querySelector('.id-identity').getBoundingClientRect(),avatar=document.querySelector('.id-avatar').getBoundingClientRect();
+    expect(!document.querySelector('.id-banner')&&!document.querySelector('.id-signature'),'embedded account shows a decorative hero or invented signature');
+    expect(getComputedStyle(card).boxShadow==='none'&&box.height<240&&avatar.width===48&&identity.left>avatar.right,'account identity is not compact or readable');
+    expect([...card.querySelectorAll('button')].every(button=>{const b=button.getBoundingClientRect();return b.width>0&&b.height>=28&&b.right<=box.right+1}),'compact account actions overflow or lose their targets');
+  }
+  document.querySelector('.id-actions .btn-primary').click();await settle();expect(success===1,'compact account lost its streaming continuation');
+  await mountLogin([server], 'jellyfin', true, (_id, method) => method === 'checkLogin' ? { loggedIn: true, profile: { userId: 42, nickname: '已连接账号', follows: 3, followeds: 4, signature: '账户签名' } } : undefined, true, true);
+  const detail=document.querySelector('.profile-details');
+  expect(detail&&!detail.open&&detail.getBoundingClientRect().height<=30&&!document.querySelector('.profile-view .stage-head'),'avatar profile did not progressively disclose account details');
+  expect(document.querySelector('.id-card').getBoundingClientRect().height<150,'avatar profile is still a large profile panel');
+  detail.querySelector('summary').click();await settle();expect(detail.open&&detail.textContent.includes('账户签名')&&detail.textContent.includes('42')&&detail.textContent.includes('退出登录'),'account disclosure lost identity or logout actions');
+  document.querySelector('.profile-switch').click();await settle();expect(document.querySelector('.provider-list'),'compact account lost the platform chooser');
+  document.querySelector('#app').style.removeProperty('width');
+
   // Title bar target and label track plugin availability, ignoring cached NCM profiles.
   let selected;
   loggedIn.value = true; profile.value = { nickname: '旧网易云账号', avatarUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', userId: 1 };
   titleApp = createApp({ render: () => h(window.TitleBar, { menuOpen: false, preview: false, ...titleProps.value, onLogin: id => selected = id }) });
   titleApp.mount('#title'); await replaceProviders([searchOnly, bili]);
   let button = document.querySelector('#title .login-btn');
-  expect(button.title === '哔哩哔哩登录' && !button.querySelector('img'), 'disabled NCM still shown in title bar');
-  button.click(); expect(selected === 'bili', 'title bar selected disabled NCM');
+  expect(button.title.includes('我的账户与任务') && !button.title.includes('旧网易云账号') && !button.querySelector('img'), 'disabled NCM still shown in title bar');
+  button.click(); expect(selected === null, 'title bar skipped the overview for the available provider');
   await replaceProviders([ncm, bili]); button.click();
-  expect(selected === 'ncm' && button.title === '旧网易云账号', 'NCM account entry was not preserved');
+  expect(selected === null && button.title.includes('旧网易云账号'), 'NCM account identity or overview entry was not preserved');
   // Navigation, account and tools keep their positions across every main surface.
   const surfaces = [
     { streaming: false },
@@ -355,11 +376,11 @@ window.runProviderFallbackTests = async () => {
     titleProps.value = surface; await settle();
     button = document.querySelector('#title .login-btn');
     expect(button && button.getBoundingClientRect().width === 46, 'account entry disappeared on ' + JSON.stringify(surface));
-    expect(document.querySelector('#title .menu-btn') && document.querySelector('#title .title-bar-tools .settings-btn') && document.querySelector('#title .title-bar-tools .plugins-btn'), 'persistent title commands disappeared');
+    expect(document.querySelector('#title .menu-btn') && document.querySelector('#title .title-bar-tools .settings-btn') && !document.querySelector('#title .title-bar-tools .plugins-btn'), 'caption commands or relocated plugin entry regressed');
     const frame = document.querySelector('#title .title-bar').getBoundingClientRect();
     const tools = document.querySelector('#title .title-bar-tools').getBoundingClientRect();
     expect(frame.height === 40 && tools.right > frame.width / 2, 'title height or right tool placement changed');
-    button.click(); expect(selected === 'ncm', 'persistent account lost its enabled provider');
+    button.click(); expect(selected === null, 'persistent account skipped the account overview');
   }
   titleProps.value = { streaming: false }; await settle();
 
@@ -393,7 +414,7 @@ window.runProviderFallbackTests = async () => {
       const layer = frame.querySelector('.title-bar-background');
       const material = layer && getComputedStyle(layer);
       expect(!frame.classList.contains('title-bar-liquid'), 'liquid material overrides immersive playback');
-      expect(!material || (material.backgroundColor === 'rgba(0, 0, 0, 0)' && material.backgroundImage === 'none' && material.boxShadow === 'none' && material.backdropFilter === 'none'), 'playback caption still paints a separate strip: ' + theme + '/' + liquid + '/' + preview);
+      expect(material.backgroundColor === 'rgba(0, 0, 0, 0)' && material.backgroundImage === 'none' && material.boxShadow === 'none' && material.backdropFilter === 'none', 'playback caption must share the continuous playback backdrop without another frosted layer: ' + theme + '/' + liquid + '/' + preview);
       expect(frame.getBoundingClientRect().height === 40, 'immersive title changed its height');
       expect([...frame.querySelectorAll('button')].every((element,index) => getComputedStyle(element).color === playerText && element.getBoundingClientRect().left === restingPositions[index]), 'immersive controls lost playback colors or moved: ' + JSON.stringify({theme,liquid,preview,playerText,controls:[...frame.querySelectorAll('button')].map((element,index)=>({name:element.className,color:getComputedStyle(element).color,left:element.getBoundingClientRect().left,expectedLeft:restingPositions[index]}))}));
       expect(!material || material.pointerEvents === 'none', 'immersive backdrop intercepts controls');
@@ -404,10 +425,9 @@ window.runProviderFallbackTests = async () => {
     const restoredMaterial = getComputedStyle(document.querySelector('#title .title-bar-background'));
     expect(restoredMaterial.backgroundColor !== 'rgba(0, 0, 0, 0)' && restoredMaterial.backdropFilter.includes('blur(24px)') && getComputedStyle(document.querySelector('#title .menu-btn')).color === normalColor, 'leaving playback did not restore normal chrome');
     expect(bar.height === 40 && menu.width === close.width && close.width === 46, 'caption geometry differs');
-    expect(!document.querySelector('#title .title-bar-back'), 'root page keeps an empty return slot');
     expect(menu.left - bar.left === bar.right - close.right, 'outer margins differ');
     expect(menu.left + menu.width / 2 - bar.left === bar.right - close.left - close.width / 2, 'outer icon centers differ');
-    expect(document.querySelector('#title .menu-btn .title-bar-icon').getBoundingClientRect().width === 18, 'left icon size did not grow');
+    expect(document.querySelector('#title .menu-btn .title-bar-icon').getBoundingClientRect().width === 18, 'application icon no longer follows the local title size');
     expect(document.querySelector('#title .settings-btn .title-bar-icon').getBoundingClientRect().width === 18, 'right application icon differs from left application icons');
     expect(document.querySelector('#title .close svg').getBoundingClientRect().width === 16, 'caption icon size changed');
     const controlPositions = [...document.querySelectorAll('#title .plugins-btn, #title .settings-btn, #title .notification-btn, #title .minimize, #title .maximize, #title .close')].map(element => element.getBoundingClientRect().left);
@@ -422,13 +442,13 @@ window.runProviderFallbackTests = async () => {
       expect(frame.height === 40 && Math.abs(icon.top + icon.height / 2 - frame.top - frame.height / 2) < .6, 'theme changed title height or vertical alignment: ' + layout);
     }
     delete document.documentElement.dataset.tePresetLayout;
+    const backSlot = document.querySelector('#title .title-bar-back').getBoundingClientRect();
     const accountLeft = button.getBoundingClientRect().left;
     canGoBack.value = true; await settle();
-    expect(button.getBoundingClientRect().left === accountLeft + 46 && document.querySelector('#title .back-btn'), 'return did not occupy one leading slot');
-    expect(document.querySelector('#title .back-btn').getBoundingClientRect().left === document.querySelector('#title .title-bar').getBoundingClientRect().left, 'return is not fixed to the left edge');
+    expect(button.getBoundingClientRect().left === accountLeft && document.querySelector('#title .back-btn'), 'return shifted account entry');
+    expect(document.querySelector('#title .title-bar-back').getBoundingClientRect().width === backSlot.width, 'return changed its reserved width');
     expect([...document.querySelectorAll('#title .plugins-btn, #title .settings-btn, #title .notification-btn, #title .minimize, #title .maximize, #title .close')].every((element, index) => element.getBoundingClientRect().left === controlPositions[index]), 'return shifted right controls');
     canGoBack.value = false; await settle();
-    expect(!document.querySelector('#title .title-bar-back') && button.getBoundingClientRect().left === accountLeft, 'root page did not remove the return slot');
   }
 
   // A failed avatar must keep a usable fallback; a changed profile retries its image.
@@ -439,9 +459,9 @@ window.runProviderFallbackTests = async () => {
   profile.value = { ...profile.value, userId: 2 }; await settle();
   expect(button.querySelector('img'), 'new profile did not retry avatar');
   loggedIn.value = false; await settle();
-  expect(button.title === '网易云音乐登录' && !button.querySelector('img') && button.querySelector('.title-bar-icon'), 'logged-out account disappeared');
+  expect(button.title.includes('我的账户与任务') && !button.title.includes('旧网易云账号') && !button.querySelector('img') && button.querySelector('.title-bar-icon'), 'logged-out account disappeared');
   await replaceProviders([searchOnly]); button.click();
-  expect(selected === null && button.title === '流媒体登录', 'empty title bar selected an unavailable provider');
+  expect(selected === null && button.title.includes('我的账户与任务'), 'empty title bar selected an unavailable provider');
   titleApp.unmount(); titleApp = null;
 
   // Unmount during account refresh must not start QR polling or emit configuration.

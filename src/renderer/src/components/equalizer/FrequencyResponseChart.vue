@@ -189,17 +189,6 @@ const emit = defineEmits<{
       ></div>
 
       <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="curveGradient" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#6366f1" />
-            <stop offset="50%" stop-color="#22d3ee" />
-            <stop offset="100%" stop-color="#ec4899" />
-          </linearGradient>
-          <linearGradient id="fillGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.25" />
-            <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.0" />
-          </linearGradient>
-        </defs>
         <line
           v-for="gain in GAIN_TICKS"
           :key="'gl-' + gain"
@@ -302,14 +291,14 @@ const emit = defineEmits<{
           v-if="props.responseView === 'dsp'"
           class="equalizer-spectrum-area"
           :d="props.responseFillPath"
-          fill="url(#fillGradient)"
+          fill="var(--te-subtle-bg)"
         />
         <path
           v-if="props.responseView === 'dsp'"
           class="equalizer-spectrum-line"
           :d="props.responsePath"
           fill="none"
-          stroke="url(#curveGradient)"
+          stroke="var(--te-primary-500)"
           stroke-width="3px"
           vector-effect="non-scaling-stroke"
           stroke-linecap="round"
@@ -321,6 +310,10 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+.chart-card {
+  min-width: 0;
+  padding: 0 12px 28px 36px;
+}
 .response-legend {
   min-height: 28px;
   margin: -2px 0 10px;
@@ -512,7 +505,7 @@ svg {
   background: #fff; /* keep-white: chart point center */
   border: 3px solid;
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+  box-shadow: none;
   z-index: 10;
 }
 

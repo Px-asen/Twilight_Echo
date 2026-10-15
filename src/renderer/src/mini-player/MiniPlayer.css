@@ -225,11 +225,11 @@
     0 14px 30px -12px var(--mini-art-shadow),
     0 3px 8px -3px var(--mini-art-shadow),
     0 0 0 1px var(--mini-hairline);
-  /* Apple-style breath: the sleeve settles back while paused. */
-  transform: scale(0.93);
+  /* A brief state change keeps the sleeve connected to playback. */
+  transform: scale(0.97);
   transition:
-    transform 640ms var(--mini-spring),
-    box-shadow 640ms var(--mini-ease-out);
+    transform 240ms var(--mini-ease-out),
+    box-shadow 240ms var(--mini-ease-out);
 }
 
 .mini-player-root.is-playing .mini-artwork-wrap {

@@ -64,3 +64,26 @@ test('named sessions keep actual and original orders, duplicate cursors and boun
     /20,000/
   )
 })
+
+test('named sessions and restored identities retain only bounded navigation identity for playback origin', () => {
+  const origin = {
+    kind: 'playlist' as const,
+    scope: 'provider' as const,
+    providerId: 'ncm',
+    id: 'playlist-12',
+    name: 'Work',
+    streamUrl: 'https://secret.test/token'
+  }
+  const saved = saveQueueTrack({ ...track, queuePlaybackOrigin: origin })
+  assert.doesNotMatch(JSON.stringify(saved), /secret|token|streamUrl/)
+  assert.deepEqual(saved.queuePlaybackOrigin, {
+    kind: 'playlist',
+    scope: 'provider',
+    providerId: 'ncm',
+    id: 'playlist-12',
+    name: 'Work'
+  })
+  origin.name = 'Renamed after save'
+  assert.equal(saved.queuePlaybackOrigin?.name, 'Work')
+  assert.deepEqual(restoreQueueTrackIdentity(saved).queuePlaybackOrigin, saved.queuePlaybackOrigin)
+})

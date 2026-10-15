@@ -1,0 +1,19 @@
+/* One source for the live bar and the editor's unscaled scene. */
+.player-bar-shell {
+  --te-standard-play-height: calc(var(--te-player-play-size, 44px) * 12 / 11);
+  --te-standard-secondary-size: max(40px, var(--te-player-control-size, 32px));
+  --te-standard-center-min: calc(
+    var(--te-standard-play-height) * 3.75 + var(--te-standard-secondary-size) * 2 + 44px
+  );
+  --te-standard-progress-label-height: calc(var(--te-font-size-body, 14px) * 12 / 14 * 1.65);
+  --te-standard-progress-row-height: max(
+    24px,
+    calc(var(--te-standard-progress-label-height) + 4px)
+  );
+  --te-standard-bar-height: calc(
+    max(var(--te-standard-play-height), var(--te-player-control-size, 32px)) +
+      var(--te-standard-progress-row-height) + 18px
+  );
+  --te-standard-cover-size: calc(var(--te-standard-bar-height) - 20px);
+  --te-standard-cover-radius: 10px;
+}

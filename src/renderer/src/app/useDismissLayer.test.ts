@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createRenderer, defineComponent, nextTick, ref, shallowRef } from 'vue'
+import { computed, createRenderer, defineComponent, nextTick, ref, shallowRef } from 'vue'
 import { createFocusTrap } from './focusTrap.ts'
 import { hasDismissLayer, useEscapeToClose, useFocusTrap } from './useDismissLayer.ts'
 
@@ -130,6 +131,31 @@ test('only the innermost trap handles Tab and closing it restores the outer dial
   }
 })
 
+test('opening keeps a visible destination already focused by an entry point', () => {
+  const env = environment()
+  const first = env.element(),
+    destination = env.element(),
+    hidden = env.element([], false),
+    inert = env.element()
+  Object.assign(inert, { closest: () => inert })
+  const root = env.element([first, destination, hidden, inert])
+  const trap = createFocusTrap(() => root, env)
+  try {
+    trap.activate()
+    env.focus(destination)
+    env.flushFrames()
+    assert.equal(env.document.activeElement, destination)
+    for (const invalid of [hidden, inert]) {
+      trap.activate()
+      env.focus(invalid)
+      env.flushFrames()
+      assert.equal(env.document.activeElement, first)
+    }
+  } finally {
+    trap.deactivate()
+  }
+})
+
 test('closing does not steal deliberate outside focus or focus a detached opener', () => {
   const env = environment()
   const root = env.element([env.element()])
@@ -175,6 +201,87 @@ const renderer = createRenderer<HostNode, HostNode>({
   patchProp() {},
   setText() {},
   setElementText() {}
+})
+
+test('application chrome mounts restored open and closed navigation before registering Escape', async () => {
+  const { useAppNavigation } = await import('./useAppNavigation.ts')
+  const { createNavigationSessionPersistence } =
+    await import('./useNavigationSessionPersistence.ts')
+  const source = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  // Execute the production declaration and registration in their actual source order.
+  const fragments = [
+    source.match(/const showLocalSidebar = computed\([\s\S]*?\n\)/),
+    source.match(
+      /useEscapeToClose\(\(\) => menuOpen\.value && showLocalSidebar\.value, closeNavigation\)/
+    )
+  ]
+  for (const fragment of fragments) assert.ok(fragment)
+  const chromeSetup = fragments
+    .sort((left, right) => left!.index! - right!.index!)
+    .map((fragment) => fragment![0])
+    .join('\n')
+  const env = environment()
+  const original = new Map<string, PropertyDescriptor | undefined>()
+  for (const [key, value] of Object.entries({ window: env.window, document: env.document })) {
+    original.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
+    Object.defineProperty(globalThis, key, { configurable: true, value })
+  }
+  try {
+    for (const menuOpen of [true, false]) {
+      for (const overlay of [null, 'appearance'] as const) {
+        const navigation = useAppNavigation()
+        const saved = JSON.stringify({ ...navigation.session.value, menuOpen, overlay })
+        const persistence = createNavigationSessionPersistence(navigation, {
+          getItem: () => saved,
+          setItem() {}
+        })
+        assert.equal(navigation.menuOpen.value, menuOpen)
+        const scope = {
+          ...navigation,
+          computed,
+          useEscapeToClose,
+          appearanceFullWindowPreview: ref(false),
+          closeNavigation: navigation.collapseMenu
+        }
+        const setupChrome = new Function(...Object.keys(scope), chromeSetup)
+        const errors: unknown[] = []
+        const app = renderer.createApp(
+          defineComponent({
+            setup() {
+              setupChrome(...Object.values(scope))
+              return () => null
+            }
+          })
+        )
+        app.config.errorHandler = (error) => errors.push(error)
+        try {
+          app.mount(node())
+          assert.deepEqual(errors, [], `restored menu=${menuOpen}, overlay=${overlay}`)
+          assert.equal(hasDismissLayer(), menuOpen && overlay === null)
+          if (overlay === 'appearance') {
+            navigation.closeAppearancePage()
+            await nextTick()
+          }
+          navigation.menuOpen.value = true
+          await nextTick()
+          assert.equal(hasDismissLayer(), true)
+          assert.equal(env.key('Escape').defaultPrevented, true)
+          await nextTick()
+          assert.equal(navigation.menuOpen.value, false)
+          assert.equal(hasDismissLayer(), false)
+        } finally {
+          app.unmount()
+          persistence.stop()
+        }
+        assert.equal(env.listenerCount(), 0)
+      }
+    }
+  } finally {
+    for (const [key, descriptor] of original) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor)
+      else Reflect.deleteProperty(globalThis, key)
+    }
+  }
 })
 
 test('real Vue mount initializes an already-open trap; Escape and unmount release resources', async () => {

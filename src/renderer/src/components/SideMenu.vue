@@ -9,10 +9,12 @@ import {
   ref,
   watch
 } from 'vue'
-import ImportDialog from '@renderer/components/ImportDialog.vue'
 import ThemeIcon from '@renderer/components/ThemeIcon.vue'
+import { overlaySidebarsNeedExclusiveMode } from '@renderer/app/overlaySidebars'
 import { useMusicStore } from '@renderer/stores/useMusicStore'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
+import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
+import type { NavigationPagePreferences } from '../../../shared/navigationPages'
 import {
   BUILTIN_NAVIGATION_PAGES,
   isNavigationPageVisible,
@@ -22,6 +24,7 @@ import {
 import {
   buildSidebarEntries,
   sidebarGroupId,
+  type SidebarEntry,
   type SidebarGroupId
 } from '@renderer/app/sidebarNavigation.ts'
 const NavigationPagesDialog = defineAsyncComponent(
@@ -33,37 +36,60 @@ const props = withDefaults(
     liquidMaterial?: boolean
     activeKey: string
     pages?: NavigationPageDefinition[]
+    preview?: boolean
+    previewPreferences?: NavigationPagePreferences
   }>(),
   { pages: () => BUILTIN_NAVIGATION_PAGES }
 )
 const persistent = ref(false)
+const sideMenu = ref<HTMLElement>()
 let observer: MutationObserver | undefined
-onMounted(() => {
+function syncPersistent(): void {
   const root = document.documentElement
-  const sync = (): void => {
-    persistent.value =
-      root.dataset.teShellLayout === 'custom' && root.dataset.teShellNavigation === 'persistent'
-  }
-  sync()
-  observer = new MutationObserver(sync)
+  persistent.value =
+    !overlaySidebarsNeedExclusiveMode() &&
+    root.dataset.teShellLayout === 'custom' &&
+    root.dataset.teShellNavigation === 'persistent'
+}
+onMounted(() => {
+  if (props.preview) return
+  const root = document.documentElement
+  syncPersistent()
+  window.addEventListener('resize', syncPersistent)
+  observer = new MutationObserver(syncPersistent)
   observer.observe(root, {
     attributes: true,
-    attributeFilter: ['data-te-shell-layout', 'data-te-shell-navigation']
+    attributeFilter: ['style', 'class', 'data-te-shell-layout', 'data-te-shell-navigation']
   })
 })
-onBeforeUnmount(() => observer?.disconnect())
-const emit = defineEmits<{ selectPage: [page: NavigationPageDefinition] }>()
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncPersistent)
+  observer?.disconnect()
+})
+const emit = defineEmits<{
+  selectPage: [page: NavigationPageDefinition]
+  plugins: []
+}>()
 const settingsStore = useSettingsStore()
-const ordered = computed(() =>
-  orderNavigationPages(props.pages, settingsStore.settings.value.navigationPages)
+const navigationPreferences = computed(
+  () =>
+    props.previewPreferences ??
+    appearanceChromePreview.value?.navigationPages ??
+    settingsStore.settings.value.navigationPages
 )
+const ordered = computed(() => orderNavigationPages(props.pages, navigationPreferences.value))
 const visible = computed(() =>
-  ordered.value.filter((page) =>
-    isNavigationPageVisible(page, settingsStore.settings.value.navigationPages)
-  )
+  ordered.value.filter((page) => isNavigationPageVisible(page, navigationPreferences.value))
 )
-const entries = computed(() => buildSidebarEntries(visible.value))
-const sideMenu = ref<HTMLElement | null>(null)
+const entries = computed(() => {
+  const result: (SidebarEntry | { kind: 'plugins'; id: 'plugins' })[] = buildSidebarEntries(
+    visible.value
+  )
+  const search = result.findIndex((entry) => entry.kind === 'page' && entry.page.id === 'search')
+  const home = result.findIndex((entry) => entry.kind === 'page' && entry.page.id === 'local-home')
+  result.splice(search >= 0 ? search + 1 : home + 1, 0, { kind: 'plugins', id: 'plugins' })
+  return result
+})
 const expanded = ref(new Set<SidebarGroupId>())
 watch(
   visible,
@@ -113,20 +139,6 @@ async function handleGroupKey(event: KeyboardEvent, id: SidebarGroupId): Promise
     group.querySelector<HTMLElement>('.menu-group-toggle')?.focus()
   }
 }
-function handleToolbarKey(event: KeyboardEvent): void {
-  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
-  const buttons = [...(event.currentTarget as HTMLElement).querySelectorAll('button')]
-  const index = buttons.indexOf(event.target as HTMLButtonElement)
-  if (index < 0) return
-  event.preventDefault()
-  const next =
-    event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? buttons.length - 1
-        : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-  buttons[next]?.focus()
-}
 const { libraryScanStatus, libraryScanProgress } = useMusicStore()
 const scanning = computed(
   () => libraryScanStatus.value.state === 'running' || libraryScanStatus.value.state === 'paused'
@@ -137,7 +149,6 @@ const scanningLabel = computed(() => {
   const phase = libraryScanProgress.value?.phase === 'parsing' ? '解析' : '扫描'
   return status.total > 0 ? phase + '中 ' + (status.current || 0) + '/' + status.total : '正在扫描…'
 })
-const showImportDialog = ref(false)
 const showPagesEditor = ref(false)
 function selectPage(page: NavigationPageDefinition): void {
   showPagesEditor.value = false
@@ -156,7 +167,9 @@ function setPressOrigin(event: PointerEvent): void {
 <template>
   <div
     ref="sideMenu"
-    class="side-menu"
+    :id="preview ? undefined : 'app-sidebar'"
+    class="side-menu overlay-side-panel"
+    data-te-material="navigation"
     :class="{ open: open || persistent, 'side-menu-liquid': props.liquidMaterial }"
     :inert="!open && !persistent"
     @pointerdown="setPressOrigin"
@@ -167,8 +180,21 @@ function setPressOrigin(event: PointerEvent): void {
     <nav class="menu-items" aria-label="页面">
       <div class="menu-nav">
         <template v-for="entry in entries" :key="entry.kind === 'page' ? entry.page.id : entry.id">
+          <button
+            v-if="entry.kind === 'plugins'"
+            type="button"
+            class="menu-item sidebar-plugins"
+            :class="{ active: props.activeKey === 'plugins' }"
+            :aria-current="props.activeKey === 'plugins' ? 'page' : undefined"
+            aria-label="插件市场"
+            title="插件市场"
+            @click="emit('plugins')"
+          >
+            <ThemeIcon class="item-icon" icon-slot="navigation.plugin" />
+            <span class="item-label">插件市场</span>
+          </button>
           <div
-            v-if="entry.kind === 'group'"
+            v-else-if="entry.kind === 'group'"
             class="menu-group"
             :class="{
               expanded: expanded.has(entry.id),
@@ -191,11 +217,10 @@ function setPressOrigin(event: PointerEvent): void {
             >
               <ThemeIcon class="item-icon" :icon-slot="entry.icon" />
               <span class="item-label">{{ entry.title }}</span>
-              <i
-                class="group-chevron pi"
-                :class="expanded.has(entry.id) ? 'pi-angle-down' : 'pi-angle-right'"
-                aria-hidden="true"
-              ></i>
+              <ThemeIcon
+                class="group-chevron"
+                :icon-slot="expanded.has(entry.id) ? 'navigation.collapse' : 'navigation.expand'"
+              />
             </button>
             <div
               :id="`sidebar-group-${entry.id}`"
@@ -260,41 +285,12 @@ function setPressOrigin(event: PointerEvent): void {
         </button>
       </div>
     </nav>
-    <div class="menu-bottom">
-      <div class="menu-separator"></div>
-      <div
-        class="menu-toolbar"
-        role="toolbar"
-        aria-label="音乐工具"
-        aria-orientation="vertical"
-        @keydown="handleToolbarKey"
-      >
-        <button
-          type="button"
-          class="menu-item toolbar-item"
-          title="导入歌曲"
-          aria-label="导入歌曲"
-          @click="showImportDialog = true"
-        >
-          <ThemeIcon class="item-icon" icon-slot="navigation.import" /><span class="item-label"
-            >导入歌曲</span
-          >
-        </button>
-        <button
-          type="button"
-          class="menu-item toolbar-item"
-          title="编辑页面"
-          aria-label="编辑页面"
-          @click="showPagesEditor = true"
-        >
-          <i class="item-icon pi pi-pencil" aria-hidden="true"></i
-          ><span class="item-label">编辑页面</span>
-        </button>
-      </div>
-      <span v-if="scanning" class="scanning-text" aria-live="polite">{{ scanningLabel }}</span>
+    <div v-if="scanning" class="menu-bottom">
+      <span class="scanning-text" aria-live="polite">
+        <span class="scanning-label">{{ scanningLabel }}</span>
+      </span>
     </div>
   </div>
-  <ImportDialog :show="showImportDialog" @close="showImportDialog = false" />
   <NativeDialogTransition>
     <NavigationPagesDialog
       v-if="showPagesEditor"
@@ -308,26 +304,30 @@ function setPressOrigin(event: PointerEvent): void {
 
 <style scoped>
 .side-menu {
+  --te-type-body: calc(var(--te-font-size-body, 14px) * 15 / 14);
+  --te-type-caption: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  --te-navigation-item-height: max(
+    var(--te-control-height-lg, 40px),
+    calc(var(--te-type-body) * var(--te-type-line-body, 1.5) + 12px)
+  );
+  --te-navigation-icon-slot: max(22px, calc(var(--te-font-size-body, 14px) * 22 / 14));
   position: fixed;
   display: flex;
   flex-direction: column;
   top: var(--te-titlebar-inset, 40px);
   left: 0;
-  /* The sidebar surface reaches the window bottom behind the player. Its
-     footer clears the painted bar; custom shells can reserve a playback row. */
+  /* The shared overlay surface reaches behind the player in every shell. */
   bottom: var(--te-side-menu-bottom, 0px);
   width: var(--te-menu-width);
-  /* The same frosted tint as the caption and player, over the shared wallpaper. */
+  /* Navigation shares the attached title-strip material, above the window base. */
   background: var(--te-chrome-navigation-surface, transparent);
   border-right: 0;
   border-radius: 0 var(--te-navigation-radius) var(--te-navigation-radius) 0;
   z-index: 1000;
   overflow: hidden;
   box-shadow: var(--te-chrome-navigation-elevation, var(--te-navigation-shadow));
-  backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
-  -webkit-backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
+  backdrop-filter: var(--te-material-filter);
+  -webkit-backdrop-filter: var(--te-material-filter);
   transform: translate3d(-100%, 0, 0);
   transform-origin: left center;
   will-change: transform;
@@ -346,9 +346,9 @@ function setPressOrigin(event: PointerEvent): void {
 
 :global(html[data-te-navigation-style='expanded']) {
   --te-menu-width: clamp(
-    calc(var(--te-font-size-body, 14px) * 208 / 14),
-    16vw,
-    calc(var(--te-font-size-body, 14px) * 236 / 14)
+    calc(var(--te-font-size-body, 14px) * 224 / 14),
+    18vw,
+    calc(var(--te-font-size-body, 14px) * 260 / 14)
   ) !important;
 }
 
@@ -357,7 +357,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 :global(html[data-te-navigation-style='rail']) {
-  --te-menu-width: 72px !important;
+  --te-menu-width: max(72px, calc(var(--te-font-size-body, 14px) * 22 / 14 + 50px)) !important;
 }
 
 .navigation-brand {
@@ -368,7 +368,7 @@ function setPressOrigin(event: PointerEvent): void {
   padding: 12px 16px;
   border-bottom: 1px solid var(--te-navigation-border);
   color: var(--te-navigation-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
+  font-size: var(--te-type-caption);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -398,7 +398,7 @@ function setPressOrigin(event: PointerEvent): void {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 16px 12px 0;
+  padding: 16px 12px 16px;
 }
 
 .menu-nav {
@@ -455,12 +455,12 @@ function setPressOrigin(event: PointerEvent): void {
   margin-left: 32px;
   padding-inline: 10px;
   gap: 10px;
-  height: 36px;
-  min-height: calc(var(--te-font-size-body, 14px) * 2.3);
+  height: max(36px, calc(var(--te-type-caption) * var(--te-type-line-body, 1.5) + 12px));
+  min-height: 36px;
 }
 
 .menu-child .item-label {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
+  font-size: var(--te-type-caption);
 }
 
 .menu-child > .item-icon {
@@ -482,7 +482,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 .toolbar-item .item-label {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
+  font-size: var(--te-type-caption);
 }
 
 .menu-bottom {
@@ -496,7 +496,7 @@ function setPressOrigin(event: PointerEvent): void {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  height: 40px;
+  height: var(--te-navigation-item-height);
   width: 100%;
   padding: 0 12px;
   margin-left: 0;
@@ -508,6 +508,7 @@ function setPressOrigin(event: PointerEvent): void {
   color: var(--te-chrome-text, var(--te-navigation-text));
   background: transparent;
   font: inherit;
+  font-weight: var(--te-type-weight-medium, 500);
   text-align: left;
   transition:
     background var(--te-motion-hover) var(--te-ease-enter),
@@ -516,8 +517,8 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 .menu-item:focus-visible {
-  outline: 2px solid var(--te-navigation-indicator);
-  outline-offset: -2px;
+  outline: var(--te-control-focus-width, 2px) solid var(--te-control-focus-color);
+  outline-offset: calc(-1 * var(--te-control-focus-width, 2px));
 }
 
 .menu-item:hover {
@@ -529,7 +530,7 @@ function setPressOrigin(event: PointerEvent): void {
 .menu-item.active {
   background: var(--te-navigation-active);
   color: var(--te-navigation-active-text);
-  font-weight: 600;
+  font-weight: var(--te-type-weight-strong, 600);
 }
 
 .menu-item.active::before {
@@ -556,8 +557,8 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 .item-icon {
-  width: 22px;
-  height: 22px;
+  width: var(--te-navigation-icon-slot);
+  height: var(--te-navigation-icon-slot);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -587,8 +588,9 @@ function setPressOrigin(event: PointerEvent): void {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  font-weight: var(--te-control-font-weight, 500);
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body, 1.5);
+  font-weight: inherit;
   color: currentColor;
   opacity: 0;
   letter-spacing: normal;
@@ -609,7 +611,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 :global(html[data-te-navigation-style='compact'] .item-label) {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
+  font-size: var(--te-type-caption);
 }
 
 :global(html[data-te-navigation-style='compact'] .menu-item.menu-child) {
@@ -630,7 +632,7 @@ function setPressOrigin(event: PointerEvent): void {
 :global(html[data-te-navigation-style='rail'] .menu-items) {
   min-width: 0;
   max-width: 100%;
-  padding: 12px 8px 0;
+  padding: 12px 8px 12px;
 }
 
 :global(html[data-te-navigation-style='rail'] .menu-bottom) {
@@ -642,7 +644,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 :global(html[data-te-navigation-style='rail'] .menu-item) {
-  width: 44px;
+  width: max(44px, calc(var(--te-navigation-icon-slot) + 22px));
   margin-left: 6px;
   padding: 0;
   justify-content: center;
@@ -650,7 +652,7 @@ function setPressOrigin(event: PointerEvent): void {
 
 :global(html[data-te-navigation-style='rail'] .menu-item.menu-child) {
   margin-left: 10px;
-  width: 40px;
+  width: max(40px, calc(var(--te-navigation-icon-slot) + 18px));
   padding: 0;
 }
 
@@ -712,7 +714,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 .side-menu-liquid {
-  background: transparent;
+  background: var(--te-window-foundation-tint);
   /* The pseudo surface owns the only backdrop pass. */
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -726,13 +728,11 @@ function setPressOrigin(event: PointerEvent): void {
   z-index: -1;
   inset: 0;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--te-lg-context-material) 72%, transparent);
+  background: var(--te-chrome-attached-liquid-surface);
   content: '';
   pointer-events: none;
-  backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
-  -webkit-backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
+  backdrop-filter: var(--te-chrome-attached-liquid-filter);
+  -webkit-backdrop-filter: var(--te-chrome-attached-liquid-filter);
 }
 
 .side-menu-liquid :is(.navigation-brand, .menu-item, .scanning-text) {

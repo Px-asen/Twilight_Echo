@@ -99,7 +99,12 @@ const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(re
 const loaded=async()=>{for(let i=0;i<30;i++){await settle();const img=document.querySelector('img');if(img?.complete&&img.naturalWidth)return img}throw Error('artwork did not load')}
 window.runArtworkTests=async()=>{
  const empty=await loaded(),fallback=empty.src
- expect(empty.naturalWidth===768&&empty.loading==='lazy'&&empty.decoding==='async','bundled fallback is absent or loses image hints')
+ expect(empty.naturalWidth>=512&&empty.loading==='lazy'&&empty.decoding==='async','bundled fallback is absent or loses image hints')
+ const lightContent=getComputedStyle(empty).content
+ document.documentElement.dataset.theme='dark';await settle()
+ expect(getComputedStyle(empty).content!==lightContent&&getComputedStyle(empty).content.startsWith('url('),'fallback does not follow the dark window tone')
+ document.documentElement.dataset.theme='pureWhite';await settle()
+ expect(getComputedStyle(empty).content===lightContent,'fallback does not restore its light window tone')
  const size=empty.getBoundingClientRect().toJSON()
  expect(size.width===160&&size.height===160,'fallback does not inherit its parent scoped thumbnail size and gets cropped')
  state.mode='broken';state.calls=0;props.coverSource='https://example.invalid/cover';props.identity='broken'
@@ -110,6 +115,7 @@ window.runArtworkTests=async()=>{
  expect((await loaded()).src===fallback,'rejected grant leaves a broken image')
  state.mode='recover';state.calls=0;props.identity='recover';await settle()
  const recovered=await loaded();expect(recovered.src!==fallback&&state.calls===2,'one expired handle cannot recover')
+ expect(!recovered.classList.contains('default-track-cover')&&getComputedStyle(recovered).content==='normal','a real cover is replaced by the theme fallback')
  expect(recovered.getBoundingClientRect().width===size.width&&recovered.getBoundingClientRect().height===size.height,'fallback changes thumbnail geometry')
  state.mode='pending';props.identity='older';await settle()
  expect(state.pending.length===1,'deferred cover was not requested')

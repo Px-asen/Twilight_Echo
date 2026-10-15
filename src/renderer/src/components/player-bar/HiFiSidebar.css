@@ -765,7 +765,7 @@ html[data-theme='dark'] .deck .deck-card {
 
 .deck-lyric-source-controls select:focus-visible,
 .deck-translation-toggle:focus-visible {
-  outline: 2px solid var(--d-accent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 
@@ -1607,10 +1607,12 @@ html[data-theme='dark'] .deck .deck-select {
 
 /* ===== 减少动态 ===== */
 @media (prefers-reduced-motion: reduce) {
-  .deck *,
-  .deck *::before,
-  .deck *::after {
-    animation: none !important;
-    transition: none !important;
+  @scope (:root:not([data-te-motion='full'])) {
+    .deck *,
+    .deck *::before,
+    .deck *::after {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 }

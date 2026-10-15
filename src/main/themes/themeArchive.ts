@@ -51,6 +51,12 @@ export async function exportThemeArchive(profile: ThemeProfileV2, target: string
   const temporary = await mkdtemp(join(tmpdir(), 'twilight-theme-export-'))
   try {
     const assets = await copyThemeAssetsForExport(normalized, temporary)
+    const imageIds = new Set(
+      assets.filter((asset) => asset.type === 'image').map((asset) => asset.id)
+    )
+    if (Object.values(normalized.iconBindings ?? {}).some((id) => !imageIds.has(id))) {
+      throw new Error('主题图标的本地资源不可用')
+    }
     const document: ThemeArchiveDocumentV2 = {
       schemaVersion: THEME_ARCHIVE_SCHEMA_VERSION,
       profile: normalized,
@@ -128,7 +134,7 @@ async function copyThemeAssetsForExport(
 ): Promise<ThemeAssetReference[]> {
   const sourceRoot = getThemeAssetRoot(profile.id)
   try {
-    const entries = await collectSafeFiles(sourceRoot, true)
+    const entries = await collectSafeFiles(sourceRoot, true, 'assets')
     const byPath = new Map(entries.map((entry) => [entry.relative, entry]))
     const assets: ThemeAssetReference[] = []
     for (const asset of profile.assets ?? []) {
@@ -234,7 +240,7 @@ function isThemeAssetContentValid(data: Buffer, extension: string): boolean {
 async function collectSafeFiles(
   root: string,
   allowMissing = false,
-  format: 'theme' | 'plugin-theme' = 'theme'
+  format: 'theme' | 'plugin-theme' | 'assets' = 'theme'
 ): Promise<ZipEntry[]> {
   const rootPath = resolve(root)
   const files: ZipEntry[] = []
@@ -258,8 +264,8 @@ async function collectSafeFiles(
       if (format === 'plugin-theme') {
         if (!['plugin.json', 'theme.css', 'ATTRIBUTION.json'].includes(relativePath))
           throw new Error('插件主题包包含非主题文件')
-      } else if (relativePath !== 'theme.json') {
-        if (!relativePath.startsWith('assets/'))
+      } else if (format === 'assets' || relativePath !== 'theme.json') {
+        if (format !== 'assets' && !relativePath.startsWith('assets/'))
           throw new Error('主题包只能包含 theme.json 与 assets/')
         if (!THEME_ASSET_EXTENSIONS.has(extname(relativePath).toLowerCase())) {
           throw new Error('主题包包含不支持的资源格式')

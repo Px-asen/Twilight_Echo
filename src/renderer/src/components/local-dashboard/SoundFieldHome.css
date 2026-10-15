@@ -36,7 +36,7 @@
 }
 
 .sound-field :is(button, input, [tabindex]):focus-visible {
-  outline: 2px solid var(--sf-accent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 4px;
 }
 
@@ -136,7 +136,7 @@
 
 .sf-current-art {
   border-radius: 12px;
-  box-shadow: 0 12px 24px color-mix(in srgb, var(--te-neutral-50) 15%, transparent);
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--te-content-shadow-color) 15%, transparent);
 }
 
 .sf-kicker {
@@ -253,7 +253,7 @@
 }
 
 .sf-progress:focus-within {
-  outline: 1px solid var(--sf-accent);
+  outline: 1px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 
@@ -1083,14 +1083,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sound-field *,
-  .sound-field *::before,
-  .sound-field *::after {
-    transition: none;
-  }
+  @scope (:root:not([data-te-motion='full'])) {
+    .sound-field *,
+    .sound-field *::before,
+    .sound-field *::after {
+      transition: none;
+    }
 
-  .sound-field button:active:not(:disabled, :focus-visible) {
-    transform: none;
+    .sound-field button:active:not(:disabled, :focus-visible) {
+      transform: none;
+    }
   }
 }
 

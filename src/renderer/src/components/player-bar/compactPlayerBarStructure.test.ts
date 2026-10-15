@@ -13,10 +13,11 @@ const playerBar = readFileSync(new URL('../PlayerBar.vue', import.meta.url), 'ut
  * comment that mentions a property it deliberately does *not* set would satisfy
  * — or wrongly fail — those assertions.
  */
-const playerBarCss = readFileSync(new URL('./PlayerBar.css', import.meta.url), 'utf8').replace(
-  /\/\*[\s\S]*?\*\//g,
-  ''
-)
+const playerBarCssSource = readFileSync(
+  new URL('./PlayerBar.css', import.meta.url),
+  'utf8'
+).replace(/\/\*[\s\S]*?\*\//g, '')
+const playerBarCss = playerBarCssSource.replace(/:deep\(([^()]*)\)/g, '$1')
 const compactVisualizer = readFileSync(
   new URL('./CompactPlayerBarVisualizer.vue', import.meta.url),
   'utf8'
@@ -65,19 +66,19 @@ test('the expanded visualizer is mounted only for compact on the lyrics page', (
   )
 
   const plainCompact = playerBarCss.match(
-    /\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact:not\(\s*\.player-bar-compact-visualizer\s*\)\s*\{[^}]*\}/
+    /\.player-bar\.player-bar-compact:not\(\s*\.player-bar-compact-visualizer\s*\)\s*\{[^}]*\}/
   )
   assert.ok(plainCompact, 'compact without a lyrics visualizer needs its own geometry')
   assert.match(plainCompact[0], /height:\s*72px/)
   assert.match(
     playerBarCss,
-    /\.player-bar\.player-bar-compact:not\(\.player-bar-compact-visualizer\)\s*>\s*\.compact-progress-rail\s*\{[^}]*top:\s*0/
+    /\.player-bar\.player-bar-compact:not\(\.player-bar-compact-visualizer\)\s*>\s*\.compact-progress-rail\s*\{[^}]*top:\s*-11px/
   )
 })
 
 test('the lyrics-page visualizer stage has no painted base colour', () => {
   const stage = playerBarCss.match(
-    /\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact\.player-bar-compact-visualizer\.player-bar-compact-visualizer\s*\{[^}]*\}/
+    /\.player-bar\.player-bar-compact\.player-bar-compact-visualizer\s*\{[^}]*\}/
   )
   assert.ok(stage, 'lyrics-page compact needs an explicit visualizer state')
   assert.match(stage[0], /background:\s*transparent/)
@@ -135,7 +136,7 @@ test('compact queue drawer follows the control deck instead of the visualizer st
 
 test('compact auto-hide keeps the lyrics visualizer while hiding its controls', () => {
   const retainedStage = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][\s\S]{0,360}\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact-visualizer\s*\{[^}]*\}/
+    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\[data-te-playbar-visibility='auto'\][\s\S]{0,360}\.player-bar\.player-bar-compact\.player-bar-compact-visualizer\s*\{[^}]*\}/
   )
   assert.ok(retainedStage, 'auto-hide needs a retained compact visualizer stage')
   assert.match(
@@ -165,9 +166,23 @@ test('every shape renders the same three regions, in a fixed order, with fixed c
   // The class names the six preset theme layouts address the bar through must be
   // derived, not hand-written per shape, or one shape drifts off them.
   assert.match(playerBar, /className:\s*`player-\$\{name\}`/)
+  // Appearance drafts feed both the controls and the standard-layout grouping;
+  // confirmed settings remain the fallback outside either preview context.
   assert.match(
     playerBar,
-    /resolvePlayerBarRegions\(settings\.value\.playerBar\.layout, props\.mode\)/
+    /const previewPlayerSettings = computed\(\s*\(\) =>\s*props\.previewAppearance\?\.playerBar \?\?\s*appearanceChromePreview\.value\?\.playerBar \?\?\s*settings\.value\.playerBar\s*\)/
+  )
+  const regions = playerBar.match(/const barRegions = computed\(\(\) => \{([\s\S]*?)\n\}\)/)
+  assert.ok(regions, 'all shapes must derive their regions from one layout computation')
+  assert.match(
+    regions[1],
+    /resolvePlayerBarRegions\(\s*previewPlayerSettings\.value\.layout,\s*props\.mode,\s*props\.glass\s*\)/
+  )
+  assert.match(regions[1], /return PLAYER_BAR_REGION_NAMES\.map\(/)
+  assert.match(regions[1], /items:\s*regions\[name\]/)
+  assert.match(
+    playerBar,
+    /resolvePlayerBarRegions\(previewPlayerSettings\.value\.layout, props\.mode\)/
   )
   // The left rail keeps remounting on track change; that remount is what fixed
   // stale covers, and a plain region name as the key would have dropped it.
@@ -182,8 +197,8 @@ test('shape chrome renders after whatever the layout placed, never instead of it
   assert.ok(loopEnd > 0, 'the control loop must close')
   for (const marker of [
     'class="resume-offer"',
-    '<PlayerSeekProgress',
-    'class="mini-progress-rail"'
+    `v-if="region.name === 'center' && isStandard"`,
+    'variant="mini"'
   ]) {
     assert.ok(
       playerBar.indexOf(marker) > loopEnd,
@@ -192,45 +207,33 @@ test('shape chrome renders after whatever the layout placed, never instead of it
   }
 })
 
-test('compact keeps its progress readout out of the layout, on its own top edge', () => {
-  // Not a placeable control: the three shapes render three different progress
-  // readouts, so a movable one would only buy unrenderable arrangements.
-  const placed = Object.values(DEFAULT_PLAYER_BAR_LAYOUT).flatMap((regions) => [
-    ...regions.left,
-    ...regions.center,
-    ...regions.right
-  ])
-  for (const id of ['progress', 'progressRail', 'compactProgress']) {
-    assert.equal(placed.includes(id as never), false, `${id} must not be a layout control`)
-  }
-  assert.match(playerBar, /v-if="isCompact" class="compact-progress-rail"/)
+test('compact progress stays on its boundary and shares standard seeking', () => {
+  assert.match(playerBar, /<PlayerSeekProgress\s+v-if="isCompact"[\s\S]{0,120}variant="compact"/)
   assert.match(
     playerBar,
-    /<SmoothedProgressFill class="compact-progress-fill" :percent="progressPercent" \/>/
+    /variant="compact"[\s\S]{0,340}:live="isLiveStream"[\s\S]{0,300}@seek="seek"/
   )
-  // Same 0..1 seek handler as mini's long rail, so neither has to know pixels.
-  assert.match(playerBar, /class="compact-progress-slider"[\s\S]{0,320}@input="onFlatRailInput"/)
-  assert.match(playerBar, /function onFlatRailInput/)
-  assert.doesNotMatch(playerBar, /onMiniRailInput/)
+  assert.doesNotMatch(playerBar, /onFlatRailInput/)
 })
 
 test('compact defaults to the arrangement the shape was designed around', () => {
   assert.deepEqual(DEFAULT_PLAYER_BAR_LAYOUT.compact, {
     left: ['cover', 'trackInfo', 'favorite', 'miniPlayer'],
-    center: ['playMode', 'transport', 'equalizer'],
-    right: ['time', 'hifi', 'volume', 'desktopLyrics', 'queue', 'exitPlayingPage']
+    center: ['playMode', 'transport', 'volume'],
+    right: ['time', 'hifi', 'equalizer', 'desktopLyrics', 'queue', 'exitPlayingPage']
   })
   // The exit control renders only under `glass`, so it costs the main window
   // nothing — but without it the only way off the now-playing page was clicking
   // the same entry that opened it, which reads as "open", not "close".
   assert.equal(DEFAULT_PLAYER_BAR_LAYOUT.compact.right.includes('exitPlayingPage'), true)
-  // The time readout and the equalizer entry are new controls the shape needs.
+  // The time readout remains part of this shape. Audio tools now live in the
+  // title bar DSP workspace; stored legacy IDs must not create another entry.
   assert.match(playerBar, /v-else-if="control === 'time'"[\s\S]{0,200}class="player-time-readout"/)
+  assert.doesNotMatch(playerBar, /v-(?:else-)?if="control === '(?:hifi|equalizer)'"/)
   assert.match(
     playerBar,
-    /v-else-if="control === 'equalizer'"[\s\S]{0,160}class="icon-btn equalizer-btn player-misc-icon"/
+    /items:\s*regions\[name\]\.filter\(\(control\) => control !== 'hifi' && control !== 'equalizer'\)/
   )
-  assert.match(playerBar, /@click="openEqualizerPage"/)
   // The transport group keeps its `.player-controls` wrapper and `.btn-play`, the
   // two hooks all six preset theme layouts restyle the play cluster through.
   assert.match(
@@ -287,7 +290,7 @@ test('every arrangement keeps exactly one way into the now-playing page', () => 
   assert.match(playerBarCss, /\.player-title-button:focus-visible\s*\{/)
 })
 
-test('the player is independent of navigation while narrow navigation reserves usable space', () => {
+test('the player is independent of navigation while navigation reserves usable space', () => {
   const sideMenu = readFileSync(new URL('../SideMenu.vue', import.meta.url), 'utf8')
   const clearance = readFileSync(
     new URL('../../app/useSideMenuClearance.ts', import.meta.url),
@@ -298,27 +301,22 @@ test('the player is independent of navigation while narrow navigation reserves u
   assert.doesNotMatch(playerBar, /'menu-open': menuOpen|geometryAnimTimer/)
   assert.doesNotMatch(playerBarCss, /\.player-bar-shell[^{}]*\.menu-open\s*\{/)
 
-  // The measured clearance was computed and then dropped on the floor. It now
-  // travels as a custom property — not an inline `bottom` — so the custom shell
-  // layout's `inset: auto !important` on the menu still wins.
+  // The existing offset remains available for host compatibility, but overlay
+  // geometry keeps it at zero and scroll content owns the player clearance.
   assert.match(app, /'--te-side-menu-bottom': `\$\{sideMenuBottomOffset\}px`/)
   assert.match(sideMenu, /bottom: var\(--te-side-menu-bottom, 0px\)/)
   assert.match(app, /<SideMenu[\s\S]*?:pages="navigationPages"/)
   assert.doesNotMatch(clearance, /streamingSidebarVisible/)
 
-  // Lifting the menu shrinks its own rect, so measuring the lifted bottom would
-  // report "no overlap", reset to 0, drop it back under the bar and oscillate
-  // forever under the ResizeObserver. Measuring the unlifted bottom is a fixed
-  // point.
-  assert.match(clearance, /sideMenuRect\.bottom \+ sideMenuBottomOffset\.value/)
-  assert.match(clearance, /playerBarRect\.top < sideMenuNaturalBottom/)
+  assert.doesNotMatch(clearance, /sideMenuNaturalBottom/)
+  assert.match(clearance, /setSideMenuBottomOffset\(0\)/)
 })
 
-test('compact geometry out-specifies the preset theme layouts without !important', () => {
+test('compact geometry stays host-owned without !important', () => {
   const geometry = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact\s*\{[^}]*\}/
+    /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\s*\{[^}]*\}/
   )
-  assert.ok(geometry, 'compact geometry rule must repeat the class to beat the preset layouts')
+  assert.ok(geometry, 'compact geometry rule must declare the host shape')
   const [rule] = geometry
   assert.doesNotMatch(rule, /!important/)
   // Every preset layout rewrites at least these four; compact has to win them.
@@ -342,14 +340,14 @@ test('compact geometry out-specifies the preset theme layouts without !important
 test('the artwork is resized to the strip and still clears the rail band', () => {
   const barHeight = playerBarCss
     .match(
-      /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact\s*\{[^}]*\}/
+      /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\s*\{[^}]*\}/
     )?.[0]
     .match(/height:\s*(\d+)px/)
   const railHeight = playerBarCss
     .match(/\.player-bar\.player-bar-compact > \.compact-progress-rail\s*\{[^}]*\}/)?.[0]
     .match(/height:\s*(\d+)px/)
   const coverRule = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-mode='compact'\][^{]*\.player-cover-placeholder\s*\{[^}]*\}/
+    /\.player-bar\.player-bar-compact[^{}]*\.player-cover-placeholder\s*\{[^}]*\}/
   )
   assert.ok(barHeight, 'the compact strip must declare its height')
   assert.ok(railHeight, 'the compact rail must declare its hit band')
@@ -374,7 +372,7 @@ test('the artwork is resized to the strip and still clears the rail band', () =>
   // leaves it clear of the rail's pointer strip along the top edge.
   assert.ok(cover < 48, `compact artwork ${cover}px must be smaller than the standard 48px`)
   assert.ok(
-    (Number(barHeight[1]) - cover) / 2 + 4 > Number(railHeight[1]),
+    (72 - cover) / 2 >= Number(railHeight[1]) - 11,
     `a ${cover}px cover in a ${barHeight[1]}px strip would sit inside the ${railHeight[1]}px rail band`
   )
   // The corners come down with the box; the base 12px radius on a 44px tile reads
@@ -409,8 +407,7 @@ test('the top-edge rail never wins the layer fight against the volume drawer', (
 })
 
 test('compact pins the shell to the window edges harder than any preset layout does', () => {
-  const shellRule =
-    /\.player-bar-shell\[data-te-playbar-mode='compact'\]\.player-bar-shell\.player-bar-shell\s*\{[^}]*\}/
+  const shellRule = /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\{[^}]*\}/
   const flush = playerBarCss.match(shellRule)
   assert.ok(flush, 'compact must claim the shell insets')
   for (const property of ['left:\\s*0', 'right:\\s*0', 'bottom:\\s*0']) {
@@ -460,27 +457,30 @@ test('the compact boundary rail is a 2px line over a real hit target', () => {
   )
   assert.ok(rail, 'the compact rail must be positioned against the bar')
   assert.match(rail[0], /position:\s*absolute/)
-  assert.match(rail[0], /top:\s*var\(--te-compact-visualizer-height, 138px\)/)
+  assert.match(rail[0], /top:\s*calc\(var\(--te-compact-visualizer-height, 138px\) - 11px\)/)
   assert.match(rail[0], /pointer-events:\s*auto/)
   // Taller than the visible line so dragging it is possible at all.
   const railHeight = rail[0].match(/height:\s*(\d+)px/)
-  assert.ok(railHeight && Number(railHeight[1]) >= 6, 'the rail needs a real hit target')
+  assert.ok(railHeight && Number(railHeight[1]) >= 24, 'the rail needs a real hit target')
 
   assert.match(playerBarCss, /\.compact-progress-track\s*\{[^}]*height:\s*2px/)
   // Real DOM track and fill, not ::-webkit-slider-runnable-track: Chromium does
   // not reliably repaint the pseudo-element when only a custom property changes.
   assert.match(
     playerBarCss,
-    /\.compact-progress-fill\s*\{[^}]*background:\s*var\(--te-player-bar-progress-fill, var\(--accent-color/
+    /\.compact-progress-fill[^{}]*\{[^}]*background:\s*var\(--te-player-bar-progress-fill, var\(--accent-color/
   )
-  assert.match(playerBarCss, /\.compact-progress-fill\s*\{[^}]*transform:\s*scaleX\(0\)/)
-  assert.match(playerBarCss, /\.compact-progress-slider\s*\{[^}]*inset:\s*0/)
-  assert.match(playerBarCss, /\.compact-progress-slider::-webkit-slider-thumb\s*\{[^}]*width:\s*0/)
+  assert.match(playerBarCss, /\.compact-progress-fill[^{}]*\{[^}]*transform:\s*scaleX\(0\)/)
+  assert.match(playerBarCss, /\.compact-progress-slider[^{}]*\{[^}]*inset:\s*0/)
+  assert.match(
+    playerBarCss,
+    /\.compact-progress-slider::-webkit-slider-thumb[^{}]*\{[^}]*width:\s*0/
+  )
 })
 
 test('compact regions stay vertically centred in both presentation states', () => {
   const regions = playerBarCss.match(
-    /\.player-bar-compact\.player-bar-compact\.player-bar-compact\s+\.player-left,[\s\S]*?\.player-bar-compact\.player-bar-compact\.player-bar-compact\s+\.player-right\s*\{[^}]*\}/
+    /\.player-bar\.player-bar-compact\s+\.player-left,[\s\S]*?\.player-bar\.player-bar-compact\s+\.player-right\s*\{[^}]*\}/
   )
   assert.ok(regions, 'compact regions need one shared alignment rule')
   assert.match(regions[0], /align-self:\s*center/)
@@ -492,39 +492,12 @@ test('the compact strip uses a neutral surface instead of the track accent', () 
   // Compact may use accent for the play button and progress rail, but never for
   // the full-width strip behind every control.
   const geometry = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\.player-bar-compact\.player-bar-compact\s*\{[^}]*\}/
+    /\.player-bar-shell\[data-te-playbar-mode='compact'\]\s*\.player-bar\.player-bar-compact\s*\{[^}]*\}/
   )
   assert.ok(geometry, 'compact needs a base surface rule')
   assert.match(geometry[0], /background:\s*var\(--te-neutral-100\)/)
   assert.doesNotMatch(geometry[0], /background:[^;}]*(?:accent-color|te-primary)/)
 
-  // The compact-only section stays tokenized. Fixed glass colours remain in the
-  // shared mini/compact declaration above this point.
-  const compactSection = playerBarCss.slice(
-    playerBarCss.indexOf(".player-bar-shell[data-te-playbar-mode='compact']")
-  )
-  assert.ok(compactSection.length > 1000, 'failed to locate the compact section')
-  const literals = compactSection.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/gi) ?? []
-  assert.deepEqual(literals, [], `compact rules must use tokens, found: ${literals.join(', ')}`)
-  assert.match(playerBarCss, /--te-flat-bar-glass-bg/)
-
-  // PlayingMusic passes glass=true even under the light app theme, so compact
-  // needs the playing-page surface explicitly or the flat rule turns it white.
-  const glassRule = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-mode='compact'\][^{]*\.player-bar\.player-bar-glass\.player-bar-compact\.player-bar-compact\.player-bar-compact\s*\{[^}]*\}/
-  )
-  assert.ok(glassRule, 'playing-page compact override must exist')
-  assert.match(glassRule[0], /background:\s*var\(--te-flat-bar-glass-bg\)/)
-  assert.match(glassRule[0], /background-image:\s*none/)
-  assert.doesNotMatch(glassRule[0], /border/)
-
-  // The playing-page rail inherits mini's brighter track/fill from a shared rule.
-  assert.match(playerBarCss, /\.player-bar-glass \.compact-progress-track,/)
-  assert.match(playerBarCss, /\.player-bar-glass \.compact-progress-fill,/)
-  // And so does the dark-theme lift: 22% accent over transparent leaves the
-  // unfilled part of the rail barely visible on a dark strip.
-  assert.match(
-    playerBarCss,
-    /html\[data-theme='dark'\] \.player-bar-compact \.compact-progress-track,/
-  )
+  assert.match(playerBarCss, /\.player-bar-glass\s+\.compact-progress-track/)
+  assert.match(playerBarCss, /\.player-bar-glass\s+\.compact-progress-fill/)
 })

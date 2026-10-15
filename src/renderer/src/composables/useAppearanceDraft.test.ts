@@ -7,6 +7,8 @@ import {
   type AppearanceDraft
 } from '../../../shared/appAppearance.ts'
 import { DEFAULT_LIQUID_GLASS } from '../../../shared/liquidGlass.ts'
+import { normalizeNavigationPagePreferences } from '../../../shared/navigationPages.ts'
+import { normalizePlayerBarSettings } from '../../../shared/playerBar.ts'
 import { useAppearanceDraft } from './useAppearanceDraft.ts'
 const initial = (): AppearanceDraft =>
   cloneAppearance({
@@ -15,6 +17,46 @@ const initial = (): AppearanceDraft =>
     liquidGlass: DEFAULT_LIQUID_GLASS,
     surfaceMaterial: 'standard'
   })
+
+test('navigation and player arrangements share the appearance draft, preview, discard and explicit save', async () => {
+  let confirmed = cloneAppearance({
+    ...initial(),
+    navigationPages: normalizeNavigationPagePreferences(null),
+    playerBar: normalizePlayerBarSettings(null)
+  })
+  let writes = 0
+  let preview: AppearanceDraft | null = null
+  const editor = useAppearanceDraft({
+    confirmed: () => confirmed,
+    persist: async (draft) => {
+      writes++
+      confirmed = draft
+    },
+    preview: async (draft) => {
+      preview = draft
+    }
+  })
+  editor.begin()
+  editor.state.draft.navigationPages!.hidden.push('recent')
+  editor.state.draft.playerBar!.mode = 'mini'
+  assert.equal(confirmed.navigationPages!.hidden.length, 0)
+  assert.equal(confirmed.playerBar!.mode, 'standard')
+  await editor.preview(true)
+  assert.equal(writes, 0)
+  assert.equal((preview as AppearanceDraft | null)?.playerBar?.mode, 'mini')
+  await editor.cancel()
+  assert.equal(preview, null)
+  editor.begin()
+  assert.equal(editor.state.draft.navigationPages!.hidden.length, 0)
+  assert.equal(editor.state.draft.playerBar!.mode, 'standard')
+  editor.state.draft.navigationPages!.hidden.push('recent')
+  editor.state.draft.playerBar!.mode = 'compact'
+  assert.equal(await editor.save(), true)
+  assert.equal(writes, 1)
+  assert.deepEqual(confirmed.navigationPages!.hidden, ['recent'])
+  assert.equal(confirmed.playerBar!.mode, 'compact')
+  assert.equal(preview, null)
+})
 
 test('draft editing and preview never persist; cancel clears overrides against latest confirmed settings', async () => {
   let confirmed = initial(),

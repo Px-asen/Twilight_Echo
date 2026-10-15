@@ -2,12 +2,18 @@
 import { computed } from 'vue'
 import { usePlayerStore } from '../../stores/usePlayerStore'
 import SmoothedProgressFill from '../SmoothedProgressFill.vue'
+const props = defineProps<{ preview?: boolean }>()
 
 // Keep playback ticks out of the dashboard's large render tree.
 const { currentTime, duration, progress, seek, formatTime } = usePlayerStore()
-const heroProgressPercent = computed(() => Math.min(100, Math.max(0, progress.value)))
+const heroProgressPercent = computed(() =>
+  props.preview ? 35 : Math.min(100, Math.max(0, progress.value))
+)
+const displayedTime = computed(() => (props.preview ? 63 : currentTime.value))
+const displayedDuration = computed(() => (props.preview ? 180 : duration.value))
 
 function handleHeroSeek(event: MouseEvent): void {
+  if (props.preview) return
   if (duration.value <= 0) return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   if (rect.width <= 0) return
@@ -27,16 +33,16 @@ function handleHeroSeek(event: MouseEvent): void {
       <SmoothedProgressFill as="span" :percent="heroProgressPercent" />
     </button>
     <div class="hero-time">
-      <span>{{ formatTime(currentTime) }}</span>
-      <span>{{ formatTime(duration) }}</span>
+      <span>{{ formatTime(displayedTime) }}</span>
+      <span>{{ formatTime(displayedDuration) }}</span>
     </div>
   </div>
 </template>
 
 <style scoped>
 .hero-progress {
-  width: min(100%, 460px);
-  margin-top: 22px;
+  width: min(100%, 480px);
+  margin-top: 14px;
 }
 
 .hero-progress-track {
@@ -86,6 +92,7 @@ function handleHeroSeek(event: MouseEvent): void {
   justify-content: space-between;
   margin-top: 6px;
   font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
+  line-height: 1.5;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--home-muted);

@@ -6,6 +6,7 @@ export function useEqSpectrum(source: {
   levels: () => Float32Array | null
   visible: () => boolean
   frozen: () => boolean
+  document?: () => Document
 }) {
   const lineRef = ref<SVGPathElement | null>(null)
   const fillRef = ref<SVGPathElement | null>(null)
@@ -19,7 +20,33 @@ export function useEqSpectrum(source: {
   let lastTime = 0
   let peakPath = ''
   let motionObserver: MutationObserver | null = null
+  let observedDocument: Document | null = null
+  let frameWindow: Window | null = null
   const paths = new WeakMap<SVGPathElement, string>()
+
+  function editorDocument(): Document {
+    return source.document?.() ?? lineRef.value?.ownerDocument ?? document
+  }
+
+  function bindDocument(): Document {
+    const doc = editorDocument()
+    if (observedDocument === doc) return doc
+    observedDocument?.removeEventListener('visibilitychange', onVisibilityChange)
+    motionObserver?.disconnect()
+    observedDocument = doc
+    doc.addEventListener('visibilitychange', onVisibilityChange)
+    motionObserver = new MutationObserver(update)
+    motionObserver.observe(doc.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-te-motion']
+    })
+    return doc
+  }
+
+  function scheduleFrame(): void {
+    frameWindow = editorDocument().defaultView ?? window
+    frame = frameWindow.requestAnimationFrame(animate)
+  }
 
   function writePath(element: SVGPathElement | null, path: string): void {
     if (!element || paths.get(element) === path) return
@@ -39,16 +66,18 @@ export function useEqSpectrum(source: {
   }
 
   function stop(): void {
-    if (frame) window.cancelAnimationFrame(frame)
+    if (frame) (frameWindow ?? window).cancelAnimationFrame(frame)
     frame = 0
+    frameWindow = null
     lastTime = 0
   }
 
   function animate(now: number): void {
     frame = 0
+    const doc = bindDocument()
     const target = source.levels()
-    if (document.hidden || !source.visible() || source.frozen() || !target) return
-    const motion = document.documentElement.dataset.teMotion
+    if (doc.hidden || !source.visible() || source.frozen() || !target) return
+    const motion = doc.documentElement.dataset.teMotion
     if (motion === 'reduced' || motion === 'off') {
       displayed.set(target)
       draw()
@@ -58,12 +87,13 @@ export function useEqSpectrum(source: {
     const moving = smoothSpectrum(displayed, target, lastTime ? now - lastTime : 16.7, speed.value)
     lastTime = now
     draw()
-    if (moving) frame = window.requestAnimationFrame(animate)
+    if (moving) scheduleFrame()
     else lastTime = 0
   }
 
   function update(): void {
-    if (document.hidden) {
+    const doc = bindDocument()
+    if (doc.hidden) {
       stop()
       return
     }
@@ -91,14 +121,14 @@ export function useEqSpectrum(source: {
     if (peaks.length !== target.length) peaks = target.slice()
     if (peakHold.value) accumulateSpectrumPeak(peaks, target)
     updatePeakPath()
-    const motion = document.documentElement.dataset.teMotion
+    const motion = doc.documentElement.dataset.teMotion
     if (motion === 'reduced' || motion === 'off') {
       stop()
       displayed.set(target)
       draw()
       return
     }
-    if (!frame) frame = window.requestAnimationFrame(animate)
+    if (!frame) scheduleFrame()
   }
 
   function resetPeaks(): void {
@@ -108,7 +138,7 @@ export function useEqSpectrum(source: {
   }
 
   function onVisibilityChange(): void {
-    if (document.hidden) {
+    if (editorDocument().hidden) {
       stop()
       return
     }
@@ -124,18 +154,12 @@ export function useEqSpectrum(source: {
     draw()
   })
   onMounted(() => {
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    motionObserver = new MutationObserver(update)
-    motionObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-te-motion']
-    })
     update()
     draw()
   })
   onBeforeUnmount(() => {
     stop()
-    document.removeEventListener('visibilitychange', onVisibilityChange)
+    observedDocument?.removeEventListener('visibilitychange', onVisibilityChange)
     motionObserver?.disconnect()
   })
   return { lineRef, fillRef, peakRef, peakHold, range, speed, resetPeaks }

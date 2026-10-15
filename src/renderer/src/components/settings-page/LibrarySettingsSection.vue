@@ -45,12 +45,11 @@ defineProps<{
 }>()
 </script>
 <template>
-  <section id="library" class="glass-card preview-section">
+  <section id="library" class="settings-section preview-section">
     <div class="section-title-row">
       <i class="pi pi-database" aria-hidden="true" />
-      <h2>媒体库与存储</h2>
+      <h2>媒体库</h2>
     </div>
-    <p class="settings-section-description">管理本地音乐、下载文件与缓存空间。</p>
     <div class="section-block">
       <h3>本地媒体库</h3>
       <div class="setting-list">

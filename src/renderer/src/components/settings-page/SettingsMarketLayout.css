@@ -1,0 +1,494 @@
+/* Market geometry only. Optical surfaces and accessibility fallbacks belong to
+   the shared material contract; content groups have no additional painter. */
+html .settings-market-navigation {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 20;
+  width: 100%;
+  min-width: 0;
+  color: var(--te-settings-text);
+}
+html .settings-market-heading {
+  margin: 0;
+  font-size: var(--te-type-page-title);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
+}
+html .settings-market-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  min-width: 0;
+}
+html .settings-market-title-row > .appearance-page-header {
+  flex: 0 1 auto;
+}
+@media (max-width: 680px) {
+  html .settings-market-title-row {
+    gap: 10px;
+  }
+}
+html .settings-market-category-row {
+  position: relative;
+  border-bottom: 1px solid var(--te-settings-control-border);
+  margin-bottom: 16px;
+}
+html .settings-preview-page .settings-market-navigation[aria-label] .settings-nav-categories {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 24px;
+  overflow: visible;
+  width: 100%;
+  padding: 0;
+  max-height: none;
+}
+html .settings-preview-page .settings-market-navigation[aria-label] .preview-nav-item {
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  width: auto;
+  min-height: 44px;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  white-space: nowrap;
+}
+html .settings-preview-page .settings-market-navigation[aria-label] .preview-nav-item::before,
+html .settings-preview-page .settings-market-navigation[aria-label] .preview-nav-item::after {
+  display: none;
+}
+html
+  .settings-preview-page
+  .settings-market-navigation[aria-label]
+  .preview-nav-item:is(.active, :hover) {
+  color: var(--te-settings-text);
+}
+html .settings-preview-page .settings-market-navigation[aria-label] .preview-nav-item.active {
+  border-bottom-color: var(--te-settings-text);
+  font-weight: var(--te-type-weight-strong);
+}
+html .settings-market-category-select {
+  display: none;
+}
+html .settings-market-search-wrap {
+  position: relative;
+  width: min(420px, 100%);
+}
+html .settings-market-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid var(--te-settings-control-border);
+  border-radius: 8px;
+  padding: 0 12px;
+}
+html .settings-market-search input {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: max(36px, calc(var(--te-type-body) * 1.5));
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--te-settings-text);
+  outline: none;
+}
+html .settings-market-search input::-webkit-search-cancel-button {
+  display: none;
+}
+html .settings-market-search:has(input:focus-visible) {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
+html .settings-market-search button {
+  flex: 0 0 auto;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--te-settings-text-muted);
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-market-search button {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: var(--te-control-radius-sm);
+}
+html .settings-market-results {
+  position: absolute;
+  inset: calc(100% + 6px) 0 auto;
+  z-index: 30;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+  border: 1px solid var(--te-material-border);
+  border-radius: 12px;
+  padding: 6px;
+}
+html .settings-preview-page .settings-market-results .settings-nav-result {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--te-settings-text);
+  text-align: left;
+}
+html .settings-market-results .settings-nav-result-title {
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
+}
+html .settings-preview-page .settings-market-results .settings-nav-result:hover {
+  background: var(--te-setting-hover-bg);
+}
+html .settings-preview-page .settings-market-results .settings-nav-result[aria-selected='true'] {
+  background: var(--te-setting-selection-bg);
+  color: var(--te-setting-selection-fg);
+}
+html
+  .settings-preview-page
+  .settings-market-results
+  .settings-nav-result[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  inset: 8px auto 8px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--te-setting-selection-mark);
+}
+html .settings-market-results small {
+  flex: 0 0 auto;
+  font-size: var(--te-type-caption);
+  color: var(--te-settings-text-muted);
+}
+html .settings-market-results p {
+  margin: 10px;
+}
+html .settings-preview-page[data-settings-layout='categories'] {
+  --te-setting-selection-bg: color-mix(
+    in srgb,
+    var(--te-control-accent) 12%,
+    var(--te-settings-control-bg)
+  );
+  --te-setting-selection-fg: var(--te-control-fg);
+  --te-setting-selection-mark: var(--te-control-accent);
+  --te-setting-hover-bg: color-mix(in srgb, var(--te-control-fg) 5%, var(--te-settings-control-bg));
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px) var(--te-page-bottom, 48px);
+  scroll-padding-block: 24px max(24px, var(--te-playbar-bottom-clearance, 0px));
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-preview-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: min(100%, 1280px);
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-preview-stack {
+  width: 100%;
+  gap: 24px;
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-page-title {
+  font-size: var(--te-type-section-title);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.settings-section, .settings-group) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-group + .settings-group {
+  border-top: 1px solid var(--te-settings-control-border);
+}
+html .settings-preview-page[data-settings-layout='categories'] :is(.setting-item, .mini-setting) {
+  padding-inline: 0;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.setting-item, .mini-setting)
+  > .inline-controls:has(> button) {
+  flex: 0 1 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.inline-controls, .personal-backup > .buttons)
+  > button {
+  width: auto;
+}
+/* Quiet row feedback follows the readable ink; keyboard focus remains on its
+   exact control. A mouse click must not leave an opaque, selected-looking row. */
+html .settings-preview-page[data-settings-layout='categories'] .setting-item:focus-within {
+  background: transparent;
+  box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  html .settings-preview-page[data-settings-layout='categories'] .setting-item:hover {
+    background: var(--te-settings-row-hover);
+  }
+}
+html .settings-preview-page[data-settings-layout='categories'] .setting-item:has(:focus-visible) {
+  background: var(--te-settings-row-focus);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.setting-copy > span, .setting-copy > small, .settings-group-summary) {
+  line-height: var(--te-type-line-caption);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.preview-select, .settings-select, .number-input, .path-control input) {
+  box-shadow: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.settings-group-trigger, .settings-group-content) {
+  padding-inline: 0;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(
+    .soft-button,
+    .brand-soft-button,
+    .muted-button,
+    .danger-soft-button,
+    .dashed-button,
+    .preset-btn,
+    .about-links button
+  ) {
+  min-height: max(34px, calc(var(--te-type-body) * 1.4 + 12px));
+  border-radius: var(--te-control-radius-sm);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  box-shadow: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.soft-button, .brand-soft-button) {
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
+  border-color: transparent;
+  box-shadow: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .segmented-control {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: var(--te-control-radius-sm);
+  box-shadow: none;
+  background: var(--te-settings-control-bg);
+}
+html .settings-preview-page[data-settings-layout='categories'] .segmented-control button {
+  min-height: max(30px, calc(var(--te-type-body) * 1.4 + 8px));
+  padding-block: 4px;
+  position: relative;
+  border-radius: calc(var(--te-control-radius-sm) - 2px);
+  font-weight: var(--te-type-weight-medium);
+  line-height: 1.4;
+  box-shadow: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .segmented-control button.active {
+  background: var(--te-setting-selection-bg);
+  color: var(--te-setting-selection-fg);
+  box-shadow: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .segmented-control button::after {
+  content: '';
+  position: absolute;
+  inset: auto 12px 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--te-setting-selection-mark);
+  opacity: 0;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  .segmented-control
+  button.active::after {
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  html
+    .settings-preview-page[data-settings-layout='categories']
+    .segmented-control
+    button:enabled:not(.active):hover {
+    background: var(--te-setting-hover-bg);
+    color: var(--te-control-fg);
+  }
+}
+html[data-te-motion]
+  .settings-preview-page[data-settings-layout='categories']
+  :is(
+    .soft-button,
+    .brand-soft-button,
+    .muted-button,
+    .segmented-control button,
+    .toggle-switch,
+    .range-pill,
+    .device-panel-disclosure,
+    .settings-group-trigger,
+    .settings-nav-result
+  ):is(:hover, :active) {
+  transform: none;
+  translate: none;
+  scale: 1;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  .settings-market-search
+  input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(button, input, select, textarea):is(:disabled, [aria-disabled='true']) {
+  cursor: not-allowed;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.soft-button, .brand-soft-button, .muted-button):disabled {
+  opacity: 0.45;
+  background: var(--te-settings-control-bg);
+  color: var(--te-settings-text-muted);
+  box-shadow: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.range-pill, .device-panel-disclosure):focus-within {
+  outline: none;
+  border-color: var(--te-settings-control-border);
+  box-shadow: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.range-pill, .device-panel-disclosure):has(> input:focus-visible) {
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.range-pill, .device-panel-disclosure)
+  > input:focus-visible {
+  outline: none;
+}
+html .appearance-page .settings-market-navigation {
+  margin-bottom: 2px;
+}
+html .settings-market-navigation--compact .settings-market-category-row {
+  overflow: hidden;
+}
+html
+  .settings-preview-page
+  .settings-market-navigation--compact[aria-label]
+  .settings-nav-categories {
+  position: absolute;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+html .settings-market-navigation--compact .settings-market-category-select {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--te-settings-control-border);
+  border-radius: 8px;
+  background: var(--te-control-bg);
+  color: var(--te-settings-text);
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-market-category-select {
+  height: auto;
+  min-height: max(40px, calc(var(--te-type-body) * 1.4 + 14px));
+  padding: 6px 12px;
+  font-size: var(--te-type-body);
+  line-height: 1.4;
+}
+html .settings-market-navigation--compact .settings-market-category-row {
+  border: 0;
+  margin-bottom: 0;
+}
+@media (max-width: 680px) {
+  html .settings-preview-page[data-settings-layout='categories'] {
+    padding: var(--te-page-top) var(--te-page-gutter) 32px;
+  }
+  html .settings-preview-page[data-settings-layout='categories'] .settings-preview-layout {
+    gap: 24px;
+  }
+  html .settings-market-title-row {
+    margin-bottom: 12px;
+  }
+}
+@media (max-width: 760px) {
+  html
+    .settings-preview-page[data-settings-layout='categories']
+    .setting-item:has(> .reset-group-actions) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  html
+    .settings-preview-page[data-settings-layout='categories']
+    .setting-item
+    > .inline-controls.reset-group-actions {
+    justify-content: flex-start;
+  }
+}
+@media (max-height: 680px) {
+  html .appearance-page .settings-market-title-row {
+    margin-bottom: 8px;
+  }
+  html .appearance-page .settings-market-category-row {
+    margin-bottom: 10px;
+  }
+}
+@media (forced-colors: active) {
+  html .settings-preview-page[data-settings-layout='categories'] {
+    --te-setting-selection-bg: Highlight;
+    --te-setting-selection-fg: HighlightText;
+    --te-setting-selection-mark: HighlightText;
+    --te-setting-hover-bg: ButtonFace;
+  }
+  html
+    .settings-preview-page[data-settings-layout='categories']
+    :is(.segmented-control button.active, .settings-nav-result[aria-selected='true']) {
+    forced-color-adjust: none;
+  }
+}

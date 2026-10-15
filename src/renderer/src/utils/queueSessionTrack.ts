@@ -2,6 +2,7 @@ import type { Track } from '@renderer/types/music'
 import { getTrackSource } from '@renderer/utils/playerTrackUtils.ts'
 import {
   MAX_SESSION_QUEUE_ENTRIES,
+  cloneQueuePlaybackOrigin,
   type NamedQueueSession,
   type SavedQueueTrack
 } from '../../../shared/queueWorkspace.ts'
@@ -47,6 +48,9 @@ export function saveQueueTrack(track: Track): SavedQueueTrack {
   return {
     id: track.id,
     queueEntryId: track.queueEntryId ?? `queue:${crypto.randomUUID()}`,
+    ...(track.queuePlaybackOrigin
+      ? { queuePlaybackOrigin: cloneQueuePlaybackOrigin(track.queuePlaybackOrigin) }
+      : {}),
     source,
     title: track.title,
     artist: track.artist,
@@ -77,6 +81,7 @@ export function restoreQueueTrackIdentity(track: SavedQueueTrack): Track {
   return {
     id: track.id,
     queueEntryId: track.queueEntryId,
+    queuePlaybackOrigin: cloneQueuePlaybackOrigin(track.queuePlaybackOrigin),
     source: track.source,
     title: track.title,
     artist: track.artist,

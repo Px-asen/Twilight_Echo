@@ -15,19 +15,16 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="streaming-placeholder" :class="{ 'detail-placeholder': detail }">
-    <i
-      :class="icon"
-      :style="
-        danger
-          ? 'font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #e74c3c'
-          : 'font-size: calc(var(--te-font-size-body, 14px) * 48 / 14); color: #ccc'
-      "
-    ></i>
+  <div
+    class="streaming-placeholder"
+    :class="{ 'detail-placeholder': detail, 'is-error': danger }"
+    :role="danger ? 'alert' : 'status'"
+  >
+    <i :class="icon" class="placeholder-icon" aria-hidden="true"></i>
     <p class="placeholder-title">{{ title }}</p>
     <p class="placeholder-hint">{{ hint }}</p>
     <button v-if="actionLabel" type="button" class="stream-action-btn" @click="emit('action')">
-      <i v-if="actionIcon" :class="actionIcon"></i>
+      <i v-if="actionIcon" :class="actionIcon" aria-hidden="true"></i>
       <span>{{ actionLabel }}</span>
     </button>
   </div>

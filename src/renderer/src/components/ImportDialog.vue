@@ -211,6 +211,7 @@ onUnmounted(() => {
         <div
           ref="dialogRef"
           class="import-dialog"
+          data-dialog-panel
           role="dialog"
           aria-modal="true"
           aria-labelledby="import-dialog-title"
@@ -342,48 +343,42 @@ html[data-te-motion='off'] .scan-status-leave-to {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background:
-    radial-gradient(circle at 30% 18%, rgba(124, 77, 255, 0.18), transparent 34%),
-    radial-gradient(circle at 72% 78%, rgba(34, 211, 238, 0.12), transparent 36%),
-    rgba(17, 24, 39, 0.18);
+  background: var(--te-dialog-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
   padding: 24px;
-  backdrop-filter: blur(8px) saturate(125%);
-  -webkit-backdrop-filter: blur(8px) saturate(125%);
 }
 
 .import-dialog {
   width: min(520px, calc(100vw - 48px));
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.7), rgba(248, 245, 255, 0.46)),
-    rgba(255, 255, 255, 0.52);
+  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  background: var(--te-glass-bg-strong);
+  color: var(--te-neutral-900);
   border-radius: var(--te-dialog-radius);
-  box-shadow:
-    0 28px 90px rgba(86, 70, 160, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  box-shadow: var(--te-glass-shadow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  backdrop-filter: blur(24px) saturate(155%);
-  -webkit-backdrop-filter: blur(24px) saturate(155%);
-  animation: import-dialog-in 0.32s var(--te-ease-soft) both;
+  border: 1px solid var(--te-card-border);
+  animation: import-dialog-in var(--te-motion-panel) var(--te-ease-out-strong) both;
 }
 
 .dialog-header {
-  padding: 8px 20px;
+  padding: 16px 20px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 24px;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .dialog-header h3 {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
+  font-size: var(--te-type-section-title, 20px);
   font-weight: 600;
   color: var(--te-neutral-900);
 }
@@ -396,26 +391,31 @@ html[data-te-motion='off'] .scan-status-leave-to {
   background: none;
   border: none;
   cursor: pointer;
-  color: #999;
+  color: var(--te-neutral-600);
   font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
   padding: 4px;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
 }
 
 .dialog-content {
-  padding: 20px;
+  padding: 16px 20px;
   flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .section-title {
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--te-neutral-900);
 }
 
@@ -439,17 +439,17 @@ html[data-te-motion='off'] .scan-status-leave-to {
 
 .folder-list {
   background: var(--te-subtle-bg);
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  border-radius: 14px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-control-radius-sm, 8px);
   max-height: 200px;
   overflow-y: auto;
-  margin-bottom: 20px;
+  margin-bottom: 0;
 }
 
 .empty-folders {
-  padding: 32px;
+  padding: 24px 16px;
   text-align: center;
-  color: #999;
+  color: var(--te-neutral-600);
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
 }
 
@@ -458,7 +458,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
   align-items: center;
   padding: 8px 12px;
   gap: 10px;
-  border-bottom: 1px solid rgba(229, 231, 235, 0.52);
+  border-bottom: 1px solid var(--te-card-border);
 }
 
 .folder-item:last-child {
@@ -468,7 +468,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 .folder-path {
   flex: 1;
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  color: #333;
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -501,7 +501,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 }
 
 .progress-section {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-control-accent-soft);
   padding: 12px;
   border-radius: 14px;
   margin-top: 10px;
@@ -538,42 +538,55 @@ html[data-te-motion='off'] .scan-status-leave-to {
   border: 1px solid rgba(255, 180, 80, 0.24);
   border-radius: 14px;
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  color: #b8780d;
+  color: var(--te-warning-soft-fg);
   text-align: center;
 }
 
 .dialog-footer {
-  padding: 16px 20px;
+  padding: 0 20px 16px;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .btn-cancel {
   background: var(--te-subtle-bg);
-  border: 1px solid rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--te-control-border);
   padding: 8px 16px;
-  border-radius: 12px;
+  border-radius: var(--te-control-radius-sm, 8px);
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
-  color: #666;
+  color: var(--te-neutral-900);
 }
 
 .btn-start {
-  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-300));
+  background: var(--te-control-accent);
   border: none;
   padding: 8px 24px;
-  border-radius: 12px;
+  border-radius: var(--te-control-radius-sm, 8px);
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   cursor: pointer;
-  color: #fff;
+  color: var(--te-control-on-accent);
   font-weight: 500;
-  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.24);
 }
 
 .btn-start:disabled {
-  background: rgba(168, 133, 247, 0.36);
+  opacity: 0.45;
   cursor: not-allowed;
+}
+.dialog-footer button {
+  min-height: 36px;
+  font-family: inherit;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
+input[type='checkbox'] {
+  accent-color: var(--te-control-accent);
 }
 
 .fade-enter-active,
@@ -588,7 +601,7 @@ html[data-te-motion='off'] .scan-status-leave-to {
 @keyframes import-dialog-in {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.98);
+    transform: translateY(8px) scale(0.98);
   }
   to {
     opacity: 1;

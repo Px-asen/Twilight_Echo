@@ -24,6 +24,8 @@ import {
 } from '@renderer/utils/dspNodeParams'
 import { cloneDspScene as cloneScene, submitDspSceneDraft } from '@renderer/utils/dspSceneDraft'
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const rackRoot = ref<HTMLElement | null>(null)
 const state = ref<DspSceneState | null>(null)
 const status = ref<DspGraphStatus | null>(null)
 const selectedSceneId = ref<string | null>(null)
@@ -32,11 +34,22 @@ const nodeTypeToAdd = ref<DspNodeType>('compressor')
 const factoryTemplateToAdd = ref<DspFactorySceneTemplateId>('transparent')
 const snapshotA = ref<DspScene[] | null>(null)
 const busy = ref(false)
+const loading = ref(true)
+const savedBaseline = ref<string | null>(null)
+const leaveBlocked = ref(false)
 const message = ref('')
+const auditionExpanded = ref(false)
 const assets = ref<DspAsset[]>([])
 const vst3Catalog = shallowRef<Vst3CatalogState | null>(null)
 
 const scenes = computed(() => state.value?.scenes ?? [])
+const controlsDisabled = computed(() => busy.value || loading.value)
+const hasUnsavedChanges = computed(
+  () =>
+    state.value !== null &&
+    savedBaseline.value !== null &&
+    serializeDraft(state.value) !== savedBaseline.value
+)
 const selectedScene = computed(
   () => scenes.value.find((scene) => scene.id === selectedSceneId.value) ?? scenes.value[0] ?? null
 )
@@ -63,7 +76,7 @@ const vst3HelpersNotice = computed(() => {
   if (!vst3Helpers.value) return ''
   if (!vst3Helpers.value.platformSupported) return 'VST3 仅在 Windows x64 构建中提供。'
   if (!vst3Helpers.value.scannerPresent || !vst3Helpers.value.hostPresent) {
-    return '本构建未包含 VST3 扫描/宿主组件。开发环境请执行 pnpm run stage:vst3-msvc，或安装完整 Windows 签名包。'
+    return '当前版本未包含 VST3 组件，VST3 插件暂不可用。内置效果仍可正常使用。'
   }
   return ''
 })
@@ -73,13 +86,89 @@ const activeGraphLatency = computed(() => status.value?.totalLatencyFrames ?? 0)
 const activeGraphTail = computed(() => status.value?.totalTailFrames ?? 0)
 const graphApplyState = computed(() => status.value?.applyState ?? 'idle')
 const graphApplyLabel = computed(() => {
-  if (graphApplyState.value === 'pending') return 'Pending'
-  if (graphApplyState.value === 'applied') return 'Applied'
-  if (graphApplyState.value === 'failed') return 'Failed'
-  return 'Idle'
+  if (graphApplyState.value === 'pending') return '正在应用'
+  if (graphApplyState.value === 'applied') return '已应用'
+  if (graphApplyState.value === 'failed') return '应用失败'
+  return '空闲'
 })
 const soxrFallbackActive = computed(() => status.value?.outputStage?.resamplerFallback === true)
 let diagnosticsPoll: number | null = null
+
+function normalizedScenes(source: DspScene[]): DspScene[] {
+  return source.map((scene) => {
+    const normalized = cloneScene(scene)
+    normalized.graph.nodes.forEach(normalizeNodeEditorParams)
+    return normalized
+  })
+}
+
+function serializeDraft(source: DspSceneState): string {
+  return JSON.stringify({
+    scenes: normalizedScenes(source.scenes),
+    pinnedSceneId: source.pinnedSceneId
+  })
+}
+
+function acceptSavedState(next: DspSceneState, keepSelection = true): void {
+  const previousSceneId = keepSelection ? selectedSceneId.value : null
+  const previousNodeId = keepSelection ? selectedNodeId.value : null
+  next.scenes = normalizedScenes(next.scenes)
+  state.value = next
+  savedBaseline.value = serializeDraft(next)
+  selectedSceneId.value = next.scenes.some((scene) => scene.id === previousSceneId)
+    ? previousSceneId
+    : (next.activeSceneId ?? next.scenes[0]?.id ?? null)
+  selectedNodeId.value = selectedScene.value?.graph.nodes.some((node) => node.id === previousNodeId)
+    ? previousNodeId
+    : (selectedScene.value?.graph.nodes[0]?.id ?? null)
+  leaveBlocked.value = false
+}
+
+async function requestLeave(): Promise<boolean> {
+  if (controlsDisabled.value) {
+    leaveBlocked.value = true
+    message.value = loading.value
+      ? '正在读取效果链，请稍后切换。'
+      : '正在处理效果链，请完成后再切换。'
+    return false
+  }
+  if (hasUnsavedChanges.value) {
+    leaveBlocked.value = true
+    message.value = '效果链有未保存的更改。请先“保存更改”或“还原更改”，再切换工作区。'
+    return false
+  }
+  leaveBlocked.value = false
+  return true
+}
+
+async function refreshFromEngine(): Promise<void> {
+  if (!(await requestLeave())) return
+  await loadSavedState()
+}
+
+defineExpose({ requestLeave, refreshFromEngine })
+
+async function loadSavedState(restoring = false): Promise<void> {
+  loading.value = true
+  try {
+    acceptSavedState(await window.api.audioEngine.getDspSceneState(), !restoring)
+    snapshotA.value = null
+    message.value = restoring ? '已从音频引擎还原最新配置。' : ''
+    const supplemental = await Promise.allSettled([refreshDiagnostics(), refreshLibrary()])
+    if (supplemental.some((result) => result.status === 'rejected')) {
+      message.value = '效果链已读取，部分诊断或资料暂时不可用。'
+    }
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '无法读取效果链状态'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function restoreChanges(): Promise<void> {
+  if (controlsDisabled.value) return
+  await loadSavedState(true)
+}
 
 function selectScene(id: string): void {
   selectedSceneId.value = id
@@ -181,17 +270,20 @@ async function refreshDiagnostics(): Promise<void> {
 }
 
 async function saveScenes(): Promise<void> {
-  if (!state.value || busy.value) return
+  if (!state.value || controlsDisabled.value) return
   busy.value = true
   try {
-    state.value.scenes.forEach((scene) => scene.graph.nodes.forEach(normalizeNodeEditorParams))
-    state.value = await submitDspSceneDraft(
-      window.api.audioEngine,
-      state.value.scenes,
-      state.value.pinnedSceneId
+    acceptSavedState(
+      await submitDspSceneDraft(
+        window.api.audioEngine,
+        normalizedScenes(state.value.scenes),
+        state.value.pinnedSceneId
+      )
     )
-    message.value = 'DSP 场景已保存并提交给音频引擎。'
-    await refreshDiagnostics()
+    message.value = '效果链更改已保存并提交给音频引擎。'
+    await refreshDiagnostics().catch(() => {
+      message.value = '效果链更改已保存，诊断状态暂时不可用。'
+    })
   } catch (error) {
     await refreshDiagnostics().catch(() => undefined)
     message.value =
@@ -202,29 +294,31 @@ async function saveScenes(): Promise<void> {
 }
 
 async function applySelectedScene(): Promise<void> {
-  if (!selectedScene.value || !state.value || busy.value) return
+  if (!selectedScene.value || !state.value || controlsDisabled.value) return
   const sceneId = selectedScene.value.id
   busy.value = true
   try {
-    state.value.scenes.forEach((scene) => scene.graph.nodes.forEach(normalizeNodeEditorParams))
     let next = await submitDspSceneDraft(
       window.api.audioEngine,
-      state.value.scenes,
+      normalizedScenes(state.value.scenes),
       state.value.pinnedSceneId,
       sceneId
     )
+    acceptSavedState(next)
     if (next.requiresPcmFallback && !next.dsdPcmFallbackApplied) {
-      const confirmed = window.confirm(
+      const confirmed = (rackRoot.value?.ownerDocument.defaultView ?? window).confirm(
         '此场景需要 DSP 处理。切换到 PCM 并应用会停止 Native DSD/DoP 直通，是否继续？'
       )
-      if (confirmed) next = await window.api.audioEngine.applyDspScene(sceneId, true)
+      if (confirmed) {
+        next = await window.api.audioEngine.applyDspScene(sceneId, true)
+        acceptSavedState(next)
+      }
     }
-    state.value = next
     message.value =
       next.requiresPcmFallback && !next.dsdPcmFallbackApplied
         ? '保留 DSD Direct/DoP 直通，DSP 图未应用。'
         : '活动场景已应用。'
-    await refreshDiagnostics()
+    await refreshDiagnostics().catch(() => undefined)
   } catch (error) {
     await refreshDiagnostics().catch(() => undefined)
     message.value =
@@ -264,19 +358,27 @@ async function refreshLibrary(): Promise<void> {
 }
 
 async function importAsset(kind: DspAssetKind): Promise<void> {
-  const asset = await window.api.audioEngine.importDspAsset(kind)
-  if (!asset) return
-  assets.value = await window.api.audioEngine.getDspAssets()
-  if (selectedNode.value?.type === 'convolver' && kind === 'impulseResponse') {
-    selectedNode.value.params.impulseResponseAssetId = asset.id
-    selectedNode.value.params.impulseResponsePath = ''
-  }
-  if (
-    selectedNode.value?.type === 'vst3Plugin' &&
-    selectedNode.value.vst3 &&
-    (kind === 'vst3Preset' || kind === 'vst3State')
-  ) {
-    selectedNode.value.vst3 = { ...selectedNode.value.vst3, stateAssetId: asset.id }
+  if (controlsDisabled.value) return
+  busy.value = true
+  try {
+    const asset = await window.api.audioEngine.importDspAsset(kind)
+    if (!asset) return
+    assets.value = await window.api.audioEngine.getDspAssets()
+    if (selectedNode.value?.type === 'convolver' && kind === 'impulseResponse') {
+      selectedNode.value.params.impulseResponseAssetId = asset.id
+      selectedNode.value.params.impulseResponsePath = ''
+    }
+    if (
+      selectedNode.value?.type === 'vst3Plugin' &&
+      selectedNode.value.vst3 &&
+      (kind === 'vst3Preset' || kind === 'vst3State')
+    ) {
+      selectedNode.value.vst3 = { ...selectedNode.value.vst3, stateAssetId: asset.id }
+    }
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '无法导入效果链资料'
+  } finally {
+    busy.value = false
   }
 }
 
@@ -294,7 +396,8 @@ function applyCorrectionProfile(assetId: string, profile: DspCorrectionProfile):
 }
 
 async function importCorrectionProfile(): Promise<void> {
-  if (!selectedNode.value || selectedNode.value.type !== 'equalizer') return
+  if (controlsDisabled.value || !selectedNode.value || selectedNode.value.type !== 'equalizer')
+    return
   busy.value = true
   try {
     const imported = await window.api.audioEngine.importDspCorrectionProfile()
@@ -310,7 +413,8 @@ async function importCorrectionProfile(): Promise<void> {
 }
 
 async function selectCorrectionAsset(assetId: string): Promise<void> {
-  if (!selectedNode.value || selectedNode.value.type !== 'equalizer') return
+  if (controlsDisabled.value || !selectedNode.value || selectedNode.value.type !== 'equalizer')
+    return
   if (!assetId) {
     delete selectedNode.value.params.correctionAssetId
     delete selectedNode.value.params.correctionFormat
@@ -327,21 +431,36 @@ async function selectCorrectionAsset(assetId: string): Promise<void> {
 }
 
 async function exportProfile(): Promise<void> {
-  await window.api.audioEngine.exportDspProfile(selectedScene.value?.name)
+  if (!(await requestLeave())) return
+  busy.value = true
+  try {
+    await window.api.audioEngine.exportDspProfile(selectedScene.value?.name)
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '无法导出效果链配置包'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function importProfile(): Promise<void> {
-  const imported = await window.api.audioEngine.importDspProfile()
-  if (!imported) return
-  state.value = imported.state
-  state.value.scenes.forEach((scene) => scene.graph.nodes.forEach(normalizeNodeEditorParams))
-  selectedSceneId.value = imported.state.activeSceneId ?? imported.state.scenes[0]?.id ?? null
-  selectedNodeId.value = selectedScene.value?.graph.nodes[0]?.id ?? null
-  await refreshLibrary()
-  await refreshDiagnostics()
+  if (!(await requestLeave())) return
+  busy.value = true
+  try {
+    const imported = await window.api.audioEngine.importDspProfile()
+    if (!imported) return
+    acceptSavedState(imported.state, false)
+    snapshotA.value = null
+    message.value = '效果链配置包已导入。'
+    await Promise.allSettled([refreshLibrary(), refreshDiagnostics()])
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '无法导入效果链配置包'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function scanVst3(): Promise<void> {
+  if (controlsDisabled.value) return
   busy.value = true
   try {
     vst3Catalog.value = await window.api.audioEngine.scanVst3Plugins()
@@ -351,6 +470,7 @@ async function scanVst3(): Promise<void> {
 }
 
 async function recoverVst3Module(catalogId: string): Promise<void> {
+  if (controlsDisabled.value) return
   busy.value = true
   try {
     vst3Catalog.value = await window.api.audioEngine.clearVst3Quarantine(catalogId)
@@ -385,20 +505,10 @@ function setOutputDither(value: string): void {
   scene.graph.outputStage.dither = value as 'off' | 'tpdf' | 'highpassTpdf' | 'noiseShaped'
 }
 
-onMounted(async () => {
-  try {
-    state.value = await window.api.audioEngine.getDspSceneState()
-    state.value.scenes.forEach((scene) => scene.graph.nodes.forEach(normalizeNodeEditorParams))
-    selectedSceneId.value = state.value.activeSceneId ?? state.value.scenes[0]?.id ?? null
-    selectedNodeId.value = selectedScene.value?.graph.nodes[0]?.id ?? null
-    await Promise.all([refreshDiagnostics(), refreshLibrary()])
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : '无法读取 DSP Rack 状态'
-  }
-})
+onMounted(() => loadSavedState())
 onMounted(() => {
   diagnosticsPoll = window.setInterval(() => {
-    if (busy.value || document.visibilityState === 'hidden') return
+    if (controlsDisabled.value || (rackRoot.value?.ownerDocument ?? document).hidden) return
     void refreshDiagnostics().catch(() => undefined)
   }, 1000)
 })
@@ -409,18 +519,49 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="dsp-rack-page">
+  <main
+    ref="rackRoot"
+    class="dsp-rack-page"
+    :class="{ embedded: props.embedded }"
+    :aria-busy="controlsDisabled"
+  >
     <header class="rack-header">
-      <div>
-        <p class="eyebrow">DSP WORKSTATION</p>
-        <h1>DSP Rack</h1>
+      <div v-if="!props.embedded">
+        <h1>效果链</h1>
       </div>
+      <p class="draft-status" role="status">
+        {{
+          loading
+            ? '正在读取效果链…'
+            : !state
+              ? '尚未读取效果链'
+              : hasUnsavedChanges
+                ? '有未保存的更改'
+                : '更改已保存'
+        }}
+      </p>
       <div class="rack-header-actions">
+        <button
+          type="button"
+          class="text-button"
+          :disabled="controlsDisabled || (!hasUnsavedChanges && state !== null)"
+          @click="restoreChanges"
+        >
+          还原更改
+        </button>
+        <button
+          type="button"
+          class="primary-button"
+          :disabled="controlsDisabled || !hasUnsavedChanges"
+          @click="saveScenes"
+        >
+          保存更改
+        </button>
         <button
           type="button"
           class="icon-button"
           title="刷新诊断"
-          :disabled="busy"
+          :disabled="controlsDisabled"
           @click="refreshDiagnostics"
         >
           <i class="pi pi-refresh"></i>
@@ -429,7 +570,7 @@ onBeforeUnmount(() => {
           type="button"
           class="icon-button"
           title="导入配置包"
-          :disabled="busy"
+          :disabled="controlsDisabled"
           @click="importProfile"
         >
           <i class="pi pi-upload"></i>
@@ -438,7 +579,7 @@ onBeforeUnmount(() => {
           type="button"
           class="icon-button"
           title="导出配置包"
-          :disabled="busy"
+          :disabled="controlsDisabled"
           @click="exportProfile"
         >
           <i class="pi pi-download"></i>
@@ -449,17 +590,29 @@ onBeforeUnmount(() => {
     <p
       v-if="message"
       class="rack-message"
-      :class="{ error: graphApplyState === 'failed' }"
-      :role="graphApplyState === 'failed' ? 'alert' : 'status'"
+      :class="{ error: !leaveBlocked && graphApplyState === 'failed' }"
+      :role="leaveBlocked || graphApplyState === 'failed' ? 'alert' : 'status'"
     >
       {{ message }}
     </p>
 
-    <DspAuditionPanel
-      :a="snapshotA?.find((scene) => scene.id === selectedScene?.id)?.graph ?? null"
-      :b="selectedScene?.graph ?? null"
-    />
-    <fieldset class="rack-layout" :disabled="busy" :inert="busy" :aria-busy="busy">
+    <details
+      class="rack-audition"
+      @toggle="auditionExpanded = ($event.target as HTMLDetailsElement).open"
+    >
+      <summary>等响度 A / B 试听<span>比较快照与当前草稿</span></summary>
+      <DspAuditionPanel
+        v-if="auditionExpanded"
+        :a="snapshotA?.find((scene) => scene.id === selectedScene?.id)?.graph ?? null"
+        :b="selectedScene?.graph ?? null"
+      />
+    </details>
+    <fieldset
+      class="rack-layout"
+      :disabled="controlsDisabled"
+      :inert="controlsDisabled"
+      :aria-busy="controlsDisabled"
+    >
       <DspScenePane
         :scenes="scenes"
         :selected-scene-id="selectedSceneId"
@@ -474,7 +627,7 @@ onBeforeUnmount(() => {
       <DspGraphCanvas
         :scene="selectedScene"
         :selected-node-id="selectedNodeId"
-        :busy="busy"
+        :busy="controlsDisabled"
         :is-pinned="isPinned"
         :snapshot-a="snapshotA !== null"
         :state="state"
@@ -498,7 +651,7 @@ onBeforeUnmount(() => {
         :node="selectedNode"
         :status="status"
         :selected-status="selectedStatus"
-        :busy="busy"
+        :busy="controlsDisabled"
         :assets="assets"
         :vst3-catalog="vst3Catalog"
         :vst3-helpers-ready="vst3HelpersReady"
@@ -525,10 +678,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dsp-rack-page {
+  box-sizing: border-box;
+  container: dsp-rack / inline-size;
   height: 100vh;
   min-height: 0;
   min-width: 0;
-  padding: calc(28px + 28px) 32px 24px;
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px) var(--te-page-bottom, 32px);
   background-color: var(--te-app-bg);
   background-image: var(--te-app-bg-image);
   background-position: center;
@@ -541,6 +696,12 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   -webkit-font-smoothing: antialiased;
+}
+.dsp-rack-page.embedded {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
 }
 :deep(.rack-header),
 :deep(.pane-heading),
@@ -556,22 +717,25 @@ onBeforeUnmount(() => {
 :deep(.rack-header) {
   position: relative;
   justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
   max-width: 1540px;
-  margin: 0 auto 18px;
+  margin: 0 auto 12px;
 }
 :deep(.rack-header h1) {
-  margin: 4px 0 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
+  margin: 0;
+  font-size: var(--te-type-page-title);
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--te-settings-text, #1a1a1a);
 }
-:deep(.eyebrow) {
+.draft-status {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+}
+.rack-header-actions {
+  margin-left: auto;
 }
 :deep(.rack-header-actions) {
   gap: 8px;
@@ -580,12 +744,13 @@ onBeforeUnmount(() => {
 :deep(.rack-message) {
   max-width: 1540px;
   margin: 0 auto 14px;
-  padding: 10px 14px;
-  background: var(--te-success-soft-bg, #f0fdf4);
-  border: 1px solid color-mix(in srgb, var(--te-success-soft-fg, #16a34a) 28%, transparent);
-  border-radius: 12px;
-  color: var(--te-success-soft-fg, #16a34a);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  padding: 10px 12px;
+  background: var(--te-settings-search-bg, #eef0f3);
+  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
+  border-radius: 8px;
+  color: var(--te-settings-text, #1a1a1a);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
 }
 :deep(.rack-message.error) {
   background: var(--te-danger-soft-bg, #fef2f2);
@@ -596,11 +761,11 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 0;
   max-width: 1540px;
-  min-height: 640px;
-  margin: 0 auto;
+  min-height: 0;
+  margin: 16px auto 0;
   display: grid;
-  grid-template-columns: 230px minmax(420px, 1fr) 320px;
-  gap: 14px;
+  grid-template-columns: 176px minmax(280px, 1fr) 280px;
+  gap: 24px;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -609,16 +774,50 @@ onBeforeUnmount(() => {
 :deep(.scene-pane),
 :deep(.graph-pane),
 :deep(.detail-pane) {
-  border: 1px solid var(--te-settings-panel-border, transparent);
-  border-radius: var(--te-equalizer-panel-radius, 20px);
-  background: var(--te-settings-control-bg, var(--te-card-bg, #ffffff));
-  box-shadow: var(--te-settings-shadow, 0 2px 16px rgba(15, 23, 42, 0.04));
-  padding: 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
   min-width: 0;
 }
-:deep(.scene-pane),
-:deep(.detail-pane) {
-  background: var(--te-settings-control-bg, #ffffff);
+.rack-audition {
+  max-width: 1540px;
+  margin: 0 auto;
+  border-bottom: 1px solid var(--te-control-border);
+}
+.rack-audition > summary {
+  min-height: 36px;
+  padding: 8px 0;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-body);
+  cursor: pointer;
+}
+.rack-audition > summary span {
+  margin-left: 12px;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+}
+.rack-audition > summary:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
+.rack-audition :deep(.audition-panel) {
+  border-bottom: 0;
+  padding-top: 12px;
+}
+:deep(.audition-panel) {
+  max-width: 1540px;
+  margin: 0 auto;
+  padding: 0 0 20px;
+  border: 0;
+  border-bottom: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
+  border-radius: 0;
+  background: transparent;
+  color: var(--te-settings-text, #1a1a1a);
+}
+:deep(.audition-panel p) {
+  color: var(--te-settings-text-muted, #8a8f98);
 }
 :deep(.pane-heading) {
   justify-content: space-between;
@@ -632,11 +831,11 @@ onBeforeUnmount(() => {
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(h2) {
-  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
+  font-size: var(--te-type-body);
   font-weight: 600;
 }
 :deep(h3) {
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 500;
   color: var(--te-settings-text-muted, #8a8f98);
 }
@@ -650,7 +849,7 @@ onBeforeUnmount(() => {
   color: var(--te-settings-nav-text, #5c6370);
   background: transparent;
   border: 0;
-  border-radius: 12px;
+  border-radius: 8px;
   cursor: pointer;
   text-align: left;
   transition:
@@ -663,9 +862,9 @@ onBeforeUnmount(() => {
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(.scene-row.selected) {
-  background: var(--te-settings-nav-active, #ffffff);
+  background: var(--te-settings-nav-active);
   color: var(--te-settings-text, #1a1a1a);
-  box-shadow: var(--te-settings-shadow-soft, 0 1px 4px rgba(15, 23, 42, 0.04));
+  box-shadow: none;
 }
 :deep(.scene-row.active strong),
 :deep(.scene-row.active i) {
@@ -685,7 +884,7 @@ onBeforeUnmount(() => {
 }
 :deep(.factory-template-picker) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 34px;
   gap: 6px;
   margin-top: 10px;
 }
@@ -703,7 +902,7 @@ onBeforeUnmount(() => {
 }
 :deep(.scene-toolbar label),
 :deep(.switch-field) {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
   display: inline-flex;
   align-items: center;
@@ -718,19 +917,32 @@ onBeforeUnmount(() => {
   font: inherit;
   color: var(--te-settings-text, #1a1a1a);
   border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
-  border-radius: 12px;
+  border-radius: var(--te-control-radius-sm, 6px);
   background: var(--te-settings-control-bg, #ffffff);
   padding: 8px 10px;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
 }
+:deep(input[type='checkbox']) {
+  flex: 0 0 auto;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 4px;
+}
+:deep(select) {
+  min-width: 0;
+  max-width: 100%;
+}
 :deep(input:focus),
 :deep(select:focus),
 :deep(textarea:focus) {
-  outline: none;
-  border-color: var(--te-primary-500);
-  box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.14);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  border-color: var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 :deep(button) {
   font: inherit;
@@ -744,7 +956,7 @@ onBeforeUnmount(() => {
   color: var(--te-settings-text, #1a1a1a);
   cursor: pointer;
   min-height: 34px;
-  border-radius: 999px;
+  border-radius: 8px;
   transition:
     background 0.16s ease,
     color 0.16s ease,
@@ -753,8 +965,8 @@ onBeforeUnmount(() => {
 :deep(.icon-button:hover),
 :deep(.text-button:hover),
 :deep(.icon-text-button:hover) {
-  background: rgba(15, 23, 42, 0.08);
-  color: var(--te-primary-500);
+  background: var(--te-control-bg-hover);
+  color: var(--te-settings-text, #1a1a1a);
 }
 :deep(.icon-button) {
   width: 34px;
@@ -777,12 +989,12 @@ onBeforeUnmount(() => {
   margin-right: 6px;
 }
 :deep(.primary-button) {
-  background: rgba(var(--te-primary-rgb), 0.12);
-  color: var(--te-primary-500);
+  background: var(--te-settings-nav-active);
+  color: var(--te-settings-text, #1a1a1a);
   font-weight: 600;
 }
 :deep(.primary-button:hover) {
-  background: rgba(var(--te-primary-rgb), 0.18);
+  background: var(--te-control-bg-hover);
 }
 :deep(.icon-text-button.selected) {
   background: rgba(var(--te-primary-rgb), 0.12);
@@ -804,10 +1016,12 @@ onBeforeUnmount(() => {
   background: var(--te-warning-soft-bg, #fff7ed);
   color: var(--te-warning-soft-fg, #d97706);
   border-radius: 12px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.graph-heading) {
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin: 15px 0 10px;
 }
 :deep(.graph-heading div:first-child) {
@@ -817,7 +1031,7 @@ onBeforeUnmount(() => {
 }
 :deep(.graph-heading span) {
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.node-add) {
   gap: 6px;
@@ -827,7 +1041,7 @@ onBeforeUnmount(() => {
 }
 :deep(.output-stage) {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 0 0 12px;
   padding: 12px;
@@ -840,13 +1054,17 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 5px;
   min-width: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
 }
 :deep(.output-stage .switch-field) {
   display: inline-flex;
-  align-items: end;
-  padding-bottom: 7px;
+  align-items: center;
+  grid-column: 1 / -1;
+  min-height: 28px;
+}
+:deep(.output-stage select) {
+  width: 100%;
 }
 :deep(.node-list) {
   display: grid;
@@ -857,22 +1075,25 @@ onBeforeUnmount(() => {
   grid-template-columns: 18px 18px minmax(0, 1fr) 28px 28px;
   align-items: center;
   gap: 8px;
-  min-height: 54px;
+  min-height: 48px;
   padding: 8px 10px;
   border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.08));
-  border-radius: 14px;
-  background: var(--te-card-bg, #ffffff);
-  box-shadow: var(--te-settings-shadow-soft, 0 1px 4px rgba(15, 23, 42, 0.04));
+  border-radius: 8px;
+  background: var(--te-settings-control-bg, #ffffff);
+  box-shadow: none;
   cursor: pointer;
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
     box-shadow 0.15s ease;
 }
-:deep(.graph-node:hover),
+:deep(.graph-node:hover) {
+  border-color: var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  background: var(--te-control-bg-hover);
+}
 :deep(.graph-node.selected) {
-  border-color: color-mix(in srgb, var(--te-primary-500) 35%, transparent);
-  background: rgba(var(--te-primary-rgb), 0.04);
+  border-color: var(--te-settings-text-muted, #8a8f98);
+  background: var(--te-settings-nav-active);
 }
 :deep(.graph-node.bypassed) {
   opacity: 0.58;
@@ -885,11 +1106,11 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 :deep(.graph-node strong) {
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text, #1a1a1a);
 }
 :deep(.graph-node small) {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
   margin-top: 2px;
 }
@@ -900,7 +1121,7 @@ onBeforeUnmount(() => {
 :deep(.v1-note) {
   margin: 13px 0 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.55;
 }
 :deep(.node-controls) {
@@ -935,13 +1156,13 @@ onBeforeUnmount(() => {
   min-width: 42px;
   padding: 5px 4px;
   text-align: center;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.matrix-axis),
 :deep(.matrix-corner) {
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   text-align: center;
 }
 :deep(.matrix-corner) {
@@ -959,8 +1180,8 @@ onBeforeUnmount(() => {
 }
 :deep(.channel-strip-row strong) {
   align-self: center;
-  color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  color: var(--te-settings-text, #1a1a1a);
+  font-size: var(--te-type-caption);
 }
 :deep(.channel-strip-row label),
 :deep(.crossover-grid label) {
@@ -968,7 +1189,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.channel-strip-row .switch-field) {
   padding-bottom: 7px;
@@ -995,7 +1216,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.band-grid .switch-field) {
   display: inline-flex;
@@ -1034,11 +1255,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 :deep(.vst3-catalog-entry strong) {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.vst3-catalog-entry small) {
   margin-top: 2px;
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
+  font-size: var(--te-type-caption);
   opacity: 0.85;
 }
 :deep(.vst3-parameter-field) {
@@ -1048,7 +1269,7 @@ onBeforeUnmount(() => {
   align-items: center;
   min-width: 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.vst3-parameter-field span) {
   overflow: hidden;
@@ -1072,7 +1293,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
   padding-top: 12px;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.raw-config pre) {
   max-height: 150px;
@@ -1092,7 +1313,7 @@ onBeforeUnmount(() => {
 :deep(.rule-editor > label) {
   display: grid;
   gap: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
   margin-bottom: 10px;
 }
@@ -1106,7 +1327,7 @@ onBeforeUnmount(() => {
   height: 155px;
   resize: vertical;
   font-family: Consolas, monospace;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.45;
 }
 :deep(.apply-params) {
@@ -1126,13 +1347,13 @@ onBeforeUnmount(() => {
 }
 :deep(.rate-fields) {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 :deep(.rate-fields label) {
   display: grid;
   gap: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted, #8a8f98);
 }
 :deep(.diagnostic-panel) {
@@ -1149,7 +1370,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 :deep(.diagnostic-panel dt) {
   color: var(--te-settings-text-muted, #8a8f98);
@@ -1173,34 +1394,29 @@ onBeforeUnmount(() => {
 :deep(.empty-detail) {
   padding-top: 36px;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   text-align: center;
 }
 :deep(.rack-footer) {
   max-width: 1540px;
   gap: 18px;
+  flex-wrap: wrap;
   margin: 12px auto 0;
   color: var(--te-settings-text-muted, #8a8f98);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
-@media (max-width: 1080px) {
-  .dsp-rack-page {
-    padding: 20px;
-  }
+@container dsp-rack (max-width: 1000px) {
   :deep(.rack-layout) {
-    grid-template-columns: 200px minmax(380px, 1fr);
+    grid-template-columns: 176px minmax(0, 1fr);
   }
   :deep(.detail-pane) {
-    grid-column: 1 / -1;
+    grid-column: 2;
   }
   :deep(.detail-pane textarea) {
     max-height: 140px;
   }
 }
-@media (max-width: 720px) {
-  .dsp-rack-page {
-    padding: 16px;
-  }
+@container dsp-rack (max-width: 680px) {
   :deep(.rack-layout) {
     display: flex;
     flex-direction: column;
@@ -1211,7 +1427,7 @@ onBeforeUnmount(() => {
     width: 100%;
   }
   :deep(.graph-pane) {
-    padding: 14px;
+    padding: 0;
   }
   :deep(.rack-header) {
     align-items: flex-start;
@@ -1235,28 +1451,11 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 }
-:global(html[data-te-equalizer-panel] .dsp-rack-page .scene-pane),
-:global(html[data-te-equalizer-panel] .dsp-rack-page .graph-pane),
-:global(html[data-te-equalizer-panel] .dsp-rack-page .detail-pane),
 :global(html[data-te-equalizer-panel] .dsp-rack-page .output-stage),
 :global(html[data-te-equalizer-panel] .dsp-rack-page .graph-node) {
   border-color: var(--te-equalizer-panel-border);
   background: var(--te-equalizer-panel-bg);
   border-radius: var(--te-equalizer-panel-radius);
-}
-
-:global(html[data-te-equalizer-panel='tinted'] .dsp-rack-page .scene-pane),
-:global(html[data-te-equalizer-panel='tinted'] .dsp-rack-page .graph-pane),
-:global(html[data-te-equalizer-panel='tinted'] .dsp-rack-page .detail-pane) {
-  background: color-mix(in srgb, var(--te-equalizer-panel-bg) 84%, var(--te-primary-500));
-}
-
-:global(html[data-te-equalizer-panel='glass'] .dsp-rack-page .scene-pane),
-:global(html[data-te-equalizer-panel='glass'] .dsp-rack-page .graph-pane),
-:global(html[data-te-equalizer-panel='glass'] .dsp-rack-page .detail-pane) {
-  background: color-mix(in srgb, var(--te-equalizer-panel-bg) 68%, transparent);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
 :global(html[data-te-equalizer-button] .dsp-rack-page .icon-button),
@@ -1313,52 +1512,5 @@ onBeforeUnmount(() => {
 ) {
   border: 0;
   background: var(--te-primary-500);
-}
-
-/* Responsive fixes selected from PR #115; desktop styling stays in the rules above. */
-@media (max-width: 1080px) {
-  :deep(.rack-layout) {
-    grid-template-columns: 200px minmax(380px, 1fr);
-  }
-  :deep(.detail-pane) {
-    grid-column: 1 / -1;
-  }
-  :deep(.detail-pane textarea) {
-    max-height: 140px;
-  }
-}
-@media (max-width: 720px) {
-  :deep(.rack-layout) {
-    display: flex;
-    flex-direction: column;
-  }
-  :deep(.scene-pane),
-  :deep(.graph-pane),
-  :deep(.detail-pane) {
-    width: 100%;
-  }
-  :deep(.graph-pane) {
-    padding: 14px;
-  }
-  :deep(.rack-header) {
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  :deep(.scene-toolbar) {
-    align-items: stretch;
-  }
-  :deep(.rack-footer) {
-    flex-wrap: wrap;
-  }
-  :deep(.output-stage) {
-    grid-template-columns: 1fr 1fr;
-  }
-  :deep(.band-grid) {
-    grid-template-columns: 1fr 1fr;
-  }
-  :deep(.vst3-parameter-grid) {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

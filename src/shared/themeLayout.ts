@@ -236,11 +236,84 @@ function shellGridToCssVariables(grid: ThemeShellGrid): {
   rows: string
   areas: string
 } {
+  const overlayGrid = withoutNavigationTracks(grid)
   return {
-    columns: grid.columns.map((track) => SHELL_TRACK_CSS[track]).join(' '),
-    rows: grid.rows.map((track) => SHELL_TRACK_CSS[track]).join(' '),
-    areas: grid.areas.map((row) => `'${row.join(' ')}'`).join(' ')
+    columns: overlayGrid.columns.map((track) => SHELL_TRACK_CSS[track]).join(' '),
+    rows: overlayGrid.rows.map((track) => SHELL_TRACK_CSS[track]).join(' '),
+    areas: overlayGrid.areas.map((row) => `'${row.join(' ')}'`).join(' ')
   }
+}
+
+/** Retain the saved theme grid contract while rendering navigation as an overlay.
+ * A navigation track can disappear when every other slot in it continues on a
+ * neighbouring track. Shared tracks stay in place to preserve title/player
+ * placement, and content can span their released navigation cells. */
+function withoutNavigationTracks(grid: ThemeShellGrid): ThemeShellGrid {
+  let columnIndexes = grid.columns.map((_, index) => index)
+  for (const column of [...columnIndexes]) {
+    const navigationTrack = grid.areas.some((row) => row[column] === 'navigation')
+    const retainsSlots = grid.areas.every(
+      (row) =>
+        row[column] === 'navigation' ||
+        row[column] === '.' ||
+        columnIndexes.some((index) => index !== column && row[index] === row[column])
+    )
+    if (navigationTrack && retainsSlots) {
+      columnIndexes = columnIndexes.filter((index) => index !== column)
+    }
+  }
+  const areas = grid.areas.map((row) => columnIndexes.map((column) => row[column]))
+  let rowIndexes = grid.rows.map((_, index) => index)
+  for (const row of [...rowIndexes]) {
+    const retainsSlots = areas[row].every(
+      (slot, column) =>
+        slot === 'navigation' ||
+        slot === '.' ||
+        rowIndexes.some((index) => index !== row && areas[index][column] === slot)
+    )
+    if (areas[row].includes('navigation') && retainsSlots) {
+      rowIndexes = rowIndexes.filter((index) => index !== row)
+    }
+  }
+  return {
+    columns: columnIndexes.map((column) => grid.columns[column]),
+    rows: rowIndexes.map((row) => grid.rows[row]),
+    areas: releaseNavigationCells(rowIndexes.map((row) => areas[row]))
+  }
+}
+
+function releaseNavigationCells(areas: ThemeShellGridArea[][]): ThemeShellGridArea[][] {
+  const released = areas.map((row) => row.map((slot) => (slot === 'navigation' ? '.' : slot)))
+  const contentCells = areas.flatMap((row, y) =>
+    row.flatMap((slot, x) => (slot === 'content' ? [{ x, y }] : []))
+  )
+  let left = Math.min(...contentCells.map(({ x }) => x))
+  let right = Math.max(...contentCells.map(({ x }) => x))
+  const top = Math.min(...contentCells.map(({ y }) => y))
+  const bottom = Math.max(...contentCells.map(({ y }) => y))
+  // Reclaim horizontal navigation cells across the entire content rectangle.
+  // This also fills intentional empty gaps, without ever overwriting another
+  // shell slot or producing an invalid L-shaped CSS grid area.
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = 0; x < areas[y].length; x += 1) {
+      if (areas[y][x] !== 'navigation') continue
+      const nextLeft = Math.min(left, x)
+      const nextRight = Math.max(right, x)
+      const available = released
+        .slice(top, bottom + 1)
+        .every((row) =>
+          row.slice(nextLeft, nextRight + 1).every((slot) => slot === 'content' || slot === '.')
+        )
+      if (available) {
+        left = nextLeft
+        right = nextRight
+      }
+    }
+  }
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) released[y][x] = 'content'
+  }
+  return released
 }
 
 function slotDisplay(

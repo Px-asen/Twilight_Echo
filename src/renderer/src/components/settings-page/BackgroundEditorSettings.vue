@@ -76,11 +76,11 @@ const image = computed(() =>
 }
 .appearance-entry-action {
   margin-left: auto;
-  font-size: 13px;
+  font-size: var(--te-type-caption);
   white-space: nowrap;
 }
 .appearance-entry:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 </style>

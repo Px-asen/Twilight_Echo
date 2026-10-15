@@ -50,7 +50,14 @@ const recent = computed(() =>
     localTracks: localTracks.value
   }).slice(0, 6)
 )
-const hero = computed(() => player.currentTrack.value ?? recent.value[0] ?? tracks.value[0] ?? null)
+const localCollection = computed(() =>
+  localTracks.value.filter((track) => getTrackSource(track) === 'local')
+)
+const localAdded = computed(() => localCollection.value.slice(-6).reverse())
+const hero = computed(
+  () =>
+    player.currentTrack.value ?? recent.value[0] ?? localAdded.value[0] ?? tracks.value[0] ?? null
+)
 const actionError = ref('')
 const pendingPlaylist = ref<string | null>(null)
 let actionRevision = 0
@@ -118,7 +125,12 @@ async function play(track: Track, queue: Track[]): Promise<void> {
 function playHero(): void {
   const track = hero.value
   if (!track) return
-  const queue = recent.value.some((item) => item.id === track.id) ? recent.value : tracks.value
+  const queue =
+    getTrackSource(track) === 'local'
+      ? localAdded.value
+      : recent.value.some((item) => item.id === track.id)
+        ? recent.value
+        : tracks.value
   void play(track, queue.some((item) => item.id === track.id) ? queue : [track])
 }
 
@@ -151,6 +163,8 @@ async function playPlaylist(playlist: MediaProviderPlaylistSummary): Promise<voi
     :logged-in="loggedIn"
     :error="actionError || error"
     :tracks="tracks"
+    :local-tracks="localAdded"
+    :local-count="localCollection.length"
     :playlists="playlists"
     :section-title="sectionTitle"
     :playlist-title="playlistTitle"
@@ -170,5 +184,6 @@ async function playPlaylist(playlist: MediaProviderPlaylistSummary): Promise<voi
     @open-radio="emit('open-radio')"
     @open-recent="emit('select-view', 'recent', null)"
     @open-library-settings="emit('open-library-settings')"
+    @open-local="emit('select-view', 'allSongs', null)"
   />
 </template>

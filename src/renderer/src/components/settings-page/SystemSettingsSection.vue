@@ -25,12 +25,11 @@ defineProps<{
 }>()
 </script>
 <template>
-  <section id="system" class="glass-card preview-section">
+  <section id="system" class="settings-section preview-section">
     <div class="section-title-row">
       <i class="pi pi-cog" aria-hidden="true" />
-      <h2>系统与关于</h2>
+      <h2>系统</h2>
     </div>
-    <p class="settings-section-description">管理应用运行、备份恢复与版本更新。</p>
     <div class="section-block">
       <h3>运行与性能</h3>
       <div class="setting-list">

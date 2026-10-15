@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const { assertSettingsStyleLoading } = require('./verify-settings-style-loading.cjs')
 
 // fonts: MiSans SC subsets + Latin UI fonts
 // cssChunk: the index chunk carries all six preset layout sheets (~11 kB each
@@ -39,6 +40,7 @@ function assertRendererBudgets(rendererDir) {
     manifestValue && typeof manifestValue === 'object' && Object.keys(manifestValue).length > 0,
     'Vite manifest is empty'
   )
+  assertSettingsStyleLoading(rendererDir, manifestValue)
   const jsAssets = assets.filter((file) => /\.js$/i.test(file))
   const cssAssets = assets.filter((file) => /\.css$/i.test(file))
   assert.ok(jsAssets.length > 0, 'Renderer output has no JavaScript assets')

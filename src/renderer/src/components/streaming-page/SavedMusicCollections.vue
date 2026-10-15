@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import CoverImg from '@renderer/components/CoverImg.vue'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
 import { useMediaProviders } from '@renderer/providers'
 import { useProviderStore } from '@renderer/stores/useProviderStore'
 import type {
@@ -8,14 +9,25 @@ import type {
   MediaProviderArtistSummary
 } from '@renderer/providers/mediaProvider'
 
-const props = defineProps<{ userId: number | string; providerId: string }>()
+type CollectionType = 'albums' | 'artists'
+const props = withDefaults(
+  defineProps<{
+    userId: number | string
+    providerId: string
+    collectionType?: CollectionType
+    hideHeader?: boolean
+    active?: boolean
+  }>(),
+  { hideHeader: false, active: true }
+)
 const emit = defineEmits<{
   openAlbum: [album: MediaProviderAlbumSummary]
   openArtist: [artist: MediaProviderArtistSummary]
+  'update:collectionType': [type: CollectionType]
 }>()
 const providers = useMediaProviders()
 const providerStore = useProviderStore()
-const tab = ref<'albums' | 'artists'>('albums')
+const localTab = ref<CollectionType>('albums')
 const supportedTabs = computed(() => {
   const methods = providerStore.getProvider(props.providerId)?.supportedMethods ?? []
   return {
@@ -23,60 +35,112 @@ const supportedTabs = computed(() => {
     artists: methods.includes('fetchSavedArtists')
   }
 })
-watch(supportedTabs, (supported) => {
-  if (!supported[tab.value]) tab.value = supported.albums ? 'albums' : 'artists'
+const tab = computed<CollectionType>({
+  get: () => {
+    const preferred = props.collectionType ?? localTab.value
+    return supportedTabs.value[preferred]
+      ? preferred
+      : supportedTabs.value.albums
+        ? 'albums'
+        : 'artists'
+  },
+  set: (type) => {
+    localTab.value = type
+    emit('update:collectionType', type)
+  }
+})
+type CollectionState = {
+  loading: boolean
+  error: string
+  loaded: boolean
+  limit: number
+  request: number
+}
+const freshState = (): CollectionState => ({
+  loading: false,
+  error: '',
+  loaded: false,
+  limit: 40,
+  request: 0
+})
+const states = reactive<Record<CollectionType, CollectionState>>({
+  albums: freshState(),
+  artists: freshState()
 })
 const albums = shallowRef<MediaProviderAlbumSummary[]>([])
 const artists = shallowRef<MediaProviderArtistSummary[]>([])
-const loading = ref(false)
-const error = ref('')
-const limit = ref(40)
-let request = 0
+const currentState = computed(() => states[tab.value])
+const loading = computed(() => currentState.value.loading)
+const error = computed(() => currentState.value.error)
+const limit = computed({
+  get: () => currentState.value.limit,
+  set: (value: number) => {
+    currentState.value.limit = value
+  }
+})
 const visibleAlbums = computed(() => albums.value.slice(0, limit.value))
 const visibleArtists = computed(() => artists.value.slice(0, limit.value))
 const count = computed(() => (tab.value === 'albums' ? albums.value.length : artists.value.length))
+const { setGridElement, gridStyle } = useBoundedGrid(() => Math.min(count.value, limit.value))
+let context = 0
+let loadedScope = ''
 
-async function load(): Promise<void> {
-  const current = ++request
-  loading.value = true
-  error.value = ''
-  limit.value = 40
-  albums.value = []
-  artists.value = []
+async function load(force = false): Promise<void> {
+  if (!props.active || !supportedTabs.value[tab.value]) return
+  const type = tab.value
+  const state = states[type]
+  if (state.loading || (state.loaded && !force)) return
+  const token = context
+  const request = ++state.request
+  const providerId = props.providerId
+  state.loading = true
+  state.error = ''
   try {
-    const provider = providers.get(props.providerId)
-    if (tab.value === 'albums') {
+    const provider = providers.get(providerId)
+    if (type === 'albums') {
       if (!provider?.fetchSavedAlbums) throw new Error('这个平台未提供收藏专辑功能')
       const result = await provider.fetchSavedAlbums()
-      if (current === request) albums.value = result
+      if (token === context && request === state.request) albums.value = result
     } else {
       if (!provider?.fetchSavedArtists) throw new Error('这个平台未提供收藏歌手功能')
       const result = await provider.fetchSavedArtists()
-      if (current === request) artists.value = result
+      if (token === context && request === state.request) artists.value = result
     }
   } catch (cause) {
-    if (current === request) error.value = cause instanceof Error ? cause.message : String(cause)
+    if (token === context && request === state.request)
+      state.error = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    if (current === request) loading.value = false
+    if (token === context && request === state.request) {
+      state.loading = false
+      state.loaded = true
+    }
   }
 }
 watch(
-  [() => props.userId, () => props.providerId, tab],
-  () => {
-    if (!supportedTabs.value[tab.value])
-      tab.value = supportedTabs.value.albums ? 'albums' : 'artists'
-    void load()
+  [() => JSON.stringify([props.providerId, props.userId]), tab, () => props.active, supportedTabs],
+  ([scope]) => {
+    if (scope !== loadedScope) {
+      loadedScope = scope
+      context++
+      albums.value = []
+      artists.value = []
+      states.albums = freshState()
+      states.artists = freshState()
+    }
+    if (props.active) void load()
   },
   { immediate: true }
 )
 onBeforeUnmount(() => {
-  request++
+  context++
 })
+const refresh = (): Promise<void> => load(true)
+defineExpose({ refresh, loading, count })
 </script>
 
 <template>
-  <section class="saved-music">
-    <header>
+  <section class="saved-music" :class="{ embedded: hideHeader }" :aria-busy="loading">
+    <header v-if="!hideHeader">
       <h2>我收藏的</h2>
       <div role="group" aria-label="收藏类型">
         <button
@@ -96,16 +160,20 @@ onBeforeUnmount(() => {
           歌手
         </button>
       </div>
-      <button type="button" :disabled="loading" @click="load">刷新</button>
+      <button type="button" :disabled="loading" @click="refresh">刷新</button>
     </header>
-    <p v-if="loading" role="status">正在加载收藏…</p>
+    <p v-if="!supportedTabs.albums && !supportedTabs.artists" role="status">
+      这个平台未提供收藏专辑或歌手功能
+    </p>
+    <p v-else-if="loading" role="status">正在加载收藏…</p>
     <p v-else-if="error" role="alert">{{ error }}</p>
     <p v-else-if="!count">暂无收藏{{ tab === 'albums' ? '专辑' : '歌手' }}</p>
-    <div v-else class="saved-grid">
+    <div v-else :ref="setGridElement" class="saved-grid" :style="gridStyle">
       <template v-if="tab === 'albums'">
         <button
           v-for="album in visibleAlbums"
           :key="album.id"
+          :title="album.name"
           type="button"
           @click="emit('openAlbum', album)"
         >
@@ -117,6 +185,7 @@ onBeforeUnmount(() => {
         <button
           v-for="artist in visibleArtists"
           :key="artist.id"
+          :title="artist.name"
           type="button"
           @click="emit('openArtist', artist)"
         >
@@ -133,50 +202,93 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .saved-music {
-  margin: 24px 0;
+  margin: 32px 0 0;
+  min-width: 0;
+}
+.saved-music.embedded {
+  margin: 0;
 }
 header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 24px;
   margin-bottom: 16px;
 }
 header h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
+}
+header [role='group'] {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+p {
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+  color: var(--te-neutral-600, var(--te-neutral-500));
 }
 button {
-  color: inherit;
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: var(--te-type-caption);
   border: 1px solid var(--te-card-border);
-  border-radius: 12px;
-  background: var(--te-card-bg);
-  padding: 10px 14px;
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-subtle-bg);
+  min-height: max(var(--te-control-height-md), 2.5em);
+  padding: 6px 12px;
   cursor: pointer;
+}
+button:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
 }
 button[aria-pressed='true'] {
   color: var(--te-primary-500);
   background: var(--te-active-bg);
 }
+button:hover:not(:disabled) {
+  background: var(--te-hover-bg);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .saved-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 16px;
+  gap: 20px;
+  justify-content: start;
   margin-bottom: 16px;
 }
 .saved-grid button {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  text-align: left;
+  align-items: stretch;
+  gap: 12px;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: transparent;
+  text-align: left;
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
 }
 .saved-grid :deep(img) {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-subtle-bg);
 }
 .saved-grid span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
 }
 </style>

@@ -82,18 +82,23 @@ async function act(action: 'play' | 'reveal' | 'add') {
   gap: 8px;
   flex-wrap: wrap;
 }
+.download-results small {
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+}
 button {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   cursor: pointer;
 }
 button,
 select {
   border: 1px solid var(--te-card-border);
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm);
   background: var(--te-card-bg);
   color: var(--te-settings-text);
   padding: 7px 12px;
+  min-height: max(var(--te-control-height-md), 2.5em);
 }
 button:hover {
   background: var(--te-hover-bg);
@@ -105,7 +110,7 @@ button:disabled {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

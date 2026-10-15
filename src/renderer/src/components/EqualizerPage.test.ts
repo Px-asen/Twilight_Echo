@@ -101,6 +101,209 @@ test('history actions flush pending gestures before switching the applied snapsh
   await result
   assert.deepEqual(events, ['finish', 'B'])
 })
+
+test('locked mode navigation has no side effects and resumes after queued commits when unlocked', async () => {
+  const declaration = page.match(/async function switchTab\([\s\S]*?\n\}/)?.[0]
+  assert.ok(declaration)
+  const events: string[] = []
+  const context = {
+    props: { navigationLocked: true },
+    activeTab: { value: 'parametric' },
+    presetMenuOpen: { value: true },
+    filterMenuOpen: { value: true },
+    commitChain: Promise.resolve(),
+    finishParametricEdits: () => events.push('finish'),
+    runEqApply: async (action: () => Promise<void>) => {
+      events.push('apply')
+      await action()
+    },
+    updateAudioProcessing: async (patch: { eqMode: string }) => {
+      events.push(patch.eqMode)
+    }
+  }
+  const switchTab = runInNewContext(`${stripTypeScriptTypes(declaration)}\nswitchTab`, context)
+  await switchTab('graphic')
+  assert.deepEqual(events, [], 'locked navigation must not finish or submit an edit')
+  assert.equal(context.activeTab.value, 'parametric')
+  assert.equal(context.presetMenuOpen.value, true)
+  assert.equal(context.filterMenuOpen.value, true)
+
+  let release!: () => void
+  context.commitChain = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  context.props.navigationLocked = false
+  let completed = false
+  const switching = switchTab('graphic').then(() => {
+    completed = true
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(events, ['finish'])
+  assert.equal(completed, false, 'the previous gesture must finish committing first')
+  assert.equal(context.activeTab.value, 'parametric')
+  assert.equal(context.presetMenuOpen.value, true)
+  assert.equal(context.filterMenuOpen.value, true)
+  release()
+  await switching
+  assert.deepEqual(events, ['finish', 'apply', 'graphic'])
+  assert.equal(context.activeTab.value, 'graphic')
+  assert.equal(context.presetMenuOpen.value, false)
+  assert.equal(context.filterMenuOpen.value, false)
+})
+
+function createLeaveHarness(feedback = 'idle'): {
+  context: {
+    historyLoading: { value: boolean }
+    historyBusy: { value: boolean }
+    clipboardBusy: { value: boolean }
+    opraApplyingEqId: { value: string }
+    opraSaving: { value: boolean }
+    opraSearching: { value: boolean }
+    opraRefreshing: { value: boolean }
+    eqApplyFeedback: { value: string }
+    commitChain: Promise<void>
+    finishParametricEdits: () => void
+    commitStagedBands: () => Promise<void>
+  }
+  events: string[]
+  requestLeave: () => Promise<boolean>
+} {
+  const declaration = page.match(/async function requestLeave\([\s\S]*?\n\}/)?.[0]
+  assert.ok(declaration)
+  const events: string[] = []
+  const context = {
+    historyLoading: { value: false },
+    historyBusy: { value: false },
+    clipboardBusy: { value: false },
+    opraApplyingEqId: { value: '' },
+    opraSaving: { value: false },
+    opraSearching: { value: false },
+    opraRefreshing: { value: false },
+    eqApplyFeedback: { value: feedback },
+    commitChain: Promise.resolve(),
+    finishParametricEdits: () => {
+      events.push('finish')
+    },
+    commitStagedBands: async () => {
+      events.push('commit')
+    }
+  }
+  const requestLeave = runInNewContext(
+    `${stripTypeScriptTypes(declaration)}\nrequestLeave`,
+    context
+  )
+  return { context, events, requestLeave }
+}
+
+test('leaving the equalizer stays pending until a finished gesture is committed', async () => {
+  const { context, events, requestLeave } = createLeaveHarness('applying')
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  context.finishParametricEdits = () => {
+    events.push('finish')
+    context.commitChain = pending
+  }
+  let decision: boolean | undefined
+  const leaving = requestLeave().then((allowed) => {
+    decision = allowed
+    return allowed
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(events, ['finish'])
+  assert.equal(decision, undefined, 'navigation must wait for the newly queued commit')
+  context.eqApplyFeedback.value = 'applied'
+  release()
+  assert.equal(await leaving, true)
+})
+
+test('leaving commits an already rendered edit before allowing navigation', async () => {
+  const { context, events, requestLeave } = createLeaveHarness('editing')
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  context.commitStagedBands = async () => {
+    events.push('commit')
+    context.eqApplyFeedback.value = 'applying'
+    context.commitChain = pending
+    await pending
+    context.eqApplyFeedback.value = 'applied'
+  }
+  let decision: boolean | undefined
+  const leaving = requestLeave().then((allowed) => {
+    decision = allowed
+    return allowed
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(events, ['finish', 'commit'])
+  assert.equal(decision, undefined, 'a renderer preview is not a completed DSP save')
+  release()
+  assert.equal(await leaving, true)
+})
+
+test('failed equalizer synchronization keeps the editor open after the commit settles', async () => {
+  const { context, events, requestLeave } = createLeaveHarness('applying')
+  let release!: () => void
+  context.commitChain = new Promise<void>((resolve) => {
+    release = resolve
+  }).then(() => {
+    context.eqApplyFeedback.value = 'failed'
+  })
+  const leaving = requestLeave()
+  release()
+  assert.equal(await leaving, false)
+  assert.deepEqual(events, ['finish'])
+  assert.equal(await requestLeave(), false, 'a settled failure must still block navigation')
+})
+
+test('idle equalizer navigation finishes interaction without submitting a redundant save', async () => {
+  const { events, requestLeave } = createLeaveHarness()
+  assert.equal(await requestLeave(), true)
+  assert.deepEqual(events, ['finish'])
+})
+
+test('equalizer navigation stays blocked during loading, history actions and clipboard work', async () => {
+  for (const busy of ['historyLoading', 'historyBusy', 'clipboardBusy'] as const) {
+    const { context, events, requestLeave } = createLeaveHarness('editing')
+    context[busy].value = true
+    assert.equal(await requestLeave(), false, `${busy} must retain the editor`)
+    assert.deepEqual(events, [], 'blocked navigation must not start another edit or save')
+  }
+})
+
+test('OPRA writes retain the equalizer until applying or saving completes', async () => {
+  for (const operation of ['apply', 'save']) {
+    const { context, events, requestLeave } = createLeaveHarness()
+    context.opraApplyingEqId.value = operation === 'apply' ? 'profile-1' : ''
+    context.opraSaving.value = operation === 'save'
+    assert.equal(await requestLeave(), false, `${operation} must retain the editor`)
+    assert.deepEqual(events, [], 'an OPRA write must block navigation before finishing edits')
+    context.opraApplyingEqId.value = ''
+    context.opraSaving.value = false
+    assert.equal(await requestLeave(), true, 'a completed OPRA write must release navigation')
+    assert.deepEqual(events, ['finish'])
+  }
+})
+
+test('read-only OPRA search and catalog refresh do not block equalizer navigation', async () => {
+  for (const [searching, refreshing] of [
+    [true, false],
+    [false, true],
+    [true, true]
+  ]) {
+    const { context, events, requestLeave } = createLeaveHarness()
+    context.opraSearching.value = searching
+    context.opraRefreshing.value = refreshing
+    assert.equal(await requestLeave(), true)
+    assert.deepEqual(events, ['finish'])
+  }
+})
+
 const chart = readFileSync(
   new URL('./equalizer/FrequencyResponseChart.vue', import.meta.url),
   'utf8'
@@ -395,6 +598,8 @@ test('group previews merge atomically and one undo restores all edited bands', a
   const context = {
     pendingBandPatches: new Map(),
     pendingBandFrame: 0,
+    pendingBandWindow: null,
+    editorRoot: { value: null },
     pendingPreamp: null,
     commitChain: Promise.resolve(),
     audioProcessing: { value: initial },
@@ -770,6 +975,74 @@ test('OPRA-stacked scene bands never overwrite the manual editor state', () => {
   assert.match(page, /if \(opraCompensationEnabled\.value\) return/)
 })
 
+test('scene EQ projection preserves the DSP switch and distinguishes master bypass from EQ bypass', () => {
+  const declaration = page.match(/function applyActiveSceneEqToEditor\([\s\S]*?\n\}/)?.[0]
+  assert.ok(declaration)
+  const sceneBands = [
+    { frequency: 180, gain: -3.5, q: 1.2, filterType: 'peak' },
+    { frequency: 4200, gain: 2, q: 0.8, filterType: 'highShelf' }
+  ]
+  for (const dspEnabled of [false, true]) {
+    for (const eqEnabled of [false, true]) {
+      for (const nodeEnabled of [false, true]) {
+        const initial = normalizeAudioProcessing({
+          ...defaultAudioProcessing,
+          dspEnabled,
+          eqEnabled,
+          eqMode: 'graphic',
+          eqPreamp: 4
+        })
+        let applies = 0
+        const context = {
+          opraCompensationEnabled: { value: false },
+          audioProcessing: { value: initial },
+          appSettings: { value: { audioProcessing: initial } },
+          normalizeAudioProcessing,
+          audioOutputDspStore: {
+            applyAudioProcessingState: (settings: typeof initial) => {
+              applies++
+              context.audioProcessing.value = settings
+            }
+          }
+        }
+        const project = runInNewContext(
+          `${stripTypeScriptTypes(declaration)}\napplyActiveSceneEqToEditor`,
+          context
+        )
+        project({
+          activeSceneId: 'active',
+          scenes: [
+            {
+              id: 'active',
+              graph: {
+                nodes: [
+                  {
+                    type: 'equalizer',
+                    enabled: nodeEnabled,
+                    params: { mode: 'parametric', preampDb: -2.5, bands: sceneBands }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+        const projected = context.audioProcessing.value
+        assert.equal(applies, 1)
+        assert.equal(projected.dspEnabled, dspEnabled, 'opening the editor must not toggle DSP')
+        assert.equal(
+          projected.eqEnabled,
+          dspEnabled ? nodeEnabled : eqEnabled,
+          'a master-bypassed scene cannot reveal the saved EQ bypass preference'
+        )
+        assert.equal(projected.eqMode, 'parametric')
+        assert.equal(projected.eqPreamp, -2.5)
+        assert.deepEqual(projected.eqBands, sceneBands)
+        assert.equal(context.appSettings.value.audioProcessing, projected)
+      }
+    }
+  }
+})
+
 test('parametric editor exposes direct manipulation and throttled DSP commits', () => {
   assert.match(page, /import ParametricEqWorkspace/)
   assert.match(page, /@add="addBand"/)
@@ -777,18 +1050,63 @@ test('parametric editor exposes direct manipulation and throttled DSP commits', 
   assert.match(page, /@commit="commitStagedBands"/)
   assert.match(page, /@delete="deleteBand"/)
   assert.match(page, /@toggle="toggleBandEnabled"/)
-  assert.match(page, /window\.requestAnimationFrame/)
+  assert.match(page, /pendingBandWindow\.requestAnimationFrame/)
   assert.match(page, /runEqApply/)
 })
 
-test('parametric page puts mode, presets and power into the instrument with a compact footer', () => {
+test('detached equalizer previews use the editor window frame instead of the hidden main window', () => {
+  const declaration = page.match(/function scheduleStagedFlush\([\s\S]*?\n\}/)?.[0]
+  assert.ok(declaration)
+  let requested = 0,
+    flushed = 0
+  let callback: (() => void) | undefined
+  const editorWindow = {
+    requestAnimationFrame: (next: () => void) => {
+      requested++
+      callback = next
+      return 9
+    }
+  }
+  const context = {
+    editorRoot: { value: { ownerDocument: { defaultView: editorWindow } } },
+    pendingBandWindow: null,
+    pendingBandFrame: 0,
+    eqApplyFeedback: { value: 'idle' },
+    flushStagedEdit: () => {
+      flushed++
+    },
+    window: {
+      requestAnimationFrame: () => {
+        throw new Error('Main window must not schedule this frame')
+      }
+    }
+  }
+  const schedule = runInNewContext(
+    `${stripTypeScriptTypes(declaration)};scheduleStagedFlush`,
+    context
+  )
+  schedule()
+  schedule()
+  assert.equal(requested, 1)
+  callback!()
+  assert.equal(flushed, 1)
+  assert.equal(context.pendingBandFrame, 0)
+})
+
+test('parametric page shares the mode navigation and keeps instrument commands with a compact footer', () => {
+  const modeTabs = page.match(/<nav class="eq-mode-tabs"[\s\S]*?<\/nav>/)?.[0]
+  const commands = page.match(/<template #commands>[\s\S]*?<\/template>/)?.[0]
+  const footer = page.match(/<template #footer>[\s\S]*?<\/template>/)?.[0]
+  assert.ok(modeTabs && commands && footer)
   assert.match(page, /class="tab-pane active parametric-pane"/)
-  assert.match(page, /<template #commands>/)
-  assert.match(page, /<template #footer>/)
-  assert.match(page, /class="instrument-mode-switch"/)
-  assert.match(page, /class="instrument-power"/)
-  assert.match(page, /class="instrument-auto-preamp"/)
-  assert.match(page, /v-if="activeTab !== 'parametric'" class="eq-sidebar"/)
+  assert.match(modeTabs, /v-for="tab in tabs"/)
+  assert.match(modeTabs, /:aria-pressed="activeTab === tab.key"/)
+  assert.match(modeTabs, /@click="switchTab\(tab.key\)"/)
+  assert.match(commands, /class="instrument-presets"/)
+  assert.match(commands, /class="instrument-power"/)
+  assert.match(footer, /<FrequencyResponseToolbar\s+compact/)
+  assert.match(footer, /class="instrument-auto-preamp"/)
+  assert.doesNotMatch(page, /class="(?:instrument-mode-switch|eq-sidebar)"/)
   assert.doesNotMatch(page, /<header class="parametric-page-header">/)
   assert.match(toolbar, /compact\?: boolean/)
 })

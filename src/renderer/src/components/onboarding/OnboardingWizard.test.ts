@@ -72,12 +72,8 @@ test('wizard chrome derives color from theme tokens instead of brand hex', () =>
   assert.match(css, /html\[data-theme='dark'\] \.onboarding-wizard/)
 })
 
-test('reduced-motion users still see content: cascades fill backwards', () => {
-  const cascadeRules = css.match(/animation:[^;]*onb-rise[^;]*;/g) ?? []
-  assert.ok(cascadeRules.length > 0)
-  for (const rule of cascadeRules) {
-    assert.match(rule, /backwards/)
-  }
+test('step controls are visible immediately without repeated entrance cascades', () => {
+  assert.doesNotMatch(css, /animation:[^;]*(?:onb-rise|onb-row-in|onb-pop-in)/)
   assert.doesNotMatch(css, /opacity: 0;\s*\n\s*animation/)
 })
 

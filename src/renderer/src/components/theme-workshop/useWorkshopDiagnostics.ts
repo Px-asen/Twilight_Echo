@@ -54,6 +54,8 @@ export function useWorkshopDiagnostics(
   let timer: ReturnType<typeof setTimeout> | undefined
   let epoch = 0
   let disposed = false
+  let paused = false
+  let needsCompile = true
   const diagnosticModule = import('../../../../shared/themeWorkshopDiagnostics.ts')
   const decodeCache = new Map<string, Promise<WorkshopDiagnostic | null>>()
 
@@ -114,9 +116,9 @@ export function useWorkshopDiagnostics(
     const version = generation.value
     const currentEpoch = epoch
     const current = project.value
-    if (!current || !previewValid.value || checking.value) return
+    if (disposed || paused || !current || !previewValid.value || checking.value) return
     const [items, assets] = await Promise.all([inspect(), decode(current)])
-    if (disposed || version !== generation.value || currentEpoch !== epoch) return
+    if (disposed || paused || version !== generation.value || currentEpoch !== epoch) return
     visual.value = [
       ...diagnoseWorkshopCssSupport(current.css, (property, value) =>
         CSS.supports(property, value)
@@ -125,16 +127,28 @@ export function useWorkshopDiagnostics(
       ...assets.filter((item): item is WorkshopDiagnostic => !!item)
     ]
   }
-  const scheduler = createThemePreviewScheduler(async (snapshot: WorkshopProject) => {
-    const version = generation.value
+  type CompileRequest = { snapshot: WorkshopProject; version: number; request: number }
+  function compilation(snapshot: WorkshopProject): CompileRequest {
+    return { snapshot, version: generation.value, request: epoch }
+  }
+  async function compile(job: CompileRequest, explicit = false): Promise<void> {
+    const { snapshot, version, request } = job
+    if (
+      disposed ||
+      (!explicit && (paused || request !== epoch)) ||
+      generation.value !== version ||
+      project.value !== snapshot
+    )
+      return
     const module = await diagnosticModule
     if (
       disposed ||
+      (!explicit && (paused || request !== epoch)) ||
       generation.value !== version ||
-      project.value?.id !== snapshot.id ||
-      project.value?.base !== snapshot.base
+      project.value !== snapshot
     )
       return
+    needsCompile = false
     const start = performanceNow()
     const diagnostics = module.diagnoseWorkshopProject(snapshot)
     baseReport.value = diagnostics
@@ -161,33 +175,54 @@ export function useWorkshopDiagnostics(
         }
       ])
     }
-    if (version === generation.value) {
-      clearTimeout(timer)
-      timer = setTimeout(() => {
-        void runtimeCheck()
-      }, 250)
-    }
-  })
+    if (!paused && request === epoch && version === generation.value) scheduleRuntime()
+  }
+  const scheduler = createThemePreviewScheduler((job: CompileRequest) => compile(job))
   function performanceNow(): number {
     return globalThis.performance.now()
   }
   function cancel(): void {
     epoch++
+    clearTimeout(timer)
+    timer = undefined
+    scheduler.cancel()
     checking.value = false
     scene.value = undefined
     stale.value = true
     progress.value = '完整检查未完成'
   }
+  function pause(): void {
+    if (paused) return
+    paused = true
+    cancel()
+  }
+  function resume(): void {
+    if (disposed || !paused) return
+    paused = false
+    if (needsCompile && project.value) scheduler.schedule(compilation(project.value))
+    else scheduleRuntime()
+  }
+  async function flush(): Promise<void> {
+    await nextTick()
+    if (disposed) return
+    if (needsCompile && project.value) {
+      scheduler.cancel()
+      // Apply temporarily disables the editor. Its explicit static validation must
+      // still use the latest draft, without restarting background scene checks.
+      await compile(compilation(project.value), true)
+    } else await scheduler.flush()
+  }
   watch(
     [generation, candidate],
     () => {
-      if (checking.value) cancel()
-      epoch++
+      cancel()
+      needsCompile = true
       visual.value = []
       stale.value = true
-      clearTimeout(timer)
-      if (project.value) scheduler.schedule(project.value)
-      else {
+      if (project.value) {
+        if (!paused) scheduler.schedule(compilation(project.value))
+      } else {
+        needsCompile = false
         css.value = ''
         validProject.value = undefined
         baseReport.value = workshopDiagnosticReport([])
@@ -196,8 +231,11 @@ export function useWorkshopDiagnostics(
     { immediate: true }
   )
   async function fullCheck(): Promise<void> {
-    await scheduler.flush()
-    if (!project.value || !previewValid.value || report.value.errors) return
+    if (disposed || paused) return
+    await flush()
+    if (disposed || paused || !project.value || !previewValid.value || report.value.errors) return
+    clearTimeout(timer)
+    timer = undefined
     const version = generation.value
     const request = ++epoch
     checking.value = true
@@ -220,12 +258,13 @@ export function useWorkshopDiagnostics(
       const assets = await decode(project.value)
       for (const asset of assets) if (asset) results.push(asset)
       for (const [index, next] of scenes.entries()) {
-        if (disposed || epoch !== request || generation.value !== version) return
+        if (disposed || paused || epoch !== request || generation.value !== version) return
         scene.value = next
         progress.value = `${index + 1}/${scenes.length} · ${WORKSHOP_PREVIEW_SURFACES.find((surface) => surface.id === next.surface)?.label} · ${next.tone === 'dark' ? '深色' : '浅色'} · ${next.width}px`
         await nextTick()
+        if (disposed || paused || epoch !== request || generation.value !== version) return
         const items = await inspect()
-        if (disposed || epoch !== request || generation.value !== version) return
+        if (disposed || paused || epoch !== request || generation.value !== version) return
         for (const item of items)
           results.push({
             ...item,
@@ -244,17 +283,16 @@ export function useWorkshopDiagnostics(
     }
   }
   function scheduleRuntime(): void {
-    if (checking.value) return
+    if (disposed || paused || checking.value) return
     clearTimeout(timer)
     timer = setTimeout(() => {
+      timer = undefined
       void runtimeCheck()
     }, 250)
   }
   onBeforeUnmount(() => {
     disposed = true
     cancel()
-    clearTimeout(timer)
-    scheduler.cancel()
     decodeCache.clear()
   })
   return {
@@ -270,7 +308,9 @@ export function useWorkshopDiagnostics(
     bufferProblems,
     fullCheck,
     cancel,
+    pause,
+    resume,
     scheduleRuntime,
-    flush: scheduler.flush
+    flush
   }
 }

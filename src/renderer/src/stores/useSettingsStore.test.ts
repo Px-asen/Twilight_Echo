@@ -587,9 +587,13 @@ test('cache strategy settings expose separate artifact and provider-controlled a
 
 test('settings page exposes search, backup, cache confirmation, and isolated plugin panel state', () => {
   const settingsPageSource = readSettingsPageSources()
+  const workspaceNavigationSource = readFileSync(
+    new URL('../components/settings-page/SettingsWorkspaceNavigation.vue', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(settingsPageSource, /const settingsSearchQuery = ref\(''\)/)
-  assert.match(settingsPageSource, /const filteredSearchResults = computed/)
+  assert.match(workspaceNavigationSource, /const query = ref\(''\)/)
+  assert.match(workspaceNavigationSource, /const matches = computed/)
   assert.match(settingsPageSource, /function scrollToSearchResult/)
   assert.match(settingsPageSource, /function confirmClearCache/)
   assert.match(settingsPageSource, /确认清理缓存/)

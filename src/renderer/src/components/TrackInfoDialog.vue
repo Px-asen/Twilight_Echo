@@ -29,25 +29,43 @@ function applyTags(paths: string[], patch: LocalLibraryTagPatch): void {
 }
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
+const tagManager = ref<{ requestClose: () => void } | null>(null)
 useNativeDialog(dialog)
 useEscapeToClose(
   () => !editing.value && !versions.value,
   () => emit('close')
 )
+
+function onCancel(): void {
+  if (versions.value) versions.value = false
+  else if (editing.value) tagManager.value?.requestClose()
+  else emit('close')
+}
+
+function onEditingEscape(event: KeyboardEvent): void {
+  if (event.defaultPrevented || !editing.value) return
+  // Repeated native close requests can become non-cancelable in Chromium.
+  event.preventDefault()
+  tagManager.value?.requestClose()
+}
 </script>
 
 <template>
   <dialog
     ref="dialog"
     class="track-info-dialog"
+    data-te-material="dialog"
     :class="{ 'is-editing': editing || versions }"
-    aria-labelledby="track-info-title"
+    :aria-labelledby="editing ? 'tag-manager-title' : versions ? undefined : 'track-info-title'"
+    :aria-label="versions ? '歌曲与专辑版本' : undefined"
     @close="emit('close')"
-    @cancel.prevent="versions ? (versions = false) : editing ? (editing = false) : emit('close')"
+    @cancel.prevent="onCancel"
+    @keydown.esc="onEditingEscape"
   >
     <MusicVersionsHost v-if="versions" embedded :initial-track="track" @close="versions = false" />
     <LocalLibraryTagManager
       v-else-if="editing"
+      ref="tagManager"
       :tracks="editableTracks"
       @close="editing = false"
       @applied="applyTags"
@@ -101,24 +119,29 @@ useEscapeToClose(
   position: fixed;
   width: min(420px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);
+  box-sizing: border-box;
+  margin: auto;
   overflow: auto;
-  padding: 28px;
-  border: 1px solid var(--te-card-border);
+  padding: 20px;
+  border: 1px solid var(--te-material-border, var(--te-card-border));
   border-radius: var(--te-dialog-radius);
-  color: var(--te-neutral-900);
-  background: var(--te-card-bg, Canvas);
+  color: var(--te-material-ink, var(--te-neutral-900));
+  background: var(--te-material-background, var(--te-card-bg));
+  box-shadow: var(--te-material-shadow, none);
+  font-size: var(--te-font-size-body, 14px);
 }
 .track-info-dialog::backdrop {
-  background: color-mix(in srgb, var(--te-neutral-900) 35%, transparent);
+  background: var(--te-material-scrim, var(--te-dialog-backdrop));
 }
 .track-info-dialog.is-editing {
   width: min(900px, calc(100vw - 48px));
   padding: 0;
 }
 .track-info-edit {
+  min-height: 36px;
   padding: 8px 14px;
   border: 1px solid var(--te-card-border);
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm, 8px);
   background: var(--te-hover-bg);
   color: inherit;
   font: inherit;
@@ -128,6 +151,8 @@ useEscapeToClose(
   position: absolute;
   top: 8px;
   right: 12px;
+  width: 32px;
+  height: 32px;
   font: inherit;
   font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
   border: 0;
@@ -151,6 +176,13 @@ dd {
   overflow-wrap: anywhere;
 }
 h2 {
+  margin: 0 24px 12px 0;
+  font-size: var(--te-type-section-title, 20px);
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+button:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
 }
 </style>

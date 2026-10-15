@@ -1,0 +1,160 @@
+/* Both navigation and the playback queue are viewport overlays. Their painted
+   surfaces extend behind the player while their scrollers retain a safe tail. */
+.app-shell {
+  --te-overlay-panel-available: calc(100vw - 2 * var(--te-window-surface-inset, 6px));
+  --te-overlay-panel-width: min(
+    max(260px, var(--te-menu-width)),
+    var(--te-overlay-panel-available)
+  );
+  --te-overlay-panel-layer: 1000;
+}
+
+.app-shell-navigation {
+  pointer-events: none;
+}
+
+html body .app-shell :is(.side-menu, .queue-sidebar).overlay-side-panel {
+  position: fixed;
+  top: var(--te-window-content-top);
+  bottom: var(--te-window-content-bottom);
+  width: var(--te-overlay-panel-width);
+  min-width: 0;
+  max-width: var(--te-overlay-panel-available);
+  height: auto;
+  box-sizing: border-box;
+  z-index: var(--te-overlay-panel-layer);
+  overflow: hidden;
+  border: 1px solid var(--te-navigation-border);
+  border-radius: var(--te-window-inner-radius);
+  background: var(--te-chrome-navigation-surface, transparent);
+  color: var(--te-chrome-text, var(--te-navigation-text));
+  box-shadow: var(--te-chrome-navigation-elevation, var(--te-navigation-shadow));
+  backdrop-filter: var(--te-material-filter, none);
+  -webkit-backdrop-filter: var(--te-material-filter, none);
+  font-family: var(--te-font-sans);
+}
+
+html body .app-shell .side-menu.overlay-side-panel {
+  left: var(--te-window-surface-inset);
+  /* Navigation density owns its width; the queue's readable minimum does not. */
+  width: min(var(--te-menu-width), var(--te-overlay-panel-available));
+}
+
+html body .app-shell .side-menu.overlay-side-panel:not(.open) {
+  transform: translate3d(calc(-100% - var(--te-window-surface-inset)), 0, 0);
+  pointer-events: none;
+}
+
+html body .app-shell .side-menu.overlay-side-panel.open {
+  pointer-events: auto;
+}
+
+html body .app-shell .queue-sidebar.overlay-side-panel {
+  right: var(--te-window-surface-inset);
+}
+
+html body .app-shell :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel {
+  background: var(--te-window-foundation-tint);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+  border-color: color-mix(in srgb, var(--te-lg-context-label) 6%, transparent);
+  color: var(--te-lg-context-label, var(--te-chrome-text));
+}
+
+/* Both panels share the same opaque fallback when diffusion is unavailable. */
+html
+  body.te-no-blur
+  .app-shell
+  :is(.side-menu, .queue-sidebar).overlay-side-panel:not(.side-menu-liquid):not(
+    .overlay-side-panel-liquid
+  ),
+html[data-te-effects-mode='reduced']
+  body
+  .app-shell
+  :is(.side-menu, .queue-sidebar).overlay-side-panel:not(.side-menu-liquid):not(
+    .overlay-side-panel-liquid
+  ) {
+  background: var(--te-chrome-material-solid, var(--te-navigation-bg));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html
+  body.te-no-blur
+  .app-shell
+  :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel::before,
+html[data-te-effects-mode='reduced']
+  body
+  .app-shell
+  :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel::before {
+  background: var(--te-lg-context-surface-solid, var(--te-chrome-material-solid)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html
+    body
+    .app-shell
+    :is(.side-menu, .queue-sidebar).overlay-side-panel:not(.side-menu-liquid):not(
+      .overlay-side-panel-liquid
+    ) {
+    background: var(--te-chrome-material-solid, var(--te-navigation-bg));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  html
+    body
+    .app-shell
+    :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel::before {
+    background: var(--te-lg-context-surface-solid, var(--te-chrome-material-solid)) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  html body .app-shell :is(.side-menu, .queue-sidebar).overlay-side-panel {
+    background: Canvas !important;
+    color: CanvasText !important;
+    border-color: CanvasText !important;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  html
+    body
+    .app-shell
+    :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel::before {
+    background: Canvas !important;
+    border: 0 !important;
+    box-shadow: none;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+html body .app-shell :is(.side-menu-liquid, .overlay-side-panel-liquid).overlay-side-panel::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--te-chrome-attached-liquid-surface);
+  content: '';
+  pointer-events: none;
+  backdrop-filter: var(--te-chrome-attached-liquid-filter);
+  -webkit-backdrop-filter: var(--te-chrome-attached-liquid-filter);
+}
+
+/* A full-width shell can contain a narrower player. Always leave a scrollable
+   tail so the last navigation action can move above either painted geometry. */
+html body .app-shell .side-menu.overlay-side-panel .menu-nav {
+  padding-bottom: max(
+    0px,
+    calc(var(--te-playbar-bottom-clearance, 0px) + 10px - var(--te-side-menu-tools-clearance, 0px))
+  );
+  scroll-padding-bottom: max(16px, var(--te-playbar-bottom-clearance, 0px));
+}

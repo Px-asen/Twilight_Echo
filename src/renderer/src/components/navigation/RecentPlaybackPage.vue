@@ -198,8 +198,7 @@ function play(track: Track): void {
 
 <style scoped>
 .recent-playback-page {
-  --recent-content-inset: min(4.4vw, 48px);
-  --recent-header-inset: 32px;
+  --recent-content-inset: var(--te-page-inset, 32px);
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -211,34 +210,13 @@ function play(track: Track): void {
   height: 0 !important;
   flex: 1;
   min-height: 0;
-  padding-top: 24px;
+  padding-top: 16px;
   padding-inline: var(--recent-content-inset);
-}
-.recent-playback-page :deep(.song-list-header) {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  min-height: 0;
-  gap: 20px;
-  padding: 0 var(--recent-header-inset);
-  margin-bottom: 20px;
-}
-.recent-playback-page :deep(.header-right) {
-  flex-wrap: nowrap;
-  gap: 12px;
 }
 .recent-playback-page :deep(.recent-source-dropdown),
 .recent-playback-page :deep(.library-filter-dropdown) {
   display: flex;
   align-items: center;
-}
-.recent-playback-page :deep(.search-box) {
-  box-sizing: border-box;
-  width: clamp(220px, 22vw, 320px);
-  min-width: 0;
-}
-.recent-playback-page :deep(.library-play-actions) {
-  padding-inline: var(--recent-header-inset);
 }
 .recent-scope-tabs {
   position: relative;
@@ -246,8 +224,8 @@ function play(track: Track): void {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
-  padding: calc(var(--te-titlebar-inset, 40px) + 16px)
-    calc(var(--recent-content-inset) + var(--recent-header-inset)) 0;
+  padding: calc(var(--te-titlebar-inset, 40px) + var(--te-page-top, 24px))
+    var(--recent-content-inset) 0;
   flex-wrap: wrap;
 }
 button,
@@ -256,7 +234,8 @@ select {
   border-radius: 10px;
   background: var(--te-card-bg);
   color: var(--te-neutral-900);
-  padding: 9px 14px;
+  min-height: var(--te-control-height-md);
+  padding: 6px 12px;
   font: inherit;
   cursor: pointer;
 }
@@ -266,7 +245,7 @@ button[aria-pressed='true'] {
 }
 button:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--te-navigation-indicator);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 button:disabled {
@@ -277,11 +256,14 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 24px calc(var(--recent-content-inset) + var(--recent-header-inset)) 40px;
+  padding: 16px var(--recent-content-inset) var(--te-page-bottom, 32px);
   color: var(--te-neutral-900);
 }
 .has-player .platform-history {
-  padding-bottom: max(130px, calc(var(--te-playbar-bottom-clearance, 0px) + 12px));
+  padding-bottom: var(
+    --te-page-bottom,
+    max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px))
+  );
 }
 header {
   display: flex;
@@ -294,7 +276,8 @@ header > div {
 }
 h2 {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 1.5);
+  font-size: var(--te-type-page-title);
+  font-weight: var(--te-type-weight-strong);
 }
 p,
 small {
@@ -342,33 +325,6 @@ nav {
   align-items: center;
   gap: 16px;
   margin-top: 24px;
-}
-@container te-recent-page (max-width: 1000px) {
-  .recent-playback-page :deep(.song-list-header) {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
-  }
-  .recent-playback-page :deep(.header-right) {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .recent-playback-page :deep(.search-box) {
-    flex: 1 1 220px;
-    width: auto;
-  }
-}
-@container te-recent-page (max-width: 640px) {
-  .recent-scope-tabs,
-  .platform-history {
-    padding-inline: calc(var(--recent-content-inset) + 10px);
-  }
-  .recent-playback-page :deep(.song-list-header),
-  .recent-playback-page :deep(.library-play-actions) {
-    padding-inline: 10px;
-  }
-  .recent-playback-page :deep(.search-box) {
-    flex-basis: 100%;
-  }
 }
 :global(html[data-theme='pureWhite'] .recent-playback-page) {
   background: var(--te-card-bg);

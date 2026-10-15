@@ -176,7 +176,7 @@ useFocusTrap(dialogRef, () => props.show)
 }
 
 .create-aggregate-btn:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 

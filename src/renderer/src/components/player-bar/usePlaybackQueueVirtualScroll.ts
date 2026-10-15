@@ -5,6 +5,7 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  unref,
   watch,
   type Ref
 } from 'vue'
@@ -19,20 +20,27 @@ import {
 export function usePlaybackQueueVirtualScroll(
   queue: Ref<Track[]>,
   queueIndex: Ref<number>,
-  open: Ref<boolean>
+  open: Ref<boolean>,
+  rowHeight: number | Ref<number> = PLAYBACK_QUEUE_ROW_HEIGHT,
+  listOffset: number | Ref<number> = 0
 ) {
   const containerRef = ref<HTMLElement | null>(null)
   const scrollTop = ref(0)
   const viewportHeight = ref(0)
 
   const visibleRange = computed(() =>
-    getPlaybackQueueWindow(queue.value.length, scrollTop.value, viewportHeight.value)
+    getPlaybackQueueWindow(
+      queue.value.length,
+      Math.max(0, scrollTop.value - unref(listOffset)),
+      viewportHeight.value,
+      unref(rowHeight)
+    )
   )
   const visibleItems = computed(() =>
     createPlaybackQueueDisplayItems(queue.value, visibleRange.value)
   )
-  const totalHeight = computed(() => queue.value.length * PLAYBACK_QUEUE_ROW_HEIGHT)
-  const translateY = computed(() => visibleRange.value.start * PLAYBACK_QUEUE_ROW_HEIGHT)
+  const totalHeight = computed(() => queue.value.length * unref(rowHeight))
+  const translateY = computed(() => visibleRange.value.start * unref(rowHeight))
 
   function updateViewport(): void {
     viewportHeight.value = containerRef.value?.clientHeight ?? 0
@@ -42,16 +50,23 @@ export function usePlaybackQueueVirtualScroll(
     scrollTop.value = (event.target as HTMLElement).scrollTop
   }
 
-  function scrollToCurrent(): void {
+  function scrollToIndex(index: number): void {
     const container = containerRef.value
-    if (!container || queueIndex.value < 0) return
-    const nextTop = getPlaybackQueueScrollTopForIndex(
-      queueIndex.value,
-      queue.value.length,
-      container.clientHeight
-    )
+    if (!container || index < 0 || index >= queue.value.length) return
+    const nextTop =
+      unref(listOffset) +
+      getPlaybackQueueScrollTopForIndex(
+        index,
+        queue.value.length,
+        container.clientHeight,
+        unref(rowHeight)
+      )
     container.scrollTop = nextTop
-    scrollTop.value = nextTop
+    scrollTop.value = container.scrollTop
+  }
+
+  function scrollToCurrent(): void {
+    scrollToIndex(queueIndex.value)
   }
 
   async function revealCurrent(): Promise<void> {
@@ -60,13 +75,29 @@ export function usePlaybackQueueVirtualScroll(
     scrollToCurrent()
   }
 
+  let resizeObserver: ResizeObserver | null = null
+
   if (getCurrentInstance()) {
     onMounted(() => {
       updateViewport()
       window.addEventListener('resize', updateViewport)
+      resizeObserver = new ResizeObserver(updateViewport)
+      if (containerRef.value) resizeObserver.observe(containerRef.value)
     })
 
-    onUnmounted(() => window.removeEventListener('resize', updateViewport))
+    watch(
+      containerRef,
+      (container) => {
+        resizeObserver?.disconnect()
+        if (container) resizeObserver?.observe(container)
+        updateViewport()
+      },
+      { flush: 'post' }
+    )
+    onUnmounted(() => {
+      window.removeEventListener('resize', updateViewport)
+      resizeObserver?.disconnect()
+    })
   }
 
   watch(open, (isOpen) => {
@@ -77,12 +108,21 @@ export function usePlaybackQueueVirtualScroll(
     if (open.value) void revealCurrent()
   })
 
+  watch(
+    () => unref(rowHeight),
+    () => {
+      if (open.value) void revealCurrent()
+    }
+  )
+  watch(() => unref(listOffset), updateViewport)
+
   return {
     containerRef,
     visibleItems,
     totalHeight,
     translateY,
     onScroll,
-    scrollToCurrent
+    scrollToCurrent,
+    scrollToIndex
   }
 }

@@ -4,7 +4,10 @@ import { computed, ref } from 'vue'
 import { DEFAULT_LIQUID_GLASS } from '../../../../shared/liquidGlass.ts'
 import EditableRangeValue from '../EditableRangeValue.vue'
 import type { AppearanceDraft } from '../../../../shared/appAppearance.ts'
-import type { LiquidGlassSettings, LiquidGlassTheme } from '../../types/settings'
+import type {
+  LiquidGlassSettings,
+  LiquidGlassTheme
+} from '../../types/settings'
 
 const props = defineProps<{ modelValue: AppearanceDraft; tone?: 'light' | 'dark' }>()
 const emit = defineEmits<{
@@ -21,12 +24,11 @@ const liquidGlassTab = computed({
   get: () => props.tone ?? 'light',
   set: (tone: 'light' | 'dark') => emit('update:tone', tone)
 })
-const hasLiquidGlassEnabled = computed(
-  () =>
-    settings.value.surfaceMaterial === 'liquidGlass' ||
-    settings.value.liquidGlass.navigationEnabled ||
-    settings.value.liquidGlass.playbarEnabled ||
-    settings.value.liquidGlass.settingsNavigationEnabled
+const hasLiquidGlassEnabled = computed(() =>
+  settings.value.surfaceMaterial === 'liquidGlass' ||
+  settings.value.liquidGlass.navigationEnabled ||
+  settings.value.liquidGlass.playbarEnabled ||
+  settings.value.liquidGlass.settingsNavigationEnabled
 )
 const activeLiquidGlassTheme = computed(() => settings.value.liquidGlass[liquidGlassTab.value])
 const activeOverLight = computed(() => settings.value.liquidGlass.overLight)
@@ -53,9 +55,7 @@ function cloneLiquidGlass(): LiquidGlassSettings {
 }
 
 function toggleLiquidGlass(): void {
-  updateSettings({
-    surfaceMaterial: settings.value.surfaceMaterial === 'liquidGlass' ? 'standard' : 'liquidGlass'
-  })
+  updateSettings({ surfaceMaterial: settings.value.surfaceMaterial === 'liquidGlass' ? 'standard' : 'liquidGlass' })
 }
 
 function resetLiquidGlassParameters(): void {

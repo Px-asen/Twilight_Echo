@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { runInNewContext } from 'node:vm'
 
 test('now playing lyrics do not surface original/translated source path chips', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
@@ -300,6 +301,58 @@ test('clicking a timed lyric releases manual scroll lock before seeking', () => 
   assert.match(source, /class="lyric-row"[\s\S]*@pointerdown\.stop[\s\S]*@click="jumpToLyric/)
 })
 
+test('returning to the current lyric resumes following without changing playback', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const handler = source.match(/function returnToCurrentLyric\(\): void \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(handler)
+  const manual = { value: true }
+  let releases = 0
+  let seeks = 0
+  const returnToCurrentLyric = runInNewContext(
+    `${handler.replace('(): void', '()')}\nreturnToCurrentLyric`,
+    {
+      lyricManualBrowsing: manual,
+      lyricViewport: {
+        releaseManualBrowse() {
+          releases += 1
+          manual.value = false
+        }
+      },
+      seek() {
+        seeks += 1
+      }
+    }
+  ) as () => void
+
+  returnToCurrentLyric()
+  assert.equal(releases, 1)
+  assert.equal(seeks, 0)
+  assert.equal(manual.value, false)
+  returnToCurrentLyric()
+  assert.equal(releases, 1, 'an already-following control must not restart the view')
+})
+
+test('the lyric return action stays keyboard reachable through automatic recovery', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const button = source.match(
+    /<button\s[^>]*class="lyric-return-button"[^>]*>[\s\S]*?<\/button>/
+  )?.[0]
+  assert.ok(button)
+  assert.match(
+    source,
+    /onManualBrowseChange: \(active\) => \{\s*lyricManualBrowsing\.value = active/
+  )
+  assert.match(button, /type="button"/)
+  assert.match(button, /v-show="lyricManualBrowsing \|\| lyricReturnFocused"/)
+  assert.match(button, /@focus="lyricReturnFocused = true"/)
+  assert.match(button, /@blur="lyricReturnFocused = false"/)
+  assert.match(button, /:aria-disabled="!lyricManualBrowsing"/)
+  assert.match(button, /@click="returnToCurrentLyric"/)
+  assert.match(button, /返回当前歌词/)
+  assert.doesNotMatch(button, /\sv-if=|\s:disabled=|\stabindex="-1"|\saria-hidden=/)
+  assert.doesNotMatch(source, /class="lyrics-head" aria-hidden="true"/)
+})
+
 test('now playing isolates high-frequency playhead updates from the full lyrics list', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
   const line = readFileSync(new URL('./PlayingLyricLine.vue', import.meta.url), 'utf8')
@@ -423,13 +476,29 @@ test('player bar smooths progress between player store ticks and snaps large jum
   // The per-frame smoothed value must not be read by the player bar itself,
   // otherwise its whole template re-renders on every animation frame.
   assert.doesNotMatch(source, /useSmoothedValue/)
-  assert.equal(source.match(/<SmoothedProgressFill[^>]*:percent="progressPercent"/g)?.length, 2)
+  assert.doesNotMatch(source, /<SmoothedProgressFill\b/)
   const seekProgress = readFileSync(
     new URL('./player-bar/PlayerSeekProgress.vue', import.meta.url),
     'utf8'
   )
-  assert.match(source, /<PlayerSeekProgress[\s\S]*?:position="currentTime"/)
-  assert.match(seekProgress, /<SmoothedProgressFill[^>]*:percent="percent"/)
+  const activeProgressByVariant = new Map(
+    Array.from(source.matchAll(/<PlayerSeekProgress\b[^>]*\/>/g))
+      .map(([tag]) => tag)
+      .filter((tag) => tag.includes(':position="currentTime"'))
+      .map((tag) => [tag.match(/\bvariant="([^"]+)"/)?.[1] ?? 'default', tag])
+  )
+  for (const variant of ['default', 'mini', 'compact']) {
+    const progress = activeProgressByVariant.get(variant)
+    assert.ok(progress, `${variant} playback must use the shared seek progress`)
+    assert.match(progress, /:duration="effectiveDuration"/)
+    assert.match(progress, /:live="isLiveStream"/)
+    assert.match(progress, /@seek="seek"/)
+  }
+  // The immersive song page reuses this same player bar with its glass shell.
+  const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  assert.match(app, /<PlayerBar\b[^>]*:glass="showPlayingPage"/)
+  assert.match(seekProgress, /<SmoothedProgressFill[^>]*v-else[^>]*:percent="percent"/)
+  assert.match(seekProgress, /v-if="preview !== null"[\s\S]*?scaleX\(\$\{percent \/ 100\}\)/)
 })
 
 test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {

@@ -185,8 +185,9 @@ test('every registered playback token is wired into a real playback or DSP surfa
   for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
 })
 
-test('theme studio is a dedicated navigable settings surface', () => {
-  assert.match(app, /ThemeStudioPage/)
+test('theme studio remains available inside the unified appearance workspace', () => {
+  const appearance = readFileSync(new URL('./AppearancePage.vue', import.meta.url), 'utf8')
+  assert.match(appearance, /ThemeStudioPage/)
   assert.match(app, /@open-theme-studio="openThemeStudioPage"/)
   assert.match(settingsSurfaces, /打开主题创意工坊/)
   assert.match(settingsSurfaces, /@click="emit\('openThemeStudio'\)"/)
@@ -489,7 +490,8 @@ test('applying and closing the studio cannot restore stale preview state over th
     /'data-te-preset-layout': resolvePresetLayout\(selection, selectedProfile\)/
   )
   assert.match(studioEditor, /if \(previewCleanup\) return previewCleanup/)
-  assert.match(studioEditor, /function closeStudio\(\)[\s\S]*void clearStudioPreview\(\)/)
+  assert.match(studioEditor, /async function prepareLeave\(\)[\s\S]*await clearStudioPreview\(\)/)
+  assert.match(studioEditor, /async function closeStudio\(\)[\s\S]*await prepareLeave\(\)/)
   assert.match(studioEditor, /onBeforeUnmount\([\s\S]*void clearStudioPreview\(\)/)
   assert.doesNotMatch(studioEditor, /document\.documentElement\.dataset\.theme = originalTone/)
 })

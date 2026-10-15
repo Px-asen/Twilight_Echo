@@ -217,7 +217,7 @@ summary {
   gap: 8px;
   list-style: none;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--te-type-weight-strong);
 }
 summary::-webkit-details-marker {
   display: none;
@@ -234,12 +234,12 @@ summary::after {
   transform: rotate(90deg);
 }
 summary span {
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-regular);
 }
 .intro,
 li p {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   line-height: 1.7;
   color: var(--te-settings-text-muted);
   margin: 10px 0 14px;
@@ -274,16 +274,16 @@ li {
 }
 .profile-name span {
   color: var(--te-primary-500);
-  font-size: 11px;
+  font-size: var(--te-type-caption);
 }
 .actions {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--te-type-caption);
 }
 button {
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--te-type-body);
   color: inherit;
   border: 1px solid var(--te-card-border);
   border-radius: 999px;
@@ -299,12 +299,12 @@ button:disabled {
   cursor: default;
 }
 :is(button, summary):focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 .error {
   color: var(--color-danger, #cd5959);
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   line-height: 1.6;
 }
 </style>

@@ -6,6 +6,18 @@ export const MAX_SESSION_QUEUE_ENTRIES = 20_000
 export const MAX_SAVED_QUEUE_ENTRIES = 40_000
 export const MAX_PLAYBACK_ORDER_ENTRIES = 200
 
+/** The collection that actually supplied this queue entry, independent of its audio provider. */
+export type QueuePlaybackOrigin =
+  | { kind: 'album' | 'playlist'; scope: 'local'; id: string; name: string }
+  | { kind: 'playlist'; scope: 'aggregate'; id: string; name: string }
+  | {
+      kind: 'album' | 'playlist'
+      scope: 'provider'
+      providerId: string
+      id: string
+      name: string
+    }
+
 export interface SavedQueueTrack {
   id: string
   queueEntryId: string
@@ -19,6 +31,7 @@ export interface SavedQueueTrack {
   cueRange?: CueRange
   ncmSongId?: number
   network?: { profileId: string; entryId: string; path: string; name: string }
+  queuePlaybackOrigin?: QueuePlaybackOrigin
 }
 
 export interface NamedQueueSession {
@@ -56,6 +69,24 @@ const timestamp = (value: unknown): boolean => text(value, 40) && Number.isFinit
 const positive = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+export function isQueuePlaybackOrigin(value: unknown): value is QueuePlaybackOrigin {
+  if (!object(value) || !identity(value.id) || !identity(value.name) || !text(value.name, 512))
+    return false
+  if (value.kind !== 'album' && value.kind !== 'playlist') return false
+  if (value.scope === 'provider') return identity(value.providerId) && text(value.providerId, 120)
+  if (value.providerId !== undefined) return false
+  return value.scope === 'local' || (value.scope === 'aggregate' && value.kind === 'playlist')
+}
+
+export function cloneQueuePlaybackOrigin(value: unknown): QueuePlaybackOrigin | undefined {
+  if (!isQueuePlaybackOrigin(value)) return undefined
+  const identity = { id: value.id, name: value.name }
+  if (value.scope === 'provider')
+    return { ...identity, kind: value.kind, scope: value.scope, providerId: value.providerId }
+  if (value.scope === 'aggregate') return { ...identity, kind: 'playlist', scope: value.scope }
+  return { ...identity, kind: value.kind, scope: value.scope }
+}
+
 export function isSavedQueueTrack(value: unknown): value is SavedQueueTrack {
   if (!object(value)) return false
   if (!identity(value.id) || !identity(value.queueEntryId) || !identity(value.source)) return false
@@ -77,6 +108,8 @@ export function isSavedQueueTrack(value: unknown): value is SavedQueueTrack {
   )
     return false
   if (!trackCueRangePropertyIsValid(value)) return false
+  if (value.queuePlaybackOrigin !== undefined && !isQueuePlaybackOrigin(value.queuePlaybackOrigin))
+    return false
   if (value.network !== undefined) {
     const network = value.network
     if (

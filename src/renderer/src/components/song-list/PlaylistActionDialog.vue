@@ -112,7 +112,7 @@ onMounted(() => {
   max-height: calc(100vh - 48px);
   box-sizing: border-box;
   margin: auto;
-  padding: 24px;
+  padding: 20px;
   border: 1px solid var(--te-card-border);
   border-radius: var(--te-dialog-radius, 12px);
   background: var(--te-card-bg);
@@ -122,20 +122,20 @@ onMounted(() => {
 }
 
 .playlist-action-dialog::backdrop {
-  background: color-mix(in srgb, var(--te-app-bg) 70%, transparent);
+  background: var(--te-dialog-backdrop);
 }
 
 h2 {
-  margin: 0 0 24px;
-  font-size: 1.25em;
-  font-weight: 650;
+  margin: 0 0 16px;
+  font-size: var(--te-type-section-title, calc(var(--te-font-size-body, 14px) * 20 / 14));
+  font-weight: 600;
 }
 
 label {
   display: block;
   margin-bottom: 8px;
   color: var(--te-neutral-700);
-  font-size: 0.92857em;
+  font-size: var(--te-type-caption, calc(var(--te-font-size-body, 14px) * 13 / 14));
 }
 
 input,
@@ -143,7 +143,7 @@ select,
 button {
   box-sizing: border-box;
   border: 1px solid var(--te-card-border);
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm, 8px);
   font: inherit;
   color: var(--te-neutral-900);
 }
@@ -151,15 +151,15 @@ button {
 input,
 select {
   width: 100%;
-  min-height: 40px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 8px 12px;
   background: var(--te-subtle-bg);
 }
 
 input:focus-visible,
 select:focus-visible,
 button:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 
@@ -173,8 +173,9 @@ button:focus-visible {
 .playlist-dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 24px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 button {
@@ -185,15 +186,20 @@ button {
 }
 
 button.primary {
-  border-color: color-mix(in srgb, var(--te-primary-500) 40%, var(--te-card-border));
-  background: var(--te-active-bg);
-  color: var(--te-neutral-900);
+  border-color: transparent;
+  background: var(--te-control-accent);
+  color: var(--te-control-on-accent);
   font-weight: 600;
 }
 
 @media (hover: hover) {
   button:hover:not(:disabled) {
     background: var(--te-hover-bg);
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: var(--te-control-accent);
+    filter: brightness(0.95);
   }
 }
 
@@ -212,8 +218,10 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  button:active:not(:disabled) {
-    transform: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    button:active:not(:disabled) {
+      transform: none;
+    }
   }
 }
 </style>

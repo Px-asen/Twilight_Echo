@@ -872,8 +872,8 @@ html[data-te-motion='off'] .network-create-form {
   box-sizing: border-box;
   width: 100%;
   min-height: 0;
-  padding: 52px clamp(24px, 5vw, 72px)
-    max(132px, calc(var(--te-playbar-bottom-clearance, 0px) + 12px));
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px)
+    var(--te-page-bottom, max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px)));
   color: var(--te-settings-text, #0f172a);
   overflow-y: auto;
   height: 100dvh;
@@ -903,7 +903,7 @@ html[data-te-motion='off'] .network-create-form {
   letter-spacing: -0.025em;
 }
 .network-heading-copy h1 {
-  font-size: clamp(25px, 3vw, 33px);
+  font-size: var(--te-type-page-title);
 }
 .network-heading-copy p,
 .network-section-heading p,
@@ -913,15 +913,15 @@ html[data-te-motion='off'] .network-create-form {
 .network-empty p {
   margin: 5px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.55;
 }
 .network-kicker,
 .network-subheading {
   display: block;
   color: var(--te-primary-500, var(--brand-600));
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   letter-spacing: 0.12em;
 }
 .network-view-toggle button,
@@ -975,8 +975,8 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 .network-view-toggle button.active {
   border-color: color-mix(in srgb, var(--te-primary-500) 24%, transparent);
@@ -989,7 +989,7 @@ html[data-te-motion='off'] .network-create-form {
   margin-bottom: 14px;
   border-radius: 12px;
   padding: 10px 13px;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 650;
 }
 .network-inline-error {
@@ -1035,7 +1035,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-browser-context h2,
 .network-section-heading h2 {
   margin-top: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
+  font-size: var(--te-type-section-title);
 }
 .network-breadcrumbs,
 .network-bookmarks {
@@ -1059,7 +1059,7 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 650;
 }
 .network-crumb:hover,
@@ -1080,7 +1080,7 @@ html[data-te-motion='off'] .network-create-form {
   white-space: nowrap;
 }
 .network-bookmark-chip i {
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
+  font-size: var(--te-type-caption);
 }
 .network-directory-actions {
   align-items: flex-end;
@@ -1097,7 +1097,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-browsing {
   margin: -8px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 .network-entry-surface {
   border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.09));
@@ -1152,7 +1152,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-entry-meta {
   overflow: hidden;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1214,7 +1214,7 @@ html[data-te-motion='off'] .network-create-form {
   padding: 0 12px;
   background: color-mix(in srgb, var(--te-card-bg, #fff) 64%, transparent);
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 .network-cache-row span {
   display: inline-flex;
@@ -1228,8 +1228,8 @@ html[data-te-motion='off'] .network-create-form {
   color: var(--te-settings-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 .text-button:hover {
   color: var(--te-primary-500, var(--brand-600));
@@ -1260,8 +1260,8 @@ html[data-te-motion='off'] .network-create-form {
   flex-direction: column;
   gap: 6px;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 .network-form-grid input,
 .network-form-grid select {
@@ -1276,8 +1276,8 @@ html[data-te-motion='off'] .network-create-form {
 }
 .network-form-grid input:focus,
 .network-form-grid select:focus {
-  border-color: color-mix(in srgb, var(--te-primary-500) 56%, transparent);
-  outline: 3px solid color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  border-color: var(--te-control-focus-color);
+  outline: 3px solid var(--te-control-focus-color);
 }
 .network-form-actions {
   display: flex;
@@ -1333,7 +1333,7 @@ html[data-te-motion='off'] .network-create-form {
 .network-profile-info small {
   overflow: hidden;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1342,8 +1342,8 @@ html[data-te-motion='off'] .network-create-form {
   padding: 2px 6px;
   background: color-mix(in srgb, var(--te-primary-500) 9%, transparent);
   color: var(--te-primary-500, var(--brand-600));
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   letter-spacing: 0.04em;
 }
 .network-profile-actions {
@@ -1361,7 +1361,7 @@ html[data-te-motion='off'] .network-create-form {
 }
 .network-empty h3 {
   color: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
+  font-size: var(--te-type-headline);
 }
 .network-empty p {
   max-width: 430px;
@@ -1375,7 +1375,7 @@ html[data-te-motion='off'] .network-create-form {
   border-radius: 13px;
   background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--te-primary-500, var(--brand-600));
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
+  font-size: var(--te-type-section-title);
 }
 .network-profiles-empty {
   min-height: 260px;
@@ -1390,12 +1390,11 @@ html[data-te-motion='off'] .network-create-form {
 }
 @media (max-width: 760px) {
   .network-sources-page {
-    padding: 30px 16px 118px;
+    padding: var(--te-page-top, 24px) var(--te-page-inset, 16px) var(--te-page-bottom, 32px);
   }
   .network-page-heading {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 12px;
-    padding: 52px 0 0;
   }
   .network-heading-copy {
     grid-column: 1 / -1;
@@ -1433,7 +1432,7 @@ html[data-te-motion='off'] .network-create-form {
 }
 @media (max-width: 460px) {
   .network-heading-copy h1 {
-    font-size: calc(var(--te-font-size-body, 14px) * 25 / 14);
+    font-size: var(--te-type-page-title);
   }
   .network-view-toggle {
     width: 100%;
@@ -1514,7 +1513,10 @@ html[data-te-motion='off'] .network-create-form {
 
 @media (max-width: 900px) {
   .network-sources-page {
-    padding-bottom: max(116px, calc(var(--te-playbar-bottom-clearance, 0px) + 16px));
+    padding-bottom: var(
+      --te-page-bottom,
+      max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px))
+    );
   }
 }
 </style>

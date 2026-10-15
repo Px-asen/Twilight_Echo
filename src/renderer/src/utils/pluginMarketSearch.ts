@@ -13,7 +13,9 @@ export interface PluginMarketIndex<T extends PluginMarketEntry> {
   grams: Map<string, Set<string>>
   byType: Map<string, Set<string>>
   byAuthor: Map<string, Set<string>>
+  byTag: Map<string, Set<string>>
   authors: string[]
+  tags: string[]
 }
 
 function addToIndex(index: Map<string, Set<string>>, key: string, id: string): void {
@@ -39,6 +41,8 @@ export function createPluginMarketIndex<T extends PluginMarketEntry>(
   const byType = new Map<string, Set<string>>()
   const byAuthor = new Map<string, Set<string>>()
   const authors = new Set<string>()
+  const byTag = new Map<string, Set<string>>()
+  const tags = new Map<string, string>()
   for (const entry of entries) {
     const text = [entry.name, entry.author, entry.id, entry.description, ...(entry.tags ?? [])]
       .join(' ')
@@ -48,6 +52,13 @@ export function createPluginMarketIndex<T extends PluginMarketEntry>(
     for (const type of entry.type) addToIndex(byType, type, entry.id)
     addToIndex(byAuthor, entry.author, entry.id)
     authors.add(entry.author)
+    for (const rawTag of entry.tags ?? []) {
+      const tag = rawTag.trim()
+      if (!tag) continue
+      const key = tag.toLocaleLowerCase()
+      addToIndex(byTag, key, entry.id)
+      if (!tags.has(key)) tags.set(key, tag)
+    }
   }
   return {
     entries,
@@ -55,7 +66,9 @@ export function createPluginMarketIndex<T extends PluginMarketEntry>(
     grams,
     byType,
     byAuthor,
-    authors: [...authors].sort((left, right) => left.localeCompare(right, 'zh-CN'))
+    byTag,
+    authors: [...authors].sort((left, right) => left.localeCompare(right, 'zh-CN')),
+    tags: [...tags.values()].sort((left, right) => left.localeCompare(right, 'zh-CN'))
   }
 }
 
@@ -63,12 +76,14 @@ export function searchPluginMarket<T extends PluginMarketEntry>(
   index: PluginMarketIndex<T>,
   query: string,
   type = '',
-  author = ''
+  author = '',
+  tag = ''
 ): T[] {
   const normalized = query.trim().toLocaleLowerCase()
   const sets: Set<string>[] = []
   if (type) sets.push(index.byType.get(type) ?? new Set())
   if (author) sets.push(index.byAuthor.get(author) ?? new Set())
+  if (tag.trim()) sets.push(index.byTag.get(tag.trim().toLocaleLowerCase()) ?? new Set())
   for (const gram of new Set(bigrams(normalized))) sets.push(index.grams.get(gram) ?? new Set())
   sets.sort((left, right) => left.size - right.size)
   const matches: T[] = []

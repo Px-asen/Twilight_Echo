@@ -532,8 +532,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'library',
     'color',
-    'rgba(255, 255, 255, 0.16)',
-    'rgba(255, 255, 255, 0.16)'
+    'transparent',
+    'transparent'
   ),
   token(
     'library.table.border',
@@ -542,8 +542,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'library',
     'color',
-    'rgba(255, 255, 255, 0.52)',
-    'rgba(255, 255, 255, 0.52)'
+    'rgba(15, 23, 42, 0.08)',
+    'rgba(255, 255, 255, 0.08)'
   ),
   token(
     'library.table.shadow',
@@ -552,8 +552,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'library',
     'shadow',
-    '0 26px 78px rgba(86, 70, 160, 0.1)',
-    '0 26px 78px rgba(86, 70, 160, 0.1)'
+    'none',
+    'none'
   ),
   token(
     'library.row.text',
@@ -572,7 +572,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'library',
     'color',
-    'rgba(255, 255, 255, 0.22)',
+    'rgba(15, 23, 42, 0.035)',
     'rgba(255, 255, 255, 0.065)'
   ),
   token(
@@ -633,8 +633,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'shape',
     'library-selection',
     'length',
-    '10px',
-    '10px',
+    '4px',
+    '4px',
     { min: 0, max: 24, step: 1, unit: 'px' }
   ),
   token(
@@ -677,8 +677,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'library-actions',
     'color',
-    'rgba(37, 99, 235, 0.08)',
-    'rgba(56, 189, 248, 0.12)'
+    'rgba(15, 23, 42, 0.04)',
+    'rgba(255, 255, 255, 0.06)'
   ),
   token(
     'library.actionRadius',
@@ -687,8 +687,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'shape',
     'library-actions',
     'length',
-    '12px',
-    '12px',
+    '8px',
+    '8px',
     { min: 0, max: 24, step: 1, unit: 'px' }
   ),
   token(

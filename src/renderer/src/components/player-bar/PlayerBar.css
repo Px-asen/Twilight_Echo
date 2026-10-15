@@ -1,6 +1,6 @@
 /* ===== Shell =====
-   The viewport owns player geometry. Navigation keeps its surface behind the
-   player and clears its tools only when the painted bar overlaps them.
+   The viewport owns player geometry. Navigation only reserves space below it;
+   opening a sidebar must not resize, move or disable the material.
    Keep this shell free of transforms and filters so fixed HiFi and dismiss
    overlays retain the viewport as their containing block. */
 .player-bar-shell {
@@ -10,6 +10,11 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
+  transition: inset 220ms var(--te-ease-soft, ease-out);
+}
+
+.player-bar-shell[data-te-playbar-mode='standard'] {
+  bottom: 22px;
 }
 
 .player-panel-dismiss {
@@ -43,13 +48,7 @@
 }
 
 :global(html[data-te-motion='full'] .drawer-up-enter-active) {
-  animation: player-drawer-arrive var(--te-motion-page) var(--te-ease-spring) both;
-}
-
-@keyframes player-drawer-arrive {
-  62% {
-    translate: 0 -2px;
-  }
+  animation: none;
 }
 
 /* ===== Volume Drawer ===== */
@@ -531,7 +530,7 @@
 }
 
 .playlist-item:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: -2px;
 }
 .playlist-item:hover {
@@ -620,9 +619,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .playing-bars i {
-    animation: none;
-    transform: scaleY(0.55);
+  @scope (:root:not([data-te-motion='full'])) {
+    .playing-bars i {
+      animation: none;
+      transform: scaleY(0.55);
+    }
   }
 }
 
@@ -808,25 +809,16 @@
   transition:
     background 0.3s,
     border-color 0.3s,
-    box-shadow 0.3s;
+    box-shadow 0.3s,
+    border-radius 220ms var(--te-ease-soft, ease-out),
+    max-width 220ms var(--te-ease-soft, ease-out),
+    padding 220ms var(--te-ease-soft, ease-out);
 }
 
 /* Keep transport and seeking together in the middle column, with concentric
    artwork corners and clear padding inside the rounded panel. */
 .player-bar:not(.player-bar-mini):not(.player-bar-compact) {
   --te-player-progress-height: 5px;
-  --te-standard-play-height: calc(var(--te-player-play-size, 44px) * 8 / 11);
-  --te-standard-progress-label-height: calc(var(--te-font-size-body, 14px) * 11 / 14 * 1.65);
-  --te-standard-progress-row-height: max(
-    22px,
-    calc(var(--te-standard-progress-label-height) + 4px)
-  );
-  --te-standard-bar-height: calc(
-    max(var(--te-standard-play-height), var(--te-player-control-size, 32px)) +
-      var(--te-standard-progress-row-height) + 18px
-  );
-  --te-standard-cover-size: calc(var(--te-standard-bar-height) - 20px);
-  --te-standard-cover-radius: 10px;
   /* Reserve the real utility width on narrow windows instead of letting its
      hit targets spill backwards into the seeking column. */
   grid-template-columns: minmax(0, 1fr) minmax(220px, 1.8fr) minmax(max-content, 1fr);
@@ -836,7 +828,9 @@
      then overshoot it. Reserve the same content space with padding and align all
      optical layers directly to this borderless outer box. */
   border: 0;
-  box-shadow: var(--te-bohr-contact), var(--te-bohr-elevation);
+  box-shadow:
+    var(--te-chrome-contact, var(--te-bohr-contact)),
+    var(--te-chrome-elevation, var(--te-bohr-elevation));
   padding: 1px 10px;
 }
 
@@ -853,7 +847,7 @@
   height: var(--te-standard-progress-row-height);
   min-height: 0;
   position: relative;
-  top: 3px;
+  top: 5px;
 }
 
 .player-bar:not(.player-bar-mini):not(.player-bar-compact) :deep(.time-label) {
@@ -864,6 +858,24 @@
 .player-bar:not(.player-bar-mini):not(.player-bar-compact) .player-controls {
   transform: none;
   gap: calc(var(--te-player-control-gap, 12px) * 5 / 6);
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .player-controls > .ctrl-btn {
+  height: var(--te-standard-play-height);
+  min-width: var(--te-standard-play-height);
+}
+
+.player-bar:not(.player-bar-mini):not(.player-bar-compact) .player-controls .playback-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.player-bar-idle :is(.player-cover-placeholder, .ctrl-btn:disabled) {
+  cursor: default;
+}
+
+.player-bar-idle .ctrl-btn:disabled {
+  opacity: 0.5;
 }
 
 /* Related controls sit closer together; whitespace marks the next function
@@ -891,9 +903,12 @@
 }
 
 .player-bar-glass {
-  --te-chrome-frosted-solid: rgb(16 17 19);
-  --te-chrome-frosted-surface: rgb(16 17 19 / 72%);
-  --te-regular-solid: var(--te-playback-bar-solid, rgb(16 17 19));
+  /* This explicit variant has light labels even in a light app theme. */
+  --te-chrome-material-solid: rgb(26 28 30);
+  --te-chrome-material-surface: rgb(26 28 30 / 76%);
+  --te-chrome-contact: 0 1px 3px rgb(0 0 0 / 20%);
+  --te-chrome-elevation: 0 5px 16px rgb(0 0 0 / 16%);
+  --te-regular-solid: var(--te-chrome-material-solid);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
     rgba(14, 14, 14, 0.86);
@@ -912,32 +927,40 @@ html[data-theme='pureWhite']
   .player-bar:not(.player-bar-liquid):not(.player-bar-mini):not(.player-bar-compact):not(
     .player-bar-glass
   ) {
-  background: var(--te-chrome-frosted-surface, rgb(250 251 253 / 80%));
+  background: var(--te-chrome-material-surface, rgb(250 251 253 / 80%));
   border-color: transparent;
-  box-shadow: var(--te-bohr-contact), var(--te-bohr-elevation);
-  backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
-  -webkit-backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
+  box-shadow:
+    var(--te-chrome-contact, var(--te-bohr-contact)),
+    var(--te-chrome-elevation, var(--te-bohr-elevation));
+  backdrop-filter: blur(24px) saturate(124%);
+  -webkit-backdrop-filter: blur(24px) saturate(124%);
 }
 
 html[data-theme='dark']
-  .player-bar:not(.player-bar-liquid):not(.player-bar-mini):not(.player-bar-compact),
+  .player-bar:where(:not(.player-bar-docked)):not(.player-bar-liquid):not(.player-bar-mini):not(
+    .player-bar-compact
+  ),
 .player-bar.player-bar-glass:not(.player-bar-liquid):not(.player-bar-mini):not(
     .player-bar-compact
-  ) {
-  background: var(--te-playback-bar-surface, var(--te-chrome-frosted-surface, rgb(16 17 19 / 72%)));
+  ):where(:not(.player-bar-docked)) {
+  --te-regular-solid: var(--te-chrome-material-solid, rgb(16 17 19));
+  background: var(--te-chrome-material-surface, rgb(16 17 19 / 72%));
   border-color: transparent;
-  box-shadow: var(--te-bohr-contact), var(--te-bohr-elevation);
-  backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
-  -webkit-backdrop-filter: blur(var(--te-chrome-frosted-blur, 24px))
-    saturate(var(--te-chrome-frosted-saturation, 124%));
+  box-shadow:
+    var(--te-chrome-contact, var(--te-bohr-contact)),
+    var(--te-chrome-elevation, var(--te-bohr-elevation));
+  backdrop-filter: blur(24px) saturate(124%);
+  -webkit-backdrop-filter: blur(24px) saturate(124%);
 }
 
-body.te-no-blur .player-bar:not(.player-bar-liquid):not(.player-bar-mini):not(.player-bar-compact),
+body.te-no-blur
+  .player-bar:where(:not(.player-bar-docked)):not(.player-bar-liquid):not(.player-bar-mini):not(
+    .player-bar-compact
+  ),
 html[data-te-effects-mode='reduced']
-  .player-bar:not(.player-bar-liquid):not(.player-bar-mini):not(.player-bar-compact) {
+  .player-bar:where(:not(.player-bar-docked)):not(.player-bar-liquid):not(.player-bar-mini):not(
+    .player-bar-compact
+  ) {
   background: rgb(
     from var(--te-regular-solid, var(--te-card-bg-solid, var(--te-card-bg))) r g b / 1
   ) !important;
@@ -973,7 +996,7 @@ html[data-te-effects-mode='reduced']
   color: var(--te-playback-control-text, rgba(255, 255, 255, 0.8));
 }
 .player-bar-glass .ctrl-btn:hover {
-  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.1));
+  background: var(--te-transport-feedback-hover);
 }
 .player-bar-glass .ctrl-btn img {
   filter: var(--te-playback-icon-filter, brightness(0) invert(1));
@@ -1020,7 +1043,7 @@ html[data-te-effects-mode='reduced']
   color: var(--te-playback-control-text, rgba(255, 255, 255, 0.6));
 }
 .player-bar-glass .icon-btn:hover {
-  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.1));
+  background: var(--te-transport-feedback-hover);
   color: var(--te-playback-control-hover-text, rgba(255, 255, 255, 0.9));
 }
 .player-bar-glass .icon-btn.active {
@@ -1031,7 +1054,7 @@ html[data-te-effects-mode='reduced']
 .player-bar-glass .ctrl-btn:active,
 .player-bar-glass .icon-btn:active,
 .player-bar-glass .mode-btn-right:active {
-  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.16));
+  background: var(--te-transport-feedback-pressed);
 }
 
 .player-bar-glass :deep(.progress-track) {
@@ -1195,7 +1218,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .player-title-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 52%, transparent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 
@@ -1242,14 +1265,12 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 @keyframes live-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
-  }
-  70% {
-    box-shadow: 0 0 0 6px rgba(255, 255, 255, 0);
-  }
+  0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
   }
 }
 
@@ -1289,7 +1310,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .player-artist:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 52%, transparent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 
@@ -1453,17 +1474,23 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   min-width: 0;
 }
 :deep(.time-label) {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   color: #999;
-  min-width: max(36px, calc(var(--te-progress-time-characters, 4) * 1ch + 12px));
+  min-width: 0;
+  width: max(36px, calc(var(--te-progress-time-characters, 4) * 1ch + 12px));
+  max-width: calc((100% - 100px) / 2);
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 :deep(.progress-slider-wrap) {
   position: relative;
   flex: 1;
-  height: 22px;
-  min-width: 0;
+  height: 24px;
+  min-width: 80px;
   z-index: 3;
 }
 /* Real DOM track/fill — Chromium does not reliably repaint
@@ -1474,6 +1501,8 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   right: 0;
   top: 50%;
   height: calc(var(--te-player-progress-height, 5px) * 0.6);
+  /* Animate thickness directly so rounded ends retain their horizontal bounds.
+     Scaling a clipped track also scales its rasterized end caps on hover. */
   transform: translateY(-50%);
   transition: height 120ms ease-out;
   border-radius: 999px;
@@ -1511,7 +1540,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   position: absolute;
   inset: 0;
   width: 100%;
-  height: 22px;
+  height: 24px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -1536,7 +1565,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 :deep(.progress-area.is-keyboard-focus .progress-track) {
-  outline: 2px solid var(--accent-color, #2563eb);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 
@@ -1545,9 +1574,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :deep(.progress-track),
-  :deep(.ab-loop-range) {
-    transition: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    :deep(.progress-track),
+    :deep(.ab-loop-range) {
+      transition: none;
+    }
   }
 }
 
@@ -1835,6 +1866,138 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   }
 }
 
+/* Default desktop arrangement: song actions, transport/seek, then tools. */
+html[data-te-player-layout='standard'] .player-bar.player-bar-reference {
+  grid-template-columns: minmax(0, 1fr) minmax(var(--te-standard-center-min), 1.4fr) minmax(0, 1fr);
+  column-gap: 20px;
+  padding-inline: 18px;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference > .player-left {
+  display: grid;
+  grid-template-columns: 32px 32px minmax(0, 1fr);
+  grid-template-rows: auto 32px;
+  gap: 2px 10px;
+  width: 100%;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference .player-track-info {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference .player-title-row {
+  flex: 0 1 auto;
+  max-width: 65%;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference .player-title {
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-weight: 600;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference .player-artist {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-weight: 400;
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped > .player-center {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  justify-content: center;
+  align-items: center;
+  column-gap: 12px;
+}
+
+html[data-te-player-layout='standard'] .player-bar.player-bar-transport-grouped {
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(var(--te-standard-center-min), 1.8fr)
+    minmax(max-content, 1fr);
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .mode-btn-right,
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .volume-control-button {
+  width: var(--te-standard-secondary-size);
+  height: var(--te-standard-play-height);
+  border-radius: 999px;
+  color: var(--te-player-bar-play-text, var(--te-transport-play-text));
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .mode-btn-right img,
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .volume-control-button svg {
+  width: 20px;
+  height: 20px;
+  opacity: 0.75;
+}
+
+html[data-te-player-layout='standard']
+  .player-bar-transport-grouped
+  .mode-btn-right:hover:not(:disabled),
+html[data-te-player-layout='standard']
+  .player-bar-transport-grouped
+  .volume-control-button:is(:hover, .active):not(:disabled) {
+  background: var(--te-transport-play-surface);
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .mode-btn-right:focus-visible,
+html[data-te-player-layout='standard']
+  .player-bar-transport-grouped
+  .volume-control-button:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+}
+
+html[data-te-player-layout='standard']
+  .player-bar-transport-grouped
+  > .player-center
+  > .mode-btn-right {
+  justify-self: end;
+}
+
+html[data-te-player-layout='standard']
+  .player-bar-transport-grouped
+  > .player-center
+  > .volume-anchor {
+  justify-self: start;
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped :deep(.progress-area),
+html[data-te-player-layout='standard'] .player-bar-transport-grouped .resume-offer {
+  grid-column: 1 / -1;
+}
+
+html[data-te-player-layout='standard'] .player-bar-transport-grouped :deep(.progress-area) {
+  width: 100%;
+}
+
+html[data-te-player-layout='standard'] .player-bar-reference > .player-right {
+  justify-content: flex-end;
+  gap: 12px;
+  transform: translateY(10px);
+}
+
+@media (max-width: 760px) {
+  html[data-te-player-layout='standard'] .player-bar.player-bar-reference {
+    grid-template-columns: minmax(0, 1fr) minmax(var(--te-standard-center-min), 1.5fr) minmax(
+        96px,
+        1fr
+      );
+    column-gap: 10px;
+    padding-inline: 12px;
+  }
+  html[data-te-player-layout='standard'] .player-bar-transport-grouped > .player-center {
+    column-gap: 8px;
+  }
+  html[data-te-player-layout='standard'] .player-bar-reference > .player-right {
+    gap: 4px;
+  }
+}
+
 /* ===== HiFi Right Overlay — modern glass console ===== */
 
 .hifi-overlay {
@@ -1842,7 +2005,9 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   top: var(--te-titlebar-inset, 32px);
   right: 0;
   bottom: 0;
-  z-index: 1100;
+  z-index: 1000;
+  box-sizing: border-box;
+  padding-bottom: var(--te-playbar-bottom-clearance, 0px);
   width: 440px;
   max-width: 100vw;
   pointer-events: auto;
@@ -1984,38 +2149,47 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   border-radius: var(--te-player-control-radius, 999px);
 }
 
-.player-bar .btn-play {
-  width: var(--te-player-play-size, 44px);
-  height: var(--te-player-play-size, 44px);
+/* Every density uses the standard bar's neutral 7:4 transport capsule. */
+.player-bar {
+  --te-family-play-height: var(--te-standard-play-height, 48px);
 }
 
-/* Keep the Windows transport easy to hit without a prominent colored disc. */
-.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play {
-  width: calc(var(--te-standard-play-height) * 15 / 8);
-  height: var(--te-standard-play-height);
+.player-bar .btn-play,
+.player-bar .mini-play-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: calc(var(--te-family-play-height) * 7 / 4);
+  height: var(--te-family-play-height);
   padding: 8px;
   border: 0;
   border-radius: 999px;
   background: var(--te-player-bar-play-surface, var(--te-transport-play-surface));
   color: var(--te-player-bar-play-text, var(--te-transport-play-text));
+  box-shadow: none;
+  cursor: pointer;
 }
 
-.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play .playback-icon {
-  width: 18px;
-  height: 18px;
+.player-bar-glass {
+  --te-transport-play-text: #fff;
+  --te-transport-play-surface: rgba(255, 255, 255, 0.08);
+  --te-transport-play-hover-surface: rgba(255, 255, 255, 0.13);
 }
 
-.player-bar:not(.player-bar-mini):not(.player-bar-compact).player-bar-glass {
-  --te-transport-play-text: var(--te-playback-page-text, #fff);
-  --te-transport-play-surface: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
-  --te-transport-play-hover-surface: var(
-    --te-playback-control-hover-surface,
-    rgba(255, 255, 255, 0.13)
-  );
+.player-bar :is(.ctrl-btn, .icon-btn, .mini-play-button) {
+  color: var(--te-player-bar-play-text, var(--te-transport-play-text));
+  transition:
+    background var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    transform var(--te-motion-hover) var(--te-ease-soft);
 }
 
-.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:hover,
-.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:active {
+.player-bar :is(.ctrl-btn, .icon-btn, .mini-play-button):hover:not(:disabled) {
+  background: var(--te-player-bar-play-surface, var(--te-transport-play-surface));
+}
+
+.player-bar :is(.btn-play, .mini-play-button):is(:hover, :active):not(:disabled) {
   background: var(
     --te-player-bar-play-hover-surface,
     var(--te-player-bar-play-surface, var(--te-transport-play-hover-surface))
@@ -2026,9 +2200,33 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   );
 }
 
-.player-bar:not(.player-bar-mini):not(.player-bar-compact) .btn-play:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+.player-bar :is(.ctrl-btn, .icon-btn, .mini-play-button):active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.player-bar :is(.ctrl-btn, .icon-btn, .mini-play-button):focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
+}
+
+.player-bar :is(.ctrl-btn, .icon-btn, .mini-play-button):disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+
+.player-bar .playback-icon {
+  width: 18px;
+  height: 18px;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.player-bar .btn-play .playback-icon,
+.player-bar .mini-play-button .playback-icon {
+  width: calc(var(--te-family-play-height) / 2);
+  height: calc(var(--te-family-play-height) / 2);
+  opacity: 1;
 }
 
 .player-bar :deep(.progress-track) {
@@ -2062,9 +2260,11 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .player-bar .ctrl-btn,
-  .player-bar .icon-btn {
-    transition: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .player-bar .ctrl-btn,
+    .player-bar .icon-btn {
+      transition: none;
+    }
   }
 }
 
@@ -2127,7 +2327,9 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   background: transparent !important;
   border-color: transparent !important;
   /* Refraction stays below the controls; elevation comes from the outer shadow. */
-  box-shadow: var(--te-bohr-contact), var(--te-bohr-elevation) !important;
+  box-shadow:
+    var(--te-chrome-contact, var(--te-bohr-contact)),
+    var(--te-chrome-elevation, var(--te-bohr-elevation)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -2224,7 +2426,7 @@ html[data-theme='dark'] .player-bar-liquid {
      strength. */
   --te-lg-transmit: 0.6;
   --te-lg-transmit-sat: 1;
-  --te-lg-luma: 0.66;
+  --te-lg-luma: 0.78;
   /* Apple's dark glass reads clear, not smoked: legibility comes from blur and
      the saturated backdrop, so the density/shade stack stays restrained while
      the rim brightens. */
@@ -2307,30 +2509,17 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 }
 
 /* ===== Mini shape =====
-
-   Geometry is keyed off the shell's data attribute so it can out-specify preset
-   theme layouts. A preset sheet rewrites the playbar from
-   `html[…] body .player-bar-shell.menu-open .player-bar.player-bar` — (0,5,2) —
-   and sets at least the properties mini needs (height, max-width, padding,
-   grid-template-columns). Repeating `.player-bar-mini` lands these rules at
-   (0,6,0), which wins on class count without `!important`; going the
-   `!important` route would force every mini rule below to match it.
-
-   Motion tiers need no variants here: base.css already collapses transition
-   durations under html[data-te-motion='reduced'|'off'] for every element. */
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
-  height: 40px;
+   The host owns player geometry. Theme layouts cannot override these controls;
+   density changes size and spacing while the shared transport owns feedback. */
+.player-bar-shell[data-te-playbar-mode='mini'] .player-bar.player-bar-mini {
+  --te-family-play-height: 32px;
+  height: 44px;
   width: calc(100% - 24px);
   max-width: min(1120px, 100%);
   margin: 0 auto;
-  /* Playback stays at the far left, the progress rail stretches through the middle. */
   grid-template-columns: auto minmax(0, 1fr) auto;
-  column-gap: 10px;
+  column-gap: 12px;
   padding: 0 10px;
-  /* No hairline on any side. On a 40px strip a 1px light border reads as an
-     outline drawn around the bar rather than as its edge — the surface and its
-     rounding carry the shape instead. */
   border: 0;
   border-radius: 16px;
   background: var(--te-card-bg, #fff);
@@ -2338,504 +2527,241 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  /* Not `overflow: hidden`, even though the 16px rounding invites it: the volume
-     drawer is a child of the bar and opens *upward* out of it, so clipping here
-     cut the drawer away entirely on a mini bar. Nothing else needs the clip —
-     `.mini-progress-track` rounds and clips its own fill, and no child reaches
-     the rounded corners. */
+  /* The volume drawer opens upward out of this surface. */
   transition:
-    background 0.3s,
-    border-color 0.3s,
-    box-shadow 0.3s,
+    background var(--te-motion-panel) ease,
     transform var(--te-motion-panel) var(--te-ease-soft),
     opacity var(--te-motion-panel) ease;
 }
 
-/* Forced colors replaces the flat surface with a system colour, so the strip
-   needs an outline back or it dissolves into the page. This is the one mode
-   where an edge is wanted: the palette is the user's, not ours. */
 @media (forced-colors: active) {
-  .player-bar-shell[data-te-playbar-mode='mini']
-    .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+  .player-bar-shell[data-te-playbar-mode='mini'] .player-bar.player-bar-mini {
     border: 1px solid CanvasText;
   }
 }
 
-/* Auto-hide tucks the bar below the viewport. Layout height is unchanged by a
-   transform, so `useSideMenuClearance` / `measurePlaybarReservedPx` read the
-   shell's data-te-playbar-hidden flag instead of measuring. pointer-events must
-   go too, or the tucked bar keeps swallowing clicks along the bottom edge.
-
-   Shape-agnostic, like the fully-hidden rule below: auto-hide resolves for every
-   shape that carries its own progress readout, so naming one shape here left the
-   compact strip with the flag set and nothing moving. The repeated class beats
-   the preset theme layouts, same trick as the shape geometry rules. */
-.player-bar-shell[data-te-playbar-hidden='true'] .player-bar.player-bar.player-bar {
+/* Hidden bars preserve their measurement box and stop receiving input. */
+.player-bar-shell[data-te-playbar-hidden='true'] .player-bar.player-bar {
   transform: translateY(calc(100% + 24px));
   opacity: 0;
   pointer-events: none;
 }
 
-/* Fully hidden ("完全隐藏") is the third visibility step and a different thing
-   from auto-hide: there is no reveal gesture, so the bar must also leave the tab
-   order and the accessibility tree — `opacity: 0` alone still lets Tab land on
-   invisible transport buttons. `visibility` does that while keeping the element
-   in the DOM, which is what the two geometry consumers query for the flag.
-
-   Unlike the rule above this one is shape-agnostic: a standard bar can be hidden
-   outright because nothing has to be revealed, so nothing is lost. The class is
-   repeated to out-specify the preset theme layouts, same as mini geometry. */
-.player-bar-shell[data-te-playbar-visibility='hidden'] .player-bar.player-bar.player-bar {
+.player-bar-shell[data-te-playbar-visibility='hidden'] .player-bar.player-bar {
   transform: translateY(calc(100% + 24px));
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 
-/* The shell keeps its box (grid area, clearance measurement) but must not
-   intercept anything either. It is already `pointer-events: none` in the default
-   layout; the custom shell layout re-asserts `auto` on it, and App.vue carries
-   the matching override for that case. */
 .player-bar-shell[data-te-playbar-visibility='hidden'] {
   pointer-events: none;
 }
 
-/* Mini's play button and long rail live inside the region wrappers now — every
-   shape renders `.player-left` / `.player-center` / `.player-right` so the
-   layout contract can move controls between them — so the region class sits in
-   the selector where a direct `>` child of `.player-bar` used to. */
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-left {
+.player-bar.player-bar-mini .player-left,
+.player-bar.player-bar-mini .player-right {
   align-self: center;
-  gap: 4px;
+  gap: 6px;
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-center {
+.player-bar.player-bar-mini .player-center {
   flex-direction: row;
   align-items: center;
+  gap: 6px;
   height: 100%;
   transform: none;
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-left
-  > .mini-play-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: var(--te-player-bar-play-surface, transparent);
-  color: var(--te-shell-control-text, #475569);
-  cursor: pointer;
-  transition:
-    color var(--te-motion-hover) ease,
-    background var(--te-motion-hover) ease;
+.player-bar.player-bar-mini .player-controls {
+  gap: 4px;
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-left
-  > .mini-play-button:hover {
-  background: var(
-    --te-player-bar-play-hover-surface,
-    var(
-      --te-player-bar-play-surface,
-      color-mix(in srgb, var(--te-shell-control-text, #475569) 8%, transparent)
-    )
-  );
+.player-bar.player-bar-mini :is(.ctrl-btn:not(.btn-play), .icon-btn) {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 999px;
 }
 
-.mini-play-button i {
+.player-bar.player-bar-mini .player-track-info {
+  flex: 0 1 auto;
+  max-width: clamp(56px, 16vw, 180px);
+}
+
+.player-bar.player-bar-mini .player-title,
+.player-bar.player-bar-mini .player-artist {
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  line-height: 1;
+  line-height: 1.25;
 }
 
-/* ===== Mini long progress rail =====
-
-   The rail owns the flexible middle grid column and spans nearly the full pill
-   width. Its visible line is intentionally flat and quiet; the larger wrapper
-   preserves a comfortable hit target for seeking. The compound
-   `.player-bar.player-bar-mini .player-center >` prefix out-specifies
-   `.player-center`'s own `position: relative` / column flow, which would
-   otherwise leave the rail stacked instead of stretched. */
+/* The time readout has its own column; visible line and input share exact bounds. */
 .player-bar.player-bar-mini .player-center > .mini-progress-rail {
   position: relative;
-  left: auto;
-  right: auto;
-  bottom: auto;
   width: 100%;
   height: 100%;
   min-width: 0;
   z-index: 3;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto;
   align-items: center;
+  gap: 12px;
   pointer-events: auto;
 }
 
-/* Real DOM track/fill for the same reason as :deep(.progress-track): Chromium does not
-   reliably repaint ::-webkit-slider-runnable-track on a custom-property change. */
-.mini-progress-track {
+:deep(.mini-progress-slider-wrap),
+:deep(.compact-progress-slider-wrap) {
+  position: relative;
+  width: 100%;
+  height: 24px;
+  min-width: 0;
+}
+
+:deep(.mini-progress-track) {
   position: absolute;
   left: 0;
-  right: 82px;
+  right: 0;
   top: 50%;
   height: 2px;
   transform: translateY(-50%);
-  border-radius: 1px;
-  background: var(
-    --te-player-bar-progress-track,
-    color-mix(in srgb, var(--accent-color, #1a73e8) 24%, transparent)
-  );
+  border-radius: 999px;
+  background: var(--te-player-bar-progress-track, var(--te-player-progress-track));
   overflow: hidden;
   pointer-events: none;
 }
 
-.mini-progress-fill {
+:deep(.mini-progress-fill),
+:deep(.compact-progress-fill) {
   height: 100%;
   width: 100%;
-  border-radius: 1px;
-  background: var(--te-player-bar-progress-fill, var(--accent-color, #2563eb));
+  border-radius: inherit;
+  background: var(--te-player-bar-progress-fill, var(--accent-color, var(--te-primary-500)));
   transform: scaleX(0);
   transform-origin: 0 50%;
   will-change: transform;
   transition: none;
 }
 
-.mini-progress-time {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  z-index: 2;
-  transform: translateY(-50%);
-  color: color-mix(in srgb, var(--te-shell-control-text, #475569) 58%, transparent);
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
+:deep(.mini-progress-time),
+.player-time-readout {
+  color: var(--te-player-bar-time-text, var(--te-shell-control-text));
+  opacity: 0.68;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   white-space: nowrap;
   pointer-events: none;
 }
 
-.mini-progress-slider {
-  position: relative;
-  z-index: 1;
+:deep(.mini-progress-slider),
+:deep(.compact-progress-slider) {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   width: 100%;
-  height: 24px;
+  height: 100%;
   margin: 0;
+  padding: 0;
+  border: 0;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
+  touch-action: none;
 }
 
-.mini-progress-slider:disabled {
+:deep(.mini-progress-slider:disabled),
+:deep(.compact-progress-slider:disabled) {
   cursor: default;
 }
 
-.mini-progress-slider::-webkit-slider-runnable-track {
+:deep(.mini-progress-slider::-webkit-slider-runnable-track),
+:deep(.compact-progress-slider::-webkit-slider-runnable-track),
+:deep(.mini-progress-slider::-moz-range-track),
+:deep(.compact-progress-slider::-moz-range-track),
+:deep(.mini-progress-slider::-moz-range-progress),
+:deep(.compact-progress-slider::-moz-range-progress) {
   height: 24px;
   background: transparent;
 }
 
-.mini-progress-slider::-webkit-slider-thumb {
+:deep(.mini-progress-slider::-webkit-slider-thumb),
+:deep(.compact-progress-slider::-webkit-slider-thumb) {
   appearance: none;
   -webkit-appearance: none;
   width: 0;
   height: 0;
 }
 
-.mini-progress-slider::-moz-range-track {
-  height: 24px;
-  background: transparent;
-}
-
-.mini-progress-slider::-moz-range-progress {
-  height: 24px;
-  background: transparent;
-}
-
-.mini-progress-slider::-moz-range-thumb {
+:deep(.mini-progress-slider::-moz-range-thumb),
+:deep(.compact-progress-slider::-moz-range-thumb) {
   width: 0;
   height: 0;
   border: 0;
+  background: transparent;
 }
 
-.mini-progress-slider:focus-visible {
-  outline: 2px solid var(--accent-color, var(--te-primary-500));
-  outline-offset: 2px;
-  border-radius: 999px;
+:deep(.mini-progress-slider:focus),
+:deep(.compact-progress-slider:focus) {
+  outline: none;
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right {
-  gap: 2px;
-  align-self: center;
+:deep(.mini-progress-rail.is-keyboard-focus .mini-progress-track),
+:deep(.compact-progress-rail.is-keyboard-focus .compact-progress-track) {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .mode-btn-right {
-  order: 1;
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .track-menu-button {
-  order: 2;
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .hifi-toggle-button {
-  order: 3;
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .volume-anchor {
-  order: 4;
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .playing-page-exit-button {
-  order: 5;
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .icon-btn,
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .mode-btn-right {
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  color: var(--te-shell-control-text, #475569);
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .icon-btn:hover,
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .mode-btn-right:hover {
-  background: color-mix(in srgb, var(--te-shell-control-text, #475569) 8%, transparent);
-  color: var(--te-shell-control-text, #475569);
-}
-
-/* Under a dark theme, 22% accent over transparent leaves the unfilled part of
-   the rail barely there, so both flat shapes lift their track the same way. */
-html[data-theme='dark'] .player-bar-compact .compact-progress-track,
-html[data-theme='dark'] .player-bar-mini .mini-progress-track {
+/* The flat strips retain a clear track on a dark app or the playing-page backdrop. */
+html[data-theme='dark'] .player-bar-mini :deep(.mini-progress-track),
+html[data-theme='dark'] .player-bar-compact :deep(.compact-progress-track) {
   background: var(
     --te-player-bar-progress-track,
     color-mix(in srgb, var(--accent-color, #60a5fa) 30%, rgba(255, 255, 255, 0.14))
   );
 }
 
-.player-bar-glass .compact-progress-track,
-.player-bar-glass .mini-progress-track {
+.player-bar.player-bar-glass :deep(.mini-progress-track),
+.player-bar.player-bar-glass :deep(.compact-progress-track) {
   background: var(--te-player-bar-progress-track, rgba(255, 255, 255, 0.28));
 }
 
-.player-bar-glass .compact-progress-fill,
-.player-bar-glass .mini-progress-fill {
+.player-bar.player-bar-glass :deep(.mini-progress-fill),
+.player-bar.player-bar-glass :deep(.compact-progress-fill) {
   background: var(--te-player-bar-progress-fill, rgba(255, 255, 255, 0.9));
 }
 
-/* Shared transport glyphs inherit color directly; SVG images' invert filters do not apply. */
-.player-controls .playback-icon {
-  width: 18px;
-  height: 18px;
-  opacity: 0.8;
-}
-
-.player-controls .btn-play .playback-icon {
-  width: 21px;
-  height: 21px;
-  color: inherit;
-  opacity: 1;
-}
-
-.mini-play-button .playback-icon {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-}
-
-.player-bar-compact .player-controls .ctrl-btn .playback-icon {
-  width: 17px;
-  height: 17px;
-}
-
-.player-bar-compact .player-controls .btn-play .playback-icon {
-  width: 16px;
-  height: 16px;
-}
-
-/* Dark themes park the card colour a step or two from the page background —
-   #181818 on #17181a in the built-in preset — so the hairline used to be the
-   only thing separating the strip. With it gone the fill has to do that job:
-   lift it just enough to read as a surface, roughly the same distance the
-   playing-page rule below sits from its own backdrop. */
 html[data-theme='dark']
   .player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini:not(.player-bar-glass) {
-  background: var(--te-flat-bar-dark-lift);
-}
-
+  .player-bar.player-bar-mini:not(.player-bar-glass),
 html[data-theme='dark']
   .player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(.player-bar-glass) {
+  .player-bar.player-bar-compact:not(.player-bar-glass) {
   background: var(--te-flat-bar-dark-lift);
 }
 
-/* PlayingMusic supplies `glass=true` even when the app theme is light. Mini
-   still needs the playing-page dark surface; otherwise the flat mini rule's
-   card token wins and turns the bar white. No border here either: the fill is
-   what separates the strip from the page. */
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini {
+.player-bar-shell[data-te-playbar-mode='mini'] .player-bar.player-bar-glass.player-bar-mini,
+.player-bar-shell[data-te-playbar-mode='compact'] .player-bar.player-bar-glass.player-bar-compact {
   background: var(--te-flat-bar-glass-bg);
   background-image: none;
   color: var(--te-flat-bar-glass-text);
 }
 
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-left
-  > .mini-play-button,
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .icon-btn,
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .mode-btn-right {
-  color: var(--te-flat-bar-control);
-}
-
-/* Keep a direct descendant form for the shared strip contract. The shell-scoped
-   selectors above carry the stronger geometry specificity; these declarations
-   make the control colour invariant explicit for both flat shapes. */
-.player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .icon-btn,
-.player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .player-right
-  .icon-btn {
-  color: var(--te-flat-bar-control);
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .icon-btn:hover,
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right
-  .mode-btn-right:hover {
-  background: var(--te-flat-bar-control-hover-bg);
-  color: var(--te-flat-bar-control-hover-text);
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-left
-  > .mini-play-button:hover {
-  background: var(
-    --te-player-bar-play-hover-surface,
-    var(--te-player-bar-play-surface, var(--te-flat-bar-control-hover-bg))
-  );
-  color: var(--te-flat-bar-control-hover-text);
-}
-
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .mini-progress-time {
+.player-bar-glass :deep(.mini-progress-time),
+.player-bar-glass .player-time-readout {
   color: var(--te-flat-bar-muted);
+  opacity: 1;
 }
 
-@media (max-width: 680px) {
-  .player-bar-shell[data-te-playbar-mode='mini']
-    .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+@media (max-width: 760px) {
+  .player-bar-shell[data-te-playbar-mode='mini'] .player-bar.player-bar-mini {
     width: calc(100% - 12px);
-    padding-inline: 6px;
-    column-gap: 6px;
-  }
-
-  .player-bar-shell[data-te-playbar-mode='mini']
-    .player-bar-mini.player-bar-mini.player-bar-mini
-    .player-right {
-    gap: 1px;
-  }
-
-  .player-bar-shell[data-te-playbar-mode='mini']
-    .player-bar-mini.player-bar-mini.player-bar-mini
-    .player-right
-    .icon-btn,
-  .player-bar-shell[data-te-playbar-mode='mini']
-    .player-bar-mini.player-bar-mini.player-bar-mini
-    .player-right
-    .mode-btn-right {
-    width: 22px;
-    height: 22px;
-  }
-
-  .player-bar.player-bar-mini .player-center > .mini-progress-rail .mini-progress-track {
-    right: 72px;
-  }
-
-  .mini-progress-time {
-    right: 8px;
-    font-size: 8px;
+    padding-inline: 8px;
+    column-gap: 8px;
   }
 }
 
-/* ===== Compact shape =====
-
-   A strip that spans the window edge to edge, flush with the bottom, with its
-   progress readout as a hairline along its own top edge. That hairline is also
-   the bar's edge: like mini it carries no border, because a 1px light line on a
-   flat strip reads as an outline drawn around the bar rather than as its top.
-
-   Geometry repeats `.player-bar-compact` for the same reason mini does — a
-   preset sheet rewrites the playbar from
-   `html[…] body .player-bar-shell .player-bar.player-bar` and sets exactly the
-   four properties below, so compact has to win all four on class count without
-   `!important`.
-
-   Motion tiers need no variants here: base.css already collapses transition
-   durations under html[data-te-motion='reduced'|'off'] for every element. */
-
-/* Compact also claims the shell's insets, which mini never does: the strip is
-   meant to sit against the window edges and four of the six preset layouts move
-   the shell away from them. Three `.player-bar-shell` compounds plus the
-   attribute land at (0,4,0), beating a preset sheet's
-   `html[…] body .player-bar-shell.player-bar-shell` at (0,3,2) on class count.
-
-   `html[data-te-shell-layout='custom']` in App.vue overrides this with
-   `inset: auto !important`, which is correct: in a theme-supplied shell the
-   playbar is a grid row that already spans the width, so it must not go back to
-   being fixed to the viewport. */
-.player-bar-shell[data-te-playbar-mode='compact'].player-bar-shell.player-bar-shell {
+/* ===== Compact shape ===== */
+.player-bar-shell[data-te-playbar-mode='compact'] {
   left: 0;
   right: 0;
   bottom: 0;
@@ -2850,8 +2776,8 @@ html[data-theme='dark']
   z-index: 3;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+.player-bar-shell[data-te-playbar-mode='compact'] .player-bar.player-bar-compact {
+  --te-family-play-height: 40px;
   --te-compact-visualizer-height: 138px;
   position: relative;
   height: 216px;
@@ -2859,9 +2785,6 @@ html[data-theme='dark']
   max-width: none;
   margin: 0;
   padding: 0 18px;
-  /* Metadata left, transport centred against the window, tools right. The two
-     1fr side columns are what keeps the centre cluster actually centred rather
-     than merely between the other two. */
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   column-gap: 16px;
   border: 0;
@@ -2871,179 +2794,65 @@ html[data-theme='dark']
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  /* Deliberately not `overflow: hidden` (mini's choice): the volume drawer opens
-     upward out of the bar and would be clipped away. Nothing here overflows —
-     the rail sits inside the top edge and the corners are square. */
   transition:
-    background 0.3s,
-    border-color 0.3s,
-    box-shadow 0.3s,
+    background var(--te-motion-panel) ease,
     transform var(--te-motion-panel) var(--te-ease-soft),
     opacity var(--te-motion-panel) ease;
 }
 
-/* Forced colors replaces the flat surface with a system colour, so the strip
-   needs an edge back or it dissolves into the page — the one mode where an
-   outline is wanted, because the palette is the user's, not ours. */
 @media (forced-colors: active) {
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+  .player-bar-shell[data-te-playbar-mode='compact'] .player-bar.player-bar-compact {
     border-top: 1px solid CanvasText;
   }
 }
 
-/* ===== Compact top-edge progress rail =====
-
-   The visible line is 2px; the wrapper is taller so seeking has a real hit
-   target. Real DOM track/fill for the same reason as `:deep(.progress-track)` and
-   `.mini-progress-track`: Chromium does not reliably repaint
-   ::-webkit-slider-runnable-track when only a custom property changes. */
+/* Split the 24px target across the boundary so the controls below remain reachable. */
 .player-bar.player-bar-compact > .compact-progress-rail {
   position: absolute;
-  top: var(--te-compact-visualizer-height, 138px);
+  top: calc(var(--te-compact-visualizer-height, 138px) - 11px);
   left: 0;
   right: 0;
-  height: 9px;
+  height: 24px;
   z-index: 4;
   pointer-events: auto;
 }
 
-/* The volume drawer is the one floating panel that lives *inside* the bar (the
-   queue panel and the HiFi overlay are siblings of it), and it opens upward with
-   its bottom edge tucked a few px into the bar — every shape does that. On a
-   compact bar those px land inside the rail's 9px hit band, and the rail is the
-   higher layer: the 2px progress line drew across the drawer, and a click near
-   the drawer's bottom scrubbed the track instead. `.volume-anchor` is already
-   `position: relative`, and neither it nor `.player-right` establishes a
-   stacking context, so z-index here competes directly with the rail inside
-   `.player-bar` — lifting the anchor takes the whole drawer above the line. */
 .player-bar.player-bar-compact .volume-anchor {
   z-index: 5;
 }
 
-/* The visualizer is an explicit z=0 layer. Raise only the region contents, not
-   the region wrappers: `.volume-anchor` must keep competing with the z=4 seek
-   rail in the bar's own stacking context so its upward drawer stays on top. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-left
-  > *,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-center
-  > *,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-right
-  > :not(.volume-anchor) {
+/* Region wrappers cannot create a stacking context around the volume drawer. */
+.player-bar.player-bar-compact .player-left > *,
+.player-bar.player-bar-compact .player-center > :not(.volume-anchor),
+.player-bar.player-bar-compact .player-right > :not(.volume-anchor) {
   position: relative;
   z-index: 1;
 }
 
-.compact-progress-track {
+:deep(.compact-progress-track) {
   position: absolute;
-  top: 0;
+  top: 11px;
   left: 0;
   right: 0;
   height: 2px;
-  background: var(
-    --te-player-bar-progress-track,
-    color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 22%, transparent)
-  );
+  background: var(--te-player-bar-progress-track, var(--te-player-progress-track));
   overflow: hidden;
   pointer-events: none;
 }
 
-.compact-progress-fill {
-  height: 100%;
-  width: 100%;
-  background: var(--te-player-bar-progress-fill, var(--accent-color, var(--te-primary-500)));
-  transform: scaleX(0);
-  transform-origin: 0 50%;
-  will-change: transform;
-  transition: none;
-}
-
-.compact-progress-slider {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-  cursor: pointer;
-}
-
-.compact-progress-slider:disabled {
-  cursor: default;
-}
-
-.compact-progress-slider::-webkit-slider-runnable-track {
-  height: 100%;
-  background: transparent;
-}
-
-.compact-progress-slider::-webkit-slider-thumb {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 0;
-  height: 0;
-}
-
-.compact-progress-slider::-moz-range-track {
-  height: 100%;
-  background: transparent;
-}
-
-.compact-progress-slider::-moz-range-progress {
-  height: 0;
-  background: transparent;
-}
-
-.compact-progress-slider::-moz-range-thumb {
-  width: 0;
-  height: 0;
-  border: 0;
-  background: transparent;
-}
-
-.compact-progress-slider:focus-visible {
-  outline: 2px solid var(--accent-color, var(--te-primary-500));
-  outline-offset: -2px;
-}
-
-/* Every compact region is centred within its control deck. The visualizer state
-   creates that deck with top padding below, so these rules work identically on
-   the home page and the lyrics page. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-left,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-center,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-right {
+.player-bar.player-bar-compact .player-left,
+.player-bar.player-bar-compact .player-center,
+.player-bar.player-bar-compact .player-right {
   align-self: center;
   margin-block: 0;
   min-width: 0;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-left {
+.player-bar.player-bar-compact .player-left {
   gap: 12px;
 }
 
-/* A row, not the standard bar's column: compact has no inline progress area to
-   stack underneath the transport cluster. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-center {
+.player-bar.player-bar-compact .player-center {
   flex-direction: row;
   align-items: center;
   gap: 10px;
@@ -3051,178 +2860,57 @@ html[data-theme='dark']
   transform: none;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-right {
+.player-bar.player-bar-compact .player-right {
   gap: 6px;
 }
 
-/* Two tight lines rather than the standard bar's three-line block. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+.player-bar.player-bar-compact .player-title {
+  font-size: var(--te-font-size-body, 14px);
   font-weight: 800;
   line-height: 1.25;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-artist {
+.player-bar.player-bar-compact .player-artist {
   margin-top: 2px;
   font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
   font-weight: 600;
 }
 
-/* The artwork the shape leads with. Smaller than the standard bar's 48px so it
-   stays visually subordinate to the full-width spectrum stage above.
-   All three selectors are needed — the slot, a loaded image, and the placeholder
-   each carry their own box in the base rules. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-cover-slot,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-cover,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-cover-placeholder {
+.player-bar.player-bar-compact .player-cover-slot,
+.player-bar.player-bar-compact .player-cover,
+.player-bar.player-bar-compact .player-cover-placeholder {
   width: 46px;
   height: 46px;
   border-radius: 12px;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-controls {
+.player-bar.player-bar-compact .player-controls {
   gap: 8px;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-controls
-  .ctrl-btn {
-  width: 34px;
-  height: 34px;
-  padding: 7px;
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-controls
-  .ctrl-btn
-  img {
-  width: 17px;
-}
-
-/* The filled circle the shape is recognised by: bigger than its neighbours, and
-   the only control carrying the accent fill. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-controls
-  .btn-play {
-  width: 40px;
-  height: 40px;
-  padding: 10px;
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .player-controls
-  .btn-play
-  img {
-  width: 16px;
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .icon-btn,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .mode-btn-right {
+.player-bar.player-bar-compact :is(.ctrl-btn:not(.btn-play), .icon-btn) {
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  padding: 6px;
+  border-radius: 999px;
 }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .mini-play-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 10px;
-  background: var(--te-player-bar-play-surface, transparent);
-  color: var(--te-shell-control-text);
-  cursor: pointer;
-}
+/* On narrow windows, measured utility width is reserved before metadata shrinks. */
+@media (max-width: 1000px) {
+  .player-bar-shell[data-te-playbar-mode='compact'] .player-bar.player-bar-compact {
+    grid-template-columns: minmax(0, 1fr) auto max-content;
+    column-gap: 8px;
+    padding-inline: 10px;
+  }
 
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar-compact.player-bar-compact.player-bar-compact
-  .mini-play-button:hover {
-  background: var(
-    --te-player-bar-play-hover-surface,
-    var(--te-player-bar-play-surface, transparent)
-  );
-}
+  .player-bar.player-bar-compact .player-left,
+  .player-bar.player-bar-compact .player-center {
+    gap: 6px;
+  }
 
-.player-time-readout {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
-  color: color-mix(in srgb, var(--te-shell-control-text) 62%, transparent);
-}
-
-/* PlayingMusic supplies `glass=true` even under a light app theme, so compact
-   follows the playback surface instead of the flat rule's card token. */
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact {
-  background: var(--te-flat-bar-glass-bg);
-  background-image: none;
-  color: var(--te-flat-bar-glass-text);
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .icon-btn,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .mode-btn-right,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .mini-play-button {
-  color: var(--te-flat-bar-control);
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .icon-btn:hover,
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .mode-btn-right:hover {
-  background: var(--te-flat-bar-control-hover-bg);
-  color: var(--te-flat-bar-control-hover-text);
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .mini-play-button:hover {
-  background: var(
-    --te-player-bar-play-hover-surface,
-    var(--te-player-bar-play-surface, var(--te-flat-bar-control-hover-bg))
-  );
-  color: var(--te-flat-bar-control-hover-text);
-}
-
-.player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
-  .player-time-readout {
-  color: var(--te-flat-bar-muted);
+  .player-bar.player-bar-compact .player-right {
+    gap: 4px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -3230,37 +2918,15 @@ html[data-theme='dark']
     --te-compact-visualizer-height: 96px;
   }
 
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+  .player-bar-shell[data-te-playbar-mode='compact'] .player-bar.player-bar-compact {
     --te-compact-visualizer-height: 96px;
     height: 174px;
-    padding: 0 10px;
-    column-gap: 8px;
-  }
-
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar-compact.player-bar-compact.player-bar-compact
-    .player-right {
-    gap: 2px;
-  }
-
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar-compact.player-bar-compact.player-bar-compact
-    .icon-btn,
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar-compact.player-bar-compact.player-bar-compact
-    .mode-btn-right {
-    width: 28px;
-    height: 28px;
   }
 }
 
-/* The expanded stage is only part of the lyrics-page presentation. Its top
-   padding reserves the visualizer while the remaining 78px grid content box
-   keeps exactly the same three-column layout and vertical centring as home.
-   Repeating the state class keeps the stage transparent over glass themes. */
+/* Keep the existing transparent lyrics-page stage and its optional skyline. */
 .player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer.player-bar-compact-visualizer {
+  .player-bar.player-bar-compact.player-bar-compact-visualizer {
   height: 216px;
   padding-top: var(--te-compact-visualizer-height, 138px);
   background: transparent;
@@ -3271,18 +2937,14 @@ html[data-theme='dark']
     opacity var(--te-motion-hover) var(--te-ease-soft);
 }
 
-/* Auto-hide removes the compact controls but keeps the lyrics-page visualizer
-   stage anchored at the bottom. The fully-hidden state intentionally does not
-   use this override, so it can still remove the visualizer altogether. */
 .player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer {
+  .player-bar.player-bar-compact.player-bar-compact-visualizer {
   transform: translateY(calc(100% - var(--te-compact-visualizer-height, 138px)));
   opacity: 1;
   pointer-events: none;
 }
 
-.player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer
-  > :not(.compact-visualizer) {
+.player-bar.player-bar-compact.player-bar-compact-visualizer > :not(.compact-visualizer) {
   pointer-events: auto;
   transition:
     opacity var(--te-motion-hover) var(--te-ease-soft),
@@ -3290,7 +2952,7 @@ html[data-theme='dark']
 }
 
 .player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer
+  .player-bar.player-bar-compact.player-bar-compact-visualizer
   > :not(.compact-visualizer) {
   opacity: 0;
   visibility: hidden;
@@ -3317,30 +2979,19 @@ html[data-te-motion='reduced']
     visibility 0s 120ms !important;
 }
 
-/* Without the stage, compact is just the normal 72px transport strip. The
-   boundary rail remains useful, but it belongs on the strip's top edge. */
 .player-bar-shell[data-te-playbar-mode='compact']
-  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(
-    .player-bar-compact-visualizer
-  ) {
+  .player-bar.player-bar-compact:not(.player-bar-compact-visualizer) {
   height: 72px;
 }
 
 .player-bar.player-bar-compact:not(.player-bar-compact-visualizer) > .compact-progress-rail {
-  top: 0;
+  top: -11px;
 }
 
 @media (max-width: 760px) {
   .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer {
+    .player-bar.player-bar-compact.player-bar-compact-visualizer {
     height: 174px;
-  }
-
-  .player-bar-shell[data-te-playbar-mode='compact']
-    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(
-      .player-bar-compact-visualizer
-    ) {
-    height: 72px;
   }
 }
 
@@ -3361,16 +3012,95 @@ html[data-te-motion='reduced']
   }
 }
 
-.player-bar-idle :is(.player-cover-placeholder, .ctrl-btn:disabled) {
-  cursor: default;
+/* The lyrics page owns the full backdrop; its desktop controls sit on the
+   viewport edge rather than painting a second floating surface over it. */
+.player-bar-shell[data-te-playing-page='true'][data-te-playbar-mode='standard'] {
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
-.player-bar-idle .ctrl-btn:disabled {
-  opacity: 0.5;
+.player-bar-shell[data-te-playing-page='true'][data-te-playbar-mode='standard']
+  > .player-bar.player-bar-glass {
+  max-width: 100%;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  /* Also override the liquid variant when entering the flush detail surface. */
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding-inline: 28px;
 }
 
+.player-bar-shell[data-te-playing-page='true'][data-te-playbar-mode='standard']
+  > .player-bar.player-bar-glass
+  .player-bar-warp {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .player-bar-shell[data-te-playing-page='true'][data-te-playbar-mode='standard']
+    > .player-bar.player-bar-glass {
+    padding-inline: 16px;
+  }
+}
+
+html:is([data-te-motion='reduced'], [data-te-motion='off']) .player-bar-shell,
+html:is([data-te-motion='reduced'], [data-te-motion='off']) .player-bar {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @scope (:root:not([data-te-motion='full'])) {
+    .player-bar-shell,
+    .player-bar {
+      transition: none;
+    }
+  }
+}
+
+/* Volume uses the same quiet control material and visible slider affordance. */
+.player-bar .volume-drawer {
+  color: var(--te-volume-text, var(--te-shell-control-text));
+  background: var(--te-volume-surface, var(--te-card-bg));
+  border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 16px;
+  box-shadow:
+    var(--te-chrome-contact, var(--te-bohr-contact)),
+    var(--te-chrome-elevation, var(--te-bohr-elevation));
+  padding: 10px;
+  gap: 8px;
+}
+.player-bar .volume-drawer.drawer-glass {
+  --te-volume-surface: var(--te-volume-popover-surface);
+  --te-volume-text: var(--te-volume-popover-text);
+}
+.player-bar .volume-drawer-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background:
+    linear-gradient(currentColor, currentColor) 0 / var(--range-value, 70%) 100% no-repeat,
+    color-mix(in srgb, currentColor 20%, transparent);
+}
+.player-bar .volume-drawer-slider {
+  color: inherit;
+  margin: 0;
+}
+.player-bar .volume-drawer-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -3px;
+  border: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
 .player-bar .volume-drawer-slider:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
   border-radius: 8px;
+}
+.player-bar .volume-drawer-val {
+  color: inherit;
+  opacity: 0.8;
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }

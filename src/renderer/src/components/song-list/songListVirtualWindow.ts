@@ -28,10 +28,12 @@ export interface SongListGridVirtualRange {
 
 export interface GridLayoutMetrics {
   minColumnWidth: number
+  maxColumnWidth: number
   columnGap: number
   rowGap: number
   padX: number
   padY: number
+  coverGap: number
 }
 
 export const GRID_OVERSCAN_ROWS = 2
@@ -58,40 +60,96 @@ export function getSongListVirtualRange({
   }
 }
 
-export function resolveGridLayoutMetrics(viewportWidth: number): GridLayoutMetrics {
-  if (viewportWidth <= 640) {
-    return { minColumnWidth: 128, columnGap: 10, rowGap: 12, padX: 16, padY: 18 }
+export function resolveGridLayoutMetrics(
+  containerWidth: number,
+  compact = false
+): GridLayoutMetrics {
+  if (compact) {
+    return {
+      minColumnWidth: 140,
+      maxColumnWidth: 190,
+      columnGap: 10,
+      rowGap: 10,
+      padX: 0,
+      padY: 0,
+      coverGap: 8
+    }
   }
-  if (viewportWidth <= 900) {
-    return { minColumnWidth: 160, columnGap: 14, rowGap: 16, padX: 20, padY: 22 }
+  if (containerWidth <= 640) {
+    return {
+      minColumnWidth: 128,
+      maxColumnWidth: 200,
+      columnGap: 10,
+      rowGap: 12,
+      padX: 0,
+      padY: 0,
+      coverGap: 13
+    }
   }
-  return { minColumnWidth: 192, columnGap: 20, rowGap: 22, padX: 26, padY: 28 }
+  if (containerWidth <= 900) {
+    return {
+      minColumnWidth: 160,
+      maxColumnWidth: 220,
+      columnGap: 14,
+      rowGap: 16,
+      padX: 0,
+      padY: 0,
+      coverGap: 13
+    }
+  }
+  return {
+    minColumnWidth: 200,
+    maxColumnWidth: 240,
+    columnGap: 24,
+    rowGap: 28,
+    padX: 0,
+    padY: 0,
+    coverGap: 13
+  }
 }
 
-export function estimateGridColumns(containerWidth: number, viewportWidth: number): number {
-  const { minColumnWidth, columnGap } = resolveGridLayoutMetrics(viewportWidth)
+export function estimateGridColumns(
+  containerWidth: number,
+  metrics = resolveGridLayoutMetrics(containerWidth),
+  itemCount = Number.POSITIVE_INFINITY
+): number {
+  // Use every readable column that fits, but do not reserve empty tracks when
+  // a small collection can share more width. CSS caps tracks at the same max.
+  const { minColumnWidth, columnGap } = metrics
   const width = Math.max(0, containerWidth)
-  return Math.max(1, Math.floor((width + columnGap) / (minColumnWidth + columnGap)))
+  const capacity = Math.max(1, Math.floor((width + columnGap) / (minColumnWidth + columnGap)))
+  return Math.max(1, Math.min(capacity, Math.floor(itemCount)))
 }
 
-export function estimateGridRowStride(columnWidth: number, viewportWidth: number): number {
-  const { rowGap, padX, padY } = resolveGridLayoutMetrics(viewportWidth)
+export function estimateGridColumnWidth(
+  containerWidth: number,
+  columns: number,
+  metrics = resolveGridLayoutMetrics(containerWidth)
+): number {
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const available = Math.max(0, containerWidth - (safeColumns - 1) * metrics.columnGap)
+  return Math.max(1, Math.min(metrics.maxColumnWidth, available / safeColumns))
+}
+
+export function estimateGridRowStride(
+  columnWidth: number,
+  metrics: GridLayoutMetrics,
+  baseFontSize = 14
+): number {
+  const { rowGap, padX, padY, coverGap } = metrics
   const cover = Math.max(1, columnWidth - padX)
-  const textBlock = 46
-  return Math.max(1, Math.round(cover + padY + textBlock + rowGap))
+  const textBlock = baseFontSize * ((15 / 14) * 1.35 + (13 / 14) * 1.5) + 3
+  return Math.max(1, Math.ceil(cover + padY + coverGap + textBlock + rowGap))
 }
 
 export function estimateAlbumGridRowStride(
   columnWidth: number,
-  viewportWidth: number,
-  bodyFontSize = 14
+  metrics: GridLayoutMetrics,
+  baseFontSize = 14
 ): number {
   // Artwork is edge-to-edge; two title lines and two metadata lines keep cards uniform.
-  const textHeight = bodyFontSize * (2.8 + 0.93 * 1.5 + 0.82 * 1.5)
-  return Math.max(
-    1,
-    Math.ceil(columnWidth + textHeight + 26 + resolveGridLayoutMetrics(viewportWidth).rowGap)
-  )
+  const textHeight = baseFontSize * ((15 / 14) * 2.8 + (13 / 14) * 3)
+  return Math.max(1, Math.ceil(columnWidth + textHeight + 22 + metrics.rowGap))
 }
 
 export function getSongListGridVirtualRange({
@@ -108,8 +166,11 @@ export function getSongListGridVirtualRange({
   const safeStride = Math.max(1, rowStride)
   const totalRows = Math.ceil(safeCount / safeColumns)
   const virtualScrollTop = Math.max(0, scrollTop - gridOffsetTop)
-  const startRow = Math.max(0, Math.floor(virtualScrollTop / safeStride) - overscanRows)
   const visibleRows = Math.ceil(Math.max(0, viewportHeight) / safeStride) + overscanRows * 2
+  const startRow = Math.min(
+    Math.max(0, totalRows - visibleRows),
+    Math.max(0, Math.floor(virtualScrollTop / safeStride) - overscanRows)
+  )
   const endRow = Math.min(totalRows, startRow + visibleRows)
   return {
     start: Math.min(safeCount, startRow * safeColumns),

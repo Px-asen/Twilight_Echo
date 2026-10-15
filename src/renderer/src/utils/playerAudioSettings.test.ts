@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { reactive } from 'vue'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
 import type { AudioProcessingSettings } from '../types/settings.ts'
 import { clampSoftwareVolume, cloneAudioProcessingSettings } from './playerAudioSettings.ts'
@@ -65,6 +66,19 @@ test('cloneAudioProcessingSettings deep-copies dsdRoute', () => {
   cloned.dsdRoute.device = 'hw:0'
   assert.equal(settings.dsdRoute.backend, 'asio')
   assert.equal(settings.dsdRoute.device, 'asio:proxy')
+})
+
+test('reactive processing settings with AutoMix cross the structured clone boundary', () => {
+  const settings = reactive({
+    ...makeSettings(),
+    autoMix: { enabled: false, allowIntelligentSkip: true, maxTransitionSeconds: 12 }
+  })
+  const cloned = cloneAudioProcessingSettings(settings)
+  const delivered = structuredClone(cloned)
+  assert.deepEqual(delivered.autoMix, settings.autoMix)
+  assert.notEqual(cloned.autoMix, settings.autoMix)
+  cloned.autoMix!.maxTransitionSeconds = 6
+  assert.equal(settings.autoMix.maxTransitionSeconds, 12)
 })
 
 test('clampSoftwareVolume clamps, rounds, and falls back for invalid values', () => {

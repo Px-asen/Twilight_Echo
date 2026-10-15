@@ -98,9 +98,17 @@ function restore() {
       包含曲库索引、歌单收藏、队列、歌词编辑、书签、统计、版本关系、电台和播客。音频文件、账号登录和插件不随备份迁移；设置可通过上方单独导出。
     </p>
     <div class="buttons">
-      <button type="button" :disabled="busy || staged" @click="exportBackup">导出个人数据</button
-      ><button type="button" :disabled="busy || staged" @click="importBackup">选择备份并预览</button
-      ><button v-if="staged" type="button" :disabled="busy" @click="run(() => api.app.relaunch())">
+      <button type="button" class="soft-button" :disabled="busy || staged" @click="exportBackup">
+        导出个人数据</button
+      ><button type="button" class="soft-button" :disabled="busy || staged" @click="importBackup">
+        选择备份并预览</button
+      ><button
+        v-if="staged"
+        type="button"
+        class="soft-button"
+        :disabled="busy"
+        @click="run(() => api.app.relaunch())"
+      >
         现在重启恢复
       </button>
     </div>
@@ -187,20 +195,22 @@ function restore() {
 </template>
 <style scoped>
 .personal-backup {
-  padding: 14px 16px;
+  padding: var(--te-setting-row-padding, 12px) 0;
 }
 .personal-backup > strong {
   color: var(--te-settings-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
-  font-weight: 500;
+  font-size: var(--te-setting-label-size, var(--te-type-body));
+  font-weight: var(--te-type-weight-medium);
 }
 .personal-backup > p {
+  margin: 4px 0 12px;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-setting-description-size, var(--te-type-caption));
+  line-height: var(--te-type-line-caption);
   opacity: 1;
 }
 p {
-  font-size: 13px;
+  font-size: var(--te-type-caption);
   line-height: 1.6;
   opacity: 0.8;
 }
@@ -237,7 +247,7 @@ table {
   border-collapse: collapse;
   width: 100%;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--te-type-caption);
 }
 td,
 th {
@@ -272,7 +282,7 @@ button:disabled {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

@@ -26,104 +26,60 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
   }
 
   function measureSideMenuClearance(): void {
-    const isWindowLayout = document.documentElement.dataset.teShellLayout !== 'custom'
     const playerBar = document.querySelector<HTMLElement>('.player-bar-shell')
     const playerBarShellRect = playerBar?.getBoundingClientRect()
-    // The shell spans the window even when the painted bar is centred at a
-    // smaller maximum width. Only the painted surface can cover the tools.
+    // The shell owns shared scroll clearance; only the painted surface can
+    // overlap a scanning status. Auto-hidden bars retain a translated box.
     const playerSurface = playerBar?.querySelector<HTMLElement>('.player-bar') ?? playerBar
     const playerBarRect = playerSurface?.getBoundingClientRect()
+    const playerVisible =
+      options.hasPlayerBar.value && playerBar?.dataset.tePlaybarHidden !== 'true'
     playerBottomClearance.value =
-      options.hasPlayerBar.value &&
-      playerBar?.dataset.tePlaybarHidden !== 'true' &&
+      playerVisible &&
       playerBarShellRect &&
       playerBarShellRect.height > 0 &&
       playerBarShellRect.bottom > 0 &&
       playerBarShellRect.top < window.innerHeight
         ? Math.max(0, Math.ceil(window.innerHeight - playerBarShellRect.top))
         : 0
-    if (!options.showLocalSidebar.value || !options.hasPlayerBar.value) {
-      setSideMenuBottomOffset(0)
-      sideMenuToolsClearance.value = 0
-      return
-    }
+
+    // Both built-in and custom shells paint the complete overlay surface.
+    // Clearance belongs to its scrollable contents, never to the panel bounds.
+    setSideMenuBottomOffset(0)
+    sideMenuToolsClearance.value = 0
+    if (!options.showLocalSidebar.value || !playerVisible || !playerBar || !playerBarRect) return
 
     const sideMenu = document.querySelector<HTMLElement>('.side-menu')
-
-    if (!sideMenu || !playerBar || !playerBarRect) {
-      setSideMenuBottomOffset(0)
-      sideMenuToolsClearance.value = 0
-      return
-    }
-
-    // An auto-hidden mini bar is translated out of view but keeps its layout box,
-    // so its rect would still push the sidebar up. The shell flags the state.
-    if (playerBar.dataset.tePlaybarHidden === 'true') {
-      setSideMenuBottomOffset(0)
-      sideMenuToolsClearance.value = 0
-      return
-    }
-
+    if (!sideMenu) return
     const sideMenuRect = sideMenu.getBoundingClientRect()
-    // Sliding the menu out must not change its footer height. Measure its layout
-    // position without its own horizontal transform, including a custom parent.
-    const sideMenuLeft =
-      sideMenu.offsetLeft + (sideMenu.offsetParent?.getBoundingClientRect().left ?? 0)
-    const sideMenuRight = sideMenuLeft + sideMenu.offsetWidth
-    const overlapsHorizontally =
-      playerBarRect.left < sideMenuRight && playerBarRect.right > sideMenuLeft
-    // Trailing button whitespace may sit behind the player. Only its icon and
-    // label need clearance. Undo the slide so closing the menu keeps this stable;
-    // opacity is deliberately ignored because hidden labels keep their layout.
+    // Both panels are fixed viewport overlays. Resting layout geometry keeps
+    // the scan status stable while the horizontal slide is in progress.
+    const sideMenuLeft = sideMenu.offsetLeft
     const slideOffset = sideMenuLeft - sideMenuRect.left
-    const overlapsToolContent = isWindowLayout
-      ? [
-          ...sideMenu.querySelectorAll<HTMLElement>(
-            '.menu-toolbar .item-icon, .menu-toolbar .item-label'
-          )
-        ].some((content) => {
-          const rect = content.getBoundingClientRect()
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            playerBarRect.left < rect.right + slideOffset + SIDE_MENU_OVERLAP_GAP &&
-            playerBarRect.right > rect.left + slideOffset - SIDE_MENU_OVERLAP_GAP
-          )
-        })
-      : overlapsHorizontally
-    // Custom shells still reserve their complete navigation column.
-    sideMenuToolsClearance.value =
+    const overlapsToolContent = [
+      ...sideMenu.querySelectorAll<HTMLElement>(
+        '.menu-toolbar .item-icon, .menu-toolbar .item-label, .scanning-label'
+      )
+    ].some((content) => {
+      const rect = content.getBoundingClientRect()
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        playerBarRect.left < rect.right + slideOffset + SIDE_MENU_OVERLAP_GAP &&
+        playerBarRect.right > rect.left + slideOffset - SIDE_MENU_OVERLAP_GAP
+      )
+    })
+    if (
       overlapsToolContent &&
       playerBarRect.height > 0 &&
-      playerBarRect.top < window.innerHeight &&
+      playerBarRect.top < sideMenuRect.bottom &&
       playerBarRect.bottom > sideMenuRect.top
-        ? Math.max(0, Math.round(sideMenuRect.bottom - playerBarRect.top + SIDE_MENU_OVERLAP_GAP))
-        : 0
-    // Keep the sidebar surface behind the player; lift only its footer. Its
-    // height and footer clearance then stay stable throughout horizontal slides.
-    if (isWindowLayout) {
-      setSideMenuBottomOffset(0)
-      return
+    ) {
+      sideMenuToolsClearance.value = Math.max(
+        0,
+        Math.round(window.innerHeight - playerBarRect.top + SIDE_MENU_OVERLAP_GAP)
+      )
     }
-    /**
-     * Test the overlap against the bottom the menu would have with no clearance
-     * applied, not its current one. Once the offset lifts the menu, its measured
-     * bottom clears the bar, so measuring that directly would report "no overlap",
-     * reset the offset to 0, drop the menu back under the bar and overlap again —
-     * and the ResizeObserver watching the menu's own height would drive that
-     * oscillation forever. Adding the offset back makes the measurement a fixed
-     * point: the second pass computes the same number and the ref stops changing.
-     */
-    const sideMenuNaturalBottom = sideMenuRect.bottom + sideMenuBottomOffset.value
-    const overlapsVertically =
-      playerBarRect.top < sideMenuNaturalBottom && playerBarRect.bottom > sideMenuRect.top
-
-    if (!overlapsHorizontally || !overlapsVertically) {
-      setSideMenuBottomOffset(0)
-      return
-    }
-
-    setSideMenuBottomOffset(window.innerHeight - playerBarRect.top + SIDE_MENU_OVERLAP_GAP)
   }
 
   function stopSideMenuMonitor(): void {

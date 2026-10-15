@@ -23,7 +23,7 @@ watch(open, (value) => {
 </script>
 
 <template>
-  <aside class="settings-quick-setup glass-card" aria-label="快速配置">
+  <aside class="settings-quick-setup settings-section" aria-label="快速配置">
     <button
       type="button"
       class="settings-group-trigger"

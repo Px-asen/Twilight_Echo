@@ -1,5 +1,6 @@
 import type { Track } from '../types/music'
 import { getTrackSource } from './playerTrackUtils.ts'
+import { cloneQueuePlaybackOrigin } from '../../../shared/queueWorkspace.ts'
 
 const MAX_SESSION_TRACK_INLINE_COVER_LENGTH = 256 * 1024
 
@@ -16,10 +17,13 @@ export function cloneTrackForPlaybackSession(track: Track): Track {
   const cloned: Track = {
     id: track.id,
     queueEntryId: track.queueEntryId,
+    queuePlaybackOrigin: cloneQueuePlaybackOrigin(track.queuePlaybackOrigin),
     title: track.title,
     artist: track.artist,
     artists: track.artists?.map((item) => ({ ...item })),
     album: track.album,
+    albumId: track.albumId,
+    albumArtist: track.albumArtist,
     filePath: track.filePath,
     fileName: track.fileName,
     dir: track.dir,

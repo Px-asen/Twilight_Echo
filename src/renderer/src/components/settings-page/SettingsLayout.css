@@ -1,12 +1,13 @@
 /* Shared settings hierarchy and geometry retain the original theme material,
    outer panels and functional previews. */
 html .settings-preview-page[data-settings-layout='categories'] {
-  --te-setting-label-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
-  --te-setting-description-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  --te-setting-row-height: 58px;
-  --te-setting-row-padding: 14px;
+  --te-setting-label-size: var(--te-type-body);
+  --te-setting-description-size: var(--te-type-caption);
+  --te-setting-row-height: 56px;
+  --te-setting-row-padding: 12px;
+  --te-setting-control-height: max(36px, calc(var(--te-type-body) * 1.4 + 14px));
   --te-setting-divider: color-mix(in srgb, var(--te-settings-text) 9%, transparent);
-  padding: 28px 32px 48px;
+  padding: var(--te-page-top, 24px) var(--te-page-gutter, 24px) 48px;
   /* Long and short categories keep the same available width and centered origin. */
   scrollbar-gutter: stable;
 }
@@ -59,7 +60,7 @@ html
 html .settings-preview-page[data-settings-layout='categories'] .preview-nav-item {
   width: 100%;
 }
-/* One hierarchy and row rhythm for the seven settings panels. Theme material,
+/* One hierarchy and row rhythm for the eight settings panels. Theme material,
    fonts, outer panels and functional previews retain their existing skin. */
 html .settings-preview-page[data-settings-layout='categories'] .settings-page-title {
   font-size: calc(var(--te-font-size-body, 14px) * 2);
@@ -105,13 +106,13 @@ html
   color: var(--te-settings-text);
   font-size: var(--te-setting-label-size);
   font-weight: 500;
-  line-height: 1.4;
+  line-height: var(--te-type-line-body);
 }
 html .settings-preview-page[data-settings-layout='categories'] .mini-setting > div > span {
   color: color-mix(in srgb, var(--te-settings-text-muted) 75%, var(--te-settings-text));
   font-size: var(--te-setting-description-size);
   font-weight: 400;
-  line-height: 1.7;
+  line-height: var(--te-type-line-caption);
 }
 html
   .settings-preview-page[data-settings-layout='categories']
@@ -126,7 +127,7 @@ html
   ) {
   margin: 0 0 8px;
   color: var(--te-settings-text);
-  font-size: var(--te-font-size-body, 14px);
+  font-size: var(--te-type-section-title);
   font-weight: 600;
   line-height: 1.5;
 }
@@ -141,27 +142,125 @@ html
 }
 html
   .settings-preview-page[data-settings-layout='categories']
-  :is(.preview-select, .settings-select, .path-control input, #desktopLyrics .field select) {
+  :is(
+    .preview-select,
+    .settings-select,
+    .number-input,
+    .path-control input,
+    #desktopLyrics .field select
+  ) {
   flex: 0 0 auto;
-  height: 36px;
-  min-height: 36px;
-  padding: 0 12px;
+  height: auto;
+  min-height: var(--te-setting-control-height);
+  padding: 6px 12px;
   border: 1px solid var(--te-settings-control-border);
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm);
   background: var(--te-settings-control-bg);
   color: var(--te-settings-text);
-  font-size: var(--te-setting-description-size);
+  font-size: var(--te-type-body);
   font-weight: 500;
+  line-height: 1.4;
+}
+html .settings-preview-page[data-settings-layout='categories'] .number-input {
+  width: calc(6ch + 24px);
+  max-width: 100%;
+}
+html .settings-preview-page[data-settings-layout='categories'] .settings-group-title {
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.settings-group-content h4, .dsp-module-card h4) {
+  font-size: var(--te-type-headline);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
 }
 html
   .settings-preview-page[data-settings-layout='categories']
   :is(.setting-item, .mini-setting)
   > :is(.preview-select, .settings-select) {
-  width: 200px;
-  max-width: 45%;
+  width: max(200px, calc(var(--te-font-size-body, 14px) * 200 / 14));
+  max-width: 100%;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.setting-item, .mini-setting):has(> :is(.preview-select, .settings-select)) {
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  .setting-item:has(> :is(.preview-select, .settings-select))
+  > .setting-copy,
+html
+  .settings-preview-page[data-settings-layout='categories']
+  .mini-setting:has(> :is(.preview-select, .settings-select))
+  > div:first-child {
+  flex-basis: calc(var(--te-type-body) * 12);
 }
 html .settings-preview-page[data-settings-layout='categories'] .path-control input {
   flex: 1 1 auto;
+}
+html .settings-preview-page[data-settings-layout='categories'] .decode-grid .mini-highres select {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+}
+html .settings-preview-page[data-settings-layout='categories'] .decode-grid .toggle-switch {
+  flex-shrink: 0;
+}
+/* Signal states retain their real controls; their frame and telemetry styling
+   do not introduce another visual hierarchy inside the audio settings. */
+html .settings-preview-page[data-settings-layout='categories'] .dsp-signal-chain {
+  padding: 16px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+html .settings-preview-page[data-settings-layout='categories'] .signal-node {
+  opacity: 1;
+}
+html .settings-preview-page[data-settings-layout='categories'] .signal-node-circle {
+  border-color: var(--te-settings-control-border);
+  background: var(--te-control-bg);
+  box-shadow: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .signal-node-circle.active {
+  border-color: var(--te-control-accent);
+  background: var(--te-control-bg);
+  box-shadow: none;
+}
+html .settings-preview-page[data-settings-layout='categories'] .signal-node-circle::after {
+  display: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.signal-node-label, .signal-node-name, .dsp-meter > span) {
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.signal-node.active .signal-node-name, .dsp-meter > strong) {
+  color: var(--te-settings-text);
+}
+html .settings-preview-page[data-settings-layout='categories'] .dsp-meter {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-wrap: anywhere;
+}
+html .settings-preview-page[data-settings-layout='categories'] .dsp-meter small {
+  color: var(--te-settings-text-muted);
+  font-weight: var(--te-type-weight-regular);
 }
 html .settings-preview-page[data-settings-layout='categories'] .settings-accordion-trigger > i {
   width: 20px;
@@ -268,12 +367,12 @@ html
   font-size: var(--te-setting-description-size);
 }
 html[data-density='compact'] .settings-preview-page[data-settings-layout='categories'] {
-  --te-setting-row-height: 50px;
-  --te-setting-row-padding: 10px;
+  --te-setting-row-height: 48px;
+  --te-setting-row-padding: 8px;
 }
 html[data-density='comfortable'] .settings-preview-page[data-settings-layout='categories'] {
-  --te-setting-row-height: 66px;
-  --te-setting-row-padding: 18px;
+  --te-setting-row-height: 64px;
+  --te-setting-row-padding: 16px;
 }
 html .settings-preview-page[data-settings-layout='categories'] .settings-category-select {
   display: none;
@@ -329,7 +428,7 @@ html
   transform: rotate(225deg);
 }
 html .settings-preview-page[data-settings-layout='categories'] summary:focus-visible {
-  outline: 2px solid var(--brand-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 html .settings-preview-page[data-settings-layout='categories'] .device-panel-disclosure {
@@ -383,12 +482,27 @@ html
   > h3 {
   font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
 }
+html
+  .settings-preview-page[data-settings-layout='categories']
+  #desktopLyrics
+  .desktop-lyrics-heading {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+html
+  .settings-preview-page[data-settings-layout='categories']
+  #desktopLyrics
+  .desktop-lyrics-heading
+  > h3 {
+  margin: 0;
+}
 html .settings-preview-page[data-settings-layout='categories'] #desktopLyrics .quick-control-row {
   display: grid;
+  grid-template-columns: 1fr;
   flex: none;
   width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 0 16px;
 }
@@ -397,7 +511,11 @@ html
   #desktopLyrics
   .quick-control-row
   > .check-field {
-  cursor: pointer;
+  width: 100%;
+  min-width: 0;
+  gap: 24px;
+  white-space: normal;
+  line-height: var(--te-type-line-body);
 }
 html
   .settings-preview-page[data-settings-layout='categories']
@@ -411,31 +529,19 @@ html
   .settings-preview-page[data-settings-layout='categories']
   #desktopLyrics
   .quick-control-row
-  input[type='checkbox']:not(:checked) {
-  border-color: color-mix(in srgb, var(--te-settings-text) 50%, var(--te-card-bg));
+  > .check-field
+  > span {
+  flex: 1;
+  min-width: 0;
 }
 html
   .settings-preview-page[data-settings-layout='categories']
   #desktopLyrics
   .quick-control-row
-  > .check-field:focus-within {
-  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
-}
-@media (hover: hover) and (pointer: fine) {
-  html
-    .settings-preview-page[data-settings-layout='categories']
-    #desktopLyrics
-    .quick-control-row
-    > .check-field:hover {
-    background: var(--te-settings-search-bg);
-  }
-}
-html
-  .settings-preview-page[data-settings-layout='categories']
-  #desktopLyrics
-  .quick-control-row
-  > .setting-item {
-  width: 100%;
+  > .check-field
+  > input {
+  order: 1;
+  flex: 0 0 18px;
 }
 html .settings-preview-page[data-settings-layout='categories'] #desktopLyrics .setting-card {
   margin: 0;
@@ -503,7 +609,7 @@ html[data-theme='dark']
 }
 @media (max-width: 900px) {
   html .settings-preview-page[data-settings-layout='categories'] {
-    padding: 16px;
+    padding: var(--te-page-top) var(--te-page-gutter) 32px;
   }
   html .settings-preview-page[data-settings-layout='categories'] .settings-preview-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -570,10 +676,6 @@ html[data-theme='dark']
   html .settings-preview-page[data-settings-layout='categories'] .path-control button {
     width: auto;
     justify-self: end;
-  }
-  html .settings-preview-page[data-settings-layout='categories'] .setting-item > .preview-select {
-    width: 200px;
-    max-width: 45%;
   }
   html
     .settings-preview-page[data-settings-layout='categories']
@@ -690,6 +792,6 @@ html
   scale: 1;
 }
 html .settings-preview-page[data-settings-layout='categories'] .preview-nav-item:focus-visible {
-  outline: 2px solid var(--te-primary-500);
-  outline-offset: -2px;
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
 }

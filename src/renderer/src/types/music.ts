@@ -13,6 +13,8 @@ import type { PlaybackSessionData } from '../../../shared/playbackSession.ts'
 import type { NcmPlaybackQuality } from './settings'
 import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
 import type { NetworkEntry } from '../../../shared/networkSources.ts'
+import type { QueuePlaybackOrigin } from '../../../shared/queueWorkspace.ts'
+export type { QueuePlaybackOrigin } from '../../../shared/queueWorkspace.ts'
 
 /**
  * 单个歌手的 provider 侧身份。`artist` 展示串是同名歌手无法区分的，跳转歌手页
@@ -31,6 +33,8 @@ export interface Track {
    * a queue, so UI commands must not use the provider track id as a row key.
    */
   queueEntryId?: string
+  /** Collection selected when this entry joined the queue; never inferred from album text. */
+  queuePlaybackOrigin?: QueuePlaybackOrigin
   title: string
   artist: string
   /** 结构化歌手身份（流媒体 provider 提供）；本地扫描曲目没有这个概念。 */

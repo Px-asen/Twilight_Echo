@@ -1,4 +1,5 @@
 import { createAbLoopController } from './player/abLoopController.ts'
+import { dspEditorDocumentVisible } from '../composables/useDspEditorWindow'
 import { createRendererPauseFadeController } from './player/rendererPauseFadeController.ts'
 import { createCastController } from './player/castController.ts'
 import { createBpmAnalysisController } from './player/bpmAnalysisController.ts'
@@ -77,6 +78,7 @@ import {
   toPlaybackQueueSnapshots,
   patchPlaybackQueueTrack
 } from '../utils/playbackQueueVirtualization.ts'
+import { preserveQueueEntryContext } from '../utils/queuePlaybackOrigin.ts'
 import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { useNcmStore } from './useNcmStore.ts'
@@ -2278,7 +2280,7 @@ const visualizationPolling = createVisualizationPolling({
   data: visualizationData,
   active: visualizerActive,
   consumers: visualizationConsumers,
-  visible: visualizationDocumentVisible,
+  visible: computed(() => visualizationDocumentVisible.value || dspEditorDocumentVisible.value),
   enabled: () => Boolean(isPlaying.value && audioEngineReady.value && currentTrack.value?.id)
 })
 
@@ -2521,15 +2523,20 @@ async function handlePlaybackFallback(
 
   const fallbackSnapshot = toPlaybackQueueSnapshot(fallback)
   queue.value = queue.value.map((track) =>
-    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
+    track.id === failedTrack.id ? preserveQueueEntryContext(fallbackSnapshot, track) : track
   )
   originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
+    track.id === failedTrack.id ? preserveQueueEntryContext(fallbackSnapshot, track) : track
   )
-  queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
+  const selectedFallback = preserveQueueEntryContext(fallback, failedTrack)
+  queueIndex.value = queue.value.findIndex((track) =>
+    selectedFallback.queueEntryId
+      ? track.queueEntryId === selectedFallback.queueEntryId
+      : track.id === selectedFallback.id
+  )
   if (queueIndex.value < 0) queueIndex.value = 0
-  currentTrack.value = fallback
-  await loadAndPlay(fallback)
+  currentTrack.value = selectedFallback
+  await loadAndPlay(selectedFallback)
   return true
 }
 
@@ -2582,20 +2589,25 @@ async function handleProviderRematchFallback(
 
   const rematchedSnapshot = toPlaybackQueueSnapshot(rematched)
   queue.value = queue.value.map((track) =>
-    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
+    track.id === failedTrack.id ? preserveQueueEntryContext(rematchedSnapshot, track) : track
   )
   originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
+    track.id === failedTrack.id ? preserveQueueEntryContext(rematchedSnapshot, track) : track
   )
-  queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
+  const selectedRematch = preserveQueueEntryContext(rematched, failedTrack)
+  queueIndex.value = queue.value.findIndex((track) =>
+    selectedRematch.queueEntryId
+      ? track.queueEntryId === selectedRematch.queueEntryId
+      : track.id === selectedRematch.id
+  )
   if (queueIndex.value < 0) queueIndex.value = 0
-  currentTrack.value = rematched
+  currentTrack.value = selectedRematch
   // Persist the rematch so playlists/library references to the expired
   // provider track are replaced — not just the transient playback queue.
   if (failedSource !== 'local') {
     useMusicStore().replaceTrackReference(failedTrack.id, rematched)
   }
-  await loadAndPlay(rematched)
+  await loadAndPlay(selectedRematch)
   return true
 }
 
@@ -2975,7 +2987,7 @@ watch(
     audioEngineReady,
     () => currentTrack.value?.id,
     visualizerActive,
-    visualizationDocumentVisible
+    () => visualizationDocumentVisible.value || dspEditorDocumentVisible.value
   ],
   ([playing, ready, trackId, activeVisualizer, visible]) => {
     if (playing && ready && trackId && !activeVisualizer && visible) {

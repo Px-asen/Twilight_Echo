@@ -39,7 +39,7 @@ export type ProxyMode = 'auto' | 'custom' | 'off'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type StreamingAudioCachePolicy = 'off' | 'provider'
 export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
-export type AppBackgroundKind = 'color' | 'image'
+export type AppBackgroundKind = 'theme' | 'color' | 'image'
 
 export type BackgroundTextTone = 'theme' | 'light' | 'dark'
 export interface AppBackgroundEffect extends BackgroundEffectTheme {
@@ -49,11 +49,21 @@ export interface AppBackgroundEffect extends BackgroundEffectTheme {
   textTone: BackgroundTextTone
 }
 
+export interface AppBackgroundImagePalette {
+  /** The local asset this sample belongs to; stale samples never follow a replacement image. */
+  image: string
+  average: string
+  accent: string
+  /** Average alpha of the sampled image, before compositing over the background color. */
+  opacity?: number
+}
+
 export interface AppBackgroundColorPair {
   light: string
   dark: string
   kind: AppBackgroundKind
   image: string
+  imagePalette?: AppBackgroundImagePalette
   /** Distinguishes an explicitly edited solid background from theme defaults. */
   customized?: boolean
   /** Optional on legacy settings; normalized before editing or rendering. */
@@ -202,6 +212,8 @@ export interface AppSettings {
   fontRendering: AppFontRendering
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
+  /** Independent foreground and out-of-bounds decoration channels for every widget. */
+  appearanceLayers?: import('./appearanceLayers').AppearanceLayersSettings
   cardAppearance: CardAppearanceSettings
   /** Switches navigation and playback controls between standard surfaces and liquid glass. */
   surfaceMaterial: SurfaceMaterial

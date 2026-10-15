@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { TWILIGHT_PLUGIN_API_VERSION } from '../src/main/plugins/types.ts'
+import { materialContract } from '../src/shared/materials.ts'
 import {
   STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION,
   THEME_MODE_DEFINITIONS,
@@ -15,6 +16,7 @@ const outputPath = fileURLToPath(
 )
 const contract = {
   schemaVersion: 1,
+  materials: materialContract(),
   pluginApiVersion: TWILIGHT_PLUGIN_API_VERSION,
   structuredThemeSchemaVersion: STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION,
   tokens: THEME_TOKEN_DEFINITIONS.map(({ id, cssVariable, label, group, surface, kind }) => ({

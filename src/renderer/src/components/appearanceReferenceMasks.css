@@ -1,0 +1,14 @@
+.appearance-preview-scene .appearance-reference-masked {
+  position: relative;
+  color: transparent !important;
+  text-shadow: none !important;
+}
+.appearance-preview-scene .appearance-reference-mask {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(50% - 0.35em);
+  height: 0.7em;
+  border-radius: 0.25em;
+  background: color-mix(in srgb, var(--te-neutral-500) 24%, transparent);
+  pointer-events: none;
+}

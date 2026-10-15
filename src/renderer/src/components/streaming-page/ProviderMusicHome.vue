@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
 import '../contentArrival.css'
 import { computed } from 'vue'
 import CoverImg from '@renderer/components/CoverImg.vue'
@@ -33,8 +34,11 @@ const emit = defineEmits<{
 const hero = computed(() => props.recSections[0])
 const heroLocked = computed(() => hero.value?.requiresLogin === true && !props.isLoggedIn)
 const features = computed(() => props.recSections.slice(1, 3))
-const tracks = computed(() => hero.value?.tracks.slice(0, 6) ?? [])
+const tracks = computed(() => hero.value?.tracks.slice(0, 9) ?? [])
 const playlists = computed(() => props.recommendPlaylists.slice(0, 12))
+const { setGridElement: playlistGrid, gridStyle: playlistGridStyle } = useBoundedGrid(
+  () => playlists.value.length
+)
 const hasContent = computed(() => props.recSections.length > 0 || playlists.value.length > 0)
 const locked = computed(() => !props.isLoggedIn && props.presentation?.requiresLogin !== false)
 const artwork = computed(() => {
@@ -44,7 +48,7 @@ const artwork = computed(() => {
     if (!track.cover || seen.has(track.cover)) continue
     seen.add(track.cover)
     result.push(track)
-    if (result.length === 3) break
+    if (result.length === 1) break
   }
   return result
 })
@@ -105,81 +109,127 @@ function count(value: number | undefined): string {
         </button>
       </div>
 
-      <section v-if="hero" class="music-hero" :aria-label="hero.title">
-        <div class="music-hero-copy">
-          <p class="music-eyebrow">
-            {{ hero.eyebrow || 'SELECTED FOR TODAY' }}
-            <span>01 / {{ String(recSections.length).padStart(2, '0') }}</span>
-          </p>
-          <h2>{{ hero.title }}</h2>
-          <p class="music-hero-description">
-            {{ hero.description || `来自 ${providerLabel} 的音乐精选。` }}
-          </p>
-          <div class="music-hero-actions">
-            <button
-              v-if="heroLocked"
-              class="music-primary"
-              type="button"
-              @click="emit('requestLogin')"
-            >
-              <i class="pi pi-user"></i> 登录查看每日推荐
-            </button>
-            <button
-              v-else-if="hero.tracks.length"
-              class="music-primary"
-              type="button"
-              @click="play(hero)"
-            >
-              <PlaybackIcon name="play" /> 播放全部
-            </button>
-            <button
-              v-else
-              class="music-primary"
-              type="button"
-              :disabled="recsLoading"
-              @click="emit('loadRecommendations')"
-            >
-              <i class="pi pi-refresh"></i> 重新加载
-            </button>
-            <button
-              v-if="hero.tracks.length && !heroLocked"
-              class="music-hero-open"
-              type="button"
-              @click="emit('openRecSection', hero)"
-            >
-              查看歌曲 <i class="pi pi-arrow-up-right"></i>
-            </button>
+      <div class="music-recommendations">
+        <section v-if="hero" class="music-hero" :aria-label="hero.title">
+          <div class="music-hero-copy">
+            <p class="music-eyebrow">
+              {{ hero.eyebrow || providerLabel }}
+            </p>
+            <h2>{{ hero.title }}</h2>
+            <p v-if="hero.description" class="music-hero-description">{{ hero.description }}</p>
+            <div class="music-hero-actions">
+              <button
+                v-if="heroLocked"
+                class="music-primary"
+                type="button"
+                @click="emit('requestLogin')"
+              >
+                <i class="pi pi-user"></i> 登录查看每日推荐
+              </button>
+              <button
+                v-else-if="hero.tracks.length"
+                class="music-primary"
+                type="button"
+                @click="play(hero)"
+              >
+                <PlaybackIcon name="play" /> 播放全部
+              </button>
+              <button
+                v-else
+                class="music-primary"
+                type="button"
+                :disabled="recsLoading"
+                @click="emit('loadRecommendations')"
+              >
+                <i class="pi pi-refresh"></i> 重新加载
+              </button>
+              <button
+                v-if="hero.tracks.length && !heroLocked"
+                class="music-hero-open"
+                type="button"
+                @click="emit('openRecSection', hero)"
+              >
+                查看歌曲 <i class="pi pi-arrow-up-right"></i>
+              </button>
+            </div>
+            <p class="music-hero-foot">
+              {{
+                heroLocked
+                  ? '登录后查看每日推荐'
+                  : hero.error ||
+                    (hero.tracks.length
+                      ? `${hero.tracks.length} 首 · ${providerLabel}`
+                      : '本次暂无推荐，稍后再来听听')
+              }}
+            </p>
           </div>
-          <p class="music-hero-foot">
-            {{
-              heroLocked
-                ? '登录后查看每日推荐'
-                : hero.error ||
-                  (hero.tracks.length
-                    ? `${hero.tracks.length} 首 · ${providerLabel}`
-                    : '本次暂无推荐，稍后再来听听')
-            }}
-          </p>
-        </div>
-        <div class="music-artwork" aria-hidden="true">
-          <span class="music-orbit"></span><span class="music-orbit music-orbit-inner"></span>
-          <div
-            v-for="(track, index) in artwork"
-            :key="track.id"
-            class="music-artwork-cover"
-            :class="`music-artwork-${index}`"
-          >
-            <CoverImg
-              :cover="track.cover"
-              :cover-source="track.coverSource"
-              alt=""
-              loading="eager"
-            />
+          <div class="music-artwork" aria-hidden="true">
+            <div
+              v-for="(track, index) in artwork"
+              :key="track.id"
+              class="music-artwork-cover"
+              :class="`music-artwork-${index}`"
+            >
+              <CoverImg
+                :cover="track.cover"
+                :cover-source="track.coverSource"
+                alt=""
+                loading="eager"
+              />
+            </div>
+            <div v-if="!artwork.length" class="music-record"><i class="pi pi-headphones"></i></div>
           </div>
-          <div v-if="!artwork.length" class="music-record"><i class="pi pi-headphones"></i></div>
-          <span class="music-artwork-caption">PRESS PLAY. FEEL MORE.</span>
-        </div>
-      </section>
+        </section>
+
+        <section v-if="features.length" class="music-features" aria-label="更多音乐推荐">
+          <article v-for="section in features" :key="section.key" class="music-feature">
+            <span class="music-feature-cover" aria-hidden="true">
+              <CoverImg
+                v-if="section.tracks[0]?.cover"
+                :cover="section.tracks[0].cover"
+                :cover-source="section.tracks[0].coverSource"
+                alt=""
+                loading="lazy"
+              />
+              <i v-else :class="section.icon"></i>
+            </span>
+            <div class="music-feature-copy">
+              <p v-if="section.eyebrow" class="music-eyebrow">{{ section.eyebrow }}</p>
+              <h2>{{ section.title }}</h2>
+              <p v-if="section.description" class="music-feature-description">
+                {{ section.description }}
+              </p>
+              <div
+                v-if="section.error || !section.tracks.length"
+                class="music-feature-empty"
+                role="status"
+              >
+                <span>{{ section.error || '本次暂无歌曲' }}</span>
+                <button type="button" :disabled="recsLoading" @click="emit('loadRecommendations')">
+                  重试
+                </button>
+              </div>
+              <div v-else class="music-feature-actions">
+                <button
+                  type="button"
+                  class="music-feature-play"
+                  :aria-label="'播放' + section.title"
+                  @click="play(section)"
+                >
+                  <PlaybackIcon name="play" /> 播放
+                </button>
+                <button
+                  type="button"
+                  class="music-feature-more"
+                  @click="emit('openRecSection', section)"
+                >
+                  查看全部 <i class="pi pi-arrow-up-right" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
 
       <div v-if="!isLoggedIn" class="music-login-strip">
         <span>先发现喜欢的音乐，登录后开始收听。</span>
@@ -194,9 +244,7 @@ function count(value: number | undefined): string {
         :aria-label="hero.title + '歌曲速览'"
       >
         <header class="music-section-head">
-          <h2>
-            先听这几首<span> / {{ hero.eyebrow || 'QUICK LISTEN' }}</span>
-          </h2>
+          <h2>歌曲速览</h2>
           <button type="button" @click="emit('openRecSection', hero)">
             全部歌曲 <i class="pi pi-arrow-right"></i>
           </button>
@@ -220,86 +268,27 @@ function count(value: number | undefined): string {
                 loading="lazy" /><span class="music-track-play"><PlaybackIcon name="play" /></span
             ></span>
             <span class="music-track-meta"
-              ><strong>{{ track.title }}</strong
-              ><span>{{ track.artist }}</span></span
+              ><strong :title="track.title">{{ track.title }}</strong
+              ><span :title="track.artist">{{ track.artist }}</span></span
             >
             <span class="music-track-duration">{{ duration(track.duration) }}</span>
           </button>
         </div>
       </section>
 
-      <section v-if="features.length" class="music-features" aria-label="更多音乐推荐">
-        <article
-          v-for="(section, index) in features"
-          :key="section.key"
-          class="music-feature"
-          :class="{ 'music-feature-alt': index === 1 }"
-        >
-          <header>
-            <div>
-              <p v-if="section.eyebrow" class="music-eyebrow">{{ section.eyebrow }}</p>
-              <h2>{{ section.title }}</h2>
-            </div>
-            <button
-              type="button"
-              class="music-feature-play"
-              :disabled="!section.tracks.length"
-              :aria-label="`播放${section.title}`"
-              @click="play(section)"
-            >
-              <i :class="section.icon"></i>
-            </button>
-          </header>
-          <p class="music-feature-description">{{ section.description }}</p>
-          <div
-            v-if="section.error || !section.tracks.length"
-            class="music-feature-empty"
-            role="status"
-          >
-            <span>{{ section.error || '本次暂无歌曲' }}</span
-            ><button type="button" :disabled="recsLoading" @click="emit('loadRecommendations')">
-              重试
-            </button>
-          </div>
-          <button
-            v-for="(track, position) in section.tracks.slice(0, 3)"
-            :key="track.id"
-            type="button"
-            class="music-feature-track"
-            :class="{ 'is-current': currentTrackId === track.id }"
-            @click="play(section, track)"
-            :aria-label="`播放 ${track.title} · ${track.artist}`"
-          >
-            <span>{{ String(position + 1).padStart(2, '0') }}</span
-            ><span class="music-feature-cover"
-              ><CoverImg
-                :cover="track.cover"
-                :cover-source="track.coverSource"
-                alt=""
-                loading="lazy" /></span
-            ><strong
-              >{{ track.title }}<small>{{ track.artist }}</small></strong
-            ><PlaybackIcon name="play" />
-          </button>
-          <button
-            v-if="section.tracks.length"
-            type="button"
-            class="music-feature-more"
-            @click="emit('openRecSection', section)"
-          >
-            查看全部 {{ section.tracks.length }} 首 <i class="pi pi-arrow-up-right"></i>
-          </button>
-        </article>
-      </section>
-
       <section class="music-playlists" aria-label="精选歌单">
         <header class="music-section-head">
-          <h2>把喜欢，听成一张歌单<span> / CURATED PLAYLISTS</span></h2>
+          <h2>精选歌单</h2>
           <button v-if="supportsDiscovery" type="button" @click="emit('openDiscovery')">
             发现更多 <i class="pi pi-arrow-right"></i>
           </button>
         </header>
-        <div v-if="playlists.length" class="music-playlist-grid">
+        <div
+          v-if="playlists.length"
+          :ref="playlistGrid"
+          class="music-playlist-grid"
+          :style="playlistGridStyle"
+        >
           <button
             v-for="playlist in playlists"
             :key="playlist.id"
@@ -312,16 +301,14 @@ function count(value: number | undefined): string {
                 :cover="playlist.coverSmall || playlist.cover"
                 :cover-source="playlist.coverSmallSource || playlist.coverSource"
                 alt=""
-                loading="lazy"
-              /><span class="music-playlist-symbol"><PlaybackIcon name="play" /></span
-              ><span
-                v-if="playlist.playCount || playlist.trackCount"
-                class="music-playlist-count"
-                >{{ count(playlist.playCount) || `${playlist.trackCount} 首` }}</span
-              ></span
-            >
-            <strong>{{ playlist.name }}</strong
+                loading="lazy" /><span class="music-playlist-symbol" aria-hidden="true"
+                ><PlaybackIcon name="play" /></span
+            ></span>
+            <strong :title="playlist.name">{{ playlist.name }}</strong
             ><small>{{ playlist.creatorName || providerLabel + '精选' }}</small>
+            <span v-if="playlist.playCount || playlist.trackCount" class="music-playlist-count">{{
+              count(playlist.playCount) || `${playlist.trackCount} 首`
+            }}</span>
           </button>
         </div>
         <div v-else class="music-feature-empty">

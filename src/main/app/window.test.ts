@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { restoreWindowSize } from './windowState.ts'
-import { getWindowBackgroundColor, syncWindowFrameAppearance } from './windowAppearance.ts'
+import { getWindowBackgroundColor, syncWindowFrameColor } from './windowAppearance.ts'
 
 test('main-process startup creates the window before deferred runtime work', async () => {
   const source = await readFile(new URL('./lifecycle.ts', import.meta.url), 'utf8')
@@ -80,16 +80,16 @@ test('system theme follows the current native preference without importing audio
 })
 
 test(
-  'Windows frame disables forced accents and restores them after leaving high contrast',
+  'Windows frame avoids a painted accent outline and yields to high contrast',
   {
     skip: process.platform !== 'win32'
   },
   () => {
     const colors: (string | boolean | null)[] = []
     const win = { setAccentColor: (color: string | boolean | null) => colors.push(color) }
-    syncWindowFrameAppearance(win, false)
-    syncWindowFrameAppearance(win, true)
-    syncWindowFrameAppearance(win, false)
+    syncWindowFrameColor(win, false)
+    syncWindowFrameColor(win, true)
+    syncWindowFrameColor(win, false)
     assert.deepEqual(colors, [false, null, false])
   }
 )

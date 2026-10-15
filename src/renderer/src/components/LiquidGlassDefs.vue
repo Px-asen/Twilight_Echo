@@ -19,7 +19,12 @@ import {
 import { glassRasterDensity, observeDevicePixelRatio } from '../utils/glassRasterDensity.ts'
 import { createFrameCoalescer } from '../utils/liquidGlassPointer.ts'
 
-const props = defineProps<{ active: boolean }>()
+const props = defineProps<{
+  active: boolean
+  targetDocument?: Document
+  theme?: typeof DEFAULT_LIQUID_GLASS_LIGHT
+}>()
+const surfaceDocument = (): Document => props.targetDocument ?? document
 const playbarMapUrl = ref('')
 const playbarGeometry = ref<DisplacementGeometry>(NOMINAL_PLAYBAR_GEOMETRY)
 const displacementScale = ref(DEFAULT_LIQUID_GLASS_LIGHT.displacementScale)
@@ -38,7 +43,13 @@ let stopObservingPixelRatio: (() => void) | null = null
 
 function syncFilterInputs(): void {
   if (!props.active) return
-  const style = getComputedStyle(document.documentElement)
+  if (props.theme) {
+    displacementScale.value = props.theme.displacementScale
+    aberrationIntensity.value = props.theme.aberrationIntensity
+    return
+  }
+  const doc = surfaceDocument()
+  const style = doc.defaultView!.getComputedStyle(doc.documentElement)
   const number = (name: string, fallback: number): number => {
     const value = Number.parseFloat(style.getPropertyValue(name))
     return Number.isFinite(value) ? value : fallback
@@ -55,7 +66,7 @@ function syncFilterInputs(): void {
 
 function ensureMaps(): void {
   if (!props.active) return
-  const surface = document.querySelector(LIQUID_GLASS_PLAYBAR_SELECTOR)
+  const surface = surfaceDocument().querySelector(LIQUID_GLASS_PLAYBAR_SELECTOR)
   if (surface !== target) {
     if (target) geometryObserver?.unobserve(target)
     target = surface
@@ -107,7 +118,8 @@ function syncActive(): void {
       geometryFrames.schedule(undefined)
     }
   })
-  mountObserver.observe(document.querySelector('.app-shell-player') ?? document.body, {
+  const doc = surfaceDocument()
+  mountObserver.observe(doc.querySelector('.app-shell-player') ?? doc.body, {
     childList: true,
     subtree: true,
     attributes: true,
@@ -133,6 +145,8 @@ onBeforeUnmount(() => {
   window.removeEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
 })
 watch(() => props.active, syncActive, { flush: 'post' })
+watch(() => props.targetDocument, syncActive, { flush: 'post' })
+watch(() => props.theme, onTuningChanged, { deep: true, flush: 'post' })
 </script>
 
 <template>

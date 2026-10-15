@@ -23,8 +23,8 @@ test('playback background contrast and saved colors survive tone and bar changes
     )
     const baseStyles =
       (await readFile(new URL('../../assets/base.css', import.meta.url), 'utf8')) +
-      (await readFile(new URL('../../assets/bohr.css', import.meta.url), 'utf8')) +
-      (await readFile(new URL('../../assets/appearance.css', import.meta.url), 'utf8'))
+      (await readFile(new URL('../../assets/materials.css', import.meta.url), 'utf8')) +
+      (await readFile(new URL('../../assets/bohr.css', import.meta.url), 'utf8'))
     const sources = [
       await readFile(new URL('./PlayerBar.css', import.meta.url), 'utf8'),
       await readFile(new URL('../LocalDashboard.css', import.meta.url), 'utf8'),
@@ -194,9 +194,16 @@ const mount=(mode,glass=false,live=false)=>{
     mountIcon(shell.querySelector('.previous-button'),'previous')
     mountIcon(shell.querySelector('.next-button'),'next')
     shell.querySelector('.player-right').innerHTML='<button class="icon-btn favorite-btn" aria-label="喜欢"></button><button class="ctrl-btn mode-btn-right" aria-label="播放模式"></button><div class="volume-anchor"><button class="icon-btn volume-control-button" aria-label="音量控制"></button></div><button class="icon-btn track-menu-button" aria-label="播放列表"></button><button class="icon-btn mini-player-btn" aria-label="迷你播放器"></button><button class="icon-btn desktop-lyrics-btn" aria-label="桌面歌词"></button><button class="icon-btn hifi-toggle-button" aria-label="HiFi"></button>'
+    shell.querySelector('.player-bar').classList.add('player-bar-transport-grouped')
+    const center=shell.querySelector('.player-center');center.prepend(shell.querySelector('.mode-btn-right'));center.insertBefore(shell.querySelector('.volume-anchor'),center.querySelector('.progress-slider-wrap'))
     shell.querySelector('.player-left').innerHTML='<div class="player-cover-slot"><img class="player-cover" alt="" /></div>'
     const rail=shell.querySelector('.progress-slider-wrap')
     rail.outerHTML='<div class="progress-area"><span class="time-label">0:24</span>'+rail.outerHTML+'<span class="time-label">2:41</span></div>'
+  }
+  if(mode!=='standard'){
+    const rail=shell.querySelector('.'+mode+'-progress-rail')
+    rail.innerHTML='<div class="'+mode+'-progress-slider-wrap"><div class="'+mode+'-progress-track"><div class="'+mode+'-progress-fill'+(live?' live':'')+'"></div></div><input type="range" class="'+mode+'-progress-slider" aria-label="播放进度" /></div>'+(mode==='mini'?'<span class="mini-progress-time">0:24 / 2:41</span>':'')
+    if(mode==='compact')shell.querySelector('.player-bar').prepend(rail)
   }
   mountIcon(shell.querySelector('.btn-play'),'play')
   if(mode!=='standard')mountIcon(shell.querySelector('.mini-play-button'),'play')
@@ -344,10 +351,13 @@ const checkColors=async(overrides)=>{
       mount(mode,glass,live)
       await settle()
       const label=[tone,mode,glass,live].join('/')
+      if(mode!=='standard'&&glass)checkBackground(bar,getComputedStyle(bar).getPropertyValue('--te-flat-bar-glass-bg'),label+' playing-page strip stays dark')
+      if(mode!=='standard'&&!glass&&tone==='dark')checkBackground(bar,getComputedStyle(bar).getPropertyValue('--te-flat-bar-dark-lift'),label+' dark strip retains its lifted surface')
       checkBackground(track,overrides[tone]['playback.progress.track'],label+' track')
       checkBackground(fill,overrides[tone]['playback.progress.fill'],label+' fill')
       checkBackground(button,overrides[tone]['playback.control.surface'],label+' play')
-      if(mode==='standard')checkIconColor(button,overrides[tone]['playback.control.text'])
+      checkIconColor(button,overrides[tone]['playback.control.text'])
+      if(mode!=='standard')checkIconColor(stripButton,overrides[tone]['playback.control.text'])
       if(mode!=='standard')checkBackground(stripButton,overrides[tone]['playback.control.surface'],label+' standalone play')
       bar.style.setProperty('--accent-color','#0000aa')
       bar.style.setProperty('--play-button-color','#0000aa')
@@ -363,7 +373,7 @@ const checkDashboardDefaults=()=>{
   const ink=style.getPropertyValue('--home-ink')
   checkBackground(track,'color-mix(in srgb, '+ink+' 12%, transparent)','reset restores dashboard track','::before')
   checkBackground(fill,'linear-gradient(90deg, '+style.getPropertyValue('--home-accent')+', '+style.getPropertyValue('--te-accent-cyan')+')','reset restores dashboard fill')
-  checkBackground(button,'linear-gradient(145deg, color-mix(in srgb, '+style.getPropertyValue('--home-accent')+' 82%, '+style.getPropertyValue('--home-card')+'), color-mix(in srgb, '+style.getPropertyValue('--home-accent')+' 90%, '+ink+'))','reset restores themed dashboard play surface')
+  checkBackground(button,'var(--te-transport-play-surface)','reset restores quiet dashboard play surface')
 }
 window.runPlayerThemeTests=async()=>{
   await boot()
@@ -376,14 +386,15 @@ window.runPlayerThemeTests=async()=>{
       const rect=button.getBoundingClientRect()
       expect(rect.width>=rect.height*1.6&&rect.height>=32,'standard transport is a quiet capsule with a usable desktop hit target')
       checkBackground(button,'var(--te-transport-play-surface)','default standard play surface stays neutral across covers')
+      const expected=background(button)
+      const expectedIcon=getComputedStyle(button).color
       mountDashboard()
       bar.style.setProperty('--play-button-color',cover)
       await settle()
       const homeRect=button.getBoundingClientRect()
-      expect(homeRect.width>=44&&homeRect.height>=44,'dashboard transport keeps a usable hit target')
-      const homeStyle=getComputedStyle(bar)
-      checkBackground(button,'linear-gradient(145deg, color-mix(in srgb, '+homeStyle.getPropertyValue('--home-accent')+' 82%, '+homeStyle.getPropertyValue('--home-card')+'), color-mix(in srgb, '+homeStyle.getPropertyValue('--home-accent')+' 90%, '+homeStyle.getPropertyValue('--home-ink')+'))',tone+' dashboard play surface follows its theme after cover changes')
-      expect(getComputedStyle(button).color!==getComputedStyle(button).backgroundColor,tone+' dashboard play icon contrasts with its surface')
+      expect(Math.abs(homeRect.width-rect.width)<0.6&&Math.abs(homeRect.height-rect.height)<0.6,'dashboard and standard capsule dimensions match')
+      expect(background(button)===expected,tone+' dashboard and standard play colors match after cover changes')
+      expect(getComputedStyle(button).color===expectedIcon,tone+' dashboard and standard play icon colors match')
     }
   }
   const profile=store.createProfile('Player colors')
@@ -411,15 +422,15 @@ window.runPlayerThemeTests=async()=>{
   checkDashboardDefaults()
   mount('mini')
   checkBackground(fill,'#cc9900','reset restores cover progress color')
-  checkBackground(button,'#cc9900','reset restores cover play color')
-  checkBackground(stripButton,'transparent','reset restores standalone play surface')
+  checkBackground(button,'var(--te-transport-play-surface)','reset restores neutral family play color')
+  checkBackground(stripButton,'var(--te-transport-play-surface)','reset restores shared standalone play surface')
   await store.saveProfile(profile)
   await store.setActive({kind:'user',id:profile.id})
   await store.setActive({kind:'builtin',id:'builtin:twilight-echo-default'})
   checkDashboardDefaults()
   mount('compact')
   checkBackground(fill,'#cc9900','switching theme clears progress override')
-  checkBackground(button,'#cc9900','switching theme clears play override')
+  checkBackground(button,'var(--te-transport-play-surface)','switching theme restores neutral play')
   await store.setActive({kind:'user',id:profile.id})
 }
 window.checkStandardPlayerGeometry=async()=>{
@@ -428,7 +439,10 @@ window.checkStandardPlayerGeometry=async()=>{
     mount('standard',glass)
     const shell=bar.parentElement
     shell.style.setProperty('transition','none','important')
-    expect(Math.abs(innerHeight-shell.getBoundingClientRect().bottom-14)<0.1,'player restores its 14px floating inset on every page')
+    expect(Math.abs(innerHeight-shell.getBoundingClientRect().bottom-22)<0.1,'regular player floats 22px above the bottom')
+    shell.dataset.tePlayingPage='true'
+    expect(Math.abs(innerHeight-shell.getBoundingClientRect().bottom)<0.1,'song detail player remains flush with the bottom')
+    shell.dataset.tePlayingPage='false'
     const material=getComputedStyle(bar)
     expect(material.backdropFilter.includes('blur(24px)'), 'regular player material diffuses artwork before controls: '+material.backdropFilter)
     const alpha=colorRgba(material.backgroundColor)[3]/255
@@ -459,15 +473,15 @@ window.checkStandardPlayerGeometry=async()=>{
     const labels=[...bar.querySelectorAll('.time-label')].map(label=>label.getBoundingClientRect())
     const visibleBottom=Math.max(progress.bottom,...labels.map(label=>label.bottom))
     const topInset=controls.top-frame.top,bottomInset=frame.bottom-visibleBottom
-    expect(Math.abs(topInset-bottomInset-3)<0.6,'progress restores its 3px offset while transport retains its top inset: '+JSON.stringify({tone,glass,fontSize,topInset,bottomInset}))
-    expect(Math.abs(controls.top-art.top)<0.6&&Math.abs(visibleBottom-art.bottom-3)<0.6,'transport and seeking stay aligned with artwork')
-    if(fontSize===14)expect(frame.height>=71&&frame.height<=73,'default player restores its 72px height')
+    expect(Math.abs(topInset-bottomInset-5)<0.6,'progress moves down 5px while transport retains its top inset: '+JSON.stringify({tone,glass,fontSize,topInset,bottomInset}))
+    expect(Math.abs(controls.top-art.top)<0.6&&Math.abs(visibleBottom-art.bottom-5)<0.6,'transport stays aligned with artwork while seeking gets more separation')
+    if(fontSize===14)expect(frame.height>=89&&frame.height<=91,'default player reserves room for the enlarged transport')
     const seekTarget=bar.querySelector('.progress-slider-wrap').getBoundingClientRect()
-    expect(seekTarget.height>=22&&seekTarget.bottom<=frame.bottom,'optical centering preserves the full seek target inside the panel')
+    expect(seekTarget.height>=24&&seekTarget.bottom<=frame.bottom,'optical centering preserves the full seek target inside the panel')
     expect(controls.top-frame.top>=9.9,'transport has at least 10px top clearance: '+(controls.top-frame.top))
     expect(frame.bottom-progress.bottom>=4.9,'lowered progress retains bottom clearance')
     const play=button.getBoundingClientRect(),glyph=button.querySelector('svg').getBoundingClientRect()
-    expect(play.height>=31.9,'play retains its restored desktop hit target')
+    expect(play.height>=47.9,'play retains an enlarged forty-eight-pixel hit target')
     const previous=bar.querySelector('.previous-button').getBoundingClientRect(),next=bar.querySelector('.next-button').getBoundingClientRect()
     expect(Math.abs(previous.height-play.height)<0.6&&Math.abs(next.height-play.height)<0.6,'transport controls use the same desktop height')
     expect(Math.abs((play.left-previous.right)-(next.left-play.right))<0.6,'previous and next have balanced spacing around play')
@@ -477,7 +491,7 @@ window.checkStandardPlayerGeometry=async()=>{
     expect(utilities[0].left>=seeking.right+4,'utility hit targets cannot intrude into the seeking column at narrow widths')
     expect(utilities.at(-1).right<=frame.right-9,'trailing controls stay inside the panel')
     for(let i=1;i<utilities.length;i++)expect(utilities[i].left-utilities[i-1].right>=3.9,'secondary hit targets do not overlap')
-    expect(utilities[2].left-utilities[1].right>=11.9&&utilities[4].left-utilities[3].right>=11.9,'whitespace separates playback preferences, output and queue, and player tools')
+    expect(utilities[2].left-utilities[1].right>=11.9,'whitespace separates queue from detached player tools')
     expect(play.width>=play.height*1.6,'play capsule remains horizontal at every width and font size')
     expect(Math.abs(glyph.x+glyph.width/2-play.x-play.width/2)<0.6&&Math.abs(glyph.y+glyph.height/2-play.y-play.height/2)<0.6,'transport glyph stays centered in the capsule: '+JSON.stringify({tone,glass,fontSize,width:innerWidth,play:play.toJSON(),glyph:glyph.toJSON(),display:getComputedStyle(button).display,align:getComputedStyle(button).alignItems}))
   }
@@ -496,10 +510,17 @@ window.checkNavigationProportions=async()=>{
     document.documentElement.style.setProperty('--te-font-size-body',size+'px','important')
     await new Promise(requestAnimationFrame)
     const frame=menu.getBoundingClientRect(),row=item.getBoundingClientRect(),glyph=icon.getBoundingClientRect()
+    const contentBefore=main.getBoundingClientRect()
+    main.classList.remove('menu-open');menu.classList.remove('open')
+    await new Promise(requestAnimationFrame)
+    const contentClosed=main.getBoundingClientRect()
+    main.classList.add('menu-open');menu.classList.add('open')
+    await new Promise(requestAnimationFrame)
     expect(Math.abs(frame.top-40)<0.6,'sidebar begins below the fixed 40px title bar')
-    const expected=style==='rail'?72:style==='compact'?size*192/14:Math.max(size*208/14,Math.min(innerWidth*.16,size*236/14))
+    const expected=style==='rail'?72:style==='compact'?size*192/14:Math.max(size*224/14,Math.min(innerWidth*.18,size*260/14))
     expect(Math.abs(frame.width-expected)<1,'navigation mode width survives inline theme tokens: '+style+' '+frame.width+'/'+expected)
-    expect(Math.abs(parseFloat(getComputedStyle(main).paddingLeft)-(innerWidth>900?frame.width:0))<1,'content reserves sidebar width on desktop and overlays at narrow widths: '+JSON.stringify({style,width:frame.width,padding:getComputedStyle(main).paddingLeft,window:innerWidth}))
+    expect(Math.abs(parseFloat(getComputedStyle(main).paddingLeft))<1,'navigation overlays content at every window width: '+JSON.stringify({style,width:frame.width,padding:getComputedStyle(main).paddingLeft,window:innerWidth}))
+    expect(Math.abs(contentBefore.width-contentClosed.width)<1&&Math.abs(contentBefore.left-contentClosed.left)<1,'opening navigation preserves content width and position at every window width')
     expect(glyph.left>=frame.left+8&&glyph.right<=frame.right-8,'navigation icon stays inside sidebar padding')
     expect(row.left>=frame.left+7&&row.right<=frame.right-7,'navigation row has balanced inset')
     if(style!=='rail')expect(label.scrollWidth<=label.clientWidth+1,'normal navigation label remains readable')
@@ -529,9 +550,11 @@ window.checkSharedPlaybackGlyphs=async()=>{
     bar.append(tile)
     for(const plate of tile.children){
       mountIcon(plate,'play')
-      const actual=getComputedStyle(plate.querySelector('svg')).color
-      const expected=plate.classList.contains('fresh-play')?getComputedStyle(plate).color:'rgb(17, 24, 39)'
-      expect(actual===expected,tone+' cover play glyph follows its theme surface')
+      if(plate.className==='gallery-play') expect(getComputedStyle(plate.querySelector('svg')).color==='rgb(17, 24, 39)',tone+' white overlay keeps a dark play glyph')
+      else {
+        const foreground=document.createElement('span');foreground.style.color='var(--te-transport-play-text)';plate.append(foreground);
+        expect(getComputedStyle(plate.querySelector('svg')).color===getComputedStyle(foreground).color,tone+' themed overlay keeps the transport foreground');foreground.remove()
+      }
     }
     const row=document.createElement('button')
     row.className='music-track'
@@ -562,6 +585,7 @@ window.checkSidebarTransition=async()=>{
       expect(Number(getComputedStyle(shell).zIndex)>Number(getComputedStyle(sidebar).zIndex),'player stays above navigation: '+mode)
       for(const open of [true,false,true,false]){
         sidebar.style.transform=open?'translateX(0)':'translateX(-100%)'
+        // Old integrations may still toggle this class; it must have no effect.
         shell.classList.toggle('menu-open',open)
         const started=performance.now()
         do{
@@ -618,7 +642,7 @@ window.checkPlayerThemeHover=()=>{
   const hoverRect=hoverTarget.getBoundingClientRect()
   expect(hoverTarget.matches(':hover'),'play button receives hover: '+document.documentElement.dataset.theme+' '+bar.className+' '+JSON.stringify({x:hoverRect.x,y:hoverRect.y,w:hoverRect.width,h:hoverRect.height,hit:document.elementFromPoint(hoverRect.x+hoverRect.width/2,hoverRect.y+hoverRect.height/2)?.outerHTML.slice(0,200)}))
   checkBackground(hoverTarget,colors[document.documentElement.dataset.theme]['playback.control.hoverSurface'],'custom play hover '+bar.className+' '+getComputedStyle(hoverTarget).getPropertyValue('--te-player-bar-play-hover-surface'))
-  if(bar.classList.contains('home')||(!bar.classList.contains('player-bar-mini')&&!bar.classList.contains('player-bar-compact')))checkIconColor(hoverTarget,colors[document.documentElement.dataset.theme]['playback.control.hoverText'])
+  checkIconColor(hoverTarget,colors[document.documentElement.dataset.theme]['playback.control.hoverText'])
 }
 window.checkReloadedPlayerTheme=async()=>{
   await boot()

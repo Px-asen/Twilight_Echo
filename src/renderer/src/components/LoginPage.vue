@@ -3,7 +3,7 @@ import QRCode from 'qrcode'
 import './contentArrival.css'
 import ServerLoginForm from '@renderer/components/login/ServerLoginForm.vue'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { useBackHandler } from '../app/useBackStack'
 import AnimatedInput from './AnimatedInput.vue'
 import { useNcmStore } from '../stores/useNcmStore'
@@ -13,6 +13,8 @@ import type { MediaProviderProfile } from '../providers/mediaProvider'
 const props = defineProps<{
   forceProfile?: boolean
   initialProviderId?: string | null
+  embedded?: boolean
+  compactProfile?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +24,13 @@ const emit = defineEmits<{
 
 const providerStore = useProviderStore()
 const ncmStore = useNcmStore()
+const loginRoot = ref<HTMLElement | null>(null)
+const methodId = useId()
+const loginMethods = [
+  { value: 'qr', label: '扫码登录' },
+  { value: 'captcha', label: '短信登录' },
+  { value: 'password', label: '密码登录' }
+] as const
 
 const POLL_INTERVAL = 5000
 const QR_KEY_COOLDOWN = 5000
@@ -184,6 +193,27 @@ const view = computed<'loading' | 'connect' | 'login' | 'profile' | 'success' | 
       return 'login'
   }
 })
+
+let focusStageOnArrival = false
+watch(view, () => {
+  focusStageOnArrival =
+    props.embedded === true && !!loginRoot.value?.contains(document.activeElement)
+})
+function focusArrivingStage(element: Element): void {
+  if (!focusStageOnArrival) return
+  focusStageOnArrival = false
+  const target =
+    element.querySelector<HTMLElement>('h2') ??
+    element.querySelector<HTMLElement>('[role="alert"], button')
+  target?.focus({ preventScroll: true })
+}
+function canDismissOutside(): boolean {
+  if (accountLoginBusy.value || captchaBusy.value) return false
+  if (view.value !== 'login') return true
+  const inputs = loginRoot.value?.querySelectorAll<HTMLInputElement>('form input') ?? []
+  return !Array.from(inputs).some((input) => input.id !== 'lp-country' && input.value.length > 0)
+}
+defineExpose({ canDismissOutside })
 
 const loginCooldownRemaining = ref(0)
 const isLoginCoolingDown = computed(() => loginCooldownRemaining.value > 0)
@@ -348,6 +378,20 @@ function setLoginMethod(method: LoginMethod): void {
     return
   }
   stopPolling()
+}
+
+function onMethodKeydown(event: KeyboardEvent): void {
+  const index = loginMethods.findIndex((method) => method.value === loginMethod.value)
+  let next = index
+  if (event.key === 'ArrowRight') next = (index + 1) % loginMethods.length
+  else if (event.key === 'ArrowLeft') next = (index + loginMethods.length - 1) % loginMethods.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = loginMethods.length - 1
+  else return
+  event.preventDefault()
+  const method = loginMethods[next].value
+  setLoginMethod(method)
+  void nextTick(() => document.getElementById(`${methodId}-${method}`)?.focus())
 }
 
 function refreshCooldownRemaining(): void {
@@ -810,8 +854,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="login-page">
-    <div class="lp-sky" aria-hidden="true">
+  <div
+    ref="loginRoot"
+    class="login-page"
+    :class="{ 'login-page--embedded': embedded, 'login-page--compact-profile': compactProfile }"
+  >
+    <div v-if="!embedded" class="lp-sky" aria-hidden="true">
       <div class="sky-blob sky-blob-a"></div>
       <div class="sky-blob sky-blob-b"></div>
       <div class="sky-halo"></div>
@@ -819,9 +867,9 @@ onUnmounted(() => {
 
     <div class="lp-shell">
       <main class="lp-stage">
-        <Transition name="stage" mode="out-in">
+        <Transition name="stage" mode="out-in" @after-enter="focusArrivingStage">
           <!-- 初始化 -->
-          <section v-if="view === 'loading'" key="loading" class="stage-center">
+          <section v-if="view === 'loading'" key="loading" class="stage-center" role="status">
             <div class="lp-spinner"></div>
             <p class="stage-muted">正在连接在线音源…</p>
           </section>
@@ -829,12 +877,24 @@ onUnmounted(() => {
           <!-- 平台选择 -->
           <section v-else-if="view === 'connect'" key="connect" class="stage-view">
             <header class="stage-head">
-              <h2 class="stage-title">选择你的音乐平台</h2>
-              <p class="stage-sub">登录一个平台，把它的曲库接进 Twilight Echo</p>
+              <h2 class="stage-title" tabindex="-1">
+                {{ embedded ? '音乐账户' : '选择你的音乐平台' }}
+              </h2>
+              <p class="stage-sub">
+                {{ embedded ? '选择音乐平台' : '登录一个平台，把它的曲库接进 Twilight Echo' }}
+              </p>
             </header>
             <p v-if="providerCards.length === 0" class="stage-muted">
               暂无可用的登录平台，请在扩展中心启用流媒体插件。
             </p>
+            <button
+              v-if="providerCards.length === 0"
+              type="button"
+              class="btn-secondary"
+              @click="emit('configure')"
+            >
+              管理音乐来源
+            </button>
             <div class="provider-list">
               <button
                 v-for="(provider, index) in providerCards"
@@ -842,6 +902,7 @@ onUnmounted(() => {
                 type="button"
                 class="provider-row"
                 :class="{ unavailable: !provider.available }"
+                :title="provider.name"
                 :style="{ '--d': index }"
                 @click="openAccount(provider.id)"
               >
@@ -857,6 +918,7 @@ onUnmounted(() => {
                     <em v-if="provider.loggedIn" class="provider-pill on">已连接</em>
                     <em v-else-if="!provider.available" class="provider-pill off">不可用</em>
                     <em v-else-if="provider.needsSetup" class="provider-pill setup">需配置</em>
+                    <em v-else class="provider-pill off">未连接</em>
                   </span>
                   <span class="provider-desc">
                     <template v-if="provider.loggedIn">
@@ -897,7 +959,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="chip-back"
-                data-te-back-button="pill"
+                :data-te-back-button="embedded ? undefined : 'pill'"
                 @click="backToAccounts"
               >
                 <svg
@@ -914,7 +976,7 @@ onUnmounted(() => {
                 </svg>
                 全部平台
               </button>
-              <h2 class="stage-title">
+              <h2 class="stage-title" tabindex="-1">
                 <span
                   v-if="activeCard"
                   class="title-glyph"
@@ -933,41 +995,30 @@ onUnmounted(() => {
               aria-label="登录方式"
             >
               <button
+                v-for="method in loginMethods"
+                :id="`${methodId}-${method.value}`"
+                :key="method.value"
                 type="button"
                 role="tab"
                 class="method-tab"
-                :aria-selected="loginMethod === 'qr'"
-                :class="{ active: loginMethod === 'qr' }"
-                @click="setLoginMethod('qr')"
+                :aria-selected="loginMethod === method.value"
+                :aria-controls="`${methodId}-panel`"
+                :tabindex="loginMethod === method.value ? 0 : -1"
+                :class="{ active: loginMethod === method.value }"
+                @click="setLoginMethod(method.value)"
+                @keydown="onMethodKeydown"
               >
-                扫码登录
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="method-tab"
-                :aria-selected="loginMethod === 'captcha'"
-                :class="{ active: loginMethod === 'captcha' }"
-                @click="setLoginMethod('captcha')"
-              >
-                短信登录
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="method-tab"
-                :aria-selected="loginMethod === 'password'"
-                :class="{ active: loginMethod === 'password' }"
-                @click="setLoginMethod('password')"
-              >
-                密码登录
+                {{ method.label }}
               </button>
             </div>
 
             <!-- 扫码 / OAuth -->
             <div
+              :id="supportsAccountLogin ? `${methodId}-panel` : undefined"
               :key="supportsServerLogin ? 'server' : loginMethod"
               class="login-method-content te-content-arrival"
+              :role="supportsAccountLogin ? 'tabpanel' : undefined"
+              :aria-labelledby="supportsAccountLogin ? `${methodId}-${loginMethod}` : undefined"
             >
               <ServerLoginForm
                 v-if="supportsServerLogin"
@@ -1001,16 +1052,12 @@ onUnmounted(() => {
                     <div v-else-if="pageState === 'qr_loading'" class="qr-loading">
                       <div class="lp-spinner"></div>
                     </div>
-                    <div
+                    <button
                       v-if="pageState === 'qr_expired'"
+                      type="button"
                       class="qr-expired-overlay"
-                      data-te-interactive
-                      role="button"
-                      tabindex="0"
                       aria-label="刷新二维码"
                       @click="handleRefresh"
-                      @keydown.enter.prevent="handleRefresh"
-                      @keydown.space.prevent="handleRefresh"
                     >
                       <svg
                         width="24"
@@ -1026,10 +1073,14 @@ onUnmounted(() => {
                         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                       </svg>
                       <span>点击刷新二维码</span>
-                    </div>
+                    </button>
                     <div v-if="pageState === 'qr_ready'" class="qr-scanline"></div>
                   </div>
-                  <p class="qr-status" :class="{ scanned: pageState === 'qr_scanned' }">
+                  <p
+                    class="qr-status"
+                    :class="{ scanned: pageState === 'qr_scanned' }"
+                    role="status"
+                  >
                     <span
                       class="qr-dot"
                       :class="pageState === 'qr_scanned' ? 'scanned' : 'waiting'"
@@ -1057,12 +1108,13 @@ onUnmounted(() => {
                 <div
                   v-if="loginMethod === 'password'"
                   class="kind-switch"
-                  role="radiogroup"
+                  role="group"
                   aria-label="账号类型"
                 >
                   <button
                     type="button"
                     class="kind-chip"
+                    :aria-pressed="passwordKind === 'phone'"
                     :class="{ active: passwordKind === 'phone' }"
                     @click="((passwordKind = 'phone'), clearAccountLoginFeedback())"
                   >
@@ -1071,6 +1123,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="kind-chip"
+                    :aria-pressed="passwordKind === 'email'"
                     :class="{ active: passwordKind === 'email' }"
                     @click="((passwordKind = 'email'), clearAccountLoginFeedback())"
                   >
@@ -1167,10 +1220,10 @@ onUnmounted(() => {
                         : '登 录'
                   }}
                 </button>
-                <p v-if="isLoginCoolingDown" class="form-message">
+                <p v-if="isLoginCoolingDown" class="form-message" role="status">
                   {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
                 </p>
-                <p v-else-if="accountLoginMessage" class="form-message">
+                <p v-else-if="accountLoginMessage" class="form-message" role="alert">
                   {{ accountLoginMessage }}
                 </p>
               </form>
@@ -1179,11 +1232,11 @@ onUnmounted(() => {
 
           <!-- 资料页 -->
           <section v-else-if="view === 'profile'" key="profile" class="stage-view profile-view">
-            <header class="stage-head">
+            <header v-if="!compactProfile" class="stage-head">
               <button
                 type="button"
                 class="chip-back"
-                data-te-back-button="pill"
+                :data-te-back-button="embedded ? undefined : 'pill'"
                 @click="backToAccounts"
               >
                 <svg
@@ -1203,7 +1256,7 @@ onUnmounted(() => {
             </header>
 
             <div class="id-card">
-              <div class="id-banner">
+              <div v-if="!embedded" class="id-banner">
                 <i v-if="activeCard" :class="activeCard.icon" class="id-watermark"></i>
               </div>
               <div class="id-avatar-slot">
@@ -1216,16 +1269,21 @@ onUnmounted(() => {
                 <span v-else class="id-avatar id-avatar-fallback">{{ profileInitial }}</span>
               </div>
               <div class="id-identity">
-                <h2 class="id-name">{{ activeProfile?.nickname || '未知用户' }}</h2>
+                <h2 class="id-name" tabindex="-1" :title="activeProfile?.nickname || '未知用户'">
+                  {{ activeProfile?.nickname || '未知用户' }}
+                </h2>
                 <span v-if="activeCard" class="id-provider">
                   <i :class="activeCard.icon"></i>
                   {{ activeCard.name }}
                 </span>
               </div>
-              <p class="id-signature">
+              <p
+                v-if="!compactProfile && (!embedded || activeProfile?.signature?.trim())"
+                class="id-signature"
+              >
                 {{ activeProfile?.signature?.trim() || '这位听众很安静，还没有留下签名' }}
               </p>
-              <div class="id-stats">
+              <div v-if="!compactProfile" class="id-stats">
                 <span v-if="activeProfile?.follows != null" class="id-stat">
                   <strong>{{ activeProfile.follows }}</strong>
                   <span>关注</span>
@@ -1261,17 +1319,58 @@ onUnmounted(() => {
                   进入流媒体
                 </button>
                 <button
-                  v-if="!confirmLogout"
+                  v-if="compactProfile"
+                  type="button"
+                  class="profile-switch"
+                  @click="backToAccounts"
+                >
+                  切换账户
+                </button>
+                <button
+                  v-if="!compactProfile && !confirmLogout"
                   type="button"
                   class="btn-ghost-danger"
                   @click="requestLogout"
                 >
                   退出登录
                 </button>
-                <button v-else type="button" class="btn-ghost-danger confirm" @click="handleLogout">
+                <button
+                  v-else-if="!compactProfile"
+                  type="button"
+                  class="btn-ghost-danger confirm"
+                  @click="handleLogout"
+                >
                   确认退出？
                 </button>
               </div>
+              <details v-if="compactProfile" class="profile-details">
+                <summary>账户详情</summary>
+                <p v-if="activeProfile?.signature?.trim()" class="id-signature">
+                  {{ activeProfile.signature }}
+                </p>
+                <div class="id-stats">
+                  <span v-if="activeProfile?.follows != null" class="id-stat">
+                    <strong>{{ activeProfile.follows }}</strong
+                    ><span>关注</span>
+                  </span>
+                  <span v-if="activeProfile?.followeds != null" class="id-stat">
+                    <strong>{{ activeProfile.followeds }}</strong
+                    ><span>粉丝</span>
+                  </span>
+                  <button type="button" class="id-stat uid" @click="copyUid">
+                    <strong>{{ activeProfile?.userId ?? '—' }}</strong>
+                    <span>{{ uidCopied ? '已复制 ✓' : 'UID · 复制' }}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  class="btn-ghost-danger"
+                  :class="{ confirm: confirmLogout }"
+                  @click="confirmLogout ? handleLogout() : requestLogout()"
+                >
+                  {{ confirmLogout ? '确认退出？' : '退出登录' }}
+                </button>
+              </details>
             </div>
           </section>
 
@@ -1283,7 +1382,7 @@ onUnmounted(() => {
                 <path class="success-tick" fill="none" d="M15 27l7 7 15-16" />
               </svg>
             </div>
-            <h2 class="stage-title center">登录成功</h2>
+            <h2 class="stage-title center" tabindex="-1" role="status">登录成功</h2>
             <p class="stage-muted">正在为你打开流媒体…</p>
           </section>
 
@@ -1304,13 +1403,15 @@ onUnmounted(() => {
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
             </div>
-            <p class="error-text">{{ errorMsg || '出了点问题，请稍后重试' }}</p>
+            <p class="error-text" tabindex="-1" role="alert">
+              {{ errorMsg || '出了点问题，请稍后重试' }}
+            </p>
             <div class="error-actions">
               <button type="button" class="btn-primary" @click="handleRefresh">重试</button>
               <button
                 type="button"
                 class="btn-secondary"
-                data-te-back-button="pill"
+                :data-te-back-button="embedded ? undefined : 'pill'"
                 @click="backToAccounts"
               >
                 返回平台列表
@@ -1324,6 +1425,449 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.login-page.login-page--embedded {
+  --lp-text: var(--te-material-ink, var(--te-text, var(--te-neutral-900)));
+  --lp-muted: var(--te-text-secondary, var(--te-neutral-500));
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  display: block;
+  width: 100%;
+  background: transparent;
+  overflow: visible;
+  font-size: var(--te-type-body, 15px);
+}
+.login-page--embedded .lp-shell {
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  overflow: visible;
+}
+.login-page--embedded .lp-shell::before {
+  display: none;
+}
+.login-page--embedded .lp-stage {
+  overflow: visible;
+}
+.login-page--embedded .stage-view {
+  padding: 0;
+}
+.login-page--embedded .stage-center {
+  min-height: 96px;
+  padding: 16px 0;
+  gap: 10px;
+}
+
+/* The account child uses the same quiet identity and list hierarchy as the shell. */
+.login-page--embedded .stage-head {
+  margin-bottom: 12px;
+  align-items: flex-start;
+  text-align: left;
+}
+.login-page--embedded .stage-title {
+  font-family: var(--te-font-sans);
+  justify-content: flex-start;
+  font-size: var(--te-type-headline, 17px);
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.4;
+}
+.login-page--embedded .stage-sub {
+  margin-top: 0;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .chip-back {
+  align-self: flex-start;
+  height: auto;
+  min-height: var(--te-control-height-md, 34px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lp-muted);
+  box-shadow: none;
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-type-caption, 13px);
+}
+.login-page--embedded .chip-back:hover {
+  color: var(--lp-text);
+}
+.login-page--embedded .id-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+.login-page--embedded .id-avatar-slot {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.login-page--embedded .id-avatar {
+  width: 48px;
+  height: 48px;
+  box-shadow: none;
+}
+.login-page--embedded .id-avatar-fallback {
+  background: var(--te-subtle-bg);
+  color: var(--te-text-secondary);
+  font-family: var(--te-font-sans);
+  font-size: 22px;
+}
+.login-page--embedded .id-identity {
+  grid-column: 2;
+  grid-row: 1;
+  align-items: flex-start;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 4px;
+}
+.login-page--embedded .id-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-headline, 17px);
+  font-weight: 600;
+  text-align: left;
+  line-height: 1.4;
+}
+.login-page--embedded .id-provider {
+  height: auto;
+  padding: 0;
+  background: transparent;
+  color: var(--lp-muted);
+  font-weight: 400;
+  font-size: var(--te-type-caption, 13px);
+  border-radius: 0;
+}
+.login-page--embedded .id-signature {
+  grid-column: 1 / -1;
+  max-width: none;
+  margin: 14px 0 0;
+  padding: 0;
+  text-align: left;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .id-stats {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 16px;
+  padding: 12px 0;
+  border-block: 1px solid var(--lp-line);
+  border-radius: 0;
+  background: transparent;
+}
+.login-page--embedded .id-stat {
+  flex-direction: row;
+  gap: 5px;
+  min-height: 28px;
+}
+.login-page--embedded .id-stat strong {
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-caption, 13px);
+  font-weight: 500;
+}
+.login-page--embedded .id-stat span {
+  font-size: var(--te-type-caption, 13px);
+}
+.login-page--embedded .id-stat.uid {
+  flex-basis: 100%;
+  justify-content: flex-start;
+}
+.login-page--embedded .id-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.login-page--embedded .btn-primary {
+  height: auto;
+  min-height: var(--te-control-height-md, 34px);
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--te-subtle-bg);
+  color: var(--lp-text);
+  box-shadow: none;
+  transform: none;
+  font-size: var(--te-type-caption, 13px);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.login-page--embedded .btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--te-text) 12%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+.login-page--embedded .btn-ghost-danger {
+  height: auto;
+  min-height: var(--te-control-height-md, 34px);
+  padding: 6px 8px;
+  color: var(--lp-muted);
+  background: transparent;
+  border-radius: 8px;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .btn-ghost-danger:is(:hover, .confirm) {
+  color: var(--te-danger-soft-fg);
+}
+.login-page--compact-profile .id-name {
+  font-size: var(--te-type-headline, 17px);
+  line-height: 1.4;
+  letter-spacing: normal;
+}
+.login-page--compact-profile .id-identity,
+.login-page--compact-profile .stage-head {
+  padding-right: 0;
+}
+.login-page--compact-profile .id-actions {
+  margin-top: 12px;
+}
+.profile-switch {
+  min-height: var(--te-control-height-md, 34px);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lp-muted);
+  font: inherit;
+  font-size: var(--te-type-caption, 13px);
+  cursor: pointer;
+}
+.profile-switch:hover {
+  background: var(--te-subtle-bg);
+  color: var(--lp-text);
+}
+.profile-details {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  font-size: var(--te-type-caption, 13px);
+  color: var(--lp-muted);
+}
+.profile-details summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  min-height: var(--te-control-height-sm, 28px);
+  cursor: pointer;
+  list-style: none;
+}
+.profile-details summary::-webkit-details-marker {
+  display: none;
+}
+.profile-details summary::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.profile-details[open] summary::before {
+  transform: rotate(45deg);
+}
+.login-page--compact-profile .profile-details .id-stats {
+  margin-top: 4px;
+  padding: 8px 0;
+  border: 0;
+}
+.profile-details summary:focus-visible,
+.profile-switch:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.login-page--embedded .provider-list {
+  gap: 0;
+}
+.login-page--embedded .provider-row {
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--lp-line);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  transform: none;
+  opacity: 1;
+}
+.login-page--embedded .provider-row:hover {
+  background: var(--te-subtle-bg);
+  box-shadow: none;
+  transform: none;
+}
+.login-page--embedded .provider-glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--lp-text);
+  font-size: var(--te-type-icon, 16px);
+}
+.login-page--embedded .provider-name {
+  flex-wrap: wrap;
+  font-size: var(--te-type-body, 15px);
+  font-weight: 500;
+  line-height: 1.4;
+}
+.login-page--embedded .provider-desc {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .provider-pill {
+  height: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.4;
+}
+.login-page--embedded .title-glyph {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+}
+.login-page--embedded .method-tabs {
+  width: 100%;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--lp-line);
+  border-radius: 0;
+  background: transparent;
+}
+.login-page--embedded .method-tab {
+  height: auto;
+  min-width: 0;
+  min-height: var(--te-control-height-md, 34px);
+  padding: 8px 4px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-size: var(--te-type-caption, 13px);
+  font-weight: 500;
+  line-height: 1.5;
+}
+.login-page--embedded .method-tab.active {
+  border-bottom-color: var(--lp-text);
+  background: transparent;
+  color: var(--lp-text);
+  box-shadow: none;
+}
+.login-page--embedded .qr-stage {
+  gap: 12px;
+  padding-top: 12px;
+}
+.login-page--embedded .qr-frame {
+  width: min(192px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  border: 1px solid var(--lp-line);
+  border-radius: 8px;
+  box-shadow: none;
+}
+.login-page--embedded .qr-image {
+  width: calc(100% - 24px);
+  height: auto;
+  aspect-ratio: 1;
+}
+.login-page--embedded .qr-corner,
+.login-page--embedded .qr-scanline {
+  display: none;
+}
+.login-page--embedded .qr-dot {
+  animation: none;
+}
+.login-page--embedded .qr-status {
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .account-form {
+  width: 100%;
+  margin: 0;
+}
+.login-page--embedded .kind-switch {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.login-page--embedded .kind-chip {
+  height: auto;
+  min-height: var(--te-control-height-md, 34px);
+  padding: 6px 10px;
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .field-label,
+.login-page--embedded .form-message,
+.login-page--embedded .stage-muted {
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded .field-input {
+  height: auto;
+  min-height: var(--te-control-height-field, 36px);
+  padding: 8px 10px;
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-font-size-body, 14px);
+  line-height: 1.5;
+}
+.login-page--embedded .field-row.phone {
+  grid-template-columns: minmax(64px, 3.5em) minmax(0, 1fr);
+}
+.login-page--embedded .field-row.captcha {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.login-page--embedded .btn-captcha {
+  height: auto;
+  max-width: 7em;
+  padding: 8px 10px;
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded :is(.btn-secondary, .btn-oauth, .btn-ghost-danger) {
+  height: auto;
+  min-height: var(--te-control-height-md, 34px);
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-type-caption, 13px);
+  line-height: 1.5;
+}
+.login-page--embedded :deep(.server-login-form) {
+  gap: 12px;
+  margin: 16px 0 0;
+  font-size: var(--te-type-caption, 13px);
+}
+.login-page--embedded :deep(.server-login-form label) {
+  color: var(--lp-text);
+}
+.login-page--embedded :deep(.server-login-form input),
+.login-page--embedded :deep(.server-login-form button) {
+  min-height: var(--te-control-height-field, 36px);
+  border-radius: var(--te-control-radius-sm, 8px);
+  font-size: var(--te-font-size-body, 14px);
+  line-height: 1.5;
+}
+
 .login-page {
   /* 本页局部调色板：与流媒体首页同源 —— 卡片 / 墨色中性 token 派生，自动适配深浅色 */
   --lp-surface: var(--te-card-bg);
@@ -1366,7 +1910,7 @@ onUnmounted(() => {
   position: absolute;
   border-radius: 50%;
   filter: blur(110px);
-  animation: skyDrift 22s ease-in-out infinite alternate;
+  animation: none;
 }
 
 .sky-blob-a {
@@ -1396,15 +1940,6 @@ onUnmounted(() => {
   );
 }
 
-@keyframes skyDrift {
-  from {
-    transform: translate(0, 0) scale(1);
-  }
-  to {
-    transform: translate(-28px, 22px) scale(1.08);
-  }
-}
-
 /* ─── 主壳体 ──────────────────────────────── */
 
 .lp-shell {
@@ -1419,7 +1954,7 @@ onUnmounted(() => {
   background: var(--lp-surface);
   border: 1px solid var(--lp-line);
   box-shadow: var(--lp-shadow);
-  animation: shellIn 0.55s var(--te-ease-spring) both;
+  animation: none;
 }
 
 /* 卡片顶部的一层主题色光晕，替代原品牌面板的视觉锚点 */
@@ -1437,17 +1972,6 @@ onUnmounted(() => {
     transparent 68%
   );
   pointer-events: none;
-}
-
-@keyframes shellIn {
-  from {
-    opacity: 0;
-    transform: translateY(22px) scale(0.975);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 /* ─── 舞台区 ──────────────────────────────── */
@@ -1583,23 +2107,11 @@ onUnmounted(() => {
   color: var(--lp-text);
   text-align: left;
   cursor: pointer;
-  animation: rowIn 0.5s var(--te-ease-spring) both;
-  animation-delay: calc(var(--d) * 70ms);
+  animation: none;
   transition:
     transform var(--te-motion-return) var(--te-ease-out-quint),
     border-color var(--te-motion-hover),
     box-shadow var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-@keyframes rowIn {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .provider-row:hover {
@@ -1856,6 +2368,7 @@ onUnmounted(() => {
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   cursor: pointer;
+  border: 0;
   transition: color var(--te-motion-hover) var(--te-ease-soft);
 }
 
@@ -2009,9 +2522,11 @@ onUnmounted(() => {
 
 .field-input:focus,
 .field-input:focus-within {
-  border-color: var(--te-primary-500);
+  border-color: var(--te-control-focus-color);
   background: var(--lp-surface);
-  box-shadow: 0 0 0 3px var(--lp-tint);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 
 .field-input.country {
@@ -2144,7 +2659,7 @@ onUnmounted(() => {
 .btn-ghost-danger.confirm {
   background: var(--te-danger-soft-fg);
   color: white;
-  animation: confirmNudge 0.3s var(--te-ease-spring);
+  animation: confirmNudge var(--te-motion-panel) var(--te-ease-spring);
 }
 
 @keyframes confirmNudge {
@@ -2197,7 +2712,7 @@ onUnmounted(() => {
   background: var(--lp-surface);
   box-shadow: var(--lp-shadow);
   overflow: hidden;
-  animation: rowIn 0.5s var(--te-ease-spring) both;
+  animation: none;
 }
 
 .id-banner {
@@ -2364,7 +2879,7 @@ onUnmounted(() => {
   inset: 0;
   border-radius: 50%;
   background: var(--lp-tint);
-  animation: burstRing 0.9s var(--te-ease-soft) both;
+  animation: burstRing var(--te-motion-panel) var(--te-ease-soft) both;
 }
 
 @keyframes burstRing {
@@ -2393,7 +2908,7 @@ onUnmounted(() => {
   stroke-dasharray: 152;
   stroke-dashoffset: 152;
   stroke-linecap: round;
-  animation: drawStroke 0.7s var(--te-ease-soft) 0.1s forwards;
+  animation: drawStroke var(--te-motion-panel) var(--te-ease-soft) 0ms forwards;
 }
 
 .success-tick {
@@ -2403,7 +2918,7 @@ onUnmounted(() => {
   stroke-dashoffset: 36;
   stroke-linecap: round;
   stroke-linejoin: round;
-  animation: drawStroke 0.4s var(--te-ease-soft) 0.55s forwards;
+  animation: drawStroke var(--te-motion-panel) var(--te-ease-soft) 0ms forwards;
 }
 
 @keyframes drawStroke {
@@ -2445,18 +2960,20 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sky-blob,
-  .qr-scanline,
-  .qr-dot.waiting,
-  .qr-dot.scanned {
-    animation: none;
-  }
+  @scope (:root:not([data-te-motion='full'])) {
+    .sky-blob,
+    .qr-scanline,
+    .qr-dot.waiting,
+    .qr-dot.scanned {
+      animation: none;
+    }
 
-  .lp-shell,
-  .provider-row,
-  .id-card {
-    animation-duration: 0.01s;
-    animation-delay: 0s;
+    .lp-shell,
+    .provider-row,
+    .id-card {
+      animation-duration: 0.01s;
+      animation-delay: 0s;
+    }
   }
 }
 </style>

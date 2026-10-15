@@ -5,7 +5,10 @@
     :key="displayCover ? coverIdentityKey : `fb:${coverIdentityKey}`"
     :src="displayCover || fallback"
     :alt="alt"
-    :class="$attrs.class"
+    :class="[
+      $attrs.class,
+      { 'default-track-cover': !displayCover && fallback === DEFAULT_TRACK_COVER }
+    ]"
     decoding="async"
     :loading="loading"
     @error="displayCover && onImageError($event)"
@@ -14,7 +17,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import DEFAULT_TRACK_COVER from '../assets/images/default-track-cover.webp'
+import DEFAULT_TRACK_COVER from '../assets/images/default-track-cover-light.png'
+import '../assets/default-track-cover.css'
 import {
   clearLocalCoverDataCache,
   invalidateRemoteCoverGrant,

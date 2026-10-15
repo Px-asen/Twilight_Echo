@@ -18,61 +18,29 @@ test('content material stays flat while playback optics have bounded work and cl
   const directory = await mkdtemp(join(tmpdir(), 'twilight-content-material-'))
   try {
     const base = await readFile(join(root, 'src/renderer/src/assets/base.css'), 'utf8')
-    const home = compileStyle({
-      source: await readFile(join(root, 'src/renderer/src/components/LocalDashboard.css'), 'utf8'),
-      filename: 'Home.css',
-      id: 'data-v-content',
-      scoped: true
-    })
+    const home = compileStyle({ source: await readFile(join(root, 'src/renderer/src/components/LocalDashboard.css'), 'utf8'), filename: 'Home.css', id: 'data-v-content', scoped: true })
     assert.deepEqual(home.errors, [])
     await writeFile(join(directory, 'entry.ts'), runtime)
-    await build({
-      configFile: false,
-      logLevel: 'error',
-      root,
-      plugins: [vue()],
-      resolve: {
-        alias: { '@renderer': join(root, 'src/renderer/src'), '@shared': join(root, 'src/shared') }
-      },
+    await build({ configFile: false, logLevel: 'error', root, plugins: [vue()],
+      resolve: { alias: { '@renderer': join(root, 'src/renderer/src'), '@shared': join(root, 'src/shared') } },
       define: { 'process.env.NODE_ENV': '"production"' },
-      build: {
-        outDir: join(directory, 'bundle'),
-        emptyOutDir: true,
-        lib: {
-          entry: join(directory, 'entry.ts'),
-          name: 'ContentMaterial',
-          formats: ['iife'],
-          fileName: () => 'runtime.js'
-        }
-      }
-    })
-    await writeFile(
-      join(directory, 'index.html'),
-      `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><style>${base}\n${home.code}
+      build: { outDir: join(directory, 'bundle'), emptyOutDir: true,
+        lib: { entry: join(directory, 'entry.ts'), name: 'ContentMaterial', formats: ['iife'], fileName: () => 'runtime.js' } } })
+    await writeFile(join(directory, 'index.html'), `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><style>${base}\n${home.code}
       body{margin:0;background:#17181a}.home{display:block;padding:30px;width:100%}
       .app-shell-player .player-bar-liquid{position:fixed;bottom:14px;left:18px;width:900px;height:80px;border-radius:24px}
-      </style></head><body><div id="fixture"></div><script src="bundle/runtime.js"></script></body></html>`
-    )
-    await writeFile(
-      join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron');
+      </style></head><body><div id="fixture"></div><script src="bundle/runtime.js"></script></body></html>`)
+    await writeFile(join(directory, 'runner.cjs'), `const {app,BrowserWindow}=require('electron');
       app.setPath('userData',require('node:path').join(__dirname,'profile'));
       app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1100,height:700,webPreferences:{offscreen:true,contextIsolation:false,backgroundThrottling:false}});
       win.webContents.on('console-message',event=>console.error(event.message));
       try{await win.loadFile(process.argv.at(-1));const result=await win.webContents.executeJavaScript('window.runContentMaterial()');
-      console.error('CONTENT_MATERIAL_OK '+JSON.stringify(result));app.exit(0)}catch(error){console.error(error);app.exit(1)}});`
-    )
-    const env = { ...process.env }
-    delete env.ELECTRON_RUN_AS_NODE
-    const { stderr } = await promisify(execFile)(
-      require('electron') as string,
-      [join(directory, 'runner.cjs'), join(directory, 'index.html')],
-      { windowsHide: true, timeout: 60_000, env }
-    )
+      console.error('CONTENT_MATERIAL_OK '+JSON.stringify(result));app.exit(0)}catch(error){console.error(error);app.exit(1)}});`)
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE
+    const { stderr } = await promisify(execFile)(require('electron') as string,
+      [join(directory, 'runner.cjs'), join(directory, 'index.html')], { windowsHide: true, timeout: 60_000, env })
     assert.match(stderr, /CONTENT_MATERIAL_OK/)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
 const runtime = `import {h,render,ref,nextTick} from 'vue'

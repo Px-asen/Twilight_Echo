@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// Both lazy pages need these foundations before either page has been opened.
+import './components/settings-page/SettingsPage.css'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import { mountWorkshopDecorations } from '@renderer/components/theme-workshop/workshopDecorations'
 import {
@@ -13,15 +15,21 @@ import {
   defineAsyncComponent
 } from 'vue'
 import TitleBar from './components/TitleBar.vue'
+import { providePageDock } from './app/pageDock'
 import AppBackgroundLayer from './components/AppBackgroundLayer.vue'
+import AppearanceLayersHost from './components/AppearanceLayersHost.vue'
 import {
   appearanceEditorOpen,
+  appearanceChromePreview,
   appearanceFullWindowPreview
 } from './composables/appearanceEditorState.ts'
 const BackgroundAppearanceCustomizer = defineAsyncComponent(
   () => import('./components/BackgroundAppearanceCustomizer.vue')
 )
 const SideMenu = defineAsyncComponent(() => import('@renderer/components/SideMenu.vue'))
+const SidebarBookmark = defineAsyncComponent(
+  () => import('@renderer/components/SidebarBookmark.vue')
+)
 import {
   buildNavigationPages,
   type NavigationPageTarget,
@@ -49,14 +57,11 @@ const StreamingPage = defineAsyncComponent(() => import('./components/StreamingP
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
 const NetworkSourcesPage = defineAsyncComponent(() => import('./components/NetworkSourcesPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
+const AccountPage = defineAsyncComponent(() => import('./components/AccountPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
-const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
-const ThemeWorkshopPage = defineAsyncComponent(
-  () => import('./components/theme-workshop/ThemeWorkshopPage.vue')
-)
+const AppearancePage = defineAsyncComponent(() => import('./components/AppearancePage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
-const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
-const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
+const AudioWorkspace = defineAsyncComponent(() => import('./components/AudioWorkspace.vue'))
 const ListeningAnalyticsPage = defineAsyncComponent(
   () => import('./components/ListeningAnalyticsPage.vue')
 )
@@ -84,9 +89,10 @@ import { useAppNavigation } from './app/useAppNavigation'
 import { createNavigationSessionPersistence } from './app/useNavigationSessionPersistence'
 import { useCommandPalette } from '@renderer/app/useCommandPalette.ts'
 import { useBackStack } from './app/useBackStack'
-import { hasDismissLayer } from '@renderer/app/useDismissLayer'
+import { hasDismissLayer, useEscapeToClose } from '@renderer/app/useDismissLayer'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
+import { overlaySidebarsNeedExclusiveMode } from './app/overlaySidebars'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 import { useDesktopLyricsPublisher } from './app/useDesktopLyricsPublisher.ts'
 import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
@@ -95,6 +101,8 @@ import { useLanguagePreference } from './app/useLocale'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
+import type { QueuePlaybackOrigin } from './types/music'
+import type { StreamingCollectionNavigationRequest } from './utils/queuePlaybackOrigin.ts'
 import { scheduleIdleTask, type IdleTaskHandle } from './app/scheduleIdleTask'
 import {
   getPrimaryStreamingArtistId,
@@ -119,6 +127,7 @@ const navigation = useAppNavigation({
 const navigationPersistence = createNavigationSessionPersistence(navigation)
 const {
   menuOpen,
+  isHome,
   showPlayingPage,
   showStreamingPage,
   showRecentPage,
@@ -128,14 +137,20 @@ const {
   showRadioPodcastPage,
   showNetworkSourcesPage,
   showLoginPage,
+  showAccountPage,
+  accountInitialProviderId,
   loginPageMode,
   loginInitialProviderId,
   showSettingsPage,
+  showAppearancePage,
+  appearanceNavigationTarget,
   showThemeStudioPage,
   themeStudioInitialDomain,
   showPluginPage,
   showEqualizerPage,
   showDspRackPage,
+  showAudioWorkspace,
+  audioWorkspaceTab,
   activePluginPage,
   settingsInitialSection,
   settingsNavigationTarget,
@@ -146,7 +161,6 @@ const {
   localViewVisible,
   collapseMenu,
   onSelectView,
-  onSelectPluginPage,
   openPlayingPage: showPlaying,
   closePlayingPage,
   enterStreamingMode,
@@ -154,24 +168,96 @@ const {
   openLoginPage,
   closeLoginPage,
   closeSettingsPage,
-  openThemeStudioPage,
-  closeThemeStudioPage,
-  openPlaybackSettings,
-  openDspSettings,
+  closeAppearancePage,
   hidePluginPage,
-  openPluginPage,
-  openEqualizerPage,
-  closeEqualizerPage,
-  openDspRackPage,
-  closeDspRackPage,
-  closeMissingPluginPage,
-  openSettingsPage
+  closeMissingPluginPage
 } = navigation
+const audioWorkspaceRef = ref<{
+  requestLeave: () => Promise<boolean>
+  focusEditorWindow: () => void
+  showEditorTab: (tab: 'equalizer' | 'effects') => Promise<void>
+} | null>(null)
+const audioWorkspaceDetached = ref(false)
+let leavingAudioWorkspace = false
+async function runAfterAudioLeave(action: () => void | Promise<void>): Promise<void> {
+  if (!showAudioWorkspace.value) {
+    await action()
+    return
+  }
+  const workspace = audioWorkspaceRef.value
+  if (leavingAudioWorkspace || !workspace) return
+  const initialOverlay = navigation.session.value.overlay
+  leavingAudioWorkspace = true
+  try {
+    if (!(await workspace.requestLeave())) return
+    if (
+      audioWorkspaceRef.value !== workspace ||
+      navigation.session.value.overlay !== initialOverlay
+    )
+      return
+    await action()
+  } finally {
+    leavingAudioWorkspace = false
+  }
+}
+function openAudioWorkspace(): void {
+  if (audioWorkspaceDetached.value) {
+    audioWorkspaceRef.value?.focusEditorWindow()
+    return
+  }
+  navigation.openAudioWorkspace()
+}
+function openEqualizerPage(): void {
+  if (audioWorkspaceDetached.value) {
+    void audioWorkspaceRef.value?.showEditorTab('equalizer')
+    return
+  }
+  if (showAudioWorkspace.value && audioWorkspaceTab.value === 'equalizer') return
+  void runAfterAudioLeave(navigation.openEqualizerPage)
+}
+function openDspRackPage(): void {
+  if (audioWorkspaceDetached.value) {
+    void audioWorkspaceRef.value?.showEditorTab('effects')
+    return
+  }
+  if (showAudioWorkspace.value && audioWorkspaceTab.value === 'effects') return
+  void runAfterAudioLeave(navigation.openDspRackPage)
+}
+function openDspSettings(): void {
+  openDspRackPage()
+}
+function openSettingsPage(...args: Parameters<typeof navigation.openSettingsPage>): void {
+  void runAfterAudioLeave(() => navigation.openSettingsPage(...args))
+}
+function openAppearancePage(...args: Parameters<typeof navigation.openAppearancePage>): void {
+  void runAfterAudioLeave(() => navigation.openAppearancePage(...args))
+}
+function openThemeStudioPage(...args: Parameters<typeof navigation.openThemeStudioPage>): void {
+  void runAfterAudioLeave(() => navigation.openThemeStudioPage(...args))
+}
+function openPlaybackSettings(): void {
+  void runAfterAudioLeave(navigation.openPlaybackSettings)
+}
+function openPluginPage(): void {
+  void runAfterAudioLeave(navigation.openPluginPage)
+}
+async function requestCloseAudioWorkspace(): Promise<void> {
+  await runAfterAudioLeave(navigation.closeAudioWorkspace)
+  if (!showAudioWorkspace.value)
+    void nextTick(() => document.querySelector<HTMLButtonElement>('.title-bar .dsp-btn')?.focus())
+}
+const pageDock = providePageDock(() => navigation.session.value.overlay ?? activePageId.value)
+const accountAnchor = shallowRef<HTMLElement | null>(null)
+const noticeHistoryTarget = ref<HTMLElement | null>(null)
+const { centerOpen } = useAppNoticeStore()
+watch([showAccountPage, noticeHistoryTarget], ([visible, target]) => {
+  centerOpen.value = visible && target !== null
+})
 // Keep the wallpaper inside its overlay through the leave transition. An idle
 // overlay must hide its embedded painter, which would otherwise cover home.
 const settingsOverlayLeaves = ref(0)
 const settingsOverlayVisible = computed(
-  () => showSettingsPage.value || showPluginPage.value || settingsOverlayLeaves.value > 0
+  () => showSettingsPage.value || showAppearancePage.value || settingsOverlayLeaves.value > 0
 )
 function retainSettingsOverlay(): void {
   settingsOverlayLeaves.value += 1
@@ -195,7 +281,6 @@ onBeforeUnmount(() => {
   updateNotificationsDisposed = true
   stopAppUpdateNotifications?.()
 })
-const noticeHostRef = ref<InstanceType<typeof AppNoticeHost> | null>(null)
 
 // One global back affordance on the title bar. Every full-screen page
 // registers a single base layer here; deeper in-page states (streaming
@@ -204,32 +289,159 @@ const noticeHostRef = ref<InstanceType<typeof AppNoticeHost> | null>(null)
 const backStack = useBackStack()
 backStack.useBackHandler(navigation.canGoBackPage, navigation.goBackPage)
 backStack.useBackHandler(showPlayingPage, closePlayingPage)
-backStack.useBackHandler(showSettingsPage, closeSettingsPage)
-// ThemeStudio 不在此注册：未应用的修改需要确认，由 ThemeStudioPage 自己挂载
-// 期间注册 closeStudio。
+backStack.useBackHandler(showSettingsPage, () => void requestCloseSettingsWorkspace())
+// The appearance workspace owns its back handler so all editors can protect drafts.
 backStack.useBackHandler(showPluginPage, hidePluginPage)
-backStack.useBackHandler(showEqualizerPage, closeEqualizerPage)
-backStack.useBackHandler(showDspRackPage, closeDspRackPage)
+backStack.useBackHandler(showAudioWorkspace, () => void requestCloseAudioWorkspace())
 backStack.useBackHandler(showLoginPage, closeLoginPage)
-const toggleMenu = navigation.createToggleMenuHandler()
-const toggleSettingsPage = navigation.createToggleSettingsHandler()
-const togglePluginPage = navigation.createTogglePluginHandler()
+backStack.useBackHandler(showAccountPage, closeAccountSubview, '收起我的')
+const toggleMenuNavigation = navigation.createToggleMenuHandler()
+const toggleMenu = () => void runAfterAudioLeave(toggleMenuNavigation)
+function closeNavigation(): void {
+  const focusWasInside = document.querySelector('.side-menu')?.contains(document.activeElement)
+  collapseMenu()
+  if (focusWasInside) document.querySelector<HTMLButtonElement>('.sidebar-bookmark')?.focus()
+}
+function handleQueueOpened(): void {
+  if (overlaySidebarsNeedExclusiveMode()) closeNavigation()
+}
+const toggleSettingsPage = () =>
+  showSettingsPage.value ? void requestCloseSettingsWorkspace() : openSettingsPage()
+const appearancePageRef = ref<InstanceType<typeof AppearancePage> | null>(null)
+const toggleAppearancePage = () =>
+  showAppearancePage.value ? appearancePageRef.value?.requestClose() : openAppearancePage()
+const settingsPageVisited = ref(false)
+const appearancePageVisited = ref(false)
+watch(
+  showSettingsPage,
+  (visible) => {
+    if (visible) settingsPageVisited.value = true
+  },
+  { immediate: true }
+)
+watch(
+  showAppearancePage,
+  (visible) => {
+    if (visible) appearancePageVisited.value = true
+  },
+  { immediate: true }
+)
+const settingsWorkspaceRetained = computed(
+  () =>
+    showSettingsPage.value ||
+    showAppearancePage.value ||
+    navigation.session.value.overlayHistory.some(
+      (page) => page === 'settings' || page === 'appearance'
+    )
+)
+const settingsPageRetained = computed(
+  () => settingsPageVisited.value && settingsWorkspaceRetained.value
+)
+const appearancePageRetained = computed(
+  () => appearancePageVisited.value && settingsWorkspaceRetained.value
+)
+watch(settingsWorkspaceRetained, (retained) => {
+  if (!retained) {
+    settingsPageVisited.value = false
+    appearancePageVisited.value = false
+  }
+})
+let closingSettingsWorkspace = false
+async function requestCloseSettingsWorkspace(): Promise<void> {
+  if (closingSettingsWorkspace) return
+  closingSettingsWorkspace = true
+  try {
+    if (
+      appearancePageRetained.value &&
+      (!appearancePageRef.value || !(await appearancePageRef.value.requestLeave()))
+    )
+      return
+    closeSettingsPage()
+  } finally {
+    closingSettingsWorkspace = false
+  }
+}
+let returningHome = false
+async function handleTitleHome(): Promise<void> {
+  if (returningHome) return
+  returningHome = true
+  try {
+    await runAfterAudioLeave(async () => {
+      if (appearancePageRetained.value) {
+        if (!appearancePageRef.value || !(await appearancePageRef.value.requestLeave())) return
+      }
+      streamingArtistRequest.value = null
+      streamingCollectionRequest.value = null
+      navigation.goHome()
+    })
+  } finally {
+    returningHome = false
+  }
+}
+function openSidebarPlugins(): void {
+  collapseMenu()
+  pluginInitialTab.value = 'discover'
+  openPluginPage()
+}
+const pluginInitialTab = ref<'installed' | 'discover'>('installed')
+watch(showPluginPage, (visible) => {
+  if (!visible) pluginInitialTab.value = 'installed'
+})
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingArtistRequest = ref<StreamingArtistNavigationRequest | null>(null)
+const streamingCollectionRequest = ref<StreamingCollectionNavigationRequest | null>(null)
+const titleSearchQuery = ref('')
+const streamingSearchRequest = ref<{ key: number; query: string } | null>(null)
+let streamingSearchRequestKey = 0
+let navigatingTitleSearch = false
+let streamingCollectionRequestKey = 0
 let streamingArtistRequestKey = 0
 // Keep StreamingPage mounted so contextual navigation preserves its detail.
 // Explicit sidebar selection returns the selected tab to its root instead.
 const streamingPageTabs = shallowRef<StreamingPageTab[]>([])
 const streamingRootNavigationRevisions = ref<Partial<Record<StreamingPageTab, number>>>({})
 
-function selectSidebarPage(target: NavigationPageTarget): void {
-  streamingArtistRequest.value = null
-  if (target.kind === 'streaming') {
-    const revisions = streamingRootNavigationRevisions.value
-    revisions[target.tab] = (revisions[target.tab] ?? 0) + 1
+function handleTitleSearchQuery(query: string): void {
+  titleSearchQuery.value = query
+  if (!query.trim() && showStreamingSurface.value && streamingTab.value === 'search') {
+    streamingSearchRequest.value = { key: ++streamingSearchRequestKey, query: '' }
   }
-  navigation.selectSidebarPage(target)
+}
+
+async function handleTitleSearch(query: string): Promise<void> {
+  const term = query.trim()
+  if (!term || navigatingTitleSearch) return
+  navigatingTitleSearch = true
+  try {
+    await runAfterAudioLeave(async () => {
+      if (
+        appearancePageRetained.value &&
+        (!appearancePageRef.value || !(await appearancePageRef.value.requestLeave()))
+      )
+        return
+      streamingArtistRequest.value = null
+      streamingCollectionRequest.value = null
+      titleSearchQuery.value = term
+      streamingSearchRequest.value = { key: ++streamingSearchRequestKey, query: term }
+      collapseMenu()
+      enterStreamingMode('search')
+    })
+  } finally {
+    navigatingTitleSearch = false
+  }
+}
+
+function selectSidebarPage(target: NavigationPageTarget): void {
+  void runAfterAudioLeave(() => {
+    streamingArtistRequest.value = null
+    streamingCollectionRequest.value = null
+    if (target.kind === 'streaming') {
+      const revisions = streamingRootNavigationRevisions.value
+      revisions[target.tab] = (revisions[target.tab] ?? 0) + 1
+    }
+    navigation.selectSidebarPage(target)
+  })
 }
 watch(
   [showStreamingPage, streamingTab],
@@ -252,16 +464,18 @@ const onboardingSaving = ref(false)
 const onboardingSaveError = ref('')
 
 function applyExternalNavigation(target: 'local' | 'streaming' | 'settings'): void {
-  showOnboarding.value = false
-  if (target === 'settings') {
-    openSettingsPage('general')
-    return
-  }
-  if (target === 'streaming') {
-    enterStreamingMode()
-  } else {
-    onSelectView('dashboard', null)
-  }
+  void runAfterAudioLeave(() => {
+    showOnboarding.value = false
+    if (target === 'settings') {
+      navigation.openSettingsPage('general')
+      return
+    }
+    if (target === 'streaming') {
+      enterStreamingMode()
+    } else {
+      onSelectView('dashboard', null)
+    }
+  })
 }
 const titleMenuOpen = computed(() => menuOpen.value)
 
@@ -322,8 +536,33 @@ function handleStreamingLogin(providerId?: string | null): void {
   openLoginPage(providerId ?? null)
 }
 
-function handleTitleLogin(providerId?: string | null): void {
-  openLoginPage(providerId ?? null)
+function closeAccountSubview(returnFocus = true): void {
+  navigation.closeAccountPage()
+  if (returnFocus) void nextTick(() => accountAnchor.value?.focus({ preventScroll: true }))
+}
+
+function handleTitleLogin(providerId?: string | null, anchor?: HTMLElement): void {
+  collapseMenu()
+  if (showAccountPage.value) closeAccountSubview()
+  else {
+    accountAnchor.value = anchor ?? document.querySelector('.title-bar .login-btn')
+    navigation.openAccountPage(providerId ?? null)
+  }
+}
+
+let navigatingFromAccount = false
+async function navigateFromAccount(target: NavigationPageTarget | 'plugins'): Promise<void> {
+  if (navigatingFromAccount) return
+  navigatingFromAccount = true
+  try {
+    if (showAppearancePage.value) {
+      if (!appearancePageRef.value || !(await appearancePageRef.value.requestLeave())) return
+    }
+    if (target === 'plugins') openPluginPage()
+    else selectSidebarPage(target)
+  } finally {
+    navigatingFromAccount = false
+  }
 }
 
 function handleReopenOnboarding(): void {
@@ -426,10 +665,60 @@ const {
   visualizerActive
 } = usePlayerStore()
 useDesktopLyricsPublisher()
-const { setAdaptiveMedia, effectiveSurfaceMaterial, effectiveLiquidGlass } = useThemeStore()
+const { setAdaptiveMedia, effectiveSurfaceMaterial, effectiveLiquidGlass, effectiveThemeLayers } =
+  useThemeStore()
 const mediaProviders = useMediaProviders()
+function handleQueueSource(origin: QueuePlaybackOrigin): void {
+  collapseMenu()
+  streamingArtistRequest.value = null
+  if (origin.scope === 'provider') {
+    streamingCollectionRequest.value = { key: ++streamingCollectionRequestKey, origin }
+    enterStreamingMode('search')
+    return
+  }
+  if (origin.kind === 'album') {
+    const album = musicStore.albums.value.find((item) => item.id === origin.id)
+    if (album) onSelectView('albums', `album:${album.id}`)
+    else
+      pushNotice({
+        kind: 'warning',
+        message: '专辑来源已不可用：这张专辑已不在当前曲库中，播放队列仍可继续使用。'
+      })
+    return
+  }
+  const playlists =
+    origin.scope === 'aggregate'
+      ? musicStore.aggregatePlaylists.value
+      : musicStore.localPlaylists.value
+  const playlist = playlists.find((item) => item.id === origin.id)
+  if (playlist)
+    navigation.openLibraryPlaylist({
+      id: playlist.id,
+      name: playlist.name,
+      kind: origin.scope === 'aggregate' ? 'aggregate' : undefined
+    })
+  else
+    pushNotice({
+      kind: 'warning',
+      message: '歌单来源已不可用：这个歌单已被移除，播放队列仍可继续使用。'
+    })
+}
 const navigationProviders = useProviderStore()
-const commandPalette = useCommandPalette(navigation, () => navigationPages.value)
+const commandPalette = useCommandPalette(
+  {
+    ...navigation,
+    openEqualizerPage,
+    openDspRackPage,
+    openSettingsPage,
+    openAppearancePage,
+    openPlayingPage: () => void runAfterAudioLeave(navigation.openPlayingPage),
+    navigate: (...args: Parameters<typeof navigation.navigate>) =>
+      void runAfterAudioLeave(() => navigation.navigate(...args)),
+    openLibraryPlaylist: (...args: Parameters<typeof navigation.openLibraryPlaylist>) =>
+      void runAfterAudioLeave(() => navigation.openLibraryPlaylist(...args))
+  },
+  () => navigationPages.value
+)
 
 function handlePlayerBarArtistClick(): void {
   const track = currentTrack.value
@@ -529,13 +818,7 @@ const availablePluginPages = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
 )
 function openThemeWorkshop(): void {
-  const page = availablePluginPages.value.find(
-    (page) =>
-      page.pluginId === 'com.twilightecho.tool.theme-workshop' && page.id === 'theme-workshop'
-  )
-  if (!page) return
-  closeSettingsPage()
-  onSelectPluginPage(page)
+  openAppearancePage(undefined, 'workshop')
 }
 const localSidebarItems = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
@@ -543,7 +826,6 @@ const localSidebarItems = computed(() =>
 const soundFieldSidebarVisible = ref(false)
 const playerBarRef = ref<{
   openQueue: () => void
-  openAudio: () => void
   openMiniPlayer: () => void
 } | null>(null)
 const soundFieldSidebarActive = computed(() =>
@@ -563,7 +845,7 @@ provide(soundFieldPlaybackKey, {
   favoriteTitle: favoriteButtonTitle,
   toggleFavorite,
   openQueue: () => playerBarRef.value?.openQueue(),
-  openAudio: () => playerBarRef.value?.openAudio(),
+  openAudio: openAudioWorkspace,
   openMiniPlayer: () => playerBarRef.value?.openMiniPlayer(),
   openLyrics: () => showPlaying()
 })
@@ -572,34 +854,40 @@ const hasPlayerBar = computed(
     !showOnboarding.value &&
     !showLoginPage.value &&
     (!showSettingsPage.value || appearanceFullWindowPreview.value) &&
+    (!showAppearancePage.value || appearanceFullWindowPreview.value) &&
     !showThemeStudioPage.value &&
     !showEqualizerPage.value &&
     !showDspRackPage.value &&
-    !showPluginPage.value &&
     !activePluginPage.value &&
     !visualizerActive.value
 )
 /* Shape and visibility resolution live in shared/playerBar.ts so main and renderer
    agree and the truth table stays unit-testable; App.vue only forwards the result.
-   A fully hidden bar stays mounted — playback controls, the HiFi panel and the
+   A fully hidden bar stays mounted — playback controls and the
    geometry flag both consumers read all live on it — so CSS does the hiding. */
 const playerBarPresentation = computed(() =>
-  resolvePlayerBarPresentation(settings.value.playerBar, {
-    onPlayingPage: showPlayingPage.value
-  })
+  resolvePlayerBarPresentation(
+    appearanceChromePreview.value?.playerBar ?? settings.value.playerBar,
+    {
+      onPlayingPage: showPlayingPage.value
+    }
+  )
 )
 const showLocalSidebar = computed(
   () =>
     !showPlayingPage.value &&
+    !showAccountPage.value &&
     !showLoginPage.value &&
     (!showSettingsPage.value || appearanceFullWindowPreview.value) &&
+    (!showAppearancePage.value || appearanceFullWindowPreview.value) &&
     !showThemeStudioPage.value &&
     !showEqualizerPage.value &&
-    !showDspRackPage.value &&
-    !showPluginPage.value
+    !showDspRackPage.value
 )
+// watch() reads its getter during registration, including restored open menus.
+useEscapeToClose(() => menuOpen.value && showLocalSidebar.value, closeNavigation)
 
-const sideMenuActiveKey = activePageId
+const sideMenuActiveKey = computed(() => (showPluginPage.value ? 'plugins' : activePageId.value))
 const navigationPages = computed(() => {
   const providers = navigationProviders.providers.value
   const ncmAvailable = providers.some(
@@ -860,12 +1148,12 @@ watch(
 )
 
 watch(
-  [showSettingsPage, showPluginPage, showThemeStudioPage, appearanceFullWindowPreview],
+  [showSettingsPage, showAppearancePage, showThemeStudioPage, appearanceFullWindowPreview],
   () => {
     document.body.classList.toggle(
       'te-settings-surface',
       !appearanceFullWindowPreview.value &&
-        (showSettingsPage.value || showPluginPage.value || showThemeStudioPage.value)
+        (showSettingsPage.value || showAppearancePage.value || showThemeStudioPage.value)
     )
   },
   { immediate: true }
@@ -923,8 +1211,8 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 const titleSurface = computed<TitleSurface>(() => {
   if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value && !appearanceFullWindowPreview.value) return 'settings'
+  if (showAppearancePage.value && !appearanceFullWindowPreview.value) return 'settings'
   if (showThemeStudioPage.value) return 'settings'
-  if (showPluginPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
   if (showNetworkSourcesPage.value) return 'streaming'
   if (activePluginPage.value) return 'settings'
@@ -973,13 +1261,30 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
 </script>
 
 <template>
+  <AppearanceLayersHost
+    v-if="!showAppearancePage && !appearanceEditorOpen"
+    :settings="
+      appearanceChromePreview?.appearanceLayers ?? effectiveThemeLayers ?? settings.appearanceLayers
+    "
+  />
   <AppBackgroundLayer
     :page="showStreamingSurface ? 'streaming' : 'local'"
+    :reading="
+      (showAudioWorkspace ||
+        showSettingsPage ||
+        showAppearancePage ||
+        showRadioPodcastPage ||
+        showNetworkSourcesPage) &&
+      !appearanceFullWindowPreview
+    "
     :ambient="localViewVisible && activeCategory === 'dashboard'"
   />
   <div
     class="app-shell"
-    :class="{ 'is-immersive': showPlayingPage }"
+    :class="{
+      'is-immersive': showPlayingPage,
+      'appearance-editor-active': showAppearancePage && !appearanceFullWindowPreview
+    }"
     :inert="appearanceFullWindowPreview"
     :style="{
       '--te-side-menu-bottom': `${sideMenuBottomOffset}px`,
@@ -989,22 +1294,46 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     <LiquidGlassDefs :active="playbarRefractionActive" />
     <div class="app-shell-title">
       <TitleBar
+        :search-query="titleSearchQuery"
         :close-only="showOnboarding"
+        :home="isHome"
+        :account-open="showAccountPage"
+        :page-dock-actions="pageDock.actions.value"
         :immersive="showPlayingPage"
         :liquid-material="liquidGlassChromeActive"
         :streaming="showStreamingPage && !showPlayingPage"
         :title-surface="titleSurface"
-        :active-tool="showPluginPage ? 'plugins' : showSettingsPage ? 'settings' : null"
+        :reading="
+          (showAudioWorkspace ||
+            showSettingsPage ||
+            showAppearancePage ||
+            showRadioPodcastPage ||
+            showNetworkSourcesPage) &&
+          !appearanceFullWindowPreview
+        "
+        :active-tool="
+          showAudioWorkspace
+            ? 'dsp'
+            : showPluginPage
+              ? 'plugins'
+              : showAppearancePage
+                ? 'appearance'
+                : showSettingsPage
+                  ? 'settings'
+                  : null
+        "
         :menu-open="titleMenuOpen"
         @toggle-menu="toggleMenu"
+        @home="handleTitleHome"
         @collapse-menu="collapseMenu"
         @back="handleTitleBack"
+        @update:search-query="handleTitleSearchQuery"
+        @search="handleTitleSearch"
         @login="handleTitleLogin"
         @settings="toggleSettingsPage"
-        @plugins="togglePluginPage"
+        @appearance="toggleAppearancePage"
+        @dsp="openAudioWorkspace"
         @library="selectSidebarPage({ kind: 'local', category: 'allSongs', filter: null })"
-        :notifications-open="noticeHostRef?.historyOpen ?? false"
-        @notifications="noticeHostRef?.toggleHistory($event)"
       />
     </div>
     <div
@@ -1019,8 +1348,15 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         :pages="navigationPages"
         @vue:mounted="startSideMenuMonitor"
         @select-page="selectSidebarPage($event.target)"
+        @plugins="openSidebarPlugins"
       />
     </div>
+    <SidebarBookmark
+      v-if="showLocalSidebar"
+      :open="menuOpen"
+      :liquid-material="liquidGlassChromeActive"
+      @toggle="toggleMenu"
+    />
     <div class="app-shell-content">
       <div
         class="main-content"
@@ -1028,7 +1364,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           'menu-open': menuOpen && showLocalSidebar,
           'playing-open': showPlayingPage,
           'plugin-open': showPluginPage,
-          'dsp-rack-open': showDspRackPage,
+          'audio-workspace-open': showAudioWorkspace,
           'radio-podcast-open': showRadioPodcastPage
         }"
         :style="{ minHeight: mainContentMinHeight }"
@@ -1093,12 +1429,19 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           :has-player="hasPlayerBar"
           :initial-tab="tab"
           :root-navigation-revision="streamingRootNavigationRevisions[tab] ?? 0"
+          :search-navigation-request="tab === 'search' ? streamingSearchRequest : null"
           :artist-navigation-request="
             showStreamingSurface && tab === 'home' && streamingTab === tab
               ? streamingArtistRequest
               : null
           "
+          :collection-navigation-request="
+            showStreamingSurface && tab === 'search' && streamingTab === tab
+              ? streamingCollectionRequest
+              : null
+          "
           @navigate-tab="enterStreamingMode($event)"
+          @search-query-change="titleSearchQuery = $event"
           @select-view="onSelectView"
           @recent="navigation.navigate({ kind: 'recent', scope: 'platform', providerId: $event })"
           @login="handleStreamingLogin"
@@ -1123,33 +1466,26 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             @configure="handleLoginConfigure"
           />
         </Transition>
-        <Transition name="settings-page">
-          <ThemeStudioPage
-            v-if="showThemeStudioPage"
-            :initial-domain="themeStudioInitialDomain"
-            @domain-change="navigation.rememberThemeStudioDomain"
-            @back="closeThemeStudioPage"
-          />
-        </Transition>
-        <Transition name="settings-page">
-          <DspRackPage v-if="showDspRackPage" />
-        </Transition>
+        <AudioWorkspace
+          v-if="showAudioWorkspace || audioWorkspaceDetached"
+          ref="audioWorkspaceRef"
+          :tab="audioWorkspaceTab"
+          :active="showAudioWorkspace"
+          @switch-tab="navigation.switchAudioWorkspaceTab"
+          @detached-change="audioWorkspaceDetached = $event"
+        />
         <Transition name="login-page">
-          <EqualizerPage v-if="showEqualizerPage" />
-        </Transition>
-        <Transition name="login-page">
-          <ThemeWorkshopPage
-            v-if="
-              activePluginPage?.pluginId === 'com.twilightecho.tool.theme-workshop' &&
-              activePluginPage.id === 'theme-workshop'
-            "
-          />
           <PluginExtensionPage
-            v-else-if="activePluginPage"
+            v-if="activePluginPage"
             :key="activePageId"
             :page="activePluginPage"
           />
         </Transition>
+        <PluginPage
+          v-if="showPluginPage"
+          :initial-tab="pluginInitialTab"
+          @open-theme-workshop="openThemeWorkshop"
+        />
       </div>
     </div>
     <div class="app-shell-player">
@@ -1157,6 +1493,8 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         v-if="hasPlayerBar"
         ref="playerBarRef"
         :glass="showPlayingPage"
+        :liquid-material="liquidGlassChromeActive"
+        :left-navigation-open="menuOpen && showLocalSidebar"
         :visualizer-visible="showPlayingPage && settings.playerBar.compactVisualizerEnabled"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
@@ -1168,6 +1506,8 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @open-dsp="openDspSettings"
         @open-equalizer="openEqualizerPage"
         @open-artist="handlePlayerBarArtistClick"
+        @open-queue-source="handleQueueSource"
+        @queue-opened="handleQueueOpened"
       />
     </div>
   </div>
@@ -1176,7 +1516,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     v-show="settingsOverlayVisible && !appearanceFullWindowPreview"
     :class="{ 'settings-overlay-root--active': settingsOverlayVisible }"
   >
-    <AppBackgroundLayer page="settings" embedded />
+    <AppBackgroundLayer page="settings" embedded :reading="!appearanceFullWindowPreview" />
     <Transition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
@@ -1184,7 +1524,9 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       @leave-cancelled="releaseSettingsOverlay"
     >
       <SettingsPage
-        v-if="showSettingsPage"
+        v-if="settingsPageRetained"
+        v-show="showSettingsPage"
+        :active="showSettingsPage"
         :initial-section="settingsInitialSection"
         :navigation-target="settingsNavigationTarget"
         @section-change="navigation.rememberSettingsSection"
@@ -1193,6 +1535,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @open-theme-studio="openThemeStudioPage"
         @open-theme-workshop="openThemeWorkshop"
         @reopen-onboarding="handleReopenOnboarding"
+        @open-appearance="navigation.openAppearancePage"
       />
     </Transition>
     <Transition
@@ -1201,20 +1544,32 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       @after-leave="releaseSettingsOverlay"
       @leave-cancelled="releaseSettingsOverlay"
     >
-      <PluginPage
-        v-if="showPluginPage"
-        @open-theme-workshop="
-          onSelectPluginPage({
-            pluginId: 'com.twilightecho.tool.theme-workshop',
-            id: 'theme-workshop',
-            kind: 'sidebarPage',
-            title: '主题插件工坊',
-            command: 'theme-workshop.open'
-          })
-        "
+      <AppearancePage
+        :pages="navigationPages"
+        v-if="appearancePageRetained"
+        ref="appearancePageRef"
+        v-show="showAppearancePage"
+        :active="showAppearancePage"
+        :navigation-target="appearanceNavigationTarget"
+        :initial-domain="themeStudioInitialDomain"
+        @tab-change="navigation.appearanceTab.value = $event"
+        @domain-change="navigation.rememberThemeStudioDomain"
+        @back="closeAppearancePage"
+        @open-plugins="openPluginPage"
       />
     </Transition>
   </div>
+  <Transition name="account-subpage">
+    <AccountPage
+      v-if="showAccountPage"
+      :anchor="accountAnchor"
+      :initial-provider-id="accountInitialProviderId"
+      @close="closeAccountSubview"
+      @notice-target="noticeHistoryTarget = $event"
+      @configure="navigateFromAccount('plugins')"
+      @login-success="navigateFromAccount({ kind: 'streaming', tab: 'home' })"
+    />
+  </Transition>
   <CommandPalette
     v-if="commandPalette.isOpen.value"
     :actions="commandPalette.actions.value"
@@ -1246,8 +1601,9 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     />
   </NativeDialogTransition>
   <AppNoticeHost
-    ref="noticeHostRef"
-    @library="selectSidebarPage({ kind: 'local', category: 'allSongs', filter: null })"
+    history-embedded
+    :history-target="noticeHistoryTarget"
+    @library="navigateFromAccount({ kind: 'local', category: 'allSongs', filter: null })"
   />
   <BackgroundAppearanceCustomizer v-if="appearanceEditorOpen" />
 </template>
@@ -1325,7 +1681,14 @@ html[data-te-shell-layout='custom'] .app-shell-title {
 }
 
 html[data-te-shell-layout='custom'] .app-shell-navigation {
-  grid-area: navigation;
+  /* Navigation is detached from the theme grid; opening it cannot claim a
+     content track or change the title and playback slots. */
+  position: fixed;
+  top: var(--te-window-content-top);
+  bottom: var(--te-window-content-bottom);
+  left: var(--te-window-surface-inset);
+  width: var(--te-overlay-panel-width);
+  z-index: var(--te-overlay-panel-layer, 1000);
   display: var(--te-shell-navigation-display);
   min-width: 0;
   min-height: 0;
@@ -1356,18 +1719,7 @@ html[data-te-shell-layout='custom'] .app-shell-title .title-bar {
 }
 
 html[data-te-shell-layout='custom'] .app-shell-navigation .side-menu {
-  position: relative !important;
-  inset: auto !important;
-  width: 100% !important;
-  min-width: 0;
-  height: 100% !important;
-  border-radius: 0;
-}
-
-html[data-te-shell-layout='custom'][data-te-shell-navigation='persistent']
-  .app-shell-navigation
-  .side-menu {
-  transform: none !important;
+  position: fixed;
 }
 
 html[data-te-shell-layout='custom'][data-te-shell-navigation='hidden'] .app-shell-navigation {
@@ -1415,12 +1767,6 @@ html[data-te-shell-layout='custom']
 
   html[data-te-shell-layout='custom'] .app-shell-navigation.navigation-temporary {
     display: block;
-    position: fixed;
-    top: var(--te-titlebar-inset, 32px);
-    left: 0;
-    width: var(--te-menu-width);
-    bottom: var(--te-side-menu-bottom, 0px);
-    z-index: 1000;
   }
 
   html[data-te-shell-layout='custom'] .app-shell-navigation.navigation-temporary .side-menu {
@@ -1428,21 +1774,7 @@ html[data-te-shell-layout='custom']
   }
 }
 
-/* The clearance is animated on `padding-left` itself, deliberately, even though
-   that reflows this subtree every frame of the 0.32s slide.
-
-   The alternative — land the padding instantly and give the distance back with a
-   composited `translate` — is cheaper but geometrically wrong here. This box is
-   `width: 100%` and `border-box`, so its right edge is pinned to the window and
-   only its width changes; a translate moves *both* edges, so the right edge
-   snapped inward by the clearance on the first frame and slid back over the
-   remaining ones. That read as the content flashing on the right, and on the
-   collapsing direction it overhung the window and flickered a scrollbar in.
-
-   Pinning the right edge while the left one moves *is* a width change, and a
-   width change is a layout. There is no compositor-only spelling of it: only
-   `scaleX` alters visual width, and that stretches the glyphs. So the cost is
-   the intended trade, not an oversight — keep the layout property here. */
+/* Sidebars slide over this stable content box. */
 .main-content {
   display: grid;
   box-sizing: border-box;
@@ -1451,7 +1783,6 @@ html[data-te-shell-layout='custom']
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
-  transition: padding-left var(--te-motion-panel) var(--te-ease-soft);
   overflow: hidden;
   position: relative;
   z-index: 1;
@@ -1477,7 +1808,7 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .main-content.menu-open {
-  padding-left: var(--te-menu-width);
+  padding-left: 0;
 }
 
 .main-content.playing-open {
@@ -1485,16 +1816,15 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .main-content.plugin-open {
-  min-height: 100vh !important;
-  height: 100vh;
+  min-height: 0 !important;
 }
 
-.main-content.dsp-rack-open {
+.main-content.audio-workspace-open {
   height: 100vh;
   min-height: 0 !important;
 }
 
-.main-content.dsp-rack-open > .dsp-rack-page {
+.main-content.audio-workspace-open > .audio-workspace {
   height: 100%;
   min-height: 0;
 }
@@ -1652,29 +1982,25 @@ html[data-te-motion='off']
   }
 }
 
-/* PlayingMusic open/close — expands from / shrinks to cover position */
+/* The immersive view rises from, and returns to, the bottom player. */
 .playing-page-enter-active {
   transition:
     transform var(--te-motion-page) var(--te-ease-out-expo),
-    opacity var(--te-motion-panel) ease,
-    border-radius var(--te-motion-page) var(--te-ease-out-expo);
+    opacity 180ms ease;
 }
 .playing-page-leave-active {
   transition:
     transform var(--te-motion-panel) var(--te-ease-enter),
-    opacity var(--te-motion-hover) ease,
-    border-radius var(--te-motion-panel) var(--te-ease-enter);
+    opacity var(--te-motion-hover) ease;
 }
 
 .playing-page-enter-from {
-  transform: scale(0.12) !important;
-  border-radius: 28px;
+  transform: translate3d(0, 28px, 0) !important;
   opacity: 0;
 }
 
 .playing-page-leave-to {
-  transform: scale(0.12) !important;
-  border-radius: 28px;
+  transform: translate3d(0, 28px, 0) !important;
   opacity: 0;
 }
 
@@ -1706,18 +2032,13 @@ html[data-te-motion='off']
 }
 .onboarding-page-leave-active {
   pointer-events: none;
-  transition:
-    opacity var(--te-motion-settle) ease,
-    transform var(--te-motion-settle) var(--te-ease-out-expo),
-    filter var(--te-motion-settle) var(--te-ease-out-expo);
+  transition: opacity var(--te-motion-panel) ease;
 }
 .onboarding-page-enter-from {
   opacity: 0;
 }
 .onboarding-page-leave-to {
   opacity: 0;
-  transform: scale(1.02);
-  filter: blur(10px);
 }
 body.te-no-blur .onboarding-page-leave-to {
   filter: none !important;
@@ -1742,11 +2063,44 @@ body.te-no-blur .onboarding-page-leave-to {
   opacity: 0;
   transform: translateY(10px);
 }
+
+html:is([data-te-motion='reduced'], [data-te-motion='off'])
+  :is(
+    [class*='playing-page-enter-'],
+    [class*='playing-page-leave-'],
+    [class*='login-page-enter-'],
+    [class*='login-page-leave-'],
+    [class*='onboarding-page-enter-'],
+    [class*='onboarding-page-leave-'],
+    [class*='onb-fwd-enter-'],
+    [class*='onb-fwd-leave-'],
+    [class*='onb-back-enter-'],
+    [class*='onb-back-leave-']
+  ) {
+  transform: none !important;
+  filter: none !important;
+}
+
+html[data-te-motion='reduced']
+  :is(
+    .playing-page-enter-active,
+    .playing-page-leave-active,
+    .login-page-enter-active,
+    .login-page-leave-active,
+    .onboarding-page-enter-active,
+    .onboarding-page-leave-active,
+    .onb-fwd-enter-active,
+    .onb-fwd-leave-active,
+    .onb-back-enter-active,
+    .onb-back-leave-active
+  ) {
+  transition: opacity 120ms var(--te-ease-out-strong) !important;
+}
 </style>
 
 <style>
 .streaming-page.menu-open .streaming-content {
-  padding-left: var(--te-menu-width);
+  padding-left: 0;
 }
 html[data-te-shell-layout='custom'] .streaming-page {
   position: absolute;
@@ -1757,12 +2111,6 @@ html[data-te-shell-layout='custom'] .streaming-page .streaming-content {
 html[data-te-shell-layout='custom'][data-te-shell-navigation='hidden']
   .app-shell-navigation.navigation-temporary {
   display: block;
-  position: fixed;
-  top: var(--te-titlebar-inset, 32px);
-  left: 0;
-  width: var(--te-menu-width);
-  bottom: var(--te-side-menu-bottom, 0px);
-  z-index: 1000;
 }
 html[data-te-shell-layout='custom'][data-te-shell-navigation='hidden']
   .app-shell-navigation.navigation-temporary

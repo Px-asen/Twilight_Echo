@@ -1,5 +1,150 @@
 {
   "schemaVersion": 1,
+  "materials": {
+    "version": 1,
+    "attribute": "data-te-material",
+    "modes": [
+      "standard",
+      "transparent",
+      "liquidGlass"
+    ],
+    "roles": [
+      {
+        "id": "canvas",
+        "purpose": "Page backdrop; no foreground optics",
+        "optical": false,
+        "transparent": true,
+        "variables": [
+          "--te-material-canvas-ink",
+          "--te-material-canvas-border",
+          "--te-material-canvas-shadow",
+          "--te-material-canvas-filter",
+          "--te-material-canvas-background",
+          "--te-material-canvas-solid"
+        ]
+      },
+      {
+        "id": "content",
+        "purpose": "Readable content cards; existing editor inputs remain authoritative",
+        "optical": false,
+        "transparent": true,
+        "variables": [
+          "--te-material-content-ink",
+          "--te-material-content-border",
+          "--te-material-content-shadow",
+          "--te-material-content-filter",
+          "--te-material-content-background",
+          "--te-material-content-solid"
+        ]
+      },
+      {
+        "id": "navigation",
+        "purpose": "Overlay navigation and playback queue",
+        "optical": true,
+        "transparent": true,
+        "variables": [
+          "--te-material-navigation-ink",
+          "--te-material-navigation-border",
+          "--te-material-navigation-shadow",
+          "--te-material-navigation-filter",
+          "--te-material-navigation-background",
+          "--te-material-navigation-solid"
+        ]
+      },
+      {
+        "id": "titlebar",
+        "purpose": "Attached window chrome; no extra border or elevation",
+        "optical": true,
+        "transparent": true,
+        "variables": [
+          "--te-material-titlebar-ink",
+          "--te-material-titlebar-border",
+          "--te-material-titlebar-shadow",
+          "--te-material-titlebar-filter",
+          "--te-material-titlebar-background",
+          "--te-material-titlebar-solid"
+        ]
+      },
+      {
+        "id": "panel",
+        "purpose": "Account subpage and readable floating panels",
+        "optical": false,
+        "transparent": false,
+        "variables": [
+          "--te-material-panel-ink",
+          "--te-material-panel-border",
+          "--te-material-panel-shadow",
+          "--te-material-panel-filter",
+          "--te-material-panel-background",
+          "--te-material-panel-solid"
+        ]
+      },
+      {
+        "id": "popover",
+        "purpose": "Anchored tools and secondary filters",
+        "optical": false,
+        "transparent": false,
+        "variables": [
+          "--te-material-popover-ink",
+          "--te-material-popover-border",
+          "--te-material-popover-shadow",
+          "--te-material-popover-filter",
+          "--te-material-popover-background",
+          "--te-material-popover-solid"
+        ]
+      },
+      {
+        "id": "dialog",
+        "purpose": "Modal decisions; opaque and readable in every material mode",
+        "optical": false,
+        "transparent": false,
+        "variables": [
+          "--te-material-dialog-ink",
+          "--te-material-dialog-border",
+          "--te-material-dialog-shadow",
+          "--te-material-dialog-filter",
+          "--te-material-dialog-background",
+          "--te-material-dialog-solid"
+        ]
+      },
+      {
+        "id": "transport",
+        "purpose": "Standard floating playback; mini/compact remain flat",
+        "optical": true,
+        "transparent": true,
+        "variables": [
+          "--te-material-transport-ink",
+          "--te-material-transport-border",
+          "--te-material-transport-shadow",
+          "--te-material-transport-filter",
+          "--te-material-transport-background",
+          "--te-material-transport-solid"
+        ]
+      },
+      {
+        "id": "control",
+        "purpose": "Fields and compact controls without additional glass layers",
+        "optical": false,
+        "transparent": false,
+        "variables": [
+          "--te-material-control-ink",
+          "--te-material-control-border",
+          "--te-material-control-shadow",
+          "--te-material-control-filter",
+          "--te-material-control-background",
+          "--te-material-control-solid"
+        ]
+      }
+    ],
+    "inputs": [
+      "theme tokens",
+      "card appearance",
+      "liquid glass settings",
+      "background context"
+    ],
+    "fallback": "Opaque standard material when effects, transparency or contrast require it. Forced colors use system colors.",
+    "ownership": "Host owns recipes. Plugins consume roles and theme inputs; geometry and artwork remain component-owned."
+  },
   "pluginApiVersion": 3,
   "structuredThemeSchemaVersion": 3,
   "tokens": [
@@ -1273,182 +1418,277 @@
       "id": "appearance.accentSource",
       "dataAttribute": "data-te-accent-source",
       "label": "强调色来源",
-      "options": ["fixed", "cover"],
+      "options": [
+        "fixed",
+        "cover"
+      ],
       "defaultValue": "fixed"
     },
     {
       "id": "appearance.backgroundTreatment",
       "dataAttribute": "data-te-background-treatment",
       "label": "背景处理",
-      "options": ["solid", "gradient", "cover-blur", "image"],
+      "options": [
+        "solid",
+        "gradient",
+        "cover-blur",
+        "image"
+      ],
       "defaultValue": "solid"
     },
     {
       "id": "appearance.toneScheduling",
       "dataAttribute": "data-te-tone-scheduling",
       "label": "明暗调度",
-      "options": ["manual", "system", "timed"],
+      "options": [
+        "manual",
+        "system",
+        "timed"
+      ],
       "defaultValue": "manual"
     },
     {
       "id": "appearance.contrastGuard",
       "dataAttribute": "data-te-contrast-guard",
       "label": "对比度保护",
-      "options": ["off", "warn", "enforce"],
+      "options": [
+        "off",
+        "warn",
+        "enforce"
+      ],
       "defaultValue": "warn"
     },
     {
       "id": "appearance.effectsMode",
       "dataAttribute": "data-te-effects-mode",
       "label": "特效模式",
-      "options": ["full", "reduced"],
+      "options": [
+        "full",
+        "reduced"
+      ],
       "defaultValue": "full"
     },
     {
       "id": "navigation.style",
       "dataAttribute": "data-te-navigation-style",
       "label": "导航样式",
-      "options": ["expanded", "compact", "rail"],
+      "options": [
+        "expanded",
+        "compact",
+        "rail"
+      ],
       "defaultValue": "expanded"
     },
     {
       "id": "navigation.iconScale",
       "dataAttribute": "data-te-navigation-icon-scale",
       "label": "导航图标大小",
-      "options": ["sm", "md", "lg"],
+      "options": [
+        "sm",
+        "md",
+        "lg"
+      ],
       "defaultValue": "md"
     },
     {
       "id": "navigation.logo",
       "dataAttribute": "data-te-navigation-logo",
       "label": "导航品牌标识",
-      "options": ["show", "hide"],
+      "options": [
+        "show",
+        "hide"
+      ],
       "defaultValue": "hide"
     },
     {
       "id": "library.density",
       "dataAttribute": "data-te-library-density",
       "label": "媒体库密度",
-      "options": ["comfortable", "compact"],
+      "options": [
+        "comfortable",
+        "compact"
+      ],
       "defaultValue": "comfortable"
     },
     {
       "id": "library.selection",
       "dataAttribute": "data-te-library-selection",
       "label": "媒体库选中样式",
-      "options": ["fill", "stroke"],
+      "options": [
+        "fill",
+        "stroke"
+      ],
       "defaultValue": "fill"
     },
     {
       "id": "library.titleOverlay",
       "dataAttribute": "data-te-library-title-overlay",
       "label": "媒体库标题叠层",
-      "options": ["off", "on"],
+      "options": [
+        "off",
+        "on"
+      ],
       "defaultValue": "off"
     },
     {
       "id": "player.layout",
       "dataAttribute": "data-te-player-layout",
       "label": "播放器布局",
-      "options": ["standard", "full-cover", "lyrics-focus", "split", "minimal"],
+      "options": [
+        "standard",
+        "full-cover",
+        "lyrics-focus",
+        "split",
+        "minimal"
+      ],
       "defaultValue": "standard"
     },
     {
       "id": "player.controls",
       "dataAttribute": "data-te-player-controls",
       "label": "播放器控制区",
-      "options": ["standard", "pro"],
+      "options": [
+        "standard",
+        "pro"
+      ],
       "defaultValue": "standard"
     },
     {
       "id": "player.titleAlign",
       "dataAttribute": "data-te-player-title-align",
       "label": "播放器标题对齐",
-      "options": ["left", "center"],
+      "options": [
+        "left",
+        "center"
+      ],
       "defaultValue": "left"
     },
     {
       "id": "player.progress",
       "dataAttribute": "data-te-player-progress",
       "label": "播放器进度样式",
-      "options": ["line", "ring", "solid", "spectrum"],
+      "options": [
+        "line",
+        "ring",
+        "solid",
+        "spectrum"
+      ],
       "defaultValue": "line"
     },
     {
       "id": "artwork.transition",
       "dataAttribute": "data-te-artwork-transition",
       "label": "封面过渡",
-      "options": ["fade", "slide", "none"],
+      "options": [
+        "fade",
+        "slide",
+        "none"
+      ],
       "defaultValue": "fade"
     },
     {
       "id": "artwork.shadow",
       "dataAttribute": "data-te-artwork-shadow",
       "label": "封面阴影",
-      "options": ["on", "off"],
+      "options": [
+        "on",
+        "off"
+      ],
       "defaultValue": "on"
     },
     {
       "id": "equalizer.panel",
       "dataAttribute": "data-te-equalizer-panel",
       "label": "均衡器面板",
-      "options": ["neutral", "tinted", "glass"],
+      "options": [
+        "neutral",
+        "tinted",
+        "glass"
+      ],
       "defaultValue": "neutral"
     },
     {
       "id": "equalizer.slider",
       "dataAttribute": "data-te-equalizer-slider",
       "label": "均衡器滑块",
-      "options": ["ring", "solid"],
+      "options": [
+        "ring",
+        "solid"
+      ],
       "defaultValue": "ring"
     },
     {
       "id": "equalizer.knob",
       "dataAttribute": "data-te-equalizer-knob",
       "label": "均衡器旋钮指示",
-      "options": ["line", "dot"],
+      "options": [
+        "line",
+        "dot"
+      ],
       "defaultValue": "line"
     },
     {
       "id": "equalizer.spectrum",
       "dataAttribute": "data-te-equalizer-spectrum",
       "label": "均衡器频谱",
-      "options": ["bars", "line", "area"],
+      "options": [
+        "bars",
+        "line",
+        "area"
+      ],
       "defaultValue": "line"
     },
     {
       "id": "equalizer.button",
       "dataAttribute": "data-te-equalizer-button",
       "label": "均衡器按钮",
-      "options": ["soft", "outline", "solid"],
+      "options": [
+        "soft",
+        "outline",
+        "solid"
+      ],
       "defaultValue": "soft"
     },
     {
       "id": "icons.family",
       "dataAttribute": "data-te-icon-family",
       "label": "图标族",
-      "options": ["outline", "rounded", "filled"],
+      "options": [
+        "outline",
+        "rounded",
+        "filled"
+      ],
       "defaultValue": "outline"
     },
     {
       "id": "typography.titleCase",
       "dataAttribute": "data-te-title-case",
       "label": "标题字形",
-      "options": ["preserve", "uppercase"],
+      "options": [
+        "preserve",
+        "uppercase"
+      ],
       "defaultValue": "preserve"
     },
     {
       "id": "typography.lyricAccent",
       "dataAttribute": "data-te-lyric-accent",
       "label": "歌词强调高亮",
-      "options": ["off", "accent"],
+      "options": [
+        "off",
+        "accent"
+      ],
       "defaultValue": "off"
     },
     {
       "id": "typography.titleColor",
       "dataAttribute": "data-te-title-color",
       "label": "自适应标题颜色",
-      "options": ["off", "track", "artist-album"],
+      "options": [
+        "off",
+        "track",
+        "artist-album"
+      ],
       "defaultValue": "off"
     }
   ],
@@ -1468,10 +1708,30 @@
     "miniPlayerArtwork"
   ],
   "layout": {
-    "slots": ["titleBar", "navigation", "content", "playerBar"],
-    "tracks": ["auto", "content", "narrow", "standard", "wide", "fill", "double"],
-    "navigation": ["toggle", "persistent", "hidden"],
-    "requiredSlots": ["titleBar", "content"],
+    "slots": [
+      "titleBar",
+      "navigation",
+      "content",
+      "playerBar"
+    ],
+    "tracks": [
+      "auto",
+      "content",
+      "narrow",
+      "standard",
+      "wide",
+      "fill",
+      "double"
+    ],
+    "navigation": [
+      "toggle",
+      "persistent",
+      "hidden"
+    ],
+    "requiredSlots": [
+      "titleBar",
+      "content"
+    ],
     "compactBreakpointPx": 760
   }
 }

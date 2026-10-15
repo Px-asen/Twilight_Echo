@@ -12,12 +12,11 @@ defineProps<{
 }>()
 </script>
 <template>
-  <section id="connections" class="glass-card preview-section">
+  <section id="connections" class="settings-section preview-section">
     <div class="section-title-row">
       <i class="pi pi-link" aria-hidden="true" />
       <h2>连接与控制</h2>
     </div>
-    <p class="settings-section-description">配置快捷键、系统控制和外部连接。</p>
     <div class="section-block">
       <h3>播放控制</h3>
       <slot />

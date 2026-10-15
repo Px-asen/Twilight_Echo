@@ -1,7 +1,11 @@
 import type { Track } from '@renderer/types/music'
 import { restoreQueueTrackIdentity } from '@renderer/utils/queueSessionTrack.ts'
 import { toPlaybackQueueSnapshot } from '@renderer/utils/playbackQueueVirtualization.ts'
-import type { NamedQueueSession, SavedQueueTrack } from '../../../../shared/queueWorkspace.ts'
+import {
+  cloneQueuePlaybackOrigin,
+  type NamedQueueSession,
+  type SavedQueueTrack
+} from '../../../../shared/queueWorkspace.ts'
 
 export interface QueueSessionRestoreSources {
   localTracks: ReadonlyMap<string, Track>
@@ -55,7 +59,11 @@ export async function resolveQueueSession(
     if (track)
       candidates.push({
         saved: entry,
-        track: { ...toPlaybackQueueSnapshot(track), queueEntryId: entry.queueEntryId }
+        track: {
+          ...toPlaybackQueueSnapshot(track),
+          queueEntryId: entry.queueEntryId,
+          queuePlaybackOrigin: cloneQueuePlaybackOrigin(entry.queuePlaybackOrigin)
+        }
       })
     else missing.push({ entry, reason })
   }

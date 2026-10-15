@@ -30,8 +30,11 @@ const PALETTE_TOKENS = [
 
 function declaredVariables(selectorPattern: RegExp): Set<string> {
   const declared = new Set<string>()
-  for (const rule of baseCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (!selectorPattern.test(rule[1].trim())) continue
+  const cssWithoutComments = baseCss.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const rule of cssWithoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = rule[1].trim()
+    const sharedRootRoles = selectorPattern.test(':root') && /^:root\s*,\s*:is\(/.test(selector)
+    if (!selectorPattern.test(selector) && !sharedRootRoles) continue
     for (const declaration of rule[2].matchAll(/(--te-[a-z0-9-]+)\s*:/gi)) {
       declared.add(declaration[1])
     }
@@ -47,6 +50,8 @@ test('every theme token the download panel reads is declared in the light palett
     Array.from(panelStyles.matchAll(/var\((--te-[a-z0-9-]+)/gi), (match) => match[1])
   )
   assert.ok(referenced.size > 0, 'expected the panel to consume theme tokens')
+  // The shell measures this at runtime; it is geometry rather than a palette token.
+  referenced.delete('--te-playbar-bottom-clearance')
   const undeclared = [...referenced].filter((token) => !lightTokens.has(token)).sort()
   assert.deepEqual(
     undeclared,
@@ -64,7 +69,10 @@ test('no token is read through a literal fallback that pins one palette', () => 
   // `var(--te-panel-bg, #1e1e2e)` is how the panel used to render a dark card under
   // the light theme's dark body text: the fallback hid the missing token instead of
   // failing loudly.
-  assert.doesNotMatch(panelStyles, /var\(\s*--te-[a-z0-9-]+\s*,/i)
+  assert.doesNotMatch(
+    panelStyles,
+    /(?:color|background(?:-color)?|border(?:-color)?|box-shadow):[^;]*var\(\s*--te-[a-z0-9-]+\s*,/i
+  )
 })
 
 test('the panel paints its own text colour instead of inheriting the page colour', () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { StreamingProviderOption } from '../../utils/streamingNavigation'
 
 const props = defineProps<{
@@ -14,13 +14,14 @@ const emit = defineEmits<{
 const providerMenuOpen = ref(false)
 const switcherRef = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
+const triggerRef = ref<HTMLButtonElement | null>(null)
 const menuId = useId()
 const menuStyle = ref({ left: '0px', top: '0px', maxHeight: '320px', transformOrigin: 'right top' })
 const activeOption = computed(
   () => props.options.find((option) => option.id === props.modelValue) ?? props.options[0] ?? null
 )
 
-function toggleProviderMenu(): void {
+async function toggleProviderMenu(): Promise<void> {
   if (props.options.length < 2) return
   const menu = menuRef.value
   const rect = switcherRef.value?.getBoundingClientRect()
@@ -33,6 +34,8 @@ function toggleProviderMenu(): void {
   menu.inert = false
   menu.showPopover()
   providerMenuOpen.value = true
+  await nextTick()
+  menu.querySelector<HTMLElement>('[aria-selected="true"]')?.focus()
 }
 
 function positionMenu(): void {
@@ -51,10 +54,11 @@ function positionMenu(): void {
   }
 }
 
-function closeMenu(): void {
+function closeMenu(restoreFocus = false): void {
   if (menuRef.value) menuRef.value.inert = true
   menuRef.value?.hidePopover()
   providerMenuOpen.value = false
+  if (restoreFocus) triggerRef.value?.focus()
 }
 
 function onViewportChange(event: Event): void {
@@ -69,7 +73,24 @@ function onToggle(event: Event): void {
 
 function selectProvider(providerId: string): void {
   if (providerId !== props.modelValue) emit('change', providerId)
-  closeMenu()
+  closeMenu(true)
+}
+
+function onMenuKeydown(event: KeyboardEvent): void {
+  const items = Array.from(
+    menuRef.value?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []
+  )
+  if (!items.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  event.stopPropagation()
+  const index = items.findIndex((item) => item === document.activeElement)
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+  items[next]?.focus()
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
@@ -104,9 +125,11 @@ onBeforeUnmount(() => {
     class="provider-switcher"
     :class="{ open: providerMenuOpen }"
     @focusout="onMenuFocusOut"
-    @keydown.esc.prevent="closeMenu"
+    @keydown.esc.stop.prevent="closeMenu(true)"
   >
     <button
+      v-if="options.length > 1"
+      ref="triggerRef"
       type="button"
       class="provider-switcher-trigger"
       :style="{ '--provider-color': activeOption.color }"
@@ -123,12 +146,16 @@ onBeforeUnmount(() => {
       :aria-haspopup="options.length > 1 ? 'listbox' : undefined"
       :aria-expanded="options.length > 1 ? providerMenuOpen : undefined"
       :aria-controls="menuId"
-      :disabled="options.length < 2"
       @click="toggleProviderMenu"
+      @keydown.down.prevent="toggleProviderMenu"
     >
       <i :class="activeOption.icon" aria-hidden="true"></i>
       <span class="provider-switcher-label">{{ activeOption.name }}</span>
     </button>
+    <span v-else class="provider-current" :title="`当前音源：${activeOption.name}`">
+      <i :class="activeOption.icon" aria-hidden="true"></i>
+      <span class="provider-switcher-label">{{ activeOption.name }}</span>
+    </span>
 
     <div
       :id="menuId"
@@ -137,6 +164,7 @@ onBeforeUnmount(() => {
       popover="auto"
       :style="menuStyle"
       @toggle="onToggle"
+      @keydown="onMenuKeydown"
       role="listbox"
       aria-label="选择音源"
     >
@@ -148,6 +176,7 @@ onBeforeUnmount(() => {
         :class="{ active: option.id === activeOption.id }"
         role="option"
         :aria-selected="option.id === activeOption.id"
+        :tabindex="option.id === activeOption.id ? 0 : -1"
         :style="{ '--provider-color': option.color }"
         @click="selectProvider(option.id)"
       >
@@ -166,49 +195,48 @@ onBeforeUnmount(() => {
 <style scoped>
 .provider-switcher {
   position: relative;
-  z-index: 5;
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
 }
-
+.provider-switcher-trigger,
+.provider-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(320px, 100%);
+  min-height: max(var(--te-control-height-field), 2.5em);
+  box-sizing: border-box;
+  padding: 6px 12px;
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+}
 .provider-switcher-trigger {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--te-card-bg) 86%, transparent);
-  color: var(--te-neutral-700);
-  box-shadow: 0 12px 32px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-subtle-bg);
   cursor: pointer;
-  backdrop-filter: blur(16px) saturate(145%);
-  -webkit-backdrop-filter: blur(16px) saturate(145%);
-  transition:
-    transform 0.18s var(--te-ease-soft),
-    background 0.18s,
-    border-color 0.18s,
-    box-shadow 0.18s;
 }
-
+.provider-current {
+  padding-inline: 0;
+  color: var(--te-neutral-600, var(--te-neutral-500));
+}
 .provider-switcher-trigger:hover,
 .provider-switcher.open .provider-switcher-trigger {
-  transform: translateY(-2px);
-  background: var(--te-subtle-bg);
-  border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
-  box-shadow: 0 16px 36px color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
+  background: var(--te-hover-bg);
 }
-
-.provider-switcher-trigger:disabled {
-  cursor: default;
+.provider-switcher-trigger > .pi,
+.provider-current > i {
+  flex-shrink: 0;
 }
-
-.provider-switcher-trigger > .pi {
-  color: var(--provider-color, var(--te-primary-500));
-  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
+.provider-switcher-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .provider-switcher-menu {
   position: fixed;
   inset: auto;
@@ -217,107 +245,57 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   overflow-y: auto;
   overscroll-behavior: contain;
-  z-index: 10;
   padding: 6px;
   border: 1px solid var(--te-card-border);
-  border-radius: 14px;
+  border-radius: var(--te-control-radius-sm);
   background: var(--te-card-bg);
-  box-shadow: 0 18px 42px color-mix(in srgb, var(--te-neutral-900) 18%, transparent);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  color: var(--te-neutral-900);
+  box-shadow: var(--te-menu-shadow, var(--te-glass-shadow));
   opacity: 0;
-  transform: scale(0.97);
-  pointer-events: none;
   transition:
-    opacity 160ms var(--te-ease-out-strong),
-    transform 160ms var(--te-ease-out-strong),
-    display 160ms allow-discrete,
-    overlay 160ms allow-discrete;
+    opacity var(--te-motion-panel) var(--te-ease-soft),
+    display var(--te-motion-panel) allow-discrete,
+    overlay var(--te-motion-panel) allow-discrete;
 }
-
 .provider-switcher-menu:popover-open {
   opacity: 1;
-  transform: none;
-  pointer-events: auto;
   @starting-style {
     opacity: 0;
-    transform: scale(0.97);
   }
 }
-
-:global(html[data-te-motion='reduced'] .provider-switcher-menu) {
-  transform: none;
-  transition:
-    opacity 120ms var(--te-ease-out-strong),
-    display 120ms allow-discrete,
-    overlay 120ms allow-discrete !important;
-  @starting-style {
-    transform: none;
-  }
-}
-
-:global(html[data-te-motion='off'] .provider-switcher-menu) {
-  transform: none;
-  transition: none !important;
-}
-
 .provider-switcher-option {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: var(--te-control-height-field);
-  padding: 0 var(--te-control-pad-x-sm);
+  min-height: max(var(--te-control-height-field), 2.5em);
+  padding: 6px var(--te-control-pad-x-sm);
   border: 0;
   border-radius: var(--te-control-radius-sm);
   background: transparent;
   color: var(--te-neutral-900);
   font: inherit;
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    color var(--te-motion-hover);
 }
-
 .provider-switcher-option:hover,
 .provider-switcher-option.active {
   background: var(--te-hover-bg);
 }
-
-.provider-switcher-option > .pi:first-child {
+.provider-switcher-option > .pi {
   flex-shrink: 0;
-  color: var(--provider-color, var(--te-primary-500));
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
 }
-
 .provider-switcher-option-name {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-
 .provider-switcher-option-check {
-  flex-shrink: 0;
   color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
 }
-</style>
-
-<style scoped>
-.provider-switcher-trigger {
-  display: flex;
-  gap: 8px;
-  width: auto;
-  max-width: 220px;
-  padding: 0 12px;
-}
-.provider-switcher-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--te-font-size-body, 14px);
+html[data-te-motion='off'] .provider-switcher-menu {
+  transition: none;
 }
 </style>

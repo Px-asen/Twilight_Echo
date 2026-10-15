@@ -69,7 +69,7 @@ test('notification dropdown retains tasks, actions and keyboard focus in light a
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:960,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));for(const dark of [false,true]) {await win.webContents.executeJavaScript('window.runTaskCenterTests('+dark+')');for(const [width,height] of [[1360,900],[640,600],[360,320]]) {win.setSize(width,height);await win.webContents.executeJavaScript('window.checkTaskViewport('+width+','+height+')');if(process.env.TASK_CENTER_CAPTURE_DIR&&height>320){await win.webContents.executeJavaScript('new Promise(r=>setTimeout(r,80))');const image=await win.webContents.capturePage();require('node:fs').writeFileSync(require('node:path').join(process.env.TASK_CENTER_CAPTURE_DIR,'任务通知-'+(dark?'深色':'浅色')+'-'+width+'.png'),image.toPNG())}}await win.webContents.executeJavaScript('window.disposeTaskFixture()')}console.log('TASK_CENTER_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
+      `const {app,BrowserWindow}=require('electron');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:960,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));for(const dark of [false,true]) {await win.webContents.executeJavaScript('window.runTaskCenterTests('+dark+')');for(const [width,height] of [[1360,900],[640,600],[360,320]]) {win.setSize(width,height);await win.webContents.executeJavaScript('window.checkTaskViewport('+width+','+height+')');if(process.env.TASK_CENTER_CAPTURE_DIR&&height>320){await win.webContents.executeJavaScript('new Promise(r=>setTimeout(r,80))');const image=await win.webContents.capturePage();require('node:fs').writeFileSync(require('node:path').join(process.env.TASK_CENTER_CAPTURE_DIR,'任务通知-'+(dark?'深色':'浅色')+'-'+width+'.png'),image.toPNG())}}await win.webContents.executeJavaScript('window.checkEmbeddedTaskCenter()');await win.webContents.executeJavaScript('window.disposeTaskFixture()')}console.log('TASK_CENTER_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
     )
     const result = await promisify(execFile)(
       require('electron'),
@@ -128,17 +128,12 @@ window.runTaskCenterTests=async dark=>{
   let snapshot=createInitialAppUpdateSnapshot();
   window.api={window:{getState:async()=>({maximized:false}),onStateChanged:()=>()=>{}},providerDownloads:{list:async()=>[],onChanged:fn=>{downloadsChanged=fn;return()=>stops++},cancel:async()=>{},retry:async()=>{retries++},result:async()=> 'D:/fixture/song.aac'},shell:{showItemInFolder:async()=>{revealed++}},app:{getUpdateState:async()=>snapshot,onUpdateState:fn=>{updateChanged=fn;return()=>stops++},installUpdate:async()=>{installed++}},loudnessAnalysis:{getBatch:async()=>({status:{state:'idle',revision:0}}),onBatchProgress:fn=>{batchChanged=fn;return()=>stops++},cancelBatch:async()=>{}}};
   const host=ref();
-  scan.value={state:'completed',current:10,total:10,error:''};
-  const app=createApp({render:()=>h('div',{},[h(TitleBar,{menuOpen:false,hideStart:true,notificationsOpen:store.centerOpen.value,onNotifications:event=>host.value.toggleHistory(event)}),h('button',{id:'outside'},'页面操作'),h(Host,{ref:host,onLibrary:()=>library++})])});app.mount('#app');await tick();
-  document.querySelector('.notification-btn').click();await tick();
-  expect(document.querySelector('.task-record')&&!store.noticeHistory.value.length,'initial completed scan fixture missing');
-  expect(!button('.notice-history','清空记录').disabled,'completed initial scan cannot be cleared');
-  button('.notice-history','清空记录').click();await tick();expect(!document.querySelector('.task-record'),'completed initial scan reappeared after clearing');
-  document.querySelector('.notification-btn').click();scan.value={state:'idle',current:0,total:10,error:''};await tick();
+  const embeddedTarget=ref(null),embeddedMode=ref(false);
+  const app=createApp({render:()=>h('div',{},[h(TitleBar,{menuOpen:false,accountOpen:store.centerOpen.value,onLogin:()=>host.value.toggleHistory()}),h('button',{id:'outside'},'页面操作'),h('div',{id:'account-fixture'}),h(Host,{ref:host,historyTarget:embeddedTarget.value,historyEmbedded:embeddedMode.value,onLibrary:()=>library++})])});app.mount('#app');await tick();
   for(const kind of ['info','success','warning'])store.pushNotice({kind,message:'通知结果 '+kind});await tick();
   expect(!opened(),'notification opened the center automatically');expect(!document.querySelector('.app-notice'),'routine information interrupted the page');expect(store.unreadCount.value===3,'quiet outcomes lost unread state');
   scan.value={state:'running',current:4,total:10,error:''};await tick();expect(store.activeTaskCount.value===1,'closed dropdown stopped task updates');
-  const bell=document.querySelector('.notification-btn');expect(bell.querySelector('.notification-dot'),'normal unread indicator missing');bell.focus();bell.click();await tick();
+  const bell=document.querySelector('.login-btn');expect(bell.querySelector('.notification-dot'),'normal unread indicator missing');expect(!document.querySelector('.notification-btn'),'notifications retained a separate caption entry');bell.focus();bell.click();await tick();
   expect(document.querySelectorAll('[role=dialog]').length===1,'notifications and tasks opened separate dialogs');expect(document.querySelectorAll('.notice-history').length===1,'history displayed twice');expect(noticeText().includes('通知结果 success'),'user result unavailable in shared panel');expect(store.unreadCount.value===0,'visible history was not marked read');
   expect(document.querySelector('progress[aria-label="曲库扫描"]').value===0.4,'live scan progress missing');button('.notice-history','暂停').click();await tick();button('.notice-history','继续').click();await tick();expect(calls.join(',')==='pause,resume','task controls lost behavior');
   scan.value={state:'completed',current:10,total:10,error:''};await tick();expect(noticeText().includes('曲库扫描：已完成'),'background completion disappeared');expect(!document.querySelector('.task-record'),'completion duplicated in live tasks');expect(!store.notices.value.length,'background completion became a toast');
@@ -163,6 +158,23 @@ window.runTaskCenterTests=async dark=>{
   scan.value={state:'running',current:7,total:10,error:''};bell.click();await tick();button('.notice-history','清空记录').click();await tick();expect(scan.value.state==='running'&&!calls.includes('cancel'),'clearing history cancelled a live task');
   expect(![...document.querySelectorAll('.task-record')].some(el=>el.textContent.includes('下载旋律')),'cleared download result reappeared');
   store.pushNotice({kind:'success',message:'下载完成 · '+('长曲名与路径'.repeat(18)),presentation:'center',downloadTaskId:task('completed').id});store.pushNotice({kind:'info',message:'曲库扫描：已完成，新增 12 首歌曲。'});await tick();
+  window.checkEmbeddedTaskCenter=async()=>{
+    embeddedMode.value=true;embeddedTarget.value=document.querySelector('#account-fixture');store.centerOpen.value=true;await tick();
+    const panel=embeddedTarget.value.querySelector('.notice-history');
+    expect(panel&&getComputedStyle(panel).position==='relative'&&panel.getAttribute('role')==='region','tasks did not join the secondary page');
+    expect(!panel.querySelector('[aria-label="关闭任务与通知"]'),'embedded tasks retained a floating panel close control');
+    expect(document.querySelectorAll('.notice-history').length===1,'embedding duplicated task subscriptions or history');
+    metadata.value={state:'completed',completed:0,failed:0,skipped:0,total:0,error:''};await tick();
+    expect(![...panel.querySelectorAll('.task-record')].some(record=>record.textContent.includes('曲目信息补全')),'empty completion still occupies a second activity panel');
+    store.clearHistory();for(let index=0;index<5;index++)store.pushNotice({message:'最近记录 '+index,presentation:'center'});await tick();
+    expect(panel.querySelectorAll('.notice-record').length===3&&store.unreadCount.value===2,'compact history marked collapsed notices as read');
+    panel.querySelector('.notice-history-more').click();await tick();expect(panel.querySelectorAll('.notice-record').length===5&&store.unreadCount.value===0,'recent history disclosure lost records or unread tracking');
+    document.querySelector('#outside').click();await tick();expect(opened(),'clicking the parent page dismissed embedded tasks');
+    const actions=[...panel.querySelectorAll('button:not(:disabled)')];actions.at(-1).focus();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));expect(document.activeElement!==actions[0],'embedded tasks trapped keyboard focus');
+    embeddedTarget.value=null;await nextTick();
+    expect(getComputedStyle(panel).display==='none'&&panel.getAttribute('role')==='region'&&stops===0,'closing the account child flashes a separate notification popup or disconnects tasks');
+    store.centerOpen.value=false;await tick();
+  };
   dispose=()=>{app.unmount();expect(stops===3,'shared services did not disconnect');store.clearNotices()};
 }
 `

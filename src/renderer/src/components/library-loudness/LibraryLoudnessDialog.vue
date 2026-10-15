@@ -48,9 +48,29 @@ const trackMode = ref<HTMLInputElement | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(360)
 const selectedRow = ref(0)
-const ROW_HEIGHT = 64
+const rowHeight = ref(56)
+const scrollbarWidth = ref(0)
 useNativeDialog(dialog, () => props.restoreFocus)
 let observer: ResizeObserver | undefined
+let typographyObserver: MutationObserver | undefined
+
+function measureGrid(): void {
+  viewportHeight.value = grid.value?.clientHeight || 360
+  if (grid.value)
+    scrollbarWidth.value = Math.max(0, grid.value.offsetWidth - grid.value.clientWidth - 2)
+  if (!dialog.value) return
+  const style = getComputedStyle(dialog.value)
+  const font = Number.parseFloat(style.getPropertyValue('--te-font-size-body') || style.fontSize)
+  const height = Math.max(56, Math.ceil((Number.isFinite(font) ? font : 14) * 4))
+  if (height === rowHeight.value) return
+  const anchor = scrollTop.value / rowHeight.value
+  rowHeight.value = height
+  void nextTick(() => {
+    if (!grid.value) return
+    grid.value.scrollTop = anchor * height
+    scrollTop.value = grid.value.scrollTop
+  })
+}
 
 const rows = computed(() => {
   const rows: {
@@ -88,7 +108,7 @@ const range = computed(() =>
     scrollTop: scrollTop.value,
     viewportHeight: viewportHeight.value,
     tableOffsetTop: 0,
-    rowHeight: ROW_HEIGHT,
+    rowHeight: rowHeight.value,
     overscanRows: 4
   })
 )
@@ -146,17 +166,17 @@ function onGridKey(event: KeyboardEvent): void {
   else if (event.key === 'Home') next = 0
   else if (event.key === 'End') next = rows.value.length - 1
   else if (event.key === 'PageDown')
-    next += Math.max(1, Math.floor(viewportHeight.value / ROW_HEIGHT))
+    next += Math.max(1, Math.floor(viewportHeight.value / rowHeight.value))
   else if (event.key === 'PageUp')
-    next -= Math.max(1, Math.floor(viewportHeight.value / ROW_HEIGHT))
+    next -= Math.max(1, Math.floor(viewportHeight.value / rowHeight.value))
   else return
   event.preventDefault()
   selectedRow.value = Math.max(0, Math.min(rows.value.length - 1, next))
-  const top = selectedRow.value * ROW_HEIGHT
+  const top = selectedRow.value * rowHeight.value
   if (grid.value) {
     if (top < grid.value.scrollTop) grid.value.scrollTop = top
-    else if (top + ROW_HEIGHT > grid.value.scrollTop + viewportHeight.value)
-      grid.value.scrollTop = top + ROW_HEIGHT - viewportHeight.value
+    else if (top + rowHeight.value > grid.value.scrollTop + viewportHeight.value)
+      grid.value.scrollTop = top + rowHeight.value - viewportHeight.value
     scrollTop.value = grid.value.scrollTop
   }
 }
@@ -169,13 +189,20 @@ watch(rows, () => {
 onMounted(async () => {
   await nextTick()
   trackMode.value?.focus()
-  observer = new ResizeObserver(() => {
-    viewportHeight.value = grid.value?.clientHeight || 360
-  })
+  measureGrid()
+  observer = new ResizeObserver(measureGrid)
   if (grid.value) observer.observe(grid.value)
+  typographyObserver = new MutationObserver(measureGrid)
+  for (let element: HTMLElement | null = dialog.value; element; element = element.parentElement) {
+    typographyObserver.observe(element, {
+      attributes: true,
+      attributeFilter: ['style', 'class', 'data-theme']
+    })
+  }
 })
 onBeforeUnmount(() => {
   observer?.disconnect()
+  typographyObserver?.disconnect()
 })
 </script>
 
@@ -183,6 +210,10 @@ onBeforeUnmount(() => {
   <dialog
     ref="dialog"
     class="loudness-dialog"
+    :style="{
+      '--loudness-row-height': `${rowHeight}px`,
+      '--loudness-scrollbar-width': `${scrollbarWidth}px`
+    }"
     aria-labelledby="loudness-title"
     @cancel.prevent="emit('close')"
   >
@@ -258,7 +289,7 @@ onBeforeUnmount(() => {
       @keydown="onGridKey"
     >
       <p v-if="!rows.length" class="empty">{{ plan.error || '此范围没有可分析的本地歌曲。' }}</p>
-      <div :style="{ height: `${range.start * ROW_HEIGHT}px` }" aria-hidden="true"></div>
+      <div :style="{ height: `${range.start * rowHeight}px` }" aria-hidden="true"></div>
       <div
         v-for="row in visibleRows"
         :id="`loudness-row-${row.index}`"
@@ -303,7 +334,7 @@ onBeforeUnmount(() => {
         >
       </div>
       <div
-        :style="{ height: `${Math.max(0, rows.length - range.end) * ROW_HEIGHT}px` }"
+        :style="{ height: `${Math.max(0, rows.length - range.end) * rowHeight}px` }"
         aria-hidden="true"
       ></div>
     </div>
@@ -359,17 +390,19 @@ onBeforeUnmount(() => {
 .loudness-dialog {
   width: min(920px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
+  margin: auto;
   padding: 24px;
-  border: 1px solid var(--border-color, #d5d2dd);
-  border-radius: 18px;
-  background: var(--bg-primary, #faf9fc);
-  color: var(--text-primary, #28252e);
+  box-sizing: border-box;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-dialog-radius, 8px);
+  background: var(--te-glass-bg-strong);
+  color: var(--te-neutral-900);
   font-size: var(--te-font-size-body, 14px);
   overflow: auto;
   box-shadow: 0 20px 80px #0003;
 }
 .loudness-dialog::backdrop {
-  background: #0006;
+  background: var(--te-dialog-backdrop);
 }
 header,
 .loudness-options,
@@ -383,24 +416,32 @@ header,
 header {
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+}
+header > div {
+  min-width: 0;
+}
+header > button {
+  flex-shrink: 0;
 }
 h2 {
-  font-size: 1.4em;
+  font-size: var(--te-type-section-title, 20px);
+  font-weight: 600;
   margin: 0 0 6px;
 }
 p {
   margin: 0;
-  color: var(--text-secondary, #736c7e);
+  color: var(--te-neutral-600);
   line-height: 1.6;
 }
 button {
   font: inherit;
-  border: 1px solid var(--border-color, #d5d2dd);
+  border: 1px solid var(--te-card-border);
   color: inherit;
-  background: var(--bg-secondary, #f0eef5);
-  border-radius: 8px;
-  padding: 8px 12px;
+  background: var(--te-subtle-bg);
+  border-radius: var(--te-control-radius-sm, 8px);
+  min-height: 34px;
+  padding: 6px 12px;
   cursor: pointer;
 }
 button:disabled {
@@ -410,12 +451,12 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 summary:focus-visible {
-  outline: 2px solid var(--accent-color, #6958cb);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 button.primary {
-  background: var(--accent-color, #6958cb);
-  color: #fff;
+  background: var(--te-control-accent);
+  color: var(--te-control-on-accent);
   border-color: transparent;
 }
 fieldset {
@@ -424,6 +465,7 @@ fieldset {
   margin: 0;
   display: flex;
   gap: 18px;
+  flex-wrap: wrap;
 }
 legend {
   position: absolute;
@@ -439,15 +481,15 @@ label {
   cursor: pointer;
 }
 input {
-  accent-color: var(--accent-color, #6958cb);
+  accent-color: var(--te-control-accent);
 }
 .loudness-options {
   justify-content: space-between;
   flex-wrap: wrap;
 }
 .scope-note {
-  margin: 10px 0 16px;
-  font-size: 0.9em;
+  margin: 8px 0 12px;
+  font-size: var(--te-type-caption, 13px);
 }
 .loudness-error {
   padding: 10px;
@@ -457,7 +499,7 @@ input {
 }
 .loudness-progress {
   flex-wrap: wrap;
-  font-size: 0.9em;
+  font-size: var(--te-type-caption, 13px);
   margin-bottom: 14px;
 }
 .current-title {
@@ -465,55 +507,64 @@ input {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--text-secondary, #736c7e);
+  color: var(--te-neutral-600);
 }
 progress {
   width: 100%;
   height: 6px;
-  accent-color: var(--accent-color, #6958cb);
+  accent-color: var(--te-control-accent);
 }
 .loudness-head,
 .loudness-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) repeat(4, 86px);
+  grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, 1fr));
   align-items: center;
   gap: 8px;
   padding: 0 12px;
 }
 .loudness-head {
-  height: 36px;
-  font-size: 0.85em;
-  color: var(--text-secondary, #736c7e);
+  min-height: 36px;
+  padding-block: 6px;
+  margin-inline: 1px;
+  padding-inline-end: calc(12px + var(--loudness-scrollbar-width, 0px));
+  font-size: var(--te-type-caption, 13px);
+  color: var(--te-neutral-600);
 }
 .loudness-results {
   height: min(360px, 40vh);
   min-height: 128px;
   overflow: auto;
-  border: 1px solid var(--border-color, #d5d2dd);
+  border: 1px solid var(--te-card-border);
   border-radius: 10px;
   scrollbar-gutter: stable;
 }
 .loudness-results:focus-visible {
-  outline: 2px solid var(--accent-color, #6958cb);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .loudness-row {
-  height: 64px;
+  height: var(--loudness-row-height, 56px);
   box-sizing: border-box;
-  border-bottom: 1px solid var(--border-color, #d5d2dd);
+  border-bottom: 1px solid var(--te-card-border);
   font-variant-numeric: tabular-nums;
 }
 .loudness-row.selected {
-  background: color-mix(in srgb, var(--accent-color, #6958cb) 8%, transparent);
+  background: var(--te-control-accent-soft);
 }
 .loudness-row.member .result-name {
   padding-left: 16px;
+}
+.loudness-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .result-name {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 .result-name strong,
 .result-name small {
@@ -525,8 +576,8 @@ progress {
   font-weight: 500;
 }
 .result-name small {
-  color: var(--text-secondary, #736c7e);
-  font-size: 0.82em;
+  color: var(--te-neutral-600);
+  font-size: var(--te-type-caption, 13px);
 }
 .empty {
   padding: 32px 16px;
@@ -534,8 +585,8 @@ progress {
 }
 details {
   margin-top: 14px;
-  font-size: 0.86em;
-  color: var(--text-secondary, #736c7e);
+  font-size: var(--te-type-caption, 13px);
+  color: var(--te-neutral-600);
 }
 summary {
   cursor: pointer;
@@ -548,12 +599,12 @@ footer {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin-top: 20px;
+  margin-top: 12px;
   flex-wrap: wrap;
 }
 footer > span {
-  font-size: 0.82em;
-  color: var(--text-secondary, #736c7e);
+  font-size: var(--te-type-caption, 13px);
+  color: var(--te-neutral-600);
 }
 .loudness-actions {
   flex-wrap: wrap;
@@ -566,10 +617,14 @@ footer > span {
   }
   .loudness-head,
   .loudness-row {
-    grid-template-columns: minmax(120px, 1fr) repeat(4, 60px);
+    grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, 1fr));
     gap: 4px;
-    font-size: 0.82em;
+    font-size: var(--te-type-caption, 13px);
     padding: 0 8px;
+  }
+  .loudness-head {
+    padding-block: 6px;
+    padding-inline-end: calc(8px + var(--loudness-scrollbar-width, 0px));
   }
 }
 </style>

@@ -205,6 +205,7 @@ export function useLiquidGlassEnvironment(options: {
       attributes: true,
       attributeFilter: ['data-theme', 'data-active-theme', 'data-te-surface-material', 'style']
     })
+
   })
 
   onBeforeUnmount(() => {

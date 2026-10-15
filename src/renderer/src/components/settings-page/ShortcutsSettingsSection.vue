@@ -409,14 +409,14 @@ function onRecorderBlur(key: BindingKey): void {
 .shortcut-panel-head h3 {
   margin: 0;
   color: var(--te-settings-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 600;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .shortcut-panel-hint {
   flex: 1 1 auto;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.5;
 }
 
@@ -428,7 +428,7 @@ function onRecorderBlur(key: BindingKey): void {
   background: var(--te-card-bg);
   color: var(--te-settings-text-muted);
   cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-body);
   line-height: 1.4;
 }
 
@@ -480,8 +480,8 @@ function onRecorderBlur(key: BindingKey): void {
   overflow: hidden;
   min-width: 0;
   color: var(--te-settings-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 500;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -498,7 +498,7 @@ function onRecorderBlur(key: BindingKey): void {
   background: transparent;
   color: var(--te-settings-text-muted);
   cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 
 .shortcut-revert:hover {
@@ -520,8 +520,8 @@ function onRecorderBlur(key: BindingKey): void {
   color: var(--te-settings-text);
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 650;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .shortcut-key:hover,
@@ -529,14 +529,18 @@ function onRecorderBlur(key: BindingKey): void {
   border-color: rgba(var(--te-primary-rgb), 0.55);
   outline: none;
 }
+.shortcut-key:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
 
 .shortcut-key.recording {
   border-color: rgba(var(--te-primary-rgb), 0.7);
   background: rgba(var(--te-primary-rgb), 0.08);
   color: var(--te-settings-text-muted);
   font-family: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 500;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
 }
 
 .shortcut-row.conflict .shortcut-key {
@@ -546,13 +550,13 @@ function onRecorderBlur(key: BindingKey): void {
 .shortcut-key.static {
   color: var(--te-settings-text-muted);
   cursor: default;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 
 .shortcut-note {
   margin: 10px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.5;
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import DownloadResultActions from './DownloadResultActions.vue'
 import { useEscapeToClose, useFocusTrap } from '../../app/useDismissLayer.ts'
 import type { ProviderDownloadTaskSnapshot } from '../../../../shared/providerDownloads.ts'
@@ -19,10 +19,36 @@ const emit = defineEmits<{
 
 const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks))
 const dialogRef = ref<HTMLElement | null>(null)
+const downloadTrigger = ref<HTMLButtonElement | null>(null)
+let openedFromTrigger = false
 useFocusTrap(dialogRef, () => props.show)
 useEscapeToClose(
   () => props.show,
   () => emit('close')
+)
+
+function openFromTrigger(): void {
+  // The trigger is hidden before the common post-flush trap can remember it.
+  openedFromTrigger = true
+  emit('open')
+}
+
+watch(
+  () => props.show,
+  async (show, wasShown) => {
+    if (show || !wasShown || !openedFromTrigger) return
+    openedFromTrigger = false
+    await nextTick()
+    const focused = document.activeElement
+    if (
+      !focused ||
+      focused === document.body ||
+      (focused instanceof Element && focused.closest('.provider-download-panel'))
+    ) {
+      downloadTrigger.value?.focus()
+    }
+  },
+  { flush: 'post' }
 )
 
 function isRunning(task: ProviderDownloadTaskSnapshot): boolean {
@@ -141,11 +167,13 @@ function formatFileSize(bytes: number): string {
   </Teleport>
 
   <button
-    v-if="activeDownloadTasks.length > 0 && !show"
+    v-if="activeDownloadTasks.length > 0"
+    v-show="!show"
+    ref="downloadTrigger"
     type="button"
     class="provider-download-fab"
     aria-label="打开下载管理"
-    @click="emit('open')"
+    @click="openFromTrigger"
   >
     <i class="pi pi-download"></i>
     <span class="fab-badge">{{ activeDownloadTasks.length }}</span>
@@ -169,8 +197,9 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-panel {
-  width: min(560px, 90vw);
-  max-height: 70vh;
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(780px, calc(100dvh - 48px));
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--te-card-bg);
@@ -182,6 +211,7 @@ function formatFileSize(bytes: number): string {
 }
 .provider-download-panel-header {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
   padding: 14px 18px;
@@ -190,14 +220,16 @@ function formatFileSize(bytes: number): string {
 
 .provider-download-panel-header h3 {
   margin: 0;
-  font-size: calc(var(--te-font-size-body) * 15 / 14);
+  font-size: var(--te-type-headline);
   font-weight: var(--te-text-title);
   color: var(--te-settings-text);
 }
 
 .provider-download-icon-button {
-  width: 30px;
-  height: 30px;
+  width: max(30px, 2.5em);
+  min-height: max(30px, 2.5em);
+  flex-shrink: 0;
+  font-size: var(--te-type-caption);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -220,16 +252,18 @@ function formatFileSize(bytes: number): string {
   padding: 32px 20px;
   text-align: center;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body) * 13 / 14);
+  font-size: var(--te-type-body);
 }
 
 .provider-download-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 6px 0;
 }
 .provider-download-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
@@ -249,7 +283,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-title {
-  font-size: calc(var(--te-font-size-body) * 13 / 14);
+  font-size: var(--te-type-body);
   font-weight: var(--te-text-strong);
   color: var(--te-settings-text);
   overflow: hidden;
@@ -258,7 +292,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-artist {
-  font-size: calc(var(--te-font-size-body) * 12 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -274,8 +308,8 @@ function formatFileSize(bytes: number): string {
 }
 .provider-download-badge {
   padding: 2px 8px;
-  border-radius: 999px;
-  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  border-radius: var(--te-control-radius-sm);
+  font-size: var(--te-type-caption);
   font-weight: var(--te-text-strong);
   background: var(--te-hover-bg);
   color: var(--te-settings-text-muted);
@@ -303,14 +337,14 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-tag {
-  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted);
 }
 .provider-download-progress {
   margin-top: 3px;
   width: min(320px, 60vw);
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--te-control-radius-sm);
   background: color-mix(in srgb, var(--te-settings-text-muted) 28%, transparent);
   overflow: hidden;
 }
@@ -325,19 +359,19 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-warning {
-  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted);
   word-break: break-word;
 }
 
 .provider-download-error {
-  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-danger-soft-fg);
   word-break: break-word;
 }
 
 .provider-download-path {
-  font-size: calc(var(--te-font-size-body) * 11 / 14);
+  font-size: var(--te-type-caption);
   color: var(--te-settings-text-muted);
   word-break: break-all;
   font-family: monospace;
@@ -349,16 +383,16 @@ function formatFileSize(bytes: number): string {
   flex-shrink: 0;
 }
 .provider-download-button {
-  min-height: 30px;
+  min-height: max(var(--te-control-height-md), 2.5em);
   padding: 6px 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--te-card-border);
-  border-radius: 999px;
+  border-radius: var(--te-control-radius-sm);
   background: var(--te-subtle-bg);
   color: var(--te-settings-text);
-  font-size: calc(var(--te-font-size-body) * 12 / 14);
+  font-size: var(--te-type-caption);
   font-weight: var(--te-text-strong);
   cursor: pointer;
   transition:
@@ -381,7 +415,7 @@ function formatFileSize(bytes: number): string {
 }
 .provider-download-fab {
   position: fixed;
-  bottom: 80px;
+  bottom: calc(var(--te-playbar-bottom-clearance, 80px) + 16px);
   right: 24px;
   z-index: 900;
   width: 48px;
@@ -393,13 +427,13 @@ function formatFileSize(bytes: number): string {
   justify-content: center;
   cursor: pointer;
   background: var(--te-primary-500);
-  color: var(--te-neutral-50);
+  color: var(--te-control-on-accent);
   box-shadow: var(--te-glass-shadow);
   transition: transform var(--te-motion-hover) var(--te-ease-soft);
 }
 
 .provider-download-fab:hover {
-  transform: scale(1.05);
+  background: var(--te-primary-400);
 }
 
 .fab-badge {
@@ -407,11 +441,11 @@ function formatFileSize(bytes: number): string {
   top: -4px;
   right: -4px;
   min-width: 18px;
-  height: 18px;
+  min-height: 18px;
   border-radius: 9px;
   background: var(--te-danger-soft-fg);
   color: var(--te-card-bg);
-  font-size: calc(var(--te-font-size-body) * 10 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 700;
   display: flex;
   align-items: center;

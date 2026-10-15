@@ -8,8 +8,7 @@
   --onb-faint: #98a2b3;
   --onb-card: var(--te-glass-bg, rgba(255, 255, 255, 0.9));
   --onb-card-border: var(--te-glass-border, rgba(255, 255, 255, 0.55));
-  --onb-card-shadow: var(--te-glass-shadow, 0 20px 70px rgba(86, 70, 160, 0.16));
-  --onb-card-shadow-hover: 0 30px 90px rgba(50, 42, 110, 0.22);
+  --onb-card-shadow: 0 4px 12px color-mix(in srgb, var(--te-content-shadow-color) 8%, transparent);
   --onb-accent: var(--te-primary-500, #2563eb);
   --onb-accent-rgb: var(--te-primary-rgb, 37, 99, 235);
   --onb-on-accent: #ffffff;
@@ -69,8 +68,7 @@ html[data-theme='dark'] .onboarding-wizard {
   --onb-faint: rgba(229, 226, 214, 0.4);
   --onb-card: rgba(30, 30, 32, 0.82);
   --onb-card-border: rgba(255, 255, 255, 0.09);
-  --onb-card-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
-  --onb-card-shadow-hover: 0 30px 90px rgba(0, 0, 0, 0.55);
+  --onb-card-shadow: 0 4px 12px color-mix(in srgb, var(--te-content-shadow-color) 16%, transparent);
   --onb-on-accent: #16130c;
   --onb-bg: var(--te-app-bg, #131316);
 }
@@ -84,7 +82,7 @@ html[data-theme='dark'] .onboarding-wizard {
   overflow: hidden;
   pointer-events: none;
   transform: translate3d(0, 0, 0);
-  transition: transform 900ms var(--te-ease-out-quint);
+  transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
   will-change: transform;
 }
 
@@ -101,7 +99,7 @@ html[data-theme='dark'] .onboarding-wizard {
   width: 58vw;
   height: 58vw;
   background: radial-gradient(circle, rgba(var(--onb-accent-rgb), 0.32) 0%, transparent 68%);
-  animation: onb-drift-a 26s var(--te-ease-enter, ease-in-out) infinite alternate;
+  animation: none;
 }
 
 .onb-blob-b {
@@ -114,8 +112,7 @@ html[data-theme='dark'] .onboarding-wizard {
     var(--te-glow-soft, rgba(255, 126, 182, 0.2)) 0%,
     transparent 66%
   );
-  animation: onb-drift-b 32s var(--te-ease-enter, ease-in-out) infinite alternate;
-  animation-delay: -8s;
+  animation: none;
 }
 
 .onb-blob-c {
@@ -128,8 +125,7 @@ html[data-theme='dark'] .onboarding-wizard {
     var(--te-glow-cyan, rgba(34, 211, 238, 0.2)) 0%,
     transparent 70%
   );
-  animation: onb-drift-c 38s var(--te-ease-enter, ease-in-out) infinite alternate;
-  animation-delay: -17s;
+  animation: none;
 }
 
 html[data-theme='dark'] .onb-blob {
@@ -155,14 +151,8 @@ html[data-theme='dark'] .onb-blob {
     transparent 74%,
     rgba(var(--onb-accent-rgb), 0.07)
   );
-  animation: onb-halo-spin 90s linear infinite;
+  animation: none;
   will-change: transform;
-}
-
-@keyframes onb-halo-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* A single hairline ring — the one crisp geometric element against all the
@@ -176,7 +166,7 @@ html[data-theme='dark'] .onb-blob {
   border: 1px solid rgba(var(--onb-accent-rgb), 0.14);
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  animation: onb-ring-breathe 14s var(--te-ease-enter, ease-in-out) infinite alternate;
+  animation: none;
 }
 
 .onb-ring::after {
@@ -185,17 +175,6 @@ html[data-theme='dark'] .onb-blob {
   inset: -11vh;
   border: 1px solid rgba(var(--onb-accent-rgb), 0.07);
   border-radius: 50%;
-}
-
-@keyframes onb-ring-breathe {
-  from {
-    transform: translate(-50%, -50%) scale(0.97);
-    opacity: 0.75;
-  }
-  to {
-    transform: translate(-50%, -50%) scale(1.04);
-    opacity: 1;
-  }
 }
 
 /* Gentle edge darkening pulls focus to the center column. */
@@ -215,33 +194,6 @@ html[data-theme='dark'] .onb-vignette {
     transparent 52%,
     rgba(0, 0, 0, 0.32) 100%
   );
-}
-
-@keyframes onb-drift-a {
-  from {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  to {
-    transform: translate3d(9vw, 7vh, 0) scale(1.18);
-  }
-}
-
-@keyframes onb-drift-b {
-  from {
-    transform: translate3d(0, 0, 0) scale(1.12);
-  }
-  to {
-    transform: translate3d(-8vw, -6vh, 0) scale(0.94);
-  }
-}
-
-@keyframes onb-drift-c {
-  from {
-    transform: translate3d(-4vw, 3vh, 0) scale(0.92);
-  }
-  to {
-    transform: translate3d(5vw, -5vh, 0) scale(1.15);
-  }
 }
 
 /* Fine grain to suppress gradient banding. */
@@ -272,7 +224,7 @@ body.te-no-blur .onb-blob {
   font-family: var(--onb-display);
   line-height: 1;
   transform: translate3d(0, 0, 0);
-  transition: transform 900ms var(--te-ease-out-quint);
+  transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
 }
 
 .onb-scene-no span {
@@ -316,18 +268,15 @@ body.te-no-blur .onb-blob {
 .onb-scene-no-enter-from {
   opacity: 0;
   transform: translateY(0.18em);
-  filter: blur(6px);
 }
 
 .onb-scene-no-leave-to {
   opacity: 0;
   transform: translateY(-0.14em);
-  filter: blur(4px);
 }
 
 body.te-no-blur .onb-scene-no-enter-from,
 body.te-no-blur .onb-scene-no-leave-to {
-  filter: none !important;
 }
 
 /* ══ Progress dots ═════════════════════════════════════════════════════ */
@@ -339,7 +288,7 @@ body.te-no-blur .onb-scene-no-leave-to {
   gap: 10px;
   padding: 22px 0 0;
   flex: 0 0 auto;
-  animation: onb-footer-in 700ms var(--te-ease-out-expo) 200ms backwards;
+  animation: none;
 }
 
 .onb-dot {
@@ -384,21 +333,7 @@ body.te-no-blur .onb-scene-no-leave-to {
     transparent 80%
   );
   background-size: 200% 100%;
-  animation: onb-dot-shimmer 2.6s var(--te-ease-enter) infinite;
-}
-
-@keyframes onb-dot-shimmer {
-  0% {
-    background-position: 130% 0;
-    opacity: 0;
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    background-position: -130% 0;
-    opacity: 0;
-  }
+  animation: none;
 }
 
 /* ══ Scene stage ═══════════════════════════════════════════════════════ */
@@ -441,30 +376,22 @@ body.te-no-blur .onb-scene-no-leave-to {
   margin-bottom: auto;
 }
 
-/* Two-level cascade: direct children float in one after another with a
-   longer, airier settle — the blur clearing as each row lands is what makes
-   it feel expensive. */
+/* Step changes own the motion; individual controls remain ready immediately. */
 .onb-stage > * {
-  animation: onb-rise 640ms var(--te-ease-out-expo) backwards;
+  animation: none;
 }
 
 .onb-stage > *:nth-child(2) {
-  animation-delay: 80ms;
 }
 .onb-stage > *:nth-child(3) {
-  animation-delay: 160ms;
 }
 .onb-stage > *:nth-child(4) {
-  animation-delay: 240ms;
 }
 .onb-stage > *:nth-child(5) {
-  animation-delay: 320ms;
 }
 .onb-stage > *:nth-child(6) {
-  animation-delay: 400ms;
 }
 .onb-stage > *:nth-child(7) {
-  animation-delay: 470ms;
 }
 
 /* …and cards inside a group stagger again. */
@@ -473,19 +400,6 @@ body.te-no-blur .onb-scene-no-leave-to {
 }
 .onb-cards > .onb-card:nth-child(3) {
   animation-delay: 300ms;
-}
-
-@keyframes onb-rise {
-  from {
-    opacity: 0;
-    transform: translateY(30px) scale(0.98);
-    filter: blur(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
 }
 
 body.te-no-blur .onb-stage > *,
@@ -512,23 +426,11 @@ body.te-no-blur .onb-card {
   width: 28px;
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(var(--onb-accent-rgb), 0.6));
-  animation: onb-rule-grow 900ms var(--te-ease-out-expo) backwards;
-  animation-delay: 260ms;
+  animation: none;
 }
 
 .onb-kicker::after {
   background: linear-gradient(90deg, rgba(var(--onb-accent-rgb), 0.6), transparent);
-}
-
-@keyframes onb-rule-grow {
-  from {
-    width: 0;
-    opacity: 0;
-  }
-  to {
-    width: 28px;
-    opacity: 1;
-  }
 }
 
 .onb-title {
@@ -556,16 +458,7 @@ body.te-no-blur .onb-card {
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: onb-ink-sheen 3.2s var(--te-ease-soft) 600ms backwards;
-}
-
-@keyframes onb-ink-sheen {
-  from {
-    background-position: 120% 0;
-  }
-  to {
-    background-position: 0% 0;
-  }
+  animation: none;
 }
 
 .onb-subtitle {
@@ -610,8 +503,7 @@ body.te-no-blur .onb-card {
   cursor: pointer;
   overflow: hidden;
   backdrop-filter: blur(18px) saturate(1.4);
-  animation: onb-rise 640ms var(--te-ease-out-expo) backwards;
-  animation-delay: 160ms;
+  animation: none;
   transition:
     transform var(--te-motion-panel) var(--te-ease-spring),
     box-shadow var(--te-motion-panel) var(--te-ease-soft),
@@ -624,45 +516,13 @@ body.te-no-blur .onb-card {
   backdrop-filter: none;
 }
 
-/* Diagonal glass sheen that glides across on hover. */
+/* Content choices use a stable surface; selection is expressed by the checkmark. */
 .onb-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 32%,
-    rgba(255, 255, 255, 0.22) 48%,
-    rgba(255, 255, 255, 0.05) 54%,
-    transparent 66%
-  );
-  transform: translateX(-120%);
-  transition: transform 700ms var(--te-ease-out-quint);
-  pointer-events: none;
-}
-
-html[data-theme='dark'] .onb-card::before {
-  background: linear-gradient(
-    115deg,
-    transparent 32%,
-    rgba(255, 255, 255, 0.09) 48%,
-    rgba(255, 255, 255, 0.02) 54%,
-    transparent 66%
-  );
-}
-
-.onb-card:hover::before {
-  transform: translateX(120%);
+  content: none;
 }
 
 .onb-card:hover {
-  transform: translateY(-6px) scale(1.015);
-  box-shadow: var(--onb-card-shadow-hover);
-  border-color: rgba(var(--onb-accent-rgb), 0.4);
-}
-
-.onb-card:hover .onb-card-icon {
-  transform: scale(1.12) rotate(-3deg);
+  background: var(--te-hover-bg);
 }
 
 .onb-card:active {
@@ -673,20 +533,7 @@ html[data-theme='dark'] .onb-card::before {
 .onb-card.is-selected {
   border-color: var(--onb-accent);
   background: rgba(var(--onb-accent-rgb), 0.1);
-  box-shadow:
-    var(--onb-card-shadow),
-    0 0 0 4px rgba(var(--onb-accent-rgb), 0.12),
-    0 14px 44px rgba(var(--onb-accent-rgb), 0.22);
-}
-
-.onb-cards.has-selection .onb-card:not(.is-selected) {
-  opacity: 0.55;
-  transform: scale(0.985);
-}
-
-.onb-cards.has-selection .onb-card:not(.is-selected):hover {
-  opacity: 0.85;
-  transform: translateY(-4px) scale(1);
+  box-shadow: var(--onb-card-shadow);
 }
 
 .onb-card-icon {
@@ -723,7 +570,7 @@ html[data-theme='dark'] .onb-card::before {
   color: var(--onb-on-accent);
   font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
   box-shadow: 0 4px 12px rgba(var(--onb-accent-rgb), 0.4);
-  animation: onb-check-pop 420ms var(--te-ease-spring) backwards;
+  animation: onb-check-pop var(--te-motion-panel) var(--te-ease-spring) backwards;
 }
 
 @keyframes onb-check-pop {
@@ -801,18 +648,16 @@ html[data-theme='dark'] .onb-card::before {
 .onb-swatch-row .onb-swatch,
 .onb-theme-row .onb-theme-chip,
 .onb-bg-row .onb-bg-swatch {
-  animation: onb-pop-in 460ms var(--te-ease-spring) backwards;
+  animation: none;
 }
 
 .onb-swatch-row .onb-swatch:nth-child(2),
 .onb-theme-row .onb-theme-chip:nth-child(2),
 .onb-bg-row .onb-bg-swatch:nth-child(2) {
-  animation-delay: 50ms;
 }
 .onb-swatch-row .onb-swatch:nth-child(3),
 .onb-theme-row .onb-theme-chip:nth-child(3),
 .onb-bg-row .onb-bg-swatch:nth-child(3) {
-  animation-delay: 100ms;
 }
 .onb-swatch-row .onb-swatch:nth-child(4),
 .onb-bg-row .onb-bg-swatch:nth-child(4) {
@@ -828,17 +673,6 @@ html[data-theme='dark'] .onb-card::before {
 }
 .onb-bg-row .onb-bg-swatch:nth-child(7) {
   animation-delay: 300ms;
-}
-
-@keyframes onb-pop-in {
-  from {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 
 .onb-swatch {
@@ -1058,7 +892,7 @@ body.te-no-blur .onb-segmented {
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  animation: onb-row-in 520ms var(--te-ease-out-expo) backwards;
+  animation: none;
   transition:
     background var(--te-motion-hover) var(--te-ease-soft),
     border-color var(--te-motion-hover) var(--te-ease-soft),
@@ -1323,7 +1157,7 @@ html[data-theme='dark'] .onb-audio-test-error {
   align-items: flex-start;
   gap: 10px;
   padding: 2px 12px 8px;
-  animation: onb-rise var(--te-motion-panel) var(--te-ease-out-quint) backwards;
+  animation: none;
 }
 
 .onb-segmented.is-small > button {
@@ -1352,7 +1186,7 @@ html[data-theme='dark'] .onb-audio-test-error {
 }
 
 .onb-input:focus {
-  border-color: var(--onb-accent);
+  border-color: var(--te-control-focus-color);
 }
 
 .onb-input-port {
@@ -1483,7 +1317,7 @@ body.te-no-blur .onb-panel {
   padding: 9px 12px;
   border-radius: 12px;
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  animation: onb-rise var(--te-motion-panel) var(--te-ease-out-quint) backwards;
+  animation: none;
   transition: background var(--te-motion-hover) var(--te-ease-soft);
 }
 
@@ -1536,7 +1370,7 @@ body.te-no-blur .onb-panel {
   gap: 14px;
   padding: 10px 12px;
   border-radius: 12px;
-  animation: onb-row-in 520ms var(--te-ease-out-expo) backwards;
+  animation: none;
   transition:
     background var(--te-motion-hover) var(--te-ease-soft),
     transform var(--te-motion-hover) var(--te-ease-soft);
@@ -1562,17 +1396,6 @@ body.te-no-blur .onb-panel {
 }
 .onb-panel > *:nth-child(5) {
   animation-delay: 400ms;
-}
-
-@keyframes onb-row-in {
-  from {
-    opacity: 0;
-    transform: translateX(-14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 .onb-toggle-copy {
@@ -1703,55 +1526,32 @@ body.te-no-blur .onb-panel {
   position: absolute;
   bottom: -40px;
   color: rgba(var(--onb-accent-rgb), 0.3);
-  animation: onb-note-float 9s var(--te-ease-enter) infinite;
+  animation: none;
 }
 
 .onb-notes i:nth-child(1) {
   left: 12%;
   font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
-  animation-delay: 0s;
 }
 .onb-notes i:nth-child(2) {
   left: 26%;
   font-size: calc(var(--te-font-size-body, 14px) * 30 / 14);
-  animation-delay: 2.4s;
 }
 .onb-notes i:nth-child(3) {
   left: 48%;
   font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
-  animation-delay: 4.8s;
 }
 .onb-notes i:nth-child(4) {
   left: 64%;
   font-size: calc(var(--te-font-size-body, 14px) * 26 / 14);
-  animation-delay: 1.2s;
 }
 .onb-notes i:nth-child(5) {
   left: 78%;
   font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
-  animation-delay: 3.6s;
 }
 .onb-notes i:nth-child(6) {
   left: 90%;
   font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
-  animation-delay: 6s;
-}
-
-@keyframes onb-note-float {
-  0% {
-    opacity: 0;
-    transform: translateY(0) rotate(-8deg);
-  }
-  12% {
-    opacity: 1;
-  }
-  82% {
-    opacity: 0.5;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(calc(-88vh)) rotate(10deg);
-  }
 }
 
 .onb-feature-grid {
@@ -1772,7 +1572,7 @@ body.te-no-blur .onb-panel {
   background: var(--onb-card);
   font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
   color: var(--onb-muted);
-  animation: onb-rise var(--te-motion-settle, 500ms) var(--te-ease-out-expo) backwards;
+  animation: none;
   transition:
     transform var(--te-motion-hover) var(--te-ease-spring),
     border-color var(--te-motion-hover) var(--te-ease-soft),
@@ -1786,16 +1586,12 @@ body.te-no-blur .onb-panel {
 }
 
 .onb-feature:nth-child(2) {
-  animation-delay: 60ms;
 }
 .onb-feature:nth-child(3) {
-  animation-delay: 120ms;
 }
 .onb-feature:nth-child(4) {
-  animation-delay: 180ms;
 }
 .onb-feature:nth-child(5) {
-  animation-delay: 240ms;
 }
 
 .onb-feature i {
@@ -1931,18 +1727,7 @@ html[data-theme='dark'] .onb-save-error {
   justify-content: space-between;
   gap: 12px;
   padding: 14px clamp(24px, 6vw, 72px) 26px;
-  animation: onb-footer-in 700ms var(--te-ease-out-expo) 350ms backwards;
-}
-
-@keyframes onb-footer-in {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  animation: none;
 }
 
 .onb-key-hint {
@@ -1951,16 +1736,7 @@ html[data-theme='dark'] .onb-save-error {
   letter-spacing: 0.08em;
   color: var(--onb-faint);
   user-select: none;
-  animation: onb-hint-fade 1.4s ease 1.2s backwards;
-}
-
-@keyframes onb-hint-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  animation: none;
 }
 
 @media (max-width: 760px) {
@@ -2021,21 +1797,12 @@ html[data-theme='dark'] .onb-save-error {
   cursor: pointer;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(var(--onb-accent-rgb), 0.35);
-  animation: onb-btn-breathe 3.6s var(--te-ease-enter) infinite alternate;
+  animation: none;
   transition:
     transform var(--te-motion-hover) var(--te-ease-soft),
     box-shadow var(--te-motion-hover) var(--te-ease-soft),
     filter var(--te-motion-hover) ease,
     opacity var(--te-motion-hover) ease;
-}
-
-@keyframes onb-btn-breathe {
-  from {
-    box-shadow: 0 10px 30px rgba(var(--onb-accent-rgb), 0.32);
-  }
-  to {
-    box-shadow: 0 12px 40px rgba(var(--onb-accent-rgb), 0.52);
-  }
 }
 
 /* Sheen glides across the CTA on hover — same language as the cards. */
@@ -2050,7 +1817,7 @@ html[data-theme='dark'] .onb-save-error {
     transparent 70%
   );
   transform: translateX(-130%);
-  transition: transform 600ms var(--te-ease-out-quint);
+  transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
   pointer-events: none;
 }
 
@@ -2085,56 +1852,46 @@ html[data-theme='dark'] .onb-save-error {
   transform: translateX(3px);
 }
 
-/* ══ Scene transitions (vertical slide + blur dissolve) ════════════════ */
+/* ══ Scene transitions ════════════════════════════════════════════════ */
 
 .onb-fwd-enter-active,
 .onb-back-enter-active {
   transition:
-    opacity 560ms ease,
-    transform 560ms var(--te-ease-out-expo),
-    filter 560ms var(--te-ease-out-expo);
+    opacity var(--te-motion-panel) ease,
+    transform var(--te-motion-panel) var(--te-ease-out-expo);
 }
 
 .onb-fwd-leave-active,
 .onb-back-leave-active {
-  transition:
-    opacity var(--te-motion-panel, 280ms) ease,
-    transform var(--te-motion-panel, 280ms) var(--te-ease-enter),
-    filter var(--te-motion-panel, 280ms) var(--te-ease-enter);
+  transition: opacity var(--te-motion-panel, 280ms) ease,
+    transform var(--te-motion-panel, 280ms) var(--te-ease-enter), 280ms) var(--te-ease-enter);
 }
 
-/* Depth choreography: the outgoing scene recedes (scales down, blurs away)
-   while the incoming one rises from below at full presence — reads as moving
-   through space rather than sliding a flat sheet. */
+/* Forward and back share one axis and a small, symmetric displacement. */
 .onb-fwd-enter-from {
   opacity: 0;
-  transform: translateY(72px) scale(0.97);
-  filter: blur(12px);
+  transform: translateY(16px);
 }
 
 .onb-fwd-leave-to {
   opacity: 0;
-  transform: translateY(-40px) scale(0.955);
-  filter: blur(10px);
+  transform: translateY(-12px);
 }
 
 .onb-back-enter-from {
   opacity: 0;
-  transform: translateY(-72px) scale(0.97);
-  filter: blur(12px);
+  transform: translateY(-16px);
 }
 
 .onb-back-leave-to {
   opacity: 0;
-  transform: translateY(40px) scale(0.955);
-  filter: blur(10px);
+  transform: translateY(12px);
 }
 
 body.te-no-blur .onb-fwd-enter-from,
 body.te-no-blur .onb-fwd-leave-to,
 body.te-no-blur .onb-back-enter-from,
 body.te-no-blur .onb-back-leave-to {
-  filter: none !important;
 }
 
 /* Short windows: the tall player/system scenes crowd the title strip — trim

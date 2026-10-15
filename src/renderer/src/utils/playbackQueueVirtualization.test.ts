@@ -137,15 +137,23 @@ test('production virtual-scroll composable reveals the current item in a 20k que
   assert.ok(virtualScroll.visibleItems.value.length <= 18)
 })
 
-test('player drawer iterates only the virtual queue window and wires current-item reveal', () => {
-  const source = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
+test('queue sidebar iterates only the virtual queue window and wires current-item reveal', () => {
+  const source = readFileSync(
+    new URL('../components/player-bar/PlaybackQueueSidebar.vue', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(source, /usePlaybackQueueVirtualScroll\(queue, queueIndex, playlistOpen\)/)
-  assert.match(source, /v-for="item in visibleQueueItems"/)
-  assert.match(source, /class="playlist-virtual-spacer"/)
-  assert.match(source, /@scroll\.passive="onQueueScroll"/)
+  assert.match(
+    source,
+    /usePlaybackQueueVirtualScroll\([\s\S]*?viewTracks[\s\S]*?rowHeight[\s\S]*?listOffset/
+  )
+  assert.match(source, /visibleItems\.value\.map/)
+  assert.match(source, /v-for="item in rows"/)
+  assert.match(source, /class="queue-spacer"/)
+  assert.match(source, /@scroll\.passive="onScroll"/)
   assert.match(source, /:key="item\.queueEntryId"/)
-  assert.match(source, /@drop="onQueueDrop\(\$event, item\.queueEntryId\)"/)
+  assert.match(source, /@drop="emit\('drop', \$event, item\.queueEntryId\)"/)
+  assert.match(source, /@click="locateCurrent"/)
   assert.doesNotMatch(source, /v-for="\(track, i\) in queue"/)
   assert.doesNotMatch(source, /Play Queue/)
 })

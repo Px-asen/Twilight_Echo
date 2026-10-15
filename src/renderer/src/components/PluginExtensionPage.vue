@@ -140,8 +140,8 @@ watch(
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
-  padding: calc(32px + 46px) clamp(24px, 5vw, 76px)
-    max(120px, calc(var(--te-playbar-bottom-clearance, 0px) + 12px));
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px)
+    var(--te-page-bottom, max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px)));
   background: var(--te-subtle-bg);
   color: var(--te-neutral-900);
   min-width: 0;
@@ -166,7 +166,7 @@ watch(
   border-radius: 8px;
   background: #111827;
   color: #fff;
-  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
+  font-size: var(--te-type-section-title);
 }
 
 .plugin-extension-heading {
@@ -176,14 +176,14 @@ watch(
 .plugin-extension-heading span {
   display: block;
   color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .plugin-extension-heading h1 {
   margin: 3px 0;
   color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
+  font-size: var(--te-type-page-title);
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -191,8 +191,8 @@ watch(
 .plugin-extension-heading p {
   margin: 0;
   color: var(--te-neutral-600);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   overflow-wrap: anywhere;
 }
 
@@ -208,8 +208,8 @@ watch(
   background: #2563eb;
   color: #fff;
   cursor: pointer;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .plugin-extension-action:disabled {
@@ -240,7 +240,7 @@ watch(
 .plugin-extension-error-state p {
   margin: 0;
   color: var(--te-neutral-600);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font-size: var(--te-type-body);
 }
 
 .error-text {
@@ -254,7 +254,7 @@ watch(
   border-radius: 8px;
   background: var(--te-card-bg);
   color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font-size: var(--te-type-body);
   cursor: pointer;
 }
 
@@ -272,7 +272,7 @@ watch(
 
 .plugin-extension-text-result pre {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.6;
   color: var(--te-neutral-900);
   white-space: pre-wrap;
@@ -290,21 +290,21 @@ watch(
 
 .plugin-extension-kicker {
   color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 900;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .plugin-extension-card h2 {
   margin: 0;
   color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  font-size: var(--te-type-headline);
 }
 
 .plugin-extension-card p {
   margin: 0;
   color: var(--te-neutral-600);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   line-height: 1.5;
 }
 
@@ -317,14 +317,21 @@ watch(
   border-radius: 7px;
   background: #2563eb;
   color: #fff;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   cursor: pointer;
   width: fit-content;
 }
 
 /* Responsive fixes selected from PR #115; desktop styling stays in the rules above. */
 @media (max-width: 620px) {
+  .plugin-extension-page {
+    overflow-y: auto;
+  }
+  .plugin-extension-body {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
   .plugin-extension-header {
     grid-template-columns: 54px minmax(0, 1fr);
     gap: 12px;

@@ -48,3 +48,15 @@ test('combines type and author filters without hiding plugins with multiple type
   )
   assert.deepEqual(searchPluginMarket(index, 'radio', 'provider', 'Alice'), [])
 })
+
+test('classifies by an exact publisher tag and combines it with search and author', () => {
+  const index = createPluginMarketIndex([
+    ...entries,
+    { ...entries[0], id: 'com.alice.other', tags: [' Karaoke ', 'karaoke', '', 'karaoke-extra'] }
+  ])
+  assert.deepEqual(index.tags, ['community', 'karaoke', 'karaoke-extra', 'lyrics', 'streaming'])
+  assert.equal(searchPluginMarket(index, '', '', '', 'KARAOKE').length, 2)
+  assert.deepEqual(searchPluginMarket(index, '同步', 'tool', 'Alice', 'lyrics'), [entries[0]])
+  assert.deepEqual(searchPluginMarket(index, '', '', 'Bob', 'karaoke'), [])
+  assert.deepEqual(searchPluginMarket(index, '', '', '', 'missing'), [])
+})

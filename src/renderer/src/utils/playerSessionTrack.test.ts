@@ -45,6 +45,17 @@ function makeTrack(partial: Partial<Track> = {}): Track {
   }
 }
 
+test('restart snapshots retain collection source and album identity without sharing mutable origin objects', () => {
+  const origin = { kind: 'album' as const, scope: 'local' as const, id: 'album-1', name: 'Album' }
+  const track = makeTrack({ queuePlaybackOrigin: origin, albumId: 'album-1', albumArtist: 'Owner' })
+  for (const clone of [cloneTrackForPlaybackSession(track), cloneTrackForPlaybackQueue(track)]) {
+    assert.deepEqual(clone.queuePlaybackOrigin, origin)
+    assert.notEqual(clone.queuePlaybackOrigin, origin)
+    assert.equal(clone.albumId, 'album-1')
+    assert.equal(clone.albumArtist, 'Owner')
+  }
+})
+
 test('cloneTrackForPlaybackSession strips lyrics and transient fields but preserves core fields', () => {
   const cueRange = { startSeconds: 10, endSeconds: 20, pregapSeconds: 0 }
   const track = makeTrack({ cueRange, streamUrl: 'https://example.test/audio.flac' })

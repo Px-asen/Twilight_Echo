@@ -50,7 +50,10 @@
 
 ## 界面设计
 
-- [Apple Music Inspired HiFi Player 设计系统](./apple-music-inspired-hifi-player-design-system.md)
+- [Twilight Echo 界面语言](./interface-language.md)
+- [页面文字规范](./ui-typography.md)
+- [材质契约](./material-contract.md)
+- [交互动效规范](./ui-motion.md)
 - [界面材质语言](./material-language.md)
 - [控件样式与 Token 契约](./ui-style-unification.md)
 

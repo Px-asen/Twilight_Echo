@@ -41,6 +41,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
         </div>
         <select
           class="preview-select wide"
+          aria-label="歌词字体"
           :value="settings.lyricsAppearance.fontFamily"
           @change="
             updateLyricsAppearance(

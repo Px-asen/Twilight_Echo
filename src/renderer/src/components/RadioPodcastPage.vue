@@ -7,6 +7,7 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { isInsecureHttpUrl } from '../../../shared/radioStations.ts'
 import type { PodcastSubscription } from '../../../shared/podcastSubscriptions.ts'
 import { useAppNoticeStore } from '../stores/useAppNoticeStore'
+import { useEscapeToClose } from '../app/useDismissLayer'
 
 const radio = useRadioStore()
 const podcast = usePodcastStore()
@@ -15,6 +16,23 @@ const { pushNotice } = useAppNoticeStore()
 const removingSubscriptions = ref(new Set<string>())
 
 const tab = ref<'radio' | 'podcast'>('radio')
+const radioTool = ref<'add' | 'import' | 'discover' | null>(null)
+const subscribeOpen = ref(false)
+useEscapeToClose(
+  () => (tab.value === 'radio' ? radioTool.value !== null : subscribeOpen.value),
+  () => {
+    if (tab.value === 'radio') closeRadioTool()
+    else {
+      document.getElementById('podcast-tool-subscribe')?.focus()
+      subscribeOpen.value = false
+    }
+  }
+)
+function closeRadioTool(): void {
+  const previous = radioTool.value
+  document.getElementById('radio-tool-' + previous)?.focus()
+  radioTool.value = null
+}
 const stationName = ref('')
 const stationUrl = ref('')
 const allowHttp = ref(false)
@@ -292,7 +310,6 @@ function formatDuration(seconds: number): string {
   <div class="radio-podcast-page">
     <header class="page-header">
       <div class="page-heading">
-        <span class="page-kicker">ONLINE LISTENING</span>
         <h1>电台与播客</h1>
       </div>
       <div class="tabs" role="tablist" aria-label="在线音频类型">
@@ -321,9 +338,44 @@ function formatDuration(seconds: number): string {
 
     <p v-if="pageError" class="page-error" role="alert">{{ pageError }}</p>
 
-    <section v-if="tab === 'radio'" class="radio-workspace">
-      <aside class="radio-tools" aria-label="电台工具">
-        <section class="tool-card">
+    <div v-if="tab === 'radio'" class="listening-tools" role="group" aria-label="电台操作">
+      <button
+        v-for="tool in [
+          { id: 'add', label: '添加电台' },
+          { id: 'import', label: '导入列表' },
+          { id: 'discover', label: '发现电台' }
+        ] as const"
+        :key="tool.id"
+        :id="'radio-tool-' + tool.id"
+        type="button"
+        :aria-expanded="radioTool === tool.id"
+        aria-controls="radio-tools-panel"
+        @click="radioTool = radioTool === tool.id ? null : tool.id"
+      >
+        {{ tool.label }}
+      </button>
+    </div>
+    <div v-else class="listening-tools" role="group" aria-label="播客操作">
+      <button
+        id="podcast-tool-subscribe"
+        type="button"
+        :aria-expanded="subscribeOpen"
+        aria-controls="podcast-subscribe-panel"
+        @click="subscribeOpen = !subscribeOpen"
+      >
+        订阅播客
+      </button>
+      <button
+        type="button"
+        :disabled="formBusy || podcast.busy.value"
+        @click="runFormAction(() => podcast.refreshAll())"
+      >
+        刷新全部
+      </button>
+    </div>
+    <section v-if="tab === 'radio'" class="radio-workspace" :class="{ 'has-tools': radioTool }">
+      <aside v-show="radioTool" id="radio-tools-panel" class="radio-tools" aria-label="电台工具">
+        <section v-show="radioTool === 'add'" class="tool-card">
           <div class="card-heading">
             <span class="card-icon"><i class="pi pi-plus"></i></span>
             <div>
@@ -362,7 +414,7 @@ function formatDuration(seconds: number): string {
           </button>
         </section>
 
-        <section class="tool-card tool-card-muted">
+        <section v-show="radioTool === 'import'" class="tool-card tool-card-muted">
           <div class="card-heading">
             <span class="card-icon"><i class="pi pi-upload"></i></span>
             <div>
@@ -370,6 +422,9 @@ function formatDuration(seconds: number): string {
               <p>粘贴 M3U 或 PLS 内容，批量导入电台。</p>
             </div>
           </div>
+          <label class="checkbox"
+            ><input v-model="allowHttp" type="checkbox" /><span>允许 HTTP 流地址</span></label
+          >
           <textarea
             v-model="playlistText"
             rows="4"
@@ -384,7 +439,7 @@ function formatDuration(seconds: number): string {
           </button>
         </section>
 
-        <section class="tool-card discovery-card">
+        <section v-show="radioTool === 'discover'" class="tool-card discovery-card">
           <div class="card-heading">
             <span class="card-icon"><i class="pi pi-search"></i></span>
             <div>
@@ -464,13 +519,14 @@ function formatDuration(seconds: number): string {
         <div v-else class="collection-empty">
           <span class="empty-icon"><i class="pi pi-broadcast"></i></span>
           <h3>还没有收藏的电台</h3>
-          <p>添加或导入电台。</p>
+          <p>收藏喜欢的电台，随时回来收听。</p>
+          <button type="button" class="primary" @click="radioTool = 'discover'">发现电台</button>
         </div>
       </section>
     </section>
 
     <section v-else class="podcast-workspace">
-      <section class="podcast-subscribe-card">
+      <section v-show="subscribeOpen" id="podcast-subscribe-panel" class="podcast-subscribe-card">
         <div class="card-heading">
           <span class="card-icon"><i class="pi pi-rss"></i></span>
           <div>
@@ -492,13 +548,6 @@ function formatDuration(seconds: number): string {
             @click="subscribeFeed"
           >
             订阅
-          </button>
-          <button
-            type="button"
-            :disabled="formBusy || podcast.busy.value"
-            @click="runFormAction(() => podcast.refreshAll())"
-          >
-            刷新全部
           </button>
         </div>
       </section>
@@ -601,8 +650,8 @@ function formatDuration(seconds: number): string {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 52px clamp(24px, 5vw, 72px)
-    max(132px, calc(var(--te-playbar-bottom-clearance, 0px) + 12px));
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px)
+    var(--te-page-bottom, max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px)));
   color: var(--te-settings-text, #0f172a);
   scrollbar-width: thin;
   scrollbar-color: var(--te-scrollbar-thumb) transparent;
@@ -656,7 +705,7 @@ function formatDuration(seconds: number): string {
   color: inherit;
   cursor: pointer;
   font: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 650;
   transition:
     border-color 0.18s ease,
@@ -679,14 +728,14 @@ button:disabled {
 .section-kicker {
   display: block;
   color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   letter-spacing: 0.14em;
   line-height: 1.2;
 }
 .page-heading h1 {
   margin: 5px 0 4px;
-  font-size: clamp(25px, 3vw, 34px);
+  font-size: var(--te-type-page-title);
   letter-spacing: -0.045em;
   line-height: 1.04;
 }
@@ -696,7 +745,7 @@ button:disabled {
 .episode-empty p {
   margin: 0;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.55;
 }
 
@@ -718,7 +767,7 @@ button:disabled {
 button.primary {
   border-color: transparent;
   background: var(--te-primary-500);
-  color: var(--te-primary-on-primary, #fff);
+  color: var(--te-control-on-accent);
   box-shadow: 0 7px 18px color-mix(in srgb, var(--te-primary-500) 20%, transparent);
 }
 
@@ -729,7 +778,7 @@ button.primary {
   border-radius: 12px;
   background: var(--te-danger-soft-bg);
   color: var(--te-danger-soft-fg);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 600;
 }
 
@@ -778,7 +827,7 @@ button.primary {
   line-height: 1.18;
 }
 .card-heading h2 {
-  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
+  font-size: var(--te-type-body);
 }
 .card-icon,
 .station-icon,
@@ -797,8 +846,8 @@ button.primary {
   display: grid;
   gap: 6px;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
 }
 .tool-card label.checkbox {
   display: flex;
@@ -828,8 +877,10 @@ button.primary {
 .tool-card input:focus,
 .tool-card textarea:focus,
 .podcast-subscribe-form input:focus {
-  border-color: color-mix(in srgb, var(--te-primary-500) 58%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  border-color: var(--te-control-focus-color);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 .wide-action {
   width: 100%;
@@ -867,7 +918,7 @@ button.primary {
 .subscription-list strong,
 .episode-list strong {
   display: block;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   line-height: 1.35;
 }
 .directory-results small,
@@ -878,12 +929,12 @@ button.primary {
   gap: 5px 8px;
   margin-top: 3px;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 .directory-results button {
   min-height: 30px;
   padding-inline: 9px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
 }
 
 .station-collection {
@@ -903,7 +954,7 @@ button.primary {
 }
 .collection-heading h2 {
   margin-top: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
+  font-size: var(--te-type-section-title);
 }
 .collection-count,
 .library-heading > span {
@@ -912,7 +963,7 @@ button.primary {
   padding: 6px 9px;
   background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 750;
 }
 .station-grid {
@@ -956,7 +1007,7 @@ button.primary {
   overflow: hidden;
   margin-top: 4px;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1009,7 +1060,7 @@ button.primary {
 .collection-empty h3,
 .episode-empty h2 {
   margin-bottom: 6px;
-  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  font-size: var(--te-type-headline);
 }
 
 .podcast-workspace {
@@ -1051,7 +1102,7 @@ button.primary {
 }
 .library-heading h2 {
   margin-top: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  font-size: var(--te-type-headline);
 }
 .subscription-list li {
   display: flex;
@@ -1094,11 +1145,11 @@ button.primary {
 .subscription-list .linkish {
   min-height: 28px;
   padding-inline: 8px;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
 }
 .empty {
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
 }
 .episode-panel {
   padding: clamp(18px, 3vw, 28px);
@@ -1109,12 +1160,12 @@ button.primary {
 }
 .episode-header h2 {
   margin-top: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 22 / 14);
+  font-size: var(--te-type-section-title);
 }
 .episode-header p {
   margin: 4px 0 0;
   color: var(--te-settings-text-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
 }
 .episode-list li {
   display: grid;
@@ -1174,7 +1225,7 @@ button.primary {
 
 @media (max-width: 680px) {
   .radio-podcast-page {
-    padding: 38px 16px 120px;
+    padding: var(--te-page-top) var(--te-page-inset) var(--te-page-bottom);
   }
   .page-header {
     gap: 14px;
@@ -1281,7 +1332,46 @@ button.primary {
 
 @media (max-width: 900px) {
   .radio-podcast-page {
-    padding-bottom: max(116px, calc(var(--te-playbar-bottom-clearance, 0px) + 16px));
+    padding-bottom: var(
+      --te-page-bottom,
+      max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px))
+    );
   }
+}
+
+.listening-tools {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.listening-tools button,
+.collection-empty button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  background: var(--te-subtle-bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.listening-tools button[aria-expanded='true'] {
+  background: var(--te-active-bg);
+}
+.listening-tools button:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+}
+.radio-workspace:not(.has-tools) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.radio-workspace:not(.has-tools) .station-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+}
+.collection-empty button {
+  margin-top: 18px;
 }
 </style>

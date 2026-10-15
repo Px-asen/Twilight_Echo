@@ -81,7 +81,7 @@ function setCardField<K extends keyof CardAppearanceTheme>(
   >
     <span class="setting-copy">
       <strong>卡片细节</strong>
-      <span>调节卡片模糊、颜色、圆角、阴影和悬停反馈。</span>
+      <span>调节卡片模糊、颜色、阴影和悬停反馈。</span>
     </span>
     <i class="pi pi-chevron-down"></i>
   </button>
@@ -275,32 +275,6 @@ function setCardField<K extends keyof CardAppearanceTheme>(
               @change="setCardField('borderWidth', $event)"
             />
           </div>
-        </div>
-      </div>
-      <hr />
-      <div class="setting-item">
-        <div class="setting-copy">
-          <strong>卡片圆角半径</strong>
-          <span>控制卡片边角的圆滑程度。</span>
-        </div>
-        <div class="range-pill">
-          <span>圆角</span>
-          <input
-            class="range-input"
-            type="range"
-            min="0"
-            max="24"
-            :value="settings.cardAppearance[cardAppearanceTab].borderRadius"
-            @input="setCardField('borderRadius', Number(($event.target as HTMLInputElement).value))"
-          />
-          <EditableRangeValue
-            :value="settings.cardAppearance[cardAppearanceTab].borderRadius"
-            :min="0"
-            :max="24"
-            suffix="px"
-            aria-label="编辑卡片圆角半径"
-            @change="setCardField('borderRadius', $event)"
-          />
         </div>
       </div>
       <hr />

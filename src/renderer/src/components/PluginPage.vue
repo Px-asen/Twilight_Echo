@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import PuzzleIcon from './icons/PuzzleIcon.vue'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import {
   pluginIndexLoadedFromLabel,
@@ -12,19 +11,27 @@ import {
   type PluginTrustRefreshController
 } from '@renderer/utils/pluginTrustRefresh'
 import { createPluginMarketIndex, searchPluginMarket } from '@renderer/utils/pluginMarketSearch'
+import { usePageDock } from '../app/pageDock'
+import ThemeIcon from './ThemeIcon.vue'
+import AppBackgroundLayer from './AppBackgroundLayer.vue'
+import type { ThemeIconSlot } from '../../../shared/theme.ts'
 
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
 type TwilightPluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.getIndexStatus>>
 
-const activeTab = ref('installed')
+const props = defineProps<{ initialTab?: 'installed' | 'discover' }>()
+const activeTab = ref<'installed' | 'discover' | 'updates'>(props.initialTab ?? 'installed')
 const emit = defineEmits<{ openThemeWorkshop: [] }>()
 const { settings, updateSettings } = useSettingsStore()
 // 开发者模式是持久化设置：这里的开关与「设置 → 常规 → 开发者选项」是同一个值。
 const devMode = computed(() => settings.value.developerMode === true)
 const searchText = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
+const marketFiltersRef = ref<HTMLDetailsElement | null>(null)
 const selectedType = ref('')
 const selectedAuthor = ref('')
+const selectedTag = ref('')
 const visibleCount = ref(40)
 const marketTypes = [
   { value: '', label: '全部类型' },
@@ -32,7 +39,7 @@ const marketTypes = [
   { value: 'tool', label: '工具' },
   { value: 'ui', label: '界面' },
   { value: 'theme', label: '主题' },
-  { value: 'dsp', label: 'DSP' }
+  { value: 'dsp', label: '音效' }
 ]
 
 const installedPlugins = ref<TwilightPluginDescriptor[]>([])
@@ -42,39 +49,48 @@ const loading = ref(false)
 const errorMsg = ref('')
 const warningMsg = ref('')
 const busyIds = ref(new Set<string>())
+const localInstallKind = ref<'package' | 'directory' | null>(null)
+const changingDevMode = ref(false)
+const updatingAll = ref(false)
 const trustEvaluationTimeMs = ref(Date.now())
 let trustRefreshController: PluginTrustRefreshController | null = null
 let indexRequestGeneration = 0
 
-function switchTab(tabId: string) {
+function switchTab(tabId: 'installed' | 'discover' | 'updates') {
   activeTab.value = tabId
+  if (marketFiltersRef.value) marketFiltersRef.value.open = false
 }
+usePageDock('plugins', () => [
+  {
+    id: 'refresh-plugins',
+    label: loading.value ? '刷新中…' : '刷新插件',
+    icon: 'navigation.refresh',
+    disabled: loading.value || !!localInstallKind.value || updatingAll.value,
+    run: () => (activeTab.value === 'discover' ? refreshMarket() : loadAll())
+  }
+])
 
 /* ---------- helpers ---------- */
 
-function getIconInfo(id: string, type: string[]): { cls: string; icon: string; style?: string } {
-  if (id.includes('ncm')) return { cls: 'ncm', icon: 'pi pi-cloud' }
-  if (type.includes('provider')) return { cls: 'provider', icon: 'pi pi-music' }
-  if (type.includes('dsp')) return { cls: 'dsp', icon: 'pi pi-wave-pulse' }
-  return {
-    cls: '',
-    icon: 'pi pi-puzzle',
-    style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;'
-  }
+function getIconInfo(id: string, type: string[]): { cls: string; slot: ThemeIconSlot } {
+  if (id.includes('ncm')) return { cls: 'ncm', slot: 'navigation.cloud' }
+  if (type.includes('provider')) return { cls: 'provider', slot: 'navigation.streaming' }
+  if (type.includes('theme')) return { cls: 'theme', slot: 'navigation.appearance' }
+  if (type.includes('dsp')) return { cls: 'dsp', slot: 'library.empty' }
+  return { cls: 'tool', slot: 'navigation.plugin' }
 }
 
 function getTags(type: string[]): Array<{ label: string; cls: string; style?: string }> {
   const tags: Array<{ label: string; cls: string; style?: string }> = []
   for (const t of type) {
-    if (t === 'provider') tags.push({ label: 'PROVIDER', cls: 'provider' })
-    else if (t === 'ui') tags.push({ label: 'UI', cls: 'ui' })
-    else if (t === 'dsp') tags.push({ label: 'DSP NATIVE', cls: 'dsp' })
-    else if (t === 'tool') tags.push({ label: 'TOOL', cls: 'tool' })
+    if (t === 'provider') tags.push({ label: '音源', cls: 'provider' })
+    else if (t === 'ui') tags.push({ label: '界面', cls: 'ui' })
+    else if (t === 'dsp') tags.push({ label: '音效', cls: 'dsp' })
+    else if (t === 'tool') tags.push({ label: '工具', cls: 'tool' })
     else if (t === 'theme')
       tags.push({
-        label: 'THEME',
-        cls: '',
-        style: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;'
+        label: '主题',
+        cls: 'theme'
       })
   }
   return tags
@@ -85,7 +101,7 @@ function getTags(type: string[]): Array<{ label: string; cls: string; style?: st
 const filteredInstalled = computed(() => {
   const list = installedPlugins.value
   if (!searchText.value.trim()) return list
-  const q = searchText.value.toLowerCase()
+  const q = searchText.value.trim().toLocaleLowerCase()
   return list.filter(
     (p) =>
       p.name.toLowerCase().includes(q) ||
@@ -100,17 +116,75 @@ const marketIndex = computed(() =>
   )
 )
 const filteredIndex = computed(() =>
-  searchPluginMarket(marketIndex.value, searchText.value, selectedType.value, selectedAuthor.value)
+  searchPluginMarket(
+    marketIndex.value,
+    searchText.value,
+    selectedType.value,
+    selectedAuthor.value,
+    selectedTag.value
+  )
 )
 const visibleIndex = computed(() => filteredIndex.value.slice(0, visibleCount.value))
 const marketAuthors = computed(() => marketIndex.value.authors)
+const marketClassifications = marketTypes.map((item) => ({
+  key: 'type:' + item.value,
+  label: item.value ? item.label : '全部',
+  type: item.value
+}))
+const marketFilterCount = computed(
+  () => Number(Boolean(selectedAuthor.value)) + Number(Boolean(selectedTag.value))
+)
+function selectClassification(item: { type: string }): void {
+  selectedType.value = item.type
+}
 
-watch([searchText, selectedType, selectedAuthor, indexEntries], () => {
+function closeMarketFilters(event: KeyboardEvent): void {
+  const details = event.currentTarget as HTMLDetailsElement
+  details.open = false
+  details.querySelector('summary')?.focus()
+}
+
+function closeMarketFiltersOnPointer(event: PointerEvent): void {
+  const details = marketFiltersRef.value
+  if (details?.open && event.target instanceof Node && !details.contains(event.target)) {
+    details.open = false
+  }
+}
+
+function clearSearch(): void {
+  searchText.value = ''
+  searchInput.value?.focus()
+}
+
+function clearMarketFilters(): void {
+  selectedTag.value = ''
+  selectedAuthor.value = ''
+  const details = marketFiltersRef.value
+  if (details?.contains(document.activeElement)) details.querySelector('summary')?.focus()
+}
+
+function resetMarketSearch(): void {
+  selectedType.value = ''
+  clearMarketFilters()
+  clearSearch()
+}
+
+watch([searchText, selectedType, selectedAuthor, selectedTag, indexEntries], () => {
   visibleCount.value = 40
 })
 
 const updateEntries = computed(() => {
   return indexEntries.value.filter((e) => e.installState === 'update-available')
+})
+const filteredUpdates = computed(() => {
+  const query = searchText.value.trim().toLocaleLowerCase()
+  return updateEntries.value.filter(
+    (entry) =>
+      !query ||
+      [entry.name, entry.author, entry.id, entry.description].some((text) =>
+        text.toLocaleLowerCase().includes(query)
+      )
+  )
 })
 
 const marketRepoUrl = 'https://github.com/Px-asen/Twilight-Echo-plugins'
@@ -216,13 +290,15 @@ function formatPluginInstallError(error: unknown): string {
     return (
       `安装失败：无法下载插件包（${message}）。` +
       '离线发现快照只能浏览元数据；.tep 仍需从网络获取。' +
-      '请切换到「已安装」→「从本地安装包 (.tep)」，或配置可访问 GitHub raw 的代理/镜像后重试。'
+      '请切换到「已安装」→「安装本地插件」，或配置可访问 GitHub raw 的代理/镜像后重试。'
     )
   }
   return `安装失败：${message}`
 }
 
 async function installFromLocal(kind: 'package' | 'directory' = 'package') {
+  if (localInstallKind.value) return
+  localInstallKind.value = kind
   errorMsg.value = ''
   warningMsg.value = ''
   try {
@@ -233,15 +309,21 @@ async function installFromLocal(kind: 'package' | 'directory' = 'package') {
     }
   } catch (e) {
     errorMsg.value = formatPluginInstallError(e)
+  } finally {
+    localInstallKind.value = null
   }
 }
 
 async function toggleDevMode() {
+  if (changingDevMode.value) return
+  changingDevMode.value = true
   errorMsg.value = ''
   try {
     await updateSettings({ developerMode: !devMode.value })
   } catch (e) {
     errorMsg.value = `切换开发者模式失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    changingDevMode.value = false
   }
 }
 
@@ -262,8 +344,14 @@ async function installFromIndex(entry: TwilightPluginIndexEntry) {
 }
 
 async function updateAll() {
-  for (const entry of updateEntries.value) {
-    await installFromIndex(entry)
+  if (updatingAll.value) return
+  updatingAll.value = true
+  try {
+    for (const entry of updateEntries.value) {
+      await installFromIndex(entry)
+    }
+  } finally {
+    updatingAll.value = false
   }
 }
 
@@ -307,6 +395,7 @@ onMounted(() => {
   })
   window.addEventListener('focus', refreshTrustOnResume)
   document.addEventListener('visibilitychange', handleTrustVisibilityChange)
+  document.addEventListener('pointerdown', closeMarketFiltersOnPointer)
   void loadAll()
   unsubChanged = window.api.plugins.onChanged(() => {
     void refreshInstalled()
@@ -318,243 +407,257 @@ onUnmounted(() => {
   unsubChanged?.()
   window.removeEventListener('focus', refreshTrustOnResume)
   document.removeEventListener('visibilitychange', handleTrustVisibilityChange)
+  document.removeEventListener('pointerdown', closeMarketFiltersOnPointer)
   trustRefreshController?.stop()
   trustRefreshController = null
 })
 </script>
 
 <template>
-  <div class="plugin-page">
+  <div class="plugin-page" role="region" aria-labelledby="plugin-page-title">
+    <AppBackgroundLayer page="settings" embedded reading />
     <div class="plugin-window">
-      <!-- Sidebar -->
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <h1><PuzzleIcon /> 扩展中心</h1>
+      <header class="plugin-page-header">
+        <div class="plugin-heading">
+          <h1 id="plugin-page-title">插件市场</h1>
         </div>
-        <nav class="nav-menu">
-          <div
-            class="nav-item"
-            data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'installed'"
-            :class="{ active: activeTab === 'installed' }"
-            @click="switchTab('installed')"
-            @keydown.enter.prevent="switchTab('installed')"
-            @keydown.space.prevent="switchTab('installed')"
-          >
-            <i class="pi pi-check-circle"></i>
-            <span>已安装</span>
-          </div>
-          <div
-            class="nav-item"
-            data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'discover'"
-            :class="{ active: activeTab === 'discover' }"
-            @click="switchTab('discover')"
-            @keydown.enter.prevent="switchTab('discover')"
-            @keydown.space.prevent="switchTab('discover')"
-          >
-            <i class="pi pi-compass"></i>
-            <span>发现市场</span>
-          </div>
-          <div
-            class="nav-item"
-            data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'updates'"
-            :class="{ active: activeTab === 'updates' }"
-            @click="switchTab('updates')"
-            @keydown.enter.prevent="switchTab('updates')"
-            @keydown.space.prevent="switchTab('updates')"
-          >
-            <i class="pi pi-cloud-download"></i>
-            <span
-              >更新
-              <span
-                v-if="updateEntries.length > 0"
-                style="
-                  background: #ef4444;
-                  color: #fff;
-                  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-                  padding: 2px 6px;
-                  border-radius: 100px;
-                  margin-left: 4px;
-                "
-                >{{ updateEntries.length }}</span
-              ></span
+        <div class="plugin-page-controls">
+          <nav class="nav-menu" aria-label="插件管理视图">
+            <button
+              type="button"
+              class="nav-item"
+              :aria-pressed="activeTab === 'installed'"
+              :class="{ active: activeTab === 'installed' }"
+              @click="switchTab('installed')"
             >
-          </div>
-        </nav>
+              <span>已安装</span>
+            </button>
+            <button
+              type="button"
+              class="nav-item"
+              :aria-pressed="activeTab === 'discover'"
+              :class="{ active: activeTab === 'discover' }"
+              @click="switchTab('discover')"
+            >
+              <span>发现</span>
+            </button>
+            <button
+              type="button"
+              class="nav-item"
+              :aria-pressed="activeTab === 'updates'"
+              :class="{ active: activeTab === 'updates' }"
+              @click="switchTab('updates')"
+            >
+              <span
+                >更新
+                <span v-if="updateEntries.length > 0" class="update-count">{{
+                  updateEntries.length
+                }}</span></span
+              >
+            </button>
+          </nav>
 
-        <div class="sidebar-footer">
-          <div class="dev-mode-toggle">
-            <span>开发者模式</span>
-            <div
+          <div v-if="activeTab === 'installed'" class="dev-mode-toggle">
+            <span>{{ changingDevMode ? '正在切换…' : '开发者模式' }}</span>
+            <button
+              type="button"
               class="switch"
-              data-te-interactive
               role="switch"
-              tabindex="0"
               aria-label="开发者模式"
               :aria-checked="devMode"
+              :aria-busy="changingDevMode"
+              :disabled="changingDevMode || !!localInstallKind"
               :class="{ on: devMode }"
               @click="toggleDevMode"
-              @keydown.enter.prevent="toggleDevMode"
-              @keydown.space.prevent="toggleDevMode"
-            ></div>
+            ></button>
           </div>
         </div>
-      </aside>
+      </header>
 
       <!-- Main Content -->
-      <main class="main-content">
+      <main class="plugin-main">
         <!-- Topbar -->
         <header class="topbar">
-          <div class="search-box">
-            <i class="pi pi-search"></i>
+          <div class="search-box" role="search" aria-label="插件搜索">
+            <i class="pi pi-search" aria-hidden="true"></i>
             <input
-              type="text"
+              ref="searchInput"
+              type="search"
+              aria-label="搜索插件"
               v-model="searchText"
               :placeholder="
                 activeTab === 'installed'
-                  ? '搜索已安装插件名称或作者...'
+                  ? '搜索已安装插件'
                   : activeTab === 'discover'
-                    ? '搜索名称、开发者、描述或标签...'
-                    : '在可用更新中搜索...'
+                    ? '搜索插件'
+                    : '搜索更新'
               "
             />
+            <button
+              v-if="searchText"
+              type="button"
+              class="search-clear"
+              aria-label="清除插件搜索"
+              @click="clearSearch"
+            >
+              <i class="pi pi-times" aria-hidden="true"></i>
+            </button>
           </div>
+          <details
+            v-if="activeTab === 'discover'"
+            ref="marketFiltersRef"
+            class="market-filters"
+            @keydown.esc.stop.prevent="closeMarketFilters"
+          >
+            <summary>
+              筛选<span v-if="marketFilterCount">（{{ marketFilterCount }}）</span>
+            </summary>
+            <div class="market-filter-content" data-te-material="popover">
+              <label>
+                <span>标签</span>
+                <select v-model="selectedTag" aria-label="插件标签">
+                  <option value="">全部标签</option>
+                  <option v-for="tag in marketIndex.tags" :key="tag" :value="tag">{{ tag }}</option>
+                </select>
+              </label>
+              <label>
+                <span>开发者</span>
+                <select v-model="selectedAuthor" aria-label="插件开发者">
+                  <option value="">全部开发者</option>
+                  <option v-for="author in marketAuthors" :key="author" :value="author">
+                    {{ author }}
+                  </option>
+                </select>
+              </label>
+              <button
+                v-if="marketFilterCount"
+                type="button"
+                class="market-filter-reset"
+                @click="clearMarketFilters"
+              >
+                清除筛选
+              </button>
+            </div>
+          </details>
           <div class="top-actions">
             <button
               v-if="activeTab === 'installed'"
+              type="button"
               class="btn btn-outline"
+              :disabled="loading || !!localInstallKind || updatingAll"
+              :aria-busy="localInstallKind === 'package'"
               @click="installFromLocal('package')"
             >
-              <i class="pi pi-folder-open"></i> 从本地安装包 (.tep)
+              <i class="pi pi-folder-open" aria-hidden="true"></i>
+              {{ localInstallKind === 'package' ? '安装中…' : '安装本地插件' }}
             </button>
             <button
               v-if="activeTab === 'installed' && devMode"
+              type="button"
               class="btn btn-outline"
               title="选择包含 plugin.json 的未打包插件目录（开发者模式）"
+              :disabled="loading || !!localInstallKind || updatingAll"
+              :aria-busy="localInstallKind === 'directory'"
               @click="installFromLocal('directory')"
             >
-              <i class="pi pi-folder"></i> 从文件夹安装（开发）
-            </button>
-            <button
-              v-if="activeTab === 'discover'"
-              class="btn btn-outline"
-              @click="refreshMarket"
-              :disabled="loading"
-            >
-              <i class="pi pi-refresh"></i> {{ loading ? '刷新中...' : '刷新市场' }}
+              <i class="pi pi-folder" aria-hidden="true"></i>
+              {{ localInstallKind === 'directory' ? '安装中…' : '从文件夹安装（开发）' }}
             </button>
           </div>
         </header>
 
-        <!-- Error / warning banners -->
         <div
-          v-if="errorMsg"
-          style="
-            margin: 0 32px 16px;
-            padding: 12px 16px;
-            background: var(--te-danger-soft-bg);
-            border: 1px solid var(--te-danger-soft-fg);
-            border-radius: 12px;
-            color: var(--te-danger-soft-fg);
-            font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          "
+          v-if="activeTab === 'discover'"
+          class="market-classifications"
+          role="group"
+          aria-label="插件类型"
         >
-          <i class="pi pi-exclamation-triangle"></i>
-          {{ errorMsg }}
+          <button
+            v-for="item in marketClassifications"
+            :key="item.key"
+            type="button"
+            class="market-classification"
+            :aria-pressed="selectedType === item.type"
+            @click="selectClassification(item)"
+          >
+            {{ item.label }}
+          </button>
         </div>
-        <div
-          v-if="warningMsg"
-          style="
-            margin: 0 32px 16px;
-            padding: 12px 16px;
-            background: var(--te-warning-soft-bg, #fff7ed);
-            border: 1px solid var(--te-warning-soft-fg, #c2410c);
-            border-radius: 12px;
-            color: var(--te-warning-soft-fg, #c2410c);
-            font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          "
-        >
-          <i class="pi pi-info-circle"></i>
+
+        <!-- Error / warning banners -->
+        <div v-if="errorMsg" class="page-notice page-notice--error" role="alert">
+          <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+          <span>{{ errorMsg }}</span>
+          <button
+            type="button"
+            class="btn btn-outline"
+            :disabled="loading"
+            @click="activeTab === 'discover' ? refreshMarket() : loadAll()"
+          >
+            重试
+          </button>
+        </div>
+        <div v-if="warningMsg" class="page-notice page-notice--warning" role="status">
+          <i class="pi pi-info-circle" aria-hidden="true"></i>
           {{ warningMsg }}
+        </div>
+        <div v-if="loading" class="page-status" role="status">
+          <i class="pi pi-spin pi-spinner" aria-hidden="true"></i> 正在加载插件…
         </div>
 
         <!-- Scroll Area: Installed -->
         <div class="scroll-area" v-if="activeTab === 'installed'">
-          <div class="page-title">
+          <h2 class="page-title">
             已安装扩展 <span class="badge">{{ filteredInstalled.length }}</span>
-          </div>
+          </h2>
 
           <!-- Empty state -->
           <div
-            v-if="filteredInstalled.length === 0"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-            "
+            v-if="!loading && !errorMsg && filteredInstalled.length === 0"
+            class="empty-state"
+            role="status"
           >
-            <i
-              class="pi pi-inbox"
-              style="
-                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
-                display: block;
-                margin-bottom: 16px;
-                opacity: 0.3;
-              "
-            ></i>
+            <i class="pi pi-inbox" aria-hidden="true"></i>
             <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
             <button
               v-if="!searchText"
               type="button"
               class="btn btn-outline"
-              style="margin-top: 16px"
               @click="switchTab('discover')"
             >
               去发现插件
             </button>
+            <button v-else type="button" class="btn btn-outline" @click="clearSearch">
+              清除搜索
+            </button>
           </div>
 
-          <div class="plugin-grid" v-else>
+          <div
+            v-if="filteredInstalled.length"
+            class="plugin-grid"
+            :style="{ '--plugin-card-count': filteredInstalled.length }"
+          >
             <div
               v-for="plugin in filteredInstalled"
               :key="plugin.id"
-              class="plugin-card"
-              :style="{ opacity: plugin.enabled ? 1 : 0.7 }"
+              class="plugin-card plugin-card--installed"
+              :aria-busy="busyIds.has(plugin.id)"
             >
-              <div v-if="plugin.builtIn" class="builtin-label">系统内置</div>
               <div class="plugin-card-header">
-                <div
-                  class="plugin-icon"
-                  :class="getIconInfo(plugin.id, plugin.type).cls"
-                  :style="getIconInfo(plugin.id, plugin.type).style"
-                >
-                  <i :class="getIconInfo(plugin.id, plugin.type).icon"></i>
+                <div class="plugin-icon" :class="getIconInfo(plugin.id, plugin.type).cls">
+                  <ThemeIcon :icon-slot="getIconInfo(plugin.id, plugin.type).slot" />
                 </div>
                 <div class="plugin-info">
                   <div class="plugin-title-row">
-                    <div class="plugin-name">{{ plugin.name }}</div>
+                    <h3 class="plugin-name" :title="plugin.name">{{ plugin.name }}</h3>
                     <div class="plugin-version">v{{ plugin.version }}</div>
                   </div>
-                  <div class="plugin-author">
-                    <i class="pi pi-user"></i>
+                  <div class="plugin-author" :title="plugin.author">
+                    <i class="pi pi-user" aria-hidden="true"></i>
                     {{ plugin.author }}
                   </div>
                   <div class="plugin-tags">
+                    <span v-if="plugin.builtIn" class="tag">内置</span>
                     <span
                       v-for="(tag, idx) in getTags(plugin.type)"
                       :key="idx"
@@ -568,57 +671,63 @@ onUnmounted(() => {
               </div>
               <div class="plugin-desc">
                 {{ plugin.description }}
-                <div
-                  v-if="plugin.error"
-                  style="
-                    margin-top: 8px;
-                    color: #ef4444;
-                    font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-                  "
-                >
+                <div v-if="plugin.error" class="plugin-error" role="alert">
                   <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
                 </div>
               </div>
               <div class="plugin-footer">
-                <div
+                <button
+                  type="button"
                   class="switch-wrap"
                   data-te-interactive
                   role="switch"
-                  tabindex="0"
                   :aria-label="`启用 ${plugin.name}`"
                   :aria-checked="isPluginRequestedEnabled(plugin)"
+                  :disabled="busyIds.has(plugin.id) || loading || updatingAll || !!localInstallKind"
                   @click="togglePlugin(plugin)"
-                  @keydown.enter.prevent="togglePlugin(plugin)"
-                  @keydown.space.prevent="togglePlugin(plugin)"
                 >
                   <div class="switch" :class="{ on: isPluginRequestedEnabled(plugin) }"></div>
                   <span class="switch-label">{{
-                    isPluginRequestedEnabled(plugin)
-                      ? plugin.status === 'failed'
-                        ? '启动失败'
-                        : '已启用'
-                      : '已停用'
+                    busyIds.has(plugin.id)
+                      ? '正在处理…'
+                      : isPluginRequestedEnabled(plugin)
+                        ? plugin.status === 'failed'
+                          ? '启动失败'
+                          : '已启用'
+                        : '已停用'
                   }}</span>
-                </div>
+                </button>
                 <div class="plugin-actions">
                   <button
                     v-if="plugin.id === 'com.twilightecho.tool.theme-workshop' && plugin.enabled"
+                    type="button"
+                    class="btn btn-outline"
                     @click="emit('openThemeWorkshop')"
                   >
                     打开工坊
                   </button>
                   <button
                     v-if="!plugin.builtIn"
+                    type="button"
                     class="icon-btn"
                     title="查看日志"
+                    :aria-label="`查看 ${plugin.name} 的日志`"
+                    :disabled="
+                      busyIds.has(plugin.id) || loading || updatingAll || !!localInstallKind
+                    "
                     @click="openLog(plugin)"
                   >
                     <i class="pi pi-align-left"></i>
                   </button>
                   <button
                     v-if="!plugin.builtIn"
+                    type="button"
                     class="icon-btn danger"
                     title="卸载"
+                    :aria-label="`卸载 ${plugin.name}`"
+                    :disabled="
+                      busyIds.has(plugin.id) || loading || updatingAll || !!localInstallKind
+                    "
                     @click="uninstallPlugin(plugin)"
                   >
                     <i class="pi pi-trash"></i>
@@ -631,222 +740,177 @@ onUnmounted(() => {
 
         <!-- Scroll Area: Discover -->
         <div class="scroll-area" v-else-if="activeTab === 'discover'">
-          <div class="discover-banner">
-            <div class="banner-text">
-              <h2>{{ indexSourceLabel }}</h2>
-              <p>
-                当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。
-              </p>
-            </div>
-            <div class="banner-art">
-              <i class="pi pi-server"></i>
-            </div>
-            <button
-              v-if="marketRepoUrl"
-              class="btn btn-outline"
-              style="
-                position: absolute;
-                right: 32px;
-                bottom: 32px;
-                background: rgba(255, 255, 255, 0.1);
-                border-color: rgba(255, 255, 255, 0.2);
-                color: #fff;
-              "
-              @click="openExternal(marketRepoUrl)"
-            >
-              浏览插件目录 <i class="pi pi-external-link"></i>
-            </button>
-          </div>
-
-          <div v-if="indexStatus" class="market-status">
-            <span><i class="pi pi-database"></i> {{ indexLoadedFromLabel }}</span>
-            <span>获取：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
-            <span>过期：{{ formatIndexTime(indexStatus.expiresAt) }}</span>
-            <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
-            <span v-if="indexStatus.expired" class="warn">索引已过期</span>
-            <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
-            <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
-            <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
-            <span class="source-url" :title="indexStatus.sourceUrl">{{
-              indexStatus.sourceUrl
-            }}</span>
-            <span
-              v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
-              class="source-url warn"
-              :title="indexStatus.configuredSourceUrl"
-            >
-              配置：{{ indexStatus.configuredSourceUrl }}
-            </span>
-          </div>
-
-          <div
-            class="page-title"
-            style="font-size: calc(var(--te-font-size-body, 14px) * 18 / 14); margin-bottom: 16px"
-          >
-            可用插件 <span class="badge">{{ filteredIndex.length }}</span>
-          </div>
-          <div class="market-filters">
-            <label>
-              <span>类型</span>
-              <select v-model="selectedType">
-                <option v-for="item in marketTypes" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
-            </label>
-            <label>
-              <span>开发者</span>
-              <select v-model="selectedAuthor">
-                <option value="">全部开发者</option>
-                <option v-for="author in marketAuthors" :key="author" :value="author">
-                  {{ author }}
-                </option>
-              </select>
-            </label>
+          <div class="catalog-toolbar">
+            <h2 class="page-title">
+              可用插件 <span class="badge">{{ filteredIndex.length }}</span>
+            </h2>
+            <details class="market-source">
+              <summary>
+                目录信息
+                <span v-if="indexStatus?.expired" class="source-state source-state--warning"
+                  >已过期</span
+                >
+                <span
+                  v-else-if="indexStatus?.trustStoreError"
+                  class="source-state source-state--warning"
+                  >签名校验不可用</span
+                >
+                <span
+                  v-else-if="indexStatus && !indexStatus.originVerified"
+                  class="source-state source-state--warning"
+                  >来源待验证</span
+                >
+                <span
+                  v-else-if="indexStatus && indexStatus.loadedFrom !== 'remote'"
+                  class="source-state"
+                  >离线缓存</span
+                >
+              </summary>
+              <div class="market-source-content">
+                <p>{{ indexSourceLabel }}</p>
+                <div v-if="indexStatus" class="market-status">
+                  <span>{{ indexLoadedFromLabel }}</span>
+                  <span>获取：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+                  <span>过期：{{ formatIndexTime(indexStatus.expiresAt) }}</span>
+                  <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+                  <span v-if="indexStatus.expired" class="warn">索引已过期</span>
+                  <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
+                  <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
+                  <span v-if="indexStatus.error" class="warn"
+                    >最近错误：{{ indexStatus.error }}</span
+                  >
+                  <span class="source-url">{{ indexStatus.sourceUrl }}</span>
+                  <span
+                    v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
+                    class="source-url warn"
+                  >
+                    配置：{{ indexStatus.configuredSourceUrl }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="plugin-repository-link"
+                  @click="openExternal(marketRepoUrl)"
+                >
+                  浏览插件目录 <i class="pi pi-external-link" aria-hidden="true"></i>
+                </button>
+              </div>
+            </details>
           </div>
 
           <!-- Empty state -->
           <div
-            v-if="filteredIndex.length === 0"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-            "
+            v-if="!loading && !errorMsg && filteredIndex.length === 0"
+            class="empty-state"
+            role="status"
           >
-            <i
-              class="pi pi-search"
-              style="
-                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
-                display: block;
-                margin-bottom: 16px;
-                opacity: 0.3;
-              "
-            ></i>
-            {{
-              searchText || selectedType || selectedAuthor
-                ? '没有匹配的插件'
-                : '插件市场暂无可用插件'
-            }}
+            <i class="pi pi-search" aria-hidden="true"></i>
+            <p>
+              {{
+                searchText || selectedType || selectedAuthor || selectedTag
+                  ? '没有匹配的插件'
+                  : '插件市场暂无可用插件'
+              }}
+            </p>
+            <button
+              v-if="searchText || selectedType || selectedAuthor || selectedTag"
+              type="button"
+              class="btn btn-outline"
+              @click="resetMarketSearch"
+            >
+              清除搜索和筛选
+            </button>
           </div>
 
-          <div class="plugin-grid" v-else>
+          <div
+            v-if="visibleIndex.length"
+            class="plugin-grid"
+            :style="{ '--plugin-card-count': visibleIndex.length }"
+          >
             <div
               v-for="entry in visibleIndex"
               :key="entry.id"
-              class="plugin-card"
-              :style="{ opacity: entry.installState === 'incompatible' ? 0.6 : 1 }"
+              class="plugin-card plugin-card--catalog"
+              :aria-busy="busyIds.has(entry.id)"
             >
               <div class="plugin-card-header">
-                <div
-                  class="plugin-icon"
-                  :class="getIconInfo(entry.id, entry.type).cls"
-                  :style="getIconInfo(entry.id, entry.type).style"
-                >
-                  <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls">
+                  <ThemeIcon :icon-slot="getIconInfo(entry.id, entry.type).slot" />
                 </div>
                 <div class="plugin-info">
                   <div class="plugin-title-row">
-                    <div class="plugin-name">{{ entry.name }}</div>
+                    <h3 class="plugin-name" :title="entry.name">{{ entry.name }}</h3>
                     <div class="plugin-version">v{{ entry.version }}</div>
                   </div>
-                  <div class="plugin-author" :title="pluginTrust(entry).detail">
-                    <i :class="pluginTrust(entry).icon"></i>
-                    {{ entry.author }}
-                  </div>
-                  <div class="plugin-tags">
-                    <span v-if="entry.tags?.includes('community')" class="tag community"
-                      >社区插件</span
-                    >
-                    <span
-                      v-for="(tag, idx) in getTags(entry.type)"
-                      :key="idx"
-                      class="tag"
-                      :class="tag.cls"
-                      :style="tag.style"
-                      >{{ tag.label }}</span
-                    >
+                  <div class="plugin-author" :title="entry.author">
+                    <span>{{
+                      getTags(entry.type)
+                        .map((tag) => tag.label)
+                        .join(' · ')
+                    }}</span>
+                    <span>{{ entry.author }}</span>
                   </div>
                 </div>
               </div>
               <div class="plugin-desc">
                 {{ entry.description }}
               </div>
-              <button
-                v-if="entry.repository"
-                class="plugin-repository-link"
-                @click="openExternal(entry.repository)"
-              >
-                开发者仓库 <i class="pi pi-external-link"></i>
-              </button>
               <div class="plugin-footer">
-                <div class="plugin-trust-stack">
-                  <div
-                    class="plugin-trust"
-                    :class="`trust-${pluginTrust(entry).tone}`"
-                    :title="pluginTrust(entry).detail"
-                  >
-                    <i :class="pluginTrust(entry).icon"></i> {{ pluginTrust(entry).label }}
-                  </div>
-                  <span
-                    class="signature-evidence"
-                    :title="entry.verification.keyFingerprintSha256 || entry.verification.reason"
-                  >
-                    签名 {{ entry.verification.signatureStatus }} · 指纹
-                    {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
-                  </span>
-                </div>
-
                 <!-- Install states -->
                 <button
                   v-if="entry.installState === 'not-installed'"
+                  type="button"
                   class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
+                  :disabled="busyIds.has(entry.id) || loading || updatingAll || !!localInstallKind"
                   @click="installFromIndex(entry)"
                 >
                   <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '安装中' : '获取' }}
+                  {{ busyIds.has(entry.id) ? '安装中…' : '安装' }}
                 </button>
-                <span
-                  v-else-if="entry.installState === 'installed'"
-                  style="
-                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-                    font-weight: 600;
-                    color: var(--te-neutral-400);
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                  "
-                >
+                <span v-else-if="entry.installState === 'installed'" class="plugin-install-state">
                   <i class="pi pi-check"></i> 已安装
                 </span>
                 <button
                   v-else-if="entry.installState === 'update-available'"
+                  type="button"
                   class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
+                  :disabled="busyIds.has(entry.id) || loading || updatingAll || !!localInstallKind"
                   @click="installFromIndex(entry)"
                 >
                   <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
+                  {{ busyIds.has(entry.id) ? '更新中…' : '更新' }}
                 </button>
                 <span
                   v-else-if="entry.installState === 'incompatible'"
-                  style="
-                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-                    font-weight: 600;
-                    color: var(--te-neutral-400);
-                  "
+                  class="plugin-install-state"
                 >
                   不兼容
                 </span>
               </div>
+              <details class="plugin-details">
+                <summary>详情</summary>
+                <div class="plugin-detail-content">
+                  <p class="plugin-full-description">{{ entry.description }}</p>
+                  <div class="plugin-trust" :class="`trust-${pluginTrust(entry).tone}`">
+                    <i :class="pluginTrust(entry).icon" aria-hidden="true"></i>
+                    {{ pluginTrust(entry).label }}
+                  </div>
+                  <p class="signature-evidence">{{ pluginTrust(entry).detail }}</p>
+                  <button
+                    v-if="entry.repository"
+                    type="button"
+                    class="plugin-repository-link"
+                    @click="openExternal(entry.repository)"
+                  >
+                    开发者仓库 <i class="pi pi-external-link" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
           <button
             v-if="visibleIndex.length < filteredIndex.length"
+            type="button"
             class="btn btn-outline market-load-more"
             @click="visibleCount += 40"
           >
@@ -856,131 +920,87 @@ onUnmounted(() => {
 
         <!-- Scroll Area: Updates -->
         <div class="scroll-area" v-else-if="activeTab === 'updates'">
-          <div class="page-title">
+          <h2 class="page-title">
             可用更新
-            <span
-              v-if="updateEntries.length > 0"
-              class="badge"
-              style="background: var(--te-danger-soft-bg); color: var(--te-danger-soft-fg)"
-              >{{ updateEntries.length }}</span
-            >
-          </div>
+            <span v-if="filteredUpdates.length > 0" class="badge">{{
+              filteredUpdates.length
+            }}</span>
+          </h2>
 
           <!-- Empty state -->
           <div
-            v-if="updateEntries.length === 0"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-            "
+            v-if="!loading && !errorMsg && filteredUpdates.length === 0"
+            class="empty-state"
+            role="status"
           >
-            <i
-              class="pi pi-check-circle"
-              style="
-                font-size: calc(var(--te-font-size-body, 14px) * 48 / 14);
-                display: block;
-                margin-bottom: 16px;
-                opacity: 0.3;
-              "
-            ></i>
-            所有插件均为最新版本
+            <i class="pi pi-check-circle" aria-hidden="true"></i>
+            <p>{{ updateEntries.length ? '没有匹配的更新' : '所有插件均为最新版本' }}</p>
+            <button v-if="searchText" type="button" class="btn btn-outline" @click="clearSearch">
+              清除搜索
+            </button>
           </div>
 
-          <template v-else>
-            <div
-              style="
-                margin-bottom: 24px;
-                padding: 16px;
-                background: rgba(99, 102, 241, 0.05);
-                border: 1px solid rgba(99, 102, 241, 0.1);
-                border-radius: 16px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-              "
-            >
-              <div
-                style="
-                  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-                  font-weight: 600;
-                  color: var(--te-primary-600);
-                "
+          <template v-if="filteredUpdates.length">
+            <div class="updates-summary">
+              <span>
+                {{ updateEntries.length }} 个插件可更新<span v-if="searchText"
+                  >，找到 {{ filteredUpdates.length }} 个</span
+                >
+              </span>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="loading || updatingAll || busyIds.size > 0 || !!localInstallKind"
+                :aria-busy="updatingAll"
+                @click="updateAll"
               >
-                有 {{ updateEntries.length }} 个插件可以更新。
-              </div>
-              <button class="btn btn-primary" @click="updateAll">全部更新</button>
+                {{ updatingAll ? '正在更新…' : '全部更新' }}
+              </button>
             </div>
 
-            <div class="plugin-grid" style="grid-template-columns: 1fr">
+            <div class="plugin-grid" :style="{ '--plugin-card-count': filteredUpdates.length }">
               <div
-                v-for="entry in updateEntries"
+                v-for="entry in filteredUpdates"
                 :key="entry.id"
-                class="plugin-card"
-                style="
-                  flex-direction: row;
-                  align-items: center;
-                  justify-content: space-between;
-                  padding: 20px;
-                "
+                class="plugin-card plugin-card--update"
+                :aria-busy="busyIds.has(entry.id)"
               >
-                <div class="plugin-card-header" style="align-items: center; margin-bottom: 0">
-                  <div
-                    class="plugin-icon"
-                    :class="getIconInfo(entry.id, entry.type).cls"
-                    :style="getIconInfo(entry.id, entry.type).style"
-                    style="
-                      width: 48px;
-                      height: 48px;
-                      font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
-                    "
-                  >
-                    <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                <div class="plugin-card-header">
+                  <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls">
+                    <ThemeIcon :icon-slot="getIconInfo(entry.id, entry.type).slot" />
                   </div>
-                  <div class="plugin-info" style="margin-left: 16px">
+                  <div class="plugin-info">
                     <div class="plugin-title-row">
-                      <div
-                        class="plugin-name"
-                        style="font-size: calc(var(--te-font-size-body, 14px) * 16 / 14)"
-                      >
+                      <h3 class="plugin-name" :title="entry.name">
                         {{ entry.name }}
-                      </div>
+                      </h3>
                     </div>
                     <div class="plugin-author">
                       {{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }}
                       <i
                         class="pi pi-arrow-right"
-                        style="
-                          font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-                          margin: 0 4px;
-                        "
+                        style="font-size: var(--te-type-caption); margin: 0 4px"
                       ></i>
-                      <span style="color: var(--te-primary-600); font-weight: 600"
-                        >v{{ entry.version }}</span
-                      >
+                      <span>v{{ entry.version }}</span>
                     </div>
                   </div>
                 </div>
-                <div
-                  style="
-                    flex: 1;
-                    margin: 0 32px;
-                    font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-                    color: var(--te-neutral-500);
-                  "
-                >
+                <div class="plugin-desc">
                   {{ entry.description }}
                 </div>
-                <button
-                  class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
-                  @click="installFromIndex(entry)"
-                >
-                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
-                </button>
+                <div class="plugin-footer">
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="
+                      busyIds.has(entry.id) || loading || updatingAll || !!localInstallKind
+                    "
+                    @click="installFromIndex(entry)"
+                  >
+                    <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                    {{ busyIds.has(entry.id) ? '更新中…' : '更新' }}
+                  </button>
+                </div>
               </div>
             </div>
           </template>
@@ -992,16 +1012,14 @@ onUnmounted(() => {
 
 <style scoped>
 .plugin-page {
-  position: fixed;
-  inset: 0;
-  /* Above the sidebar (1000) and player bar (1002); below the title bar (9999). */
-  z-index: 2000;
-  /* Render the bottom-most global background on this overlay surface. */
-  background-color: var(--te-app-bg);
-  background-image: var(--te-app-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--te-settings-text);
+  font-family: var(--te-font-sans);
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -1010,106 +1028,129 @@ onUnmounted(() => {
 .plugin-window {
   width: 100%;
   height: 100%;
-  flex: 1;
   background: transparent;
-  display: flex;
-  overflow: hidden;
-  position: relative;
-}
-
-/* Sidebar */
-.sidebar {
-  width: 240px;
-  /* Frosted surface: the bottom-most global background shows through. */
-  background: transparent;
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-right: 1px solid var(--te-border-color, #e5e7eb);
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  padding: var(--te-page-top, 32px) var(--te-page-inset, 32px) var(--te-page-bottom);
+  scroll-padding-block: 16px var(--te-page-bottom);
+  container: te-plugin-market / inline-size;
+}
+
+.plugin-page > .app-background-layer {
+  display: block;
+  z-index: 0;
+}
+
+.plugin-page-header {
   flex-shrink: 0;
 }
 
-.sidebar-header {
-  padding: 56px 24px 24px 24px;
-}
-
-.sidebar-header h1 {
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
-  font-weight: 700;
+.plugin-heading h1 {
+  font-size: var(--te-type-page-title);
+  font-weight: var(--te-type-weight-strong);
   margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-settings-text);
+  line-height: var(--te-type-line-title);
 }
 
-.sidebar-header h1 i,
-.sidebar-header h1 .puzzle-icon {
-  color: var(--te-neutral-900, #111827);
-  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
+.plugin-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  border-bottom: 1px solid var(--te-card-border);
 }
 
 .nav-menu {
-  flex: 1;
-  padding: 0 16px;
+  padding: 0;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
+  gap: 20px;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  color: var(--te-neutral-600, #4b5563);
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--te-settings-text-muted);
   cursor: pointer;
   transition:
     background-color 0.2s var(--te-ease-soft),
     color 0.2s var(--te-ease-soft);
-  font-weight: 500;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font: inherit;
+  font-weight: var(--te-type-weight-medium);
+  font-size: var(--te-type-body);
 }
 
 .nav-item i {
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
+  font-size: var(--te-type-icon);
   opacity: 0.7;
 }
 
 .nav-item:hover {
-  background: var(--te-bg-hover, #f3f4f6);
-  color: var(--te-neutral-900, #111827);
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
 }
 
 .nav-item.active {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--te-primary-600, #6366f1);
+  border-bottom-color: currentColor;
+  color: var(--te-settings-text);
+  font-weight: var(--te-type-weight-strong);
 }
 
 .nav-item.active i {
   opacity: 1;
 }
 
-.sidebar-footer {
-  padding: 20px 24px;
-  border-top: 1px solid var(--te-border-color, #e5e7eb);
-}
-
 .dev-mode-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 500;
-  color: var(--te-neutral-600, #4b5563);
+  gap: 10px;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  color: var(--te-settings-text-muted);
+}
+.dev-mode-toggle .switch {
+  height: 28px;
+  background: transparent;
+}
+.dev-mode-toggle .switch::before {
+  content: '';
+  position: absolute;
+  inset: 4px 0;
+  border-radius: 20px;
+  background: var(--te-border-color);
+}
+.dev-mode-toggle .switch.on::before {
+  background: var(--te-primary-600);
+}
+.dev-mode-toggle .switch::after {
+  top: 6px;
 }
 
 .switch {
+  flex-shrink: 0;
+  border: 0;
+  padding: 0;
   width: 36px;
   height: 20px;
   background: var(--te-border-color, #e5e7eb);
@@ -1129,7 +1170,7 @@ onUnmounted(() => {
   background: #fff; /* keep-white: toggle knob */
   border-radius: 50%;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 
 .switch.on {
@@ -1141,18 +1182,18 @@ onUnmounted(() => {
 }
 
 /* Main Content */
-.main-content {
-  flex: 1;
+.plugin-main {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  background: #fafaf9; /* 极浅暖灰背景，区分侧边栏 */
+  background: transparent;
   min-height: 0;
   min-width: 0;
 }
 
 .topbar {
-  height: 104px;
-  padding: 32px 32px 0 32px;
+  min-height: 64px;
+  padding: 16px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1160,26 +1201,34 @@ onUnmounted(() => {
   background: transparent;
   z-index: 10;
   flex-shrink: 0;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .search-box {
+  color: var(--te-control-fg);
   display: flex;
   align-items: center;
-  background: rgba(0, 0, 0, 0.04);
-  border-radius: 100px;
-  padding: 8px 16px;
-  width: 300px;
+  background: var(--te-control-bg);
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm);
+  padding: 8px 12px;
+  width: min(420px, 100%);
+  max-width: 420px;
+  flex: 1 1 280px;
   transition: background-color 0.2s var(--te-ease-soft);
   min-width: 0;
 }
 
 .search-box:focus-within {
-  background: var(--te-card-bg);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  background: var(--te-control-bg);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 
 .search-box i {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-control-fg-muted);
   margin-right: 8px;
 }
 
@@ -1187,37 +1236,137 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   outline: none;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-body);
   width: 100%;
-  color: var(--te-neutral-800, #1f2937);
+  color: var(--te-control-fg);
+  font-family: var(--te-font-sans);
+  font-weight: var(--te-type-weight-regular);
+  min-width: 0;
+  line-height: var(--te-type-line-body);
+}
+
+.search-box input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.search-clear {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  min-height: 32px;
+  margin: -4px -8px -4px 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: transparent;
+  color: var(--te-settings-text-muted);
+  cursor: pointer;
+}
+.search-clear i {
+  margin: 0;
+}
+.search-clear:hover {
+  background: var(--te-hover-bg);
 }
 
 .search-box input::placeholder {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-control-fg-muted);
 }
 
 .market-filters {
-  display: flex;
-  flex-wrap: wrap;
+  position: relative;
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-caption);
+}
+
+.market-filters > summary {
+  min-height: var(--te-control-height-md);
+  padding: 6px var(--te-control-pad-x-sm);
+  border-radius: var(--te-control-radius-sm);
+  cursor: pointer;
+}
+.market-filters > summary:hover {
+  background: var(--te-hover-bg);
+}
+
+.market-filter-content {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  width: min(320px, calc(100vw - 48px));
+  max-height: min(480px, calc(100vh - 160px));
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--te-material-border, var(--te-card-border));
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-material-background, var(--te-card-bg));
+  box-shadow: var(--te-material-shadow, none);
+  color: var(--te-material-ink, var(--te-settings-text));
+  backdrop-filter: var(--te-material-filter, none);
+  -webkit-backdrop-filter: var(--te-material-filter, none);
+  display: grid;
   gap: 12px;
-  margin-bottom: 20px;
+}
+
+.market-filter-reset {
+  justify-self: end;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--te-settings-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.market-classifications {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 0 0 12px;
+  overflow-x: auto;
+}
+
+.market-classification {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: transparent;
+  color: var(--te-settings-text-muted);
+  font: inherit;
+  font-size: var(--te-type-caption);
+  cursor: pointer;
+}
+
+.market-classification:hover,
+.market-classification[aria-pressed='true'] {
+  background: var(--te-active-bg);
+  color: var(--te-settings-text);
 }
 
 .market-filters label {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 8px;
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
 }
 
 .market-filters select {
-  max-width: 200px;
+  width: 100%;
+  max-width: 100%;
   padding: 7px 12px;
-  border: 1px solid var(--te-border-color, #e5e7eb);
-  border-radius: 8px;
-  background: var(--te-card-bg, #fff);
-  color: var(--te-neutral-800, #1f2937);
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-control-bg);
+  color: var(--te-settings-text);
+  min-height: 34px;
+  font: inherit;
+  font-weight: var(--te-type-weight-regular);
 }
 
 .plugin-repository-link {
@@ -1225,8 +1374,11 @@ onUnmounted(() => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--te-primary-600, #6366f1);
+  color: var(--te-settings-text);
   cursor: pointer;
+  min-height: 28px;
+  font: inherit;
+  font-size: var(--te-type-caption);
 }
 
 .market-load-more {
@@ -1238,13 +1390,16 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .btn {
   min-height: var(--te-control-height-md);
-  padding: 0 var(--te-control-pad-x-md);
-  border-radius: var(--te-control-radius-pill);
-  font-size: var(--te-control-font-size-sm);
+  padding: 6px var(--te-control-pad-x-md);
+  border-radius: var(--te-control-radius-sm);
+  font-size: var(--te-type-body);
   font-weight: var(--te-control-font-weight-strong);
   cursor: pointer;
   display: inline-flex;
@@ -1255,40 +1410,107 @@ onUnmounted(() => {
     border-color var(--te-motion-hover) var(--te-ease-soft),
     color var(--te-motion-hover) var(--te-ease-soft);
   border: none;
+  font-family: inherit;
+  line-height: var(--te-type-line-body);
+  max-width: 100%;
+  white-space: normal;
 }
 
 .btn-outline {
   background: transparent;
-  border: 1px solid var(--te-border-color, #e5e7eb);
-  color: var(--te-neutral-700, #374151);
+  border: 1px solid var(--te-control-border);
+  color: var(--te-settings-text);
 }
 
 .btn-outline:hover {
-  background: var(--te-bg-hover, #f3f4f6);
+  background: var(--te-hover-bg);
 }
 
 .btn-primary {
-  background: var(--te-primary-600, #6366f1);
-  color: #fff;
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
+  font-weight: var(--te-type-weight-medium);
 }
 
 .btn-primary:hover {
-  background: var(--te-primary-500, #818cf8);
+  background: var(--te-hover-bg);
 }
 
 .scroll-area {
-  flex: 1;
-  overflow-y: auto;
-  padding: 32px;
+  flex: 0 0 auto;
+  padding: 8px 0 0;
   min-height: 0;
   min-width: 0;
 }
 
+.page-notice {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid currentColor;
+  border-radius: var(--te-control-radius-sm);
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-body);
+  overflow-wrap: anywhere;
+}
+.page-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+.page-notice--error {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+.page-notice--warning {
+  background: var(--te-warning-soft-bg);
+  color: var(--te-warning-soft-fg);
+}
+.page-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 32px 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-body);
+}
+.empty-state > i {
+  font-size: var(--te-type-section-title);
+}
+.empty-state p {
+  margin: 0;
+}
+.plugin-error {
+  margin-top: 8px;
+  color: var(--te-danger-soft-fg);
+  font-size: var(--te-type-caption);
+}
+.plugin-install-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--te-control-height-md);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+}
+
 .page-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
-  font-weight: 700;
-  color: var(--te-neutral-900, #111827);
-  margin-bottom: 24px;
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-settings-text);
+  margin: 0 0 12px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1297,16 +1519,35 @@ onUnmounted(() => {
 .badge {
   font-size: var(--te-badge-font-size);
   font-weight: var(--te-badge-font-weight);
-  background: var(--te-subtle-bg);
+  background: transparent;
   color: var(--te-control-fg-muted);
-  padding: 4px var(--te-badge-pad-x);
+  padding: 0;
   border-radius: var(--te-badge-radius);
 }
 
 .plugin-grid {
+  --plugin-card-min: 320px;
+  --plugin-card-max: 560px;
+  --plugin-card-gap: 24px;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--plugin-card-min)), 1fr));
+  gap: 16px var(--plugin-card-gap);
+  width: 100%;
+  max-width: calc(
+    var(--plugin-card-count) * var(--plugin-card-max) + (var(--plugin-card-count) - 1) *
+      var(--plugin-card-gap)
+  );
+}
+.updates-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--te-card-border);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  flex-wrap: wrap;
 }
 
 .market-status {
@@ -1314,94 +1555,62 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin: -16px 0 24px;
-  color: var(--te-neutral-500, #6b7280);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  margin: 8px 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-regular);
 }
 
 .market-status span {
   max-width: 100%;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.04);
-  padding: 6px 10px;
+  padding: 0;
 }
 
 .market-status .warn {
   background: var(--te-warning-soft-bg, #fff7ed);
-  color: #c2410c;
+  color: var(--te-warning-soft-fg);
 }
 
 .market-status .source-url {
   min-width: 0;
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
 }
 
-/* Cards */
+/* Plugins share one readable list hierarchy across discovery and management. */
 .plugin-card {
-  background: var(--te-bg-card, #fff);
-  border-radius: 16px;
-  padding: 24px;
-  border: 1px solid var(--te-border-color, #e5e7eb);
+  background: transparent;
+  border-radius: var(--te-card-radius, 12px);
+  padding: 16px;
+  border: 1px solid var(--te-card-border);
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  max-width: var(--plugin-card-max);
   position: relative;
-  transition:
-    transform 0.2s var(--te-ease-enter),
-    border-color 0.2s var(--te-ease-enter);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
-}
-
-.plugin-card:hover {
-  box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.05);
-  transform: translateY(-2px);
-  border-color: rgba(99, 102, 241, 0.3);
-}
-
-.builtin-label {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 600;
-  color: var(--te-neutral-400, #9ca3af);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .plugin-card-header {
   display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 0;
+  min-width: 0;
 }
 
 .plugin-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--te-control-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
+  font-size: var(--te-type-icon);
   flex-shrink: 0;
-}
-
-.plugin-icon.ncm {
-  background: linear-gradient(135deg, #fee2e2, #fecaca);
-  color: #ef4444;
-}
-
-.plugin-icon.provider {
-  background: linear-gradient(135deg, #e0f2fe, #ccfbf1);
-  color: #0891b2;
-}
-
-.plugin-icon.dsp {
-  background: linear-gradient(135deg, #e0f2fe, #bae6fd);
-  color: #0ea5e9;
+  background: var(--te-subtle-bg);
+  color: var(--te-settings-text-muted);
 }
 
 .plugin-info {
@@ -1417,67 +1626,69 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .plugin-name {
-  font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
-  font-weight: 700;
-  color: var(--te-neutral-900, #111827);
+  margin: 0;
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-settings-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .plugin-version {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  color: var(--te-neutral-400, #9ca3af);
-  background: rgba(0, 0, 0, 0.04);
-  padding: 2px 6px;
-  border-radius: 6px;
+  font-size: var(--te-type-caption);
+  color: var(--te-settings-text-muted);
+  font-weight: var(--te-type-weight-regular);
+  flex-shrink: 0;
 }
 
 .plugin-author {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: var(--te-neutral-500, #6b7280);
+  font-size: var(--te-type-caption);
+  color: var(--te-settings-text-muted);
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-weight: var(--te-type-weight-regular);
 }
 
 .plugin-trust {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-}
-
-.plugin-trust-stack {
-  display: grid;
-  gap: 3px;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
 }
 
 .signature-evidence {
-  color: var(--te-neutral-400, #9ca3af);
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
   letter-spacing: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 
 .plugin-trust.trust-official {
-  color: #4f46e5;
+  color: var(--te-info-soft-fg);
 }
 
 .plugin-trust.trust-signed {
-  color: #047857;
+  color: var(--te-success-soft-fg);
 }
 
 .plugin-trust.trust-declared {
-  color: #a16207;
+  color: var(--te-warning-soft-fg);
 }
 
 .plugin-trust.trust-unverified {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-settings-text-muted);
 }
 
 .plugin-tags {
@@ -1487,68 +1698,63 @@ onUnmounted(() => {
 }
 
 .tag {
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-regular);
+  padding: 0;
 }
-
-.tag.provider {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--te-primary-600, #6366f1);
-}
-
-.tag.ui {
-  background: rgba(245, 158, 11, 0.1);
-  color: #d97706;
-}
-
-.tag.dsp {
-  background: rgba(14, 165, 233, 0.1);
-  color: #0ea5e9;
-}
-
-.tag.tool {
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
-}
-
-.tag.community {
-  background: color-mix(in srgb, var(--te-neutral-500) 12%, transparent);
-  color: var(--te-neutral-500);
+.tag:is(.provider, .ui, .dsp, .tool, .theme, .community) {
+  background: transparent;
+  color: var(--te-settings-text-muted);
 }
 
 .plugin-desc {
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  color: var(--te-neutral-600, #4b5563);
-  line-height: 1.5;
-  flex: 1;
-  margin-bottom: 20px;
+  font-size: var(--te-type-caption);
+  color: var(--te-settings-text-muted);
+  line-height: var(--te-type-line-body);
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--te-type-weight-regular);
+}
+.plugin-card--catalog .plugin-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .plugin-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
-  padding-top: 16px;
+  border: 0;
+  padding-top: 4px;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: auto;
 }
 
 .switch-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
 
 .switch-label {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 600;
-  color: var(--te-neutral-500, #6b7280);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-settings-text-muted);
 }
 
 .plugin-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .icon-btn {
@@ -1557,7 +1763,7 @@ onUnmounted(() => {
   border-radius: var(--te-control-radius-sm);
   border: none;
   background: var(--te-control-bg-hover);
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-settings-text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1568,8 +1774,8 @@ onUnmounted(() => {
 }
 
 .icon-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--te-neutral-900, #111827);
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
 }
 
 .icon-btn.danger:hover {
@@ -1577,98 +1783,120 @@ onUnmounted(() => {
   color: var(--te-danger-soft-fg);
 }
 
-/* Discover Banner */
-.discover-banner {
-  background: linear-gradient(135deg, #4f46e5, #818cf8);
-  border-radius: 20px;
-  padding: 32px;
-  color: #fff;
+.catalog-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  position: relative;
-  overflow: hidden;
-  margin-bottom: 32px;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--te-card-border);
 }
-
-.banner-text h2 {
-  margin: 0 0 8px 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
-  font-weight: 800;
-}
-
-.banner-text p {
+.catalog-toolbar .page-title {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  opacity: 0.9;
-  max-width: 300px;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  color: var(--te-settings-text-muted);
+}
+.market-source,
+.plugin-details {
+  min-width: 0;
+  font-size: var(--te-type-caption);
+  color: var(--te-settings-text-muted);
+}
+.market-source[open] {
+  flex-basis: 100%;
+}
+.market-source-content {
+  padding: 4px 0 12px;
+}
+.market-source-content > p {
+  margin: 8px 0;
+  color: var(--te-settings-text);
+}
+.market-source summary,
+.plugin-details summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  width: fit-content;
+  list-style: none;
+  cursor: pointer;
+}
+.market-source summary::-webkit-details-marker,
+.plugin-details summary::-webkit-details-marker {
+  display: none;
+}
+.market-source summary::before,
+.plugin-details summary::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.market-source[open] summary::before,
+.plugin-details[open] summary::before {
+  transform: rotate(45deg);
+}
+.source-state {
+  margin-left: 6px;
+  color: var(--te-settings-text-muted);
+}
+.source-state--warning {
+  color: var(--te-warning-soft-fg);
+}
+.plugin-details {
+  margin: 0;
+}
+.plugin-detail-content {
+  padding: 4px 0 8px;
+}
+.plugin-full-description {
+  margin: 0 0 12px;
   line-height: 1.5;
+  color: var(--te-settings-text-muted);
+  font-weight: var(--te-type-weight-regular);
+}
+.plugin-page :is(.market-source, .plugin-details) summary:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
-.banner-art {
-  position: absolute;
-  right: -20px;
-  bottom: -40px;
-  font-size: 180px;
-  opacity: 0.1;
-  transform: rotate(-15deg);
-}
-
-/* Responsive fixes selected from PR #115; desktop styling stays in the rules above. */
-@media (max-width: 900px) {
-  .sidebar {
-    width: 192px;
-  }
-  .topbar {
-    height: auto;
-    min-height: 104px;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding-bottom: 20px;
-  }
+@container te-plugin-market (max-width: 620px) {
   .search-box {
-    width: min(100%, 300px);
+    width: 100%;
+    max-width: none;
+    flex-basis: 100%;
   }
   .top-actions {
-    justify-content: flex-start;
-  }
-  .plugin-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-@media (max-width: 620px) {
-  .plugin-window {
-    flex-direction: column;
-  }
-  .sidebar {
     width: 100%;
-    padding-top: var(--te-page-top, 55px);
-    border-right: 0;
-    border-bottom: 1px solid var(--te-card-border);
-  }
-  .sidebar-header {
-    display: none;
-  }
-  .nav-menu {
-    flex-direction: row;
-    overflow-x: auto;
-    padding-inline: var(--te-page-gutter, 16px);
-  }
-  .nav-item {
-    flex-shrink: 0;
-  }
-  .sidebar-footer {
-    padding: 8px var(--te-page-gutter, 16px);
-    border-top: 0;
-  }
-  .topbar {
-    padding-top: 20px;
+    margin-inline-start: 0;
   }
 }
 
-@media (max-width: 900px) {
-  .scroll-area {
-    padding-bottom: max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 16px));
+.update-count {
+  margin-left: 4px;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-settings-text-muted);
+}
+.plugin-page :is(button, select):focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+}
+.plugin-page button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-page *,
+  .plugin-page *::after {
+    transition: none;
   }
 }
 </style>

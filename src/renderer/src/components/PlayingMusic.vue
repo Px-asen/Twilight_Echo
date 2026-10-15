@@ -376,12 +376,16 @@ const lyricFocusWindow = computed<ReadonlySet<number> | null>(() => {
  * scale and blur from scroll position, which made those values slaves to the
  * scroll and left no room for per-line physics. Depth is part of the layout.
  */
+const lyricManualBrowsing = ref(false)
+const lyricReturnFocused = ref(false)
 const lyricViewport = createLyricViewportController({
   afterLayout: async () => {
     await nextTick()
     await waitForAnimationFrameWithFallback(LYRIC_SCROLL_FRAME_FALLBACK_MS)
   },
-  onManualBrowseChange: () => {},
+  onManualBrowseChange: (active) => {
+    lyricManualBrowsing.value = active
+  },
   getActiveIndex: () => activeLyricIndex.value,
   getHotIndices: () => lyricHotIndices.value,
   getBufferedIndices: () => lyricBufferedIndices.value,
@@ -546,6 +550,11 @@ function jumpToLyric(time: number | null): void {
   if (time == null) return
   lyricViewport.releaseManualBrowse()
   seek(Math.max(0, time - currentLyricOffsetSeconds.value))
+}
+
+function returnToCurrentLyric(): void {
+  if (!lyricManualBrowsing.value) return
+  lyricViewport.releaseManualBrowse()
 }
 
 /**
@@ -753,7 +762,19 @@ onBeforeUnmount(() => {
               }"
               :style="lyricStyle"
             >
-              <div class="lyrics-head" aria-hidden="true" />
+              <div class="lyrics-head">
+                <button
+                  v-show="lyricManualBrowsing || lyricReturnFocused"
+                  type="button"
+                  class="lyric-return-button"
+                  :aria-disabled="!lyricManualBrowsing"
+                  @focus="lyricReturnFocused = true"
+                  @blur="lyricReturnFocused = false"
+                  @click="returnToCurrentLyric"
+                >
+                  {{ lyricManualBrowsing ? '返回当前歌词' : '正在跟随歌词' }}
+                </button>
+              </div>
 
               <div
                 ref="lyricsEl"
@@ -1197,13 +1218,13 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 }
 
 :global(html[data-te-motion='full'] .cover-frame) {
-  animation: te-playing-artwork-arrive var(--te-motion-page) var(--te-ease-spring) both;
+  animation: te-playing-artwork-arrive var(--te-motion-page) var(--te-ease-out-strong) both;
 }
 
 @keyframes te-playing-artwork-arrive {
   from {
     opacity: 0;
-    scale: 0.9;
+    scale: 0.98;
   }
 }
 
@@ -1258,13 +1279,13 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 }
 
 :global(html[data-te-motion='full'] .cover-meta) {
-  animation: te-playing-meta-arrive var(--te-motion-panel) var(--te-ease-spring) 36ms both;
+  animation: te-playing-meta-arrive var(--te-motion-panel) var(--te-ease-out-strong) both;
 }
 
 @keyframes te-playing-meta-arrive {
   from {
     opacity: 0;
-    translate: 0 12px;
+    translate: 0 6px;
   }
 }
 
@@ -1335,6 +1356,25 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   padding-bottom: 18px;
   min-height: 56px;
   min-width: 0;
+}
+
+.lyric-return-button {
+  min-height: var(--te-control-height-sm, 32px);
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--te-playback-control-border);
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-playback-control-surface);
+  color: var(--te-playback-control-text);
+  font: inherit;
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+  text-align: start;
+  cursor: pointer;
+}
+
+.lyric-return-button[aria-disabled='true'] {
+  cursor: default;
 }
 
 .playback-time {
@@ -1913,16 +1953,16 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 @keyframes te-artwork-slide {
   from {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(8px);
   }
 }
 
 :global(html[data-te-artwork-transition='fade'] .playing-music .cover-frame) {
-  animation: te-artwork-fade 0.42s var(--te-ease-enter, ease-out) both;
+  animation: te-artwork-fade var(--te-motion-page) var(--te-ease-out-strong) both;
 }
 
 :global(html[data-te-artwork-transition='slide'] .playing-music .cover-frame) {
-  animation: te-artwork-slide 0.46s var(--te-ease-soft, ease-out) both;
+  animation: te-artwork-slide var(--te-motion-page) var(--te-ease-out-strong) both;
 }
 
 :global(html[data-te-artwork-transition='none'] .playing-music .cover-frame) {
@@ -2184,8 +2224,10 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(html[data-te-artwork-transition] .playing-music .cover-frame) {
-    animation: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    :global(html[data-te-artwork-transition] .playing-music .cover-frame) {
+      animation: none;
+    }
   }
 }
 </style>

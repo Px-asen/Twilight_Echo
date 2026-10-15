@@ -2,9 +2,63 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { effectScope, ref } from 'vue'
 
-const { useTrackMultiSelect } = (await import(
+const { useTrackMultiSelect, isTrackListShortcutTarget } = (await import(
   new URL('./useTrackMultiSelect.ts', import.meta.url).href
 )) as typeof import('./useTrackMultiSelect')
+
+test('list shortcuts stay within the owning noneditable surface and yield to menus and dialogs', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement')
+  class TestElement {
+    tagName = 'BUTTON'
+    isContentEditable = false
+  }
+  Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: TestElement })
+  try {
+    const row = new TestElement()
+    const outside = new TestElement()
+    const input = Object.assign(new TestElement(), { tagName: 'INPUT' })
+    const select = Object.assign(new TestElement(), { tagName: 'SELECT' })
+    const contentEditable = Object.assign(new TestElement(), { isContentEditable: true })
+    let active = row
+    let overlay: object | null = null
+    const inside = new Set([row, input, select, contentEditable])
+    const root = {
+      contains: (element: TestElement) => inside.has(element),
+      ownerDocument: {
+        get activeElement() {
+          return active
+        },
+        querySelector: () => overlay
+      }
+    } as unknown as HTMLElement
+    const event = (target: TestElement, defaultPrevented = false): KeyboardEvent =>
+      ({
+        key: 'a',
+        ctrlKey: true,
+        target,
+        defaultPrevented
+      }) as unknown as KeyboardEvent
+    assert.equal(isTrackListShortcutTarget(event(row), root, false), true)
+    assert.equal(isTrackListShortcutTarget(event(outside), root, false), false)
+    active = outside
+    assert.equal(isTrackListShortcutTarget(event(row), root, false), false)
+    for (const editable of [input, select, contentEditable]) {
+      active = editable
+      assert.equal(isTrackListShortcutTarget(event(editable), root, false), false)
+    }
+    active = row
+    assert.equal(isTrackListShortcutTarget(event(row, true), root, false), false)
+    assert.equal(isTrackListShortcutTarget(event(row), root, true), false)
+    overlay = { role: 'menu' }
+    assert.equal(isTrackListShortcutTarget(event(row), root, false), false)
+    overlay = { tag: 'dialog' }
+    assert.equal(isTrackListShortcutTarget(event(row), root, false), false)
+    assert.equal(isTrackListShortcutTarget(event(row), null, false), false)
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'HTMLElement', previous)
+    else Reflect.deleteProperty(globalThis, 'HTMLElement')
+  }
+})
 
 function makeTracks(count: number): Array<{
   id: string

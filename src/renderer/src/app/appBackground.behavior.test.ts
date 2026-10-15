@@ -58,9 +58,11 @@ test('wallpapers remain visible and adaptive glass sampling survives duplicate u
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron')
+      `const {app,BrowserWindow,protocol}=require('electron')
 app.setPath('userData',require('node:path').join(__dirname,'profile'))
+protocol.registerSchemesAsPrivileged([{scheme:'background',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}])
 app.whenReady().then(async()=>{
+  protocol.handle('background',request=>new Response('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><path fill="'+(request.url.includes('global.png')?'#123456':'#654321')+'" d="M0 0h800v600H0z"/></svg>',{headers:{'Content-Type':'image/svg+xml','Access-Control-Allow-Origin':'*'}}))
   const win=new BrowserWindow({show:false,width:800,height:600,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}})
   try{
     await win.loadFile(process.argv.at(-1))
@@ -94,8 +96,8 @@ import {useLiquidGlassEnvironment} from '@renderer/composables/useLiquidGlassEnv
 import {createApp,h,ref} from 'vue'
 const expect=(value,message)=>{if(!value)throw new Error(message)}
 const wallpaper=(color)=>'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><path fill="'+color+'" d="M0 0h800v600H0z"/></svg>')
-const globalImage=wallpaper('#123456')
-const pageImage=wallpaper('#654321')
+const globalImage='background://global.png'
+const pageImage='background://page.png'
 const pair={kind:'image',light:'#f4f4f7',dark:'#0f1114',image:globalImage}
 const pages=Object.fromEntries(['local','settings','streaming','player'].map(page=>[page,{...pair,inherit:true}]))
 const settings={theme:'pureWhite',accentColor:'blue',uiDensity:'comfortable',surfaceMaterial:'liquidGlass',appBackground:{global:{...pair},pages}}
@@ -115,7 +117,7 @@ const apply=async(tone)=>{
 const checkImage=(expected,label)=>{
   const actual=getComputedStyle(document.body).backgroundImage
   if(expected){
-    expect(actual.startsWith('url("'+expected+'")'),label+': configured image is not the top layer: '+actual)
+    expect(actual.startsWith('url("'+new URL(expected).href+'")'),label+': configured image is not the top layer: '+actual)
   }else{
     expect(!actual.includes('url('),label+': removed image is still visible: '+actual)
   }

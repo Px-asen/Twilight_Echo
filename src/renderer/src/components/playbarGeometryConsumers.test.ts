@@ -120,6 +120,10 @@ function measure(options: Parameters<typeof installDom>[0]): number {
   return offset
 }
 
+test('custom sidebar keeps its material bounds behind a visible overlapping playbar', () => {
+  assert.equal(measure({ playerBarHidden: 'false', shellLayout: 'custom' }), 0)
+})
+
 test('default sidebar preserves its content clearance during a slide and repeated toggles', () => {
   for (const right of [240, 160, 80, 0, -4, 0, 80, 160, 240]) {
     installDom({
@@ -137,16 +141,11 @@ test('default sidebar preserves its content clearance during a slide and repeate
     )
     assert.equal(
       clearance.sideMenuToolsClearance.value,
-      106,
+      110,
       'sliding past the player cannot resize the scroller'
     )
     clearance.dispose()
   }
-})
-
-test('sidebar clearance reserves room for a visible overlapping playbar', () => {
-  // 800 viewport - 700 top + 10 gap.
-  assert.equal(measure({ playerBarHidden: 'false' }), 110)
 })
 
 test('sidebar clearance drops to zero once the mini bar is tucked away', () => {
@@ -154,7 +153,7 @@ test('sidebar clearance drops to zero once the mini bar is tucked away', () => {
 })
 
 test('legacy menu-open state does not bypass actual overlap clearance', () => {
-  assert.equal(measure({ playerBarMenuOpen: true }), 110)
+  assert.equal(measure({ playerBarMenuOpen: true }), 0)
 })
 
 test('navigation tools clear the overlaid player and remain flush for adjacent custom layouts', () => {
@@ -164,8 +163,8 @@ test('navigation tools clear the overlaid player and remain flush for adjacent c
     hasPlayerBar: ref(true)
   })
   clearance.measureSideMenuClearance()
-  assert.equal(clearance.sideMenuBottomOffset.value, 110)
-  assert.equal(clearance.sideMenuToolsClearance.value, 70)
+  assert.equal(clearance.sideMenuBottomOffset.value, 0)
+  assert.equal(clearance.sideMenuToolsClearance.value, 110)
 
   // Once the transition completes, adjacent bars also need no padding when a
   // custom shell owns their positioning or the menu-open class is absent.
@@ -181,7 +180,7 @@ test('navigation tools clear the overlaid player and remain flush for adjacent c
 
   installDom({ playerBarMenuOpen: true, viewportWidth: 760 })
   clearance.measureSideMenuClearance()
-  assert.equal(clearance.sideMenuToolsClearance.value, 70)
+  assert.equal(clearance.sideMenuToolsClearance.value, 110)
 
   installDom({ playerBarHidden: 'true' })
   clearance.measureSideMenuClearance()
@@ -208,12 +207,12 @@ test('navigation tools do not reserve the playback band twice in an inset shell'
   clearance.dispose()
 })
 
-test('custom overlay navigation at 760px reserves room above the full-width playbar', () => {
-  assert.equal(measure({ playerBarMenuOpen: true, viewportWidth: 760 }), 110)
+test('custom overlay navigation at 760px keeps its full surface behind the playbar', () => {
+  assert.equal(measure({ playerBarMenuOpen: true, viewportWidth: 760 }), 0)
 })
 
-test('temporary navigation in a wide custom shell clears its grid-positioned playbar', () => {
-  assert.equal(measure({ playerBarMenuOpen: true, shellLayout: 'custom' }), 110)
+test('temporary navigation in a wide custom shell keeps its overlay bounds', () => {
+  assert.equal(measure({ playerBarMenuOpen: true, shellLayout: 'custom' }), 0)
 })
 
 test('window tools clear the painted player at every size while the sidebar surface stays full height', () => {
@@ -300,7 +299,7 @@ test('sidebar clearance still handles a missing playbar and a non-overlapping on
   )
 })
 
-test('sidebar opening and closing retain the footer height while translating off screen', () => {
+test('all sidebar shells retain footer clearance while their surfaces slide', () => {
   for (const shellLayout of ['classic', 'custom'] as const) {
     for (const shift of [0, -24, -120, -215, -216, -120, 0]) {
       const options = {
@@ -317,8 +316,8 @@ test('sidebar opening and closing retain the footer height while translating off
       clearance.measureSideMenuClearance()
       assert.equal(
         clearance.sideMenuBottomOffset.value,
-        shellLayout === 'classic' ? 0 : 110,
-        `horizontal translation ${shift}px must not reset the footer clearance`
+        0,
+        `horizontal translation ${shift}px must follow the ${shellLayout} clearance contract`
       )
       assert.equal(clearance.sideMenuToolsClearance.value, 110)
       clearance.dispose()
@@ -326,7 +325,7 @@ test('sidebar opening and closing retain the footer height while translating off
   }
 })
 
-test('sidebar layout measurements retain the custom shell parent origin', () => {
+test('custom sidebar bounds stay independent of a theme parent position', () => {
   assert.equal(
     measure({
       shellLayout: 'custom',
@@ -335,7 +334,7 @@ test('sidebar layout measurements retain the custom shell parent origin', () => 
       sideMenuRect: { top: 40, bottom: 800, left: 96, right: 312, height: 760 },
       playerBarRect: { top: 700, bottom: 780, left: 300, right: 600, height: 80 }
     }),
-    110
+    0
   )
   assert.equal(
     measure({
@@ -348,64 +347,17 @@ test('sidebar layout measurements retain the custom shell parent origin', () => 
   )
 })
 
-/**
- * The browser feeds the applied clearance straight back into the next
- * measurement: lifting the menu shortens it, so its measured bottom now clears
- * the bar. Modelled with a live rect, because a static one cannot express that
- * loop — and it is the loop a ResizeObserver on the menu would drive forever,
- * flickering the menu between lifted and full height.
- */
-test('sidebar clearance settles instead of oscillating once the menu is lifted', () => {
-  const NATURAL_BOTTOM = 760
-  const playerBarRect = { top: 700, bottom: 780, left: 0, right: 1200, height: 80 }
-  let appliedOffset = 0
-  const playerBar = {
-    dataset: { tePlaybarHidden: 'false' },
-    querySelector: () => null,
-    classList: { contains: () => false },
-    getBoundingClientRect: () => playerBarRect
-  }
-  const sideMenu = {
-    offsetLeft: 0,
-    offsetWidth: 216,
-    getBoundingClientRect: () => ({
-      top: 100,
-      bottom: NATURAL_BOTTOM - appliedOffset,
-      left: 0,
-      right: 240,
-      height: NATURAL_BOTTOM - appliedOffset - 100
-    })
-  }
-  const g = globalThis as Record<string, unknown>
-  g.window = { innerHeight: 800 }
-  g.document = {
-    hidden: false,
-    documentElement: { dataset: { teShellLayout: 'custom' } },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    querySelector: (selector: string) => {
-      if (selector === '.side-menu') return sideMenu
-      if (selector === '.player-bar-shell') return playerBar
-      return null
-    }
-  }
-  g.requestAnimationFrame = (): number => 1
-  g.cancelAnimationFrame = (): void => {}
-
-  const clearance = useSideMenuClearance({
-    showLocalSidebar: ref(true),
-    hasPlayerBar: ref(true)
-  })
+test('custom sidebar clearance settles without shrinking its full overlay surface', () => {
+  installDom({ shellLayout: 'custom' })
+  const clearance = useSideMenuClearance({ showLocalSidebar: ref(true), hasPlayerBar: ref(true) })
   const passes: number[] = []
   for (let pass = 0; pass < 4; pass += 1) {
     clearance.measureSideMenuClearance()
-    // What the DOM would look like on the next observer callback.
-    appliedOffset = clearance.sideMenuBottomOffset.value
-    passes.push(appliedOffset)
+    passes.push(clearance.sideMenuBottomOffset.value)
+    assert.equal(clearance.sideMenuToolsClearance.value, 110)
   }
   clearance.dispose()
-  // 800 viewport - 700 top + 10 gap, then held: no pass may drop back to 0.
-  assert.deepEqual(passes, [110, 110, 110, 110])
+  assert.deepEqual(passes, [0, 0, 0, 0])
 })
 
 test('the now-playing lyric centring reads the same hidden flag', () => {

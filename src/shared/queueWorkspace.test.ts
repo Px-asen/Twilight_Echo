@@ -104,3 +104,27 @@ test('workspace bounds session count, aggregate entries and actual history indep
     true
   )
 })
+
+test('saved queue origins accept stable collection routes and reject malformed or ambiguous targets', () => {
+  const track = session().entries[0]
+  const origin = { kind: 'album', scope: 'provider', providerId: 'ncm', id: '12', name: 'Album' }
+  assert.equal(isSavedQueueTrack({ ...track, queuePlaybackOrigin: origin }), true)
+  assert.equal(
+    isSavedQueueTrack({
+      ...track,
+      queuePlaybackOrigin: { kind: 'playlist', scope: 'local', id: 'playlist-1', name: 'Work' }
+    }),
+    true
+  )
+  for (const invalid of [
+    { ...origin, providerId: '' },
+    { ...origin, id: '' },
+    { ...origin, name: ' ' },
+    { ...origin, name: 'x'.repeat(513) },
+    { ...origin, scope: 'aggregate' },
+    { ...origin, scope: 'local' },
+    { ...origin, kind: 'folder' }
+  ]) {
+    assert.equal(isSavedQueueTrack({ ...track, queuePlaybackOrigin: invalid }), false)
+  }
+})

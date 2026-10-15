@@ -8,10 +8,11 @@
   min-height: 0;
   height: 100dvh;
   overflow: auto;
-  padding: calc(32px + 24px) 24px 24px;
+  padding: calc(var(--te-titlebar-inset, 40px) + var(--te-page-top, 24px))
+    var(--te-page-gutter, 24px) 24px;
   background: var(--te-app-bg);
   color: var(--te-neutral-900);
-  font: 14px/1.5 var(--te-font-sans, sans-serif);
+  font: var(--te-type-body)/var(--te-type-line-body) var(--te-font-sans, sans-serif);
 }
 .workshop-header,
 .workshop-create,
@@ -23,11 +24,11 @@
   margin-bottom: 16px;
 }
 .workshop-header h1 {
-  font-size: 24px;
+  font-size: var(--te-type-page-title);
   margin: 0;
 }
 .workshop-header small {
-  font-size: 10px;
+  font-size: var(--te-type-caption);
   letter-spacing: 2px;
 }
 .workshop-page > :not(.workshop-workspace) {
@@ -143,7 +144,8 @@
     gap: 12px;
   }
   .workshop-page {
-    padding: calc(32px + 16px) 16px 16px;
+    padding: calc(var(--te-titlebar-inset, 40px) + var(--te-page-top, 24px))
+      var(--te-page-gutter, 24px) 24px;
   }
 }
 @media (max-width: 760px) {
@@ -168,4 +170,252 @@
   .workshop-properties {
     max-height: 560px;
   }
+}
+
+.workshop-page--controls-only {
+  --te-primary-500: var(--appearance-edit-primary, var(--te-neutral-900));
+  height: auto;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  font: inherit;
+}
+.workshop-page--controls-only .workshop-workspace {
+  display: block;
+  flex: none;
+  min-height: 0;
+}
+.workshop-page--controls-only .workshop-properties {
+  padding: 0;
+  overflow: visible;
+  max-height: none;
+  border-radius: 0;
+  background: transparent;
+}
+.workshop-page--controls-only .workshop-properties-heading h2 {
+  margin: 8px 0;
+  font-size: var(--te-type-body);
+  font-weight: var(--te-text-strong, 500);
+}
+.workshop-page--controls-only button,
+.workshop-page--controls-only input:not([type='checkbox']):not([type='range']):not([type='color']),
+.workshop-page--controls-only select {
+  min-height: 32px;
+  padding: 5px 8px;
+}
+.workshop-page--controls-only button,
+.workshop-page--controls-only input,
+.workshop-page--controls-only select,
+.workshop-page--controls-only textarea {
+  border-color: var(--appearance-edit-line, var(--te-neutral-200));
+  background: var(--appearance-edit-field, var(--te-card-bg));
+}
+.workshop-page--controls-only :focus-visible {
+  outline-color: var(--appearance-edit-focus, var(--te-neutral-900));
+}
+.workshop-page--controls-only .workshop-diagnostics {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.workshop-page--controls-only .workshop-diagnostics-header,
+.workshop-page--controls-only .workshop-diagnostics-body {
+  padding-inline: 0;
+}
+.workshop-shared-preview-options {
+  margin-bottom: 12px;
+}
+.workshop-shared-preview-options > summary {
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.workshop-shared-preview-fields {
+  display: grid;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+.workshop-properties .workshop-shared-preview-fields > label {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.workshop-shared-preview-fields > label > select {
+  width: 100%;
+}
+.workshop-shared-preview-fields > button {
+  justify-self: start;
+}
+
+.workshop-page--contextual {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  gap: 4px;
+}
+.workshop-context-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  width: max-content;
+  max-width: min(440px, 100%);
+  min-width: 0;
+  min-height: 50px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--te-editor-panel-radius, 10px);
+  background: var(--te-editor-panel, var(--te-settings-backplate, var(--te-card-bg)));
+  color: var(--te-settings-text, var(--te-neutral-900));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+.workshop-context-color,
+.workshop-context-material {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.workshop-page--contextual .workshop-context-bar :is(button, select, input[type='color']) {
+  min-height: 34px;
+  font: inherit;
+}
+.workshop-context-bar select {
+  width: 112px;
+  max-width: 100%;
+}
+.workshop-context-bar input[type='color'] {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 34px;
+  padding: 2px;
+}
+.workshop-page--contextual .workshop-context-bar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding-inline: 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  white-space: nowrap;
+}
+.workshop-page--contextual .workshop-context-bar button:not(:disabled):hover,
+.workshop-page--contextual .workshop-context-bar button[aria-expanded='true'] {
+  background: var(--appearance-edit-hover, var(--te-hover-bg));
+}
+.workshop-context-unavailable {
+  color: var(--appearance-edit-muted, var(--te-neutral-700));
+  font: inherit;
+  white-space: nowrap;
+}
+.workshop-page--contextual .workshop-workspace {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 24px));
+  max-height: calc(100dvh - 70px);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  border: 0;
+  border-radius: var(--te-editor-panel-radius, 10px);
+  background: var(--te-editor-panel, var(--te-settings-backplate, var(--te-card-bg)));
+  color: var(--te-settings-text, var(--te-neutral-900));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+.workshop-page--contextual .workshop-workspace:not(:popover-open) {
+  display: none;
+}
+.workshop-page--contextual .workshop-workspace:popover-open {
+  display: block;
+}
+.workshop-page--contextual .workshop-workspace::backdrop {
+  background: transparent;
+}
+.workshop-context-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.workshop-context-heading h2 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: var(--te-text-strong, 500);
+}
+.workshop-context-tabs,
+.workshop-context-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.workshop-context-tabs > button {
+  flex: 1 1 auto;
+}
+.workshop-context-tabs > button[aria-pressed='true'] {
+  border-color: var(--appearance-edit-focus, var(--te-neutral-900));
+  background: var(--appearance-edit-hover, var(--te-hover-bg));
+}
+.workshop-context-files {
+  padding-block: 2px 10px;
+}
+.workshop-context-files > summary {
+  min-height: 32px;
+  padding: 5px 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.workshop-context-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.workshop-context-actions > label,
+.workshop-context-group {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+.workshop-page--contextual .workshop-properties label {
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.workshop-properties--single-color
+  :is(.studio-appearance-heading, .workshop-control-heading)
+  > strong,
+.workshop-properties--single-color .studio-color-swatch > span {
+  display: none;
+}
+.workshop-properties--single-color :is(.studio-appearance-control, .workshop-control) {
+  border: 0;
+}
+.workshop-context-actions select,
+.workshop-context-group select,
+.workshop-context-color-choice select {
+  width: 100%;
+}
+.workshop-page--contextual .workshop-shared-preview-options > summary {
+  display: none;
+}
+.workshop-page--contextual .workshop-error,
+.workshop-page--contextual .workshop-notice {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.workshop-page--contextual .workshop-context-publish {
+  min-width: 0;
 }

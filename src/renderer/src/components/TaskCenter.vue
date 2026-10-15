@@ -10,8 +10,8 @@ import type { LoudnessBatchStatus } from '../../../shared/libraryLoudness'
 
 const api = window.api
 const props = withDefaults(
-  defineProps<{ active: boolean; filter?: 'all' | 'active' | 'attention' }>(),
-  { filter: 'all' }
+  defineProps<{ active: boolean; filter?: 'all' | 'active' | 'attention'; compact?: boolean }>(),
+  { filter: 'all', compact: false }
 )
 const emit = defineEmits<{ library: []; visibleCount: [count: number] }>()
 const notices = useAppNoticeStore()
@@ -133,6 +133,8 @@ const visibleJobs = computed(() =>
   jobs.value.filter(
     (j) =>
       matches(j.state) &&
+      // Completed work belongs in the activity history, not a second task summary.
+      !(props.compact && j.state === 'completed') &&
       (j.id === 'update' ||
         !terminal(j.state) ||
         (!notices.noticeHistory.value.some((n) => n.dedupeKey === 'task-result:' + j.id) &&
@@ -249,8 +251,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section v-if="active" class="notice-tasks" aria-label="后台任务">
-    <h3 v-if="visibleJobs.length || visibleDownloads.length" class="task-group-title">后台任务</h3>
+  <section
+    v-if="active"
+    class="notice-tasks"
+    :class="{ 'notice-tasks--compact': compact }"
+    aria-label="后台任务"
+  >
+    <h3 v-if="!compact && (visibleJobs.length || visibleDownloads.length)" class="task-group-title">
+      后台任务
+    </h3>
     <p
       v-if="
         actionError || downloads.error.value || update.error.value || update.connectionError.value
@@ -331,6 +340,20 @@ onUnmounted(() => {
   padding: 0 20px;
   min-width: 0;
 }
+.notice-tasks--compact {
+  padding: 0;
+}
+.notice-tasks--compact .task-record {
+  padding: 12px 0;
+}
+.notice-tasks--compact .task-actions {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.notice-tasks--compact button {
+  background: var(--te-subtle-bg);
+  font-weight: 400;
+}
 .task-group-title {
   margin: 16px 0 0;
   color: var(--te-settings-text-muted, var(--te-text-secondary));
@@ -399,7 +422,7 @@ button:disabled {
   cursor: default;
 }
 button:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

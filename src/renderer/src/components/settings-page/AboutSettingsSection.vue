@@ -145,10 +145,10 @@ useFocusTrap(qqGroupDialogRef, qqGroupDialogOpen)
 </script>
 
 <template>
-  <div id="about" class="section-block about-section">
+  <section id="about" class="settings-section preview-section about-section">
     <div class="section-title-row">
-      <i class="pi pi-info-circle"></i>
-      <h3>版本与关于</h3>
+      <i class="pi pi-info-circle" aria-hidden="true"></i>
+      <h2>版本与关于</h2>
     </div>
 
     <div data-setting-id="app-version" id="setting-app-version" class="about-hero">
@@ -301,7 +301,12 @@ useFocusTrap(qqGroupDialogRef, qqGroupDialogOpen)
             </header>
 
             <div v-if="SPONSORS.length > 0" class="sponsor-list-entries">
-              <article v-for="sponsor in SPONSORS" :key="sponsor.id" class="sponsor-list-entry">
+              <article
+                v-for="sponsor in SPONSORS"
+                :key="sponsor.id"
+                class="sponsor-list-entry"
+                data-te-material="content"
+              >
                 <div class="sponsor-list-entry-copy">
                   <strong>{{ sponsor.name }}</strong>
                 </div>
@@ -361,5 +366,5 @@ useFocusTrap(qqGroupDialogRef, qqGroupDialogOpen)
         </div>
       </Transition>
     </Teleport>
-  </div>
+  </section>
 </template>

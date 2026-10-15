@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, useId, watch } from 'vue'
 import type { OpraCatalogStatus, OpraProfile } from '../../../../preload/types'
 import type { HeadphoneCompensationSettings } from '../../types/settings'
 import {
@@ -13,6 +13,7 @@ const props = defineProps<{
   status: OpraCatalogStatus | null
   searching: boolean
   refreshing: boolean
+  saving?: boolean
   applyingEqId: string
   results: OpraProfile[]
   error: string
@@ -27,7 +28,8 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-const drawerOpen = ref(true)
+const drawerOpen = ref(false)
+const drawerId = useId()
 const query = ref(props.query)
 let searchTimer: number | null = null
 
@@ -53,11 +55,14 @@ onBeforeUnmount(() => {
           {{ formatActiveCompensationTitle(props.compensation) }}
           <span v-if="props.compensation.enabled" class="badge">已启用补偿</span>
         </h3>
-        <p>OPRA (AutoEQ) 自动耳机频响校正曲线。独立处理，不干扰您的手动 EQ 设置。</p>
+        <p>按耳机型号查找 AutoEQ 校准曲线，与手动均衡独立控制。</p>
       </div>
       <button
+        type="button"
         class="opra-action-btn"
         :class="{ active: drawerOpen }"
+        :aria-expanded="drawerOpen"
+        :aria-controls="drawerId"
         @click="drawerOpen = !drawerOpen"
       >
         <span>{{ drawerOpen ? '收起设备搜索' : '展开设备搜索' }}</span>
@@ -65,7 +70,13 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div class="opra-drawer-wrapper" :class="{ collapsed: !drawerOpen }">
+    <div
+      :id="drawerId"
+      class="opra-drawer-wrapper"
+      :class="{ collapsed: !drawerOpen }"
+      :inert="!drawerOpen"
+      :aria-hidden="!drawerOpen"
+    >
       <div class="opra-drawer">
         <div class="opra-drawer-inner">
           <div class="opra-search">
@@ -85,7 +96,7 @@ onBeforeUnmount(() => {
           <div
             style="
               font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-              font-weight: 700;
+              font-weight: 500;
               color: var(--te-neutral-500);
               display: flex;
               justify-content: space-between;
@@ -95,19 +106,23 @@ onBeforeUnmount(() => {
               >{{ formatOpraStatus(props.status) }}
               <span v-if="props.searching">搜索中...</span></span
             >
-            <span v-if="props.error" style="color: #ec4899">{{ props.error }}</span>
+            <span v-if="props.error" style="color: var(--te-danger-soft-fg)">{{
+              props.error
+            }}</span>
             <button
               v-if="props.compensation.enabled"
+              type="button"
+              :disabled="props.saving || !!props.applyingEqId"
               @click="emit('clear')"
               style="
                 background: none;
                 border: none;
-                color: #ec4899;
+                color: var(--te-danger-soft-fg);
                 cursor: pointer;
-                font-weight: 700;
+                font-weight: 500;
               "
             >
-              停用补偿
+              {{ props.saving ? '正在停用…' : '停用补偿' }}
             </button>
           </div>
 
@@ -117,18 +132,22 @@ onBeforeUnmount(() => {
                 <span class="result-brand">{{ profile.vendorName }}</span>
                 <span class="result-model">{{ profile.productName }}</span>
                 <span class="result-author">Profile by {{ profile.author }}</span>
-                <span class="result-author" v-if="!profile.applicable" style="color: #ec4899"
+                <span
+                  class="result-author"
+                  v-if="!profile.applicable"
+                  style="color: var(--te-danger-soft-fg)"
                   >不支持: {{ profile.unsupportedBandTypes.join(', ') }}</span
                 >
               </div>
               <button
+                type="button"
                 class="result-apply"
                 :style="
                   props.compensation.eqId === profile.eqId
-                    ? 'background: var(--te-primary-500); color: #fff;'
+                    ? 'background: var(--te-primary-500); color: var(--te-control-on-accent);'
                     : ''
                 "
-                :disabled="!profile.applicable || props.applyingEqId === profile.eqId"
+                :disabled="props.saving || !!props.applyingEqId || !profile.applicable"
                 @click="emit('select', profile)"
               >
                 {{
@@ -151,24 +170,22 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .opra-panel {
-  background: var(--te-card-bg);
-  border-radius: 20px;
-  border: 1px solid var(--te-card-border);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03);
-  overflow: hidden;
+  background: transparent;
+  border-top: 1px solid var(--te-card-border);
 }
 .opra-header {
-  padding: 24px;
+  padding: 16px 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--te-card-bg);
+  gap: 16px;
+  flex-wrap: wrap;
   z-index: 2;
   position: relative;
 }
 .opra-info h3 {
-  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-headline);
+  font-weight: var(--te-type-weight-strong);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -187,11 +204,12 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 .opra-action-btn {
-  background: rgba(15, 23, 42, 0.04);
-  border: none;
-  padding: 10px 20px;
-  border-radius: 10px;
-  font-weight: 700;
+  min-height: var(--te-control-height-md);
+  background: transparent;
+  border: 1px solid var(--te-card-border);
+  padding: 6px 12px;
+  border-radius: var(--te-control-radius-sm);
+  font-weight: var(--te-type-weight-medium);
   color: var(--te-neutral-900);
   cursor: pointer;
   transition:
@@ -208,13 +226,11 @@ onBeforeUnmount(() => {
   transition: transform 0.4s var(--te-ease-soft);
 }
 .opra-action-btn:hover {
-  background: var(--te-subtle-bg);
-  transform: translateY(-2px);
+  background: var(--te-hover-bg);
 }
 .opra-action-btn.active {
-  background: var(--te-info-soft-bg);
-  color: var(--te-info-soft-fg);
-  transform: translateY(0);
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-900);
 }
 .opra-action-btn.active i {
   transform: rotate(180deg);
@@ -229,12 +245,11 @@ onBeforeUnmount(() => {
   grid-template-rows: 0fr;
 }
 .opra-drawer {
+  min-height: 0;
   overflow: hidden;
 }
 .opra-drawer-inner {
-  border-top: 1px solid var(--te-card-border);
-  background: var(--te-subtle-bg);
-  padding: 20px 24px 24px;
+  padding: 8px 0 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -273,18 +288,20 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 .opra-search-input-wrap input:focus {
-  border-color: var(--te-primary-500);
-  box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1);
+  border-color: var(--te-control-focus-color);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 .opra-refresh {
   background: var(--te-card-bg);
   border: 1px solid var(--te-card-border);
   padding: 11px 20px;
   border-radius: 12px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--te-neutral-900);
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.02);
+  box-shadow: none;
   transition:
     background-color var(--te-motion-hover) var(--te-ease-soft),
     color var(--te-motion-hover) var(--te-ease-soft),
@@ -327,12 +344,11 @@ onBeforeUnmount(() => {
     background-color var(--te-motion-hover) var(--te-ease-soft),
     color var(--te-motion-hover) var(--te-ease-soft),
     border-color var(--te-motion-hover) var(--te-ease-soft);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+  box-shadow: none;
 }
 .opra-result-item:hover {
   border-color: rgba(99, 102, 241, 0.3);
-  box-shadow: 0 8px 16px rgba(99, 102, 241, 0.08);
-  transform: translateY(-2px);
+  box-shadow: none;
 }
 .result-info {
   display: flex;
@@ -341,14 +357,14 @@ onBeforeUnmount(() => {
 }
 .result-brand {
   font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 800;
+  font-weight: 600;
   color: var(--te-neutral-500);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .result-model {
   font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
-  font-weight: 800;
+  font-weight: 600;
   color: var(--te-neutral-900);
 }
 .result-author {
@@ -363,7 +379,7 @@ onBeforeUnmount(() => {
   border: none;
   padding: 8px 16px;
   border-radius: 8px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   transition:
     background-color var(--te-motion-hover) var(--te-ease-soft),
@@ -384,7 +400,7 @@ onBeforeUnmount(() => {
 .opra-attribution a {
   color: var(--te-primary-500);
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 500;
 }
 .opra-attribution a:hover {
   text-decoration: underline;

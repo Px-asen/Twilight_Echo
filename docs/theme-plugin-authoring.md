@@ -235,3 +235,6 @@ access.
 | `structured` schemaVersion 3                 | Current API v3 theme contract; adds host-owned shell layout              |
 | `twilight.themes.register()`                 | Deprecated source signature; runtime registration rejects                |
 | Renderer scripts, remote code, arbitrary DOM | Never supported; API v3 shell layout is declarative host composition     |
+## 材质接入
+
+宿主通过 `packages/plugin-api/material-contract.json` 发布材质角色和可消费字段。新增界面先选择角色，再使用已有主题输入；不要在插件页面里再定义独立的模糊、半透明基底或阴影配方。示例与兼容边界见 [统一材质声明](./material-contract.md)。

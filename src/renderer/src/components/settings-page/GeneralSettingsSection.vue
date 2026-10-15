@@ -2,53 +2,62 @@
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { APP_LOCALES, normalizeLanguagePreference } from '../../../../shared/i18n/locale.ts'
 import { useLocale } from '../../app/useLocale.ts'
-import type { StartupHomePage, TrackActivationMode } from '../../types/settings'
-import type { BooleanSettingKey } from './types.ts'
-const { settings, updateSettings: persistSettings } = useSettingsStore()
+import type { AppTheme, StartupHomePage } from '../../types/settings'
+import { colorModeOptions, type BooleanSettingKey } from './types.ts'
+const { settings, saving, lastSettingsError, updateSettings: persistSettings } = useSettingsStore()
 const { t } = useLocale()
 function setLanguage(event: Event): void {
   const value = normalizeLanguagePreference((event.target as HTMLSelectElement).value)
   void persistSettings({ language: value })
 }
 
+async function setColorMode(theme: AppTheme): Promise<void> {
+  if (settings.value.theme === theme || saving.value) return
+  try {
+    await persistSettings({ theme })
+  } catch {
+    // The shared store restores the confirmed preference and exposes its error.
+  }
+}
+
 const emit = defineEmits<{ reopenOnboarding: [] }>()
 defineProps<{
-  trackActivationModeOptions: readonly { value: TrackActivationMode; label: string; icon: string }[]
   startupHomePageOptions: readonly { value: StartupHomePage; label: string; icon: string }[]
   toggleSetting: (key: BooleanSettingKey) => void
-  setTrackActivationMode: (mode: TrackActivationMode) => void
   setStartupHomePage: (page: StartupHomePage) => void
   setCloseBehavior: (event: Event) => void
 }>()
 </script>
 <template>
-  <section id="general" class="glass-card preview-section">
+  <section id="general" class="settings-section preview-section">
     <div class="section-title-row">
       <i class="pi pi-sliders-h" aria-hidden="true" />
       <h2>通用</h2>
     </div>
-    <p class="settings-section-description">选择适合你的语言、启动方式和操作习惯。</p>
     <div class="section-block">
-      <h3>操作习惯</h3>
+      <h3>显示</h3>
       <div class="setting-list">
-        <div data-setting-id="track-activation" id="setting-track-activation" class="setting-item">
+        <div data-setting-id="color-mode" id="setting-color-mode" class="setting-item">
           <div class="setting-copy">
-            <strong>歌曲列表播放方式</strong>
-            <span>选择普通左键单击还是双击播放；右键始终只打开菜单，不改变选中状态。</span>
+            <strong>配色模式</strong>
+            <span>选择跟随系统，或固定使用深色、浅色模式。</span>
           </div>
-          <div class="segmented-control">
+          <div class="segmented-control" role="group" aria-label="配色模式" :aria-busy="saving">
             <button
-              v-for="option in trackActivationModeOptions"
+              v-for="option in colorModeOptions"
               :key="option.value"
               type="button"
-              :class="{ active: settings.trackActivationMode === option.value }"
-              @click="setTrackActivationMode(option.value)"
+              :class="{ active: settings.theme === option.value }"
+              :aria-pressed="settings.theme === option.value"
+              :aria-disabled="saving"
+              @click="setColorMode(option.value)"
             >
-              <i :class="option.icon"></i>
+              <i :class="option.icon" aria-hidden="true" />
               {{ option.label }}
             </button>
           </div>
         </div>
+        <p v-if="lastSettingsError" class="setting-hint" role="alert">{{ lastSettingsError }}</p>
       </div>
     </div>
     <div class="section-block">
@@ -59,12 +68,13 @@ defineProps<{
             <strong>启动后进入</strong>
             <span>未保存上次页面时使用此主页；重新打开应用会自动回到关闭前的页面。</span>
           </div>
-          <div class="segmented-control">
+          <div class="segmented-control" role="group" aria-label="启动后进入">
             <button
               v-for="option in startupHomePageOptions"
               :key="option.value"
               type="button"
               :class="{ active: settings.startupHomePage === option.value }"
+              :aria-pressed="settings.startupHomePage === option.value"
               @click="setStartupHomePage(option.value)"
             >
               <i :class="option.icon"></i>
@@ -94,7 +104,12 @@ defineProps<{
             <strong>{{ t('settings.language.title') }}</strong>
             <span>{{ t('settings.language.description') }}</span>
           </div>
-          <select class="preview-select" :value="settings.language" @change="setLanguage">
+          <select
+            class="preview-select"
+            :aria-label="t('settings.language.title')"
+            :value="settings.language"
+            @change="setLanguage"
+          >
             <option value="system">{{ t('settings.language.system') }}</option>
             <option v-for="option in APP_LOCALES" :key="option" :value="option">
               {{ t(`settings.language.${option}`) }}
@@ -109,6 +124,7 @@ defineProps<{
           </div>
           <select
             class="preview-select"
+            aria-label="关闭主窗口时"
             :value="settings.closeWindowBehavior"
             @change="setCloseBehavior"
           >

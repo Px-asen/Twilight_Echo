@@ -66,14 +66,16 @@ function play(selected: Track[]): void {
 .music-versions-dialog {
   width: min(1000px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
+  margin: auto;
   padding: 0;
   border: 1px solid var(--te-card-border);
-  border-radius: 12px;
+  border-radius: var(--te-dialog-radius, 8px);
+  box-sizing: border-box;
   background: var(--te-card-bg);
   color: var(--te-neutral-900);
   overflow: auto;
 }
 .music-versions-dialog::backdrop {
-  background: color-mix(in srgb, var(--te-neutral-900) 35%, transparent);
+  background: var(--te-dialog-backdrop);
 }
 </style>

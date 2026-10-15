@@ -11,6 +11,7 @@ import { useMusicStore } from '../../stores/useMusicStore'
 import { usePlayerStore } from '../../stores/usePlayerStore'
 import { useProviderStore } from '../../stores/useProviderStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { trackRowKeyAction } from '../song-list/trackRowKeyboard'
 import {
   buildAggregateRows,
   collectAggregateSources,
@@ -268,7 +269,12 @@ function playRow(track: Track): void {
     actionError.value = '偏好来源未载入，请通过来源菜单明确选择，或在歌曲信息中修改偏好'
     return
   }
-  playTrack(track, playableTracks.value)
+  const playlist = activePlaylist.value
+  playTrack(track, playableTracks.value, {
+    queuePlaybackOrigin: playlist
+      ? { kind: 'playlist', scope: 'aggregate', id: playlist.id, name: playlist.name }
+      : null
+  })
 }
 
 function onRowClick(track: Track): void {
@@ -279,6 +285,10 @@ function onRowClick(track: Track): void {
 function onRowDoubleClick(track: Track): void {
   if (settingsStore.settings.value.trackActivationMode !== 'doubleClick') return
   playRow(track)
+}
+
+function onRowKeydown(track: Track, event: KeyboardEvent): void {
+  if (trackRowKeyAction(event, false) === 'play' && !event.repeat) playRow(track)
 }
 
 function removeRow(row: AggregateRow, event: Event): void {
@@ -472,8 +482,12 @@ function rowNumber(index: number): number {
               class="aggregate-row"
               data-te-interactive
               :class="{ 'is-playing': currentTrack?.id === track.id }"
-              :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+              :style="{ height: rowHeight + 'px', display: 'flex' }"
               @click="onRowClick(track)"
+              tabindex="0"
+              :aria-label="`${track.title}，${track.artist}。Enter 播放`"
+              :aria-current="currentTrack?.id === track.id ? 'true' : undefined"
+              @keydown="onRowKeydown(track, $event)"
               @dblclick="onRowDoubleClick(track)"
             >
               <td class="col-index">

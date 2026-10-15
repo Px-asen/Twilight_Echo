@@ -9,6 +9,7 @@ import {
   type Ref
 } from 'vue'
 import type { Track } from '../../types/music'
+import { hasDismissLayer } from '../../app/useDismissLayer.ts'
 
 export type MultiSelectClickResult = 'select' | 'play'
 
@@ -24,6 +25,8 @@ export type UseTrackMultiSelectOptions = {
   resetSources?: Array<Ref<unknown> | ComputedRef<unknown> | (() => unknown)>
   /** When false, keyboard shortcuts are ignored (e.g. grid view). Default true. */
   enabled?: Ref<boolean> | ComputedRef<boolean> | (() => boolean)
+  /** Owning list surface; falls back to this component's root when omitted. */
+  root?: Ref<HTMLElement | null> | (() => HTMLElement | null)
 }
 
 function resolveTracks(source: TrackListSource): Track[] {
@@ -44,6 +47,22 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
 
+export function isTrackListShortcutTarget(
+  event: KeyboardEvent,
+  root: HTMLElement | null,
+  dismissLayerActive = hasDismissLayer()
+): boolean {
+  if (event.defaultPrevented || dismissLayerActive || !root) return false
+  const target = event.target
+  const active = root.ownerDocument.activeElement
+  if (!(target instanceof HTMLElement) || !(active instanceof HTMLElement)) return false
+  if (!root.contains(target) || !root.contains(active)) return false
+  if (isEditableTarget(target) || isEditableTarget(active)) return false
+  return !root.ownerDocument.querySelector(
+    'dialog:modal, [role="dialog"][aria-modal="true"], [role="menu"]:not([hidden]):not([aria-hidden="true"])'
+  )
+}
+
 /**
  * System-style multi-select for track tables:
  * - Ctrl/Cmd+Click: toggle selection (does not play)
@@ -57,7 +76,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function useTrackMultiSelect({
   tracks,
   resetSources = [],
-  enabled
+  enabled,
+  root
 }: UseTrackMultiSelectOptions): {
   selectedIds: Ref<Set<string>>
   selectedCount: ComputedRef<number>
@@ -73,6 +93,7 @@ export function useTrackMultiSelect({
   getSelectedTracks: () => Track[]
   getSelectedTrackIds: () => string[]
 } {
+  const instance = getCurrentInstance()
   const selectedIds = ref<Set<string>>(new Set())
   const anchorIndex = ref<number | null>(null)
   let suppressNextRowDoubleClick = false
@@ -183,7 +204,13 @@ export function useTrackMultiSelect({
 
   function onKeyDown(event: KeyboardEvent): void {
     if (!resolveEnabled(enabled)) return
-    if (isEditableTarget(event.target)) return
+    const element = instance?.subTree.el
+    const surface =
+      typeof root === 'function'
+        ? root()
+        : (root?.value ??
+          (typeof HTMLElement !== 'undefined' && element instanceof HTMLElement ? element : null))
+    if (!isTrackListShortcutTarget(event, surface)) return
 
     const key = event.key
     if (key === 'Escape' && hasSelection.value) {
@@ -193,13 +220,12 @@ export function useTrackMultiSelect({
     }
 
     if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === 'a') {
-      // Only hijack Ctrl+A when focus is within a track list surface, or always when enabled.
       event.preventDefault()
       selectAll()
     }
   }
 
-  if (getCurrentInstance()) {
+  if (instance) {
     for (const source of resetSources) {
       watch(typeof source === 'function' ? source : () => source.value, () => clearSelection())
     }

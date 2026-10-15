@@ -1,0 +1,61 @@
+/* Color effects and only the skin's overflow escape clipping. The skin's body
+   is a native background; a hole in the overflow plane protects its foreground. */
+.te-appearance-effects {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+}
+.te-appearance-effects[hidden] {
+  display: none;
+}
+.te-appearance-effect {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
+  box-shadow: 0 0 var(--te-effect-blur) var(--te-effect-spread)
+    color-mix(in srgb, var(--te-effect-color) var(--te-effect-alpha), transparent);
+}
+.te-appearance-effect[data-effect-placement='inside'] {
+  box-shadow: inset 0 0 var(--te-effect-blur) var(--te-effect-spread)
+    color-mix(in srgb, var(--te-effect-color) var(--te-effect-alpha), transparent);
+  overflow: hidden;
+}
+.te-appearance-skin-overflow {
+  position: absolute;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  pointer-events: none;
+  user-select: none;
+}
+.te-appearance-effect[data-effect-motion='breathe'] {
+  animation: te-effect-breathe 4s ease-in-out infinite;
+}
+.te-appearance-effect[data-effect-motion='drift'] {
+  animation: te-effect-drift 6s ease-in-out infinite alternate;
+}
+.te-appearance-effect[data-effect-placement='inside'][data-effect-motion='drift'] {
+  animation-name: te-effect-breathe;
+}
+@keyframes te-effect-breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+@keyframes te-effect-drift {
+  to {
+    transform: translate(3px, -3px);
+  }
+}
+html[data-te-motion='reduced'] .te-appearance-effect,
+html[data-te-motion='off'] .te-appearance-effect,
+html[data-te-visibility='hidden'] .te-appearance-effect {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .te-appearance-effect {
+    animation: none;
+  }
+}

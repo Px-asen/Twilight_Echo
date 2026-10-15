@@ -2,6 +2,7 @@ import { normalizeNavigationPagePreferences } from '../../../shared/navigationPa
 import { DEFAULT_DOWNLOAD_PREFERENCES } from '../../../shared/downloadPreferences.ts'
 import { computed, ref } from 'vue'
 import { normalizeAppBackgroundSettings } from '../../../shared/appAppearance.ts'
+import { normalizeAppearanceLayers } from '../../../shared/appearanceLayers.ts'
 import { normalizeAppFontRendering } from '../../../shared/appFont.ts'
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
@@ -440,6 +441,7 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
       ...(incoming.cachePolicy ?? {})
     },
     navigationPages: normalizeNavigationPagePreferences(incoming.navigationPages),
+    appearanceLayers: normalizeAppearanceLayers(incoming.appearanceLayers),
     fontRendering: normalizeAppFontRendering(incoming.fontRendering),
     appBackground: normalizeAppBackgroundSettings(
       incoming.appBackground,

@@ -7,7 +7,10 @@ import {
   THEME_ACCENT_PALETTES,
   THEME_BACKGROUND_PALETTES,
   THEME_ICON_SLOT_REGISTRY,
+  THEME_ICON_SLOTS,
+  THEME_ICON_SLOT_LABELS,
   THEME_TOKEN_DEFINITIONS,
+  THEME_MANAGED_DATA_ATTRIBUTES,
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
@@ -27,6 +30,8 @@ import {
   limitThemeProfileHistory,
   resolveScheduledThemeTone,
   resolveThemeIconClasses,
+  resolveThemeIconUrl,
+  themeProfilesHaveSameEditableState,
   ensureThemeTextContrast,
   themeContrastRatio,
   themeShellLayoutToCssVariables,
@@ -35,6 +40,7 @@ import {
   themeTokensToCssVariables,
   type ThemeShellLayout
 } from './theme.ts'
+import { normalizeThemeEditor, WORKSHOP_IMAGE_SLOTS } from './themeEditor.ts'
 
 test('the immutable built-in theme preserves the current light and dark root values', () => {
   assert.equal(TWILIGHT_DEFAULT_THEME.id, TWILIGHT_DEFAULT_THEME_ID)
@@ -272,13 +278,99 @@ test('phase three icon slots resolve every host-owned family without arbitrary r
   const slots = Object.entries(THEME_ICON_SLOT_REGISTRY)
   assert.ok(slots.length >= 24)
   for (const [id, definition] of slots) {
-    assert.match(id, /^(navigation|library)\.[a-z]+$/)
-    assert.ok(definition.domain === 'navigation' || definition.domain === 'library')
+    assert.match(id, /^(navigation|library|playback)\.[a-zA-Z]+$/)
+    assert.ok(['navigation', 'library', 'playback'].includes(definition.domain))
     assert.match(definition.classes.outline, /^ph ph-/)
     assert.match(definition.classes.rounded, /^ph-bold ph-/)
     assert.match(definition.classes.filled, /^ph-fill ph-/)
   }
   assert.equal(resolveThemeIconClasses('navigation.home', 'filled'), 'ph-fill ph-house')
+})
+
+test('icon bindings reference declared image assets and never accept paths, fonts or unknown slots', () => {
+  const profile = normalizeThemeProfile({
+    schemaVersion: 2,
+    id: 'user:icons',
+    name: 'Icons',
+    overrides: {},
+    assets: [
+      { id: 'home', path: 'icons/home button.png', type: 'image' },
+      { id: 'play', path: 'play.webp', type: 'image' },
+      { id: 'font', path: 'icons.woff2', type: 'font' },
+      { id: 'unsafe', path: '../private.png', type: 'image' },
+      { id: 'remote', path: 'https://example.com/icon.png', type: 'image' },
+      { id: 'svg', path: 'icon.svg', type: 'image' }
+    ],
+    iconBindings: {
+      'navigation.home': 'home',
+      'playback.play': 'play',
+      'playback.pause': 'font',
+      'playback.next': 'missing',
+      'playback.previous': 'unsafe',
+      'playback.shuffle': 'remote',
+      'playback.repeat': 'svg',
+      'library.search': 'https://example.com/icon.png',
+      'window.close': 'home',
+      constructor: 'home'
+    }
+  })!
+  assert.deepEqual(profile.iconBindings, { 'navigation.home': 'home', 'playback.play': 'play' })
+  assert.equal(
+    resolveThemeIconUrl(profile, 'navigation.home'),
+    'theme-asset://asset/user%3Aicons/icons/home%20button.png'
+  )
+  assert.equal(
+    resolveThemeIconUrl(profile, 'playback.play'),
+    'theme-asset://asset/user%3Aicons/play.webp'
+  )
+  assert.equal(resolveThemeIconUrl(profile, 'playback.pause'), '')
+  assert.equal(resolveThemeIconUrl(null, 'playback.play'), '')
+  assert.equal(resolveThemeIconUrl({ ...profile, assets: [] }, 'playback.play'), '')
+  assert.equal(resolveThemeIconUrl({ ...profile, id: '../private' }, 'playback.play'), '')
+  assert.equal(normalizeThemeProfile({ ...profile, iconBindings: {} })!.iconBindings, undefined)
+  assert.equal(
+    themeProfilesHaveSameEditableState(profile, { ...profile, iconBindings: undefined }),
+    false
+  )
+  const library = createDefaultThemeLibraryDocument()
+  library.profiles = [profile]
+  library.activeTheme = { kind: 'user', id: profile.id }
+  assert.deepEqual(
+    normalizeThemeLibraryDocument(JSON.parse(JSON.stringify(library))).profiles[0].iconBindings,
+    profile.iconBindings
+  )
+})
+
+test('every controlled icon slot has a user label and a matching workshop image selector', () => {
+  assert.equal(THEME_ICON_SLOTS.length, 61)
+  assert.deepEqual(Object.keys(THEME_ICON_SLOT_LABELS).sort(), [...THEME_ICON_SLOTS].sort())
+  const controls = THEME_ICON_SLOTS.map((slot, index) => ({
+    id: `icon-${index}`,
+    label: THEME_ICON_SLOT_LABELS[slot],
+    group: '图标',
+    type: 'image',
+    slot,
+    defaults: { dark: '', pureWhite: '' }
+  }))
+  const descriptor = normalizeThemeEditor({
+    schemaVersion: 1,
+    controls: [
+      ...controls,
+      {
+        id: 'close',
+        label: 'Close',
+        group: '图标',
+        type: 'image',
+        slot: 'window.close',
+        defaults: { dark: '', pureWhite: '' }
+      }
+    ]
+  })!
+  assert.equal(descriptor.controls.length, controls.length)
+  for (const slot of THEME_ICON_SLOTS) {
+    assert.ok(THEME_ICON_SLOT_LABELS[slot].trim())
+    assert.equal(WORKSHOP_IMAGE_SLOTS[slot], `[data-theme-icon-slot="${slot}"]`)
+  }
 })
 
 test('timed tone schedules are bounded and switch correctly across midnight', () => {
@@ -579,7 +671,7 @@ test('structured plugin theme v3 accepts a host-owned shell layout and rejects u
   })
   assert.equal(
     themeShellLayoutToCssVariables(layout)['--te-shell-template-areas'],
-    "'titleBar titleBar' 'navigation content' 'navigation playerBar'"
+    "'titleBar' 'content' 'playerBar'"
   )
   assert.deepEqual(
     findInvalidThemeShellLayoutFields({
@@ -608,4 +700,87 @@ test('structured plugin theme v3 accepts a host-owned shell layout and rejects u
     }),
     undefined
   )
+})
+
+test('overlay navigation releases its row and column while preserving title and playback slots', () => {
+  const layouts: ThemeShellLayout[] = [
+    {
+      desktop: {
+        columns: ['standard', 'fill'],
+        rows: ['auto', 'fill', 'auto'],
+        areas: [
+          ['titleBar', 'titleBar'],
+          ['navigation', 'content'],
+          ['playerBar', 'playerBar']
+        ]
+      }
+    },
+    {
+      desktop: {
+        columns: ['fill'],
+        rows: ['auto', 'standard', 'fill', 'auto'],
+        areas: [['titleBar'], ['navigation'], ['content'], ['playerBar']]
+      }
+    }
+  ]
+  for (const layout of layouts) {
+    const saved = JSON.stringify(layout)
+    const css = themeShellLayoutToCssVariables(layout)
+    assert.equal(css['--te-shell-template-columns'], 'minmax(0, 1fr)')
+    assert.equal(css['--te-shell-template-rows'], 'auto minmax(0, 1fr) auto')
+    assert.equal(css['--te-shell-template-areas'], "'titleBar' 'content' 'playerBar'")
+    assert.equal(css['--te-shell-navigation-display'], 'block')
+    assert.equal(JSON.stringify(layout), saved, 'rendering must preserve the stored theme layout')
+  }
+})
+
+test('shared custom shell tracks reclaim navigation without splitting the content rectangle', () => {
+  const layout: ThemeShellLayout = {
+    desktop: {
+      columns: ['fill', 'fill', 'fill', 'fill'],
+      rows: ['fill', 'fill', 'fill'],
+      areas: [
+        ['.', 'playerBar', '.', '.'],
+        ['.', 'playerBar', '.', 'titleBar'],
+        ['navigation', 'navigation', '.', 'content']
+      ]
+    }
+  }
+  const css = themeShellLayoutToCssVariables(layout)
+  assert.equal(
+    css['--te-shell-template-areas'],
+    "'playerBar . .' 'playerBar . titleBar' 'content content content'"
+  )
+})
+
+test('overlay track removal retains slots shared by several navigation tracks', () => {
+  const layout: ThemeShellLayout = {
+    desktop: {
+      columns: ['fill', 'fill', 'fill'],
+      rows: ['fill', 'fill', 'fill'],
+      areas: [
+        ['.', 'titleBar', 'navigation'],
+        ['content', 'titleBar', 'navigation'],
+        ['content', '.', 'playerBar']
+      ]
+    },
+    compact: {
+      columns: ['fill', 'fill'],
+      rows: ['auto', 'standard', 'fill'],
+      areas: [
+        ['titleBar', 'titleBar'],
+        ['navigation', 'navigation'],
+        ['content', 'content']
+      ]
+    }
+  }
+  const css = themeShellLayoutToCssVariables(layout)
+  assert.equal(css['--te-shell-template-areas'], "'content titleBar .' 'content . playerBar'")
+  assert.equal(css['--te-shell-compact-template-areas'], "'titleBar' 'content'")
+})
+
+test('theme isolation manages all per-page image palette markers', () => {
+  for (const page of ['app', 'local', 'settings', 'streaming', 'player']) {
+    assert.ok(THEME_MANAGED_DATA_ATTRIBUTES.includes(`data-te-${page}-image-palette`))
+  }
 })

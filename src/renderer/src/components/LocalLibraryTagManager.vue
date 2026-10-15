@@ -324,6 +324,8 @@ function requestClose(): void {
   void nextTick(restoreTriggerFocus)
 }
 
+defineExpose({ requestClose })
+
 function onDialogKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -565,7 +567,7 @@ onMounted(() => {
   overflow: auto;
   padding: 20px;
   border: 1px solid var(--te-glass-border, #dce0e8);
-  border-radius: 8px;
+  border-radius: var(--te-dialog-radius, 8px);
   background: var(--te-glass-bg-strong, #fff);
   color: var(--te-neutral-900, #1b1b1b);
   box-shadow: 0 24px 64px rgba(24, 28, 42, 0.28);
@@ -578,16 +580,27 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
 }
+.tag-manager-header > div {
+  min-width: 0;
+}
+.tag-manager-header > button {
+  flex-shrink: 0;
+}
+.tag-actions,
+.duplicate-group header {
+  flex-wrap: wrap;
+}
 .tag-manager-header h3 {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
+  font-size: var(--te-type-section-title, 20px);
+  font-weight: 600;
 }
 .tag-manager-header p,
 .tag-help,
 .tag-manager-live,
 .duplicate-group header span {
   color: var(--te-neutral-600, #657084);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption, 13px);
 }
 .tag-manager-header p {
   margin: 4px 0 0;
@@ -596,17 +609,18 @@ onMounted(() => {
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--te-control-radius-sm, 8px);
   background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 .tag-icon-button:hover {
-  background: rgba(0, 0, 0, 0.07);
+  background: var(--te-hover-bg);
 }
 .tag-manager-tabs {
   display: flex;
   gap: 4px;
-  margin: 18px 0;
+  margin: 12px 0;
   border-bottom: 1px solid rgba(128, 128, 128, 0.22);
 }
 .tag-manager-tabs button {
@@ -619,15 +633,27 @@ onMounted(() => {
 .tag-manager-tabs button[aria-selected='true'] {
   color: var(--te-primary-600, #6345d5);
   border-bottom: 2px solid currentColor;
-  font-weight: 700;
+  font-weight: 600;
 }
 .tag-manager-live {
   min-height: 18px;
   margin: 8px 0;
 }
+.tag-manager-live:empty {
+  min-height: 0;
+  margin: 0;
+}
+.tag-manager :is(button, input, summary):focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
 .tag-editor {
   display: grid;
   gap: 12px;
+}
+.tag-help {
+  margin: 0;
+  line-height: 1.5;
 }
 .tag-form-grid {
   margin: 0;
@@ -643,17 +669,20 @@ onMounted(() => {
 .tag-form-grid label {
   display: grid;
   gap: 5px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption, 13px);
   font-weight: 600;
 }
 .tag-form-grid input {
   box-sizing: border-box;
   width: 100%;
   min-height: 34px;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 4px;
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm, 8px);
   padding: 6px 8px;
   font: inherit;
+  font-size: var(--te-control-font-size, 14px);
+  color: var(--te-neutral-900);
+  background: var(--te-subtle-bg);
 }
 .tag-cover-input {
   grid-column: 1 / -1;
@@ -678,20 +707,20 @@ onMounted(() => {
 .tag-primary-button,
 .tag-secondary-button {
   min-height: 36px;
-  border-radius: 5px;
+  border-radius: var(--te-control-radius-sm, 8px);
   padding: 7px 12px;
   font: inherit;
   cursor: pointer;
 }
 .tag-primary-button {
-  border: 1px solid #6845de;
-  background: #6845de;
-  color: #fff;
+  border: 1px solid transparent;
+  background: var(--te-control-accent);
+  color: var(--te-control-on-accent);
 }
 .tag-secondary-button {
-  border: 1px solid rgba(104, 69, 222, 0.36);
+  border: 1px solid var(--te-control-border);
   background: transparent;
-  color: #5635bb;
+  color: var(--te-neutral-900);
 }
 .tag-primary-button:disabled,
 .tag-secondary-button:disabled {

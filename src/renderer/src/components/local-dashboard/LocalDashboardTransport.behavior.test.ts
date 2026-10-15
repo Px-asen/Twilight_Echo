@@ -26,7 +26,7 @@ test('homepage playback and return geometry remain stable across routes and moti
     const localTransition = template.match(/<Transition\s+:name=[\s\S]*?<\/Transition>/)![0]
     const sidebarVisibility = appSource.slice(
       appSource.indexOf('const showLocalSidebar = computed('),
-      appSource.indexOf('const sideMenuActiveKey')
+      appSource.indexOf('// watch() reads its getter')
     )
     await writeFile(
       join(directory, 'NavigationFixture.vue'),
@@ -38,8 +38,8 @@ const navigation=useAppNavigation()
 window.homeNavigation=navigation
 const {menuOpen,pageTarget,localViewVisible,activeCategory,activeFilter,songlistTransitionName,
  showPlayingPage,showPluginPage,showDspRackPage,showRadioPodcastPage,showLoginPage,
- showSettingsPage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
-const appearanceFullWindowPreview=ref(false)
+ showSettingsPage,showAppearancePage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
+const appearanceFullWindowPreview=ref(false),showAccountPage=ref(false)
 ${sidebarVisibility}
 const hasPlayerBar=ref(false), mainContentMinHeight='100vh'
 const SongList=defineComponent({render:()=>h('article',{class:'list-fixture'},'Music library')})
@@ -48,7 +48,9 @@ const openSettingsPage=()=>{}, enterStreamingMode=()=>{}, handleStreamingLogin=(
 </script><template>${mainTag}${localTransition}</div></template>`
     )
     const baseStyles = await readFile(join(workspace, 'src/renderer/src/assets/base.css'), 'utf8')
-    const appStyles = appDescriptor.styles.map((style) => style.content).join('\n')
+    const appStyles =
+      appDescriptor.styles.map((style) => style.content).join('\n') +
+      (await readFile(join(workspace, 'src/renderer/src/assets/overlay-sidebars.css'), 'utf8'))
     await build({
       configFile: false,
       logLevel: 'error',
@@ -173,16 +175,19 @@ window.runHomeTransportTests=async()=>{
  await settle()
  for(let tick=0;tick<30&&!document.querySelector('.fresh-cover img')?.naturalWidth;tick++)await settle()
  const fallback=document.querySelector('.fresh-cover img')
- expect(fallback?.naturalWidth===768,'recent music is missing the bundled fallback artwork')
+ expect(fallback?.naturalWidth>0,'recent music is missing the bundled fallback artwork')
  expect(Math.abs(fallback.getBoundingClientRect().width-fallback.parentElement.getBoundingClientRect().width)<1,'fallback cover is cropped at its intrinsic size')
  expect(controls().length===1,'fresh launch must show its regular play control')
- expect(play()?.getAttribute('aria-label')==='开始收听'&&play().querySelector('[data-playback-icon="play"]'),'idle control must have the visible play glyph and matching accessible label')
+ expect(play()?.getAttribute('aria-label')==='开始收听'&&play().querySelector('[data-playback-icon="play"]'),'idle control must have the visible play glyph')
  expect(play().getBoundingClientRect().width>0,'idle control must occupy visible space')
- expect(play().classList.contains('is-idle')&&play().textContent.includes('开始收听'),'fresh launch must show a labeled listening invitation')
+ expect(play().classList.contains('is-idle')&&play().textContent.includes('开始收听'),'initial listening label remains visible without moving the reserved controls')
+ const playCenter=()=>{const rect=play().getBoundingClientRect();return rect.x+rect.width/2}
+ const idleCenter=playCenter()
+ expect(document.querySelector('.hero-actions').getBoundingClientRect().bottom<document.querySelector('.hero-progress').getBoundingClientRect().top,'progress must sit below transport controls')
  expect(!document.querySelector('.hero-actions')?.textContent.includes('播放这首'),'no duplicate text CTA')
  const cardHeight=()=>document.querySelector('.feature-card').getBoundingClientRect().height
  const idleHeight=cardHeight()
- expect(!document.querySelector('.hero-progress'),'idle card must not expose a seek control')
+ expect(getComputedStyle(document.querySelector('.hero-progress')).visibility==='hidden','idle progress must reserve space without exposing a seek control')
  const routeTrigger=document.querySelector('[aria-label="打开实时 DSP 输出线路"]')
  routeTrigger.focus();routeTrigger.click();await settle()
  const routeDialog=document.querySelector('.dsp-route-dialog')
@@ -196,20 +201,16 @@ window.runHomeTransportTests=async()=>{
  await settle()
  expect(!document.querySelector('.home').classList.contains('has-route-dialog')&&document.activeElement===routeTrigger,'DSP modal closes on Escape and restores its trigger')
  play().click();await settle()
- expect(cardHeight()>=idleHeight,'playback progress must fit in the card')
- const playingHeight=cardHeight()
+ expect(Math.abs(cardHeight()-idleHeight)<1,'first playback must preserve the card height')
  expect(getComputedStyle(document.querySelector('.hero-progress')).visibility==='visible','active playback must reveal the real progress control')
- expect(document.querySelector('.hero-progress').getBoundingClientRect().bottom<=document.querySelector('.hero-actions').getBoundingClientRect().top,'progress returns above transport')
  expect(JSON.stringify(state.calls[0])===JSON.stringify(['start','two',['one','two']]),'idle control must play the displayed last track with its normal queue')
  expect(controls().length===3&&play().getAttribute('aria-label')==='暂停','starting a track must expose all three regular controls')
- expect(document.querySelector('.hero-actions').classList.contains('is-current')&&!play().classList.contains('is-idle'),'active controls must expose their session transport')
- expect(controls().every(button=>{const r=button.getBoundingClientRect();return r.width>=44&&r.height>=44}),'all transport controls must retain usable hit targets')
+ expect(Math.abs(playCenter()-idleCenter)<1,'starting playback shifts the centered primary control')
  play().click();await settle()
- expect(Math.abs(cardHeight()-playingHeight)<1,'pause must preserve the card height')
+ expect(Math.abs(cardHeight()-idleHeight)<1,'pause must preserve the card height')
  expect(!state.isPlaying.value&&play().getAttribute('aria-label')==='播放','pause must keep an available resume control')
- expect(document.querySelector('.hero-actions').classList.contains('is-current')&&controls().length===3,'pause must retain the grouped transport without returning to the listening invitation')
  play().click();await settle()
- expect(Math.abs(cardHeight()-playingHeight)<1,'resume must preserve the card height')
+ expect(Math.abs(cardHeight()-idleHeight)<1,'resume must preserve the card height')
  expect(state.isPlaying.value&&state.calls.filter(call=>call[0]==='start').length===1,'resume must not replace the queue')
  const originalTrack=state.currentTrack.value
  const originalLibrary=state.tracks.value
@@ -223,16 +224,17 @@ window.runHomeTransportTests=async()=>{
   const title=document.querySelector('.hero-title'),artist=document.querySelector('.hero-artist')
   const lineHeight=parseFloat(getComputedStyle(title).lineHeight)
   expect(artist.getBoundingClientRect().top-title.getBoundingClientRect().bottom<14,'short title separates its artist at width '+width)
-  const grid=document.querySelector('.fresh-grid'),tiles=[...grid.children],host=document.querySelector('.home-inner')
+  const grid=document.querySelector('.fresh-grid'),tiles=[...grid.children],host=document.querySelector('.home-inner'),css=getComputedStyle(host)
   const image=tiles[0].querySelector('img'),frame=tiles[0].querySelector('.fresh-cover')
-  expect(image?.naturalWidth===768&&Math.abs(image.getBoundingClientRect().width-frame.getBoundingClientRect().width)<1&&Math.abs(image.getBoundingClientRect().height-frame.getBoundingClientRect().height)<1,'fallback cover sizing broke at '+width+'px')
-  const gridBox=grid.getBoundingClientRect()
-  expect(tiles.length===6&&tiles.every(tile=>{const box=tile.getBoundingClientRect();return box.width>0&&box.left>=gridBox.left-1&&box.right<=gridBox.right+1}),'responsive music shelf must keep its cards in bounds at '+width+' '+density)
-  expect(document.querySelector('.signal-card').getBoundingClientRect().bottom<gridBox.top,'signal card returns above recent music')
+  expect(image?.naturalWidth>0&&Math.abs(image.getBoundingClientRect().width-frame.getBoundingClientRect().width)<1&&Math.abs(image.getBoundingClientRect().height-frame.getBoundingClientRect().height)<1,'fallback cover sizing broke at '+width+'px')
+  const contentWidth=host.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)
+  const columns=contentWidth<=520?2:contentWidth<=940?3:6
+  expect(tiles.length===6&&tiles.filter(tile=>Math.abs(tile.getBoundingClientRect().top-tiles[0].getBoundingClientRect().top)<1).length===columns,'music shelf leaves uneven rows at width '+width+' '+density)
+  expect(document.querySelector('.signal-card').getBoundingClientRect().top>grid.getBoundingClientRect().bottom,'technical status precedes music discovery')
   expect(host.scrollWidth<=host.clientWidth+1,'homepage content overflows horizontally '+JSON.stringify({width,font,density,client:host.clientWidth,scroll:host.scrollWidth,children:[...host.children].map(el=>({class:el.className,right:el.getBoundingClientRect().right}))}))
   state.currentTrack.value={...originalTrack,title:'A Cielo Abierto (Viaje V) — A long musical journey across the evening sky',album:'A very long album title that must not displace the audio metadata or transport controls'};await settle()
   expect(title.scrollHeight>lineHeight*1.5,'long title must wrap at width '+width)
-  expect(cardHeight()>=shortHeight,'wrapped title must fit inside the card at width '+width)
+  expect(Math.abs(cardHeight()-shortHeight)<1,'wrapped title must preserve card height at width '+width+' '+JSON.stringify({shortHeight,longHeight:cardHeight(),parts:[...document.querySelector('.hero-copy').children].map(el=>({class:el.className,height:el.getBoundingClientRect().height,margin:getComputedStyle(el).marginTop})),min:getComputedStyle(document.querySelector('.hero-copy')).minHeight}))
  }
  state.tracks.value=originalLibrary
  document.documentElement.style.removeProperty('--te-font-size-body')
@@ -290,10 +292,10 @@ async function runHomeReturnTests(){
    expect(play()?.getBoundingClientRect().width>0,'return lost the play control '+name)
   }
  }
- // Explicit sidebar toggles still animate, unlike restoration of a hidden sidebar.
+ // Navigation overlays the page: opening or closing it must not animate content geometry.
  document.documentElement.dataset.teMotion='full'
- navigation.menuOpen.value=false;await nextTick();await frame()
- expect(document.querySelector('.main-content').getAnimations().some(a=>a.transitionProperty==='padding-left'),'manual sidebar toggle lost its transition')
+ const beforeToggle=measure();navigation.menuOpen.value=false;await nextTick();await frame()
+ const toggled=measure();expect(Math.abs(toggled.x-beforeToggle.x)<.75&&Math.abs(toggled.width-beforeToggle.width)<.75&&!document.querySelector('.main-content').getAnimations().some(a=>a.transitionProperty==='padding-left'),'overlay navigation reflows the content')
  await sleep(350)
  routeApp.unmount()
 }

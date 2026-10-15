@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   gradientColors,
+  isStudioTokenEditable,
   matchesStudioSearch,
   parseStudioColor,
   replaceGradientAngle,
@@ -18,6 +19,34 @@ test('studio search accepts displayed names, old labels, IDs and multiple search
   assert.equal(matchesStudioSearch('列表表面', ...terms), true)
   assert.equal(matchesStudioSearch(' LIBRARY.TABLE ', ...terms), true)
   assert.equal(matchesStudioSearch('歌曲 字体', ...terms), false)
+})
+
+test('studio hides structural geometry while retaining accessible typography and material controls', () => {
+  for (const id of [
+    'shape.globalRadius',
+    'shape.dialogRadius',
+    'layout.uiScale',
+    'navigation.radius',
+    'library.selection.inlineInset',
+    'playback.control.radius',
+    'playback.control.playSize',
+    'playback.control.gap',
+    'playback.control.borderWidth',
+    'playback.progress.height',
+    'playback.cover.size'
+  ])
+    assert.equal(isStudioTokenEditable(id), false, id)
+  for (const id of [
+    'typography.bodySize',
+    'typography.lyricSize',
+    'typography.sans',
+    'navigation.surface',
+    'material.surfaceOpacity',
+    'material.cardBlur',
+    'playback.backdrop.blur',
+    'motion.enter'
+  ])
+    assert.equal(isStudioTokenEditable(id), true, id)
 })
 
 test('color picker preserves opacity across rgba and short or alpha hex colors', () => {

@@ -153,6 +153,14 @@ export function studioTokenGroup(id: string): string {
   return '界面配色'
 }
 
+// Geometry remains part of saved themes; the editor keeps structural sizing in
+// the application design system while leaving accessible text sizing editable.
+export function isStudioTokenEditable(id: string): boolean {
+  if (id.startsWith('typography.')) return true
+  if (id.startsWith('shape.') || id.startsWith('layout.')) return false
+  return !/(?:radius|width|height|size|padding|margin|gap|inset|offset)$/i.test(id)
+}
+
 export function matchesStudioSearch(query: string, ...terms: string[]): boolean {
   const text = terms.join(' ').toLowerCase()
   return query

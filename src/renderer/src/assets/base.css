@@ -1,9 +1,60 @@
+/* Recompute derived sizes at page/editor boundaries so a local draft or preview
+   font size does not inherit values already resolved on the document root. */
+:root,
+:is(
+  .settings-preview-page,
+  .plugin-page,
+  .appearance-editor,
+  .appearance-inspector,
+  .appearance-floating-properties,
+  .appearance-popover,
+  .studio-context-popup,
+  .theme-studio-page,
+  .workshop-page,
+  .home,
+  .song-list,
+  .aggregate-page,
+  .streaming-page,
+  .dsp-rack-page,
+  .audio-workspace,
+  .eq-page,
+  .analytics-page,
+  .radio-podcast-page,
+  .network-sources-page,
+  .plugin-extension-page
+) {
+  --te-type-page-title: calc(var(--te-font-size-body, 14px) * 28 / 14);
+  --te-type-section-title: calc(var(--te-font-size-body, 14px) * 20 / 14);
+  --te-type-headline: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  --te-type-body: calc(var(--te-font-size-body, 14px) * 15 / 14);
+  --te-type-caption: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  --te-page-bottom: max(32px, calc(var(--te-playbar-bottom-clearance, 0px) + 24px));
+  --te-type-toolbar: var(--te-type-caption);
+  --te-type-icon: calc(var(--te-font-size-body, 14px) * 16 / 14);
+}
 :root {
   --te-chrome-frosted-solid: rgb(250 251 253);
   --te-chrome-frosted-surface: rgb(250 251 253 / 80%);
   --te-chrome-shadow-color: #121820;
+  /* Cast shadows stay dark; text-neutral colors invert in dark themes. */
+  --te-content-shadow-color: #121820;
   --te-volume-popover-surface: #202328;
   --te-volume-popover-text: #f5f5f7;
+  --te-bohr-light: rgb(255 255 255 / 58%);
+  --te-bohr-shoulder: rgb(255 255 255 / 18%);
+  --te-bohr-edge: rgb(18 24 32 / 22%);
+  --te-bohr-contact: 0 2px 5px rgb(18 24 32 / 10%);
+  --te-bohr-elevation: 0 12px 32px rgb(18 24 32 / 14%);
+  --te-space-related: 8px;
+  --te-space-group: 24px;
+  --te-space-section: 32px;
+  --te-page-content-max: 1280px;
+  --te-page-gutter: clamp(24px, 4vw, 48px);
+  --te-page-inset: max(
+    var(--te-page-gutter),
+    calc((100% - var(--te-page-content-max)) / 2 + var(--te-page-gutter))
+  );
+  --te-page-top: 32px;
   --te-titlebar-height: 40px;
   --te-titlebar-inset: 40px;
   --te-transport-play-text: var(--te-shell-control-text);
@@ -54,16 +105,16 @@
   /* Strong ease-out for UI enter/exit (AUDIT §2). */
   --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --te-motion-press: 90ms;
-  --te-motion-hover: 160ms;
-  --te-motion-panel: 280ms;
-  --te-motion-page: 400ms;
-  /* Asymmetric motion: hover-in settles on a long out-quint tail, hover-out returns fast. */
-  --te-motion-settle: 500ms;
-  --te-motion-return: 220ms;
+  --te-motion-hover: 140ms;
+  --te-motion-panel: 240ms;
+  --te-motion-page: 240ms;
+  /* Frequent feedback must not outlast the next interaction. */
+  --te-motion-settle: 220ms;
+  --te-motion-return: 160ms;
   --te-motion-press-scale: 0.97;
   --te-motion-hover-translate: -1px;
   --te-ui-scale: 0.94;
-  --te-menu-width: clamp(208px, 16vw, 236px);
+  --te-menu-width: clamp(224px, 18vw, 260px);
   --te-radius-global: 10px;
   --te-surface-opacity: 100%;
   /* Latin: Inter. CJK: packaged MiSans unicode-range subsets. */
@@ -81,6 +132,13 @@
   --te-text-meta: 400;
   --te-text-strong: 500;
   --te-font-size-body: 14px;
+  /* Shared text hierarchy; all roles follow the existing global text-size input. */
+  --te-type-weight-regular: 400;
+  --te-type-weight-medium: 500;
+  --te-type-weight-strong: 600;
+  --te-type-line-title: 1.25;
+  --te-type-line-body: 1.5;
+  --te-type-line-caption: 1.45;
   --te-chrome-text: #475569;
   --te-app-bg: #f4f4f7;
   --te-app-bg-image: none;
@@ -121,7 +179,8 @@
   --te-control-border-width: 1px;
   --te-control-focus-width: 2px;
   --te-control-focus-offset: 2px;
-  --te-control-focus-color: var(--te-navigation-indicator, var(--te-primary-500));
+  /* Keyboard location stays stable when artwork or a user accent changes. */
+  --te-control-focus-color: #0067c0;
   --te-control-bg: var(--te-card-bg);
   --te-control-bg-hover: var(--te-hover-bg);
   --te-control-bg-active: var(--te-active-bg);
@@ -194,22 +253,22 @@
   --te-navigation-opacity: 94%;
   --te-navigation-radius: 0px;
   --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
-  --te-library-table-bg: rgba(255, 255, 255, 0.16);
-  --te-library-table-border: rgba(255, 255, 255, 0.52);
-  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-table-bg: transparent;
+  --te-library-table-border: rgba(15, 23, 42, 0.08);
+  --te-library-table-shadow: none;
   --te-library-row-text: #334155;
-  --te-library-row-hover: rgba(255, 255, 255, 0.22);
+  --te-library-row-hover: rgba(15, 23, 42, 0.035);
   --te-library-selection-bg: rgba(15, 23, 42, 0.045);
   --te-library-selection-hover: rgba(15, 23, 42, 0.07);
   --te-library-selection-indicator: rgba(15, 23, 42, 0.55);
   --te-library-icon: #64748b;
   --te-library-icon-size: 18px;
-  --te-library-selection-radius: 10px;
+  --te-library-selection-radius: 4px;
   --te-library-selection-inline-inset: 0px;
   --te-library-cover-radius: 8px;
   --te-library-title-overlay-opacity: 72%;
-  --te-library-action-bg: rgba(37, 99, 235, 0.08);
-  --te-library-action-radius: 12px;
+  --te-library-action-bg: rgba(15, 23, 42, 0.04);
+  --te-library-action-radius: 8px;
   --te-playback-cover-size: 100%;
   --te-artwork-list-radius: 6px;
   --te-player-control-size: 32px;
@@ -271,11 +330,11 @@
   --te-navigation-active-text: #2563eb;
   --te-navigation-indicator: #2563eb;
   --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
-  --te-library-table-bg: rgba(255, 255, 255, 0.16);
-  --te-library-table-border: rgba(255, 255, 255, 0.52);
-  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-table-bg: transparent;
+  --te-library-table-border: rgba(15, 23, 42, 0.08);
+  --te-library-table-shadow: none;
   --te-library-row-text: #334155;
-  --te-library-row-hover: rgba(255, 255, 255, 0.22);
+  --te-library-row-hover: rgba(15, 23, 42, 0.035);
   --te-library-selection-bg: rgba(15, 23, 42, 0.045);
   --te-library-selection-hover: rgba(15, 23, 42, 0.07);
   --te-library-selection-indicator: rgba(15, 23, 42, 0.55);
@@ -458,7 +517,7 @@
 }
 
 .te-scroll-top:focus-visible {
-  outline: 2px solid var(--te-scroll-top-color);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 
@@ -468,8 +527,14 @@
 }
 
 :where(button, [role='button'], [role='switch'], [data-te-interactive]):focus-visible {
-  outline: 2px solid var(--te-navigation-indicator, var(--te-primary-500));
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  :root {
+    --te-control-focus-color: Highlight !important;
+  }
 }
 
 :where(button, [role='button'], [role='switch'], [data-te-interactive]):is(
@@ -498,6 +563,8 @@ html[data-te-motion='reduced'] {
   --te-motion-hover: 100ms;
   --te-motion-panel: 120ms;
   --te-motion-page: 120ms;
+  --te-motion-settle: 120ms;
+  --te-motion-return: 120ms;
   --te-motion-press-scale: 1;
   --te-motion-hover-translate: 0px;
 }
@@ -557,6 +624,13 @@ html[data-te-motion='off'] *::after {
   scroll-behavior: auto !important;
 }
 
+/* Hidden windows retain their current state without running CSS loops. */
+html[data-te-motion][data-te-visibility='hidden'] *,
+html[data-te-motion][data-te-visibility='hidden'] *::before,
+html[data-te-motion][data-te-visibility='hidden'] *::after {
+  animation-play-state: paused !important;
+}
+
 :root,
 :root[data-theme='pureWhite'] {
   color-scheme: light;
@@ -604,6 +678,9 @@ html[data-te-motion='off'] *::after {
   --te-chrome-frosted-surface: rgb(16 17 19 / 72%);
   --te-chrome-shadow-color: #000000;
   color-scheme: dark;
+  --te-control-focus-color: #60cdff;
+  --te-chrome-shadow-color: #000000;
+  --te-content-shadow-color: #000000;
   --te-primary-500: #f59e0b;
   --te-primary-400: #fbbf24;
   --te-primary-300: #fde68a;
@@ -678,9 +755,9 @@ html[data-te-motion='off'] *::after {
   --te-navigation-active-text: #f59e0b;
   --te-navigation-indicator: #f59e0b;
   --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
-  --te-library-table-bg: rgba(255, 255, 255, 0.16);
-  --te-library-table-border: rgba(255, 255, 255, 0.52);
-  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-table-bg: transparent;
+  --te-library-table-border: rgba(255, 255, 255, 0.08);
+  --te-library-table-shadow: none;
   --te-library-row-text: #d8d8d8;
   --te-library-row-hover: rgba(255, 255, 255, 0.065);
   --te-library-selection-bg: rgba(255, 255, 255, 0.06);
@@ -942,7 +1019,7 @@ body::before {
     ),
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(247, 244, 255, 0.78));
   opacity: 0.9;
-  animation: ambient-light-shift 14s var(--te-ease-soft) infinite alternate;
+  animation: none;
 }
 
 html[data-theme='pureWhite'] body {
@@ -1080,14 +1157,6 @@ a {
 
 /* Translate-only: the full-window gradient layer stays a cached texture that
    the compositor slides, instead of re-rasterizing on every scale step. */
-@keyframes ambient-light-shift {
-  from {
-    transform: translate3d(-1.2%, -0.6%, 0);
-  }
-  to {
-    transform: translate3d(1.4%, 0.8%, 0);
-  }
-}
 
 html[data-theme='pureWhite'] .title-bar {
   border-bottom-color: transparent;
@@ -1156,16 +1225,20 @@ html[data-theme='pureWhite'] .side-menu:not(.side-menu-liquid) {
 html[data-theme='pureWhite'] .menu-item:hover,
 html[data-theme='pureWhite'] .menu-item-streaming:hover,
 html[data-theme='pureWhite'] .menu-item-import:hover {
-  background: #f3f4f6;
+  background: var(--te-navigation-hover);
 }
 
 html[data-theme='pureWhite'] .menu-item.active {
-  background: #e8e8e8;
+  background: var(--te-navigation-active);
   box-shadow: none;
 }
 
 html[data-theme='pureWhite'] .song-list {
-  background: #ffffff;
+  background: var(--te-library-light-panel-bg, #ffffff);
+}
+
+html[data-theme='pureWhite'] {
+  --te-library-light-panel-bg: #ffffff;
 }
 
 html[data-theme='pureWhite'] .song-list::before,
@@ -1180,9 +1253,6 @@ html[data-theme='pureWhite'] .playlist-card::before {
 html[data-theme='pureWhite'] .song-list-header,
 html[data-theme='pureWhite'] .filter-card,
 html[data-theme='pureWhite'] .track-table-wrapper,
-html[data-theme='pureWhite'] .artist-card,
-html[data-theme='pureWhite'] .album-card,
-html[data-theme='pureWhite'] .playlist-card,
 html[data-theme='pureWhite'] .empty-list-card {
   border-color: rgba(15, 23, 42, 0.08);
   background: #ffffff;
@@ -1197,18 +1267,12 @@ html[data-theme='pureWhite'] .song-list-header {
   box-shadow: none;
 }
 
-html[data-theme='pureWhite'] .artist-card:hover,
-html[data-theme='pureWhite'] .album-card:hover,
-html[data-theme='pureWhite'] .playlist-card:hover {
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.1);
-}
-
 html[data-theme='pureWhite'] .track-row:hover {
-  background: transparent;
+  background: var(--te-library-row-hover);
 }
 
 html[data-theme='pureWhite'] .track-row.track-playing {
-  background: transparent;
+  background: var(--te-library-selection-bg);
 }
 
 html[data-theme='pureWhite'] .track-table-wrapper {
@@ -1228,7 +1292,7 @@ html[data-theme='pureWhite'] .track-table thead {
 
 html[data-theme='pureWhite'] .track-table th,
 html[data-theme='pureWhite'] .track-row td {
-  border-bottom-color: transparent;
+  border-bottom-color: var(--te-library-table-border);
 }
 
 html[data-theme='pureWhite'] .track-row {
@@ -1248,16 +1312,16 @@ html[data-theme='pureWhite'] .track-row::after {
 html[data-theme='pureWhite'] .track-row:hover,
 html[data-theme='pureWhite'] .track-row.track-playing {
   transform: none;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
   filter: none;
   z-index: 1;
 }
 
 html[data-theme='pureWhite'] .track-row:hover::before,
 html[data-theme='pureWhite'] .track-row.track-playing::before {
-  border-color: rgba(15, 23, 42, 0.06);
-  background: rgba(15, 23, 42, 0.055);
-  opacity: 1;
+  border-color: transparent;
+  background: transparent;
+  opacity: 0;
 }
 
 html[data-theme='pureWhite'] .track-row:hover::after,
@@ -1271,9 +1335,9 @@ html[data-theme='pureWhite'] .track-row.track-playing td {
 }
 
 html[data-theme='pureWhite'] .track-playing .track-title {
-  font-family: var(--te-font-rounded);
-  font-weight: 900;
-  color: var(--te-neutral-900);
+  font-family: var(--te-font-sans);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-primary-500);
 }
 
 html[data-theme='pureWhite'] .player-bar:not(.player-bar-glass),
@@ -1336,14 +1400,6 @@ html[data-theme='pureWhite'] .range-control {
   accent-color: var(--te-primary-500);
 }
 
-html[data-theme='pureWhite'] .playing-music {
-  background: #080e17;
-}
-
-html[data-theme='pureWhite'] .playing-music .backdrop {
-  background: color-mix(in srgb, var(--accent-color) 26%, #080e17);
-}
-
 html[data-theme='pureWhite'] .playing-music .backdrop-cover {
   filter: blur(64px) saturate(1.42) brightness(0.62);
   opacity: 1;
@@ -1385,8 +1441,8 @@ html[data-theme='pureWhite'] .playing-music .lyrics-column {
 html[data-theme='pureWhite'] .playing-music .time-chip,
 html[data-theme='pureWhite'] .playing-music .lyric-row.active {
   border-color: var(--te-playback-control-border, rgba(255, 255, 255, 0.12));
-  background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
-  box-shadow: var(--te-playback-control-hover-shadow, 0 14px 32px rgba(0, 0, 0, 0.2));
+  background: var(--te-transport-feedback-surface);
+  box-shadow: var(--te-transport-feedback-shadow);
 }
 
 html[data-theme='pureWhite'] .playing-music .cover-frame {
@@ -1503,7 +1559,7 @@ html[data-theme='dark'] .streaming-menu-item:hover {
 }
 
 html[data-theme='dark'] .menu-item.active {
-  background: var(--te-active-bg);
+  background: var(--te-navigation-active);
   box-shadow: none;
 }
 
@@ -1538,9 +1594,6 @@ html[data-theme='dark'] .table-view::before {
   display: none;
 }
 
-html[data-theme='dark'] .artist-card,
-html[data-theme='dark'] .album-card,
-html[data-theme='dark'] .playlist-card,
 html[data-theme='dark'] .empty-state,
 html[data-theme='dark'] .track-table-wrapper,
 html[data-theme='dark'] .context-menu,
@@ -1548,19 +1601,6 @@ html[data-theme='dark'] .submenu {
   border-color: rgba(148, 163, 184, 0.16);
   background: var(--te-card-bg);
   box-shadow: 0 22px 64px rgba(0, 0, 0, 0.26);
-}
-
-html[data-theme='dark'] .artist-card:hover,
-html[data-theme='dark'] .album-card:hover,
-html[data-theme='dark'] .playlist-card:hover,
-html[data-theme='dark'] .artist-card:focus-visible,
-html[data-theme='dark'] .album-card:focus-visible,
-html[data-theme='dark'] .playlist-card:focus-visible {
-  border-color: rgba(var(--te-primary-rgb), 0.32);
-  background: rgba(30, 41, 59, 0.82);
-  box-shadow:
-    0 24px 70px rgba(0, 0, 0, 0.34),
-    0 0 0 1px rgba(var(--te-primary-rgb), 0.12);
 }
 
 html[data-theme='dark'] .artist-cover-placeholder,
@@ -1607,8 +1647,6 @@ html[data-theme='dark'] .album-count,
 html[data-theme='dark'] .playlist-count,
 html[data-theme='dark'] .track-artist:where(:not(.playing-music *)),
 html[data-theme='dark'] .player-artist:where(:not(.player-bar-glass *)),
-html[data-theme='dark'] .empty-text,
-html[data-theme='dark'] .empty-hint,
 html[data-theme='dark'] .placeholder-hint,
 html[data-theme='dark'] .playlist-grid-count {
   color: rgba(148, 163, 184, 0.82);
@@ -1617,30 +1655,28 @@ html[data-theme='dark'] .playlist-grid-count {
 html[data-theme='dark'] .search-box,
 html[data-theme='dark'] .streaming-search-box,
 html[data-theme='dark'] .view-tool {
-  border-color: rgba(148, 163, 184, 0.16);
-  background: rgba(15, 23, 42, 0.74);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+  border-color: var(--te-control-border);
+  background: var(--te-control-bg);
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .search-box.focused,
 html[data-theme='dark'] .streaming-search-box.focused {
-  border-color: rgba(var(--te-primary-rgb), 0.48);
-  background: rgba(17, 24, 39, 0.92);
-  box-shadow:
-    0 0 0 4px rgba(var(--te-primary-rgb), 0.16),
-    0 18px 44px rgba(0, 0, 0, 0.28);
-  outline: 2px solid var(--te-primary-500);
-  outline-offset: 2px;
+  border-color: var(--te-control-focus-color);
+  background: var(--te-control-bg);
+  box-shadow: none;
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
 }
 
 html[data-theme='dark'] .search-input,
 html[data-theme='dark'] .streaming-search-input {
-  color: rgba(248, 250, 252, 0.92);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .search-input::placeholder,
 html[data-theme='dark'] .streaming-search-input::placeholder {
-  color: rgba(148, 163, 184, 0.58);
+  color: var(--te-control-fg-muted);
 }
 
 html[data-theme='dark'] .track-table thead,
@@ -1659,22 +1695,22 @@ html[data-theme='dark'] .track-row td {
 }
 
 html[data-theme='dark'] .track-row::before {
-  border-color: rgba(148, 163, 184, 0.16);
-  background: rgba(30, 41, 59, 0.74);
+  border-color: transparent;
+  background: transparent;
 }
 
 html[data-theme='dark'] .track-row:hover {
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.22);
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .track-playing {
-  background: var(--te-active-bg) !important;
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+  background: var(--te-library-selection-bg) !important;
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .track-playing .track-title {
-  font-family: var(--te-font-rounded);
-  font-weight: 900;
+  font-family: var(--te-font-sans);
+  font-weight: var(--te-type-weight-strong);
   color: var(--te-primary-300);
 }
 
@@ -1839,7 +1875,7 @@ html[data-theme='dark'] .ctrl-btn:not(.btn-play):hover:where(:not(.player-bar-gl
 html[data-theme='dark'] .icon-btn:hover:where(:not(.player-bar-glass *)),
 html[data-theme='dark'] .icon-btn.active:where(:not(.player-bar-glass *)),
 html[data-theme='dark'] .mode-btn-right:hover:where(:not(.player-bar-glass *)) {
-  background: rgba(255, 255, 255, 0.075);
+  background: var(--te-transport-feedback-hover);
   color: rgba(248, 250, 252, 0.94);
 }
 
@@ -1854,11 +1890,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
 html[data-theme='dark'] .ctrl-btn:not(.btn-play):active:where(:not(.player-bar-glass *)),
 html[data-theme='dark'] .icon-btn:active:where(:not(.player-bar-glass *)),
 html[data-theme='dark'] .mode-btn-right:active:where(:not(.player-bar-glass *)) {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--te-transport-feedback-pressed);
 }
 
 html[data-theme='dark'] .icon-btn.active:where(:not(.player-bar-glass *)) {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--te-transport-feedback-pressed);
   color: rgba(248, 250, 252, 0.96);
 }
 
@@ -2006,9 +2042,7 @@ html[data-theme='dark'] .liked-panel,
 html[data-theme='dark'] .playlist-list-item {
   border-color: rgba(148, 163, 184, 0.16);
   background: var(--te-card-bg);
-  box-shadow:
-    0 20px 58px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--te-card-shadow);
 }
 
 html[data-theme='dark'] .track-table th {
@@ -2141,18 +2175,16 @@ html[data-theme='dark'] .btn-cancel {
 }
 
 html[data-theme='dark'] .eq-sidebar,
-html[data-theme='dark'] .eq-content,
 html[data-theme='dark'] .eq-workbench,
 html[data-theme='dark'] .response-card,
 html[data-theme='dark'] .graphic-board,
 html[data-theme='dark'] .parameter-editor,
 html[data-theme='dark'] .square-panel,
-html[data-theme='dark'] .preset-menu,
 html[data-theme='dark'] .filter-menu {
-  border-color: rgba(148, 163, 184, 0.16);
+  border-color: var(--te-control-border);
   background: var(--te-card-bg);
-  color: rgba(248, 250, 252, 0.94);
-  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
+  color: var(--te-neutral-900);
+  box-shadow: var(--te-chrome-elevation);
 }
 
 html[data-theme='dark'] .eq-nav-item,
@@ -2161,9 +2193,9 @@ html[data-theme='dark'] .preset-menu-item,
 html[data-theme='dark'] .filter-menu button,
 html[data-theme='dark'] .filter-select-button,
 html[data-theme='dark'] .band-selector button {
-  border-color: rgba(148, 163, 184, 0.16);
-  background: rgba(15, 23, 42, 0.82);
-  color: rgba(226, 232, 240, 0.9);
+  border-color: var(--te-control-border);
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .eq-nav-item.active,
@@ -2172,23 +2204,25 @@ html[data-theme='dark'] .preset-menu-item.active,
 html[data-theme='dark'] .filter-menu button.active,
 html[data-theme='dark'] .band-selector button.active,
 html[data-theme='dark'] .graphic-band.selected {
-  background: rgba(var(--te-primary-rgb), 0.2);
-  color: var(--te-primary-300);
+  background: var(--te-control-bg-active);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .eq-heading h1,
 html[data-theme='dark'] .editor-title,
 html[data-theme='dark'] .band-gain {
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-neutral-900);
 }
 
 html[data-theme='dark'] .eq-heading p,
 html[data-theme='dark'] .eq-nav-desc,
-html[data-theme='dark'] .preset-menu-title,
-html[data-theme='dark'] .preset-empty,
 html[data-theme='dark'] .band-frequency,
 html[data-theme='dark'] .editor-row span {
-  color: rgba(148, 163, 184, 0.78);
+  color: var(--te-neutral-500);
+}
+html[data-theme='dark'] .preset-menu-title,
+html[data-theme='dark'] .preset-empty {
+  color: var(--te-control-fg-muted);
 }
 
 html[data-theme='dark'] input,
@@ -2275,21 +2309,17 @@ html[data-theme='dark'] .dashboard-wrapper .control-btn:hover {
 
 /* ===== Settings & Plugin pages: dark readable text ===== */
 html[data-theme='dark'] .settings-preview-layout,
-html[data-theme='dark'] .plugin-page,
 html[data-theme='dark'] .plugin-panel,
 html[data-theme='dark'] .plugin-extension-page {
   color: rgba(248, 250, 252, 0.92);
 }
 
 html[data-theme='dark'] .settings-preview-layout strong,
-html[data-theme='dark'] .plugin-page strong,
 html[data-theme='dark'] .plugin-panel strong,
 html[data-theme='dark'] .plugin-extension-page strong,
 html[data-theme='dark'] .settings-preview-layout h1,
 html[data-theme='dark'] .settings-preview-layout h2,
 html[data-theme='dark'] .settings-preview-layout h3,
-html[data-theme='dark'] .plugin-page h1,
-html[data-theme='dark'] .plugin-page h2,
 html[data-theme='dark'] .plugin-panel h2,
 html[data-theme='dark'] .plugin-panel h3,
 html[data-theme='dark'] .plugin-extension-page h1,
@@ -2307,8 +2337,6 @@ html[data-theme='dark'] .diagnostic-chain {
 }
 
 html[data-theme='dark'] .settings-preview-layout .setting-value,
-html[data-theme='dark'] .plugin-page .plugin-summary,
-html[data-theme='dark'] .plugin-page .plugin-empty,
 html[data-theme='dark'] .plugin-extension-page .plugin-extension-desc,
 html[data-theme='dark'] .plugin-extension-page .plugin-extension-meta,
 html[data-theme='dark'] .plugin-extension-text-result,
@@ -2335,8 +2363,8 @@ html[data-theme='dark'] .settings-preview-layout {
 html[data-theme='dark'] .preview-select,
 html[data-theme='dark'] .preview-select.wide,
 html[data-theme='dark'] .range-pill {
-  background: var(--te-subtle-bg);
-  border-color: var(--te-card-border);
+  background: var(--te-control-bg);
+  border-color: var(--te-control-border);
 }
 
 html[data-theme='dark'] .toggle-switch.inactive {
@@ -2520,36 +2548,21 @@ html[data-theme='dark'] .settings-preview-layout .plugin-empty {
   color: rgba(148, 163, 184, 0.78);
 }
 
-/* --- Plugin page (extension center): backgrounds --- */
+/* Plugin content shares the shell wallpaper; its controls use semantic colors. */
+html[data-theme='dark'] .plugin-page :is(h1, h2, h3, strong) {
+  color: var(--te-settings-text);
+}
+
 html[data-theme='dark'] .plugin-page,
 html[data-theme='dark'] .plugin-page .plugin-window,
-html[data-theme='dark'] .plugin-page .main-content,
+html[data-theme='dark'] .plugin-page .plugin-main,
 html[data-theme='dark'] .plugin-page .topbar {
-  background-color: var(--te-app-bg);
-  background-image: var(--te-app-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  color: rgba(248, 250, 252, 0.92);
-}
-
-html[data-theme='dark'] .plugin-page .sidebar {
   background: transparent;
-  border-right-color: var(--te-card-border);
-}
-
-html[data-theme='dark'] .plugin-page .sidebar-header h1,
-html[data-theme='dark'] .plugin-page .sidebar-header h1 i,
-html[data-theme='dark'] .plugin-page .sidebar-header h1 .puzzle-icon {
-  color: rgba(248, 250, 252, 0.95);
-}
-
-html[data-theme='dark'] .plugin-page .sidebar-footer {
-  border-top-color: var(--te-card-border);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .dev-mode-toggle {
-  color: rgba(148, 163, 184, 0.82);
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .switch {
@@ -2562,41 +2575,41 @@ html[data-theme='dark'] .plugin-page .switch.on {
 
 /* --- Plugin page: navigation --- */
 html[data-theme='dark'] .plugin-page .nav-item {
-  color: rgba(148, 163, 184, 0.82);
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .nav-item:hover {
-  background: var(--te-hover-bg);
-  color: rgba(248, 250, 252, 0.95);
+  background: var(--te-subtle-bg);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .nav-item.active {
-  background: var(--te-active-bg);
-  color: var(--te-primary-300);
+  background: transparent;
+  color: var(--te-settings-text);
 }
 
 /* --- Plugin page: search box & topbar actions --- */
 html[data-theme='dark'] .plugin-page .search-box {
-  background: rgba(15, 23, 42, 0.74);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: var(--te-control-bg);
+  border: 1px solid var(--te-control-border);
 }
 
 html[data-theme='dark'] .plugin-page .search-box:focus-within {
-  background: rgba(17, 24, 39, 0.92);
-  border-color: rgba(var(--te-primary-rgb), 0.48);
+  background: var(--te-control-bg);
+  border-color: var(--te-primary-500);
 }
 
 html[data-theme='dark'] .plugin-page .search-box input {
-  color: rgba(248, 250, 252, 0.92);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .plugin-page .search-box input::placeholder {
-  color: rgba(148, 163, 184, 0.5);
+  color: var(--te-control-fg-muted);
 }
 
 html[data-theme='dark'] .plugin-page .btn-outline {
   border-color: var(--te-card-border);
-  color: rgba(203, 213, 225, 0.88);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .btn-outline:hover {
@@ -2605,41 +2618,36 @@ html[data-theme='dark'] .plugin-page .btn-outline:hover {
 
 /* --- Plugin page: content text & badges --- */
 html[data-theme='dark'] .plugin-page .page-title {
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .badge {
-  background: rgba(148, 163, 184, 0.16);
-  color: rgba(148, 163, 184, 0.82);
+  background: transparent;
+  color: var(--te-settings-text-muted);
 }
 
 /* --- Plugin page: cards --- */
 html[data-theme='dark'] .plugin-page .plugin-card {
-  background: var(--te-card-bg);
+  background: transparent;
   border-color: var(--te-card-border);
-  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
-}
-
-html[data-theme='dark'] .plugin-page .plugin-card:hover {
-  border-color: rgba(var(--te-primary-rgb), 0.32);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .plugin-page .plugin-name {
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .plugin-version {
-  background: rgba(148, 163, 184, 0.16);
-  color: rgba(148, 163, 184, 0.82);
+  background: transparent;
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .plugin-author {
-  color: rgba(148, 163, 184, 0.78);
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .plugin-desc {
-  color: rgba(203, 213, 225, 0.82);
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .plugin-footer {
@@ -2647,26 +2655,22 @@ html[data-theme='dark'] .plugin-page .plugin-footer {
 }
 
 html[data-theme='dark'] .plugin-page .switch-label {
-  color: rgba(148, 163, 184, 0.78);
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .plugin-page .icon-btn {
   background: rgba(148, 163, 184, 0.12);
-  color: rgba(203, 213, 225, 0.82);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .icon-btn:hover {
   background: rgba(var(--te-primary-rgb), 0.16);
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-settings-text);
 }
 
 html[data-theme='dark'] .plugin-page .icon-btn.danger:hover {
   background: var(--te-danger-soft-bg);
   color: var(--te-danger-soft-fg);
-}
-
-html[data-theme='dark'] .plugin-page .builtin-label {
-  color: rgba(148, 163, 184, 0.62);
 }
 
 /* --- Settings page: about section dark mode --- */
@@ -2720,11 +2724,7 @@ html[data-theme='dark'] .settings-preview-layout .status-icon {
   color: var(--te-success-soft-fg);
 }
 
-/* --- Plugin page: discover banner & inline error states --- */
-html[data-theme='dark'] .plugin-page .discover-banner {
-  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
-}
-
+/* --- Plugin page: inline error states --- */
 html[data-theme='dark'] .plugin-page .engine-error,
 html[data-theme='dark'] .plugin-page [style*='background: var(--te-danger-soft-bg)'] {
   color: var(--te-danger-soft-fg);
@@ -2803,50 +2803,51 @@ html[data-te-card-custom='on'] .streaming-sidebar {
   -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
 }
 
-/* ===== Card appearance: hover effects ===== */
-html[data-te-card-custom='on']
-  :is(
-    .artist-card,
-    .album-card,
-    .playlist-card,
-    .glass-card,
-    .feature-card,
-    .playlist-grid-card,
-    .playlist-tile,
-    .favorites-card,
-    .streaming-placeholder,
-    .empty-recommend,
-    .detail-playlist-header,
-    .track-table-wrapper,
-    .profile-panel,
-    .liked-panel,
-    .playlist-list-item,
-    .profile-card,
-    .recent-card,
-    .ranking-card,
-    .create-playlist-card,
-    .folder-card,
-    .empty-list-card,
-    .filter-card,
-    .sponsor-card,
-    .update-card,
-    .dsp-module-card,
-    .device-card,
-    .card,
-    .account-card,
-    .plugin-card,
-    .market-card,
-    .plugin-extension-card,
-    .bili-qr-card,
-    .chart-card,
-    .parameter-card,
-    .square-card,
-    .opra-panel,
-    .opra-result-item
-  ):hover {
-  transform: var(--te-card-hover-transform, none) !important;
-  box-shadow:
-    var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
+/* Hover tuning applies to actionable cards, not informational panels. */
+@media (hover: hover) and (pointer: fine) {
+  html[data-te-card-custom='on']
+    :is(
+      .artist-card,
+      .album-card,
+      .playlist-card,
+      .glass-card,
+      .feature-card,
+      .playlist-grid-card,
+      .playlist-tile,
+      .favorites-card,
+      .streaming-placeholder,
+      .empty-recommend,
+      .detail-playlist-header,
+      .track-table-wrapper,
+      .profile-panel,
+      .liked-panel,
+      .playlist-list-item,
+      .profile-card,
+      .recent-card,
+      .ranking-card,
+      .create-playlist-card,
+      .folder-card,
+      .empty-list-card,
+      .filter-card,
+      .sponsor-card,
+      .update-card,
+      .dsp-module-card,
+      .device-card,
+      .card,
+      .account-card,
+      .plugin-card,
+      .market-card,
+      .plugin-extension-card,
+      .bili-qr-card,
+      .chart-card,
+      .parameter-card,
+      .square-card,
+      .opra-panel,
+      .opra-result-item
+    ):is(button, a[href], [role='button']):not(:disabled, [aria-disabled='true']):hover {
+    transform: var(--te-card-hover-transform, none) !important;
+    box-shadow: var(--te-card-hover-shadow, var(--te-card-shadow, none)) !important;
+  }
 }
 
 /* ===== Window transparency: compositor blur passthrough ===== */
@@ -3283,6 +3284,30 @@ html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body:
 
 /* Content cards use their standard theme surfaces; no optical overlay. */
 
+.detail-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: var(--te-card-bg);
+  color: var(--te-chrome-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.detail-back-button:hover {
+  background: var(--te-hover-bg);
+}
+.detail-back-button:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
+}
+
 .metadata-link {
   display: block;
   width: fit-content;
@@ -3307,4 +3332,20 @@ html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body:
 
 :root {
   --te-page-gutter: clamp(16px, 3vw, 32px);
+}
+
+/* Bohr material uses the same foundation colors at every surface. */
+html[data-theme='dark'] {
+  --te-bohr-light: rgb(255 255 255 / 28%);
+  --te-bohr-shoulder: rgb(255 255 255 / 7%);
+  --te-bohr-edge: rgb(0 0 0 / 52%);
+  --te-bohr-contact: 0 2px 5px rgb(0 0 0 / 30%);
+  --te-bohr-elevation: 0 12px 32px rgb(0 0 0 / 36%);
+}
+
+@media (max-width: 680px) {
+  :root {
+    --te-page-gutter: 16px;
+    --te-page-top: 24px;
+  }
 }

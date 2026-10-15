@@ -137,7 +137,7 @@ window.prepareToplistPreview=async({dark,detail})=>{
  document.documentElement.dataset.theme=dark?'dark':'pureWhite'
  if(detail){click('查看飙升榜');await pause()}else{const close=document.querySelector('[aria-label="关闭排行榜"]');close?.click();await pause()}
 }
-window.toplistGeometry=()=>({overflow:document.querySelector('.music-home').scrollWidth>document.querySelector('.music-home').clientWidth+1,dialogOverflow:!!document.querySelector('.toplists-dialog')&&document.querySelector('.toplists-dialog').scrollWidth>document.querySelector('.toplists-dialog').clientWidth+1,columns:getComputedStyle(document.querySelector('.toplists-grid')).gridTemplateColumns.split(' ').length})
+window.toplistGeometry=()=>({overflow:document.querySelector('.music-home').scrollWidth>document.querySelector('.music-home').clientWidth+1,dialogOverflow:!!document.querySelector('.toplists-dialog')&&document.querySelector('.toplists-dialog').scrollWidth>document.querySelector('.toplists-dialog').clientWidth+1,columns:getComputedStyle(document.querySelector('.toplists-grid')).gridTemplateColumns.split(' ').length,cards:[...document.querySelectorAll('.toplist-card')].map(card=>({inset:parseFloat(getComputedStyle(card).paddingInlineStart),radius:parseFloat(getComputedStyle(card).borderTopLeftRadius)}))})
 `
 
 const runner = `const {app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path')
@@ -148,6 +148,7 @@ app.whenReady().then(async()=>{
   for(const [name,width,dark,detail,columns] of [['light',1280,false,false,4],['dark',1280,true,false,4],['narrow',760,false,false,2],['small',390,false,false,1],['detail',1280,false,true,4],['detail-dark',1280,true,true,4],['detail-small',390,false,true,1]]){
    win.setSize(width,1100);await win.webContents.executeJavaScript('window.prepareToplistPreview('+JSON.stringify({dark,detail})+')');await new Promise(resolve=>setTimeout(resolve,100))
    const geometry=await win.webContents.executeJavaScript('window.toplistGeometry()');if(geometry.overflow||geometry.dialogOverflow||geometry.columns!==columns)throw new Error(name+' invalid geometry: '+JSON.stringify(geometry))
+   if(geometry.cards.some(card=>card.inset<12||card.radius<8))throw new Error(name+' cards lost shared inset or radius: '+JSON.stringify(geometry.cards))
    if(process.env.TWILIGHT_TOPLIST_SCREENSHOTS){fs.mkdirSync(process.env.TWILIGHT_TOPLIST_SCREENSHOTS,{recursive:true});fs.writeFileSync(path.join(process.env.TWILIGHT_TOPLIST_SCREENSHOTS,name+'.png'),(await win.webContents.capturePage()).toPNG())}
   }
   console.log('TOPLISTS_OK');app.exit(0)

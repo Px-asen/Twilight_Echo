@@ -1,6 +1,6 @@
 .workshop-hint {
   color: var(--te-neutral-700);
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   line-height: 1.6;
   margin: 6px 0 12px;
 }
@@ -25,7 +25,7 @@
 }
 .workshop-save-state {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   color: var(--te-neutral-700);
 }
 .workshop-save-state.failed {
@@ -84,7 +84,7 @@
   place-items: center;
   border-radius: 50%;
   background: var(--te-hover-bg);
-  font-size: 12px;
+  font-size: var(--te-type-caption);
 }
 .workshop-template-grid {
   display: grid;
@@ -99,7 +99,7 @@
   padding: 12px;
 }
 .workshop-template-grid small {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   color: var(--te-neutral-700);
 }
 .workshop-template-thumb {
@@ -169,7 +169,7 @@
   padding: 3px 9px;
 }
 .workshop-badge {
-  font-size: 10px;
+  font-size: var(--te-type-caption);
   padding: var(--te-badge-pad-y) var(--te-badge-pad-x);
   border-radius: var(--te-control-radius-sm);
   background: var(--te-hover-bg);
@@ -204,10 +204,10 @@
   justify-content: space-between;
 }
 .workshop-properties-heading h2 {
-  font-size: 17px;
+  font-size: var(--te-type-headline);
 }
 .workshop-properties-heading > span {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   color: var(--te-neutral-700);
 }
 .workshop-properties .studio-appearance-control {
@@ -253,7 +253,7 @@
 }
 .workshop-properties .studio-control-hint,
 .workshop-properties .token-source {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   color: var(--te-neutral-700);
 }
 .workshop-properties .studio-icon-button {
@@ -297,14 +297,14 @@
   border-radius: 6px;
 }
 .workshop-asset-card h3 {
-  font-size: 14px;
+  font-size: var(--te-type-body);
   overflow-wrap: anywhere;
 }
 .workshop-asset-card details {
   margin: 12px 0;
 }
 .workshop-asset-card p {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
 }
 .workshop-designer-row {
   padding: 10px 0;
@@ -394,7 +394,7 @@
   color: #fff;
 }
 .workshop-page :focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 @media (max-width: 760px) {
@@ -402,7 +402,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .workshop-steps button {
-    font-size: 12px;
+    font-size: var(--te-type-body);
   }
   .workshop-save-state {
     margin-left: 0;
@@ -414,7 +414,9 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .workshop-page button:active:not(:disabled) {
-    transform: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .workshop-page button:active:not(:disabled) {
+      transform: none;
+    }
   }
 }

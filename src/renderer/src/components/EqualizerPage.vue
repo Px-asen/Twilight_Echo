@@ -62,7 +62,12 @@ type EqApplyFeedback = 'idle' | 'editing' | 'applying' | 'applied' | 'failed'
 type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
 type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 
+const props = withDefaults(defineProps<{ embedded?: boolean; navigationLocked?: boolean }>(), {
+  embedded: false,
+  navigationLocked: false
+})
 const audioOutputDspStore = useAudioOutputDspStore()
+const editorRoot = ref<HTMLElement | null>(null)
 const playerStore = usePlayerStore()
 const { audioProcessing, outputInfo, audioEngineReady } = storeToRefs(audioOutputDspStore)
 const { visualizationData, isPlaying, acquireVisualizationConsumer } = playerStore
@@ -101,8 +106,10 @@ const opraStatus = ref<OpraCatalogStatus | null>(null)
 const opraSearching = ref(false)
 const opraRefreshing = ref(false)
 const opraApplyingEqId = ref('')
+const opraSaving = ref(false)
 const opraError = ref('')
 let pendingBandFrame = 0
+let pendingBandWindow: Window | null = null
 const pendingBandPatches = new Map<number, Partial<EqualizerBand>>()
 let pendingPreamp: number | null = null
 let commitChain: Promise<void> = Promise.resolve()
@@ -414,8 +421,8 @@ function applyActiveSceneEqToEditor(dspState: DspSceneState): void {
   const params = node.params
   const settings = normalizeAudioProcessing({
     ...audioProcessing.value,
-    dspEnabled: true,
-    eqEnabled: node.enabled,
+    // A bypassed engine node does not change either user power switch.
+    eqEnabled: audioProcessing.value.dspEnabled ? node.enabled : audioProcessing.value.eqEnabled,
     eqMode: params.mode === 'parametric' ? 'parametric' : 'graphic',
     eqPreamp: typeof params.preampDb === 'number' ? params.preampDb : 0,
     eqBands: Array.isArray(params.bands) ? (params.bands as EqualizerBand[]) : []
@@ -544,8 +551,10 @@ function flushStagedEdit(): void {
 function scheduleStagedFlush(): void {
   eqApplyFeedback.value = 'editing'
   if (pendingBandFrame !== 0) return
-  pendingBandFrame = window.requestAnimationFrame(() => {
+  pendingBandWindow = editorRoot.value?.ownerDocument.defaultView ?? window
+  pendingBandFrame = pendingBandWindow.requestAnimationFrame(() => {
     pendingBandFrame = 0
+    pendingBandWindow = null
     flushStagedEdit()
   })
 }
@@ -588,8 +597,9 @@ function updatePreampInput(event: Event): void {
 
 async function commitStagedBands(): Promise<void> {
   if (pendingBandFrame !== 0) {
-    window.cancelAnimationFrame(pendingBandFrame)
+    ;(pendingBandWindow ?? window).cancelAnimationFrame(pendingBandFrame)
     pendingBandFrame = 0
+    pendingBandWindow = null
   }
   flushStagedEdit()
   // Snapshot the staged bands now, before any in-flight commit's response can
@@ -872,7 +882,7 @@ async function refreshOpraCatalog(): Promise<void> {
 }
 
 async function applyOpraProfile(profile: OpraProfile): Promise<void> {
-  if (!profile.applicable || opraApplyingEqId.value) return
+  if (!profile.applicable || opraApplyingEqId.value || opraSaving.value) return
   opraApplyingEqId.value = profile.eqId
   opraError.value = ''
   try {
@@ -905,7 +915,9 @@ async function applyOpraProfile(profile: OpraProfile): Promise<void> {
 }
 
 async function disableOpraCompensation(): Promise<void> {
-  if (!appSettings.value) return
+  if (!appSettings.value || opraSaving.value || opraApplyingEqId.value) return
+  opraSaving.value = true
+  opraError.value = ''
   try {
     const savedSettings = await window.api.settings.update({
       headphoneCompensation: {
@@ -924,15 +936,9 @@ async function disableOpraCompensation(): Promise<void> {
     }
     await syncActiveSceneEq(audioProcessing.value)
   } catch (err) {
-    console.error('停用 OPRA 补偿失败：', err)
-    // Fallback: at least update local state so the UI reflects the change
-    appSettings.value = {
-      ...appSettings.value,
-      headphoneCompensation: {
-        ...headphoneCompensation.value,
-        enabled: false
-      }
-    }
+    opraError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    opraSaving.value = false
   }
 }
 
@@ -986,6 +992,7 @@ function saveAsCurrentPreset(): void {
 }
 
 async function switchTab(tab: EqualizerTab): Promise<void> {
+  if (props.navigationLocked) return
   finishParametricEdits()
   await commitChain
   activeTab.value = tab
@@ -1045,6 +1052,25 @@ function finishParametricEdits(): void {
   if (pendingBandFrame !== 0) void commitStagedBands()
 }
 
+async function requestLeave(): Promise<boolean> {
+  if (
+    historyLoading.value ||
+    historyBusy.value ||
+    clipboardBusy.value ||
+    opraApplyingEqId.value ||
+    opraSaving.value
+  )
+    return false
+  finishParametricEdits()
+  // A preview can already have flushed to the renderer without its final
+  // pointer-up commit. Finish that edit before unmounting the audio editor.
+  if (eqApplyFeedback.value === 'editing') await commitStagedBands()
+  await commitChain
+  return eqApplyFeedback.value !== 'failed'
+}
+
+defineExpose({ requestLeave })
+
 async function toggleParametricEq(): Promise<void> {
   finishParametricEdits()
   await commitChain
@@ -1076,7 +1102,7 @@ onBeforeUnmount(() => {
   releaseVisualizationConsumer?.()
   releaseVisualizationConsumer = null
   clearApplyFeedbackTimer()
-  if (pendingBandFrame !== 0) window.cancelAnimationFrame(pendingBandFrame)
+  if (pendingBandFrame !== 0) (pendingBandWindow ?? window).cancelAnimationFrame(pendingBandFrame)
 })
 
 // Keep the compensated preamp in sync when bands change through paths that
@@ -1098,8 +1124,9 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 
 <template>
   <div
+    ref="editorRoot"
     class="eq-page"
-    :class="{ 'is-parametric': activeTab === 'parametric' }"
+    :class="{ 'is-parametric': activeTab === 'parametric', 'is-embedded': props.embedded }"
     @keydown="onEqualizerKeydown"
   >
     <div
@@ -1112,27 +1139,19 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
       @wheel.capture="blockWhileApplying"
       @contextmenu.capture="blockWhileApplying"
     >
-      <aside v-if="activeTab !== 'parametric'" class="eq-sidebar">
-        <div
+      <nav class="eq-mode-tabs" aria-label="均衡器模式">
+        <button
           v-for="tab in tabs"
           :key="tab.key"
+          type="button"
           class="nav-item"
-          data-te-interactive
-          role="button"
-          tabindex="0"
           :aria-pressed="activeTab === tab.key"
           :class="{ active: activeTab === tab.key }"
           @click="switchTab(tab.key)"
-          @keydown.enter.prevent="switchTab(tab.key)"
-          @keydown.space.prevent="switchTab(tab.key)"
         >
-          <i :class="tab.icon"></i>
-          <div class="nav-info">
-            <span>{{ tab.label }}</span
-            ><small>{{ tab.desc }}</small>
-          </div>
-        </div>
-      </aside>
+          {{ tab.key === 'graphic' ? '图形' : '参数' }}
+        </button>
+      </nav>
 
       <main class="eq-content">
         <!-- Toolbar for Presets across Graphic and Parametric -->
@@ -1147,7 +1166,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
             <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">
               选择预设 <i class="pi pi-chevron-down"></i>
             </button>
-            <div v-if="presetMenuOpen" class="preset-menu">
+            <div v-if="presetMenuOpen" class="preset-menu" data-te-material="popover">
               <div class="preset-menu-section">
                 <span class="preset-menu-title">内置预设</span>
                 <button
@@ -1216,40 +1235,32 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
         <div v-if="activeTab === 'graphic'" class="tab-pane active">
           <header class="eq-header">
             <div class="eq-title">
-              <h1>图形均衡器</h1>
-              <p>调整此面板会改变最终输出。</p>
+              <h2>均衡曲线</h2>
+              <p>{{ audioProcessing.eqBands.length }} 个频段 · {{ eqApplyStatusText }}</p>
             </div>
-            <div
+            <button
+              type="button"
               class="master-switch"
-              data-te-interactive
               role="switch"
-              tabindex="0"
               aria-label="启用均衡器"
               :aria-checked="audioProcessing.eqEnabled"
               :class="{ off: !audioProcessing.eqEnabled }"
               @click="toggleParametricEq()"
-              @keydown.enter.prevent="toggleParametricEq()"
-              @keydown.space.prevent="toggleParametricEq()"
             >
               {{ audioProcessing.eqEnabled ? '已启用' : '已关闭' }}
-              <div class="toggle-track"><div class="toggle-thumb"></div></div>
-            </div>
+            </button>
           </header>
 
-          <OpraEqPanel
-            :compensation="headphoneCompensation"
-            :status="opraStatus"
-            :searching="opraSearching"
-            :refreshing="opraRefreshing"
-            :applying-eq-id="opraApplyingEqId"
-            :results="opraResults"
-            :error="opraError"
-            :query="opraQuery"
-            @update:query="opraQuery = $event"
-            @search="searchOpraProfiles"
-            @select="applyOpraProfile"
-            @clear="disableOpraCompensation"
-            @refresh="refreshOpraCatalog"
+          <p v-if="eqApplyError" class="eq-apply-error" role="alert">{{ eqApplyError }}</p>
+
+          <GraphicEqPanel
+            :preamp="audioProcessing.eqPreamp"
+            :bands="audioProcessing.eqBands"
+            :auto-preamp-enabled="autoPreampEnabled"
+            @preview-preamp="stagePreamp"
+            @preview-band="stageBandPatch"
+            @commit="commitStagedBands"
+            @advanced="openAdvancedSettings"
           />
 
           <FrequencyResponseChart
@@ -1288,14 +1299,21 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
             @clear="clearFrequencyResponse"
           />
 
-          <GraphicEqPanel
-            :preamp="audioProcessing.eqPreamp"
-            :bands="audioProcessing.eqBands"
-            :auto-preamp-enabled="autoPreampEnabled"
-            @preview-preamp="stagePreamp"
-            @preview-band="stageBandPatch"
-            @commit="commitStagedBands"
-            @advanced="openAdvancedSettings"
+          <OpraEqPanel
+            :compensation="headphoneCompensation"
+            :status="opraStatus"
+            :searching="opraSearching"
+            :refreshing="opraRefreshing"
+            :applying-eq-id="opraApplyingEqId"
+            :saving="opraSaving"
+            :results="opraResults"
+            :error="opraError"
+            :query="opraQuery"
+            @update:query="opraQuery = $event"
+            @search="searchOpraProfiles"
+            @select="applyOpraProfile"
+            @clear="disableOpraCompensation"
+            @refresh="refreshOpraCatalog"
           />
         </div>
 
@@ -1352,12 +1370,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
                 :can-redo="canRedo"
                 @command="runHistoryCommand"
               />
-              <div class="instrument-mode-switch" aria-label="均衡器模式">
-                <button type="button" :aria-pressed="false" @click="switchTab('graphic')">
-                  图形
-                </button>
-                <button type="button" class="active" :aria-pressed="true">参数</button>
-              </div>
+
               <div class="instrument-presets">
                 <div class="preset-menu-anchor">
                   <button
@@ -1367,7 +1380,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
                   >
                     选择预设 <i class="pi pi-chevron-down"></i>
                   </button>
-                  <div v-if="presetMenuOpen" class="preset-menu">
+                  <div v-if="presetMenuOpen" class="preset-menu" data-te-material="popover">
                     <div class="preset-menu-section">
                       <span class="preset-menu-title">内置预设</span>
                       <button
@@ -1485,36 +1498,27 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-}
-
-:global(html[data-theme='dark'] .eq-page) {
-  background-color: var(--te-app-bg);
-  background-image: var(--te-app-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
 }
 
 .eq-toolbar-modern {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 0 20px 0;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  margin-bottom: 24px;
+  gap: 8px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--te-card-border);
+  margin-bottom: 0;
   flex-wrap: wrap;
 }
 
 .eq-command {
-  background: var(--te-glass-bg);
-  border: 1px solid var(--te-glass-border);
-  padding: 8px 16px;
-  border-radius: 12px;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 600;
-  color: var(--te-neutral-700);
+  min-height: var(--te-control-height-md);
+  background: transparent;
+  border: 1px solid var(--te-card-border);
+  padding: 6px 12px;
+  border-radius: var(--te-control-radius-sm);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  color: var(--te-neutral-900);
   cursor: pointer;
   transition:
     background-color 0.2s var(--te-ease-soft),
@@ -1526,10 +1530,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 
 .eq-command:hover:not(:disabled) {
-  background: var(--te-card-bg);
-  border-color: var(--te-primary-400);
-  color: var(--te-primary-500);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
+  background: var(--te-hover-bg);
+  color: var(--te-neutral-900);
 }
 
 .eq-command.soft {
@@ -1547,9 +1549,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 
 .auto-preamp-toggle.active {
-  background: rgba(var(--te-primary-rgb), 0.1);
-  border-color: var(--te-primary-400);
-  color: var(--te-primary-500);
+  background: var(--te-active-bg);
+  color: var(--te-neutral-900);
 }
 
 .preset-menu-anchor {
@@ -1560,11 +1561,12 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  background: var(--te-glass-bg-strong);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--te-glass-border);
+  background: var(--te-material-background);
+  color: var(--te-material-ink);
+  backdrop-filter: var(--te-material-filter);
+  border: 1px solid var(--te-material-border);
   border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
+  box-shadow: var(--te-material-shadow);
   padding: 12px;
   width: 240px;
   z-index: 100;
@@ -1580,9 +1582,9 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 
 .preset-menu-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 700;
-  color: var(--te-neutral-400);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
+  color: var(--te-control-fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 0 8px 4px;
@@ -1593,9 +1595,9 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   border: none;
   padding: 8px;
   text-align: left;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 600;
-  color: var(--te-neutral-700);
+  color: var(--te-control-fg);
   border-radius: 8px;
   cursor: pointer;
   transition:
@@ -1604,13 +1606,13 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 
 .preset-menu-item:hover {
-  background: var(--te-primary-50);
-  color: var(--te-primary-600);
+  background: var(--te-control-bg-hover);
+  color: var(--te-control-fg);
 }
 
 .preset-empty {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: var(--te-neutral-400);
+  font-size: var(--te-type-caption);
+  color: var(--te-control-fg-muted);
   padding: 4px 8px;
 }
 
@@ -1618,16 +1620,17 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   display: flex;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  border-top: 1px solid var(--te-control-border);
 }
 
 .preset-create input {
   flex: 1;
-  background: rgba(15, 23, 42, 0.04);
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 6px 10px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   outline: none;
   transition:
     background-color 0.2s var(--te-ease-soft),
@@ -1636,17 +1639,17 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 
 .preset-create input:focus {
-  background: var(--te-card-bg);
-  border-color: var(--te-primary-400);
+  background: var(--te-control-bg);
+  border-color: var(--te-control-focus-color);
 }
 
 .preset-create button {
-  background: var(--te-primary-500);
-  color: #fff;
+  background: var(--te-control-accent);
+  color: var(--te-control-on-accent);
   border: none;
   border-radius: 8px;
   padding: 0 12px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
@@ -1666,116 +1669,62 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   padding: 0;
 }
 
+/* One flat editor surface, within the secondary DSP workspace. */
 .eq-container {
   width: 100%;
   height: 100%;
-  margin: 0;
-  max-width: none;
-  background: var(--te-glass-bg);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  display: flex;
-  overflow: hidden;
-}
-
-/* Sidebar Navigation */
-.eq-sidebar {
-  width: 240px;
-  background: var(--te-glass-bg);
-  border-right: 1px solid var(--te-glass-border);
-  padding: 90px 20px 32px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  flex-shrink: 0;
+  overflow: hidden;
+  background: transparent;
 }
-.nav-item {
+.eq-mode-tabs {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  cursor: pointer;
-  transition:
-    background-color var(--te-motion-hover) var(--te-ease-soft),
-    color var(--te-motion-hover) var(--te-ease-soft),
-    border-color var(--te-motion-hover) var(--te-ease-soft);
-  color: var(--te-neutral-500);
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: calc(var(--te-titlebar-inset, 40px) + var(--te-page-top, 32px))
+    var(--te-page-inset, 32px) 0;
 }
-.nav-item:hover {
+.eq-mode-tabs .nav-item {
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--te-control-radius-sm);
+  background: transparent;
+  color: var(--te-neutral-500);
+  font: inherit;
+  font-size: var(--te-type-body);
+  cursor: pointer;
+}
+.eq-mode-tabs .nav-item:hover {
   background: var(--te-hover-bg);
   color: var(--te-neutral-900);
 }
-.nav-item.active {
-  background: var(--te-active-bg);
-  color: var(--te-primary-500);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  border: 1px solid var(--te-card-border);
-}
-.nav-item i {
-  font-size: 1.2rem;
+.eq-mode-tabs .nav-item.active {
+  border-color: var(--te-card-border);
   background: var(--te-subtle-bg);
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  transition:
-    background-color var(--te-motion-hover) var(--te-ease-soft),
-    color var(--te-motion-hover) var(--te-ease-soft),
-    border-color var(--te-motion-hover) var(--te-ease-soft);
+  color: var(--te-neutral-900);
+  font-weight: var(--te-type-weight-medium);
 }
-.nav-item.active i {
-  background: rgba(var(--te-primary-rgb), 0.1);
-  color: var(--te-primary-500);
-}
-.nav-info {
-  display: flex;
-  flex-direction: column;
-}
-.nav-info span {
-  font-weight: 700;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-}
-.nav-info small {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 500;
-  opacity: 0.7;
-}
-
-/* Content Area */
 .eq-content {
   flex: 1;
-  padding: 40px;
+  padding: 20px var(--te-page-inset, 32px) var(--te-page-bottom, 32px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 24px;
   min-height: 0;
   min-width: 0;
 }
 .tab-pane {
   display: none;
   flex-direction: column;
-  gap: 30px;
-  animation: fadeIn 0.4s var(--te-ease-soft);
+  gap: 24px;
+  animation: none;
 }
 .tab-pane.active {
   display: flex;
-}
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .eq-header {
@@ -1784,63 +1733,35 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   align-items: center;
   flex-wrap: wrap;
 }
-.eq-title h1 {
-  font-size: calc(var(--te-font-size-body, 14px) * 28 / 14);
-  font-weight: 800;
-  letter-spacing: -0.5px;
+.eq-title h2 {
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
+  letter-spacing: normal;
   margin-bottom: 6px;
 }
 .eq-title p {
   color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font-size: var(--te-type-body);
   font-weight: 500;
 }
 
 .master-switch {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--te-card-bg);
-  padding: 8px 16px 8px 20px;
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  border: 1px solid var(--te-card-border);
-  font-weight: 700;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  color: var(--te-primary-500);
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--te-control-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: var(--te-type-caption);
   cursor: pointer;
-  transition: color 0.2s;
 }
-.master-switch.off {
-  color: var(--te-neutral-500);
+.master-switch[aria-checked='true'] {
+  background: var(--te-subtle-bg);
 }
-.toggle-track {
-  width: 44px;
-  height: 24px;
-  background: linear-gradient(135deg, var(--te-primary-500), #22d3ee);
-  border-radius: 999px;
-  position: relative;
-  transition: background 0.2s;
-}
-.master-switch.off .toggle-track {
-  background: rgba(15, 23, 42, 0.12);
-}
-.toggle-thumb {
-  width: 20px;
-  height: 20px;
-  background: #fff; /* keep-white: toggle knob */
-  border-radius: 50%;
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  transition:
-    right 0.2s,
-    left 0.2s;
-}
-.master-switch.off .toggle-thumb {
-  right: auto;
-  left: 2px;
+.master-switch:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
 }
 
 /* Detailed SVG Chart Area */
@@ -1867,8 +1788,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 .parametric-eyebrow,
 .parametric-toolbar-label,
 .parametric-context-status {
-  font-size: calc(var(--te-font-size-body, 14px) * 9 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   line-height: 1;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1885,7 +1806,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 
 .parametric-page-title h1 {
   margin: 0 0 2px;
-  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  font-size: var(--te-type-headline);
   font-weight: 760;
   line-height: 1.15;
   letter-spacing: -0.02em;
@@ -1894,7 +1815,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 .parametric-page-title p {
   overflow: hidden;
   color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-size: var(--te-type-caption);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1933,8 +1854,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   border-radius: 10px;
   border: 1px solid var(--te-card-border);
   background: var(--te-card-bg);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   color: var(--te-neutral-500);
   cursor: pointer;
   transition:
@@ -1968,8 +1889,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   gap: 8px;
 }
 .param-group label {
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   color: var(--te-neutral-500);
 }
 .param-group input,
@@ -1979,7 +1900,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   padding: 12px 16px;
   border-radius: 12px;
   font-family: inherit;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font-size: var(--te-type-body);
   font-weight: 600;
   color: var(--te-neutral-900);
   outline: none;
@@ -1987,8 +1908,10 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 }
 .param-group input:focus,
 .param-group select:focus {
-  border-color: var(--te-primary-500);
-  box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1);
+  border-color: var(--te-control-focus-color);
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .square-card {
@@ -2017,8 +1940,8 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   margin-bottom: 24px;
 }
 .square-card h2 {
-  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
-  font-weight: 800;
+  font-size: var(--te-type-page-title);
+  font-weight: var(--te-type-weight-strong);
   margin-bottom: 12px;
 }
 .square-card p {
@@ -2049,7 +1972,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   }
 
   .parametric-page-title h1 {
-    font-size: calc(var(--te-font-size-body, 14px) * 15 / 14);
+    font-size: var(--te-type-body);
   }
 
   .parametric-page-title p {
@@ -2089,6 +2012,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 :global(html[data-te-equalizer-button='soft'] .eq-page .band-tab) {
   border-color: transparent;
   background: var(--te-equalizer-button-bg);
+  color: var(--te-control-fg);
 }
 
 :global(html[data-te-equalizer-button='outline'] .eq-page .eq-command),
@@ -2101,7 +2025,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 :global(html[data-te-equalizer-button='solid'] .eq-page .band-tab) {
   border-color: var(--te-primary-500);
   background: var(--te-primary-500);
-  color: var(--te-neutral-50);
+  color: var(--te-control-on-accent);
 }
 
 :global(html[data-te-equalizer-knob] .eq-page .toggle-thumb) {
@@ -2167,7 +2091,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   color: var(--te-neutral-900);
 }
 
-.eq-page.is-parametric .eq-container {
+.eq-page.is-parametric:not(.is-embedded) .eq-container {
   background: var(--te-app-bg);
   backdrop-filter: none;
 }
@@ -2344,7 +2268,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
   appearance: none;
 }
 .instrument-preamp input:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .instrument-mode-switch button:focus-visible,
@@ -2352,7 +2276,7 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 .instrument-auto-preamp:focus-visible,
 .instrument-more summary:focus-visible,
 .instrument-more button:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 @media (max-width: 820px) {
@@ -2410,7 +2334,54 @@ watch([activeTab, spectrumVisible, responseView, isPlaying, spectrumFrozen], upd
 
 @media (max-width: 900px) {
   .eq-content {
-    padding-bottom: max(40px, calc(var(--te-playbar-bottom-clearance, 0px) + 16px));
+    padding-bottom: var(--te-page-bottom, 32px);
   }
+}
+
+.eq-page.is-embedded {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+}
+.eq-page.is-embedded .eq-mode-tabs {
+  padding: 0;
+}
+.eq-page.is-embedded .eq-content {
+  padding: 12px 0 24px;
+  gap: 16px;
+}
+.eq-page.is-embedded .eq-toolbar-modern {
+  margin-bottom: 0;
+  gap: 8px;
+}
+.eq-page.is-embedded .eq-header {
+  margin-bottom: 16px;
+}
+.eq-page.is-embedded :deep(.chart-card) {
+  border-radius: 8px;
+}
+.eq-page.is-embedded :deep(.svg-container) {
+  height: clamp(120px, 18vh, 160px);
+}
+.eq-page.is-embedded :deep(.sliders-board) {
+  --te-graphic-slider-height: clamp(112px, 18vh, 148px);
+  padding: 16px 8px;
+  border-radius: 8px;
+}
+.eq-page.is-embedded :deep(.slider-column) {
+  gap: 12px;
+}
+.eq-page.is-embedded :deep(.opra-panel) {
+  border-radius: 8px;
+}
+.eq-page.is-embedded.is-parametric .eq-content {
+  padding: 16px 0 24px;
+}
+.eq-apply-error {
+  color: var(--te-danger-soft-fg);
+  font-size: var(--te-type-body);
 }
 </style>

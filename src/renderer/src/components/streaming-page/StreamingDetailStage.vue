@@ -214,6 +214,31 @@ function onRowDblClick(track: Track, index: number, event: MouseEvent): void {
   emit('playTrack', track, index, event)
 }
 
+async function onRowKeydown(event: KeyboardEvent, track: Track, index: number): Promise<void> {
+  if (event.target !== event.currentTarget) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.repeat) return
+    if (event.key === 'Enter') emit('playTrack', track, index)
+    else emit('trackClick', track, index, new MouseEvent('click', { ctrlKey: true }))
+    return
+  }
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+  event.preventDefault()
+  event.stopPropagation()
+  const nextIndex = Math.max(
+    0,
+    Math.min(props.tracks.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1))
+  )
+  const list = (event.currentTarget as HTMLElement).closest('.stage-rows')
+  scrollToIndex(nextIndex)
+  await nextTick()
+  list
+    ?.querySelector<HTMLElement>(`[data-track-index="${nextIndex}"]`)
+    ?.focus({ preventScroll: true })
+}
+
 function onPlayRow(track: Track, index: number, event: MouseEvent): void {
   event.stopPropagation()
   emit('playTrack', track, index)
@@ -248,7 +273,7 @@ const infoTrack = shallowRef<Track | null>(null)
       <TrackInfoDialog v-if="infoTrack" :track="infoTrack" @close="infoTrack = null" />
     </NativeDialogTransition>
   </Teleport>
-  <section class="detail-stage" :data-kind="kind">
+  <section class="detail-stage" :data-kind="kind" :aria-busy="loading || refreshing">
     <header class="stage-hero">
       <div class="stage-cover-frame">
         <CoverImg
@@ -256,17 +281,15 @@ const infoTrack = shallowRef<Track | null>(null)
           :cover="cover"
           :cover-source="coverSource"
           class="stage-cover"
-          alt="cover"
+          alt=""
         />
         <div v-else class="stage-cover stage-cover-fallback" aria-hidden="true">
           <i :class="icon"></i>
         </div>
-        <span class="stage-cover-ring" aria-hidden="true"></span>
       </div>
 
       <div class="stage-copy">
         <div class="stage-kicker">
-          <span class="stage-kicker-mark" aria-hidden="true"></span>
           <span class="stage-kicker-text">{{ kindLabel }}</span>
           <span v-if="trackCountLabel" class="stage-kicker-meta">{{ trackCountLabel }}</span>
         </div>
@@ -274,11 +297,13 @@ const infoTrack = shallowRef<Track | null>(null)
         <h2 class="stage-title">{{ title }}</h2>
 
         <p v-if="description" class="stage-desc">{{ description }}</p>
-        <p v-if="intro" class="stage-intro">{{ intro }}</p>
+        <details v-if="intro" class="stage-about">
+          <summary>简介</summary>
+          <p class="stage-intro">{{ intro }}</p>
+        </details>
 
-        <div class="stage-meta-row">
-          <span v-if="totalDurationLabel" class="stage-chip">{{ totalDurationLabel }}</span>
-          <span v-if="tracks.length" class="stage-chip muted">{{ tracks.length }} 首在列</span>
+        <div v-if="totalDurationLabel" class="stage-meta-row">
+          <span class="stage-chip">{{ totalDurationLabel }}</span>
         </div>
 
         <div class="stage-actions">
@@ -287,11 +312,13 @@ const infoTrack = shallowRef<Track | null>(null)
             type="button"
             class="stage-btn stage-btn-primary"
             :class="{ active: followActive }"
-            :disabled="followLoading"
+            :disabled="followLoading || loading"
+            :aria-busy="followLoading"
+            :aria-pressed="followActive"
             @click="emit('follow')"
           >
             <i :class="followIcon"></i>
-            <span>{{ followLabel }}</span>
+            <span>{{ followLoading ? '正在处理…' : followLabel }}</span>
           </button>
 
           <template v-else-if="showPlayActions">
@@ -319,7 +346,7 @@ const infoTrack = shallowRef<Track | null>(null)
           </template>
         </div>
 
-        <p v-if="followError" class="stage-follow-error">{{ followError }}</p>
+        <p v-if="followError" class="stage-follow-error" role="alert">{{ followError }}</p>
       </div>
     </header>
 
@@ -358,17 +385,19 @@ const infoTrack = shallowRef<Track | null>(null)
     <div
       v-if="!loading && tracks.length === 0 && showPlayActions && !showFollow"
       class="stage-empty"
+      role="status"
     >
       <i class="pi pi-wave-pulse" aria-hidden="true"></i>
       <p>{{ query ? '没有匹配的歌曲，试试其他关键词' : emptyMessage }}</p>
     </div>
 
+    <p v-if="loading" class="stage-loading" role="status">正在加载歌曲…</p>
     <!-- Loading skeleton -->
     <div
       v-if="loading && tracks.length === 0"
       class="stage-list stage-list-skeleton"
       :class="{ 'no-like': isExternal && !showTrackLikes }"
-      aria-live="polite"
+      aria-hidden="true"
     >
       <div class="stage-list-head">
         <span class="col-index">#</span>
@@ -400,7 +429,6 @@ const infoTrack = shallowRef<Track | null>(null)
     >
       <div v-if="hasSelection" class="stage-selection" role="toolbar" aria-label="批量操作">
         <div class="stage-selection-left">
-          <span class="stage-selection-dot" aria-hidden="true"></span>
           <span>已选 {{ selectedCount }} 首</span>
         </div>
         <div class="stage-selection-actions">
@@ -430,119 +458,143 @@ const infoTrack = shallowRef<Track | null>(null)
         </div>
       </div>
 
-      <div class="stage-list-head" aria-hidden="true">
-        <span class="col-index">#</span>
-        <span class="col-title">曲目</span>
-        <span v-if="!isExternal || showTrackLikes" class="col-like"></span>
-        <span class="col-album">专辑</span>
-        <span class="col-time">时长</span>
-      </div>
+      <div
+        class="stage-track-table"
+        role="table"
+        :aria-label="`${title}歌曲`"
+        :aria-rowcount="tracks.length + 1"
+      >
+        <div class="stage-list-head" role="row">
+          <span class="col-index" role="columnheader">#</span>
+          <span class="col-title" role="columnheader">标题</span>
+          <span
+            v-if="!isExternal || showTrackLikes"
+            class="col-like"
+            role="columnheader"
+            aria-label="收藏"
+          ></span>
+          <span class="col-album" role="columnheader">专辑</span>
+          <span class="col-time" role="columnheader">时长</span>
+        </div>
 
-      <ul :ref="listRef" class="stage-rows" role="list" :style="{ height: `${totalHeight}px` }">
-        <li
-          v-for="(track, index) in visibleTracks"
-          :key="track.id"
-          class="stage-row"
-          data-te-interactive
-          :class="{
-            playing: currentTrackId === track.id,
-            selected: isSelected(track.id)
-          }"
-          :style="index === 0 ? { marginTop: `${paddingTop}px` } : undefined"
-          role="listitem"
-          @click="onRowActivate(track, trackIndex(index), $event)"
-          @dblclick="onRowDblClick(track, trackIndex(index), $event)"
-          @contextmenu="onContextMenu(track, trackIndex(index), $event)"
+        <ul
+          :ref="listRef"
+          class="stage-rows"
+          role="rowgroup"
+          :style="{ height: `${totalHeight}px` }"
         >
-          <div class="col-index">
-            <button
-              v-if="currentTrackId === track.id"
-              type="button"
-              class="row-play-btn playing"
-              title="正在播放"
-              @click="onPlayRow(track, trackIndex(index), $event)"
-            >
-              <span class="eq-bars" aria-hidden="true"> <i></i><i></i><i></i> </span>
-            </button>
-            <button
-              v-else
-              type="button"
-              class="row-play-btn"
-              :aria-label="`播放 ${track.title}`"
-              @click="onPlayRow(track, trackIndex(index), $event)"
-            >
-              <span class="row-index-num">{{
-                String(trackIndex(index) + 1).padStart(2, '0')
-              }}</span>
-              <PlaybackIcon name="play" class="row-play-icon" />
-            </button>
-          </div>
-
-          <div class="col-title">
-            <CoverImg
-              :cover="track.cover"
-              :cover-source="track.coverSource"
-              class="row-cover"
-              alt=""
-            />
-
-            <div class="row-copy">
+          <li
+            v-for="(track, index) in visibleTracks"
+            :key="track.id"
+            class="stage-row"
+            data-te-interactive
+            :class="{
+              playing: currentTrackId === track.id,
+              selected: isSelected(track.id)
+            }"
+            :style="index === 0 ? { marginTop: `${paddingTop}px` } : undefined"
+            role="row"
+            tabindex="0"
+            :data-track-index="trackIndex(index)"
+            :aria-label="`${track.title} · ${track.artist}，按回车播放，空格选择`"
+            :aria-selected="isSelected(track.id)"
+            :aria-rowindex="trackIndex(index) + 2"
+            @keydown="onRowKeydown($event, track, trackIndex(index))"
+            @click="onRowActivate(track, trackIndex(index), $event)"
+            @dblclick="onRowDblClick(track, trackIndex(index), $event)"
+            @contextmenu="onContextMenu(track, trackIndex(index), $event)"
+          >
+            <div class="col-index" role="cell">
               <button
+                v-if="currentTrackId === track.id"
                 type="button"
-                class="row-title metadata-link"
-                :title="track.title"
-                @click.stop="infoTrack = track"
-                @dblclick.stop
+                class="row-play-btn playing"
+                title="正在播放"
+                :aria-label="`播放 ${track.title}，当前正在播放`"
+                @click="onPlayRow(track, trackIndex(index), $event)"
               >
-                {{ track.title }}
+                <i class="pi pi-volume-up" aria-hidden="true"></i>
               </button>
               <button
+                v-else
                 type="button"
-                class="row-artist metadata-link"
-                :title="track.artist"
-                @click.stop="emit('openArtist', track)"
-                @dblclick.stop
+                class="row-play-btn"
+                :aria-label="`播放 ${track.title}`"
+                @click="onPlayRow(track, trackIndex(index), $event)"
               >
-                {{ track.artist || '未知艺人' }}
+                <span class="row-index-num">{{
+                  String(trackIndex(index) + 1).padStart(2, '0')
+                }}</span>
+                <PlaybackIcon name="play" class="row-play-icon" />
               </button>
             </div>
-          </div>
 
-          <div v-if="!isExternal || showTrackLikes" class="col-like">
-            <button
-              type="button"
-              class="row-like"
-              :class="{
-                liked: isTrackLiked(track),
-                loading: isLiking(track)
-              }"
-              :disabled="isLiking(track)"
-              :title="`在${favoriteProviderLabel}${isTrackLiked(track) ? '取消' : ''}${isExternal ? '收藏' : '喜欢'}`"
-              :aria-label="`在${favoriteProviderLabel}${isTrackLiked(track) ? '取消' : ''}${isExternal ? '收藏' : '喜欢'}`"
-              :aria-pressed="isTrackLiked(track)"
-              @click="onLike(track, $event)"
-            >
-              <i v-if="isLiking(track)" class="pi pi-spin pi-spinner"></i>
-              <i v-else :class="isTrackLiked(track) ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-            </button>
-          </div>
+            <div class="col-title" role="cell">
+              <CoverImg
+                :cover="track.cover"
+                :cover-source="track.coverSource"
+                class="row-cover"
+                alt=""
+              />
 
-          <div class="col-album" :title="track.album || ''">
-            <button
-              type="button"
-              class="metadata-link"
-              @click.stop="emit('openAlbum', track)"
-              @dblclick.stop
-            >
-              {{ track.album || '—' }}
-            </button>
-          </div>
+              <div class="row-copy">
+                <button
+                  type="button"
+                  class="row-title metadata-link"
+                  :title="track.title"
+                  @click.stop="infoTrack = track"
+                  @dblclick.stop
+                >
+                  {{ track.title }}
+                </button>
+                <button
+                  type="button"
+                  class="row-artist metadata-link"
+                  :title="track.artist"
+                  @click.stop="emit('openArtist', track)"
+                  @dblclick.stop
+                >
+                  {{ track.artist || '未知艺人' }}
+                </button>
+              </div>
+            </div>
 
-          <div class="col-time">
-            {{ formatTime(track.duration) }}
-          </div>
-        </li>
-      </ul>
+            <div v-if="!isExternal || showTrackLikes" class="col-like" role="cell">
+              <button
+                type="button"
+                class="row-like"
+                :class="{
+                  liked: isTrackLiked(track),
+                  loading: isLiking(track)
+                }"
+                :disabled="isLiking(track)"
+                :title="`在${favoriteProviderLabel}${isTrackLiked(track) ? '取消' : ''}${isExternal ? '收藏' : '喜欢'}`"
+                :aria-label="`在${favoriteProviderLabel}${isTrackLiked(track) ? '取消' : ''}${isExternal ? '收藏' : '喜欢'}`"
+                :aria-pressed="isTrackLiked(track)"
+                @click="onLike(track, $event)"
+              >
+                <i v-if="isLiking(track)" class="pi pi-spin pi-spinner"></i>
+                <i v-else :class="isTrackLiked(track) ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+              </button>
+            </div>
+
+            <div class="col-album" :title="track.album || ''" role="cell">
+              <button
+                type="button"
+                class="metadata-link"
+                @click.stop="emit('openAlbum', track)"
+                @dblclick.stop
+              >
+                {{ track.album || '—' }}
+              </button>
+            </div>
+
+            <div class="col-time" role="cell">
+              {{ formatTime(track.duration) }}
+            </div>
+          </li>
+        </ul>
+      </div>
 
       <div v-if="likedFooter" class="stage-footer">
         <span v-if="likedFooter.loadingMore" class="stage-footer-msg">

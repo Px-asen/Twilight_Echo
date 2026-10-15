@@ -1,5 +1,6 @@
 import type { Track } from '../types/music'
 import { splitGenreValues } from '../../../shared/genreSeparators.ts'
+import { getPinyinInitial } from './pinyinInitials.ts'
 
 export const AZ_INDEX_LETTERS = Array.from({ length: 26 }, (_, index) =>
   String.fromCharCode(65 + index)
@@ -83,7 +84,8 @@ export function collectionAddedAt(item: LibraryCollectionItem): number {
 
 export function collectionIndexLetter(name: string): string | null {
   const first = name.trim().normalize('NFKD').replace(/\p{M}/gu, '').charAt(0).toUpperCase()
-  return /^[A-Z]$/.test(first) ? first : null
+  if (/^[A-Z]$/.test(first)) return first
+  return getPinyinInitial(first).toUpperCase() || null
 }
 
 export function availableCollectionLetters(items: readonly LibraryCollectionItem[]): Set<string> {

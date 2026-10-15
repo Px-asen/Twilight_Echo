@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type {
   StreamingTrackSort,
   StreamingSortDirection
@@ -20,6 +21,11 @@ const emit = defineEmits<{
   refresh: []
   locate: []
 }>()
+const searchInput = ref<HTMLInputElement | null>(null)
+function clearQuery(): void {
+  emit('update:query', '')
+  searchInput.value?.focus()
+}
 </script>
 
 <template>
@@ -27,23 +33,21 @@ const emit = defineEmits<{
     <label class="track-search">
       <i class="pi pi-search" aria-hidden="true"></i>
       <input
+        ref="searchInput"
+        type="search"
         :value="query"
         placeholder="在歌单中搜索"
         aria-label="搜索当前歌单的歌曲、歌手或专辑"
         @input="emit('update:query', ($event.target as HTMLInputElement).value)"
       />
-      <button
-        v-if="query"
-        type="button"
-        aria-label="清除歌单搜索"
-        @click="emit('update:query', '')"
-      >
+      <button v-if="query" type="button" aria-label="清除歌单搜索" @click="clearQuery">
         <i class="pi pi-times" aria-hidden="true"></i>
       </button>
     </label>
     <span class="track-count" aria-live="polite"
       >{{ count }}<span v-if="count !== total"> / {{ total }}</span> 首</span
     >
+    <span v-if="refreshing" class="tool-status" role="status">正在刷新…</span>
     <div class="track-tool-actions">
       <select
         :value="sort"
@@ -70,7 +74,7 @@ const emit = defineEmits<{
           aria-hidden="true"
         ></i>
       </button>
-      <span class="tool-divider"></span>
+      <span class="tool-divider" aria-hidden="true"></span>
       <button
         type="button"
         :disabled="!canLocate"
@@ -83,8 +87,9 @@ const emit = defineEmits<{
       <button
         type="button"
         :disabled="refreshing"
-        title="刷新歌单"
-        aria-label="刷新歌单"
+        :title="refreshing ? '正在刷新歌单…' : '刷新歌单'"
+        :aria-label="refreshing ? '正在刷新歌单…' : '刷新歌单'"
+        :aria-busy="refreshing"
         @click="emit('refresh')"
       >
         <i :class="['pi pi-refresh', { 'pi-spin': refreshing }]" aria-hidden="true"></i>
@@ -99,90 +104,89 @@ const emit = defineEmits<{
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--stage-line);
-  border-radius: 14px;
-  background: var(--stage-paper-raised);
-  color: var(--stage-ink-soft);
+  min-width: 0;
+  color: var(--te-settings-text-muted);
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
 }
 .track-search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex: 1 1 180px;
-  min-width: 140px;
-  padding-left: 10px;
+  gap: 8px;
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 420px;
+  min-height: var(--te-control-height-field);
+  padding: 6px 12px;
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-subtle-bg);
 }
 .track-search input {
   width: 100%;
   min-width: 0;
   border: 0;
   outline: none;
-  color: var(--stage-ink);
+  color: var(--te-settings-text);
   background: transparent;
   font: inherit;
 }
-.track-search:focus-within {
-  color: var(--stage-accent);
+.track-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
-.track-count {
-  font-size: 0.8em;
-  color: var(--stage-ink-soft);
+.track-count,
+.tool-status {
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 .track-tool-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 button,
 select {
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  color: inherit;
-  background: transparent;
+  min-height: var(--te-control-height-md);
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm);
+  color: var(--te-settings-text);
+  background: var(--te-subtle-bg);
   font: inherit;
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
   cursor: pointer;
 }
 button {
-  width: 34px;
+  width: max(34px, calc(var(--te-font-size-body) * 2));
   flex-shrink: 0;
 }
-select {
-  max-width: 120px;
-  padding: 0 8px;
-  background: var(--stage-paper);
-  color: var(--stage-ink);
+.track-search button {
+  border: 0;
+  background: transparent;
 }
 button:hover:enabled {
-  color: var(--stage-accent);
-  background: var(--stage-accent-soft);
-}
-button:active:enabled {
-  transform: scale(0.97);
+  background: var(--te-hover-bg);
 }
 button:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: default;
 }
 button:focus-visible,
 select:focus-visible,
 .track-search:focus-within {
-  outline: 2px solid var(--stage-accent);
-  outline-offset: 3px;
-  border-radius: 8px;
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
 }
 .tool-divider {
-  height: 16px;
+  height: 20px;
   width: 1px;
-  background: var(--stage-line-strong);
-  margin: 0 4px;
-}
-@media (max-width: 900px) {
-  .track-tool-actions {
-    margin-left: auto;
-  }
+  background: var(--te-card-border);
+  margin-inline: 4px;
 }
 </style>

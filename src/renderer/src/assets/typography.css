@@ -1,0 +1,46 @@
+/* Shared UI text roles. Existing theme font and user text-size inputs remain authoritative. */
+:is(
+  .settings-preview-page,
+  .plugin-page,
+  .theme-studio-page,
+  .workshop-page,
+  .home,
+  .song-list,
+  .aggregate-page,
+  .streaming-page,
+  .dsp-rack-page,
+  .audio-workspace,
+  .eq-page,
+  .analytics-page,
+  .radio-podcast-page,
+  .network-sources-page,
+  .plugin-extension-page
+) {
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-regular);
+  line-height: var(--te-type-line-body);
+  letter-spacing: normal;
+  font-synthesis: none;
+}
+
+:is(
+    .settings-preview-page,
+    .plugin-page,
+    .theme-studio-page,
+    .workshop-page,
+    .home,
+    .song-list,
+    .aggregate-page,
+    .streaming-page,
+    .dsp-rack-page,
+    .audio-workspace,
+    .eq-page,
+    .analytics-page,
+    .radio-podcast-page,
+    .network-sources-page,
+    .plugin-extension-page
+  )
+  :is(button, input, select, textarea) {
+  font-family: inherit;
+}

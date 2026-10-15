@@ -67,7 +67,19 @@ export function createFocusTrap(getRoot: () => HTMLElement | null, environment: 
         if (!active || traps.at(-1) !== entry) return
         const root = getRoot()
         activeRoot = root
-        if (root?.isConnected) (targets(root)[0] ?? root).focus()
+        if (!root?.isConnected) return
+        const current = document.activeElement as HTMLElement | null
+        // Search and other explicit entry points can focus their destination
+        // before this opening frame runs. Keep that visible, usable target.
+        if (
+          current &&
+          root.contains(current) &&
+          current.getClientRects().length > 0 &&
+          !current.closest('[inert], [disabled]')
+        )
+          return
+        const destination = targets(root)[0] ?? root
+        destination.focus()
       })
     },
     deactivate(): void {

@@ -23,19 +23,21 @@ import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { trackRowKeyAction } from './song-list/trackRowKeyboard'
 import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
-import { useProviderStore } from '../stores/useProviderStore'
+import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
 import {
   buildLastPlayedByTrackId,
   getRecentTracks,
   useListeningStatsStore
 } from '../stores/useListeningStatsStore'
-import type { Track } from '../types/music'
+import type { Track, QueuePlaybackOrigin } from '../types/music'
+import { withQueuePlaybackOrigin } from '../utils/queuePlaybackOrigin.ts'
 import { copyTrackNames } from '../utils/copyTrackNames'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSearchBlob, normalizeSearchText } from '../utils/localLibrarySearch'
 import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackModel'
-import { useEscapeToClose } from '../app/useDismissLayer.ts'
+import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer.ts'
 import { useBackHandler } from '../app/useBackStack.ts'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import { searchMetadataTracks } from '../utils/musicMetadataSearch'
@@ -84,6 +86,7 @@ import { usePlaylistLifecycleActions } from './song-list/usePlaylistLifecycleAct
 import { useSongListSearch } from './song-list/useSongListSearch'
 import { useSongListVirtualScroll } from './song-list/useSongListVirtualScroll'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
+import { usePageDock } from '../app/pageDock'
 
 const props = defineProps<{
   category: string
@@ -142,11 +145,17 @@ const playbackStore = usePlayerStore()
 const settingsStore = useSettingsStore()
 const { currentTrack } = playbackStore
 const { playTrack, playTrackFromPosition, setPlayMode, playNextTrack } = playbackStore
-const playbackBookmarks = usePlaybackBookmarks()
-void playbackBookmarks.ensureLoaded()
-const mediaProviders = useMediaProviders()
-const unifiedSearch = useUnifiedMusicSearch()
-const providerStore = useProviderStore()
+const savedPlaybackBookmarks = props.previewTracks ? undefined : usePlaybackBookmarks()
+void savedPlaybackBookmarks?.ensureLoaded()
+const playbackBookmarks = savedPlaybackBookmarks ?? {
+  resumeBookmarkFor: () => undefined,
+  bookmarksFor: () => []
+}
+const mediaProviders = useMediaProviders({ sync: !props.previewTracks })
+const unifiedSearch = useUnifiedMusicSearch({ sync: !props.previewTracks })
+const providerStore = props.previewTracks
+  ? { providers: ref<ProviderInfo[]>([]) }
+  : useProviderStore()
 const { listeningStats } = useListeningStatsStore()
 const EMPTY_LAST_PLAYED_BY_TRACK_ID: ReadonlyMap<string, number> = new Map()
 
@@ -157,6 +166,7 @@ const { searchQuery, debouncedSearchQuery, searchInputFocused } =
 // ─── Recent playback source selector ──────────────────────────────────────
 const recentSource = ref('all')
 const recentSourceMenuOpen = ref(false)
+const recentSourceDropdownRef = ref<HTMLElement | null>(null)
 
 const recentSourceOptions = computed(() => {
   const options = [
@@ -180,18 +190,13 @@ const activeRecentSourceLabel = computed(
 )
 
 function selectRecentSource(sourceId: string): void {
-  recentSourceMenuOpen.value = false
+  closeLibraryDropdown('recent', true)
   recentSource.value = sourceId
-}
-
-function closeRecentSourceMenuDelayed(): void {
-  setTimeout(() => {
-    recentSourceMenuOpen.value = false
-  }, 150)
 }
 
 // ─── 库管理下拉（重复检查 + 已移除） ────────────────────────────────────────
 const libraryToolsMenuOpen = ref(false)
+const libraryToolsDropdownRef = ref<HTMLElement | null>(null)
 const LibraryLoudnessDialog = defineAsyncComponent(
   () => import('@renderer/components/library-loudness/LibraryLoudnessDialog.vue')
 )
@@ -271,6 +276,26 @@ function setSortKey(value: string): void {
   updateLibraryView({ ...libraryViewState.value, sortKey: value as LibrarySortKey })
 }
 
+function sortTracksBy(key: LibrarySortKey): void {
+  const state = libraryViewState.value
+  updateLibraryView({
+    ...state,
+    sortKey: key,
+    sortDirection: state.sortKey === key && state.sortDirection === 'asc' ? 'desc' : 'asc'
+  })
+}
+
+function columnSortState(key: LibrarySortKey): 'ascending' | 'descending' | undefined {
+  if (libraryViewState.value.sortKey !== key) return undefined
+  return libraryViewState.value.sortDirection === 'asc' ? 'ascending' : 'descending'
+}
+
+function columnSortLabel(key: LibrarySortKey, label: string): string {
+  const descending =
+    libraryViewState.value.sortKey === key && libraryViewState.value.sortDirection === 'asc'
+  return `按${label}${descending ? '降序' : '升序'}排序`
+}
+
 function setSortDirection(value: string): void {
   updateLibraryView({ ...libraryViewState.value, sortDirection: value as LibrarySortDirection })
 }
@@ -290,7 +315,13 @@ const libraryFilterDropdownRef = ref<HTMLElement | null>(null)
 
 function toggleLibraryFilterPanel(): void {
   libraryFilterPanelOpen.value = !libraryFilterPanelOpen.value
-  if (libraryFilterPanelOpen.value) libraryToolsMenuOpen.value = false
+  if (libraryFilterPanelOpen.value) {
+    libraryToolsMenuOpen.value = false
+    recentSourceMenuOpen.value = false
+    void nextTick(() =>
+      libraryFilterDropdownRef.value?.querySelector<HTMLSelectElement>('select')?.focus()
+    )
+  }
 }
 
 function closeLibraryFilterPanel(): void {
@@ -298,11 +329,80 @@ function closeLibraryFilterPanel(): void {
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
-  if (!libraryFilterPanelOpen.value) return
-  const root = libraryFilterDropdownRef.value
   const target = event.target
-  if (!(target instanceof Node) || !root || root.contains(target)) return
-  closeLibraryFilterPanel()
+  if (!(target instanceof Node)) return
+  for (const menu of ['tools', 'recent', 'filter'] as const) {
+    const root = libraryDropdownRoot(menu)
+    if (root && !root.contains(target)) closeLibraryDropdown(menu)
+  }
+}
+
+type LibraryDropdown = 'tools' | 'recent' | 'filter'
+
+function libraryDropdownRoot(menu: LibraryDropdown): HTMLElement | null {
+  return menu === 'tools'
+    ? libraryToolsDropdownRef.value
+    : menu === 'recent'
+      ? recentSourceDropdownRef.value
+      : libraryFilterDropdownRef.value
+}
+
+function closeLibraryDropdown(menu: LibraryDropdown, restoreFocus = false): void {
+  if (menu === 'tools') libraryToolsMenuOpen.value = false
+  else if (menu === 'recent') recentSourceMenuOpen.value = false
+  else closeLibraryFilterPanel()
+  if (restoreFocus) {
+    void nextTick(() =>
+      libraryDropdownRoot(menu)?.querySelector<HTMLButtonElement>('button')?.focus()
+    )
+  }
+}
+
+function toggleLibraryMenu(menu: 'tools' | 'recent'): void {
+  const open = menu === 'tools' ? libraryToolsMenuOpen : recentSourceMenuOpen
+  const next = !open.value
+  closeLibraryDropdown('tools')
+  closeLibraryDropdown('recent')
+  closeLibraryDropdown('filter')
+  open.value = next
+}
+
+function onLibraryDropdownFocusOut(event: FocusEvent, menu: LibraryDropdown): void {
+  const root = event.currentTarget as HTMLElement
+  if (event.relatedTarget instanceof Node && root.contains(event.relatedTarget)) return
+  closeLibraryDropdown(menu)
+}
+
+function onLibraryMenuKeydown(event: KeyboardEvent, menu: 'tools' | 'recent'): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeLibraryDropdown(menu, true)
+    return
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const open = menu === 'tools' ? libraryToolsMenuOpen : recentSourceMenuOpen
+  if (!open.value) toggleLibraryMenu(menu)
+  void nextTick(() => {
+    const root = libraryDropdownRoot(menu)
+    const options = Array.from(
+      root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]') ?? []
+    )
+    if (!options.length) return
+    const active = options.indexOf(root?.ownerDocument.activeElement as HTMLButtonElement)
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? options.length - 1
+          : event.key === 'ArrowUp'
+            ? active <= 0
+              ? options.length - 1
+              : active - 1
+            : (active + 1) % options.length
+    options[next]?.focus()
+  })
 }
 
 function resetLibraryFilters(): void {
@@ -327,13 +427,22 @@ const activeLibraryFilterCount = computed(() => {
   return count
 })
 
+const libraryViewChanged = computed(() => {
+  const defaults = createDefaultLibraryViewState(props.category)
+  return (
+    activeLibraryFilterCount.value > 0 ||
+    libraryViewState.value.sortKey !== defaults.sortKey ||
+    libraryViewState.value.sortDirection !== defaults.sortDirection
+  )
+})
+
 watch([() => props.category, () => props.filter], () => {
   closeLibraryFilterPanel()
   libraryToolsMenuOpen.value = false
 })
 
 onMounted(() => {
-  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  if (!props.previewTracks) document.addEventListener('pointerdown', onDocumentPointerDown, true)
 })
 
 onBeforeUnmount(() => {
@@ -369,9 +478,26 @@ const lastPlayedByTrackId = computed(() => {
   // Listening stats tick every five seconds. Unless this view is actually
   // sorted by last-played, keep stats out of the displayTracks dependency
   // graph so a playback tick cannot re-filter and re-sort the whole library.
-  if (libraryViewState.value.sortKey !== 'lastPlayed') return EMPTY_LAST_PLAYED_BY_TRACK_ID
+  if (props.previewTracks || libraryViewState.value.sortKey !== 'lastPlayed')
+    return EMPTY_LAST_PLAYED_BY_TRACK_ID
   return buildLastPlayedByTrackId(listeningStats.value)
 })
+
+const recentPlayedAt = computed(() =>
+  props.category === 'recent'
+    ? buildLastPlayedByTrackId(listeningStats.value)
+    : EMPTY_LAST_PLAYED_BY_TRACK_ID
+)
+const recentTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit'
+})
+function recentTime(track: Track): string {
+  const timestamp = recentPlayedAt.value.get(track.id)
+  return timestamp ? recentTimeFormatter.format(timestamp) : '时间未记录'
+}
 
 const viewTitle = computed(() => {
   if (props.category === 'folders') {
@@ -481,8 +607,21 @@ const currentPlaylist = computed(() =>
     ? (localPlaylists.value.find((playlist) => playlist.name === currentPlaylistName.value) ?? null)
     : null
 )
+const queuePlaybackOrigin = computed<QueuePlaybackOrigin | null>(() => {
+  if (props.previewTracks) return null
+  const album = currentAlbum.value
+  if (album?.id) return { kind: 'album', scope: 'local', id: album.id, name: album.name }
+  const playlist = currentPlaylist.value
+  return playlist
+    ? { kind: 'playlist', scope: 'local', id: playlist.id ?? playlist.name, name: playlist.name }
+    : null
+})
 const repairMessage = ref('')
 const showExcludedTracksDialog = ref(false)
+const excludedDialogRef = ref<HTMLElement | null>(null)
+const createPlaylistDialogRef = ref<HTMLElement | null>(null)
+const createPlaylistFocusTarget = ref<HTMLElement | null>(null)
+const contextFocusTarget = ref<HTMLElement | null>(null)
 const showTagManager = ref(false)
 const showLibraryInbox = ref(false)
 const showMusicVersions = ref(false)
@@ -693,7 +832,7 @@ function onRowDblClick(track: Track, event: MouseEvent): void {
     void playNetworkTrack(track)
     return
   }
-  playTrack(track, displayTracks.value)
+  playTrack(track, displayTracks.value, { queuePlaybackOrigin: queuePlaybackOrigin.value })
 }
 
 async function playNetworkTrack(track: Track): Promise<void> {
@@ -705,7 +844,7 @@ async function playNetworkTrack(track: Track): Promise<void> {
       ...track,
       filePath: plan.kind === 'direct-url' ? (plan.url ?? '') : (plan.cacheFilePath ?? '')
     }
-    playTrack(resolved, [resolved])
+    playTrack(resolved, [resolved], { queuePlaybackOrigin: queuePlaybackOrigin.value })
   } catch (err) {
     unifiedSearch.error.value = `网络源播放失败：${err instanceof Error ? err.message : String(err)}`
   }
@@ -714,14 +853,16 @@ async function playNetworkTrack(track: Track): Promise<void> {
 function playAllTracks(): void {
   const list = displayTracks.value
   if (list.length === 0) return
-  playTrack(list[0], list)
+  playTrack(list[0], list, { queuePlaybackOrigin: queuePlaybackOrigin.value })
 }
 
 function shufflePlayTracks(): void {
   const list = displayTracks.value
   if (list.length === 0) return
   setPlayMode('shuffle')
-  playTrack(list[Math.floor(Math.random() * list.length)], list)
+  playTrack(list[Math.floor(Math.random() * list.length)], list, {
+    queuePlaybackOrigin: queuePlaybackOrigin.value
+  })
 }
 
 function trackQualityLabel(track: Track): string {
@@ -828,7 +969,10 @@ function trackSourceClass(track: Track): string {
 }
 
 function playlistSourceSummaryLabel(playlist: GridItem): string {
-  return formatPlaylistSourceSummary(summarizePlaylistSources(playlist))
+  const summary = summarizePlaylistSources(playlist)
+  return (summary.local > 0 ? 1 : 0) + summary.providers.length > 1
+    ? formatPlaylistSourceSummary(summary)
+    : ''
 }
 
 async function handleManualRematch(track: Track): Promise<void> {
@@ -933,7 +1077,7 @@ const {
   },
   createPlaylist,
   deletePlaylist,
-  playNext: playNextTrack,
+  playNext: (track) => playNextTrack(withQueuePlaybackOrigin(track, queuePlaybackOrigin.value)),
   viewArtist: (track) => {
     const artist = track.artist.trim()
     if (!artist) return
@@ -973,6 +1117,22 @@ function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): vo
 }
 
 useEscapeToClose(showContextMenu, closeContextMenu)
+useEscapeToClose(showCreatePlaylistDialog, dismissCreatePlaylistDialog)
+useEscapeToClose(showExcludedTracksDialog, closeExcludedTracksDialog)
+useFocusTrap(createPlaylistDialogRef, showCreatePlaylistDialog)
+useFocusTrap(excludedDialogRef, showExcludedTracksDialog)
+
+watch(
+  showCreatePlaylistDialog,
+  (open) => {
+    if (!open) return
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    createPlaylistFocusTarget.value = active?.closest('.context-menu')
+      ? contextFocusTarget.value
+      : active
+  },
+  { flush: 'sync' }
+)
 
 const {
   containerRef,
@@ -1006,6 +1166,7 @@ void tbodyRef.value
 
 const multiSelect = useTrackMultiSelect({
   tracks: displayTracks,
+  root: containerRef,
   resetSources: [() => props.category, () => props.filter, debouncedSearchQuery, recentSource],
   enabled: showTable
 })
@@ -1066,7 +1227,15 @@ function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): vo
     return
   }
   if (settingsStore.settings.value.trackActivationMode === 'doubleClick') return
-  playTrack(track, displayTracks.value)
+  playTrack(track, displayTracks.value, { queuePlaybackOrigin: queuePlaybackOrigin.value })
+}
+
+function onRowKeydown(track: Track, index: number, event: KeyboardEvent): void {
+  const action = trackRowKeyAction(event)
+  if (action === 'select' && !event.repeat) toggle(track.id, absoluteIndex(index))
+  if (action !== 'play' || event.repeat) return
+  if (track.source === 'network') void playNetworkTrack(track)
+  else playTrack(track, displayTracks.value, { queuePlaybackOrigin: queuePlaybackOrigin.value })
 }
 
 function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event): void {
@@ -1075,6 +1244,7 @@ function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event)
 }
 
 function onTrackContextMenu(event: MouseEvent, track: Track): void {
+  contextFocusTarget.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   onContextMenu(event, track)
 }
 
@@ -1222,7 +1392,9 @@ function formatExcludedAt(value: string): string {
 
 function appendActionTracksToQueue(actionTracks: Track[]): void {
   if (actionTracks.length === 0) return
-  playbackStore.appendQueueTracks(actionTracks)
+  playbackStore.appendQueueTracks(
+    actionTracks.map((track) => withQueuePlaybackOrigin(track, queuePlaybackOrigin.value))
+  )
   repairMessage.value = `已添加 ${actionTracks.length} 首到播放队列`
   clearSelection()
   closeContextMenu()
@@ -1327,7 +1499,9 @@ function handleContinueFromBookmark(): void {
     playbackBookmarks.resumeBookmarkFor(track) ?? playbackBookmarks.bookmarksFor(track)[0]
   if (!resume) return
   closeContextMenu()
-  playTrackFromPosition(track, resume.positionSeconds, displayTracks.value)
+  playTrackFromPosition(track, resume.positionSeconds, displayTracks.value, {
+    queuePlaybackOrigin: queuePlaybackOrigin.value
+  })
 }
 
 function handleToolbarRemoveFromLibrary(): void {
@@ -1344,18 +1518,13 @@ function handleToolbarFavorite(): void {
 
 function openTagManager(initialView: 'edit' | 'duplicates' = 'edit'): void {
   const selected = selectLocalLibraryActionTracks(getSelectedTracks())
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null
   tagManagerFocusRestoreTarget.value =
-    document.activeElement instanceof HTMLElement ? document.activeElement : null
+    active?.closest('.library-tools-dropdown')?.querySelector('button') ?? active
   tagManagerTracks.value = selected
   tagManagerInitialView.value = initialView
   showTagManager.value = true
   closeContextMenu()
-}
-
-function closeLibraryToolsMenuDelayed(): void {
-  setTimeout(() => {
-    libraryToolsMenuOpen.value = false
-  }, 150)
 }
 
 function openLibraryDuplicates(): void {
@@ -1376,6 +1545,10 @@ function openLibraryInbox(): void {
 function openLibraryExcluded(): void {
   libraryToolsMenuOpen.value = false
   showExcludedTracksDialog.value = true
+}
+
+function closeExcludedTracksDialog(): void {
+  showExcludedTracksDialog.value = false
 }
 
 function closeTagManager(): void {
@@ -1399,7 +1572,6 @@ const {
   gridWindowStart,
   gridPaddingTop,
   gridPaddingBottom,
-  showPlaylistCreateCard,
   visibleArtists,
   visibleAlbums,
   visibleGenres,
@@ -1428,6 +1600,12 @@ const {
 })
 
 const availableIndexLetters = computed(() => availableCollectionLetters(filteredGridItems.value))
+const showCollectionIndex = computed(
+  () =>
+    isCollectionGrid.value &&
+    gridTotalCount.value > gridColumns.value * 2 &&
+    availableIndexLetters.value.size > 1
+)
 
 function collectionLetterDisabled(letter: string): boolean {
   return !availableIndexLetters.value.has(letter)
@@ -1500,6 +1678,26 @@ function finishViewSwitchAndRestoreScroll(): void {
   finishViewSwitch()
   restoreScrollAndMeasure()
 }
+usePageDock(
+  () => (props.category === 'aggregate' ? 'playlists' : props.category),
+  () => [
+    {
+      id: 'play-view',
+      label: '播放全部',
+      icon: 'library.play',
+      disabled: displayTracks.value.length === 0,
+      run: playAllTracks
+    },
+    {
+      id: 'shuffle-view',
+      label: '随机播放',
+      icon: 'library.shuffle',
+      disabled: displayTracks.value.length === 0,
+      run: shufflePlayTracks
+    }
+  ],
+  () => !props.previewTracks
+)
 </script>
 
 <template>
@@ -1537,6 +1735,14 @@ function finishViewSwitchAndRestoreScroll(): void {
               </div>
             </div>
             <div class="header-right">
+              <button
+                v-if="category === 'playlists'"
+                type="button"
+                class="library-create-button"
+                @click="openCreatePlaylistDialog()"
+              >
+                <i class="pi pi-plus" aria-hidden="true" />创建歌单
+              </button>
               <div v-if="isCollectionGrid" class="collection-view-controls" aria-label="分类与排序">
                 <label>
                   <span class="sr-only">排序方式</span>
@@ -1571,15 +1777,18 @@ function finishViewSwitchAndRestoreScroll(): void {
                   v-model="searchQuery"
                   type="text"
                   class="search-input"
-                  :placeholder="
-                    category === 'playlists' && showGrid
-                      ? '搜索歌单'
-                      : '搜索歌曲、歌手、专辑或文件夹'
-                  "
+                  placeholder="搜索歌曲、歌手、专辑或文件夹"
+                  aria-label="搜索歌曲、歌手、专辑或文件夹"
                   @focus="searchInputFocused = true"
                   @blur="searchInputFocused = false"
                 />
-                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+                <button
+                  v-if="searchQuery"
+                  type="button"
+                  class="search-clear"
+                  aria-label="清除搜索"
+                  @click="searchQuery = ''"
+                >
                   <ThemeIcon icon-slot="library.clear" />
                 </button>
               </div>
@@ -1606,7 +1815,7 @@ function finishViewSwitchAndRestoreScroll(): void {
             class="empty-state"
           >
             <p class="empty-text">暂无歌单</p>
-            <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
+            <p class="empty-hint">点击“创建歌单”开始收藏音乐</p>
           </div>
           <div v-else-if="category === 'folders' && folders.length === 0" class="empty-state">
             <div class="empty-icon">
@@ -1619,11 +1828,28 @@ function finishViewSwitchAndRestoreScroll(): void {
             <p class="empty-text">没有符合搜索条件的内容</p>
             <p class="empty-hint">请清除搜索内容后重试</p>
           </div>
-          <div v-else class="collection-grid-layout" :class="{ 'has-az-index': isCollectionGrid }">
-            <p v-if="category === 'playlists'" class="playlist-order-notice" role="status">
-              {{ playlistOrderNotice || '长按歌单拖动排序，顺序保存在当前设备。' }}
+          <div
+            v-else
+            class="collection-grid-layout"
+            :class="{ 'has-az-index': showCollectionIndex }"
+          >
+            <p
+              v-if="category === 'playlists' && playlistOrderNotice"
+              class="playlist-order-notice"
+              role="status"
+            >
+              {{ playlistOrderNotice }}
             </p>
-            <div class="card-grid" data-reorder-group @click.capture="localPlaylistReorder.click">
+            <div
+              class="card-grid"
+              :data-collection-kind="category"
+              :style="{ '--te-grid-columns': gridColumns }"
+              :title="
+                category === 'playlists' ? '长按歌单拖动排序，顺序保存在当前设备。' : undefined
+              "
+              data-reorder-group
+              @click.capture="localPlaylistReorder.click"
+            >
               <div
                 v-if="gridPaddingTop > 0"
                 class="grid-virtual-spacer"
@@ -1699,21 +1925,6 @@ function finishViewSwitchAndRestoreScroll(): void {
               <template v-if="category === 'playlists'">
                 <!-- Create Playlist Card -->
                 <div
-                  v-if="showPlaylistCreateCard"
-                  class="playlist-card create-playlist-card"
-                  role="button"
-                  tabindex="0"
-                  @keydown="activateCollectionCard"
-                  data-te-interactive
-                  @click="openCreatePlaylistDialog()"
-                >
-                  <div class="playlist-cover-placeholder create-placeholder">
-                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
-                  </div>
-                  <div class="playlist-name">创建歌单</div>
-                  <div class="playlist-count">点击创建新歌单</div>
-                </div>
-                <div
                   v-for="playlist in visiblePlaylists"
                   :key="playlist.id"
                   class="playlist-card"
@@ -1778,6 +1989,8 @@ function finishViewSwitchAndRestoreScroll(): void {
                   v-for="folder in visibleFolders"
                   :key="folder.path"
                   class="playlist-card folder-card"
+                  :title="folder.path"
+                  :aria-label="`${folder.name}，${folder.trackCount ?? 0} 首，${folder.path ?? ''}`"
                   role="button"
                   tabindex="0"
                   @keydown="activateCollectionCard"
@@ -1805,7 +2018,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                 aria-hidden="true"
               ></div>
             </div>
-            <nav v-if="isCollectionGrid" class="az-index" aria-label="A-Z 快捷索引">
+            <nav v-if="showCollectionIndex" class="az-index" aria-label="A-Z 快捷索引">
               <button
                 v-for="letter in AZ_INDEX_LETTERS"
                 :key="letter"
@@ -1828,7 +2041,21 @@ function finishViewSwitchAndRestoreScroll(): void {
             <div v-if="!currentAlbum" class="header-left">
               <div class="title-group">
                 <div class="title-line">
-                  <h2 class="song-list-title">{{ viewTitle }}</h2>
+                  <h2
+                    class="song-list-title"
+                    :title="
+                      category === 'folders' && filter?.startsWith('folder:')
+                        ? filter.slice(7)
+                        : undefined
+                    "
+                    :aria-label="
+                      category === 'folders' && filter?.startsWith('folder:')
+                        ? `${viewTitle}，${filter.slice(7)}`
+                        : undefined
+                    "
+                  >
+                    {{ viewTitle }}
+                  </h2>
                   <span v-if="viewStatsText" class="view-stats">{{ viewStatsText }}</span>
                 </div>
                 <span v-if="repairMessage" class="repair-status">{{ repairMessage }}</span>
@@ -1881,8 +2108,11 @@ function finishViewSwitchAndRestoreScroll(): void {
               </button>
               <div
                 v-if="category === 'allSongs'"
+                ref="libraryToolsDropdownRef"
                 class="library-tools-dropdown"
                 :class="{ open: libraryToolsMenuOpen }"
+                @focusout="onLibraryDropdownFocusOut($event, 'tools')"
+                @keydown="onLibraryMenuKeydown($event, 'tools')"
               >
                 <button
                   type="button"
@@ -1891,8 +2121,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                   title="重复检查与已移除管理"
                   :aria-expanded="libraryToolsMenuOpen"
                   aria-haspopup="menu"
-                  @click="libraryToolsMenuOpen = !libraryToolsMenuOpen"
-                  @blur="closeLibraryToolsMenuDelayed"
+                  @click="toggleLibraryMenu('tools')"
                 >
                   <i class="pi pi-sitemap"></i>
                   <span>库管理</span>
@@ -1934,7 +2163,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                     type="button"
                     class="library-tools-option"
                     role="menuitem"
-                    @mousedown.prevent="openLibraryDuplicates"
+                    @click="openLibraryDuplicates"
                   >
                     <i class="pi pi-copy"></i>
                     <span>重复检查</span>
@@ -1943,7 +2172,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                     type="button"
                     class="library-tools-option"
                     role="menuitem"
-                    @mousedown.prevent="openLibraryExcluded"
+                    @click="openLibraryExcluded"
                   >
                     <i class="pi pi-ban"></i>
                     <span>已移除 {{ excludedTracks.length }}</span>
@@ -1952,13 +2181,18 @@ function finishViewSwitchAndRestoreScroll(): void {
               </div>
               <div
                 v-if="category === 'recent'"
+                ref="recentSourceDropdownRef"
                 class="recent-source-dropdown"
                 :class="{ open: recentSourceMenuOpen }"
+                @focusout="onLibraryDropdownFocusOut($event, 'recent')"
+                @keydown="onLibraryMenuKeydown($event, 'recent')"
               >
                 <button
+                  type="button"
                   class="recent-source-trigger"
-                  @click="recentSourceMenuOpen = !recentSourceMenuOpen"
-                  @blur="closeRecentSourceMenuDelayed"
+                  :aria-expanded="recentSourceMenuOpen"
+                  aria-haspopup="menu"
+                  @click="toggleLibraryMenu('recent')"
                 >
                   <i
                     class="pi pi-bolt"
@@ -1970,13 +2204,21 @@ function finishViewSwitchAndRestoreScroll(): void {
                     style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"
                   ></i>
                 </button>
-                <div v-if="recentSourceMenuOpen" class="recent-source-menu">
-                  <div
+                <div
+                  v-if="recentSourceMenuOpen"
+                  class="recent-source-menu"
+                  role="menu"
+                  aria-label="近期播放来源"
+                >
+                  <button
                     v-for="opt in recentSourceOptions"
                     :key="opt.id"
+                    type="button"
                     class="recent-source-option"
+                    role="menuitemradio"
+                    :aria-checked="recentSource === opt.id"
                     :class="{ active: recentSource === opt.id }"
-                    @mousedown.prevent="selectRecentSource(opt.id)"
+                    @click="selectRecentSource(opt.id)"
                   >
                     <i
                       class="pi"
@@ -1992,7 +2234,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                         margin-left: auto;
                       "
                     ></i>
-                  </div>
+                  </button>
                 </div>
               </div>
               <div
@@ -2000,6 +2242,8 @@ function finishViewSwitchAndRestoreScroll(): void {
                 class="library-filter-dropdown"
                 :class="{ open: libraryFilterPanelOpen }"
                 aria-label="媒体库排序和过滤"
+                @focusout="onLibraryDropdownFocusOut($event, 'filter')"
+                @keydown.esc.stop.prevent="closeLibraryDropdown('filter', true)"
               >
                 <button
                   type="button"
@@ -2035,7 +2279,7 @@ function finishViewSwitchAndRestoreScroll(): void {
                     <button
                       type="button"
                       class="library-filter-reset"
-                      :disabled="activeLibraryFilterCount === 0"
+                      :disabled="!libraryViewChanged"
                       @click="resetLibraryFilters"
                     >
                       重置
@@ -2193,10 +2437,17 @@ function finishViewSwitchAndRestoreScroll(): void {
                   type="text"
                   class="search-input"
                   placeholder="搜索歌曲、歌手、专辑或文件夹"
+                  aria-label="搜索歌曲、歌手、专辑或文件夹"
                   @focus="searchInputFocused = true"
                   @blur="searchInputFocused = false"
                 />
-                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+                <button
+                  v-if="searchQuery"
+                  type="button"
+                  class="search-clear"
+                  aria-label="清除搜索"
+                  @click="searchQuery = ''"
+                >
                   <ThemeIcon icon-slot="library.clear" />
                 </button>
               </div>
@@ -2265,9 +2516,9 @@ function finishViewSwitchAndRestoreScroll(): void {
             </p>
           </div>
           <div v-else class="track-table-wrapper">
-            <div v-if="hasSelection" class="selection-toolbar">
-              <span class="selection-count">已选择 {{ selectedCount }} 首</span>
-              <div class="selection-actions">
+            <div v-if="hasSelection" class="selection-toolbar" role="region" aria-label="批量操作">
+              <span class="selection-count" role="status">已选择 {{ selectedCount }} 首</span>
+              <div class="selection-actions" role="group" aria-label="选中歌曲的操作">
                 <button
                   type="button"
                   class="selection-btn"
@@ -2361,14 +2612,60 @@ function finishViewSwitchAndRestoreScroll(): void {
                 </button>
               </div>
             </div>
-            <table class="track-table">
+            <table class="track-table" :aria-rowcount="displayTracks.length + 1" aria-label="歌曲">
               <thead>
                 <tr>
-                  <th class="col-index">#</th>
-                  <th class="col-cover-header"></th>
-                  <th class="col-info">标题</th>
-                  <th class="col-album">专辑</th>
-                  <th class="col-duration">时长</th>
+                  <th class="col-index" scope="col" aria-label="序号">#</th>
+                  <th class="col-cover-header" scope="col" aria-label="封面与选择"></th>
+                  <th class="col-info" scope="col" :aria-sort="columnSortState('title')">
+                    <button
+                      type="button"
+                      class="column-sort"
+                      :aria-label="columnSortLabel('title', '标题')"
+                      @click="sortTracksBy('title')"
+                    >
+                      <span>标题</span
+                      ><span
+                        v-if="columnSortState('title')"
+                        class="column-sort-direction"
+                        aria-hidden="true"
+                        >{{ libraryViewState.sortDirection === 'asc' ? '↑' : '↓' }}</span
+                      >
+                    </button>
+                  </th>
+                  <th v-if="category === 'recent'" class="col-album" scope="col">最近收听</th>
+                  <th v-else class="col-album" scope="col" :aria-sort="columnSortState('album')">
+                    <button
+                      type="button"
+                      class="column-sort"
+                      :aria-label="columnSortLabel('album', '专辑')"
+                      @click="sortTracksBy('album')"
+                    >
+                      <span>专辑</span
+                      ><span
+                        v-if="columnSortState('album')"
+                        class="column-sort-direction"
+                        aria-hidden="true"
+                        >{{ libraryViewState.sortDirection === 'asc' ? '↑' : '↓' }}</span
+                      >
+                    </button>
+                  </th>
+                  <th class="col-duration" scope="col" :aria-sort="columnSortState('duration')">
+                    <button
+                      type="button"
+                      class="column-sort"
+                      :aria-label="columnSortLabel('duration', '时长')"
+                      @click="sortTracksBy('duration')"
+                    >
+                      <span>时长</span
+                      ><span
+                        v-if="columnSortState('duration')"
+                        class="column-sort-direction"
+                        aria-hidden="true"
+                        >{{ libraryViewState.sortDirection === 'asc' ? '↑' : '↓' }}</span
+                      >
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody ref="tbodyRef" :style="{ height: totalHeight + 'px' }">
@@ -2392,6 +2689,12 @@ function finishViewSwitchAndRestoreScroll(): void {
                   :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
                   :draggable="isPlaylistDetail"
                   @click="onRowClick(track, Number(index), $event)"
+                  tabindex="0"
+                  :aria-label="`${track.title}，${track.artist}。Enter 播放，空格选择`"
+                  :aria-selected="isSelected(track.id)"
+                  :aria-rowindex="absoluteIndex(Number(index)) + 2"
+                  :aria-current="currentTrack?.id === track.id ? 'true' : undefined"
+                  @keydown="onRowKeydown(track, Number(index), $event)"
                   @dblclick="onRowDblClick(track, $event)"
                   @dragstart="handlePlaylistDragStart($event, track)"
                   @dragover.prevent
@@ -2468,7 +2771,8 @@ function finishViewSwitchAndRestoreScroll(): void {
                       {{ track.artist }}
                     </button>
                   </td>
-                  <td class="col-album">
+                  <td v-if="category === 'recent'" class="col-album">{{ recentTime(track) }}</td>
+                  <td v-else class="col-album">
                     <button
                       type="button"
                       class="metadata-link"
@@ -2478,11 +2782,8 @@ function finishViewSwitchAndRestoreScroll(): void {
                       {{ track.album }}
                     </button>
                   </td>
-                  <td class="col-duration">
+                  <td class="col-duration" :title="trackQualityLabel(track)">
                     <span class="duration-time">{{ formatDuration(track.duration) }}</span>
-                    <span v-if="trackQualityLabel(track)" class="duration-quality">
-                      {{ trackQualityLabel(track) }}
-                    </span>
                   </td>
                 </tr>
                 <tr
@@ -2749,36 +3050,47 @@ function finishViewSwitchAndRestoreScroll(): void {
 
     <!-- Create Playlist Dialog -->
     <Teleport to="body">
-      <Transition name="dialog-fade">
+      <NativeDialogTransition overlay :restore-focus="createPlaylistFocusTarget">
         <div
           v-if="showCreatePlaylistDialog"
           class="dialog-overlay"
           @click.self="dismissCreatePlaylistDialog"
         >
-          <div class="create-playlist-dialog" @click.stop>
-            <h3 class="dialog-title">创建歌单</h3>
+          <form
+            ref="createPlaylistDialogRef"
+            class="create-playlist-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-playlist-title"
+            @submit.prevent="handleConfirmCreatePlaylist"
+            @click.stop
+          >
+            <h3 id="create-playlist-title" class="dialog-title">创建歌单</h3>
+            <label for="new-playlist-name" class="dialog-field-label">歌单名称</label>
             <input
+              id="new-playlist-name"
               v-model="newPlaylistName"
               class="dialog-input"
               type="text"
               placeholder="请输入歌单名称"
               maxlength="50"
+              autocomplete="off"
               autofocus
-              @keyup.enter="handleConfirmCreatePlaylist"
+              @keydown.enter="
+                ($event.isComposing || $event.keyCode === 229) && $event.preventDefault()
+              "
             />
             <div class="dialog-actions">
-              <button class="dialog-btn cancel" @click="dismissCreatePlaylistDialog">取消</button>
-              <button
-                class="dialog-btn confirm"
-                :disabled="!newPlaylistName.trim()"
-                @click="handleConfirmCreatePlaylist"
-              >
+              <button type="button" class="dialog-btn cancel" @click="dismissCreatePlaylistDialog">
+                取消
+              </button>
+              <button type="submit" class="dialog-btn confirm" :disabled="!newPlaylistName.trim()">
                 创建
               </button>
             </div>
-          </div>
+          </form>
         </div>
-      </Transition>
+      </NativeDialogTransition>
     </Teleport>
 
     <NativeDialogTransition>
@@ -2844,23 +3156,32 @@ function finishViewSwitchAndRestoreScroll(): void {
     </Teleport>
 
     <Teleport to="body">
-      <Transition name="dialog-fade">
+      <NativeDialogTransition overlay :restore-focus="libraryToolsTrigger">
         <div
           v-if="showExcludedTracksDialog"
           class="dialog-overlay"
-          @click.self="showExcludedTracksDialog = false"
+          @click.self="closeExcludedTracksDialog"
         >
-          <div class="excluded-tracks-dialog" @click.stop>
+          <div
+            ref="excludedDialogRef"
+            class="excluded-tracks-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="excluded-tracks-title"
+            :aria-busy="exclusionRestorePending"
+            @click.stop
+          >
             <div class="excluded-dialog-header">
               <div>
-                <h3 class="dialog-title">已从音乐库移除</h3>
+                <h3 id="excluded-tracks-title" class="dialog-title">已从音乐库移除</h3>
                 <p class="excluded-dialog-count">{{ excludedTracks.length }} 个排除项</p>
               </div>
               <button
                 type="button"
                 class="excluded-dialog-close"
                 title="关闭"
-                @click="showExcludedTracksDialog = false"
+                aria-label="关闭已移除列表"
+                @click="closeExcludedTracksDialog"
               >
                 <i class="pi pi-times"></i>
               </button>
@@ -2886,20 +3207,21 @@ function finishViewSwitchAndRestoreScroll(): void {
                   @click="handleRestoreExclusions([item.filePath])"
                 >
                   <i class="pi pi-refresh"></i>
-                  <span>恢复</span>
+                  <span>{{ exclusionRestorePending ? '正在恢复…' : '恢复' }}</span>
                 </button>
               </div>
             </div>
             <div class="dialog-actions excluded-dialog-actions">
-              <button class="dialog-btn cancel" @click="showExcludedTracksDialog = false">
+              <button type="button" class="dialog-btn cancel" @click="closeExcludedTracksDialog">
                 关闭
               </button>
               <button
+                type="button"
                 class="dialog-btn confirm"
                 :disabled="excludedTracks.length === 0 || exclusionRestorePending"
                 @click="handleRestoreExclusions(excludedTracks.map((item) => item.filePath))"
               >
-                全部恢复
+                {{ exclusionRestorePending ? '正在恢复…' : '全部恢复' }}
               </button>
               <button
                 class="dialog-btn danger"
@@ -2911,7 +3233,7 @@ function finishViewSwitchAndRestoreScroll(): void {
             </div>
           </div>
         </div>
-      </Transition>
+      </NativeDialogTransition>
     </Teleport>
   </div>
 </template>

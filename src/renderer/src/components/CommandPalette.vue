@@ -441,8 +441,10 @@ button:disabled {
   border-radius: 9px;
 }
 .palette-input:focus-within {
-  border-color: var(--te-primary-500, #6b5cff);
-  box-shadow: 0 0 0 1px var(--te-primary-500, #6b5cff);
+  border-color: var(--te-control-focus-color);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 .palette-input input {
   width: 100%;
@@ -538,7 +540,7 @@ footer div {
   gap: 8px;
 }
 button:focus-visible {
-  outline: 2px solid var(--te-primary-500, #6b5cff);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

@@ -44,8 +44,8 @@ const themeContributions = ref<ThemeContribution[]>([])
 const syncInFlight = ref<Promise<void> | null>(null)
 let listenerSetup = false
 
-export function useExtensionRegistry() {
-  setupExtensionChangeListener()
+export function useExtensionRegistry(options: { listen?: boolean } = {}) {
+  if (options.listen !== false) setupExtensionChangeListener()
   return {
     uiContributions: computed(() => uiContributions.value),
     themeContributions: computed(() => themeContributions.value),

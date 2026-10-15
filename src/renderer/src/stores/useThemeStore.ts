@@ -2,17 +2,20 @@ import { applyExplicitThemePreferences } from '@renderer/extensions/themeProfile
 import { backgroundDisplayUrl } from '../../../shared/backgroundDisplay.ts'
 import {
   backgroundCssVariables,
-  backgroundEffect,
   cardCssVariables,
-  resolveBackground,
+  resolveBackgroundAppearance,
+  resolveBackgroundPalette,
+  resolveBackgroundTextTone,
   type AppearanceDraft
 } from '../../../shared/appAppearance.ts'
 import { documentMotionMode } from '@renderer/app/scrollMotion'
+import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
 import {
   explicitPlaybackColorVariables,
   sharedPlayerBarStylesheet
 } from '../../../shared/themePlayerBar.ts'
-import { computed, nextTick, ref, shallowRef } from 'vue'
+import { computed, nextTick, ref, shallowRef, watchEffect } from 'vue'
+import { setThemeIconProfile } from '../app/themeIconRuntime'
 import {
   DEFAULT_THEME_TONE_SCHEDULE,
   THEME_MANAGED_DATA_ATTRIBUTES,
@@ -71,6 +74,7 @@ import {
   liquidGlassExpandedCssVariables,
   liquidGlassHomeCardCssVariables,
   normalizeSurfaceMaterial,
+  resolveLiquidGlassTone,
   type LiquidGlassSettings,
   type SurfaceMaterial
 } from '../../../shared/liquidGlass.ts'
@@ -150,10 +154,7 @@ function resolveThemeMode(theme: AppSettings['theme']): ThemeTone {
 }
 
 function applySettingsThemeMode(theme: AppSettings['theme']): void {
-  const tone = resolveThemeMode(theme)
-  document.documentElement.dataset.theme = tone
   document.documentElement.dataset.themePreference = theme
-  document.documentElement.style.colorScheme = tone === 'dark' ? 'dark' : 'light'
   themePreference = theme
 }
 
@@ -196,6 +197,12 @@ export function syncThemeSettingsAppearance(settings: SettingsAppearanceInput): 
 /** Transient settings draft; never changes the confirmed snapshot or startup cache. */
 export async function previewAppearance(draft: AppearanceDraft | null): Promise<void> {
   appearancePreview = draft
+  appearanceChromePreview.value = draft
+    ? {
+        navigationPages: draft.navigationPages,
+        playerBar: draft.playerBar
+      }
+    : null
   if (savedAppearance) cacheSettingsAppearance(savedAppearance)
   await applyActiveTheme(false, draft ? 'preview' : 'apply')
 }
@@ -206,10 +213,12 @@ export async function previewAppearance(draft: AppearanceDraft | null): Promise<
  * `data-te-lg-adaptive-tone` on the root; `overLight` remains the manual force.
  */
 function resolveSharedGlassProfileIsDark(tone: ThemeTone): boolean {
-  if (tone === 'dark' || liquidGlass.overLight) return true
   return (
-    liquidGlass.adaptiveTone &&
-    document.documentElement.dataset.teLiquidGlassAdaptiveTone === 'dark'
+    resolveLiquidGlassTone(
+      tone === 'dark' ? 'dark' : 'light',
+      liquidGlass,
+      document.documentElement.dataset.teLiquidGlassAdaptiveTone
+    ) === 'dark'
   )
 }
 
@@ -347,6 +356,10 @@ function setupThemeListeners(): void {
   })
   window.api.settings.onChanged((next) => {
     if (next.settings.theme !== themePreference) {
+      // An explicit saved preference supersedes a temporary day/night preview.
+      // Commit tone, palette and material attributes together in applyActiveTheme;
+      // flipping data-theme here would expose the old image palette for a frame.
+      previewTone.value = null
       applySettingsThemeMode(next.settings.theme)
     }
     syncThemeSettingsAppearance(next.settings)
@@ -375,6 +388,15 @@ function getSelectedProfile(selection: ThemeSelection | undefined): ThemeProfile
   const profileId = selection.id
   return library.profiles.find((profile) => profile.id === profileId) ?? null
 }
+
+watchEffect(
+  () => {
+    setThemeIconProfile(
+      getSelectedProfile(previewSelection.value ?? snapshot.value?.data.activeTheme)
+    )
+  },
+  { flush: 'sync' }
+)
 
 function themeSelectionsEqual(
   first: ThemeSelection | undefined,
@@ -473,7 +495,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           variables,
           themeTokensToCssVariables(TWILIGHT_DEFAULT_THEME.variants[tone].tokens)
         )
-        applyAppBackgroundVariables(tone, variables)
+        const backgroundBaseline = applyAppBackgroundVariables(tone, variables)
         applySettingsAccentColor(tone, variables)
         Object.assign(variables, appFontCssVariables(uiFontFamily))
         Object.assign(variables, appFontRenderingCssVariables(uiFontRendering))
@@ -486,7 +508,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
         }
         applyControlColors(tone, variables)
         return {
-          css: `:root {\n${Object.entries(variables)
+          css: `${backgroundBaseline}\n:root {\n${Object.entries(variables)
             .map(([name, value]) => `  ${name}: ${value} !important;`)
             .join('\n')}\n}`,
           variables,
@@ -538,32 +560,12 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     }
   }
   const themedVariables = { ...variables }
-  applyAppBackgroundVariables(tone, variables)
   applySettingsAccentColor(tone, variables)
   Object.assign(variables, appFontCssVariables(uiFontFamily))
   Object.assign(variables, appFontRenderingCssVariables(uiFontRendering))
   applyExplicitThemePreferences(selectedProfile, tone, themedVariables, variables)
   Object.assign(variables, explicitPlaybackColorVariables(tone, selectedProfile))
-  if (appBackground) {
-    const global = appBackground.global
-    if (global.customized) {
-      variables['--te-app-bg'] = global[tone === 'dark' ? 'dark' : 'light']
-      variables['--te-app-bg-image'] = toBackgroundImageValue(global)
-    }
-    if (global.kind === 'image' && global.image) {
-      variables['--te-app-bg-image'] = toBackgroundImageValue(global)
-    }
-    for (const page of APP_BACKGROUND_PAGES) {
-      const override = appBackground.pages[page]
-      const background = override.inherit ? global : override
-      if (background.customized || !override.inherit) {
-        variables[`--te-${page}-bg`] = background[tone === 'dark' ? 'dark' : 'light']
-        variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background)
-      } else if (background.kind === 'image' && background.image) {
-        variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background)
-      }
-    }
-  }
+  const backgroundBaseline = applyAppBackgroundVariables(tone, variables)
   applyLiquidGlassVariables(tone, variables)
   if (cardAppearance?.enabled && surfaceMaterial === 'standard') {
     Object.assign(variables, cardCssVariables(cardAppearance[tone === 'dark' ? 'dark' : 'light']))
@@ -576,8 +578,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     variables,
     css: [
       assetStylesheet,
+      backgroundBaseline,
       root ? `:root {\n${root}\n}` : '',
       stylesheet,
+      themeBackgroundBaselineStylesheet(stylesheet),
       sharedPlayerBarStylesheet(tone, selectedProfile)
     ]
       .filter(Boolean)
@@ -619,27 +623,86 @@ function applyLiquidGlassVariables(tone: ThemeTone, variables: Record<string, st
   }
 }
 
-function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, string>): void {
-  if (!appBackground) return
+const THEME_BACKGROUND_VARIABLE = /^--te-(app|local|settings|streaming|player)-bg(?:-image)?$/
 
+function themeBackgroundReferences(value: string): string {
+  return value.replace(
+    /(var\(\s*)(--te-(?:app|local|settings|streaming|player)-bg(?:-image)?)(?=\s*(?:,|\)))/g,
+    (_match, prefix: string, name: string) => `${prefix}${name.replace('--te-', '--te-theme-')}`
+  )
+}
+
+/** Mirror only background tokens, preserving a legacy stylesheet's own cascade. */
+function themeBackgroundBaselineStylesheet(stylesheet: string): string {
+  if (!stylesheet) return ''
+  const parsed = new CSSStyleSheet()
+  parsed.replaceSync(stylesheet)
+  const aliases = (rules: CSSRuleList): string =>
+    [...rules]
+      .map((rule) => {
+        if (rule instanceof CSSStyleRule) {
+          const declarations = [...rule.style]
+            .filter((name) => THEME_BACKGROUND_VARIABLE.test(name))
+            .map((name) => {
+              const priority = rule.style.getPropertyPriority(name)
+              return `${name.replace('--te-', '--te-theme-')}:${themeBackgroundReferences(rule.style.getPropertyValue(name))}${priority ? ' !important' : ''};`
+            })
+            .join('')
+          return declarations ? `${rule.selectorText}{${declarations}}` : ''
+        }
+        if ('cssRules' in rule) {
+          const children = aliases((rule as CSSGroupingRule).cssRules)
+          if (children) return `${rule.cssText.slice(0, rule.cssText.indexOf('{'))}{${children}}`
+        }
+        return ''
+      })
+      .join('\n')
+  return aliases(parsed.cssRules)
+}
+
+function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, string>): string {
   const colorMode = tone === 'dark' ? 'dark' : 'light'
-  const globalBackground = appBackground.global
-  variables['--te-app-bg'] = globalBackground[colorMode]
-  variables['--te-app-bg-image'] = toBackgroundImageValue(globalBackground)
-
-  for (const page of APP_BACKGROUND_PAGES) {
-    const pageBackground = appBackground.pages[page]
-    const resolvedBackground = pageBackground.inherit ? globalBackground : pageBackground
-    variables[`--te-${page}-bg`] = resolvedBackground[colorMode]
-    variables[`--te-${page}-bg-image`] = toBackgroundImageValue(resolvedBackground)
-  }
-  variables['--te-streaming-surface'] = 'var(--te-streaming-bg)'
+  const inheritedBaseline: string[] = []
   for (const page of ['app', ...APP_BACKGROUND_PAGES] as const) {
-    const background = page === 'app' ? globalBackground : resolveBackground(appBackground, page)
+    const fallback =
+      page === 'app' || (page === 'settings' && tone !== 'dark')
+        ? TWILIGHT_DEFAULT_THEME.variants[tone].tokens[`surface.${page}`]
+        : 'var(--te-theme-app-bg)'
+    for (const [suffix, value] of [
+      ['', fallback],
+      ['-image', page === 'app' || page === 'settings' ? 'none' : 'var(--te-theme-app-bg-image)']
+    ]) {
+      const name = `--te-${page}-bg${suffix}`
+      const alias = name.replace('--te-', '--te-theme-')
+      if (variables[name] !== undefined)
+        variables[alias] = themeBackgroundReferences(variables[name])
+      // Native CSS supplies inherited pages for legacy themes. Keep these fallbacks
+      // below their packaged stylesheet, rather than promoting defaults to !important.
+      else {
+        const selector =
+          suffix === '' && tone === 'dark'
+            ? ":root[data-theme='dark']"
+            : page === 'settings' && tone !== 'dark'
+              ? ":root[data-theme='pureWhite']"
+              : ':root'
+        inheritedBaseline.push(`${selector}{${alias}:${value};}`)
+      }
+    }
+  }
+  const fallbackStylesheet = inheritedBaseline.join('')
+  if (!appBackground) return fallbackStylesheet
+  for (const page of ['app', ...APP_BACKGROUND_PAGES] as const) {
+    const { background, colorOverride, imageOverride, customBackground } =
+      resolveBackgroundAppearance(appBackground, page, colorMode)
+    if (colorOverride) variables[`--te-${page}-bg`] = background[colorMode]
+    if (imageOverride) variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background)
+    if (page === 'streaming' && customBackground)
+      variables['--te-streaming-surface'] = 'var(--te-streaming-bg)'
     for (const [name, value] of Object.entries(backgroundCssVariables(background, colorMode))) {
       variables[`--te-${page}-background-${name.slice('--appearance-'.length)}`] = value
     }
   }
+  return fallbackStylesheet
 }
 
 function appearanceDataAttributes(tone: ThemeTone): Record<string, string> {
@@ -648,24 +711,26 @@ function appearanceDataAttributes(tone: ThemeTone): Record<string, string> {
   }
   if (!appBackground) return result
   for (const page of ['app', ...APP_BACKGROUND_PAGES] as const) {
-    const background =
-      page === 'app' ? appBackground.global : resolveBackground(appBackground, page)
-    const effect = backgroundEffect(background, tone === 'dark' ? 'dark' : 'light')
-    const hasEffect =
-      effect.blur !== 0 ||
-      effect.dim !== 0 ||
-      effect.brightness !== 100 ||
-      effect.scale !== 1 ||
-      effect.positionX !== 50 ||
-      effect.positionY !== 50
-    result[`data-te-${page}-custom-background`] =
-      background.customized ||
-      (page !== 'app' && !appBackground.pages[page].inherit) ||
-      (background.kind === 'image' && !!background.image) ||
-      hasEffect
-        ? 'on'
-        : 'off'
-    result[`data-te-${page}-text-tone`] = effect.textTone
+    const colorMode = tone === 'dark' ? 'dark' : 'light'
+    const { background, customBackground } = resolveBackgroundAppearance(
+      appBackground,
+      page,
+      colorMode
+    )
+    result[`data-te-${page}-custom-background`] = customBackground ? 'on' : 'off'
+    result[`data-te-${page}-text-tone`] = customBackground
+      ? resolveBackgroundTextTone(background, colorMode)
+      : 'theme'
+    const palette = customBackground && resolveBackgroundPalette(background, colorMode)
+    result[`data-te-${page}-image-palette`] = palette ? 'on' : 'off'
+    const textTone = background.effects?.[colorMode]?.textTone ?? 'theme'
+    result[`data-te-${page}-text-tone-source`] = !customBackground
+      ? 'theme'
+      : textTone !== 'theme'
+        ? 'manual'
+        : palette
+          ? 'auto'
+          : 'theme'
   }
   return result
 }
@@ -694,7 +759,7 @@ function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): 
   // system). Reading the DOM attribute here lets a previous timed or system
   // preset leak its resolved tone into the next manual preset, so switching
   // presets while in dark mode could flip the whole app back to light.
-  return resolveThemeMode(themePreference)
+  return themePreference === 'system' ? systemTone.value : resolveThemeMode(themePreference)
 }
 
 function scheduleTimedToneRefresh(profile: ThemeProfileV2 | null): void {
@@ -994,7 +1059,12 @@ export async function applyActiveTheme(
     applyLiquidGlassRuntimeVariables(state.tone)
     document.documentElement.dataset.activeTheme = state.activeTheme
     effectiveVariables.value = state.variables
-    if (operation === 'apply' && !appearancePreview) {
+    if (
+      operation === 'apply' &&
+      !appearancePreview &&
+      !previewProfile.value &&
+      !previewSelection.value
+    ) {
       persistThemeRuntimeCache({
         css: state.css,
         attributes: state.dataAttributes,
@@ -1073,6 +1143,9 @@ export function useThemeStore() {
       },
       modes: source?.modes && !derivedPreset ? JSON.parse(JSON.stringify(source.modes)) : {},
       toneSchedule: source?.toneSchedule && !derivedPreset ? { ...source.toneSchedule } : undefined,
+      appearanceLayers: source?.appearanceLayers
+        ? JSON.parse(JSON.stringify(source.appearanceLayers))
+        : undefined,
       source: derivedPreset
         ? { kind: 'builtin-preset' as const, presetId: derivedPresetId! }
         : source?.source
@@ -1084,7 +1157,8 @@ export function useThemeStore() {
           : undefined,
       assets: derivedPreset ? undefined : source?.assets?.map((asset) => ({ ...asset })),
       assetBindings:
-        source?.assetBindings && !derivedPreset ? { ...source.assetBindings } : undefined
+        source?.assetBindings && !derivedPreset ? { ...source.assetBindings } : undefined,
+      iconBindings: source?.iconBindings && !derivedPreset ? { ...source.iconBindings } : undefined
     }
   }
 
@@ -1198,6 +1272,17 @@ export function useThemeStore() {
 
   return {
     snapshot,
+    effectiveThemeLayers: computed(() => {
+      const selection = previewSelection.value ?? activeTheme.value
+      const profile = getSelectedProfile(selection)
+      if (profile) return profile.appearanceLayers
+      if (selection.kind !== 'plugin') return undefined
+      const structured = resolvePluginTheme(
+        useExtensionRegistry().themeContributions.value,
+        selection
+      )?.structured
+      return structured?.schemaVersion === 3 ? structured.appearanceLayers : undefined
+    }),
     effectiveSurfaceMaterial,
     effectiveLiquidGlass,
     previewAppearance,

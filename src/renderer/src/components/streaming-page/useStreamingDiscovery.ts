@@ -48,6 +48,7 @@ export function useStreamingDiscovery({
   offset: Ref<number>
   hasMore: Ref<boolean>
   listLoading: Ref<boolean>
+  hasRequested: Ref<boolean>
   listError: Ref<string>
   loadingMore: Ref<boolean>
   ensureLoaded: () => Promise<void>
@@ -71,6 +72,7 @@ export function useStreamingDiscovery({
   const offset = ref(0)
   const hasMore = ref(false)
   const listLoading = ref(false)
+  const hasRequested = ref(false)
   const listError = ref('')
   const loadingMore = ref(false)
 
@@ -100,6 +102,7 @@ export function useStreamingDiscovery({
 
   async function loadPage(nextOffset: number): Promise<void> {
     const requestId = ++latestRequestId
+    hasRequested.value = true
     listLoading.value = true
     listError.value = ''
     try {
@@ -237,6 +240,7 @@ export function useStreamingDiscovery({
     offset.value = 0
     hasMore.value = false
     listLoading.value = false
+    hasRequested.value = false
     listError.value = ''
     loadingMore.value = false
     hqBefore = 0
@@ -266,6 +270,7 @@ export function useStreamingDiscovery({
     offset,
     hasMore,
     listLoading,
+    hasRequested,
     listError,
     loadingMore,
     ensureLoaded,

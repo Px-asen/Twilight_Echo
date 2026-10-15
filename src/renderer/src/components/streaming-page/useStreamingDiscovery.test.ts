@@ -69,6 +69,30 @@ test('ensureLoaded fetches the catalogue and first page exactly once', async () 
   )
 })
 
+test('first request state distinguishes initial preparation from a completed empty page', async () => {
+  let complete!: (value: ReturnType<typeof discoveryPage>) => void
+  const providerId = ref('alpha')
+  const discovery = useStreamingDiscovery({
+    providerId,
+    fetchDiscoveryPlaylists: () =>
+      new Promise((resolve) => {
+        complete = resolve
+      })
+  })
+  assert.equal(discovery.hasRequested.value, false)
+  const loading = discovery.ensureLoaded()
+  assert.equal(discovery.hasRequested.value, true)
+  assert.equal(discovery.listLoading.value, true)
+  complete(discoveryPage([], 0, 0))
+  await loading
+  assert.equal(discovery.hasRequested.value, true)
+  assert.equal(discovery.listLoading.value, false)
+  assert.equal(discovery.playlists.value.length, 0)
+  providerId.value = 'beta'
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(discovery.hasRequested.value, false)
+})
+
 test('selectTag resets the offset, refetches with the new tag, and collapses the panel', async () => {
   const requests: Array<{ cat?: string; order?: string; offset?: number }> = []
   const discovery = useStreamingDiscovery({

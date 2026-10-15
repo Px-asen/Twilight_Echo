@@ -103,10 +103,11 @@ test('splits multi-genre tags in collection filters with custom separators', () 
 test('builds an A-Z index, disables absent letters, and finds jump targets', () => {
   const items = [item('Alpha', []), item('Beta', []), item('Björk', []), item('周杰伦', [])]
   assert.equal(collectionIndexLetter('Éclair'), 'E')
-  assert.equal(collectionIndexLetter('周杰伦'), null)
-  assert.deepEqual([...availableCollectionLetters(items)].sort(), ['A', 'B'])
+  assert.equal(collectionIndexLetter('周杰伦'), 'Z')
+  assert.deepEqual([...availableCollectionLetters(items)].sort(), ['A', 'B', 'Z'])
   assert.equal(firstCollectionIndexForLetter(items, 'B'), 1)
-  assert.equal(firstCollectionIndexForLetter(items, 'Z'), -1)
+  assert.equal(firstCollectionIndexForLetter(items, 'Z'), 3)
+  assert.equal(firstCollectionIndexForLetter(items, 'M'), -1)
   assert.equal(
     collectionLetterAtScroll(
       [item('Alpha', []), item('Beta', []), item('Mango', [])],
@@ -128,6 +129,23 @@ test('builds an A-Z index, disables absent letters, and finds jump targets', () 
     ),
     'M'
   )
+})
+
+test('Chinese collections share the existing letter jump and scroll highlight', () => {
+  const items = [item('陈奕迅', []), item('范特西', []), item('周杰伦', [])]
+  assert.deepEqual([...availableCollectionLetters(items)].sort(), ['C', 'F', 'Z'])
+  assert.equal(firstCollectionIndexForLetter(items, 'f'), 1)
+  assert.equal(collectionLetterAtScroll(items, 400, 0, 1, 200, 0), 'Z')
+  assert.equal(collectionIndexLetter('  范特西 '), 'F')
+  assert.equal(collectionIndexLetter('E\u0301cho'), 'E')
+  assert.equal(collectionIndexLetter('Ａlbum'), 'A')
+})
+
+test('numbers, punctuation, unsupported scripts and blank names keep no-letter behavior', () => {
+  for (const name of ['42 Songs', '#1', '🎵 Album', 'かな', '𠀀', '', '   ']) {
+    assert.equal(collectionIndexLetter(name), null, name)
+  }
+  assert.equal(availableCollectionLetters([item('42 Songs', []), item('🎵 Album', [])]).size, 0)
 })
 
 test('persists independent artist and album collection preferences', () => {

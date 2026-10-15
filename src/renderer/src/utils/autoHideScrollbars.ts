@@ -26,6 +26,12 @@ export function invalidateAutoHideScrollbarCache(): void {
   cacheGeneration += 1
 }
 
+function setScrollbarClass(element: HTMLElement, name: string, enabled: boolean): void {
+  // DOMTokenList emits attribute mutations even for some unchanged operations.
+  // Root observers must not treat every pointer frame as a new theme/layout.
+  if (element.classList.contains(name) !== enabled) element.classList.toggle(name, enabled)
+}
+
 function getScrollbarAxes(element: HTMLElement): ScrollbarAxes {
   const style = window.getComputedStyle(element)
   const canScrollVertical = /(auto|scroll|overlay)/.test(style.overflowY)
@@ -68,15 +74,15 @@ function clearHideTimer(): void {
 
 function clearScroller(element: HTMLElement | null, clearActive = true): void {
   if (!element) return
-  element.classList.remove(NEAR_SCROLLBAR_CLASS)
-  if (clearActive) element.classList.remove(ACTIVE_SCROLLBAR_CLASS)
+  setScrollbarClass(element, NEAR_SCROLLBAR_CLASS, false)
+  if (clearActive) setScrollbarClass(element, ACTIVE_SCROLLBAR_CLASS, false)
   if (activeScroller === element && clearActive) activeScroller = null
 }
 
 function scheduleHide(element: HTMLElement): void {
   clearHideTimer()
   hideTimer = window.setTimeout(() => {
-    element.classList.remove(ACTIVE_SCROLLBAR_CLASS)
+    setScrollbarClass(element, ACTIVE_SCROLLBAR_CLASS, false)
     hideTimer = null
     if (!element.classList.contains(NEAR_SCROLLBAR_CLASS) && activeScroller === element) {
       activeScroller = null
@@ -87,10 +93,8 @@ function scheduleHide(element: HTMLElement): void {
 function revealWhileScrolling(element: HTMLElement): void {
   if (activeScroller && activeScroller !== element) clearScroller(activeScroller)
   activeScroller = element
-  // Repeated class writes invalidate styles even when the tokens already exist.
-  if (!element.classList.contains(AUTO_SCROLLBAR_CLASS)) element.classList.add(AUTO_SCROLLBAR_CLASS)
-  if (!element.classList.contains(ACTIVE_SCROLLBAR_CLASS))
-    element.classList.add(ACTIVE_SCROLLBAR_CLASS)
+  setScrollbarClass(element, AUTO_SCROLLBAR_CLASS, true)
+  setScrollbarClass(element, ACTIVE_SCROLLBAR_CLASS, true)
   scheduleHide(element)
 }
 
@@ -106,8 +110,8 @@ function updatePointerProximity(event: PointerEvent): void {
   const farFromHorizontal = rect.bottom - event.clientY > SCROLLBAR_FAR_SKIP_PX
   if (farFromVertical && farFromHorizontal) {
     if (activeScroller && activeScroller !== element) clearScroller(activeScroller, false)
-    element.classList.add(AUTO_SCROLLBAR_CLASS)
-    element.classList.remove(NEAR_SCROLLBAR_CLASS)
+    setScrollbarClass(element, AUTO_SCROLLBAR_CLASS, true)
+    setScrollbarClass(element, NEAR_SCROLLBAR_CLASS, false)
     if (!element.classList.contains(ACTIVE_SCROLLBAR_CLASS) && activeScroller === element) {
       activeScroller = null
     }
@@ -130,8 +134,8 @@ function updatePointerProximity(event: PointerEvent): void {
   const isNear = nearVertical || nearHorizontal
 
   if (activeScroller && activeScroller !== element) clearScroller(activeScroller, false)
-  element.classList.add(AUTO_SCROLLBAR_CLASS)
-  element.classList.toggle(NEAR_SCROLLBAR_CLASS, isNear)
+  setScrollbarClass(element, AUTO_SCROLLBAR_CLASS, true)
+  setScrollbarClass(element, NEAR_SCROLLBAR_CLASS, isNear)
   if (isNear) activeScroller = element
   else if (!element.classList.contains(ACTIVE_SCROLLBAR_CLASS) && activeScroller === element) {
     activeScroller = null
@@ -149,7 +153,14 @@ function onPointerMove(event: PointerEvent): void {
   })
 }
 
+function cancelPointerUpdate(): void {
+  if (pointerFrame !== null) window.cancelAnimationFrame(pointerFrame)
+  pointerFrame = null
+  pendingPointerEvent = null
+}
+
 function onPointerLeaveDocument(): void {
+  cancelPointerUpdate()
   clearScroller(activeScroller, false)
 }
 
@@ -171,21 +182,20 @@ function onViewportChange(): void {
 function onVisibilityChange(): void {
   if (!document.hidden) return
   clearHideTimer()
-  if (pointerFrame !== null) window.cancelAnimationFrame(pointerFrame)
-  pointerFrame = null
-  pendingPointerEvent = null
+  cancelPointerUpdate()
   clearScroller(activeScroller)
 }
 
 export function installAutoHideScrollbars(): () => void {
-  document.documentElement.classList.add(AUTO_SCROLLBAR_CLASS)
-  document.body.classList.add(AUTO_SCROLLBAR_CLASS)
+  setScrollbarClass(document.documentElement, AUTO_SCROLLBAR_CLASS, true)
+  setScrollbarClass(document.body, AUTO_SCROLLBAR_CLASS, true)
   document.addEventListener('pointermove', onPointerMove, { passive: true })
   document.addEventListener('pointerleave', onPointerLeaveDocument, { passive: true })
   document.addEventListener('scroll', onScroll, { capture: true, passive: true })
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('resize', onViewportChange)
   window.addEventListener('orientationchange', onViewportChange)
+  window.addEventListener('blur', onPointerLeaveDocument)
 
   return () => {
     document.removeEventListener('pointermove', onPointerMove)
@@ -194,10 +204,9 @@ export function installAutoHideScrollbars(): () => void {
     document.removeEventListener('visibilitychange', onVisibilityChange)
     window.removeEventListener('resize', onViewportChange)
     window.removeEventListener('orientationchange', onViewportChange)
+    window.removeEventListener('blur', onPointerLeaveDocument)
     clearHideTimer()
-    if (pointerFrame !== null) window.cancelAnimationFrame(pointerFrame)
-    pointerFrame = null
-    pendingPointerEvent = null
+    cancelPointerUpdate()
     clearScroller(activeScroller)
   }
 }

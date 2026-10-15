@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
-import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
 import { usePlaylistLibraryView } from '@renderer/components/streaming-page/usePlaylistLibraryView'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import SavedMusicCollections from '@renderer/components/streaming-page/SavedMusicCollections.vue'
@@ -16,6 +17,12 @@ import {
   buildProviderHealthPresentation,
   type ProviderHealthInput
 } from '@renderer/utils/providerHealthPresentation'
+
+interface LibraryViewState {
+  collection: 'playlists' | 'albums' | 'artists'
+  category: 'all' | 'owned' | 'saved'
+  limit: number
+}
 
 interface ProviderOption {
   id: string
@@ -46,16 +53,68 @@ const props = defineProps<{
   deletingPlaylistId?: string | number | null
   availableProviders?: ProviderOption[]
   activeProvider?: string
+  viewState?: LibraryViewState
 }>()
 const providerStore = useProviderStore()
-const canShowSavedCollections = computed(
-  () =>
-    providerStore
-      .getProvider(props.activeProvider ?? 'ncm')
-      ?.supportedMethods.some(
-        (method) => method === 'fetchSavedAlbums' || method === 'fetchSavedArtists'
-      ) === true
+const savedCollectionCapabilities = computed(() => {
+  const methods = providerStore.getProvider(props.activeProvider ?? 'ncm')?.supportedMethods ?? []
+  return {
+    albums: props.isLoggedIn && methods.includes('fetchSavedAlbums'),
+    artists: props.isLoggedIn && methods.includes('fetchSavedArtists')
+  }
+})
+type CollectionKind = 'playlists' | 'albums' | 'artists'
+const collectionKind = ref<CollectionKind>('playlists')
+const collectionId = useId()
+const collectionTabs = ref<HTMLElement | null>(null)
+const visitedCollections = ref({ albums: false, artists: false })
+const albumCollections = ref<InstanceType<typeof SavedMusicCollections> | null>(null)
+const artistCollections = ref<InstanceType<typeof SavedMusicCollections> | null>(null)
+const collectionOptions = computed(() => [
+  { id: 'playlists' as const, label: '歌单' },
+  ...(savedCollectionCapabilities.value.albums ? [{ id: 'albums' as const, label: '专辑' }] : []),
+  ...(savedCollectionCapabilities.value.artists ? [{ id: 'artists' as const, label: '歌手' }] : [])
+])
+const activeSavedCollections = computed(() =>
+  collectionKind.value === 'albums' ? albumCollections.value : artistCollections.value
 )
+watch(collectionKind, (kind) => {
+  if (kind !== 'playlists') visitedCollections.value[kind] = true
+})
+watch(collectionOptions, (options) => {
+  if (options.some((option) => option.id === collectionKind.value)) return
+  const restoreFocus = collectionTabs.value?.contains(document.activeElement)
+  collectionKind.value = 'playlists'
+  if (restoreFocus)
+    void nextTick(() =>
+      collectionTabs.value?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus()
+    )
+})
+watch(
+  () => JSON.stringify([props.activeProvider, props.profile?.userId, props.isLoggedIn]),
+  () => {
+    collectionKind.value = 'playlists'
+    visitedCollections.value = { albums: false, artists: false }
+  }
+)
+
+function onCollectionTabKeydown(event: KeyboardEvent): void {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const items = Array.from(
+    collectionTabs.value?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []
+  )
+  if (!items.length) return
+  event.preventDefault()
+  const index = items.findIndex((item) => item === document.activeElement)
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length
+  collectionKind.value = items[next].dataset.collection as CollectionKind
+  items[next].focus()
+}
 
 const {
   category: playlistCategory,
@@ -76,6 +135,9 @@ const {
 )
 
 const playlistReorder = useHoldReorder(movePlaylist)
+const { setGridElement: playlistGrid, gridStyle: playlistGridStyle } = useBoundedGrid(
+  () => visiblePlaylists.value.length
+)
 watch(
   () => [props.activeProvider, props.profile?.userId, playlistCategory.value],
   playlistReorder.cancel
@@ -95,7 +157,58 @@ const emit = defineEmits<{
   openRecent: []
   openRanking: []
   switchProvider: [id: string]
+  'update:viewState': [state: LibraryViewState]
 }>()
+
+let viewStateRevision = 0
+let applyingViewState = false
+const emitViewState = (): void =>
+  emit('update:viewState', {
+    collection: collectionKind.value,
+    category: playlistCategory.value,
+    limit: playlistLimit.value
+  })
+watch(
+  () => props.viewState,
+  async (state) => {
+    if (
+      !state ||
+      (state.collection === collectionKind.value &&
+        state.category === playlistCategory.value &&
+        state.limit === playlistLimit.value)
+    )
+      return
+    const revision = ++viewStateRevision
+    applyingViewState = true
+    collectionKind.value = collectionOptions.value.some((option) => option.id === state.collection)
+      ? state.collection
+      : 'playlists'
+    playlistCategory.value = state.category
+    // The playlist view resets its page when category changes. Restore the caller's
+    // reveal count after that watcher so a detail return doesn't collapse 96 to 48.
+    await nextTick()
+    if (revision !== viewStateRevision) return
+    playlistLimit.value = Number.isFinite(state.limit) ? Math.max(48, state.limit) : 48
+    await nextTick()
+    if (revision === viewStateRevision) {
+      applyingViewState = false
+      if (
+        state.collection !== collectionKind.value ||
+        state.category !== playlistCategory.value ||
+        state.limit !== playlistLimit.value
+      )
+        emitViewState()
+    }
+  },
+  { immediate: true }
+)
+watch(
+  [collectionKind, playlistCategory, playlistLimit],
+  () => {
+    if (!applyingViewState) emitViewState()
+  },
+  { flush: 'post' }
+)
 
 // ─── Provider switcher (music library toggle) ───────────────────────────
 // Only renders when more than one library provider is available, so the
@@ -120,12 +233,14 @@ const activeProviderIcon = computed(() => {
   return active?.icon ?? 'pi pi-music'
 })
 
-function closeProviderMenu(): void {
+function closeProviderMenu(restoreFocus = false): void {
+  if (providerMenuElement.value) providerMenuElement.value.inert = true
   providerMenuElement.value?.hidePopover()
   providerMenuOpen.value = false
+  if (restoreFocus) providerTrigger.value?.focus()
 }
 
-function toggleProviderMenu(): void {
+async function toggleProviderMenu(): Promise<void> {
   const menu = providerMenuElement.value
   const trigger = providerTrigger.value
   if (!menu || !trigger) return
@@ -134,8 +249,32 @@ function toggleProviderMenu(): void {
     return
   }
   positionProviderMenu()
+  menu.inert = false
   menu.showPopover()
   providerMenuOpen.value = true
+  await nextTick()
+  const selected =
+    menu.querySelector<HTMLElement>('[aria-selected="true"]') ??
+    menu.querySelector<HTMLElement>('[role="option"]')
+  selected?.focus()
+}
+
+function onProviderMenuKeydown(event: KeyboardEvent): void {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  const items = Array.from(
+    providerMenuElement.value?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []
+  )
+  if (!items.length) return
+  event.preventDefault()
+  event.stopPropagation()
+  const index = items.findIndex((item) => item === document.activeElement)
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+  items[next]?.focus()
 }
 
 function positionProviderMenu(): void {
@@ -156,6 +295,7 @@ function positionProviderMenu(): void {
 
 function onProviderMenuToggle(event: Event): void {
   providerMenuOpen.value = (event as ToggleEvent).newState === 'open'
+  if (providerMenuElement.value) providerMenuElement.value.inert = !providerMenuOpen.value
 }
 
 function onProviderViewportChange(event: Event): void {
@@ -174,7 +314,10 @@ function onProviderFocusOut(event: FocusEvent): void {
   }
 }
 
-watch(() => props.activeProvider, closeProviderMenu)
+watch(
+  () => props.activeProvider,
+  () => closeProviderMenu()
+)
 onMounted(() => {
   window.addEventListener('scroll', onProviderViewportChange, true)
   window.addEventListener('resize', onProviderViewportChange)
@@ -185,8 +328,7 @@ onBeforeUnmount(() => {
 })
 
 function selectProvider(id: string): void {
-  closeProviderMenu()
-  providerTrigger.value?.focus()
+  closeProviderMenu(true)
   emit('switchProvider', id)
 }
 
@@ -262,23 +404,26 @@ function deleteMenuPlaylist(): void {
 
 <template>
   <div class="library-view">
-    <!-- Top Cards -->
-    <p v-if="showLikedPanel === false" class="provider-liked-empty">这个平台未提供“我喜欢”列表。</p>
-    <section class="top-cards" :class="{ 'top-cards-single': showLikedPanel === false }">
-      <!-- Profile Card -->
+    <section class="top-cards" aria-label="账户与音源">
       <div class="glass-card profile-card">
         <div class="profile-avatar-wrap">
           <div class="profile-avatar-ring">
             <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" class="profile-avatar" alt="" />
-            <span v-else class="profile-avatar profile-avatar-placeholder">
-              <i class="pi pi-user"></i>
-            </span>
+            <span v-else class="profile-avatar profile-avatar-placeholder"
+              ><i class="pi pi-user" aria-hidden="true"></i
+            ></span>
           </div>
         </div>
         <div class="profile-info">
           <div class="profile-title-row">
-            <h3>{{ providerLabel || '在线音源' }}个人音乐库</h3>
-            <div v-if="canSwitchProvider" class="provider-switcher">
+            <h2 :title="profile?.nickname || '未登录用户'">
+              {{ profile?.nickname || '未登录用户' }}
+            </h2>
+            <div
+              v-if="canSwitchProvider"
+              class="provider-switcher"
+              @keydown.esc.stop.prevent="closeProviderMenu(true)"
+            >
               <button
                 ref="providerTrigger"
                 type="button"
@@ -287,7 +432,9 @@ function deleteMenuPlaylist(): void {
                 :title="`切换音源（当前：${activeProviderName}）`"
                 :aria-expanded="providerMenuOpen"
                 :aria-controls="providerMenuId"
+                aria-haspopup="listbox"
                 @click="toggleProviderMenu"
+                @keydown.down.prevent="toggleProviderMenu"
                 @focusout="onProviderFocusOut"
               >
                 <i :class="activeProviderIcon"></i>
@@ -298,12 +445,14 @@ function deleteMenuPlaylist(): void {
                 :id="providerMenuId"
                 ref="providerMenuElement"
                 class="provider-menu"
+                data-te-material="popover"
                 popover="auto"
-                role="group"
+                role="listbox"
                 aria-label="选择音源"
                 :style="providerMenuStyle"
                 @toggle="onProviderMenuToggle"
                 @focusout="onProviderFocusOut"
+                @keydown="onProviderMenuKeydown"
               >
                 <button
                   v-for="provider in providerOptions"
@@ -312,7 +461,9 @@ function deleteMenuPlaylist(): void {
                   class="provider-menu-item"
                   :class="{ active: provider.id === activeProvider }"
                   :title="providerMenuHealthDetail(provider)"
-                  :aria-pressed="provider.id === activeProvider"
+                  role="option"
+                  :aria-selected="provider.id === activeProvider"
+                  :tabindex="provider.id === activeProvider ? 0 : -1"
                   @click="selectProvider(provider.id)"
                 >
                   <i :class="provider.icon"></i>
@@ -329,21 +480,25 @@ function deleteMenuPlaylist(): void {
                 </button>
               </div>
             </div>
+            <span v-else class="profile-source">{{ providerLabel || '在线音源' }}</span>
           </div>
-          <h1>{{ profile?.nickname || '未登录用户' }}</h1>
-          <p>{{ profileSignature || '这里空空如也~' }}</p>
-          <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
-            <button type="button" class="stat-badge" @click="emit('openUserList', 'follows')">
-              {{ profile?.follows || 0 }} <span>关注</span>
-            </button>
-            <button type="button" class="stat-badge" @click="emit('openUserList', 'followers')">
-              {{ profile?.followeds || 0 }} <span>粉丝</span>
-            </button>
-          </div>
+          <p v-if="profileSignature" :title="profileSignature">{{ profileSignature }}</p>
+        </div>
+        <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
+          <button type="button" class="stat-badge" @click="emit('openUserList', 'follows')">
+            {{ profile?.follows || 0 }} <span>关注</span>
+          </button>
+          <button type="button" class="stat-badge" @click="emit('openUserList', 'followers')">
+            {{ profile?.followeds || 0 }} <span>粉丝</span>
+          </button>
         </div>
       </div>
-
-      <!-- Favorites Card -->
+    </section>
+    <section
+      class="library-shortcuts"
+      aria-label="常用音乐"
+      :class="{ 'shortcuts-single': !isLoggedIn || showFeatureCards === false }"
+    >
       <div
         v-if="showLikedPanel !== false"
         class="glass-card favorites-card"
@@ -355,7 +510,7 @@ function deleteMenuPlaylist(): void {
       >
         <div class="favorites-info">
           <div class="favorites-heading">
-            <span class="tag">我的收藏</span>
+            <h2>我喜欢</h2>
             <label
               v-if="(likedPlaylistOptions?.length ?? 0) > 1"
               class="favorites-picker"
@@ -380,24 +535,26 @@ function deleteMenuPlaylist(): void {
               </select>
             </label>
           </div>
-          <h2>{{ likedSummary.name || '我喜欢' }}</h2>
-          <p>{{ likedSummary.trackCount }} 首歌曲</p>
-          <button class="btn-play" @click.stop="emit('playLikedSongs')">
-            <PlaybackIcon name="play" />
-            播放全部
-          </button>
+          <p
+            v-if="likedSummary.name && !['我喜欢', '我喜欢的音乐'].includes(likedSummary.name)"
+            class="favorites-name"
+            :title="likedSummary.name"
+          >
+            {{ likedSummary.name }}
+          </p>
+          <div class="favorites-footer">
+            <p>{{ likedSummary.trackCount }} 首歌曲</p>
+            <button type="button" class="btn-play" @click.stop="emit('playLikedSongs')">
+              <PlaybackIcon name="play" />播放全部
+            </button>
+          </div>
         </div>
         <div class="favorites-cover">
-          <img
-            v-if="likedSummary.cover"
-            :src="likedSummary.cover"
-            alt="Favorites Cover"
-            class="liked-cover-img"
-          />
+          <img v-if="likedSummary.cover" :src="likedSummary.cover" alt="" class="liked-cover-img" />
           <span v-else class="liked-cover-img liked-card-cover-placeholder">
             <i class="pi pi-heart-fill"></i>
           </span>
-          <div class="heart-icon">
+          <div class="heart-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24">
               <path
                 d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
@@ -406,19 +563,9 @@ function deleteMenuPlaylist(): void {
           </div>
         </div>
       </div>
-    </section>
-    <p
-      v-if="likedSelectionError && showLikedPanel !== false"
-      role="status"
-      class="playlist-order-hint"
-    >
-      {{ likedSelectionError }}
-    </p>
-
-    <!-- Feature Cards: Recent & Ranking portals (ncm only — external providers don't implement these) -->
-    <section class="feature-cards" v-if="isLoggedIn && showFeatureCards !== false">
       <!-- Recent Played Card -->
       <button
+        v-if="isLoggedIn && showFeatureCards !== false"
         type="button"
         class="glass-card feature-card recent-card"
         data-te-interactive
@@ -440,6 +587,7 @@ function deleteMenuPlaylist(): void {
 
       <!-- Top Ranking Card -->
       <button
+        v-if="isLoggedIn && showFeatureCards !== false"
         type="button"
         class="glass-card feature-card ranking-card"
         data-te-interactive
@@ -459,152 +607,248 @@ function deleteMenuPlaylist(): void {
         </div>
       </button>
     </section>
+    <p v-if="showLikedPanel === false" class="provider-liked-empty">这个平台未提供“我喜欢”列表。</p>
+    <p
+      v-if="likedSelectionError && showLikedPanel !== false"
+      role="status"
+      class="playlist-order-hint"
+    >
+      {{ likedSelectionError }}
+    </p>
 
-    <!-- Playlists Section -->
-    <SavedMusicCollections
-      v-if="isLoggedIn && canShowSavedCollections"
-      :user-id="profile?.userId ?? 'guest'"
-      :provider-id="activeProvider ?? 'ncm'"
-      @open-album="emit('openAlbum', $event)"
-      @open-artist="emit('openArtist', $event)"
-    />
-    <section class="playlist-section">
-      <div class="section-header">
-        <div>
-          <h2>我的歌单</h2>
-          <p>{{ userPlaylistEntries.length }} 个在线列表</p>
-        </div>
-        <button
-          v-if="allowPlaylistMutations"
-          type="button"
-          class="create-playlist-btn"
-          title="创建网易云歌单"
-          @click="emit('createPlaylist')"
+    <section class="library-collections" aria-label="我的音乐集合">
+      <header class="collection-toolbar">
+        <div
+          ref="collectionTabs"
+          class="library-collection-tabs"
+          role="tablist"
+          aria-label="音乐库内容"
+          @keydown="onCollectionTabKeydown"
         >
-          <i class="pi pi-plus"></i>
-          <span>创建歌单</span>
-        </button>
-      </div>
-
-      <div class="playlist-organization">
-        <div class="playlist-filters" role="group" aria-label="歌单分类">
           <button
-            v-for="tab in [
-              { id: 'all', label: '全部' },
-              { id: 'owned', label: '我创建的' },
-              { id: 'saved', label: '我收藏的' }
-            ] as const"
-            :key="tab.id"
+            v-for="option in collectionOptions"
+            :id="collectionId + '-tab-' + option.id"
+            :key="option.id"
             type="button"
-            :aria-pressed="playlistCategory === tab.id"
-            @click="playlistCategory = tab.id"
+            role="tab"
+            :data-collection="option.id"
+            :aria-selected="collectionKind === option.id"
+            :aria-controls="collectionId + '-panel-' + option.id"
+            :tabindex="collectionKind === option.id ? 0 : -1"
+            @click="collectionKind = option.id"
           >
-            {{ tab.label }} <span>{{ playlistCounts[tab.id] }}</span>
+            {{ option.label }}
           </button>
         </div>
-      </div>
-      <p class="playlist-order-hint">
-        拖动歌单排序（触屏需长按）；<template v-if="allowPinPlaylists">置顶优先。</template>键盘可用
-        Alt + ↑ / ↓ 调整。
-      </p>
-      <p v-if="playlistOrderError" role="status" class="playlist-order-hint">
-        {{ playlistOrderError }}
-      </p>
-      <div v-if="libraryLoaded && filteredPlaylists.length === 0" class="empty-state">
-        <span class="empty-icon">
-          <i class="pi pi-list"></i>
-        </span>
-        <p class="empty-text">暂无在线歌单</p>
-        <p class="empty-hint">
-          {{
-            allowPlaylistMutations
-              ? '点击右上角「创建歌单」开始整理在线音乐'
-              : '当前账号还没有可展示的在线歌单'
-          }}
-        </p>
-      </div>
-
-      <div v-else class="playlist-grid" data-reorder-group @click.capture="playlistReorder.click">
-        <article
-          v-for="playlist in visiblePlaylists"
-          :key="playlist.id"
-          class="playlist-item"
-          :class="{
-            'is-dragging': playlistReorder.active.value === String(playlist.id),
-            'is-drop-target':
-              playlistReorder.over.value === String(playlist.id) &&
-              playlistReorder.active.value !== String(playlist.id)
-          }"
-          :data-reorder-id="String(playlist.id)"
-          @pointerdown="playlistReorder.start($event, String(playlist.id))"
-          @dragstart.prevent
-          role="button"
-          tabindex="0"
-          @click="emit('openPlaylist', playlist)"
-          @keydown="onPlaylistKeydown($event, playlist)"
-          @contextmenu.prevent.stop="openPlaylistMenu($event, playlist)"
+        <button
+          v-if="collectionKind === 'playlists' && allowPlaylistMutations"
+          type="button"
+          class="create-playlist-btn"
+          title="创建歌单"
+          @click="emit('createPlaylist')"
         >
-          <img v-if="playlist.cover" :src="playlist.cover" class="playlist-item-cover" alt="" />
-          <span v-else class="playlist-item-cover playlist-cover-placeholder">
+          <i class="pi pi-plus" aria-hidden="true"></i><span>创建歌单</span>
+        </button>
+        <button
+          v-else-if="collectionKind !== 'playlists'"
+          type="button"
+          class="create-playlist-btn"
+          :disabled="activeSavedCollections?.loading"
+          @click="activeSavedCollections?.refresh()"
+        >
+          <i class="pi pi-refresh" aria-hidden="true"></i><span>刷新</span>
+        </button>
+      </header>
+      <section
+        :id="collectionId + '-panel-playlists'"
+        v-show="collectionKind === 'playlists'"
+        class="playlist-section"
+        role="tabpanel"
+        :aria-labelledby="collectionId + '-tab-playlists'"
+      >
+        <div class="playlist-organization">
+          <div class="playlist-filters" role="group" aria-label="歌单分类">
+            <button
+              v-for="tab in [
+                { id: 'all', label: '全部' },
+                { id: 'owned', label: '我创建的' },
+                { id: 'saved', label: '我收藏的' }
+              ] as const"
+              :key="tab.id"
+              type="button"
+              :aria-pressed="playlistCategory === tab.id"
+              @click="playlistCategory = tab.id"
+            >
+              {{ tab.label }} <span>{{ playlistCounts[tab.id] }}</span>
+            </button>
+          </div>
+          <span class="collection-count">{{ userPlaylistEntries.length }} 个歌单</span>
+          <p class="playlist-sort-help">
+            拖动排序（触屏长按）；<template v-if="allowPinPlaylists">置顶优先。</template>键盘 Alt +
+            ↑ / ↓ 调整。
+          </p>
+        </div>
+        <p v-if="playlistOrderError" role="status" class="playlist-order-hint">
+          {{ playlistOrderError }}
+        </p>
+        <p
+          v-if="!libraryLoaded && filteredPlaylists.length === 0"
+          class="playlist-order-hint"
+          role="status"
+        >
+          正在加载歌单…
+        </p>
+        <div v-else-if="libraryLoaded && filteredPlaylists.length === 0" class="empty-state">
+          <span class="empty-icon">
             <i class="pi pi-list"></i>
           </span>
-          <div class="playlist-item-info">
-            <h4 class="playlist-item-title">{{ playlist.name }}</h4>
+          <p class="empty-text">暂无在线歌单</p>
+          <p class="empty-hint">
+            {{
+              allowPlaylistMutations
+                ? '点击右上角「创建歌单」开始整理在线音乐'
+                : '当前账号还没有可展示的在线歌单'
+            }}
+          </p>
+        </div>
+
+        <div
+          v-else
+          :ref="playlistGrid"
+          class="playlist-grid"
+          :style="playlistGridStyle"
+          data-reorder-group
+          @click.capture="playlistReorder.click"
+        >
+          <article
+            v-for="playlist in visiblePlaylists"
+            :key="playlist.id"
+            class="playlist-item"
+            :class="{
+              'is-dragging': playlistReorder.active.value === String(playlist.id),
+              'is-drop-target':
+                playlistReorder.over.value === String(playlist.id) &&
+                playlistReorder.active.value !== String(playlist.id)
+            }"
+            :data-reorder-id="String(playlist.id)"
+            @pointerdown="playlistReorder.start($event, String(playlist.id))"
+            @dragstart.prevent
+            role="button"
+            tabindex="0"
+            :aria-label="`打开歌单 ${playlist.name}`"
+            @click="emit('openPlaylist', playlist)"
+            @keydown="onPlaylistKeydown($event, playlist)"
+            @contextmenu.prevent.stop="openPlaylistMenu($event, playlist)"
+          >
+            <img
+              v-if="playlist.cover"
+              :src="playlist.cover"
+              class="playlist-item-cover"
+              alt=""
+              loading="lazy"
+              decoding="async"
+            />
+            <span v-else class="playlist-item-cover playlist-cover-placeholder">
+              <i class="pi pi-list"></i>
+            </span>
+            <div class="playlist-item-info">
+              <h4 class="playlist-item-title" :title="playlist.name">{{ playlist.name }}</h4>
+            </div>
             <span class="playlist-item-count">
               {{ playlist.trackCount }} 首
               <template v-if="playlist.owned === true"> · 创建</template>
               <template v-else-if="playlist.owned === false"> · 收藏</template>
             </span>
-          </div>
 
-          <button
-            v-if="allowPinPlaylists"
-            type="button"
-            class="playlist-pin-button"
-            :class="{ active: isPlaylistPinned(playlist) }"
-            :disabled="isPlaylistPinning(playlist)"
-            :title="isPlaylistPinned(playlist) ? '取消置顶收藏夹' : '置顶收藏夹'"
-            @click.stop="emit('togglePinnedPlaylist', playlist)"
-          >
-            <i
-              :class="
-                isPlaylistPinning(playlist)
-                  ? 'pi pi-spin pi-spinner'
-                  : isPlaylistPinned(playlist)
-                    ? 'pi pi-star-fill'
-                    : 'pi pi-star'
-              "
-            ></i>
-          </button>
+            <button
+              v-if="allowPinPlaylists"
+              type="button"
+              class="playlist-pin-button"
+              :class="{ active: isPlaylistPinned(playlist) }"
+              :disabled="isPlaylistPinning(playlist)"
+              :title="isPlaylistPinned(playlist) ? '取消置顶收藏夹' : '置顶收藏夹'"
+              @click.stop="emit('togglePinnedPlaylist', playlist)"
+            >
+              <i
+                :class="
+                  isPlaylistPinning(playlist)
+                    ? 'pi pi-spin pi-spinner'
+                    : isPlaylistPinned(playlist)
+                      ? 'pi pi-star-fill'
+                      : 'pi pi-star'
+                "
+              ></i>
+            </button>
 
-          <button
-            v-if="canDeletePlaylist()"
-            type="button"
-            class="playlist-more-button"
-            :disabled="isPlaylistDeleting(playlist)"
-            :aria-label="`更多操作：${playlist.name}`"
-            title="更多操作"
-            aria-haspopup="menu"
-            @click.stop="openPlaylistMenu($event, playlist)"
-          >
-            <i
-              :class="isPlaylistDeleting(playlist) ? 'pi pi-spin pi-spinner' : 'pi pi-ellipsis-h'"
-            ></i>
-          </button>
+            <button
+              v-if="canDeletePlaylist()"
+              type="button"
+              class="playlist-more-button"
+              :disabled="isPlaylistDeleting(playlist)"
+              :aria-label="`更多操作：${playlist.name}`"
+              title="更多操作"
+              aria-haspopup="menu"
+              @click.stop="openPlaylistMenu($event, playlist)"
+            >
+              <i
+                :class="isPlaylistDeleting(playlist) ? 'pi pi-spin pi-spinner' : 'pi pi-ellipsis-h'"
+              ></i>
+            </button>
 
-          <div class="playlist-item-arrow">
-            <i class="pi pi-chevron-right"></i>
-          </div>
-        </article>
-      </div>
-      <button
-        v-if="visiblePlaylists.length < filteredPlaylists.length"
-        type="button"
-        class="playlist-load-more"
-        @click="playlistLimit += 48"
+            <div class="playlist-item-arrow">
+              <i class="pi pi-chevron-right"></i>
+            </div>
+          </article>
+        </div>
+        <button
+          v-if="visiblePlaylists.length < filteredPlaylists.length"
+          type="button"
+          class="playlist-load-more"
+          @click="playlistLimit += 48"
+        >
+          显示更多歌单 · 还有 {{ filteredPlaylists.length - visiblePlaylists.length }} 个
+        </button>
+      </section>
+      <section
+        v-if="savedCollectionCapabilities.albums"
+        :id="collectionId + '-panel-albums'"
+        v-show="collectionKind === 'albums'"
+        class="saved-collection-panel"
+        role="tabpanel"
+        :aria-labelledby="collectionId + '-tab-albums'"
       >
-        显示更多歌单 · 还有 {{ filteredPlaylists.length - visiblePlaylists.length }} 个
-      </button>
+        <SavedMusicCollections
+          v-if="visitedCollections.albums"
+          ref="albumCollections"
+          :user-id="profile?.userId ?? 'guest'"
+          :provider-id="activeProvider ?? 'ncm'"
+          collection-type="albums"
+          hide-header
+          :active="collectionKind === 'albums'"
+          @open-album="emit('openAlbum', $event)"
+          @open-artist="emit('openArtist', $event)"
+        />
+      </section>
+      <section
+        v-if="savedCollectionCapabilities.artists"
+        :id="collectionId + '-panel-artists'"
+        v-show="collectionKind === 'artists'"
+        class="saved-collection-panel"
+        role="tabpanel"
+        :aria-labelledby="collectionId + '-tab-artists'"
+      >
+        <SavedMusicCollections
+          v-if="visitedCollections.artists"
+          ref="artistCollections"
+          :user-id="profile?.userId ?? 'guest'"
+          :provider-id="activeProvider ?? 'ncm'"
+          collection-type="artists"
+          hide-header
+          :active="collectionKind === 'artists'"
+          @open-album="emit('openAlbum', $event)"
+          @open-artist="emit('openArtist', $event)"
+        />
+      </section>
     </section>
   </div>
   <Teleport to="body">
@@ -615,54 +859,445 @@ function deleteMenuPlaylist(): void {
         :disabled="isPlaylistDeleting(menuPlaylist)"
         @click="deleteMenuPlaylist"
       >
-        <i class="pi pi-trash" aria-hidden="true"></i>
-        {{ deletePlaylistLabel(menuPlaylist) }}
+        <i class="pi pi-trash" aria-hidden="true"></i>{{ deletePlaylistLabel(menuPlaylist) }}
       </button>
     </NativeContextMenu>
   </Teleport>
 </template>
-
 <style scoped>
-.playlist-organization {
+.library-view {
+  min-width: 0;
+  container-type: inline-size;
+  color: var(--te-text);
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
+}
+.library-view :is(h1, h2, h3, h4, p) {
+  margin: 0;
+}
+.library-view button {
+  font: inherit;
+  cursor: pointer;
+}
+.library-view button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.library-view :is(button, [role='button'], select):focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+}
+.top-cards {
+  margin-bottom: 16px;
+}
+.library-view .glass-card {
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.profile-card {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 16px;
+}
+.profile-avatar-wrap,
+.profile-avatar-ring {
+  flex-shrink: 0;
+}
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.profile-avatar-placeholder {
+  background: var(--te-subtle-bg);
+  color: var(--te-text-secondary);
+}
+.profile-info {
+  min-width: 0;
+  flex: 1;
+}
+.profile-title-row {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.profile-source {
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+}
+.profile-info h2 {
+  font-size: var(--te-type-headline);
+  line-height: 1.4;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.profile-info > p {
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  color: var(--te-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 4px;
+}
+.profile-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-left: auto;
+}
+.stat-badge,
+.provider-switch-btn {
+  min-height: var(--te-control-height-md);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  color: var(--te-text-secondary);
+  background: transparent;
+  font-size: var(--te-type-caption) !important;
+  line-height: 1.5;
+}
+.stat-badge:hover,
+.provider-switch-btn:is(:hover, .active) {
+  background: var(--te-subtle-bg);
+  color: var(--te-text);
+}
+.stat-badge {
+  font-variant-numeric: tabular-nums;
+}
+.provider-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.provider-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14em;
+}
+.provider-switch-caret {
+  font-size: 0.8em;
+}
+.provider-menu {
+  position: fixed;
+  margin: 0;
+  padding: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-material-background, var(--te-card-bg));
+  color: var(--te-text);
+  box-shadow: var(--te-material-shadow, none);
+  overflow-y: auto;
+}
+.provider-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  min-height: var(--te-control-height-md);
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: var(--te-type-caption) !important;
+  line-height: 1.5;
+}
+.provider-menu-item:is(:hover, .active) {
+  background: var(--te-subtle-bg);
+}
+.provider-menu-health {
+  display: block;
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+}
+.provider-menu-check {
+  margin-left: auto;
+}
+.favorites-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
   gap: 12px;
-  margin: 20px 0;
+  align-items: center;
+  cursor: pointer;
+}
+.favorites-info {
+  min-width: 0;
+}
+.favorites-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.favorites-picker {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: var(--te-control-height-md);
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.favorites-picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.favorites-picker:focus-within {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.favorites-info h2 {
+  font-size: var(--te-type-headline);
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  margin-top: 0;
+}
+.favorites-footer p,
+.favorites-info > p {
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+.btn-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--te-control-height-md);
+  padding: 7px 14px;
+  margin-top: 0;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-primary-500);
+  color: var(--te-control-on-accent);
+  font-size: var(--te-type-caption) !important;
+  line-height: 1.5;
+}
+.favorites-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.favorites-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+.favorites-cover {
+  width: 56px;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--te-subtle-bg);
+}
+.liked-cover-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.liked-card-cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--te-text-secondary);
+}
+.heart-icon {
+  display: none;
+}
+.library-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.library-shortcuts.shortcuts-single {
+  grid-template-columns: minmax(0, 460px);
+}
+.library-view .library-shortcuts .glass-card {
+  padding: 16px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-card-radius, 12px);
+  background: var(--te-card-bg);
+  box-shadow: none;
+}
+.feature-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  color: inherit;
+  text-align: left;
+}
+.feature-card:hover {
+  background: var(--te-subtle-bg);
+}
+.feature-info {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+}
+.icon-wrap {
+  grid-column: 1;
+  grid-row: 1/3;
+  color: var(--te-text-secondary);
+}
+.feature-info h3 {
+  grid-column: 2;
+  font-size: var(--te-type-headline);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.feature-info p {
+  grid-column: 2;
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+  line-height: 1.5;
+}
+.feature-preview {
+  color: var(--te-text-secondary);
+}
+.collection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--te-card-border);
+}
+.library-collection-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.library-collection-tabs button {
+  min-height: var(--te-control-height-md);
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-headline);
+  line-height: 1.4;
+}
+.library-collection-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--te-primary-500);
+  color: var(--te-text);
+  font-weight: 600;
+}
+.collection-count {
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  align-self: center;
+  white-space: nowrap;
+}
+.playlist-sort-help {
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  color: var(--te-text-secondary);
+}
+.collection-toolbar > button {
+  margin-bottom: 6px;
+}
+.create-playlist-btn,
+.playlist-load-more {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--te-control-height-md);
+  padding: 7px 12px;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  background: var(--te-subtle-bg);
+  color: var(--te-text);
+  font-size: var(--te-type-caption) !important;
+  line-height: 1.5;
+}
+.playlist-organization {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  margin-bottom: 16px;
 }
 .playlist-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 4px;
-  background: var(--te-card-bg);
-  border: 1px solid var(--te-card-border);
-  border-radius: 12px;
 }
-.playlist-filters button,
-.playlist-load-more {
+.playlist-filters button {
+  min-height: var(--te-control-height-md);
+  padding: 7px 10px;
   border: 0;
-  border-radius: 8px;
-  padding: 9px 12px;
+  border-radius: var(--te-control-radius-sm);
   background: transparent;
-  color: var(--te-neutral-500);
-  font: inherit;
-  cursor: pointer;
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
 }
 .playlist-filters button[aria-pressed='true'] {
-  background: rgba(var(--te-primary-rgb), 0.12);
-  color: var(--te-primary-500);
+  background: var(--te-subtle-bg);
+  color: var(--te-text);
+  font-weight: 500;
 }
 .playlist-filters span {
   margin-left: 6px;
-  font-size: 0.8em;
   font-variant-numeric: tabular-nums;
 }
-.playlist-order-hint {
-  color: var(--te-neutral-500);
-  font-size: 0.85em;
-  margin-bottom: 16px;
+.playlist-order-hint,
+.provider-liked-empty {
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  margin-bottom: 16px !important;
+}
+.playlist-grid {
+  display: grid;
+  min-width: 0;
+}
+.playlist-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px 4px;
+  align-content: start;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+.playlist-item[data-reorder-id] {
+  user-select: none;
+  touch-action: pan-y;
 }
 .playlist-item.is-dragging {
   opacity: 0.55;
@@ -670,1078 +1305,117 @@ function deleteMenuPlaylist(): void {
   outline: 2px solid var(--te-primary-500);
 }
 .playlist-item.is-drop-target {
-  box-shadow: inset 0 3px var(--te-primary-500);
-  background: var(--te-hover-bg);
-}
-.playlist-item[data-reorder-id] {
-  user-select: none;
-  touch-action: pan-y;
-}
-.playlist-load-more {
-  border: 1px solid var(--te-card-border);
-  display: flex;
-  margin: 24px auto 0;
-}
-.playlist-filters button:focus-visible,
-.playlist-load-more:focus-visible {
   outline: 2px solid var(--te-primary-500);
   outline-offset: 3px;
 }
-
-.library-view {
-  min-height: 100%;
-  padding-bottom: 40px;
-  animation: library-in 0.42s var(--te-ease-soft) both;
-}
-
-/* Top Cards */
-.top-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 30px;
-  margin-bottom: 30px;
-}
-.top-cards-single {
-  grid-template-columns: 1fr;
-}
-
-/* Glass Card Base */
-.glass-card {
-  background: var(--te-glass-bg-strong);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 24px;
-  padding: 32px;
-  box-shadow:
-    0 20px 40px rgba(15, 23, 42, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  position: relative;
-  overflow: hidden;
-  transition: transform 0.3s var(--te-ease-enter);
-  cursor: pointer;
-}
-.glass-card:hover {
-  transform: translateY(-4px);
-  box-shadow:
-    0 24px 48px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-
-/* User Profile Card */
-.profile-card {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  cursor: default;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(194, 112, 61, 0.1);
-  box-shadow:
-    0 20px 50px rgba(194, 112, 61, 0.07),
-    0 4px 16px rgba(42, 33, 24, 0.03),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-.profile-card:hover {
-  transform: none;
-  box-shadow:
-    0 20px 50px rgba(194, 112, 61, 0.07),
-    0 4px 16px rgba(42, 33, 24, 0.03),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-
-.profile-avatar-wrap {
-  position: relative;
-  flex-shrink: 0;
-}
-.profile-avatar-ring {
-  padding: 4px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #f6d365, #fda085, #a8edea);
-  box-shadow: 0 8px 24px rgba(194, 112, 61, 0.15);
-}
-.profile-avatar {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 3px solid #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(var(--te-font-size-body, 14px) * 2.28571);
-}
-.profile-avatar-placeholder {
-  color: #c2703d;
-  background: #fef3e2;
-}
-
-.profile-info {
-  flex: 1;
-  min-width: 0;
-}
-.profile-info h3 {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 600;
-  margin: 0 0 4px 0;
-}
-
-/* Provider switcher (music library toggle) */
-.profile-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 4px;
-}
-.profile-title-row h3 {
-  margin: 0;
-  min-width: 0;
-}
-.provider-switcher {
-  position: relative;
-  flex-shrink: 0;
-}
-.provider-switch-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  background: var(--te-subtle-bg);
-  color: var(--te-neutral-700, #334155);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background-color 0.2s var(--te-ease-soft),
-    border-color 0.2s var(--te-ease-soft),
-    color 0.2s var(--te-ease-soft);
-}
-.provider-switch-btn:hover,
-.provider-switch-btn.active {
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
-  border-color: rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
-  color: var(--te-primary-500, #6366f1);
-}
-.provider-switch-btn i:first-child {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-}
-.provider-switch-name {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-switch-caret {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.71429);
-  transition: transform 0.2s;
-}
-.provider-switch-btn.active .provider-switch-caret {
-  transform: rotate(180deg);
-}
-.provider-menu {
-  position: fixed;
-  inset: auto;
-  margin: 0;
-  box-sizing: border-box;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--te-card-bg);
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
-  padding: 6px;
-  z-index: 20;
-  animation: provider-menu-in 0.16s ease both;
-}
-.provider-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  border: none;
-  background: transparent;
-  border-radius: 10px;
-  color: var(--te-neutral-700, #334155);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-  text-align: left;
-}
-.provider-menu-item:hover {
-  background: rgba(15, 23, 42, 0.04);
-}
-.provider-menu-item.active {
-  color: var(--te-primary-500, #6366f1);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.08);
-}
-.provider-menu-item span {
-  flex: 1;
-  min-width: 0;
-}
-.provider-menu-check {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-}
-.provider-menu-health {
-  display: block;
-  margin-top: 2px;
-  color: var(--te-neutral-500, #64748b);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.78571);
-  font-weight: 600;
-  line-height: 1.2;
-}
-@keyframes provider-menu-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.profile-info h1 {
-  font-size: calc(var(--te-font-size-body, 14px) * 2);
-  font-weight: 800;
-  color: #2a2118;
-  margin: 0 0 4px 0;
-  letter-spacing: -0.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.profile-info p {
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  color: #a08a72;
-  margin: 0 0 16px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.profile-stats {
-  display: flex;
-  gap: 12px;
-}
-.stat-badge {
-  background: rgba(194, 112, 61, 0.06);
-  padding: 7px var(--te-control-pad-x-md);
-  border-radius: var(--te-control-radius-lg);
-  border: var(--te-control-border-width) solid rgba(194, 112, 61, 0.1);
-  font-size: var(--te-control-font-size-sm);
-  font-weight: var(--te-control-font-weight-bold);
-  color: #2a2118;
-  display: flex;
-  align-items: center;
-  gap: var(--te-control-gap);
-  cursor: pointer;
-  transition:
-    background-color var(--te-motion-hover) var(--te-ease-soft),
-    border-color var(--te-motion-hover) var(--te-ease-soft);
-}
-.stat-badge:hover {
-  background: rgba(194, 112, 61, 0.1);
-  border-color: rgba(194, 112, 61, 0.2);
-}
-.stat-badge span {
-  color: #a08a72;
-  font-weight: 600;
-}
-
-/* Favorites Card */
-.favorites-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: var(--te-card-bg);
-}
-.favorites-card::before {
-  content: '';
-  position: absolute;
-  top: -50px;
-  right: -50px;
-  width: 200px;
-  height: 200px;
-  background: radial-gradient(
-    circle,
-    rgba(var(--te-primary-rgb, 99, 102, 241), 0.15) 0%,
-    transparent 70%
-  );
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.favorites-info {
-  flex: 1;
-  min-width: 0;
-}
-.favorites-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-bottom: 12px;
-}
-.favorites-info .favorites-heading .tag {
-  margin-bottom: 0;
-}
-.favorites-picker {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  color: var(--te-neutral-500, #64748b);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  cursor: pointer;
-}
-.favorites-picker:hover,
-.favorites-picker:focus-within {
-  color: var(--te-primary-500);
-  background: var(--te-active-bg);
-}
-.favorites-picker:focus-within {
-  outline: 2px solid var(--te-primary-500);
-  outline-offset: 2px;
-}
-.favorites-picker i {
-  font-size: 10px;
-}
-.favorites-picker select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-.favorites-info .tag {
-  display: inline-block;
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
-  color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 6px;
-  margin-bottom: 12px;
-}
-.favorites-info h2 {
-  font-size: calc(var(--te-font-size-body, 14px) * 1.85714);
-  font-weight: 800;
-  color: var(--te-neutral-900, #1e293b);
-  margin: 0 0 6px 0;
-  letter-spacing: -0.5px;
-}
-.favorites-info p {
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 500;
-  margin: 0 0 24px 0;
-}
-
-.btn-play {
-  background: linear-gradient(135deg, var(--te-primary-500, #6366f1), #818cf8);
-  color: #fff;
-  border: none;
-  padding: 12px 32px;
-  border-radius: 999px;
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
-  transition: transform 0.3s var(--te-ease-soft);
-  cursor: pointer;
-}
-.btn-play:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb, 99, 102, 241), 0.4);
-}
-
-.favorites-cover {
-  position: relative;
-  flex-shrink: 0;
-  width: 140px;
-  height: 140px;
-  border-radius: 20px;
-  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.15);
-  overflow: hidden;
-  transform: perspective(1000px) rotateY(-5deg);
-  transition: transform 0.3s var(--te-ease-enter);
-}
-.favorites-card:hover .favorites-cover {
-  transform: perspective(1000px) rotateY(0deg) scale(1.05);
-}
-
-.liked-cover-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(var(--te-font-size-body, 14px) * 40 / 14);
-}
-.liked-card-cover-placeholder {
-  color: var(--te-favorite-500, #ef4444);
-  background: var(--te-subtle-bg);
-}
-
-.heart-icon {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 50px;
-  height: 50px;
-  background: var(--te-glass-bg);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.heart-icon svg {
-  width: 24px;
-  height: 24px;
-  fill: #fff;
-}
-
-/* Feature Cards (Recent & Ranking portals) */
-.feature-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 30px;
-  margin-bottom: 40px;
-}
-
-.feature-card {
-  text-align: left;
-  color: inherit;
-  font: inherit;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 24px;
-  min-height: 120px;
-  padding: 24px 32px;
-}
-
-.feature-info {
-  min-width: 0;
-}
-
-.recent-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(238, 242, 255, 0.5) 100%);
-}
-
-.ranking-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 241, 242, 0.5) 100%);
-}
-
-.feature-info .icon-wrap {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  margin-bottom: 12px;
-}
-
-.recent-card .icon-wrap {
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.15);
-  color: var(--te-primary-500, #6366f1);
-}
-
-.ranking-card .icon-wrap {
-  background: rgba(244, 63, 94, 0.15);
-  color: #f43f5e;
-}
-
-.feature-info h3 {
-  overflow-wrap: anywhere;
-  font-size: calc(var(--te-font-size-body, 14px) * 1.42857);
-  font-weight: 800;
-  color: var(--te-neutral-900, #1e293b);
-  margin: 0 0 4px 0;
-}
-.feature-info p {
-  overflow-wrap: anywhere;
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 500;
-  margin: 0;
-}
-
-.feature-card .enter-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--te-card-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-  transition:
-    transform 0.3s var(--te-ease-soft),
-    color 0.3s var(--te-ease-soft);
-  color: var(--te-neutral-500, #64748b);
-  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
-}
-
-.feature-card:hover .enter-btn {
-  transform: scale(1.1) translateX(4px);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
-  color: var(--te-primary-500, #6366f1);
-}
-
-.feature-preview {
-  display: flex;
-  align-items: center;
-}
-
-/* Common Section Header */
-.section-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.create-playlist-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  border: 1px solid rgba(var(--te-primary-rgb, 99, 102, 241), 0.22);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
-  color: var(--te-primary-600, #4f46e5);
-  border-radius: 999px;
-  padding: 10px 16px;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    transform 0.2s var(--te-ease-soft),
-    background-color 0.2s var(--te-ease-soft);
-}
-
-.create-playlist-btn:hover {
-  transform: translateY(-1px);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
-  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
-}
-
-.playlist-more-button {
-  position: absolute;
-  top: 18px;
-  right: 48px;
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 10px;
-  background: var(--te-hover-bg);
-  color: var(--te-chrome-text);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 0.2s var(--te-ease-soft),
-    background-color 0.2s var(--te-ease-soft);
-}
-
-.playlist-item:hover .playlist-more-button,
-.playlist-item:focus-within .playlist-more-button {
-  opacity: 1;
-}
-
-.playlist-more-button:hover:not(:disabled) {
-  background: rgba(244, 63, 94, 0.18);
-}
-
-.playlist-more-button:disabled {
-  opacity: 1;
-  cursor: wait;
-}
-
-.section-header h2 {
-  font-size: calc(var(--te-font-size-body, 14px) * 1.57143);
-  font-weight: 800;
-  color: var(--te-neutral-900, #1e293b);
-  margin: 0 0 4px 0;
-}
-
-.section-header p {
-  font-size: calc(var(--te-font-size-body, 14px) * 1);
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 500;
-  margin: 0;
-}
-
-/* Playlists Section */
-.playlist-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 24px;
-}
-
-@media (max-width: 900px) {
-  .playlist-grid {
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 18px;
-  }
-
-  .glass-card {
-    padding: 24px;
-  }
-
-  .profile-info h1 {
-    font-size: calc(var(--te-font-size-body, 14px) * 1.71429);
-  }
-
-  .favorites-info h2 {
-    font-size: calc(var(--te-font-size-body, 14px) * 1.57143);
-  }
-}
-
-.playlist-item {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  background: var(--te-glass-bg-strong);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  padding: 18px;
-  border-radius: 20px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.02);
-  cursor: pointer;
-  transition:
-    transform 0.3s var(--te-ease-enter),
-    background-color 0.3s var(--te-ease-enter);
-  position: relative;
-}
-
-.playlist-item:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
-  background: var(--te-hover-bg);
-}
-
 .playlist-item-cover {
-  width: 88px;
-  height: 88px;
-  border-radius: 14px;
+  grid-column: 1/-1;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
   object-fit: cover;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.1);
-  transition: transform 0.3s var(--te-ease-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(var(--te-font-size-body, 14px) * 2.14286);
+  border-radius: 6px;
+  background: var(--te-subtle-bg);
 }
 .playlist-cover-placeholder {
-  background: #f3f0ff;
-  color: var(--te-primary-500, #6366f1);
-}
-
-.playlist-item:hover .playlist-item-cover {
-  transform: scale(1.05);
-}
-
-.playlist-item-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.playlist-item-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
-  font-weight: 700;
-  color: var(--te-neutral-900, #1e293b);
-  margin: 0 0 4px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.playlist-item-count {
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 500;
-}
-
-.playlist-item-arrow {
-  color: #cbd5e1;
-  transition:
-    color 0.3s var(--te-ease-soft),
-    transform 0.3s var(--te-ease-soft);
-  width: 24px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.playlist-item:hover .playlist-item-arrow {
-  color: var(--te-primary-500, #6366f1);
-  transform: translateX(4px);
-}
-
-.playlist-pin-button {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(80, 88, 116, 0.1);
-  border-radius: 50%;
-  background: var(--te-card-bg);
-  color: #94a3b8;
-  cursor: pointer;
-  transition:
-    transform 0.2s var(--te-ease-soft),
-    background-color 0.2s var(--te-ease-soft),
-    border-color 0.2s var(--te-ease-soft),
-    color 0.2s var(--te-ease-soft);
-  margin-right: -4px;
-}
-
-.playlist-pin-button:hover,
-.playlist-pin-button.active {
-  border-color: #fed7aa;
-  background: var(--te-warning-soft-bg);
-  color: #d97706;
-}
-
-.playlist-pin-button:hover {
-  transform: scale(1.1);
-}
-
-.playlist-pin-button:disabled {
-  cursor: wait;
-  opacity: 0.68;
-  transform: none;
-}
-
-.empty-state {
-  min-height: 220px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 42px 20px;
-  text-align: center;
-  background: var(--te-card-bg);
-  border-radius: 20px;
-  border: 1px dashed rgba(80, 88, 116, 0.2);
-}
-
-.empty-icon {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  color: var(--te-primary-500, #6366f1);
-  background: #f3f0ff;
-  font-size: calc(var(--te-font-size-body, 14px) * 1.42857);
+  color: var(--te-text-secondary);
 }
-
-.empty-text {
-  margin: 14px 0 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 1.14286);
-  font-weight: 700;
-  color: var(--te-neutral-900, #1e293b);
+.playlist-item-info {
+  grid-column: 1/-1;
+  grid-row: 2;
+  min-width: 0;
 }
-
-.empty-hint {
-  margin: 6px 0 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
+.playlist-item-title {
+  font-size: var(--te-type-body);
+  line-height: 1.4;
   font-weight: 500;
-  color: var(--te-neutral-500, #64748b);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-
-:global(html[data-theme='dark'] .library-view .glass-card),
-:global(html[data-theme='dark'] .library-view .playlist-item),
-:global(html[data-theme='dark'] .library-view .empty-state) {
-  background: var(--te-glass-bg-strong);
-  border-color: var(--te-glass-border);
-  box-shadow:
-    var(--te-glass-shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+.playlist-item-count {
+  grid-row: 3;
+  grid-column: 1;
+  align-self: center;
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
 }
-
-:global(html[data-theme='dark'] .library-view .glass-card:hover),
-:global(html[data-theme='dark'] .library-view .playlist-item:hover) {
-  background: #202020;
-  box-shadow:
-    0 22px 56px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.055);
-}
-
-:global(html[data-theme='dark'] .library-view .profile-card:hover) {
-  box-shadow:
-    var(--te-glass-shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
-}
-
-:global(html[data-theme='dark'] .library-view .profile-avatar) {
-  border-color: #242424;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.32);
-}
-
-:global(html[data-theme='dark'] .library-view .profile-avatar-placeholder),
-:global(html[data-theme='dark'] .library-view .playlist-cover-placeholder),
-:global(html[data-theme='dark'] .library-view .empty-icon) {
-  background: #242016;
-  color: var(--te-primary-400);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-switch-btn),
-:global(html[data-theme='dark'] .library-view .stat-badge),
-:global(html[data-theme='dark'] .library-view .playlist-pin-button) {
-  background: #141414;
-  border-color: var(--te-card-border);
-  color: var(--te-neutral-700);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-switch-btn:hover),
-:global(html[data-theme='dark'] .library-view .provider-switch-btn.active),
-:global(html[data-theme='dark'] .library-view .provider-menu-item.active) {
-  background: rgba(245, 158, 11, 0.11);
-  border-color: rgba(var(--te-primary-rgb), 0.32);
-  color: var(--te-primary-400);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-menu) {
-  background: #181818;
-  border-color: var(--te-card-border);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.44);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-menu-item:hover),
-:global(html[data-theme='dark'] .library-view .stat-badge:hover) {
-  background: rgba(255, 255, 255, 0.065);
-}
-
-/* Profile card text stays readable on the dark card: the light palette was
-   hard-coded warm-brown, which turned the user id and labels invisible. The
-   dark neutral tokens are light (500/900), so no literal colors are needed. */
-:global(html[data-theme='dark'] .library-view .profile-info h1) {
-  color: var(--te-neutral-900);
-}
-
-:global(html[data-theme='dark'] .library-view .profile-info h3) {
-  color: var(--te-neutral-500);
-}
-
-:global(html[data-theme='dark'] .library-view .profile-info p) {
-  color: var(--te-neutral-500);
-}
-
-:global(html[data-theme='dark'] .library-view .stat-badge span) {
-  color: var(--te-neutral-500);
-}
-
-:global(html[data-theme='dark'] .library-view .favorites-card::before) {
-  background: radial-gradient(circle, rgba(var(--te-primary-rgb), 0.11) 0%, transparent 70%);
-}
-
-:global(html[data-theme='dark'] .library-view .favorites-info .tag) {
-  background: rgba(var(--te-primary-rgb), 0.13);
-  color: var(--te-primary-400);
-}
-
-:global(html[data-theme='dark'] .feature-card .feature-info .icon-wrap) {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: #07080a !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 10px 24px rgba(0, 0, 0, 0.26);
-}
-
-:global(html[data-theme='dark'] .recent-card .feature-info .icon-wrap) {
-  color: var(--te-primary-400) !important;
-}
-
-:global(html[data-theme='dark'] .ranking-card .feature-info .icon-wrap) {
-  color: #fb7185 !important;
-}
-
-:global(html[data-theme='dark'] .library-view .btn-play) {
-  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
-  color: #111111;
-  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb), 0.22);
-}
-
-:global(html[data-theme='dark'] .library-view .btn-play:hover) {
-  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.3);
-}
-
-:global(html[data-theme='dark'] .library-view .recent-card),
-:global(html[data-theme='dark'] .library-view .ranking-card) {
-  background: linear-gradient(135deg, rgba(31, 31, 31, 0.96) 0%, rgba(24, 24, 24, 0.84) 100%);
-}
-
-:global(html[data-theme='dark'] .library-view .feature-card .enter-btn) {
-  background: #141414;
-  color: var(--te-neutral-500);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
-}
-
-:global(html[data-theme='dark'] .library-view .feature-card:hover .enter-btn),
-:global(html[data-theme='dark'] .library-view .playlist-item:hover .playlist-item-arrow) {
-  color: var(--te-primary-400);
-}
-
-:global(html[data-window-transparent='on'] .library-view .glass-card),
-:global(html[data-window-transparent='on'] .library-view .playlist-item),
-:global(html[data-window-transparent='on'] .library-view .empty-state),
-:global(html[data-window-transparent='on'] .library-view .provider-menu),
-:global(html[data-window-transparent='on'] .library-view .provider-switch-btn),
-:global(html[data-window-transparent='on'] .library-view .stat-badge),
-:global(html[data-window-transparent='on'] .library-view .playlist-pin-button),
-:global(html[data-window-transparent='on'] .library-view .feature-card .enter-btn) {
-  background: var(--te-tp-card) !important;
-  background-image: none !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  box-shadow:
-    0 18px 48px rgba(0, 0, 0, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
-  backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
-  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
-}
-
-:global(html[data-window-transparent='on'] .library-view .glass-card:hover),
-:global(html[data-window-transparent='on'] .library-view .playlist-item:hover) {
-  background: var(--te-tp-card) !important;
-  box-shadow:
-    0 22px 56px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
-}
-
-:global(html[data-window-transparent='on'] .library-view .recent-card),
-:global(html[data-window-transparent='on'] .library-view .ranking-card) {
-  background: var(--te-tp-card) !important;
-}
-
-:global(html[data-window-transparent='on'] .library-view .heart-icon) {
-  background: rgba(255, 255, 255, 0.1) !important;
-}
-
-@keyframes library-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (max-width: 1080px) {
-  .top-cards,
-  .feature-cards {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-}
-
-@media (max-width: 720px) {
-  .playlist-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
-  }
-
-  .glass-card {
-    padding: 20px;
-  }
-
-  .playlist-item-title {
-    font-size: calc(var(--te-font-size-body, 14px) * 1);
-  }
-
-  .playlist-item-count {
-    font-size: calc(var(--te-font-size-body, 14px) * 0.85714);
-  }
-
-  .playlist-item-cover {
-    width: 68px;
-    height: 68px;
-  }
-
-  .profile-card,
-  .favorites-card,
-  .feature-card {
-    align-items: flex-start;
-    gap: 16px;
-  }
-
-  .feature-card {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-card,
-  .favorites-card {
-    flex-direction: column;
-  }
-
-  .favorites-cover {
-    width: 96px;
-    height: 96px;
-    align-self: center;
-    transform: rotateY(0);
-  }
-
-  .feature-preview {
-    align-self: flex-end;
-    min-width: 0;
-  }
-}
-
-.playlist-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-}
-.playlist-action-menu {
-  position: absolute;
-  width: 200px;
-  padding: 6px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 12px;
-  background: var(--te-card-bg);
-  box-shadow: 0 8px 32px #0003;
-}
-.playlist-action-menu button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 36px;
+.playlist-pin-button,
+.playlist-more-button {
+  grid-row: 3;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  min-width: var(--te-control-height-md);
+  min-height: var(--te-control-height-md);
+  padding: 4px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--te-control-radius-sm);
+  color: var(--te-text-secondary);
   background: transparent;
-  color: var(--te-danger, #dc2626);
-  cursor: pointer;
 }
-.playlist-action-menu button:hover,
-.playlist-action-menu button:focus-visible {
-  background: var(--te-hover-bg);
+.playlist-pin-button {
+  grid-column: 2;
+}
+.playlist-more-button {
+  grid-column: 3;
+}
+.playlist-pin-button.active {
+  color: var(--te-primary-500);
+}
+.playlist-item-arrow {
+  display: none;
+}
+.playlist-load-more {
+  margin-top: 24px;
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 0;
+}
+.empty-icon {
+  display: none;
+}
+.empty-text {
+  font-size: var(--te-type-headline);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.empty-hint {
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+  line-height: 1.5;
+}
+@container (max-width:720px) {
+  .library-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .library-shortcuts .favorites-card {
+    grid-column: 1 / -1;
+  }
+  .feature-info p {
+    display: none;
+  }
+}
+@container (max-width:600px) {
+  .profile-card {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .profile-stats {
+    margin-left: 60px;
+  }
+  .profile-info {
+    flex-basis: calc(100% - 60px);
+  }
 }
 </style>

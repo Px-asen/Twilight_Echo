@@ -73,7 +73,7 @@ test('motion modes, legacy overlays, discovery layout, popovers and satellite bo
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow,ipcMain,nativeTheme}=require('electron');const fs=require('node:fs/promises');const path=require('node:path');app.setPath('userData',path.join(path.dirname(process.argv.at(-1)),'user-data'));app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1000,height:880,webPreferences:{nodeIntegration:true,contextIsolation:false,backgroundThrottling:false,offscreen:true}});ipcMain.handle('motion-system',(_e,reduced)=>{nativeTheme.prefersReducedMotion=reduced});ipcMain.handle('motion-capture',async(_e,name)=>{if(process.env.TWILIGHT_MOTION_VISUAL_DIR){await fs.mkdir(process.env.TWILIGHT_MOTION_VISUAL_DIR,{recursive:true});await fs.writeFile(path.join(process.env.TWILIGHT_MOTION_VISUAL_DIR,name+'.png'),(await win.webContents.capturePage()).toPNG())}});try{await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runMotionCoverage()');console.log('MOTION_COVERAGE_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
+      `const {app,BrowserWindow,ipcMain}=require('electron');const fs=require('node:fs/promises');const path=require('node:path');app.setPath('userData',path.join(path.dirname(process.argv.at(-1)),'user-data'));app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1000,height:880,webPreferences:{nodeIntegration:true,contextIsolation:false,backgroundThrottling:false,offscreen:true}});win.webContents.debugger.attach('1.3');ipcMain.handle('motion-system',(_e,reduced)=>win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:reduced?'reduce':'no-preference'}]}));ipcMain.handle('motion-capture',async(_e,name)=>{if(process.env.TWILIGHT_MOTION_VISUAL_DIR){await fs.mkdir(process.env.TWILIGHT_MOTION_VISUAL_DIR,{recursive:true});await fs.writeFile(path.join(process.env.TWILIGHT_MOTION_VISUAL_DIR,name+'.png'),(await win.webContents.capturePage()).toPNG())}});try{await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runMotionCoverage()');console.log('MOTION_COVERAGE_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
     )
     const env = { ...process.env }
     delete env.ELECTRON_RUN_AS_NODE
@@ -172,11 +172,11 @@ window.runMotionCoverage=async()=>{
     await mount(()=>h(StreamingProviderSwitcher,{modelValue:'one',options:[{id:'one',name:'音源一',icon:'pi pi-cloud',color:'#5070d0'},{id:'two',name:'音源二',icon:'pi pi-cloud',color:'#609090'}]}))
     await flush();document.querySelector('.provider-switcher-trigger').click();await flush()
     const menu=document.querySelector('[popover]');expect(menu.matches(':popover-open'),'provider menu did not open')
-    expect(mode==='full'?getComputedStyle(menu).transform!=='none':getComputedStyle(menu).transform==='none','provider menu mode mismatch')
-    if(mode!=='off'){const a=menu.getAnimations().find(a=>a.transitionProperty==='opacity');expect(a,'provider menu did not fade '+JSON.stringify({mode,opacity:getComputedStyle(menu).opacity,transition:getComputedStyle(menu).transition,animations:menu.getAnimations().map(a=>({property:a.transitionProperty,time:a.currentTime,frames:a.effect.getKeyframes()}))}));a.pause();a.currentTime=60;expect(Number(getComputedStyle(menu).opacity)<1,'provider entry lacks intermediate state');a.play()}
+    expect(getComputedStyle(menu).transform==='none','provider menu should keep its anchor in every motion mode')
+    if(mode==='full'){const a=menu.getAnimations().find(a=>a.transitionProperty==='opacity');expect(a,'provider menu did not fade '+JSON.stringify({mode,opacity:getComputedStyle(menu).opacity,transition:getComputedStyle(menu).transition,animations:menu.getAnimations().map(a=>({property:a.transitionProperty,time:a.currentTime,frames:a.effect.getKeyframes()}))}));a.pause();a.currentTime=60;expect(Number(getComputedStyle(menu).opacity)<1,'provider entry lacks intermediate state');a.play()}
     if(mode==='full')await capture('provider-menu-enter')
     await sleep(200);document.querySelector('.provider-switcher-trigger').click();await nextTick();expect(menu.inert,'leaving menu still interactive')
-    if(mode!=='off'){await sleep(20);expect(getComputedStyle(menu).display!=='none','popover display removed before leave')}
+    if(mode==='full'){await sleep(20);expect(getComputedStyle(menu).display!=='none','popover display removed before leave')}
     await setMode('off');await sleep(30);expect(getComputedStyle(menu).display==='none','off did not release popover')
   }
   await setMode('full');const loading=ref(true),lists=ref([])

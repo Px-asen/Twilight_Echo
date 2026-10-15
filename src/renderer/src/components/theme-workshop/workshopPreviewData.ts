@@ -3,6 +3,7 @@ import type { ProviderHomeSection } from '@renderer/components/streaming-page/pr
 
 export const workshopPreviewTracks: Track[] = Array.from({ length: 48 }, (_, index) => ({
   id: `workshop-preview:${index}`,
+  source: 'local',
   title: ['夜空中的旋律', '初夏的风', 'Twilight Echo', '遥远的星光'][index % 4],
   artist: ['示例歌手', 'Hatsune Miku'][index % 2],
   album: ['青色回忆', '星海'][index % 2],

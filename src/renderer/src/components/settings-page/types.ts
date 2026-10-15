@@ -35,10 +35,12 @@ export type SectionKey =
   | 'general'
   | 'appearance'
   | 'playback'
+  | 'audio'
   | 'lyrics'
   | 'library'
   | 'connections'
   | 'system'
+  | 'about'
 export type LegacySettingsSection =
   | 'dsp'
   | 'cache'
@@ -52,12 +54,12 @@ export const LEGACY_SETTINGS_TARGETS: Record<
   LegacySettingsSection,
   { section: SectionKey; anchor: string }
 > = {
-  dsp: { section: 'playback', anchor: 'dsp' },
+  dsp: { section: 'audio', anchor: 'dsp' },
   cache: { section: 'library', anchor: 'cache' },
   performance: { section: 'system', anchor: 'setting-hardware-acceleration' },
   desktopLyrics: { section: 'lyrics', anchor: 'desktopLyrics' },
   shortcuts: { section: 'connections', anchor: 'shortcuts' },
-  about: { section: 'system', anchor: 'about' }
+  about: { section: 'about', anchor: 'about' }
 }
 export function normalizeSettingsSection(value: unknown): SectionKey {
   if (typeof value !== 'string') return 'general'
@@ -87,19 +89,19 @@ export const sections: { key: SectionKey; label: string; icon: string; descripti
     key: 'general',
     label: '通用',
     icon: 'pi pi-sliders-h',
-    description: '调整启动、窗口和日常操作习惯。'
-  },
-  {
-    key: 'appearance',
-    label: '外观',
-    icon: 'pi pi-palette',
-    description: '设置主题、背景、字体与播放器外观。'
+    description: '配色模式、启动、窗口与语言。'
   },
   {
     key: 'playback',
-    label: '播放与音效',
+    label: '播放',
+    icon: 'pi pi-play',
+    description: '播放习惯、曲目恢复、音质与歌曲衔接。'
+  },
+  {
+    key: 'audio',
+    label: '音频',
     icon: 'pi pi-volume-up',
-    description: '调整播放习惯、输出设备和声音处理。'
+    description: '输出设备、输出链路与 DSP 音效。'
   },
   {
     key: 'lyrics',
@@ -109,7 +111,7 @@ export const sections: { key: SectionKey; label: string; icon: string; descripti
   },
   {
     key: 'library',
-    label: '媒体库与存储',
+    label: '媒体库',
     icon: 'pi pi-database',
     description: '管理本地媒体库、下载目录与缓存。'
   },
@@ -121,16 +123,22 @@ export const sections: { key: SectionKey; label: string; icon: string; descripti
   },
   {
     key: 'system',
-    label: '系统与关于',
+    label: '系统',
     icon: 'pi pi-cog',
-    description: '管理性能、插件、备份与软件更新。'
+    description: '运行性能、插件设置与备份。'
+  },
+  {
+    key: 'about',
+    label: '版本与关于',
+    icon: 'pi pi-info-circle',
+    description: '版本信息、软件更新与项目信息。'
   }
 ]
 
 export const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
-  { value: 'system', label: '系统', icon: 'pi pi-desktop' },
-  { value: 'pureWhite', label: '浅色', icon: 'pi pi-sun' },
-  { value: 'dark', label: '深色', icon: 'pi pi-moon' }
+  { value: 'system', label: '跟随系统', icon: 'pi pi-desktop' },
+  { value: 'dark', label: '深色模式', icon: 'pi pi-moon' },
+  { value: 'pureWhite', label: '浅色模式', icon: 'pi pi-sun' }
 ]
 
 export const motionPreferenceOptions: { value: MotionPreference; label: string }[] = [
@@ -322,8 +330,6 @@ export const playerBarControlOptions: {
   { value: 'playMode', label: '播放顺序', icon: 'pi pi-refresh' },
   { value: 'volume', label: '音量', icon: 'pi pi-volume-up' },
   { value: 'queue', label: '播放列表', icon: 'pi pi-list' },
-  { value: 'hifi', label: 'HiFi 控制台', icon: 'ph ph-faders' },
-  { value: 'equalizer', label: '均衡器', icon: 'ph ph-sliders' },
   { value: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
   { value: 'miniPlayer', label: '迷你播放器', icon: 'ph ph-picture-in-picture' },
   {
@@ -382,7 +388,7 @@ export interface SettingsSearchEntry {
 export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   {
     id: 'audio-device',
-    section: 'playback',
+    section: 'audio',
     title: '输出设备',
     terms: '声音 输出设备 耳机 音箱 解码器 声卡 没有声音 audio device 系统默认'
   },
@@ -468,7 +474,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'track-activation',
-    section: 'general',
+    section: 'playback',
     title: '歌曲列表播放方式',
     terms: '通用 常规 语言 启动 窗口 操作 单击 双击 播放 列表 操作 习惯 激活 歌曲列表播放方式'
   },
@@ -561,32 +567,32 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'audio-output',
-    section: 'playback',
+    section: 'audio',
     title: '输出模式',
     terms: '播放 输出 引擎 DSP 音效 输出 output 设备 音频 模式 声卡 输出模式'
   },
   {
     id: 'dsd-output-mode',
-    section: 'playback',
+    section: 'audio',
     title: 'DSD 直通路由',
     terms: '播放 输出 引擎 DSP 音效 dsd 直通 路由 sacd 采样 原始 DSD 直通路由',
     disclosureId: 'dsd-routing'
   },
   {
     id: 'exclusive-mode',
-    section: 'playback',
+    section: 'audio',
     title: '独占模式',
     terms: '播放 输出 引擎 DSP 音效 独占 exclusive 输出 设备 绕过 混音 独占模式 (Exclusive)'
   },
   {
     id: 'exclusive-release',
-    section: 'playback',
+    section: 'audio',
     title: '独占模式自动启停',
     terms: '播放 输出 引擎 DSP 音效 独占 exclusive 自动 启停 暂停 释放 声卡 设备 独占模式自动启停'
   },
   {
     id: 'software-volume',
-    section: 'playback',
+    section: 'audio',
     title: '软件音量',
     terms: '播放 输出 引擎 DSP 音效 音量 削波 clip 保护 响度 安全 音量与削波保护'
   },
@@ -648,7 +654,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'advanced-engine-parameters',
-    section: 'playback',
+    section: 'audio',
     title: '高级引擎参数',
     terms:
       '播放 输出 引擎 DSP 音效 引擎 engine buffer 缓冲 采样率 位深 高级 高级引擎参数 (Advanced Engine)',
@@ -657,26 +663,26 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   {
     id: 'wasapi-push',
     fallbackId: 'exclusive-mode',
-    section: 'playback',
+    section: 'audio',
     title: 'WASAPI 独占推送模式',
     terms: '播放 输出 引擎 DSP 音效 wasapi 独占 推送 模式 windows 输出 WASAPI 独占推送模式',
     disclosureId: 'advanced-engine-parameters'
   },
   {
     id: 'dsp-master',
-    section: 'playback',
+    section: 'audio',
     title: 'DSP 音效',
     terms: 'DSP 数字音效 主开关 启用 旁路 播放 音频处理'
   },
   {
     id: 'clip-guard',
-    section: 'playback',
+    section: 'audio',
     title: '防破音保护',
     terms: '播放 输出 引擎 DSP 音效 防破音 clip guard 保护 削波 响度 防破音保护 (Clip Guard)'
   },
   {
     id: 'volume-normalization',
-    section: 'playback',
+    section: 'audio',
     title: '音量标准化 (ReplayGain / Loudnorm)',
     terms:
       '播放 输出 引擎 DSP 音效 replaygain loudnorm 音量 标准化 响度 增益 音量标准化 (ReplayGain / Loudnorm)',
@@ -686,7 +692,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'replaygain-preamp',
-    section: 'playback',
+    section: 'audio',
     title: 'Preamp',
     terms: '播放 输出 引擎 DSP 音效 preamp 增益 前置 音量 标准化 Preamp',
     disclosureId: 'dsp-details',
@@ -695,7 +701,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'replaygain-fallback',
-    section: 'playback',
+    section: 'audio',
     title: 'Fallback Gain',
     terms: '播放 输出 引擎 DSP 音效 fallback gain 增益 回退 音量 Fallback Gain',
     disclosureId: 'dsp-details',
@@ -704,7 +710,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'replaygain-clip',
-    section: 'playback',
+    section: 'audio',
     title: 'ReplayGain Clip',
     terms: '播放 输出 引擎 DSP 音效 replaygain clip 削波 限制 增益 ReplayGain Clip',
     disclosureId: 'dsp-details',
@@ -713,7 +719,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'parametric-eq',
-    section: 'playback',
+    section: 'audio',
     title: 'Parametric EQ',
     terms: '播放 输出 引擎 DSP 音效 eq 均衡 均衡器 parametric 频率 增益 Parametric EQ',
     disclosureId: 'dsp-details',
@@ -722,7 +728,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'crossfeed',
-    section: 'playback',
+    section: 'audio',
     title: '耳机交叉馈电 (Crossfeed)',
     terms: '播放 输出 引擎 DSP 音效 crossfeed 交叉 馈电 耳机 声场 空间 耳机交叉馈电 (Crossfeed)',
     disclosureId: 'dsp-details',
@@ -731,7 +737,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'crossfeed-delay',
-    section: 'playback',
+    section: 'audio',
     title: 'Crossfeed Delay',
     terms: '播放 输出 引擎 DSP 音效 crossfeed delay 延迟 交叉 馈电 Crossfeed Delay',
     disclosureId: 'dsp-details',
@@ -740,7 +746,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'crossfeed-cutoff',
-    section: 'playback',
+    section: 'audio',
     title: 'Crossfeed Cutoff',
     terms: '播放 输出 引擎 DSP 音效 crossfeed cutoff 截止 频率 交叉 馈电 Crossfeed Cutoff',
     disclosureId: 'dsp-details',
@@ -749,21 +755,21 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'vst3-enabled',
-    section: 'playback',
+    section: 'audio',
     title: '启用 VST3 宿主',
     terms: '播放 输出 引擎 DSP 音效 vst3 宿主 插件 启用 效果器 host 启用 VST3 宿主',
     disclosureId: 'vst3-settings'
   },
   {
     id: 'vst3-paths',
-    section: 'playback',
+    section: 'audio',
     title: 'VST3 搜索目录',
     terms: '播放 输出 引擎 DSP 音效 vst3 搜索 目录 插件 扫描 路径 VST3 搜索目录',
     disclosureId: 'vst3-settings'
   },
   {
     id: 'vst3-catalog',
-    section: 'playback',
+    section: 'audio',
     title: '插件目录状态',
     terms: '播放 输出 引擎 DSP 音效 插件 目录 状态 vst3 扫描 检测 插件目录状态',
     disclosureId: 'vst3-settings'
@@ -876,9 +882,9 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'color-mode',
-    section: 'appearance',
-    title: '主题模式',
-    terms: '外观 主题 界面 主题 模式 浅色 深色 系统 亮色 暗色 主题模式'
+    section: 'general',
+    title: '配色模式',
+    terms: '通用 外观 日夜 主题 模式 跟随系统 浅色模式 深色模式 亮色 暗色 配色模式'
   },
   {
     id: 'motion',
@@ -1321,31 +1327,31 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'app-version',
-    section: 'system',
+    section: 'about',
     title: '版本信息',
     terms: '系统 性能 备份 关于 版本 更新 版本 version 关于 twilight echo 名称 版本信息'
   },
   {
     id: 'app-update',
-    section: 'system',
+    section: 'about',
     title: '检查更新',
     terms: '系统 性能 备份 关于 版本 更新 更新 update 检查 版本 下载 安装 发布 检查更新'
   },
   {
     id: 'app-update-install',
-    section: 'system',
+    section: 'about',
     title: '下载 / 安装更新',
     terms: '系统 性能 备份 关于 版本 更新 更新 下载 安装 版本 发布 github releases 下载 / 安装更新'
   },
   {
     id: 'project-support',
-    section: 'system',
+    section: 'about',
     title: '支持项目发展',
     terms: '系统 性能 备份 关于 版本 更新 赞助 支持 捐赠 项目 开源 爱发电 支持项目发展'
   },
   {
     id: 'project-links',
-    section: 'system',
+    section: 'about',
     title: '开源致谢与交流群',
     terms: '系统 性能 备份 关于 版本 更新 开源 致谢 交流 群 社区 感谢 license 开源致谢与交流群'
   },
@@ -1407,14 +1413,14 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'dsd-compatible-route',
-    section: 'playback',
+    section: 'audio',
     title: 'DSD 兼容层路由',
     terms: '播放 输出 引擎 DSP 音效 dsd asio 代理 兼容 直通',
     disclosureId: 'dsd-routing'
   },
   {
     id: 'dsd-route-backend',
-    section: 'playback',
+    section: 'audio',
     title: '路由后端',
     terms: '播放 输出 引擎 DSP 音效 dsd 后端 asio 代理',
     disclosureId: 'dsd-routing',
@@ -1422,7 +1428,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'dsd-route-device',
-    section: 'playback',
+    section: 'audio',
     title: '路由设备',
     terms: '播放 输出 引擎 DSP 音效 dsd 设备 驱动',
     disclosureId: 'dsd-routing',
@@ -1430,7 +1436,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'dsd-route-upsampling',
-    section: 'playback',
+    section: 'audio',
     title: 'PCM→DSD 上采样也走此路由',
     terms: '播放 输出 引擎 DSP 音效 pcm dsd 上采样 兼容',
     disclosureId: 'dsd-routing',
@@ -1438,7 +1444,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'dsd-route-strict',
-    section: 'playback',
+    section: 'audio',
     title: '严格直通模式',
     terms: '播放 输出 引擎 DSP 音效 dsd 严格 直通 回退',
     disclosureId: 'dsd-routing',
@@ -1452,28 +1458,28 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'buffer-size',
-    section: 'playback',
+    section: 'audio',
     title: '缓冲大小',
     terms: '播放 输出 引擎 DSP 音效 buffer size 缓冲 延迟',
     disclosureId: 'advanced-engine-parameters'
   },
   {
     id: 'channel-routing',
-    section: 'playback',
+    section: 'audio',
     title: '声道路由',
     terms: '播放 输出 引擎 DSP 音效 routing 声道 环绕 上混',
     disclosureId: 'advanced-engine-parameters'
   },
   {
     id: 'pcm-to-dsd',
-    section: 'playback',
+    section: 'audio',
     title: 'PCM 转 DSD',
     terms: '播放 输出 引擎 DSP 音效 上采样 pcm dsd',
     disclosureId: 'advanced-engine-parameters'
   },
   {
     id: 'dsd-rate-policy',
-    section: 'playback',
+    section: 'audio',
     title: 'DSD 采样率策略',
     terms: '播放 输出 引擎 DSP 音效 dsd rate policy 回退',
     disclosureId: 'dsp-details',
@@ -1482,7 +1488,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'sacd-program',
-    section: 'playback',
+    section: 'audio',
     title: 'SACD 声道节目',
     terms: '播放 输出 引擎 DSP 音效 sacd program 声道 多声道',
     disclosureId: 'dsp-details',
@@ -1491,7 +1497,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'fft-capture',
-    section: 'playback',
+    section: 'audio',
     title: '频谱采集',
     terms: '播放 输出 引擎 DSP 音效 fft capture 频谱 分辨率',
     disclosureId: 'dsp-details',

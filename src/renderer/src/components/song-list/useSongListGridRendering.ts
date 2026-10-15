@@ -3,8 +3,10 @@ import { filterLocalGridItems } from '../../utils/localLibrarySearch'
 import type { GridItem, LocalTransitionName } from './types'
 import {
   estimateGridColumns,
+  estimateGridColumnWidth,
   estimateGridRowStride,
   estimateAlbumGridRowStride,
+  resolveGridLayoutMetrics,
   getSongListGridScrollTopForIndex,
   getSongListGridVirtualRange,
   GRID_OVERSCAN_ROWS
@@ -71,7 +73,7 @@ export function useSongListGridRendering({
   const filteredGridItems = computed(() =>
     filterLocalGridItems(currentGridItems.value, debouncedSearchQuery.value)
   )
-  const leadingSlotCount = computed(() => (category() === 'playlists' ? 1 : 0))
+  const leadingSlotCount = computed(() => 0)
   const virtualItemCount = computed(() => filteredGridItems.value.length + leadingSlotCount.value)
   const gridTotalCount = computed(() => filteredGridItems.value.length)
   const localTransitionName = computed<LocalTransitionName>(() =>
@@ -120,21 +122,48 @@ export function useSongListGridRendering({
   )
   const visibleFolders = computed(() => (category() === 'folders' ? visibleGridItems.value : []))
 
-  function estimateFromContainer(): void {
+  function estimateFromContainer(grid: HTMLElement | null = null, measuredColumns = 0): void {
     const container = containerRef.value
-    const width = container?.clientWidth || 960
-    const viewportWidth = window.innerWidth || width
-    gridColumns.value = estimateGridColumns(width, viewportWidth)
-    const columnWidth = width / Math.max(1, gridColumns.value)
-    const fontSize = container
-      ? Number.parseFloat(
-          window.getComputedStyle(container).getPropertyValue('--te-font-size-body')
-        ) || 14
-      : 14
+    const containerStyle = container ? window.getComputedStyle(container) : null
+    const pixels = (
+      style: CSSStyleDeclaration | null,
+      property: string,
+      fallback: number
+    ): number => {
+      const value = Number.parseFloat(style?.getPropertyValue(property) ?? '')
+      return Number.isFinite(value) && value >= 0 ? value : fallback
+    }
+    const contentWidth = Math.max(
+      1,
+      (container?.clientWidth || 960) -
+        pixels(containerStyle, 'padding-left', 0) -
+        pixels(containerStyle, 'padding-right', 0)
+    )
+    const compact = document.documentElement.dataset.teLibraryDensity === 'compact'
+    const metrics = resolveGridLayoutMetrics(contentWidth, compact)
+    const gridStyle = grid ? window.getComputedStyle(grid) : null
+    const width = grid
+      ? Math.max(
+          1,
+          grid.clientWidth -
+            pixels(gridStyle, 'padding-left', 0) -
+            pixels(gridStyle, 'padding-right', 0)
+        )
+      : contentWidth
+    metrics.minColumnWidth = pixels(gridStyle, '--te-grid-card-min', metrics.minColumnWidth)
+    metrics.maxColumnWidth = pixels(gridStyle, '--te-grid-card-max', metrics.maxColumnWidth)
+    metrics.padX = pixels(gridStyle, '--te-grid-card-pad-x', metrics.padX)
+    metrics.padY = pixels(gridStyle, '--te-grid-card-pad-y', metrics.padY)
+    metrics.columnGap = pixels(gridStyle, 'column-gap', metrics.columnGap)
+    metrics.rowGap = pixels(gridStyle, 'row-gap', metrics.rowGap)
+    gridColumns.value =
+      measuredColumns || estimateGridColumns(width, metrics, virtualItemCount.value)
+    const columnWidth = estimateGridColumnWidth(width, gridColumns.value, metrics)
+    const fontSize = pixels(containerStyle, '--te-font-size-body', 14) || 14
     gridRowStride.value =
       category() === 'albums'
-        ? estimateAlbumGridRowStride(columnWidth, viewportWidth, fontSize)
-        : estimateGridRowStride(columnWidth, viewportWidth)
+        ? estimateAlbumGridRowStride(columnWidth, metrics, fontSize)
+        : estimateGridRowStride(columnWidth, metrics, fontSize)
   }
 
   function measureGridMetrics(): void {
@@ -149,9 +178,19 @@ export function useSongListGridRendering({
       return
     }
     gridOffsetTop.value = grid.offsetTop
-    const template = window.getComputedStyle(grid).gridTemplateColumns
-    const columns = template.split(/\s+/).filter(Boolean).length
+    const previousColumns = gridColumns.value
+    estimateFromContainer(grid)
+    if (gridColumns.value !== previousColumns) {
+      // Let the column binding lay out the cards before measuring their height.
+      void nextTick(scheduleMeasure)
+      return
+    }
+    const gridStyle = window.getComputedStyle(grid)
+    const columns = gridStyle.gridTemplateColumns
+      .split(/\s+/)
+      .filter((track) => Number.isFinite(Number.parseFloat(track))).length
     if (columns > 0) gridColumns.value = columns
+    else estimateFromContainer(grid)
     const firstCard = grid.querySelector<HTMLElement>('.artist-card, .album-card, .playlist-card')
     if (
       typeof ResizeObserver !== 'undefined' &&
@@ -170,11 +209,12 @@ export function useSongListGridRendering({
       observedCard = firstCard
     }
     if (firstCard) {
-      const gap = Number.parseFloat(window.getComputedStyle(grid).rowGap) || 22
+      const rowGap = Number.parseFloat(gridStyle.rowGap)
+      const gap = Number.isFinite(rowGap) ? rowGap : 22
       gridRowStride.value = Math.max(1, firstCard.getBoundingClientRect().height + gap)
       return
     }
-    estimateFromContainer()
+    estimateFromContainer(grid, columns)
   }
 
   function scheduleMeasure(): void {

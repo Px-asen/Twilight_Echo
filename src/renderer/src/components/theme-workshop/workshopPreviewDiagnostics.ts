@@ -1,7 +1,10 @@
 import { themeContrastRatio } from '../../../../shared/theme.ts'
 import type { WorkshopDiagnostic } from '../../../../shared/themeWorkshopDiagnostics.ts'
 
-export function inspectWorkshopPreview(doc: Document): WorkshopDiagnostic[] {
+export function inspectWorkshopPreview(
+  doc: Document,
+  scope: ParentNode = doc
+): WorkshopDiagnostic[] {
   const view = doc.defaultView
   if (!view) return []
   const diagnostics: WorkshopDiagnostic[] = []
@@ -12,7 +15,7 @@ export function inspectWorkshopPreview(doc: Document): WorkshopDiagnostic[] {
     ['播放栏文字', '.player-bar .track-title, .player-bar .song-title, .player-bar button']
   ]
   for (const [label, selector] of targets) {
-    const element = [...doc.querySelectorAll<HTMLElement>(selector)].find(
+    const element = [...scope.querySelectorAll<HTMLElement>(selector)].find(
       (item) =>
         item.getBoundingClientRect().width > 0 &&
         item.textContent?.trim() &&
@@ -81,7 +84,7 @@ export function inspectWorkshopPreview(doc: Document): WorkshopDiagnostic[] {
     '.app-shell-content',
     '.app-shell-player'
   ]) {
-    const element = doc.querySelector<HTMLElement>(selector)
+    const element = scope.querySelector<HTMLElement>(selector)
     if (!element || !element.clientWidth || !element.clientHeight) continue
     const style = view.getComputedStyle(element)
     if (style.overflowX === 'auto' || style.overflowX === 'scroll') continue

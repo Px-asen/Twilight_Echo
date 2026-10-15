@@ -8,19 +8,11 @@ function fixture(): HTMLImageElement {
 
 test('network, executable and file URLs never enter the material image loader', async () => {
   let created = 0
-  for (const source of [
-    'https://example.com/image.png',
-    'http://localhost/a',
-    'javascript:alert(1)',
-    'file:///C:/private.png'
-  ]) {
-    await assert.rejects(
-      loadLiquidGlassContextImage(source, new AbortController().signal, () => {
-        created++
-        return fixture()
-      }),
-      /Untrusted/
-    )
+  for (const source of ['https://example.com/image.png', 'http://localhost/a', 'javascript:alert(1)', 'file:///C:/private.png']) {
+    await assert.rejects(loadLiquidGlassContextImage(source, new AbortController().signal, () => {
+      created++
+      return fixture()
+    }), /Untrusted/)
   }
   assert.equal(created, 0)
 })
@@ -38,18 +30,11 @@ test('obsolete and disposed loads clear the source, handlers and abort listener'
 
 test('stalled and failed local images release their resource references', async () => {
   const image = fixture()
-  await assert.rejects(
-    loadLiquidGlassContextImage('background:test', new AbortController().signal, () => image, 10),
-    /timed out/
-  )
+  await assert.rejects(loadLiquidGlassContextImage('background:test', new AbortController().signal, () => image, 10), /timed out/)
   assert.equal(image.src, '')
   assert.equal(image.onload, null)
   const failed = fixture()
-  const result = loadLiquidGlassContextImage(
-    'cover:missing',
-    new AbortController().signal,
-    () => failed
-  )
+  const result = loadLiquidGlassContextImage('cover:missing', new AbortController().signal, () => failed)
   failed.onerror?.call(failed, new Event('error'))
   await assert.rejects(result, /could not load/)
   assert.equal(failed.src, '')

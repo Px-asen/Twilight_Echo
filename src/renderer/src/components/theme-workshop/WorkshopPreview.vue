@@ -15,17 +15,7 @@ import {
 import { inspectWorkshopPreview } from '@renderer/components/theme-workshop/workshopPreviewDiagnostics'
 import type { WorkshopSurface, WorkshopLayer } from '../../../../shared/themeWorkshopLayers.ts'
 import type { WorkshopDiagnostic } from '../../../../shared/themeWorkshopDiagnostics.ts'
-import LocalDashboard from '@renderer/components/LocalDashboard.vue'
-import SongList from '@renderer/components/SongList.vue'
-import TitleBar from '@renderer/components/TitleBar.vue'
-import SideMenu from '@renderer/components/SideMenu.vue'
-import PlayerBar from '@renderer/components/PlayerBar.vue'
-import ProviderMusicHome from '@renderer/components/streaming-page/ProviderMusicHome.vue'
-import StreamingDetailStage from '@renderer/components/streaming-page/StreamingDetailStage.vue'
-import {
-  workshopPreviewTracks,
-  workshopPreviewSections
-} from '@renderer/components/theme-workshop/workshopPreviewData'
+import WorkshopPreviewScene from './WorkshopPreviewScene.vue'
 
 const props = defineProps<{
   project: WorkshopProject
@@ -44,7 +34,6 @@ const emit = defineEmits<{
   edit: [id: string, surface: WorkshopSurface, patch: Partial<WorkshopLayer>]
   gesture: [action: 'begin' | 'end' | 'cancel']
 }>()
-const tracks = computed(() => (props.state === 'empty' ? [] : workshopPreviewTracks))
 const frame = ref<HTMLIFrameElement>()
 const target = shallowRef<HTMLElement>()
 let sheet: HTMLStyleElement | undefined
@@ -234,103 +223,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <Teleport v-if="target" :to="target">
-      <div class="app-shell" :data-workshop-state="state">
-        <div class="app-shell-title" inert>
-          <TitleBar
-            preview
-            :immersive="surface === 'player'"
-            :menu-open="true"
-            :glass="false"
-            :streaming="false"
-            title-surface="default"
-          />
-        </div>
-        <div class="app-shell-navigation" inert>
-          <SideMenu :open="true" active-key="local-home" />
-        </div>
-        <div class="app-shell-content">
-          <main
-            class="main-content menu-open"
-            :inert="surface !== 'settings'"
-            style="height: 100%; min-height: 0; overflow: auto"
-            :data-workshop-state="state"
-          >
-            <SongList
-              v-if="surface === 'library'"
-              category="allSongs"
-              :filter="null"
-              :has-player="true"
-              transition-name="page-down"
-              :preview-tracks="tracks"
-              :data-workshop-state="state"
-            />
-            <div
-              v-else-if="surface === 'streaming' || surface === 'streaming-list'"
-              class="streaming-page"
-            >
-              <div class="streaming-content" :data-workshop-state="state">
-                <ProviderMusicHome
-                  class="home-view"
-                  v-if="surface === 'streaming'"
-                  provider-label="主题预览"
-                  :is-logged-in="true"
-                  :recs-loading="state === 'loading'"
-                  recs-error=""
-                  :rec-sections="state === 'empty' ? [] : workshopPreviewSections"
-                  :recommend-playlists="[]"
-                />
-                <StreamingDetailStage
-                  v-else
-                  kind="playlist"
-                  title="主题预览歌单"
-                  track-count-label="48 首"
-                  :tracks="tracks"
-                  :loading="state === 'loading'"
-                  :is-selected="(id) => state === 'selected' && id === 'workshop-preview:1'"
-                  :is-track-liked="() => false"
-                  :is-liking="() => false"
-                  :format-time="
-                    (seconds) =>
-                      `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-                  "
-                />
-              </div>
-            </div>
-            <section
-              v-else-if="surface === 'settings'"
-              class="settings-preview-page settings-page"
-              :data-workshop-state="state"
-            >
-              <div class="settings-section">
-                <h2>外观与控件预览</h2>
-                <label>输入框<input value="我的主题" /></label
-                ><label>开关<input type="checkbox" checked /></label
-                ><label>滑块<input type="range" value="65" /></label
-                ><button class="primary-button">主要按钮</button><button>普通按钮</button
-                ><button disabled>禁用按钮</button
-                ><select>
-                  <option>下拉菜单</option>
-                </select>
-              </div>
-            </section>
-            <section v-else-if="surface === 'player'" class="settings-preview-page">
-              <h2>播放栏与歌曲信息</h2>
-              <p>检查封面、标题、进度和播放按钮。画布不会操作真实播放。</p>
-            </section>
-            <LocalDashboard v-else :preview-tracks="tracks" :data-workshop-state="state" />
-          </main>
-        </div>
-        <div class="app-shell-player" inert>
-          <PlayerBar
-            :glass="false"
-            :menu-open="true"
-            preview
-            :preview-track="workshopPreviewTracks[0]"
-            :preview-state="state"
-            :data-workshop-state="state"
-          />
-        </div>
-      </div>
+      <WorkshopPreviewScene :surface="surface" :state="state" />
     </Teleport>
   </div>
 </template>

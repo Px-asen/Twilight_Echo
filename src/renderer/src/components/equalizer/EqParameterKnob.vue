@@ -20,7 +20,7 @@ const faceRef = ref<HTMLElement | null>(null)
 const displayedValue = ref(props.value)
 const heldPointer = ref<number | null>(null)
 const labels = { frequency: '频率', gain: '增益', q: 'Q 值' }
-const captions = { frequency: 'FREQ', gain: 'GAIN', q: 'Q' }
+const captions = { frequency: '频率', gain: '增益', q: 'Q' }
 const limits = computed(() => eqParameterLimits[props.field])
 const position = computed(() => eqParameterPosition(props.field, displayedValue.value))
 const readout = computed(() =>
@@ -262,10 +262,8 @@ defineExpose({ finishInteraction })
   inset: 8px;
   border: 1px solid var(--eq-knob-edge);
   border-radius: 50%;
-  background: linear-gradient(145deg, var(--eq-knob-light), var(--eq-knob-dark));
-  box-shadow:
-    inset 0 1px 1px var(--eq-highlight),
-    0 2px 5px var(--eq-shadow);
+  background: var(--eq-control-bg);
+  box-shadow: none;
 }
 .knob-disc i {
   position: absolute;
@@ -282,16 +280,15 @@ defineExpose({ finishInteraction })
   background: var(--eq-text-muted);
 }
 .knob-face:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
 }
 .dragging .knob-disc {
   border-color: var(--eq-response);
 }
 .knob-caption {
   color: var(--eq-text-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.14em;
 }
 .knob-readout {
   display: flex;
@@ -324,7 +321,7 @@ defineExpose({ finishInteraction })
 }
 .knob-readout input:focus {
   outline: none;
-  border-color: var(--eq-response);
+  border-color: var(--te-control-focus-color);
 }
 .knob-readout input::-webkit-inner-spin-button,
 .knob-readout input::-webkit-outer-spin-button {

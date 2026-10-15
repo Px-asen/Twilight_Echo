@@ -29,6 +29,7 @@ test('playbar body and artwork use single pixel coverage across DPI', async () =
     assert.deepEqual(style.errors, [])
     const global =
       (await readFile(join(root, 'src/renderer/src/assets/base.css'), 'utf8')) +
+      (await readFile(join(root, 'src/renderer/src/assets/materials.css'), 'utf8')) +
       (await readFile(join(root, 'src/renderer/src/assets/bohr.css'), 'utf8'))
     await writeFile(
       join(directory, 'index.html'),

@@ -58,7 +58,8 @@ test('content surfaces no longer register optical filters or geometry/pointer ob
   assert.doesNotMatch(liquidGlassSettings, /扩展实验|首页媒体焦点液态玻璃|setLiquidGlassCoverage/)
   assert.match(liquidGlassSettings, /内容卡片使用普通材质/)
   assert.match(app, /:active="playbarRefractionActive"/)
-  assert.match(defs, /document.querySelector\('\.app-shell-player'\)/)
+  assert.match(defs, /doc.querySelector\('\.app-shell-player'\)/)
+  assert.match(defs, /props.targetDocument \?\? document/)
 })
 
 test('every theme runtime return path emits all chrome material targets', () => {
@@ -171,7 +172,7 @@ test('playbar pointer tracking remains element-local', () => {
   assert.match(playerBar, /@pointermove="onGlassPointerMove"/)
   assert.match(playerBar, /playerBarRef\.value/)
   assert.doesNotMatch(playerBar, /document\.elementFromPoint/)
-  assert.match(playerBar, /effectiveSurfaceMaterial\.value !== 'transparent'/)
+  assert.match(playerBar, /props.previewAppearance\?\.surfaceMaterial \?\? effectiveSurfaceMaterial\.value/)
   assert.match(playerBar, /effectiveLiquidGlass\.value\.followPointer/)
   assert.doesNotMatch(playerBar, /settings\.value\.(surfaceMaterial|liquidGlass)/)
 })
@@ -343,11 +344,11 @@ test('browser press states preserve glass panel geometry and keyboard feedback',
       `const { app, BrowserWindow } = require('electron');
       const assert = require('node:assert/strict');
       app.whenReady().then(async () => {
-        const win = new BrowserWindow({ show: false, width: 1000, height: 800 });
+        const win = new BrowserWindow({ show: false, width: 1000, height: 800, webPreferences: { offscreen: true, backgroundThrottling: false } });
         try {
           await win.loadFile(process.argv.at(-1));
           const run = code => win.webContents.executeJavaScript(code);
-          const settle = () => run('document.getAnimations().filter(animation => animation instanceof CSSTransition).forEach(animation => animation.finish())');
+          const settle = () => run('new Promise(resolve => {document.getAnimations().filter(animation => animation instanceof CSSTransition).forEach(animation => animation.finish());requestAnimationFrame(() => requestAnimationFrame(resolve))})');
           win.webContents.debugger.attach('1.3');
           const { root } = await win.webContents.debugger.sendCommand('DOM.getDocument');
           await win.webContents.debugger.sendCommand('CSS.enable');
@@ -358,6 +359,7 @@ test('browser press states preserve glass panel geometry and keyboard feedback',
           const snapshot = id => run('(() => { const el = document.getElementById(' + JSON.stringify(id) + '); const r = el.getBoundingClientRect(), p = el.parentElement.getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height, parent:[p.x,p.y,p.width,p.height], opacity:getComputedStyle(el).opacity, parentOpacity:getComputedStyle(el.parentElement).opacity }; })()');
           for (const mode of ['full', 'reduced', 'off']) {
             await run('document.documentElement.dataset.teMotion = ' + JSON.stringify(mode));
+            await settle();
             for (const id of ['hero', 'card', 'player', 'positioned', 'disabled', 'aria-disabled']) {
               const before = await snapshot(id);
               await force('#' + id, ['active']);

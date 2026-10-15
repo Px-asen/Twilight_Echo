@@ -29,10 +29,20 @@ export function useMotionPreference(preference: Ref<MotionPreference>): void {
   }
 
   const onChange = (): void => apply()
+  const applyVisibility = (): void => {
+    document.documentElement.dataset.teVisibility = document.hidden ? 'hidden' : 'visible'
+  }
   mediaQuery?.addEventListener('change', onChange)
   watch(preference, apply, { immediate: true })
+  if (typeof document !== 'undefined') {
+    applyVisibility()
+    document.addEventListener('visibilitychange', applyVisibility)
+  }
 
   onBeforeUnmount(() => {
     mediaQuery?.removeEventListener('change', onChange)
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', applyVisibility)
+    }
   })
 }

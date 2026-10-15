@@ -470,7 +470,7 @@ html[data-te-preset-layout='neon-gradient'] .home-view .hero-stage .hero-collage
   border-radius: 6px;
   box-shadow:
     0 0 0 1px var(--ng-line),
-    0 18px 42px color-mix(in srgb, var(--te-neutral-900) 26%, transparent),
+    0 18px 42px color-mix(in srgb, var(--te-content-shadow-color) 26%, transparent),
     0 0 26px var(--ng-glow-b);
 }
 
@@ -597,8 +597,8 @@ html[data-te-preset-layout='neon-gradient'] .playing-music .cover-column .cover-
     0 0 0 1px color-mix(in srgb, var(--te-primary-500) 52%, transparent),
     0 0 44px var(--ng-glow-a),
     0 0 120px var(--ng-glow-b),
-    0 36px 90px color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
-  animation: ng-stage-breathe 6.5s ease-in-out infinite;
+    0 36px 90px color-mix(in srgb, var(--te-content-shadow-color) 34%, transparent);
+  animation: none;
 }
 
 /* 标题大字居中发光（titleAlign=center 已居中） */
@@ -637,14 +637,4 @@ html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
   .cover-column
   .cover-frame {
   animation: none;
-}
-
-@keyframes ng-stage-breathe {
-  0%,
-  100% {
-    filter: brightness(1);
-  }
-  50% {
-    filter: brightness(1.06);
-  }
 }

@@ -370,7 +370,7 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 .history-list:focus-visible {
-  outline: 2px solid var(--accent-color, #6b5cff);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 button[aria-pressed='true'],

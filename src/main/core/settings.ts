@@ -12,6 +12,7 @@ import {
 } from '../../shared/downloadPreferences.ts'
 import { app } from 'electron'
 import { normalizeAppBackgroundSettings } from '../../shared/appAppearance.ts'
+import { normalizeAppearanceLayers } from '../../shared/appearanceLayers.ts'
 import {
   normalizeContinuityOutputConfig,
   normalizeOutputConfig as normalizeSharedOutputConfig
@@ -484,6 +485,7 @@ export function normalizeHexColor(value: unknown, fallback: string): string {
 }
 
 export function normalizeBackgroundKind(value: unknown): AppBackgroundKind {
+  if (value === 'theme' || value === 'none') return 'theme'
   return value === 'image' ? 'image' : 'color'
 }
 
@@ -730,6 +732,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
       settings.cardAppearance?.background
     ),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),
+    appearanceLayers: normalizeAppearanceLayers(settings.appearanceLayers),
     surfaceMaterial: normalizeSurfaceMaterial(settings.surfaceMaterial),
     liquidGlass: normalizeLiquidGlass(settings.liquidGlass),
     playerBar: normalizePlayerBarSettings(settings.playerBar),

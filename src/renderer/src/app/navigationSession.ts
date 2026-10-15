@@ -1,12 +1,13 @@
 import type { UiContribution } from '../extensions/registry'
 import type { NavigationPageTarget, StreamingPageTab } from './navigationPages.ts'
-import type { SettingsSection, ThemeStudioDomain } from './useAppNavigation'
+import type { AppearanceWorkspaceTab, SettingsSection, ThemeStudioDomain } from './useAppNavigation'
 import { normalizeSettingsSection } from '../components/settings-page/types.ts'
 
 export type NavigationOverlay =
   | 'playing'
   | 'login'
   | 'settings'
+  | 'appearance'
   | 'theme'
   | 'plugins'
   | 'equalizer'
@@ -25,6 +26,7 @@ export interface NavigationSession {
   menuOpen: boolean
   settingsSection: SettingsSection
   themeStudioDomain: ThemeStudioDomain
+  appearanceTab?: AppearanceWorkspaceTab
   themeReturn: 'playing' | 'settings' | null
   loginPageMode: 'login' | 'profile'
   loginProviderId: string | null
@@ -53,6 +55,7 @@ const overlays = new Set<NavigationOverlay>([
   'playing',
   'login',
   'settings',
+  'appearance',
   'theme',
   'plugins',
   'equalizer',
@@ -131,6 +134,13 @@ export function normalizeNavigationSession(value: unknown): NavigationSession | 
   const pageTarget = normalizeTarget(value.pageTarget)
   if (!pageTarget) return null
   const lastLocal = normalizeTarget(value.lastLocal)
+  const overlayHistory: Array<NavigationOverlay | null> = Array.isArray(value.overlayHistory)
+    ? value.overlayHistory.slice(-20).filter((entry) => entry === null || member(overlays, entry))
+    : []
+  // Earlier local previews stored the avatar expansion as a full-page overlay.
+  const overlay = value.overlay === 'account'
+    ? (overlayHistory.pop() ?? null)
+    : member(overlays, value.overlay) ? value.overlay : null
   return {
     version: 1,
     pageTarget,
@@ -138,15 +148,17 @@ export function normalizeNavigationSession(value: unknown): NavigationSession | 
       ? value.history.slice(-50).flatMap((entry) => normalizeTarget(entry) ?? [])
       : [],
     lastLocal: lastLocal?.kind === 'local' ? lastLocal : navigationHome(),
-    overlay: member(overlays, value.overlay) ? value.overlay : null,
-    overlayHistory: Array.isArray(value.overlayHistory)
-      ? value.overlayHistory.slice(-20).filter((entry) => entry === null || member(overlays, entry))
-      : [],
+    overlay,
+    overlayHistory,
     menuOpen: value.menuOpen === true,
     settingsSection: normalizeSettingsSection(value.settingsSection),
     themeStudioDomain: member(themeDomains, value.themeStudioDomain)
       ? value.themeStudioDomain
       : 'presets',
+    appearanceTab:
+      value.appearanceTab === 'studio' || value.appearanceTab === 'workshop'
+        ? value.appearanceTab
+        : 'adjust',
     themeReturn:
       value.themeReturn === 'settings' || value.themeReturn === 'playing'
         ? value.themeReturn

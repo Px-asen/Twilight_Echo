@@ -77,49 +77,70 @@ export type PlayerBarRegions = Record<PlayerBarRegionName, PlayerBarControlId[]>
 export type PlayerBarLayoutSettings = Record<PlayerBarMode, PlayerBarRegions>
 
 /**
- * Artwork and metadata stay on the left, transport and seeking in the center,
- * and utility controls on the right. Mini's progress rail owns its center.
+ * Ordinary pages keep artwork and metadata on the left. The now-playing page
+ * applies its separate desktop arrangement without changing saved layouts.
  */
 export const DEFAULT_PLAYER_BAR_LAYOUT: PlayerBarLayoutSettings = {
   standard: {
     left: ['cover', 'trackInfo'],
-    center: ['transport'],
-    right: ['favorite', 'playMode', 'volume', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
+    center: ['playMode', 'transport', 'volume'],
+    right: ['favorite', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
   },
+  mini: {
+    left: ['playMode', 'transport', 'volume'],
+    center: [],
+    right: ['queue', 'hifi', 'exitPlayingPage']
+  },
+  compact: {
+    // The artwork leads this strip and opens the now-playing page. With a cover placed,
+    // `trackTitleOpensPlayingPage` stands down and the title is plain text again.
+    left: ['cover', 'trackInfo', 'favorite', 'miniPlayer'],
+    center: ['playMode', 'transport', 'volume'],
+    // `exitPlayingPage` renders only while the now-playing page is open, so it
+    // costs the main window nothing and is what gets you back out. Mini's default
+    // carries it for the same reason; without it the page was reachable from the
+    // strip but could only be dismissed by clicking the same entry again.
+    right: ['time', 'hifi', 'equalizer', 'desktopLyrics', 'queue', 'exitPlayingPage']
+  }
+}
+
+export const NOW_PLAYING_STANDARD_REGIONS: PlayerBarRegions = {
+  left: ['trackInfo', 'favorite', 'miniPlayer'],
+  center: ['playMode', 'transport', 'volume'],
+  right: ['hifi', 'desktopLyrics', 'queue']
+}
+
+const LEGACY_STANDARD_REGIONS: PlayerBarRegions = {
+  left: ['cover', 'trackInfo'],
+  center: ['transport'],
+  right: ['favorite', 'playMode', 'volume', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
+}
+
+const LEGACY_DENSE_REGIONS: Record<'mini' | 'compact', PlayerBarRegions> = {
   mini: {
     left: ['playPause'],
     center: [],
     right: ['playMode', 'volume', 'queue', 'hifi', 'exitPlayingPage']
   },
   compact: {
-    // The artwork leads this strip and opens the now-playing page. With a cover placed,
-    // `trackTitleOpensPlayingPage` stands down and the title is plain text again.
     left: ['cover', 'trackInfo', 'favorite', 'miniPlayer'],
     center: ['playMode', 'transport', 'equalizer'],
-    // `exitPlayingPage` renders only while the now-playing page is open, so it
-    // costs the main window nothing and is what gets you back out. Mini's default
-    // carries it for the same reason; without it the page was reachable from the
-    // strip but could only be dismissed by clicking the same entry again.
     right: ['time', 'hifi', 'volume', 'desktopLyrics', 'queue', 'exitPlayingPage']
   }
 }
 
-const PREVIOUS_NOW_PLAYING_REGIONS: PlayerBarRegions = {
-  left: ['trackInfo', 'favorite', 'miniPlayer'],
-  center: ['playMode', 'transport', 'volume'],
-  right: ['hifi', 'desktopLyrics', 'queue']
+function isLegacyStandardPlayerBar(raw: unknown): boolean {
+  return sameRegions(raw, LEGACY_STANDARD_REGIONS) || sameRegions(raw, NOW_PLAYING_STANDARD_REGIONS)
 }
 
-const PREVIOUS_STANDARD_REGIONS: PlayerBarRegions = {
-  left: ['cover', 'trackInfo'],
-  center: ['playMode', 'transport', 'volume'],
-  right: ['favorite', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
+function isLegacyPlayerBar(raw: unknown, mode: PlayerBarMode): boolean {
+  return mode === 'standard'
+    ? isLegacyStandardPlayerBar(raw)
+    : sameRegions(raw, LEGACY_DENSE_REGIONS[mode])
 }
 
-function isPreviousDefaultPlayerBar(raw: unknown): boolean {
-  return (
-    sameRegions(raw, PREVIOUS_STANDARD_REGIONS) || sameRegions(raw, PREVIOUS_NOW_PLAYING_REGIONS)
-  )
+export function isDefaultStandardPlayerBar(regions: PlayerBarRegions): boolean {
+  return sameRegions(regions, DEFAULT_PLAYER_BAR_LAYOUT.standard)
 }
 
 function sameRegions(raw: unknown, expected: PlayerBarRegions): boolean {
@@ -201,8 +222,7 @@ export function normalizePlayerBarLayout(raw: unknown): PlayerBarLayoutSettings 
   const value = isRecord(raw) ? raw : {}
   const result = {} as PlayerBarLayoutSettings
   for (const mode of Object.keys(DEFAULT_PLAYER_BAR_LAYOUT) as PlayerBarMode[]) {
-    const stored =
-      mode === 'standard' && isPreviousDefaultPlayerBar(value[mode]) ? undefined : value[mode]
+    const stored = isLegacyPlayerBar(value[mode], mode) ? undefined : value[mode]
     result[mode] = normalizeRegions(stored, DEFAULT_PLAYER_BAR_LAYOUT[mode], mode)
   }
   return result
@@ -228,13 +248,15 @@ export function clonePlayerBarLayout(value: PlayerBarLayoutSettings): PlayerBarL
  */
 export function resolvePlayerBarRegions(
   layout: PlayerBarLayoutSettings | undefined,
-  mode: PlayerBarMode
+  mode: PlayerBarMode,
+  onPlayingPage = false
 ): PlayerBarRegions {
   const stored = layout?.[mode] ?? DEFAULT_PLAYER_BAR_LAYOUT[mode]
   // Migrate exact former defaults; custom arrangements keep their placement.
-  return mode === 'standard' && isPreviousDefaultPlayerBar(stored)
-    ? DEFAULT_PLAYER_BAR_LAYOUT.standard
-    : stored
+  const regions = isLegacyPlayerBar(stored, mode) ? DEFAULT_PLAYER_BAR_LAYOUT[mode] : stored
+  return onPlayingPage && mode === 'standard' && isDefaultStandardPlayerBar(regions)
+    ? NOW_PLAYING_STANDARD_REGIONS
+    : regions
 }
 
 /** Controls this shape has not placed anywhere, for the editor's add menu. */

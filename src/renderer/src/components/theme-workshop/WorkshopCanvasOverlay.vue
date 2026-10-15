@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   workshopCanvasPoint,
   workshopLayerDrag,
@@ -90,6 +90,9 @@ function end(cancel = false): void {
   if (root.value?.hasPointerCapture(pointer)) root.value.releasePointerCapture(pointer)
   emit('gesture', cancel ? 'cancel' : 'end')
 }
+watch([() => props.enabled, () => props.tone, () => props.project.id], () => end(true))
+onBeforeUnmount(() => end(true))
+defineExpose({ cancelGesture: () => end(true) })
 </script>
 <template>
   <div
@@ -99,11 +102,11 @@ function end(cancel = false): void {
     :style="{ width: width + 'px', height: height + 'px' }"
     tabindex="0"
     aria-label="点选主题区域，拖动图层，Esc 取消拖拽"
-    @pointerdown="start($event)"
-    @pointermove="move"
-    @pointerup="end()"
-    @pointercancel="end(true)"
-    @lostpointercapture="end(true)"
+    @pointerdown.stop="start($event)"
+    @pointermove.stop="move"
+    @pointerup.stop="end()"
+    @pointercancel.stop="end(true)"
+    @lostpointercapture.stop="end(true)"
     @keydown.esc.prevent.stop="end(true)"
   >
     <div
@@ -127,6 +130,10 @@ function end(cancel = false): void {
 </template>
 <style scoped>
 .workshop-canvas-overlay {
+  --workshop-selection-color: var(
+    --appearance-selection-color,
+    var(--appearance-edit-focus, #087f79)
+  );
   position: absolute;
   inset: 0;
   z-index: 10;
@@ -134,9 +141,13 @@ function end(cancel = false): void {
   outline: none;
   cursor: crosshair;
 }
+.workshop-canvas-overlay:focus-visible {
+  outline: 2px solid var(--appearance-focus-color, var(--workshop-selection-color));
+  outline-offset: -2px;
+}
 .workshop-layer-selection {
   position: absolute;
-  border: 2px solid #087f79;
+  border: 2px solid var(--workshop-selection-color);
   pointer-events: none;
   box-sizing: border-box;
 }
@@ -145,8 +156,8 @@ function end(cancel = false): void {
   top: -24px;
   left: -2px;
   padding: 2px 8px;
-  background: #087f79;
-  color: white;
+  background: var(--appearance-edit-primary, var(--workshop-selection-color));
+  color: var(--appearance-edit-on-primary, white);
   font: 12px/1.5 system-ui;
   white-space: nowrap;
 }
@@ -158,7 +169,7 @@ function end(cancel = false): void {
   height: 14px;
   padding: 0;
   border: 2px solid white;
-  background: #087f79;
+  background: var(--workshop-selection-color);
   pointer-events: auto;
   cursor: nwse-resize;
 }

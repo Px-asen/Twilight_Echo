@@ -45,7 +45,12 @@ function setProxyPort(event: Event): void {
             <strong>代理模式</strong>
             <span>为流媒体插件（YouTube Music 等）配置 HTTP 代理，需重启后生效。</span>
           </div>
-          <select class="preview-select" :value="props.proxyMode" @change="setProxyMode">
+          <select
+            class="preview-select"
+            aria-label="代理模式"
+            :value="props.proxyMode"
+            @change="setProxyMode"
+          >
             <option value="auto">自动检测</option>
             <option value="custom">自定义</option>
             <option value="off">关闭</option>
@@ -61,6 +66,7 @@ function setProxyPort(event: Event): void {
             <input
               class="preview-select"
               type="text"
+              aria-label="代理地址"
               placeholder="127.0.0.1"
               :value="props.proxyHost"
               @change="setProxyHost"
@@ -75,6 +81,7 @@ function setProxyPort(event: Event): void {
             <input
               class="preview-select"
               type="number"
+              aria-label="代理端口"
               placeholder="7897"
               :value="props.proxyPort || ''"
               @change="setProxyPort"

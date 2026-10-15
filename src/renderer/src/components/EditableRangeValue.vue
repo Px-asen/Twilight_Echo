@@ -135,9 +135,11 @@ watch(
 }
 
 .editable-range-value:focus-within {
-  border-color: var(--brand-300);
+  border-color: var(--te-control-focus-color);
   background: var(--te-card-bg);
-  box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.14);
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+  box-shadow: none;
 }
 
 .editable-range-value.disabled {

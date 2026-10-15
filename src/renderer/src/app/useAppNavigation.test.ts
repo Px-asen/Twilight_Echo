@@ -26,7 +26,148 @@ function memoryStorage(): NavigationSessionStorage {
   }
 }
 
-test('appearance preview exposes the retained page and preserves Settings navigation', () => {
+test('DSP title entry opens EQ once and preserves the active audio workspace tab', () => {
+  const navigation = useAppNavigation()
+  navigation.enterStreamingMode('library')
+  navigation.openAudioWorkspace()
+  assert.equal(navigation.showAudioWorkspace.value, true)
+  assert.equal(navigation.audioWorkspaceTab.value, 'equalizer')
+  assert.deepEqual(navigation.session.value.overlayHistory, [null])
+
+  navigation.openDspRackPage()
+  const session = navigation.session.value
+  navigation.openAudioWorkspace()
+  assert.deepEqual(navigation.session.value, session)
+  assert.equal(navigation.audioWorkspaceTab.value, 'effects')
+  navigation.closeAudioWorkspace()
+  assert.equal(navigation.showAudioWorkspace.value, false)
+  assert.equal(navigation.showStreamingPage.value, true)
+  assert.equal(navigation.streamingTab.value, 'library')
+})
+
+test('audio tabs share one return path for compatible EQ and DSP entry points', () => {
+  const navigation = useAppNavigation()
+  navigation.openSettingsPage('audio')
+  navigation.openEqualizerPage()
+  navigation.openDspRackPage()
+  navigation.openEqualizerPage()
+  navigation.switchAudioWorkspaceTab('effects')
+  assert.deepEqual(navigation.session.value.overlayHistory, [null, 'settings'])
+  navigation.closeDspRackPage()
+  assert.equal(navigation.showSettingsPage.value, true)
+  assert.equal(navigation.showAudioWorkspace.value, false)
+  navigation.openDspSettings()
+  assert.equal(navigation.audioWorkspaceTab.value, 'effects')
+  navigation.closeAudioWorkspace()
+  assert.equal(navigation.showSettingsPage.value, true)
+})
+
+test('old stacked audio sessions close to their original surface without reopening another tab', () => {
+  const navigation = useAppNavigation()
+  navigation.restoreSession({
+    ...navigation.session.value,
+    overlay: 'dsp',
+    overlayHistory: [null, 'settings', 'equalizer', 'dsp', 'equalizer']
+  })
+  assert.equal(navigation.audioWorkspaceTab.value, 'effects')
+  navigation.closeAudioWorkspace()
+  assert.equal(navigation.showSettingsPage.value, true)
+  assert.deepEqual(navigation.session.value.overlayHistory, [null])
+})
+
+test('appearance has an independent return route and retains the settings selection', () => {
+  const navigation = useAppNavigation()
+  navigation.openSettingsPage('library')
+  navigation.openSettingsCategory('appearance')
+  navigation.openAppearancePage(undefined, 'studio')
+  assert.equal(navigation.showSettingsPage.value, false)
+  assert.equal(navigation.session.value.settingsSection, 'library')
+  assert.equal(navigation.appearanceTab.value, 'studio')
+  assert.equal(navigation.appearanceNavigationTarget.value.appearanceTab, 'studio')
+  assert.deepEqual(navigation.session.value.overlayHistory, [null, 'settings'])
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showSettingsPage.value, true)
+  assert.equal(navigation.showAppearancePage.value, false)
+  assert.equal(navigation.session.value.settingsSection, 'library')
+  navigation.openSettingsCategory('audio')
+  assert.equal(navigation.session.value.settingsSection, 'audio')
+  navigation.openSettingsCategory('appearance')
+  assert.equal(navigation.appearanceTab.value, 'studio')
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showSettingsPage.value, true)
+  assert.equal(navigation.session.value.settingsSection, 'audio')
+  navigation.closeSettingsPage()
+  assert.deepEqual(navigation.session.value.overlayHistory, [])
+})
+
+test('home control changes role across local pages, streaming and foreground tools', () => {
+  const navigation = useAppNavigation()
+  assert.equal(navigation.isHome.value, true)
+  for (const target of [
+    { kind: 'local', category: 'albums', filter: 'one' },
+    { kind: 'streaming', tab: 'home' },
+    { kind: 'network' }
+  ] as const) {
+    navigation.navigate(target)
+    assert.equal(navigation.isHome.value, false)
+    navigation.openSettingsPage()
+    navigation.menuOpen.value = true
+    navigation.goHome()
+    assert.equal(navigation.isHome.value, true)
+    assert.equal(navigation.menuOpen.value, false)
+    assert.equal(navigation.canGoBackPage.value, false)
+    assert.equal(navigation.showSettingsPage.value, false)
+    assert.deepEqual(navigation.session.value.overlayHistory, [])
+  }
+  navigation.openAccountPage()
+  assert.equal(navigation.isHome.value, true)
+})
+
+test('avatar child keeps its parent active without changing navigation or persisting its expansion', () => {
+  const navigation = useAppNavigation()
+  navigation.enterStreamingMode('library')
+  const before = navigation.session.value
+  navigation.openAccountPage('ncm')
+  assert.equal(navigation.showAccountPage.value, true)
+  assert.equal(navigation.accountInitialProviderId.value, 'ncm')
+  assert.equal(navigation.showLoginPage.value, false)
+  assert.equal(navigation.showStreamingPage.value, true)
+  assert.deepEqual(navigation.session.value, before)
+  const restored = useAppNavigation()
+  restored.restoreSession(normalizeNavigationSession(navigation.session.value)!)
+  assert.equal(restored.showAccountPage.value, false)
+  assert.equal(restored.showStreamingPage.value, true)
+  assert.equal(restored.streamingTab.value, 'library')
+  navigation.closeAccountPage()
+  navigation.openAppearancePage()
+  const appearance = navigation.session.value
+  navigation.openAccountPage()
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.deepEqual(navigation.session.value, appearance)
+  navigation.closeAccountPage()
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.deepEqual(navigation.pageTarget.value, { kind: 'streaming', tab: 'library' })
+  navigation.openAccountPage()
+  navigation.goHome()
+  assert.equal(navigation.showAccountPage.value, false)
+  assert.equal(navigation.isHome.value, true)
+})
+
+test('earlier avatar page sessions restore the retained parent', () => {
+  const navigation = useAppNavigation()
+  navigation.openAppearancePage()
+  const legacy = {
+    ...navigation.session.value,
+    overlay: 'account',
+    overlayHistory: [null, 'appearance']
+  }
+  navigation.restoreSession(normalizeNavigationSession(legacy)!)
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.showAccountPage.value, false)
+  assert.deepEqual(navigation.session.value.overlayHistory, [null])
+})
+
+test('legacy appearance entry opens its independent page and preserves the music destination', () => {
   const preview = ref(false)
   const navigation = useAppNavigation({ appearancePreviewActive: () => preview.value })
   const cases = [
@@ -46,12 +187,13 @@ test('appearance preview exposes the retained page and preserves Settings naviga
     assert.equal(visible.value, false, target.kind)
     preview.value = true
     assert.equal(visible.value, true, target.kind)
-    assert.equal(navigation.showSettingsPage.value, true)
+    assert.equal(navigation.showAppearancePage.value, true)
+    assert.equal(navigation.showSettingsPage.value, false)
     assert.equal(JSON.stringify(navigation.session.value), retainedSession)
     preview.value = false
     assert.equal(visible.value, false, target.kind)
     assert.equal(JSON.stringify(navigation.session.value), retainedSession)
-    navigation.closeSettingsPage()
+    navigation.closeAppearancePage()
     assert.equal(visible.value, true, target.kind)
     assert.deepEqual(navigation.pageTarget.value, target)
   }
@@ -63,6 +205,97 @@ test('appearance preview does not expose page content behind other foreground to
   assert.equal(navigation.localViewVisible.value, false)
   navigation.openPluginPage()
   assert.equal(navigation.localViewVisible.value, false)
+})
+
+test('unified appearance workspace preserves its origin without adding a studio back layer', () => {
+  const preview = ref(false)
+  const navigation = useAppNavigation({ appearancePreviewActive: () => preview.value })
+  navigation.enterStreamingMode('library')
+  navigation.openAppearancePage()
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.showSettingsPage.value, false)
+  assert.equal(navigation.showStreamingPage.value, false)
+  const saved = JSON.stringify(navigation.session.value)
+  preview.value = true
+  assert.equal(navigation.showStreamingPage.value, true)
+  assert.equal(JSON.stringify(navigation.session.value), saved)
+  preview.value = false
+  navigation.openThemeStudioPage()
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.appearanceTab.value, 'studio')
+  assert.deepEqual(navigation.session.value.overlayHistory, [null])
+  assert.equal(navigation.showSettingsPage.value, false)
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showStreamingPage.value, true)
+  navigation.openSettingsPage('general')
+  navigation.openAppearancePage()
+  const restored = useAppNavigation()
+  restored.restoreSession(normalizeNavigationSession(navigation.session.value)!)
+  assert.equal(restored.showAppearancePage.value, true)
+  restored.closeAppearancePage()
+  assert.equal(restored.showSettingsPage.value, true)
+  assert.equal(restored.settingsInitialSection.value, 'general')
+})
+
+test('theme plugin entries stay inside appearance and preserve the underlying music page', () => {
+  const navigation = useAppNavigation()
+  navigation.enterStreamingMode('library')
+  navigation.openSettingsPage('general')
+  navigation.onSelectPluginPage({
+    pluginId: 'com.twilightecho.tool.theme-workshop',
+    id: 'theme-workshop',
+    kind: 'sidebarPage',
+    title: '主题插件工坊'
+  })
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.appearanceTab.value, 'workshop')
+  assert.deepEqual(navigation.pageTarget.value, { kind: 'streaming', tab: 'library' })
+  const reopened = useAppNavigation()
+  reopened.restoreSession(normalizeNavigationSession(navigation.session.value)!)
+  assert.equal(reopened.appearanceTab.value, 'workshop')
+  assert.equal(reopened.appearanceNavigationTarget.value.appearanceTab, 'workshop')
+  reopened.closeAppearancePage()
+  assert.equal(reopened.showSettingsPage.value, true)
+  reopened.closeSettingsPage()
+  assert.equal(reopened.showStreamingPage.value, true)
+})
+
+test('old studio and workshop sessions migrate into the shared appearance workspace', () => {
+  const navigation = useAppNavigation()
+  const oldStudio = normalizeNavigationSession({
+    ...navigation.session.value,
+    overlay: 'theme',
+    overlayHistory: [null, 'appearance']
+  })!
+  navigation.restoreSession(oldStudio)
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.appearanceTab.value, 'studio')
+  navigation.closeAppearancePage()
+  assert.equal(navigation.localViewVisible.value, true)
+  const oldWorkshop = normalizeNavigationSession({
+    ...navigation.session.value,
+    pageTarget: {
+      kind: 'plugin',
+      pluginId: 'com.twilightecho.tool.theme-workshop',
+      pageId: 'theme-workshop'
+    },
+    history: [{ kind: 'streaming', tab: 'library' }],
+    overlay: null
+  })!
+  navigation.restoreSession(oldWorkshop)
+  assert.equal(navigation.appearanceTab.value, 'workshop')
+  assert.equal(navigation.showAppearancePage.value, true)
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showStreamingPage.value, true)
+  navigation.restoreSession({ ...oldWorkshop, overlay: 'plugins', overlayHistory: [null] })
+  assert.equal(navigation.showPluginPage.value, true)
+  navigation.hidePluginPage()
+  assert.equal(navigation.showAppearancePage.value, true)
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showStreamingPage.value, true)
+  navigation.restoreSession({ ...oldWorkshop, overlay: 'appearance', overlayHistory: [null] })
+  navigation.closeAppearancePage()
+  assert.equal(navigation.showStreamingPage.value, true)
 })
 
 test('the menu starts closed and stays shared across local and streaming pages', () => {
@@ -84,6 +317,25 @@ test('the menu starts closed and stays shared across local and streaming pages',
   navigation.collapseMenu()
   navigation.enterStreamingMode('search')
   assert.equal(navigation.menuOpen.value, false)
+})
+
+test('the sidebar bookmark opens over the plugin market without replacing the page or return route', () => {
+  const navigation = useAppNavigation()
+  navigation.enterStreamingMode('library')
+  navigation.openPluginPage()
+  const before = navigation.session.value
+  const toggle = navigation.createToggleMenuHandler()
+  toggle()
+  assert.equal(navigation.menuOpen.value, true)
+  assert.equal(navigation.showPluginPage.value, true)
+  assert.deepEqual(navigation.session.value.overlayHistory, before.overlayHistory)
+  assert.deepEqual(navigation.session.value.pageTarget, before.pageTarget)
+  toggle()
+  assert.equal(navigation.menuOpen.value, false)
+  assert.equal(navigation.showPluginPage.value, true)
+  navigation.hidePluginPage()
+  assert.equal(navigation.showStreamingPage.value, true)
+  assert.equal(navigation.streamingTab.value, 'library')
 })
 
 test('online audio pages retain the local sidebar so the title-bar menu can open it', () => {
@@ -260,8 +512,8 @@ test('settings, plugin, equalizer, and extension pages are mutually exclusive', 
 
   navigation.closeThemeStudioPage()
   assert.equal(navigation.showThemeStudioPage.value, false)
-  assert.equal(navigation.showSettingsPage.value, true)
-  assert.equal(navigation.settingsInitialSection.value, 'appearance')
+  assert.equal(navigation.showPluginPage.value, true)
+  assert.equal(navigation.showSettingsPage.value, false)
 
   navigation.openEqualizerPage()
   assert.equal(navigation.showEqualizerPage.value, true)
@@ -623,7 +875,7 @@ test('explicit navigation during startup overrides a saved plugin destination', 
     { pluginId: 'tool', id: 'page', kind: 'sidebarPage', title: 'Tool' }
   ])
   assert.equal(navigation.showSettingsPage.value, true)
-  assert.equal(navigation.settingsInitialSection.value, 'system')
+  assert.equal(navigation.settingsInitialSection.value, 'about')
   assert.equal(navigation.activePluginPage.value, null)
   persistence.stop()
 })

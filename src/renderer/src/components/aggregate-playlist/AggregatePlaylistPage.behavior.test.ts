@@ -74,9 +74,12 @@ test('real Vue and Electron DOM drive aggregate playlist grouping, filtering and
       }
     })
 
-    const bundleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.iife.js'))
+    const bundleFiles = await readdir(bundleDirectory)
+    const bundleName = bundleFiles.find((name) => name.endsWith('.iife.js'))
+    const stylesheetName = bundleFiles.find((name) => name.endsWith('.css'))
     assert.ok(bundleName, 'Vite should bundle the real aggregate playlist SFC')
-    await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
+    assert.ok(stylesheetName, 'Vite should retain the actual page and typography styles')
+    await writeFile(htmlPath, runtimeHtml(bundleName, stylesheetName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
     const electronPath = require('electron') as string
@@ -118,8 +121,18 @@ function runtimeEntrySource(): string {
     '\\',
     '/'
   )
+  const baseStylePath = join(workspaceRoot, 'src/renderer/src/assets/base.css').replaceAll(
+    '\\',
+    '/'
+  )
+  const typographyStylePath = join(
+    workspaceRoot,
+    'src/renderer/src/assets/typography.css'
+  ).replaceAll('\\', '/')
 
   return `import { createApp, h, nextTick, ref } from 'vue'
+import ${JSON.stringify(baseStylePath)}
+import ${JSON.stringify(typographyStylePath)}
 import AggregatePlaylistPage from ${JSON.stringify(pagePath)}
 import { useMusicStore } from ${JSON.stringify(storePath)}
 import { goBack } from '@renderer/app/useBackStack.ts'
@@ -196,6 +209,34 @@ window.runAggregateRuntime = async () => {
   const firstVariantLabel = () => all('.aggregate-variant-btn')[0].textContent.trim()
   expect(firstVariantLabel().includes('本地音乐'), '默认应优先本地无损，实际：' + firstVariantLabel())
 
+  // Keyboard playback is explicit and independent of the pointer activation preference.
+  const keyboardRow = all('.aggregate-row')[0]
+  document.documentElement.style.setProperty('--te-font-size-body', '14px')
+  mount.style.setProperty('--te-font-size-body', '20px')
+  await tick(); await tick()
+  const rowStride = () => {
+    const rows = all('.aggregate-row')
+    return rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top
+  }
+  const titleSize = () => parseFloat(getComputedStyle(keyboardRow.querySelector('.aggregate-row-title')).fontSize)
+  expect(keyboardRow.style.height === '98px', 'local preview font controls the virtual row instead of the application theme')
+  expect(Math.abs(rowStride() - 98) < 0.1, 'actual adjacent rows use the same 98px stride as the virtual window')
+  expect(Math.abs(titleSize() - 20 * 13 / 14) < 0.1, 'local preview typography also scales the rendered title')
+  mount.style.removeProperty('--te-font-size-body')
+  await tick(); await tick()
+  expect(keyboardRow.style.height === '68px', 'removing the local font restores the inherited row scale')
+  expect(Math.abs(rowStride() - 68) < 0.1, 'default adjacent rows use the same 68px stride as the virtual window')
+  expect(Math.abs(titleSize() - 13) < 0.1, 'removing the local font restores the inherited title size')
+  keyboardRow.focus()
+  expect(document.activeElement === keyboardRow, 'the actual table row is keyboard focusable')
+  const beforeKeyboard = window.__aggregateFixture.playCalls.length
+  keyboardRow.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  await tick()
+  expect(window.__aggregateFixture.playCalls.length === beforeKeyboard + 1, 'Enter plays one recording')
+  all('.aggregate-variant-btn')[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  await tick()
+  expect(window.__aggregateFixture.playCalls.length === beforeKeyboard + 1, 'nested source control does not also play the row')
+
   // ── 行内换源：偏好写进歌单，播放队列跟着换 ────────────────────────────
   await click(all('.aggregate-variant-btn')[0], 'open variant menu')
   const optionLabels = all('.aggregate-variant-option').map((node) => node.textContent.trim())
@@ -271,8 +312,8 @@ window.runAggregateRuntime = async () => {
 `
 }
 
-function runtimeHtml(bundleName: string): string {
-  return `<!doctype html><html><body><div id="app"></div><script>
+function runtimeHtml(bundleName: string, stylesheetName: string): string {
+  return `<!doctype html><html><head><link rel="stylesheet" href="bundle/${stylesheetName}"></head><body><div id="app"></div><script>
 const localMoon = {
   id: 'local:moon', title: 'Moon River', artist: 'Audrey', album: 'Breakfast',
   filePath: 'D:\\\\Music\\\\Moon.flac', fileName: 'Moon.flac', duration: 180,

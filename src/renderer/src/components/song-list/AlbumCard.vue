@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { GridItem } from './types'
 import AlbumArtwork from './AlbumArtwork.vue'
-import { formatReleaseDate } from '../../../../shared/releaseDate.ts'
 
 defineProps<{ album: GridItem }>()
 defineEmits<{ open: [] }>()
@@ -26,12 +25,6 @@ defineEmits<{ open: [] }>()
       <span class="local-album-artist" :title="album.artist || '未知歌手'">{{
         album.artist || '未知歌手'
       }}</span>
-      <span
-        class="local-album-meta"
-        :title="`${formatReleaseDate(album.releaseDate)} · ${album.trackCount ?? 0} 首`"
-        >{{ formatReleaseDate(album.releaseDate) }}<span aria-hidden="true"> · </span
-        >{{ album.trackCount ?? 0 }} 首</span
-      >
     </span>
   </button>
 </template>
@@ -44,7 +37,7 @@ defineEmits<{ open: [] }>()
   min-width: 0;
   padding: 0;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--te-library-cover-radius, 8px);
   background: transparent;
   box-shadow: none;
   text-align: left;
@@ -59,7 +52,7 @@ defineEmits<{ open: [] }>()
   content: none;
 }
 .album-card.local-album-card:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 5px;
   box-shadow: none;
 }
@@ -71,8 +64,8 @@ defineEmits<{ open: [] }>()
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  padding: 13px 2px 3px;
-  gap: 5px;
+  padding: 12px 0 2px;
+  gap: 4px;
 }
 .local-album-name {
   display: -webkit-box;
@@ -81,8 +74,8 @@ defineEmits<{ open: [] }>()
   height: 2.8em;
   overflow: hidden;
   overflow-wrap: anywhere;
-  font-size: var(--te-font-size-body, 14px);
-  font-weight: 650;
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-strong);
   line-height: 1.4;
 }
 .local-album-artist,
@@ -95,11 +88,11 @@ defineEmits<{ open: [] }>()
 }
 .local-album-artist {
   color: var(--te-neutral-700);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.93);
+  font-size: var(--te-type-caption);
 }
 .local-album-meta {
   color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 0.82);
+  font-size: var(--te-type-caption);
   font-variant-numeric: tabular-nums;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -113,8 +106,10 @@ defineEmits<{ open: [] }>()
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .album-card.local-album-card {
-    transition: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .album-card.local-album-card {
+      transition: none;
+    }
   }
 }
 </style>

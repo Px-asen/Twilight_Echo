@@ -66,29 +66,23 @@ const emit = defineEmits<{
   flex-direction: column;
   height: 100vh;
   min-height: 0;
+  min-width: 0;
 }
 .playlist-tabs {
   display: flex;
   flex-shrink: 0;
-  padding: 52px min(4.4vw, 48px) 0;
-}
-.playlist-segmented {
-  display: inline-flex;
-  gap: 3px;
-  padding: 4px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 12px;
-  background: var(--te-subtle-bg);
-  max-width: 100%;
+  gap: 8px;
+  padding: calc(var(--te-titlebar-inset, 40px) + var(--te-page-top, 32px))
+    var(--te-page-inset, 32px) 0;
+  flex-wrap: wrap;
 }
 .playlist-tabs button {
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--te-neutral-500);
-  padding: 7px 16px;
-  line-height: 1.4;
-  white-space: nowrap;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  background: var(--te-card-bg);
+  color: var(--te-neutral-900);
+  min-height: var(--te-control-height-md);
+  padding: 6px 12px;
   font: inherit;
   font-weight: 600;
   transition:
@@ -104,10 +98,10 @@ const emit = defineEmits<{
   background: var(--te-card-bg);
   color: var(--te-primary-500);
   border-color: var(--te-card-border);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
+  box-shadow: var(--te-chrome-contact);
 }
 .playlist-tabs button:focus-visible {
-  outline: 2px solid var(--te-navigation-indicator);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .playlist-content {
@@ -117,7 +111,8 @@ const emit = defineEmits<{
 .playlist-content :deep(.song-list),
 .playlist-content :deep(.aggregate-page) {
   height: 100% !important;
-  padding-top: 24px;
+  padding-top: 16px;
+  padding-inline: var(--te-page-inset, 32px);
 }
 :global(html[data-theme='pureWhite'] .application-playlists-page) {
   background: var(--te-card-bg);
@@ -132,6 +127,6 @@ const emit = defineEmits<{
   height: 100%;
 }
 :global(html[data-te-shell-layout='custom'] .playlist-tabs) {
-  padding-top: 20px;
+  padding-top: var(--te-page-top, 24px);
 }
 </style>

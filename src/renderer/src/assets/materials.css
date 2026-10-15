@@ -1,0 +1,316 @@
+/* Generated from src/shared/materials.ts. Run generate:materials; do not edit. */
+
+:root {
+  --te-chrome-attached-tint: 28%;
+  --te-chrome-attached-surface: transparent;
+  --te-window-foundation-tint: rgb(0 0 0 / 10%);
+  --te-chrome-attached-filter: blur(20px);
+  --te-chrome-attached-liquid-surface: color-mix(in srgb, var(--te-lg-context-material) calc(clamp(0, var(--te-lg-tint, 0.72), 1) * 100%), transparent);
+  --te-chrome-attached-liquid-filter: blur(var(--te-lg-blur, var(--te-lg-context-diffusion, 16px))) saturate(var(--te-lg-saturate, 124%));
+  --te-window-base-background: color-mix(in srgb, var(--te-app-bg) var(--te-chrome-attached-tint), transparent);
+  --te-window-transparent-foundation: color-mix(in srgb, var(--te-app-bg) 4%, transparent);
+  --te-chrome-material-solid: color-mix(in srgb, var(--te-app-bg) 96%, var(--te-shell-control-text));
+  --te-chrome-material-surface: color-mix(in srgb, var(--te-chrome-material-solid) 76%, transparent);
+  --te-chrome-navigation-surface: var(--te-window-foundation-tint);
+  --te-chrome-navigation-elevation: none;
+  --te-chrome-contact: 0 1px 3px color-mix(in srgb, var(--te-chrome-shadow-color) 8%, transparent);
+  --te-chrome-elevation: 0 5px 16px color-mix(in srgb, var(--te-chrome-shadow-color) 8%, transparent);
+  --te-material-scrim: var(--te-dialog-backdrop);
+  --te-image-card-filter: blur(20px) saturate(110%);
+  --te-bookmark-default-filter: var(--te-chrome-attached-filter);
+  --te-editor-toolbar-shadow: 0 6px 24px #00000014;
+  --te-editor-property-shadow: 0 12px 32px #00000024;
+  --te-editor-choice-surface: color-mix(in srgb, var(--te-editor-accent) 10%, transparent);
+  --te-brand-avatar-fill: linear-gradient(135deg, var(--te-primary-500), var(--te-accent-cyan));
+  --te-material-content-filter: blur(var(--te-card-blur, 0px)) saturate(var(--te-card-saturate, 100%));
+}
+
+:where(.app-background-ambient) {
+  --te-home-ambient-surface: radial-gradient(ellipse 520px 520px at 80px 40px, color-mix(in srgb, var(--te-primary-500) 6%, transparent), transparent 72%), radial-gradient(ellipse 420px 420px at calc(100% - 20px) 300px, color-mix(in srgb, var(--te-accent-cyan) 4%, transparent), transparent 72%), radial-gradient(ellipse 360px 360px at 45% 840px, color-mix(in srgb, var(--te-favorite-500) 3%, transparent), transparent 72%);
+}
+
+:where(.dialog-btn.danger) {
+  --te-danger-control-surface: color-mix(in srgb, var(--te-danger-500, #d14343) 14%, transparent);
+  --te-danger-control-hover: color-mix(in srgb, var(--te-danger-500, #d14343) 22%, transparent);
+}
+
+html[data-theme='dark'] {
+  --te-chrome-contact: 0 1px 3px color-mix(in srgb, var(--te-chrome-shadow-color) 20%, transparent);
+  --te-chrome-elevation: 0 5px 16px color-mix(in srgb, var(--te-chrome-shadow-color) 16%, transparent);
+}
+
+:where(.app-shell,[data-te-material],.sidebar-bookmark) {
+  --te-chrome-attached-surface: transparent;
+  --te-chrome-navigation-surface: var(--te-window-foundation-tint);
+  --te-chrome-attached-liquid-surface: color-mix(in srgb, var(--te-lg-context-material) calc(clamp(0, var(--te-lg-tint, 0.72), 1) * 100%), transparent);
+  --te-chrome-attached-liquid-filter: blur(var(--te-lg-blur, var(--te-lg-context-diffusion, 16px))) saturate(var(--te-lg-saturate, 124%));
+  --te-window-base-background: color-mix(in srgb, var(--te-app-bg) var(--te-chrome-attached-tint), transparent);
+  --te-window-transparent-foundation: color-mix(in srgb, var(--te-app-bg) 4%, transparent);
+}
+
+:where(.page-dock-action,.sidebar-bookmark) {
+  --te-chrome-control-hover: color-mix(in srgb, currentColor 4%, transparent);
+  --te-chrome-control-selected: color-mix(in srgb, currentColor 7%, transparent);
+  --te-chrome-control-selected-hover: color-mix(in srgb, currentColor 9%, transparent);
+  --te-bookmark-effective-filter: var(--te-bookmark-filter, var(--te-bookmark-default-filter));
+}
+
+:where(.appearance-view-angles) {
+  --te-editor-ruler-marker-shadow: 0 0 0 2px var(--appearance-ruler-surface);
+  --te-editor-camera-surface: color-mix(in srgb, var(--appearance-ruler-surface) 68%, transparent);
+  --te-editor-camera-filter: blur(12px);
+}
+
+:where(.settings-preview-page) {
+  --te-settings-row-hover: color-mix(in srgb, var(--te-settings-text) 4%, transparent);
+  --te-settings-row-focus: color-mix(in srgb, var(--te-settings-text) 7%, transparent);
+}
+
+:where(.dsp-signal-chain) {
+  --te-status-quiet-surface: color-mix(in srgb, var(--te-settings-text) 2%, transparent);
+  --te-status-selected-surface: color-mix(in srgb, var(--te-control-accent) 10%, var(--te-card-bg));
+}
+
+:where(.ctrl-btn,.icon-btn,.mode-btn-right,.time-chip,.lyric-row) {
+  --te-transport-feedback-surface: var(--te-playback-control-surface, color-mix(in srgb, var(--te-playback-control-text, var(--te-control-fg)) 8%, transparent));
+  --te-transport-feedback-hover: var(--te-playback-control-hover-surface, color-mix(in srgb, var(--te-playback-control-text, var(--te-control-fg)) 10%, transparent));
+  --te-transport-feedback-pressed: var(--te-playback-control-hover-surface, color-mix(in srgb, var(--te-playback-control-text, var(--te-control-fg)) 16%, transparent));
+  --te-transport-feedback-shadow: var(--te-playback-control-hover-shadow, var(--te-chrome-elevation));
+}
+
+:where([data-te-material='canvas']) {
+  --te-material-canvas-ink: var(--te-neutral-900);
+  --te-material-canvas-border: transparent;
+  --te-material-canvas-shadow: none;
+  --te-material-canvas-filter: none;
+  --te-material-canvas-background: var(--te-app-bg);
+  --te-material-canvas-solid: var(--te-app-bg);
+  --te-material-ink: var(--te-material-canvas-ink);
+  --te-material-border: var(--te-material-canvas-border);
+  --te-material-shadow: var(--te-material-canvas-shadow);
+  --te-material-filter: var(--te-material-canvas-filter);
+  --te-material-background: var(--te-material-canvas-background);
+  --te-material-solid: var(--te-material-canvas-solid);
+}
+
+html[data-te-surface-material='transparent'] :where([data-te-material='canvas']) {
+  --te-material-background: transparent;
+  --te-material-border: transparent;
+  --te-material-shadow: none;
+  --te-material-filter: none;
+}
+
+:where([data-te-material='content']) {
+  --te-material-content-ink: var(--te-neutral-900);
+  --te-material-content-border: var(--te-card-border);
+  --te-material-content-shadow: var(--te-card-shadow, none);
+  --te-material-content-filter: none;
+  --te-material-content-background: var(--te-card-bg);
+  --te-material-content-solid: var(--te-card-bg-solid, var(--te-card-bg));
+  --te-material-ink: var(--te-material-content-ink);
+  --te-material-border: var(--te-material-content-border);
+  --te-material-shadow: var(--te-material-content-shadow);
+  --te-material-filter: var(--te-material-content-filter);
+  --te-material-background: var(--te-material-content-background);
+  --te-material-solid: var(--te-material-content-solid);
+}
+
+html[data-te-surface-material='transparent'] :where([data-te-material='content']) {
+  --te-material-background: transparent;
+  --te-material-border: transparent;
+  --te-material-shadow: none;
+  --te-material-filter: none;
+}
+
+:where([data-te-material='navigation']) {
+  --te-material-navigation-ink: var(--te-chrome-text, var(--te-navigation-text));
+  --te-material-navigation-border: var(--te-navigation-border);
+  --te-material-navigation-shadow: var(--te-chrome-navigation-elevation);
+  --te-material-navigation-filter: var(--te-chrome-attached-filter);
+  --te-material-navigation-background: var(--te-chrome-navigation-surface);
+  --te-material-navigation-solid: var(--te-chrome-material-solid);
+  --te-material-ink: var(--te-material-navigation-ink);
+  --te-material-border: var(--te-material-navigation-border);
+  --te-material-shadow: var(--te-material-navigation-shadow);
+  --te-material-filter: var(--te-material-navigation-filter);
+  --te-material-background: var(--te-material-navigation-background);
+  --te-material-solid: var(--te-material-navigation-solid);
+}
+
+html[data-te-surface-material='transparent'] :where([data-te-material='navigation']) {
+  --te-material-background: transparent;
+  --te-material-border: transparent;
+  --te-material-shadow: none;
+  --te-material-filter: none;
+}
+
+:where([data-te-material='titlebar']) {
+  --te-material-titlebar-ink: var(--te-shell-control-text);
+  --te-material-titlebar-border: transparent;
+  --te-material-titlebar-shadow: none;
+  --te-material-titlebar-filter: var(--te-chrome-attached-filter);
+  --te-material-titlebar-background: var(--te-chrome-attached-surface);
+  --te-material-titlebar-solid: var(--te-titlebar-material-surface, var(--te-app-bg));
+  --te-material-ink: var(--te-material-titlebar-ink);
+  --te-material-border: var(--te-material-titlebar-border);
+  --te-material-shadow: var(--te-material-titlebar-shadow);
+  --te-material-filter: var(--te-material-titlebar-filter);
+  --te-material-background: var(--te-material-titlebar-background);
+  --te-material-solid: var(--te-material-titlebar-solid);
+}
+
+html[data-te-surface-material='transparent'] :where([data-te-material='titlebar']) {
+  --te-material-background: transparent;
+  --te-material-border: transparent;
+  --te-material-shadow: none;
+  --te-material-filter: none;
+}
+
+:where([data-te-material='panel']) {
+  --te-material-panel-ink: var(--te-neutral-900);
+  --te-material-panel-border: var(--te-card-border);
+  --te-material-panel-shadow: 0 12px 36px color-mix(in srgb, var(--te-chrome-shadow-color) 16%, transparent), 0 1px 4px color-mix(in srgb, var(--te-chrome-shadow-color) 8%, transparent);
+  --te-material-panel-filter: none;
+  --te-material-panel-background: var(--te-chrome-material-solid);
+  --te-material-panel-solid: var(--te-chrome-material-solid);
+  --te-material-ink: var(--te-material-panel-ink);
+  --te-material-border: var(--te-material-panel-border);
+  --te-material-shadow: var(--te-material-panel-shadow);
+  --te-material-filter: var(--te-material-panel-filter);
+  --te-material-background: var(--te-material-panel-background);
+  --te-material-solid: var(--te-material-panel-solid);
+}
+
+:where([data-te-material='popover']) {
+  --te-material-popover-ink: var(--te-control-fg);
+  --te-material-popover-border: var(--te-control-border);
+  --te-material-popover-shadow: 0 12px 36px color-mix(in srgb, var(--te-chrome-shadow-color) 16%, transparent), 0 1px 4px color-mix(in srgb, var(--te-chrome-shadow-color) 8%, transparent);
+  --te-material-popover-filter: blur(20px) saturate(120%);
+  --te-material-popover-background: color-mix(in srgb, var(--te-control-bg) 98%, transparent);
+  --te-material-popover-solid: var(--te-control-bg);
+  --te-material-ink: var(--te-material-popover-ink);
+  --te-material-border: var(--te-material-popover-border);
+  --te-material-shadow: var(--te-material-popover-shadow);
+  --te-material-filter: var(--te-material-popover-filter);
+  --te-material-background: var(--te-material-popover-background);
+  --te-material-solid: var(--te-material-popover-solid);
+}
+
+:where([data-te-material='dialog']) {
+  --te-material-dialog-ink: var(--te-neutral-900);
+  --te-material-dialog-border: var(--te-card-border);
+  --te-material-dialog-shadow: 0 12px 36px color-mix(in srgb, var(--te-chrome-shadow-color) 16%, transparent), 0 1px 4px color-mix(in srgb, var(--te-chrome-shadow-color) 8%, transparent);
+  --te-material-dialog-filter: none;
+  --te-material-dialog-background: var(--te-card-bg-solid, var(--te-card-bg));
+  --te-material-dialog-solid: var(--te-card-bg-solid, var(--te-card-bg));
+  --te-material-ink: var(--te-material-dialog-ink);
+  --te-material-border: var(--te-material-dialog-border);
+  --te-material-shadow: var(--te-material-dialog-shadow);
+  --te-material-filter: var(--te-material-dialog-filter);
+  --te-material-background: var(--te-material-dialog-background);
+  --te-material-solid: var(--te-material-dialog-solid);
+}
+
+:where([data-te-material='transport']) {
+  --te-material-transport-ink: var(--te-playbar-text, var(--te-neutral-900));
+  --te-material-transport-border: transparent;
+  --te-material-transport-shadow: var(--te-bohr-contact), var(--te-bohr-elevation);
+  --te-material-transport-filter: none;
+  --te-material-transport-background: var(--te-playbar-bg, var(--te-card-bg));
+  --te-material-transport-solid: var(--te-card-bg-solid, var(--te-card-bg));
+  --te-material-ink: var(--te-material-transport-ink);
+  --te-material-border: var(--te-material-transport-border);
+  --te-material-shadow: var(--te-material-transport-shadow);
+  --te-material-filter: var(--te-material-transport-filter);
+  --te-material-background: var(--te-material-transport-background);
+  --te-material-solid: var(--te-material-transport-solid);
+}
+
+html[data-te-surface-material='transparent'] :where([data-te-material='transport']) {
+  --te-material-background: transparent;
+  --te-material-border: transparent;
+  --te-material-shadow: none;
+  --te-material-filter: none;
+}
+
+:where([data-te-material='control']) {
+  --te-material-control-ink: var(--te-control-fg);
+  --te-material-control-border: var(--te-card-border);
+  --te-material-control-shadow: none;
+  --te-material-control-filter: none;
+  --te-material-control-background: var(--te-control-bg);
+  --te-material-control-solid: var(--te-control-bg);
+  --te-material-ink: var(--te-material-control-ink);
+  --te-material-border: var(--te-material-control-border);
+  --te-material-shadow: var(--te-material-control-shadow);
+  --te-material-filter: var(--te-material-control-filter);
+  --te-material-background: var(--te-material-control-background);
+  --te-material-solid: var(--te-material-control-solid);
+}
+
+:where(.te-material) {
+  background: var(--te-material-background);
+  color: var(--te-material-ink);
+  border-color: var(--te-material-border);
+  box-shadow: var(--te-material-shadow);
+  backdrop-filter: var(--te-material-filter);
+  -webkit-backdrop-filter: var(--te-material-filter);
+}
+
+body.te-no-blur [data-te-material], html[data-te-effects-mode='reduced'] [data-te-material] {
+  --te-material-background: var(--te-material-solid);
+  --te-material-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html [data-te-material] {
+  --te-material-background: var(--te-material-solid);
+  --te-material-filter: none;
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  html [data-te-material] {
+  --te-material-background: var(--te-material-solid);
+  --te-material-filter: none;
+  }
+}
+
+@media (forced-colors: active) {
+  html [data-te-material] {
+    --te-material-background: Canvas;
+    --te-material-ink: CanvasText;
+    --te-material-border: CanvasText;
+    --te-material-shadow: none;
+    --te-material-filter: none;
+  }
+}
+
+@layer te-appearance {
+html[data-te-card-custom='on'] :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background:var(--te-card-bg)!important;border:var(--te-card-border-width) solid var(--te-card-border)!important;border-radius:var(--te-card-radius)!important;box-shadow:var(--te-card-shadow),var(--te-card-glass-highlight)!important;backdrop-filter:var(--te-material-content-filter)!important;-webkit-backdrop-filter:var(--te-material-content-filter)!important}
+:where(html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off'] body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off'] body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace) :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:color-mix(in srgb,var(--te-image-control-surface) 72%,transparent)!important;border-color:var(--te-image-control-border)!important;backdrop-filter:var(--te-image-card-filter)!important;-webkit-backdrop-filter:var(--te-image-card-filter)!important}
+:where(html:not([data-te-surface-material='transparent'])) :where(html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off'] body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off'] body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace) :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){
+  --te-neutral-900: var(--te-image-control-text);
+  --te-neutral-800: var(--te-image-control-text);
+  --te-neutral-700: var(--te-image-control-muted);
+  --te-neutral-600: var(--te-image-control-muted);
+  --te-neutral-500: var(--te-image-control-muted);
+  --te-neutral-400: var(--te-image-control-muted);
+  --te-settings-text: var(--te-image-control-text);
+  --te-settings-text-muted: var(--te-image-control-muted);
+  --te-text-primary: var(--te-image-control-text);
+  --text-primary: var(--te-image-control-text);
+  --text-secondary: var(--te-image-control-muted);
+  --online-ink: var(--te-image-control-text);
+  --online-muted: var(--te-image-control-muted);
+  --home-ink: var(--te-image-control-text);
+  --home-muted: var(--te-image-control-muted);
+  --appearance-edit-text: var(--te-image-control-text);
+  --appearance-edit-muted: var(--te-image-control-muted);
+color:var(--te-image-control-text)!important;}
+html[data-te-surface-material='transparent'] :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+html[data-te-effects-mode='reduced'] :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card),body.te-no-blur :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:var(--te-material-solid,var(--te-card-bg-solid))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+@media(prefers-reduced-transparency:reduce),(prefers-contrast:more){html:root :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:var(--te-material-solid,var(--te-card-bg-solid))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+@supports not(backdrop-filter:blur(1px)){html:root :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:var(--te-material-solid,var(--te-card-bg-solid))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+@media(forced-colors:active){html:root :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background:Canvas!important;color:CanvasText!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+}

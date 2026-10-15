@@ -1,0 +1,18 @@
+.te-ui-motion-edge {
+  position: fixed;
+  z-index: 2147483646;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid
+    color-mix(in srgb, var(--te-ui-motion-edge-color, var(--te-primary-500)) 65%, transparent);
+  background: transparent;
+  box-shadow: 0 0 6px
+    color-mix(in srgb, var(--te-ui-motion-edge-color, var(--te-primary-500)) 10%, transparent);
+  opacity: 0;
+}
+
+.te-ui-motion-edge[data-edges='bottom'] {
+  border-width: 0 0 1px;
+  box-shadow: 0 2px 6px
+    color-mix(in srgb, var(--te-ui-motion-edge-color, var(--te-primary-500)) 10%, transparent);
+}

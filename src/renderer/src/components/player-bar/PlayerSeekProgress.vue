@@ -2,14 +2,18 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import SmoothedProgressFill from '../SmoothedProgressFill.vue'
 
-const props = defineProps<{
-  position: number
-  duration: number
-  live: boolean
-  abStart: number | null
-  abEnd: number | null
-  formatTime: (seconds: number) => string
-}>()
+const props = withDefaults(
+  defineProps<{
+    position: number
+    duration: number
+    live: boolean
+    abStart: number | null
+    abEnd: number | null
+    formatTime: (seconds: number) => string
+    variant?: 'default' | 'mini' | 'compact'
+  }>(),
+  { variant: 'default' }
+)
 const emit = defineEmits<{ seek: [seconds: number] }>()
 const preview = ref<number | null>(null)
 const keyboardFocus = ref(false)
@@ -32,6 +36,7 @@ const loopStyle = computed(() => {
   return { left: `${(start / total) * 100}%`, width: `${((end - start) / total) * 100}%` }
 })
 watch(disabled, cancel)
+watch(() => props.variant, cancel)
 onBeforeUnmount(cancel)
 
 function onInput(event: Event): void {
@@ -104,21 +109,38 @@ function onBlur(): void {
 
 <template>
   <div
-    class="progress-area"
+    class="player-seek-progress"
     :style="{
       '--te-progress-time-characters': live ? 4 : Math.max(4, formatTime(duration).length)
     }"
-    :class="{ 'is-scrubbing': preview !== null, 'is-keyboard-focus': keyboardFocus }"
+    :class="[
+      variant === 'default' ? 'progress-area' : `${variant}-progress-rail`,
+      { 'is-scrubbing': preview !== null, 'is-keyboard-focus': keyboardFocus }
+    ]"
   >
-    <span class="time-label">{{ live ? 'LIVE' : formatTime(position) }}</span>
-    <div class="progress-slider-wrap" :class="{ 'is-disabled': disabled }">
-      <div class="progress-track" aria-hidden="true">
+    <span v-if="variant === 'default'" class="time-label">{{
+      live ? 'LIVE' : formatTime(position)
+    }}</span>
+    <div
+      :class="[
+        variant === 'default' ? 'progress-slider-wrap' : `${variant}-progress-slider-wrap`,
+        { 'is-disabled': disabled }
+      ]"
+    >
+      <div
+        :class="variant === 'default' ? 'progress-track' : `${variant}-progress-track`"
+        aria-hidden="true"
+      >
         <div
           v-if="preview !== null"
-          class="progress-fill"
+          :class="variant === 'default' ? 'progress-fill' : `${variant}-progress-fill`"
           :style="{ transform: `scaleX(${percent / 100})` }"
         ></div>
-        <SmoothedProgressFill v-else class="progress-fill" :class="{ live }" :percent="percent" />
+        <SmoothedProgressFill
+          v-else
+          :class="[variant === 'default' ? 'progress-fill' : `${variant}-progress-fill`, { live }]"
+          :percent="percent"
+        />
       </div>
       <div
         v-if="abStart != null && abEnd != null && duration > 0 && !live"
@@ -128,8 +150,10 @@ function onBlur(): void {
       ></div>
       <input
         type="range"
-        class="progress-slider"
-        :class="{ live }"
+        :class="[
+          variant === 'default' ? 'progress-slider' : `${variant}-progress-slider`,
+          { live }
+        ]"
         :value="live ? 0 : position"
         min="0"
         :max="duration || 1"
@@ -148,6 +172,11 @@ function onBlur(): void {
         @blur="onBlur"
       />
     </div>
-    <span class="time-label">{{ live ? 'LIVE' : formatTime(duration) }}</span>
+    <span v-if="variant === 'default'" class="time-label">{{
+      live ? 'LIVE' : formatTime(duration)
+    }}</span>
+    <span v-else-if="variant === 'mini'" class="mini-progress-time" aria-hidden="true">
+      {{ live ? 'LIVE' : `${formatTime(position)} / ${formatTime(duration)}` }}
+    </span>
   </div>
 </template>

@@ -94,8 +94,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
     <div class="setting-copy">
       <strong>播放条形态</strong>
       <span
-        >迷你形态是 40px
-        扁平长进度条；紧凑形态贴着窗口底边通栏，进度走顶边细线。每种形态装哪些按钮见下面的「播放条按钮编排」。</span
+        >迷你形态用扁平长进度条，保留上一首、播放和下一首；紧凑形态贴着窗口底边通栏，进度走顶边细线。每种形态装哪些按钮见下面的「播放条按钮编排」。</span
       >
     </div>
     <div class="segmented-control">

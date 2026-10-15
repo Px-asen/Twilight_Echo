@@ -114,7 +114,7 @@ p {
 button:focus-visible,
 summary:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

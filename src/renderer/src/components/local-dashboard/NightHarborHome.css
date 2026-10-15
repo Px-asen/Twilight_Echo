@@ -29,7 +29,7 @@
 }
 
 .night-harbor :is(button, input):focus-visible {
-  outline: 2px solid var(--nh-accent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 5px;
 }
 
@@ -1095,8 +1095,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .night-harbor button:active:not(:focus-visible) {
-    transform: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .night-harbor button:active:not(:focus-visible) {
+      transform: none;
+    }
   }
 }
 

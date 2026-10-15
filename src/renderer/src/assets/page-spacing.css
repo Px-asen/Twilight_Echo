@@ -1,0 +1,59 @@
+/* Page boundaries only. Nested content, theme canvases and immersive playback
+   keep their own layout; a containing page reserves each edge once. */
+:root {
+  --te-library-page-gutter: clamp(24px, 2vw, 32px);
+  --te-library-page-top: 24px;
+  --te-editor-page-gutter: 24px;
+  --te-editor-page-top: 24px;
+  --te-workspace-page-gutter: clamp(24px, 4vw, 48px);
+  --te-workspace-page-top: 32px;
+}
+
+html
+  :is(
+    .song-list,
+    .streaming-page,
+    .application-playlists-page,
+    .recent-playback-page,
+    .aggregate-page
+  ) {
+  --te-page-gutter: var(--te-library-page-gutter);
+  --te-page-inset: var(--te-library-page-gutter);
+  --te-page-top: var(--te-library-page-top);
+}
+
+html
+  :is(
+    .home,
+    .analytics-page,
+    .radio-podcast-page,
+    .network-sources-page,
+    .plugin-page,
+    .plugin-extension-page,
+    .audio-workspace,
+    .dsp-rack-page,
+    .eq-page
+  ) {
+  --te-page-gutter: var(--te-workspace-page-gutter);
+  --te-page-inset: max(
+    var(--te-page-gutter),
+    calc((100% - var(--te-page-content-max)) / 2 + var(--te-page-gutter))
+  );
+  --te-page-top: var(--te-workspace-page-top);
+}
+
+html :is(.appearance-page, .settings-preview-page, .workshop-page) {
+  --te-page-gutter: var(--te-editor-page-gutter);
+  --te-page-top: var(--te-editor-page-top);
+}
+
+@media (max-width: 680px) {
+  :root {
+    --te-library-page-gutter: 16px;
+    --te-library-page-top: 16px;
+    --te-editor-page-gutter: 16px;
+    --te-editor-page-top: 16px;
+    --te-workspace-page-gutter: 16px;
+    --te-workspace-page-top: 24px;
+  }
+}

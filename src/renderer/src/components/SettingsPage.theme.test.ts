@@ -66,11 +66,11 @@ test('vertical desktop lyric previews use a compact content-sized board', () => 
 test('settings option bars define dark-mode container and active option surfaces', () => {
   assert.match(
     styles,
-    /html\[data-theme='dark'\] \.segmented-control,[\s\S]*?background:\s*var\(--te-subtle-bg\)/
+    /html\[data-theme='dark'\] \.segmented-control,[\s\S]*?background:\s*var\(--te-control-bg-hover\)/
   )
   assert.match(
     styles,
-    /html\[data-theme='dark'\] \.segmented-control button\.active,[\s\S]*?background:\s*var\(--te-card-bg\)/
+    /html\[data-theme='dark'\] \.segmented-control button\.active,[\s\S]*?background:\s*var\(--te-control-bg\)/
   )
 })
 
@@ -216,15 +216,11 @@ test('settings wallpaper is painted once by the overlay root, never per element'
 })
 
 test('plugin center uses the settings wallpaper painter over streaming content', () => {
-  const overlay =
-    appSource.match(/<div\s+class="settings-overlay-root"[\s\S]*?<CommandPalette/)?.[0] ?? ''
-  assert.match(overlay, /settings-overlay-root--active': settingsOverlayVisible/)
-  assert.match(overlay, /v-show="settingsOverlayVisible && !appearanceFullWindowPreview"/)
-  assert.match(
-    appSource,
-    /showSettingsPage\.value \|\| showPluginPage\.value \|\| settingsOverlayLeaves\.value > 0/
-  )
-  assert.match(overlay, /<PluginPage\s+v-if="showPluginPage"/)
+  const plugin = readFileSync(new URL('./PluginPage.vue', import.meta.url), 'utf8')
+  assert.match(appSource, /<PluginPage\s+v-if="showPluginPage"/)
+  assert.match(plugin, /<AppBackgroundLayer page="settings" embedded reading\s*\/>/)
+  assert.match(plugin, /\.plugin-page\s*\{[^}]*position:\s*relative/)
+  assert.match(plugin, /\.plugin-window\s*\{[^}]*position:\s*relative/)
 })
 
 test('audio output device cards are opt-in through a closed native checkbox', () => {

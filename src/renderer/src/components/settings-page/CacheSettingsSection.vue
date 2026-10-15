@@ -42,7 +42,7 @@ const emit = defineEmits<{
           <span>保存图片、歌词、在线资源和可复用的流媒体缓存；用户固定的离线下载独立保留。</span>
         </div>
         <div class="path-control">
-          <input readonly :value="activeCachePath || '未设置'" />
+          <input readonly aria-label="缓存目录" :value="activeCachePath || '未设置'" />
           <button type="button" class="soft-button" @click="emit('chooseCacheFolder')">
             选择文件夹
           </button>
@@ -135,6 +135,7 @@ const emit = defineEmits<{
           </div>
           <select
             class="preview-select compact-select"
+            aria-label="流媒体音频缓存"
             :value="cachePolicy.streamingAudio"
             @change="emit('setStreamingAudioCachePolicy', $event)"
           >

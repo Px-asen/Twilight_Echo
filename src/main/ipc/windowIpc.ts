@@ -3,6 +3,7 @@ import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electr
 import { nativeMenuTemplate, registerNativeContextMenuIpc } from './nativeContextMenuIpc.ts'
 import { registerEqualizerClipboardIpc } from './equalizerClipboardIpc.ts'
 import { readWindowChromeState } from '../app/windowChrome.ts'
+import { dspEditorInteractionWindow } from '../app/dspEditorWindow.ts'
 
 export function registerWindowIpc(ipcMain: IpcMain): void {
   ipcMain.handle('window:getState', (event) => {
@@ -27,8 +28,9 @@ export function registerWindowIpc(ipcMain: IpcMain): void {
       if (active?.requestId === requestId) active.close()
     },
     popup: (event, request) => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win || win.isDestroyed() || !request.items.length) return Promise.resolve(null)
+      const owner = BrowserWindow.fromWebContents(event.sender)
+      if (!owner || owner.isDestroyed() || !request.items.length) return Promise.resolve(null)
+      const win = dspEditorInteractionWindow(owner, BrowserWindow.getFocusedWindow())
       const senderId = event.sender.id
       menus.get(senderId)?.close()
       return new Promise((resolve) => {

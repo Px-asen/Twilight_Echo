@@ -9,6 +9,8 @@ export function useFloatingPanels(
      * it the drawer collapses behind the dialog the drawer itself opened.
      */
     isDismissBlocked?: () => boolean
+    /** Related non-modal navigation/teleported panels may share the pointer. */
+    isInternalTarget?: (target: Node) => boolean
   } = {}
 ): {
   volumeOpen: Ref<boolean>
@@ -41,7 +43,11 @@ export function useFloatingPanels(
     if (!volumeOpen.value && !playlistOpen.value && !moreOpen.value) return
     if (options.isDismissBlocked?.()) return
     const target = event.target
-    if (target instanceof Node && shellRef.value?.contains(target)) return
+    if (
+      target instanceof Node &&
+      (shellRef.value?.contains(target) || options.isInternalTarget?.(target))
+    )
+      return
     closeFloatingPanels()
   }
 

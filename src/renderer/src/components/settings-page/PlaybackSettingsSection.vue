@@ -53,10 +53,14 @@ import {
   pcmToDsdModeOptions,
   playbackResumeOptions,
   previousButtonActionOptions,
-  routingModeOptions
+  routingModeOptions,
+  trackActivationModeOptions
 } from './types.ts'
 
-withDefaults(defineProps<{ autoAnalyzeBpm?: boolean }>(), { autoAnalyzeBpm: false })
+withDefaults(defineProps<{ autoAnalyzeBpm?: boolean; view?: 'all' | 'playback' | 'audio' }>(), {
+  autoAnalyzeBpm: false,
+  view: 'all'
+})
 const emit = defineEmits<{ toggleAutoAnalyzeBpm: [] }>()
 
 const { settings, updateSettings } = useSettingsStore()
@@ -697,9 +701,28 @@ function setContinuitySampleRate(event: Event): void {
 
 <template>
   <div id="playback-basics" class="settings-playback-content">
-    <div class="section-block">
-      <h3>日常播放</h3>
+    <div v-show="view !== 'audio'" class="section-block">
+      <h3>播放习惯</h3>
       <div class="setting-list">
+        <div data-setting-id="track-activation" id="setting-track-activation" class="setting-item">
+          <div class="setting-copy">
+            <strong>歌曲列表播放方式</strong>
+            <span>选择普通左键单击还是双击播放；右键始终只打开菜单，不改变选中状态。</span>
+          </div>
+          <div class="segmented-control" role="group" aria-label="歌曲列表播放方式">
+            <button
+              v-for="option in trackActivationModeOptions"
+              :key="option.value"
+              type="button"
+              :class="{ active: settings.trackActivationMode === option.value }"
+              :aria-pressed="settings.trackActivationMode === option.value"
+              @click="updateSettings({ trackActivationMode: option.value })"
+            >
+              <i :class="option.icon"></i>
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
         <div data-setting-id="playback-resume" id="setting-playback-resume" class="setting-item">
           <div class="setting-copy">
             <strong>启动时恢复播放</strong>
@@ -709,6 +732,7 @@ function setContinuitySampleRate(event: Event): void {
           </div>
           <select
             class="preview-select"
+            aria-label="启动时恢复播放"
             :value="settings.playbackResumeMode"
             @change="setPlaybackResumeModeFromSelect"
           >
@@ -732,6 +756,7 @@ function setContinuitySampleRate(event: Event): void {
           </div>
           <select
             class="preview-select"
+            aria-label="上一首按钮行为"
             :value="settings.previousButtonAction"
             @change="setPreviousButtonActionFromSelect"
           >
@@ -791,6 +816,7 @@ function setContinuitySampleRate(event: Event): void {
           </div>
           <select
             class="preview-select"
+            aria-label="网易云播放音质"
             :value="settings.ncmPlaybackQuality"
             @change="setNcmPlaybackQuality"
           >
@@ -806,7 +832,7 @@ function setContinuitySampleRate(event: Event): void {
       </div>
     </div>
     <div v-if="audioEngineError" class="engine-error">{{ audioEngineError }}</div>
-    <div class="section-block">
+    <div v-show="view !== 'playback'" class="section-block">
       <h3>声音输出</h3>
       <div data-setting-id="audio-device" id="setting-audio-device" class="setting-item">
         <div class="setting-copy">
@@ -872,12 +898,13 @@ function setContinuitySampleRate(event: Event): void {
                 <strong>输出模式</strong>
                 <span>选择音频后端和系统混音路径。</span>
               </div>
-              <div class="segmented-control">
+              <div class="segmented-control" role="group" aria-label="输出模式">
                 <button
                   v-for="option in audioOutputOptions"
                   :key="option.id"
                   type="button"
                   :class="{ active: audioOutput === option.id }"
+                  :aria-pressed="audioOutput === option.id"
                   @click="selectAudioOutput(option.id)"
                 >
                   {{ option.label }}
@@ -954,6 +981,7 @@ function setContinuitySampleRate(event: Event): void {
                 <input
                   class="number-input"
                   type="number"
+                  aria-label="软件音量（百分比）"
                   min="0"
                   max="100"
                   :value="volumePercent"
@@ -1064,6 +1092,7 @@ function setContinuitySampleRate(event: Event): void {
                 type="button"
                 class="device-card"
                 :class="{ active: audioDevice === device.id }"
+                :aria-pressed="audioDevice === device.id"
                 @click="selectAudioDevice(device.id)"
               >
                 <i :class="deviceIcon(device)"></i>
@@ -1105,6 +1134,7 @@ function setContinuitySampleRate(event: Event): void {
       </SettingsGroup>
     </div>
     <SettingsGroup
+      v-show="view !== 'audio'"
       id="playback-transitions"
       title="歌曲衔接"
       description="想让歌曲之间更连贯，或尝试自动混音时，再调整这些选项。无缝播放、淡化与 AutoMix 分别配置。"
@@ -1289,6 +1319,7 @@ function setContinuitySampleRate(event: Event): void {
               <input
                 class="number-input"
                 type="number"
+                aria-label="交叉淡入淡出（秒）"
                 min="0"
                 max="12"
                 step="0.5"
@@ -1400,6 +1431,7 @@ function setContinuitySampleRate(event: Event): void {
       </div>
     </SettingsGroup>
     <SettingsGroup
+      v-show="view !== 'playback'"
       id="dsd-routing"
       title="DSD 播放"
       description="播放 DSD 文件或使用支持 DSD 的解码器时，再调整直通与兼容层路由。"
@@ -1594,6 +1626,7 @@ function setContinuitySampleRate(event: Event): void {
         </p>
       </div></SettingsGroup
     ><SettingsGroup
+      v-show="view !== 'playback'"
       id="advanced-engine-parameters"
       title="高级引擎参数"
       description="使用专业声卡、独占输出，或需要排查声音问题时展开；日常播放可以保持默认设置。"

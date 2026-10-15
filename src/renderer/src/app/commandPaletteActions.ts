@@ -133,6 +133,14 @@ export function createCommandPaletteActions(controls: {
       run: () => navigation.openSettingsPage()
     },
     {
+      id: 'appearance',
+      title: '调整外观',
+      description: '背景、材质、字体与播放条布局',
+      terms: 'appearance theme skin 外观 皮肤 背景 材质',
+      group: '操作',
+      run: () => navigation.openAppearancePage()
+    },
+    {
       id: 'device-profiles',
       title: '管理设备档案',
       description: '查看与选择设备、输出策略和 DSP',
@@ -147,7 +155,10 @@ export function createCommandPaletteActions(controls: {
         description: '定位设置项',
         terms: entry.terms,
         group: '设置',
-        run: () => navigation.openSettingsPage(entry.section, { entry })
+        run: () =>
+          entry.section === 'appearance'
+            ? navigation.openAppearancePage(entry)
+            : navigation.openSettingsPage(entry.section, { entry })
       })
     )
   ]

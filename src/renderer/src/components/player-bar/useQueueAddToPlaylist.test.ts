@@ -340,8 +340,10 @@ test('a pending remote read cannot fill the picker after it moved to another ent
 
 test('the queue drawer row exposes the picker and the player bar mounts its dialog', () => {
   const source = readFileSync(new URL('../PlayerBar.vue', import.meta.url), 'utf8')
-  assert.match(source, /title="添加到歌单"/)
-  assert.match(source, /queueAddToPlaylist\.openForEntry\(item\.queueEntryId\)/)
+  const sidebar = readFileSync(new URL('./PlaybackQueueSidebar.vue', import.meta.url), 'utf8')
+  assert.match(sidebar, /添加到歌单/)
+  assert.match(sidebar, /emit\('addPlaylist', id\)/)
+  assert.match(source, /@add-playlist="queueAddToPlaylist\.openForEntry"/)
   assert.match(source, /<QueueAddToPlaylistDialog/)
   // The picker is teleported outside the bar, so outside-pointer dismissal has
   // to stand down while it is open or the drawer closes underneath it.

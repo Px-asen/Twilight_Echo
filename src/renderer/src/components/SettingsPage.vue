@@ -1,10 +1,9 @@
 ﻿<script setup lang="ts">
+import './settings-page/SettingsPage.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { documentMotionMode, scrollMotionBehavior } from '../app/scrollMotion'
 import GeneralSettingsSection from './settings-page/GeneralSettingsSection.vue'
 import SettingsQuickSetup from './settings-page/SettingsQuickSetup.vue'
-import AppearanceSettingsSection from './settings-page/AppearanceSettingsSection.vue'
-import { openAppearanceEditor } from '../composables/appearanceEditorState.ts'
 import PlaybackSettingsSection from './settings-page/PlaybackSettingsSection.vue'
 import DspSettingsSection from './settings-page/DspSettingsSection.vue'
 import LibrarySettingsSection from './settings-page/LibrarySettingsSection.vue'
@@ -15,6 +14,7 @@ import CacheSettingsSection from './settings-page/CacheSettingsSection.vue'
 import DesktopLyricsSettingsSection from './settings-page/DesktopLyricsSettingsSection.vue'
 import AboutSettingsSection from './settings-page/AboutSettingsSection.vue'
 import ShortcutsSettingsSection from './settings-page/ShortcutsSettingsSection.vue'
+import SettingsWorkspaceNavigation from './settings-page/SettingsWorkspaceNavigation.vue'
 import { provideSettingsDisclosures } from './settings-page/settingsDisclosureRegistry.ts'
 import {
   type SectionKey,
@@ -27,9 +27,7 @@ import {
   settingsAnchorDisclosurePath,
   type BooleanSettingKey,
   type SettingsSearchEntry,
-  sections,
   startupHomePageOptions,
-  trackActivationModeOptions,
   streamingAudioCachePolicyOptions,
   SETTINGS_SEARCH_INDEX,
   type PluginSettingsFieldType,
@@ -53,7 +51,6 @@ import type {
   PlayerShortcutStatus,
   GlobalShortcutSettings,
   StartupHomePage,
-  TrackActivationMode,
   StreamingAudioCachePolicy
 } from '../types/settings'
 import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
@@ -66,6 +63,7 @@ import { DEFAULT_PLAYER_BAR_SETTINGS, clonePlayerBarSettings } from '../../../sh
 import { getBuiltInThemePreset, TWILIGHT_DEFAULT_THEME_ID } from '../../../shared/themeCatalog.ts'
 
 const props = defineProps<{
+  active?: boolean
   initialSection?: SettingsSectionInput
   navigationTarget?: SettingsNavigationTarget
 }>()
@@ -77,6 +75,7 @@ const emit = defineEmits<{
   openThemeStudio: []
   openThemeWorkshop: []
   reopenOnboarding: []
+  openAppearance: [entry?: SettingsSearchEntry]
 }>()
 
 const runningPluginSettingsCommand = ref('')
@@ -85,7 +84,6 @@ const pluginSettingsError = ref<Record<string, string>>({})
 
 const pluginSettingsForms = ref<Record<string, PluginSettingsForm | null>>({})
 const pluginSettingsValues = ref<Record<string, Record<string, string>>>({})
-const settingsSearchQuery = ref('')
 const settingsNotice = ref('')
 const settingsError = ref('')
 const storageError = ref('')
@@ -94,9 +92,6 @@ const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
 
 const disclosures = provideSettingsDisclosures()
 const activeSection = ref<SectionKey>(normalizeSettingsSection(props.initialSection))
-const activeSectionInfo = computed(
-  () => sections.find((section) => section.key === activeSection.value) ?? sections[0]
-)
 watch(activeSection, (section) => emit('sectionChange', section), { flush: 'sync' })
 const pageRef = ref<HTMLElement | null>(null)
 
@@ -107,6 +102,8 @@ let categoryMotionMedia: MediaQueryList | undefined
 let categoryMotionMode = documentMotionMode()
 
 function selectSettingsCategory(section: SectionKey, keyboardNavigation = false): void {
+  if (section !== activeSection.value && pageRef.value)
+    categoryScroll.set(activeSection.value, pageRef.value.scrollTop)
   keyboardCategoryChange = keyboardNavigation
   activeSection.value = section
 }
@@ -127,15 +124,14 @@ watch(
   activeSection,
   (section) => {
     const page = pageRef.value
-    const header = page?.querySelector<HTMLElement>('.settings-page-header')
     const panel = page?.querySelector<HTMLElement>(`#${section}`)
     const mode = documentMotionMode()
     // Continue from the visible fade when another category is chosen mid-transition.
-    const opacity = categoryAnimations.length && header ? getComputedStyle(header).opacity : '0'
+    const opacity = categoryAnimations.length && panel ? getComputedStyle(panel).opacity : '0'
     cancelCategoryMotion()
     const keyboard = keyboardCategoryChange
     keyboardCategoryChange = false
-    if (!header || !panel || mode === 'off' || keyboard) return
+    if (!panel || mode === 'off' || keyboard) return
     categoryMotionMode = mode
     const tokens = getComputedStyle(document.documentElement)
     const duration =
@@ -145,14 +141,16 @@ watch(
     const easing =
       tokens.getPropertyValue('--te-ease-out-strong').trim() || 'cubic-bezier(0.23, 1, 0.32, 1)'
     // Opacity keeps search positioning, sticky controls and draft inputs stable.
-    for (const element of [header, panel]) {
-      const animation = element.animate([{ opacity }, { opacity: '1' }], { duration, easing })
-      categoryAnimations.push(animation)
-      const release = (): void => {
-        categoryAnimations = categoryAnimations.filter((running) => running !== animation)
-      }
-      void animation.finished.then(release, release)
+    const animation = panel.animate([{ opacity }, { opacity: '1' }], { duration, easing })
+    categoryAnimations.push(animation)
+    const release = (): void => {
+      categoryAnimations = categoryAnimations.filter((running) => running !== animation)
     }
+    // Remove the finished effect so Chromium releases its temporary opacity layer.
+    void animation.finished.then(() => {
+      animation.cancel()
+      release()
+    }, release)
   },
   { flush: 'post' }
 )
@@ -166,15 +164,6 @@ onMounted(() => {
   categoryMotionMedia = window.matchMedia('(prefers-reduced-motion: reduce)')
   categoryMotionMedia.addEventListener('change', settleCategoryMotion)
 })
-
-function setNavigationPressOrigin(event: PointerEvent): void {
-  const button =
-    event.target instanceof Element ? event.target.closest<HTMLElement>('button') : null
-  if (!button) return
-  const rect = button.getBoundingClientRect()
-  button.style.setProperty('--te-lg-press-x', `${event.clientX - rect.left}px`)
-  button.style.setProperty('--te-lg-press-y', `${event.clientY - rect.top}px`)
-}
 
 const {
   settings,
@@ -440,36 +429,6 @@ const activeCachePath = computed(
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
-const activeSearchIndex = ref(-1)
-const filteredSearchResults = computed(() => {
-  const query = settingsSearchQuery.value.trim().toLowerCase()
-  if (!query) return []
-  const matches = SETTINGS_SEARCH_INDEX.map((entry) => {
-    const title = entry.title.toLowerCase()
-    const terms = entry.terms.toLowerCase()
-    let score = 0
-    if (title === query) score = 4
-    else if (title.startsWith(query)) score = 3
-    else if (title.includes(query)) score = 2
-    else if (terms.includes(query)) score = 1
-    return { entry, score }
-  })
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map(({ entry }) => entry)
-  return matches
-})
-// 结果集变化时修正选中索引，避免越界
-watch(filteredSearchResults, (matches) => {
-  activeSearchIndex.value = matches.length > 0 ? 0 : -1
-})
-const hasSettingsSearchResults = computed(
-  () => settingsSearchQuery.value.trim().length > 0 && filteredSearchResults.value.length > 0
-)
-const hasSettingsSearchNoResults = computed(
-  () => settingsSearchQuery.value.trim().length > 0 && filteredSearchResults.value.length === 0
-)
-
 async function setGenreSeparators(event: Event): Promise<void> {
   const value = (event.target as HTMLInputElement).value
   await updateSettings({ genreSeparators: value })
@@ -648,11 +607,6 @@ function updateDesktopLyrics(patch: Partial<DesktopLyricsSettings>): void {
 function setStartupHomePage(startupHomePage: StartupHomePage): void {
   if (settings.value.startupHomePage === startupHomePage) return
   void updateSettings({ startupHomePage })
-}
-
-function setTrackActivationMode(trackActivationMode: TrackActivationMode): void {
-  if (settings.value.trackActivationMode === trackActivationMode) return
-  void updateSettings({ trackActivationMode })
 }
 
 function setCloseBehavior(event: Event): void {
@@ -983,15 +937,20 @@ function scrollPageToElement(
   })
 }
 
+const categoryScroll = new Map<SectionKey, number>()
 function scrollToSection(section: SectionKey, keyboardNavigation = false): void {
+  if (section === 'appearance') {
+    emit('openAppearance')
+    return
+  }
+  if (pageRef.value) categoryScroll.set(activeSection.value, pageRef.value.scrollTop)
   const revision = ++settingsNavigationRevision
-  settingsSearchQuery.value = ''
   settingsNotice.value = ''
   highlightSettingItem(null)
   selectSettingsCategory(section, keyboardNavigation)
   void nextTick(() => {
     if (revision === settingsNavigationRevision)
-      pageRef.value?.scrollTo({ top: 0, behavior: 'instant' })
+      pageRef.value?.scrollTo({ top: categoryScroll.get(section) ?? 0, behavior: 'instant' })
   })
   revealActiveNavigationItem()
 }
@@ -1013,33 +972,8 @@ function revealActiveNavigationItem(): void {
 }
 watch(activeSection, revealActiveNavigationItem)
 
-function onCategoryKeydown(event: KeyboardEvent, section: SectionKey): void {
-  const index = sections.findIndex((item) => item.key === section)
-  let nextIndex: number
-  if (event.key === 'Home') nextIndex = 0
-  else if (event.key === 'End') nextIndex = sections.length - 1
-  else if (event.key === 'ArrowDown' || event.key === 'ArrowRight')
-    nextIndex = (index + 1) % sections.length
-  else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft')
-    nextIndex = (index - 1 + sections.length) % sections.length
-  else return
-  event.preventDefault()
-  const next = sections[nextIndex].key
-  scrollToSection(next, true)
-  void nextTick(() => {
-    pageRef.value
-      ?.querySelector<HTMLElement>(`[data-settings-category="${next}"]`)
-      ?.focus({ preventScroll: true })
-    revealActiveNavigationItem()
-  })
-}
-
-function onCategorySelect(event: Event): void {
-  const select = event.target as HTMLSelectElement
-  scrollToSection(normalizeSettingsSection(select.value), select.matches(':focus-visible'))
-}
-
 async function applyNavigationTarget(): Promise<void> {
+  if (props.active === false) return
   if (!pageRef.value) return
   const revision = ++settingsNavigationRevision
   settingsNotice.value = ''
@@ -1070,9 +1004,13 @@ async function applyNavigationTarget(): Promise<void> {
   else scrollToSection(normalizeSettingsSection(props.initialSection))
 }
 
-watch([() => props.initialSection, () => props.navigationTarget], applyNavigationTarget, {
-  flush: 'post'
-})
+watch(
+  [() => props.initialSection, () => props.navigationTarget, () => props.active],
+  applyNavigationTarget,
+  {
+    flush: 'post'
+  }
+)
 
 let settingsNavigationRevision = 0
 async function settleSettingsNavigation(scope: HTMLElement | null): Promise<void> {
@@ -1121,14 +1059,13 @@ async function scrollToSearchResult(
 ): Promise<void> {
   const revision = ++settingsNavigationRevision
   const entry = resolveSettingsSearchEntry(input)
-  settingsSearchQuery.value = ''
   settingsNotice.value = ''
-  selectSettingsCategory(normalizeSettingsSection(entry.section), keyboardNavigation)
-  revealActiveNavigationItem()
-  if (entry.appearanceArea) {
-    openAppearanceEditor(entry.appearanceArea)
+  if (entry.section === 'appearance') {
+    emit('openAppearance', entry)
     return
   }
+  selectSettingsCategory(normalizeSettingsSection(entry.section), keyboardNavigation)
+  revealActiveNavigationItem()
   await nextTick()
   if (revision !== settingsNavigationRevision || !pageRef.value) return
   await revealSettingsPath(settingsDisclosurePath(entry), revision)
@@ -1235,34 +1172,6 @@ function highlightSettingItem(item: HTMLElement | null): void {
   }, 2200)
 }
 
-function moveSearchSelection(delta: number): void {
-  const results = filteredSearchResults.value
-  if (results.length === 0) return
-  const next = activeSearchIndex.value + delta
-  activeSearchIndex.value = ((next % results.length) + results.length) % results.length
-  void nextTick(() => {
-    pageRef.value
-      ?.querySelector(`#settings-search-result-${activeSearchIndex.value}`)
-      ?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
-  })
-}
-
-function handleSettingsSearchEnter(): void {
-  const results = filteredSearchResults.value
-  if (results.length === 0) return
-  const target =
-    activeSearchIndex.value >= 0 && activeSearchIndex.value < results.length
-      ? results[activeSearchIndex.value]
-      : results[0]
-  scrollToSearchResult(target, true)
-}
-
-function clearSettingsSearch(): void {
-  settingsSearchQuery.value = ''
-  activeSearchIndex.value = -1
-  pageRef.value?.querySelector<HTMLInputElement>('#settings-search-input')?.focus()
-}
-
 async function refreshShortcutStatuses(): Promise<void> {
   try {
     shortcutStatuses.value = await getShortcutStatuses()
@@ -1291,7 +1200,7 @@ onMounted(async () => {
   await refreshLibraryWatcherStatus()
   if (settingsDisposed) return
   libraryWatcherStatusTimer = window.setInterval(() => {
-    if (document.visibilityState === 'hidden') return
+    if (props.active === false || document.visibilityState === 'hidden') return
     void refreshLibraryWatcherStatus()
   }, 5_000)
   await nextTick()
@@ -1322,108 +1231,13 @@ onBeforeUnmount(() => {
       @change="handleSettingsBackupSelected"
     />
     <div class="settings-preview-layout">
-      <nav
-        class="settings-preview-nav"
-        aria-label="设置分区"
-        @pointerdown="setNavigationPressOrigin"
-      >
-        <div class="settings-nav-search-wrap">
-          <div class="settings-search-box settings-nav-search">
-            <i class="pi pi-search"></i>
-            <input
-              id="settings-search-input"
-              v-model="settingsSearchQuery"
-              type="text"
-              class="settings-search-input"
-              placeholder="搜索设置"
-              aria-label="搜索设置"
-              role="combobox"
-              aria-autocomplete="list"
-              :aria-expanded="hasSettingsSearchResults"
-              :aria-controls="hasSettingsSearchResults ? 'settings-search-results' : undefined"
-              :aria-activedescendant="
-                hasSettingsSearchResults && activeSearchIndex >= 0
-                  ? `settings-search-result-${activeSearchIndex}`
-                  : undefined
-              "
-              @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
-              @keydown.down.prevent="moveSearchSelection(1)"
-              @keydown.up.prevent="moveSearchSelection(-1)"
-              @keydown.enter.prevent="handleSettingsSearchEnter"
-              @keydown.esc.stop.prevent="clearSettingsSearch"
-            />
-            <button
-              v-if="settingsSearchQuery"
-              type="button"
-              class="settings-search-clear"
-              @click="clearSettingsSearch"
-              aria-label="清除搜索"
-            >
-              <i class="pi pi-times"></i>
-            </button>
-          </div>
-          <div
-            v-if="hasSettingsSearchResults"
-            id="settings-search-results"
-            class="settings-nav-results"
-            role="listbox"
-            aria-label="搜索结果"
-          >
-            <button
-              v-for="(result, index) in filteredSearchResults"
-              :key="`${result.section}:${result.title}`"
-              :id="`settings-search-result-${index}`"
-              type="button"
-              tabindex="-1"
-              role="option"
-              :aria-selected="activeSearchIndex === index"
-              :class="{ active: activeSearchIndex === index }"
-              @mouseenter="activeSearchIndex = index"
-              @click="scrollToSearchResult(result, $event.detail === 0)"
-            >
-              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
-              <span class="settings-nav-result-title">{{ result.title }}</span>
-              <small>{{ sections.find((section) => section.key === result.section)?.label }}</small>
-            </button>
-          </div>
-          <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty" role="status">
-            没有找到匹配的设置
-          </div>
-        </div>
-        <select
-          class="settings-category-select preview-select"
-          aria-label="设置分类"
-          :value="activeSection"
-          @change="onCategorySelect"
-        >
-          <option v-for="section in sections" :key="section.key" :value="section.key">
-            {{ section.label }}
-          </option>
-        </select>
-        <div class="settings-nav-categories">
-          <button
-            v-for="section in sections"
-            :key="section.key"
-            type="button"
-            class="preview-nav-item"
-            :class="{ active: activeSection === section.key }"
-            :aria-current="activeSection === section.key ? 'page' : undefined"
-            :tabindex="activeSection === section.key ? 0 : -1"
-            :data-settings-category="section.key"
-            @keydown="onCategoryKeydown($event, section.key)"
-            @click="scrollToSection(section.key, $event.detail === 0)"
-          >
-            <i :class="section.icon"></i>
-            <span>{{ section.label }}</span>
-          </button>
-        </div>
-      </nav>
+      <SettingsWorkspaceNavigation
+        :active-section="activeSection"
+        @category="scrollToSection"
+        @search="scrollToSearchResult"
+      />
 
       <div class="settings-preview-stack">
-        <header class="settings-page-header">
-          <h1 class="settings-page-title">{{ activeSectionInfo.label }}</h1>
-          <p class="settings-page-description">{{ activeSectionInfo.description }}</p>
-        </header>
         <SettingsQuickSetup
           v-if="showQuickSetup"
           :folder-count="settings.libraryFolders?.length ?? 0"
@@ -1453,43 +1267,43 @@ onBeforeUnmount(() => {
 
         <GeneralSettingsSection
           v-show="activeSection === 'general'"
-          :track-activation-mode-options="trackActivationModeOptions"
           :startup-home-page-options="startupHomePageOptions"
           :toggle-setting="toggleSetting"
-          :set-track-activation-mode="setTrackActivationMode"
           :set-startup-home-page="setStartupHomePage"
           :set-close-behavior="setCloseBehavior"
           @reopen-onboarding="emit('reopenOnboarding')"
         />
-        <AppearanceSettingsSection
-          v-show="activeSection === 'appearance'"
-          @open-theme-studio="emit('openThemeStudio')"
-          @open-theme-workshop="emit('openThemeWorkshop')"
-        />
         <section
-          v-show="activeSection === 'playback'"
-          id="playback"
-          class="glass-card preview-section"
+          v-show="['playback', 'audio'].includes(activeSection)"
+          :id="activeSection === 'audio' ? 'audio' : 'playback'"
+          class="settings-section preview-section"
         >
           <div class="section-title-row">
-            <i class="pi pi-volume-up" aria-hidden="true" />
-            <h2>播放与音效</h2>
+            <i
+              :class="activeSection === 'audio' ? 'pi pi-volume-up' : 'pi pi-play'"
+              aria-hidden="true"
+            />
+            <h2>{{ activeSection === 'audio' ? '音频' : '播放' }}</h2>
           </div>
-          <p class="settings-section-description">调整播放习惯、输出设备和声音处理。</p>
           <PlaybackSettingsSection
+            :view="activeSection === 'audio' ? 'audio' : 'playback'"
             :auto-analyze-bpm="settings.autoAnalyzeBpm"
             @toggle-auto-analyze-bpm="toggleAutoAnalyzeBpm"
           /><DspSettingsSection
+            v-show="activeSection === 'audio'"
             @open-equalizer="emit('openEqualizer')"
             @open-dsp-rack="emit('openDspRack')"
           />
         </section>
-        <section v-show="activeSection === 'lyrics'" id="lyrics" class="glass-card preview-section">
+        <section
+          v-show="activeSection === 'lyrics'"
+          id="lyrics"
+          class="settings-section preview-section"
+        >
           <div class="section-title-row">
             <i class="pi pi-align-left" aria-hidden="true" />
             <h2>歌词</h2>
           </div>
-          <p class="settings-section-description">设置歌词来源与播放页、桌面上的显示方式。</p>
           <div class="section-block">
             <h3>歌词来源</h3>
             <div class="setting-list">
@@ -1609,12 +1423,12 @@ onBeforeUnmount(() => {
           :run-plugin-settings-panel="runPluginSettingsPanel"
           :set-plugin-settings-field="setPluginSettingsField"
           :submit-plugin-settings-form="submitPluginSettingsForm"
-        >
-          <AboutSettingsSection
-            :app-version="appVersion"
-            @export-audio-diagnostics="exportAudioDiagnostics"
-          />
-        </SystemSettingsSection>
+        />
+        <AboutSettingsSection
+          v-show="activeSection === 'about'"
+          :app-version="appVersion"
+          @export-audio-diagnostics="exportAudioDiagnostics"
+        />
       </div>
     </div>
   </main>
@@ -1672,8 +1486,6 @@ onBeforeUnmount(() => {
 }
 </style>
 
-<style src="./settings-page/SettingsPage.css"></style>
-
 <style>
 html[data-theme='dark'] .settings-preview-page {
   /* This block is emitted after SettingsPage.css. The overlay root is the
@@ -1716,7 +1528,6 @@ html[data-theme='dark'] .settings-preview-page .select-control,
 html[data-theme='dark'] .settings-preview-page .number-input,
 html[data-theme='dark'] .settings-preview-page .path-control input,
 html[data-theme='dark'] .settings-preview-page .plugin-empty,
-html[data-theme='dark'] .settings-preview-page .range-pill,
 html[data-theme='dark'] .settings-preview-page .update-card,
 html[data-theme='dark'] .settings-preview-page .about-links button,
 html[data-theme='dark'] .settings-preview-page .output-diagnostic-panel,
@@ -1734,8 +1545,8 @@ html[data-theme='dark'] .settings-preview-page .settings-nav-search,
 html[data-theme='dark'] .settings-preview-page .read-only-pill {
   border-color: var(--te-card-border);
   background: var(--te-settings-control-bg);
-  color: rgba(226, 232, 240, 0.9);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  color: var(--te-control-fg);
+  box-shadow: var(--te-settings-shadow-soft);
 }
 
 html[data-theme='dark'] .settings-preview-page .folder-chip,
@@ -1780,8 +1591,8 @@ html[data-theme='dark'] .settings-preview-page .about-section hr {
 
 html[data-theme='dark'] .settings-preview-page .segmented-control,
 html[data-theme='dark'] .settings-preview-page .theme-segment {
-  border-color: var(--te-card-border);
-  background: var(--te-subtle-bg);
+  border-color: var(--te-control-border);
+  background: var(--te-control-bg-hover);
   box-shadow: none;
 }
 
@@ -1798,9 +1609,9 @@ html[data-theme='dark'] .settings-preview-page .settings-search-box .settings-se
 html[data-theme='dark'] .settings-preview-page .segmented-control button.active,
 html[data-theme='dark'] .settings-preview-page .theme-segment button.active,
 html[data-theme='dark'] .settings-preview-page .background-kind-toggle button.active {
-  background: var(--te-card-bg);
-  color: var(--te-text);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
+  box-shadow: var(--te-settings-shadow-soft);
 }
 
 html[data-theme='dark'] .settings-preview-page .dsp-signal-chain {
@@ -1808,11 +1619,13 @@ html[data-theme='dark'] .settings-preview-page .dsp-signal-chain {
   background: var(--te-subtle-bg);
 }
 
-html[data-theme='dark'] .settings-preview-page .device-card:hover,
+html[data-theme='dark'] .settings-preview-page .device-card:hover {
+  background: var(--te-hover-bg);
+}
+
 html[data-theme='dark'] .settings-preview-page .device-card.active {
-  border-color: rgba(var(--te-primary-rgb), 0.42);
+  border-color: var(--te-primary-500);
   background: rgba(var(--te-primary-rgb), 0.1);
-  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
 }
 
 html[data-theme='dark'] .settings-preview-page .device-card > i {
@@ -1892,7 +1705,6 @@ html[data-theme='dark'] .settings-preview-page .folder-chip,
 html[data-theme='dark'] .settings-preview-page .folder-empty-hint,
 html[data-theme='dark'] .settings-preview-page .device-card small,
 html[data-theme='dark'] .settings-preview-page .plugin-empty,
-html[data-theme='dark'] .settings-preview-page .range-pill span,
 html[data-theme='dark'] .settings-preview-page .about-copy p,
 html[data-theme='dark'] .settings-preview-page .update-card span,
 html[data-theme='dark'] .settings-preview-page .background-editor-head span,
@@ -1949,7 +1761,7 @@ html[data-theme='dark'] .settings-preview-page .dashed-button,
 html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
   border-color: var(--te-card-border);
   background: var(--te-settings-control-bg);
-  color: var(--te-settings-text);
+  color: var(--te-control-fg);
   box-shadow: none;
 }
 
@@ -1960,8 +1772,8 @@ html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
 
 html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {
   border-color: rgba(var(--te-primary-rgb), 0.34);
-  background: rgba(var(--te-primary-rgb), 0.14);
-  color: var(--te-primary-300);
+  background: var(--te-control-bg-active);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .dashed-button:hover,
@@ -1969,8 +1781,8 @@ html[data-theme='dark'] .settings-preview-page .brand-soft-button:hover,
 html[data-theme='dark'] .settings-preview-page .preset-btn:hover,
 html[data-theme='dark'] .settings-preview-page .settings-nav-results button.active {
   border-color: rgba(var(--te-primary-rgb), 0.34);
-  background: rgba(var(--te-primary-rgb), 0.14);
-  color: var(--te-primary-300);
+  background: var(--te-control-bg-hover);
+  color: var(--te-control-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .restart-banner,
@@ -2045,3 +1857,5 @@ html[data-theme='dark'] .settings-preview-page .engine-error {
 </style>
 
 <style src="./settings-page/SettingsLayout.css"></style>
+
+<style src="./settings-page/SettingsMarketLayout.css"></style>

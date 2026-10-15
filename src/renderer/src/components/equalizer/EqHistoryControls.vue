@@ -69,15 +69,15 @@ button {
 }
 button.active,
 button:hover:not(:disabled) {
-  color: var(--eq-response, var(--te-primary-500));
-  background: var(--eq-control-bg, var(--te-primary-50));
+  color: var(--eq-response, var(--te-control-fg));
+  background: var(--eq-control-bg, var(--te-control-bg-active));
 }
 button:disabled {
   opacity: 0.35;
   cursor: default;
 }
 button:focus-visible {
-  outline: 2px solid var(--eq-response, var(--te-primary-500));
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

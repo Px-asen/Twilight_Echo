@@ -1,4 +1,5 @@
 import type { VersionedDataEnvelope } from './versionedPersistence.ts'
+import { normalizeAppearanceLayers, type AppearanceLayersSettings } from './appearanceLayers.ts'
 import {
   normalizeThemeShellLayout,
   THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
@@ -273,6 +274,8 @@ export interface ThemeProfileV2 extends Omit<ThemeProfileV1, 'schemaVersion'> {
   modes: ThemeModes
   toneSchedule?: ThemeToneSchedule
   source?: ThemeProfileSource
+  appearanceLayers?: AppearanceLayersSettings
+  iconBindings?: Partial<Record<ThemeIconSlot, string>>
 }
 
 export interface ThemeProfileSource {
@@ -280,7 +283,7 @@ export interface ThemeProfileSource {
   presetId: BuiltInThemePresetId
 }
 
-export type ThemeIconDomain = 'navigation' | 'library'
+export type ThemeIconDomain = 'navigation' | 'library' | 'playback'
 
 export interface ThemeIconSlotDefinition {
   domain: ThemeIconDomain
@@ -307,6 +310,7 @@ export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
   'navigation.playlists': themeIconSlot('navigation', 'playlist'),
   'navigation.folders': themeIconSlot('navigation', 'folder-open'),
   'navigation.recent': themeIconSlot('navigation', 'clock-counter-clockwise'),
+  'navigation.refresh': themeIconSlot('navigation', 'arrows-clockwise'),
   'navigation.analytics': themeIconSlot('navigation', 'chart-bar'),
   'navigation.streaming': themeIconSlot('navigation', 'globe'),
   'navigation.radio': themeIconSlot('navigation', 'radio'),
@@ -315,6 +319,11 @@ export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
   'navigation.menu': themeIconSlot('navigation', 'list'),
   'navigation.back': themeIconSlot('navigation', 'arrow-left'),
   'navigation.settings': themeIconSlot('navigation', 'gear-six'),
+  'navigation.appearance': themeIconSlot('navigation', 't-shirt'),
+  'navigation.day': themeIconSlot('navigation', 'sun'),
+  'navigation.night': themeIconSlot('navigation', 'moon'),
+  'navigation.layers': themeIconSlot('navigation', 'cube'),
+  'navigation.camera': themeIconSlot('navigation', 'camera'),
   'navigation.person': themeIconSlot('navigation', 'user-circle'),
   'navigation.notification': themeIconSlot('navigation', 'bell'),
   'navigation.quiet': themeIconSlot('navigation', 'bell-slash'),
@@ -333,13 +342,96 @@ export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
   'library.folder': themeIconSlot('library', 'folder-open'),
   'library.add': themeIconSlot('library', 'plus'),
   'library.play': themeIconSlot('library', 'play'),
+  'library.shuffle': themeIconSlot('library', 'shuffle'),
   'library.empty': themeIconSlot('library', 'waveform'),
   'library.selected': themeIconSlot('library', 'check'),
   'library.playing': themeIconSlot('library', 'speaker-high'),
-  'library.filter': themeIconSlot('library', 'funnel')
+  'library.filter': themeIconSlot('library', 'funnel'),
+  'playback.play': themeIconSlot('playback', 'play'),
+  'playback.pause': themeIconSlot('playback', 'pause'),
+  'playback.previous': themeIconSlot('playback', 'skip-back'),
+  'playback.next': themeIconSlot('playback', 'skip-forward'),
+  'playback.volume': themeIconSlot('playback', 'speaker-high'),
+  'playback.muted': themeIconSlot('playback', 'speaker-x'),
+  'playback.queue': themeIconSlot('playback', 'queue'),
+  'playback.equalizer': themeIconSlot('playback', 'sliders'),
+  'playback.miniPlayer': themeIconSlot('playback', 'picture-in-picture'),
+  'playback.favorite': themeIconSlot('playback', 'heart'),
+  'playback.favoriteActive': themeIconSlot('playback', 'heart'),
+  'playback.sequential': themeIconSlot('playback', 'arrow-right'),
+  'playback.listLoop': themeIconSlot('playback', 'repeat'),
+  'playback.repeat': themeIconSlot('playback', 'repeat-once'),
+  'playback.shuffle': themeIconSlot('playback', 'shuffle'),
+  'playback.heart': themeIconSlot('playback', 'heart-half')
 })
 
 export type ThemeIconSlot = keyof typeof THEME_ICON_SLOT_REGISTRY
+export const THEME_ICON_SLOTS: readonly ThemeIconSlot[] = Object.freeze(
+  Object.keys(THEME_ICON_SLOT_REGISTRY) as ThemeIconSlot[]
+)
+export const THEME_ICON_SLOT_LABELS: Readonly<Record<ThemeIconSlot, string>> = Object.freeze({
+  'navigation.home': '首页',
+  'navigation.songs': '歌曲',
+  'navigation.artists': '歌手',
+  'navigation.albums': '专辑',
+  'navigation.genres': '曲风',
+  'navigation.playlists': '歌单',
+  'navigation.folders': '文件夹',
+  'navigation.recent': '最近播放',
+  'navigation.refresh': '刷新资料库',
+  'navigation.analytics': '聆听统计',
+  'navigation.streaming': '流媒体',
+  'navigation.radio': '电台',
+  'navigation.import': '导入音乐',
+  'navigation.plugin': '插件',
+  'navigation.menu': '导航菜单',
+  'navigation.back': '返回',
+  'navigation.settings': '设置',
+  'navigation.appearance': '外观',
+  'navigation.day': '浅色外观',
+  'navigation.night': '深色外观',
+  'navigation.layers': '图层',
+  'navigation.camera': '快照',
+  'navigation.person': '账户',
+  'navigation.notification': '通知',
+  'navigation.quiet': '静音通知',
+  'navigation.search': '搜索',
+  'navigation.favorite': '收藏入口',
+  'navigation.cloud': '云盘',
+  'navigation.network': '网络来源',
+  'navigation.expand': '展开',
+  'navigation.collapse': '折叠',
+  'library.search': '搜索资料库',
+  'library.clear': '清除搜索',
+  'library.artist': '歌手集合',
+  'library.album': '专辑集合',
+  'library.genre': '曲风集合',
+  'library.playlist': '歌单集合',
+  'library.folder': '文件夹集合',
+  'library.add': '新建集合',
+  'library.play': '播放集合',
+  'library.shuffle': '随机播放集合',
+  'library.empty': '资料库空状态',
+  'library.selected': '已选中',
+  'library.playing': '正在播放',
+  'library.filter': '筛选资料库',
+  'playback.play': '播放',
+  'playback.pause': '暂停',
+  'playback.previous': '上一首',
+  'playback.next': '下一首',
+  'playback.volume': '音量',
+  'playback.muted': '静音',
+  'playback.queue': '播放队列',
+  'playback.equalizer': '音频调节',
+  'playback.miniPlayer': '迷你播放器',
+  'playback.favorite': '未收藏',
+  'playback.favoriteActive': '已收藏',
+  'playback.sequential': '顺序播放',
+  'playback.listLoop': '列表循环',
+  'playback.repeat': '单曲循环',
+  'playback.shuffle': '随机播放',
+  'playback.heart': '心动模式'
+})
 
 export function resolveThemeIconClasses(slot: ThemeIconSlot, family: ThemeIconFamily): string {
   return THEME_ICON_SLOT_REGISTRY[slot].classes[family]
@@ -415,6 +507,7 @@ export interface StructuredPluginThemeV2 {
 export interface StructuredPluginThemeV3 extends Omit<StructuredPluginThemeV2, 'schemaVersion'> {
   schemaVersion: 3
   layout?: ThemeShellLayout
+  appearanceLayers?: AppearanceLayersSettings
 }
 
 export type StructuredPluginTheme =
@@ -499,6 +592,7 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
   const updatedAt = normalizeIsoDate(value.updatedAt)
   const overrides = isRecord(value.overrides) ? value.overrides : {}
   const assets = normalizeThemeAssets(value.assets)
+  const iconBindings = normalizeThemeIconBindings(value.iconBindings, assets)
   const source =
     value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION
       ? normalizeThemeProfileSource(value.source)
@@ -529,9 +623,13 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
       value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION ? normalizeThemeModes(value.modes) : {},
     ...(toneSchedule ? { toneSchedule } : {}),
     ...(source ? { source } : {}),
+    ...(value.appearanceLayers != null
+      ? { appearanceLayers: normalizeAppearanceLayers(value.appearanceLayers) }
+      : {}),
     windowDefaults: normalizeWindowDefaults(value.windowDefaults),
     ...(assets.length > 0 ? { assets } : {}),
-    ...normalizeThemeAssetBindings(value.assetBindings, assets)
+    ...normalizeThemeAssetBindings(value.assetBindings, assets),
+    ...(iconBindings ? { iconBindings } : {})
   }
 }
 
@@ -596,10 +694,12 @@ function themeProfileEditableState(profile: ThemeProfileV2): object {
     overrides: profile.overrides,
     modes: profile.modes,
     toneSchedule: profile.toneSchedule,
+    appearanceLayers: profile.appearanceLayers,
     source: profile.source,
     windowDefaults: profile.windowDefaults,
     assets: profile.assets,
-    assetBindings: profile.assetBindings
+    assetBindings: profile.assetBindings,
+    iconBindings: profile.iconBindings
   }
 }
 
@@ -847,6 +947,35 @@ function normalizeThemeAssetBindings(
   return Object.keys(result).length > 0 ? { assetBindings: result } : {}
 }
 
+export function normalizeThemeIconBindings(
+  value: unknown,
+  assets: readonly ThemeAssetReference[]
+): Partial<Record<ThemeIconSlot, string>> | undefined {
+  if (!isRecord(value)) return undefined
+  const images = new Set(assets.filter((asset) => asset.type === 'image').map((asset) => asset.id))
+  const result: Partial<Record<ThemeIconSlot, string>> = {}
+  for (const slot of THEME_ICON_SLOTS) {
+    const id = typeof value[slot] === 'string' ? value[slot].trim() : ''
+    if (images.has(id)) result[slot] = id
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+/** Resolve only a declared local image; callers never accept a URL as a binding. */
+export function resolveThemeIconUrl(
+  profile: ThemeProfileV2 | null | undefined,
+  slot: ThemeIconSlot
+): string {
+  if (!profile || !normalizeThemeId(profile.id) || !Object.hasOwn(THEME_ICON_SLOT_REGISTRY, slot))
+    return ''
+  const assets = normalizeThemeAssets(profile.assets)
+  const binding = normalizeThemeIconBindings(profile.iconBindings, assets)?.[slot]
+  const asset = assets.find((item) => item.id === binding)
+  if (!asset) return ''
+  const path = asset.path.split('/').map(encodeURIComponent).join('/')
+  return `theme-asset://asset/${encodeURIComponent(profile.id)}/${path}`
+}
+
 export function normalizeThemeTokenOverrides(
   value: Record<string, unknown>
 ): Record<string, string> {
@@ -892,11 +1021,16 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
       : undefined
   const hasDeclaredLayout =
     schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && value.layout !== undefined
+  const appearanceLayers =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.appearanceLayers)
+      ? normalizeAppearanceLayers(value.appearanceLayers)
+      : undefined
   if (
     Object.keys(variants).length === 0 &&
     !windowDefaults &&
     !hasDeclaredModes &&
-    (!hasDeclaredLayout || !layout)
+    (!hasDeclaredLayout || !layout) &&
+    !appearanceLayers
   ) {
     return undefined
   }
@@ -920,6 +1054,7 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
     variants,
     ...(modes && Object.keys(modes).length > 0 ? { modes } : {}),
     ...(layout ? { layout } : {}),
+    ...(appearanceLayers ? { appearanceLayers } : {}),
     ...(windowDefaults ? { windowDefaults } : {})
   }
 }
@@ -1231,7 +1366,13 @@ export const THEME_MANAGED_DATA_ATTRIBUTES: readonly `data-te-${string}`[] = Obj
   'data-te-card-custom',
   ...['app', 'local', 'settings', 'streaming', 'player'].flatMap(
     (page) =>
-      [`data-te-${page}-custom-background`, `data-te-${page}-text-tone`] as `data-te-${string}`[]
+      [
+        `data-te-${page}-custom-background`,
+        `data-te-${page}-text-tone`,
+        `data-te-${page}-text-tone-source`,
+        `data-te-${page}-image-fallback-tone`,
+        `data-te-${page}-image-palette`
+      ] as `data-te-${string}`[]
   )
 ])
 

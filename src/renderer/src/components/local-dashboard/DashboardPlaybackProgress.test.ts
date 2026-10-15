@@ -98,6 +98,36 @@ test('playback ticks update the progress island without rendering its parent, an
       currentTarget: { getBoundingClientRect: () => ({ left: 10, width: 100 }) }
     })
     assert.equal(seekPosition, 100)
+    const previewRoot = element('preview-root')
+    const previewApp = renderer.createApp({ render: () => h(component, { preview: true }) })
+    try {
+      previewApp.mount(previewRoot)
+      const snapshotNode = (node: Element): string =>
+        JSON.stringify([node.tag, node.text, node.props, node.children.map(snapshotNode)])
+      const snapshot = snapshotNode(previewRoot)
+      for (let tick = 21; tick <= 100; tick++) {
+        currentTime.value = tick
+        progress.value = tick
+        duration.value = 200 + tick
+        await nextTick()
+      }
+      assert.equal(snapshotNode(previewRoot), snapshot)
+      const previewContainer = previewRoot.children[0]
+      assert.equal(previewContainer.children[1].children[0].text, '63s')
+      assert.equal(previewContainer.children[1].children[1].text, '180s')
+      const previewClick = previewContainer.children[0].props.onClick as (event: unknown) => void
+      previewClick({
+        clientX: 60,
+        currentTarget: {
+          getBoundingClientRect: () => {
+            throw Error('preview measures an interactive seek')
+          }
+        }
+      })
+      assert.equal(seekPosition, 100)
+    } finally {
+      previewApp.unmount()
+    }
     click({ clientX: 0, currentTarget: { getBoundingClientRect: () => ({ left: 10, width: 0 }) } })
     assert.equal(seekPosition, 100)
   } finally {

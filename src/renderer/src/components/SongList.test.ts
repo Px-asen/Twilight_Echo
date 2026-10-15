@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { withQueuePlaybackOrigin } from '../utils/queuePlaybackOrigin.ts'
 
 test('song list omits header kickers from all non-dashboard local library views', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
@@ -342,7 +343,7 @@ test('song list context menu exposes play next, view artist, and view album acti
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
 
   assert.match(source, /playNextTrack/)
-  assert.match(source, /playNext: playNextTrack/)
+  assert.match(source, /playNext: \(track\) => playNextTrack\(withQueuePlaybackOrigin/)
   assert.match(source, /canPlayNextSelectedTrack/)
   assert.match(source, /handlePlayNext/)
   assert.match(source, /下一首播放/)
@@ -394,15 +395,6 @@ test('collection grid window-mounts cards and derives A-Z from data', () => {
   assert.doesNotMatch(grid, /pumpGridRendering/)
   assert.match(grid, /getSongListGridVirtualRange/)
   assert.match(styles, /\.grid-virtual-spacer/)
-  assert.match(styles, /\.artist-card:hover[\s\S]*backdrop-filter: blur\(20px\)/)
-  assert.doesNotMatch(
-    styles.slice(
-      styles.indexOf('/* Unified Card Component Styles */'),
-      styles.indexOf('.artist-card:hover')
-    ),
-    /backdrop-filter: blur\(20px\)/
-  )
-  assert.match(styles, /\.track-playing::before \{[\s\S]*backdrop-filter: blur\(18px\)/)
 })
 
 test('selected tracks append as one queue command without starting playback', () => {
@@ -421,18 +413,23 @@ test('selected tracks append as one queue command without starting playback', ()
     'repairMessage',
     'clearSelection',
     'closeContextMenu',
+    'withQueuePlaybackOrigin',
+    'queuePlaybackOrigin',
     body
   )
   const tracks = [{ id: 'local:2' }, { id: 'ncm:1' }]
   const store = { appendQueueTracks: (items: unknown) => batches.push(items) }
+  const origin = { kind: 'playlist' as const, scope: 'local' as const, id: 'work', name: 'Work' }
   append(
     tracks,
     store,
     message,
     () => cleared++,
-    () => closed++
+    () => closed++,
+    withQueuePlaybackOrigin,
+    { value: origin }
   )
-  assert.deepEqual(batches, [tracks])
+  assert.deepEqual(batches, [tracks.map((track) => ({ ...track, queuePlaybackOrigin: origin }))])
   assert.equal(cleared, 1)
   assert.equal(closed, 1)
   assert.equal(message.value, '已添加 2 首到播放队列')
@@ -441,7 +438,9 @@ test('selected tracks append as one queue command without starting playback', ()
     store,
     message,
     () => cleared++,
-    () => closed++
+    () => closed++,
+    withQueuePlaybackOrigin,
+    { value: origin }
   )
   assert.equal(batches.length, 1)
   assert.match(source, /@click="appendActionTracksToQueue\(contextActionTracks\)"/)

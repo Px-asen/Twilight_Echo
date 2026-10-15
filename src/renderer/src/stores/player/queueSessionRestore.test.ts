@@ -129,3 +129,28 @@ test('20,000-entry restore batches authorization and aborts before applying stal
   }
   await assert.rejects(resolveQueueSession(session, resolver), /已取消恢复/)
 })
+
+test('session restoration binds the saved origin per occurrence instead of inheriting library context', async () => {
+  const album = { kind: 'album' as const, scope: 'local' as const, id: 'album-1', name: 'Album' }
+  const playlist = {
+    kind: 'playlist' as const,
+    scope: 'local' as const,
+    id: 'playlist-1',
+    name: 'Playlist'
+  }
+  const queue = [
+    { ...track('a', 'album-entry'), queuePlaybackOrigin: album },
+    { ...track('a', 'playlist-entry'), queuePlaybackOrigin: playlist }
+  ]
+  const session = captureQueueSession('mixed', queue, [...queue].reverse(), queue[1], 5, 'shuffle')
+  const result = await resolveQueueSession(session, sources([track('a')]))
+  assert.deepEqual(
+    result.queue.map((entry) => entry.queuePlaybackOrigin),
+    [album, playlist]
+  )
+  assert.deepEqual(
+    result.original.map((entry) => entry.queuePlaybackOrigin),
+    [playlist, album]
+  )
+  assert.equal(result.index, 1)
+})

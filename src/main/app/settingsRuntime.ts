@@ -5,7 +5,7 @@ import type { AppSettings, SettingsSnapshot } from '../core/types'
 import { createSettingsSnapshot, normalizeAppSettings, writeAppSettings } from '../core/settings'
 import type { AudioOutputState } from '../../shared/audioEngineTypes.ts'
 import { applyEffectiveAudioProcessingToEngine } from '../audio/state.ts'
-import { getWindowBackgroundColor, syncWindowFrameAppearance } from './windowAppearance.ts'
+import { getWindowBackgroundColor, syncWindowFrameColor } from './windowAppearance.ts'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { applyDiscordRpcSetting } from '../integrations/discord'
 import {
@@ -57,7 +57,7 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
   )
     runtime.audioEngineManager?.invalidateAutoMixSource()
   if (shouldUpdateWindowBackground && runtime.mainWindow) {
-    syncWindowFrameAppearance(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
+    syncWindowFrameColor(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
   }
   if (shouldUpdateWindowBackground && !runtime.appSettings.windowTransparency) {
     runtime.mainWindow?.setBackgroundColor(

@@ -20,6 +20,7 @@ test('glass transmission preserves input and DPI geometry without player edge li
     const read = (path: string): Promise<string> => readFile(join(root, path), 'utf8')
     const global =
       (await read('src/renderer/src/assets/base.css')) +
+      (await read('src/renderer/src/assets/materials.css')) +
       (await read('src/renderer/src/assets/bohr.css')) +
       (await read('src/renderer/src/assets/appearance.css'))
     const styles = [
@@ -28,7 +29,8 @@ test('glass transmission preserves input and DPI geometry without player edge li
         : await read('src/renderer/src/components/player-bar/PlayerBar.css'),
       await read('src/renderer/src/components/settings-page/SettingsPage.css'),
       await read('src/renderer/src/components/song-list/SongList.css'),
-      parse(await read('src/renderer/src/components/TitleBar.vue')).descriptor.styles[0].content
+      parse(await read('src/renderer/src/components/TitleBar.vue')).descriptor.styles[0].content,
+      parse(await read('src/renderer/src/components/SideMenu.vue')).descriptor.styles[0].content
     ].map((source) => {
       const result = compileStyle({ source, filename: 'Bohr.css', id: 'data-v-bohr', scoped: true })
       assert.deepEqual(result.errors, [])
@@ -69,7 +71,7 @@ test('glass transmission preserves input and DPI geometry without player edge li
       .home .feature-card{position:absolute;top:410px;left:600px;width:180px;height:120px;border-radius:18px}
       .track-row[data-v-bohr]{position:absolute;top:555px;left:640px;width:340px;height:64px;display:flex;align-items:center;justify-content:center}
       </style></head><body>
-      <div class="title-bar" data-v-bohr><div class="title-bar-background" data-v-bohr></div></div>
+      <div data-te-material="titlebar" class="title-bar" data-v-bohr><div class="title-bar-background" data-v-bohr></div></div>
       <div class="backdrop">透光的体积<br><small>温润弧面 · 清晰内容 · 柔和光影</small></div>
       <div class="player-bar player-bar-liquid" data-v-bohr>
         <span class="player-bar-warp" data-v-bohr aria-hidden="true"></span>
@@ -92,6 +94,7 @@ app.whenReady().then(async()=>{
  win.webContents.on('console-message',event=>console.error(event.message));
  try{
   await win.loadFile(process.argv.at(-1));
+  await win.webContents.executeJavaScript('window.checkNavigationGlassControls()');
   await win.webContents.executeJavaScript('window.runBohrTests()');
   win.webContents.debugger.attach('1.3');
   const captures=[];
@@ -159,8 +162,42 @@ const root=document.documentElement
 const host=document.getElementById('defs')
 const bar=document.querySelector('.player-bar')
 const expect=(value,message)=>{if(!value)throw new Error(message)}
+const colorPixel=value=>{const context=document.createElement('canvas').getContext('2d');context.fillStyle=value;context.fillRect(0,0,1,1);return context.getImageData(0,0,1,1).data}
 const settle=async()=>{await nextTick();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))}
 const mount=async(active)=>{render(h(LiquidGlassDefs,{active}),host);await settle()}
+window.checkNavigationGlassControls=async()=>{
+ const sidebar=document.createElement('aside')
+ sidebar.className='side-menu open';sidebar.setAttribute('data-v-bohr','')
+ document.body.append(sidebar)
+ const title=document.querySelector('.title-bar'),painter=title.querySelector('.title-bar-background')
+ const read=(element,pseudo)=>{const style=getComputedStyle(element,pseudo);return {background:style.backgroundColor,filter:style.backdropFilter}}
+ const variables={'--te-lg-context-surface-solid':'#e7edf5','--te-lg-context-material':'#8f9bab','--te-lg-blur':'5px','--te-lg-tint':'.12','--te-lg-saturate':'155%'}
+ try{
+  for(const tone of ['pureWhite','dark'])for(const source of ['image','solid']){
+   root.dataset.theme=tone;root.dataset.teSurfaceMaterial='theme';root.dataset.teLiquidGlassSource=source
+   for(const [name,value]of Object.entries(variables))root.style.setProperty(name,value)
+   const regularSidebar=read(sidebar),regularTitle=read(painter)
+   sidebar.classList.add('side-menu-liquid');title.classList.add('title-bar-liquid');await settle()
+   const originalSidebar=read(sidebar,'::before'),originalTitle=read(painter)
+   for(const [name,value]of [['sidebar',originalSidebar],['titlebar',originalTitle]]){
+    expect(value.filter.includes('blur(5px)')&&value.filter.includes('saturate(1.55)'),name+' receives actual shared blur and saturation: '+value.filter)
+    expect(colorPixel(value.background)[3]>0&&colorPixel(value.background)[3]<40,name+' receives the shared twelve-percent tint')
+   }
+   root.style.setProperty('--te-lg-blur','19px');root.style.setProperty('--te-lg-tint','.52');root.style.setProperty('--te-lg-saturate','190%');await settle()
+   const changedSidebar=read(sidebar,'::before'),changedTitle=read(painter)
+   for(const [name,original,changed]of [['sidebar',originalSidebar,changedSidebar],['titlebar',originalTitle,changedTitle]]){
+    expect(changed.filter.includes('blur(19px)')&&changed.filter.includes('saturate(1.9)'),name+' updates both backdrop parameters')
+    expect(changed.background!==original.background&&colorPixel(changed.background)[3]>120,name+' updates the painted tint in '+source+' mode')
+   }
+   sidebar.classList.remove('side-menu-liquid');title.classList.remove('title-bar-liquid');await settle()
+   expect(JSON.stringify(read(sidebar))===JSON.stringify(regularSidebar),'disabling navigation glass restores the local sidebar material independently of shared parameters')
+   expect(JSON.stringify(read(painter))===JSON.stringify(regularTitle),'disabling navigation glass restores the local caption material independently of shared parameters')
+  }
+ }finally{
+  sidebar.remove();title.classList.remove('title-bar-liquid');delete root.dataset.teLiquidGlassSource
+  for(const name of Object.keys(variables))root.style.removeProperty(name)
+ }
+}
 window.prepareFullMaterialRaster=async(tone,material)=>{
  await window.prepareBohrEvidence(tone)
  bar.className='player-bar'+(material==='liquid'?' player-bar-liquid':material==='glass'?' player-bar-glass':'')
@@ -188,6 +225,7 @@ window.checkPixelRatioUpdate=async()=>{
  expect(image.width===raster.width&&image.height===raster.height,'unchanged CSS geometry updates its physical-pixel raster: '+image.width+'x'+image.height+' at '+density)
 }
 window.runBohrTests=async()=>{
+ bar.className='player-bar player-bar-liquid'
  root.setAttribute('data-te-surface-material','liquidGlass')
  root.style.setProperty('--te-lg-specular','0.76')
  await mount(true)
@@ -219,15 +257,13 @@ window.runBohrTests=async()=>{
   root.setAttribute('data-theme',tone)
   expect(getComputedStyle(document.querySelector('.title-bar-background')).boxShadow==='none','caption material has no dark separator')
   const shadow=getComputedStyle(bar).boxShadow
-  const shadowColor=shadow.match(/^(rgba?[(][^)]*[)]|color[(][^)]*[)])/ )?.[0]
-  expect(Boolean(shadowColor),'elevation must retain a resolvable colour')
-  const canvas=document.createElement('canvas');canvas.width=canvas.height=1
-  const context=canvas.getContext('2d');context.fillStyle=shadowColor;context.fillRect(0,0,1,1)
-  const pixel=context.getImageData(0,0,1,1).data
-  const expected=tone==='dark'?[0,0,0]:[18,24,32]
-  // Canvas stores premultiplied 8-bit channels: faint shadows lose RGB precision.
-  const tolerance=Math.ceil(255/(2*pixel[3]))
-  expect(expected.every((value,index)=>Math.abs(pixel[index]-value)<=tolerance)&&pixel[3]>0,'elevation follows theme tone: '+JSON.stringify({tone,shadow,pixel:[...pixel]}))
+  const shadowColor=shadow.match(/(?:rgba?|color)[(][^)]+[)]/)?.[0]
+  expect(Boolean(shadowColor),'cast shadow retains a real paint color: '+shadow)
+  const components=shadowColor.match(/[0-9.]+/g).map(Number)
+  const channels=components.slice(0,3).map(value=>shadowColor.startsWith('color(srgb')?value*255:value)
+  const expectedChannels=tone==='dark'?[0,0,0]:[18,24,32]
+  expect(channels.every((value,index)=>Math.abs(value-expectedChannels[index])<.01),'cast shadow keeps the local dark neutral substrate in each tone: '+shadow+' '+JSON.stringify({dpi:devicePixelRatio,tone,className:bar.className}))
+  expect(Math.abs(components[3]-(tone==='dark'?.2:.08))<.001,'elevation strength follows theme tone: '+shadow)
   const after=bar.getBoundingClientRect()
   expect(after.height===geometry.height&&after.width===geometry.width,'material does not change bar geometry')
  }

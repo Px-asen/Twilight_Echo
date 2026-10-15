@@ -233,7 +233,7 @@ function applied(paths: string[], patch: LocalLibraryTagPatch): void {
         </button>
       </div>
       <p v-if="error" role="alert">{{ error }}</p>
-      <p role="status">{{ notice }}</p>
+      <p class="inbox-notice" role="status">{{ notice }}</p>
       <div class="inbox-controls">
         <button @click="selectPage">选择本页</button
         ><button @click="selection = new Set()">清空选择</button>
@@ -290,7 +290,7 @@ function applied(paths: string[], patch: LocalLibraryTagPatch): void {
   z-index: 2000;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--te-neutral-900) 35%, transparent);
+  background: var(--te-dialog-backdrop);
 }
 .inbox-dialog {
   width: min(960px, calc(100vw - 32px));
@@ -298,10 +298,11 @@ function applied(paths: string[], patch: LocalLibraryTagPatch): void {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  gap: 12px;
+  overflow: auto;
   font-size: var(--te-font-size-body, 14px);
   padding: 20px;
-  border-radius: 12px;
+  border-radius: var(--te-dialog-radius, 8px);
   background: var(--te-glass-bg-strong);
   color: var(--te-neutral-900);
   border: 1px solid var(--te-glass-border);
@@ -319,26 +320,52 @@ header,
 footer {
   justify-content: space-between;
 }
+header > div {
+  flex: 1;
+  min-width: 0;
+}
+header > button {
+  flex-shrink: 0;
+}
 h2 {
   margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 20 / 14);
+  font-size: var(--te-type-section-title, 20px);
+  font-weight: 600;
 }
 p,
 small {
   color: var(--te-neutral-500);
   overflow-wrap: anywhere;
 }
+p {
+  margin: 0;
+  line-height: 1.5;
+}
+header p {
+  margin-top: 4px;
+  font-size: var(--te-type-caption, 13px);
+}
+.inbox-notice:empty {
+  display: none;
+}
 .inbox-controls {
-  margin: 12px 0;
+  margin: 0;
+  gap: 8px;
+}
+.inbox-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 button,
 select {
   font: inherit;
   color: inherit;
-  background: var(--te-glass-bg);
-  border: 1px solid var(--te-glass-border);
-  border-radius: 6px;
-  padding: 7px 10px;
+  background: var(--te-subtle-bg);
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-control-radius-sm, 8px);
+  min-height: 34px;
+  padding: 6px 10px;
 }
 button {
   cursor: pointer;
@@ -347,9 +374,16 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 2px;
+}
 .inbox-list {
-  flex: 1;
-  min-height: 80px;
+  flex: 1 0 120px;
+  min-height: 120px;
+  margin: 0;
   overflow: auto;
   list-style: none;
   padding: 0;
@@ -363,5 +397,22 @@ button:disabled {
 }
 input {
   margin-right: 8px;
+  accent-color: var(--te-control-accent);
+}
+@media (max-height: 640px) {
+  .inbox-dialog {
+    padding: 16px;
+    gap: 8px;
+  }
+}
+@media (max-width: 560px) {
+  .inbox-controls label {
+    flex: 1 1 150px;
+    min-width: 0;
+  }
+  .inbox-controls select {
+    min-width: 0;
+    flex: 1;
+  }
 }
 </style>

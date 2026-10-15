@@ -41,6 +41,36 @@ test('extracts provider prefixes from source or track id', () => {
   assert.equal(getProviderLocalId('ncm:12345', 'bili'), null)
 })
 
+test('preview registry access avoids provider discovery while normal access still syncs', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  let reads = 0
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        providers: {
+          list: async () => {
+            reads++
+            return []
+          }
+        }
+      }
+    }
+  })
+  try {
+    const { useMediaProviders, syncPluginProviders } = await import('./index.ts')
+    const preview = useMediaProviders({ sync: false })
+    await Promise.resolve()
+    assert.equal(reads, 0)
+    assert.equal(useMediaProviders(), preview)
+    await syncPluginProviders()
+    assert.equal(reads, 1)
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'window', previous)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
+
 test('album search registration follows advertised methods and forwards cancellation through the bridge', async (t) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window')
   const { syncPluginProviders, useMediaProviders } = await import('./index.ts')
@@ -105,6 +135,80 @@ test('album search registration follows advertised methods and forwards cancella
   methods = []
   await syncPluginProviders()
   assert.equal(registry.get('album-test')?.searchAlbums, undefined)
+})
+
+test('playlist search follows the search contract without requiring playlist library access', async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const { syncPluginProviders, useMediaProviders } = await import('./index.ts')
+  let methods: string[] = ['searchPlaylists']
+  const calls: unknown[][] = []
+  const cancelled: string[] = []
+  let rejectPending: ((reason: Error) => void) | undefined
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        providers: {
+          list: async () => [
+            {
+              id: 'playlist-search-only',
+              name: 'Collection search',
+              capabilities: ['search'],
+              supportedMethods: methods
+            }
+          ],
+          call: async (
+            id: string,
+            method: string,
+            args: unknown[],
+            options?: { requestId?: string }
+          ) => {
+            calls.push([id, method, args, options])
+            if (options?.requestId)
+              return new Promise((_resolve, reject) => {
+                rejectPending = reject
+              })
+            return {
+              items: [{ id: 'mix', name: 'Evening', cover: null, trackCount: 12 }],
+              total: 1
+            }
+          },
+          cancel: (requestId: string) => {
+            cancelled.push(requestId)
+            rejectPending?.(new Error('cancelled'))
+          }
+        }
+      }
+    }
+  })
+  const registry = useMediaProviders()
+  t.after(() => {
+    registry.unregister('playlist-search-only')
+    if (previous) Object.defineProperty(globalThis, 'window', previous)
+    else Reflect.deleteProperty(globalThis, 'window')
+  })
+  await syncPluginProviders()
+  assert.equal((await registry.searchPlaylists('playlist-search-only', 'Evening', 20, 40)).total, 1)
+  assert.deepEqual(calls[0].slice(0, 3), [
+    'playlist-search-only',
+    'searchPlaylists',
+    ['Evening', 20, 40]
+  ])
+  assert.equal(registry.get('playlist-search-only')?.fetchPlaylistTracks, undefined)
+  const controller = new AbortController()
+  const pending = registry.searchPlaylists('playlist-search-only', 'Evening', 20, 0, {
+    signal: controller.signal
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  controller.abort()
+  await assert.rejects(pending, /cancelled/)
+  assert.equal(cancelled.length, 1)
+  methods = []
+  await syncPluginProviders()
+  assert.equal(registry.get('playlist-search-only')?.searchPlaylists, undefined)
+  methods = ['searchPlaylists']
+  await syncPluginProviders()
+  assert.equal((await registry.searchPlaylists('playlist-search-only', 'Back')).total, 1)
 })
 
 test('resolveLyricsAcrossProviders fans out to NCM for local tracks', async () => {

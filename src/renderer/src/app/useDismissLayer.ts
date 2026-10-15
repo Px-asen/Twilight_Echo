@@ -6,12 +6,22 @@ import { createFocusTrap } from './focusTrap.ts'
 // Calls the handler on Escape while `active` is true. Handlers registered later
 // run first, so nested surfaces (menu above dialog) close innermost-first.
 const escapeStack: Array<() => void> = []
+const activationDialogs = new WeakMap<() => void, HTMLDialogElement | null>()
 let escapeListenerAttached = false
+
+function currentNativeDialog(): HTMLDialogElement | null {
+  return typeof document === 'undefined' ? null : (document.querySelector?.('dialog:modal') ?? null)
+}
 
 function onWindowKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented || event.key !== 'Escape' || escapeStack.length === 0) return
+  const entry = escapeStack[escapeStack.length - 1]
+  const nativeDialog = currentNativeDialog()
+  // A native modal opened above a sidebar owns Escape through its cancel event.
+  // A nested custom surface opened inside that same modal still closes first.
+  if (nativeDialog && activationDialogs.get(entry) !== nativeDialog) return
   event.preventDefault()
-  escapeStack[escapeStack.length - 1]()
+  entry()
 }
 
 export function hasDismissLayer(): boolean {
@@ -32,9 +42,11 @@ export function useEscapeToClose(active: Ref<boolean> | (() => boolean), close: 
     const index = escapeStack.indexOf(entry)
     if (value && index === -1) {
       ensureEscapeListener()
+      activationDialogs.set(entry, currentNativeDialog())
       escapeStack.push(entry)
     } else if (!value && index !== -1) {
       escapeStack.splice(index, 1)
+      activationDialogs.delete(entry)
       if (escapeStack.length === 0 && escapeListenerAttached && typeof window !== 'undefined') {
         window.removeEventListener('keydown', onWindowKeydown)
         escapeListenerAttached = false

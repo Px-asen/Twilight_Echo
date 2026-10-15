@@ -1122,7 +1122,7 @@ html[data-theme='dark'] .lyrics-customizer {
   border: 1px solid var(--te-card-border);
   border-radius: 12px;
   background: var(--te-settings-bg);
-  box-shadow: 0 18px 46px color-mix(in srgb, var(--te-neutral-900) 26%, transparent);
+  box-shadow: 0 18px 46px color-mix(in srgb, var(--te-content-shadow-color) 26%, transparent);
 }
 .font-search {
   min-height: 34px;
@@ -1329,12 +1329,14 @@ html[data-theme='dark'] .lyrics-customizer {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lyrics-customizer-enter-active,
-  .lyrics-customizer-leave-active,
-  .lyrics-customizer-enter-active .lyrics-customizer,
-  .lyrics-customizer-leave-active .lyrics-customizer,
-  .preview-lines p {
-    transition: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .lyrics-customizer-enter-active,
+    .lyrics-customizer-leave-active,
+    .lyrics-customizer-enter-active .lyrics-customizer,
+    .lyrics-customizer-leave-active .lyrics-customizer,
+    .preview-lines p {
+      transition: none;
+    }
   }
 }
 </style>

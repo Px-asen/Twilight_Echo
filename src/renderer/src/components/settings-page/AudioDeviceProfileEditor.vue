@@ -234,7 +234,7 @@ label {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--te-type-caption);
 }
 .wide {
   grid-column: 1 / -1;
@@ -258,7 +258,7 @@ input[type='checkbox'] {
   accent-color: var(--accent-color);
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--te-type-caption);
   line-height: 1.6;
   opacity: 0.7;
   margin: 0;
@@ -275,7 +275,7 @@ button:disabled {
   cursor: default;
 }
 :is(input, select, button):focus-visible {
-  outline: 2px solid var(--accent-color, #7c4dff);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 @media (max-width: 600px) {

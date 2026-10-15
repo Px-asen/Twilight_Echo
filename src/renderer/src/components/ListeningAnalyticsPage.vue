@@ -37,6 +37,7 @@ const { currentTrack, playTrack } = usePlayerStore()
 const now = ref(new Date())
 const sort = ref<'seconds' | 'plays'>('seconds')
 const showFormatTable = ref(false)
+const analyticsView = ref<'overview' | 'rankings' | 'formats'>('overview')
 const showClearDialog = ref(false)
 const clearingStats = ref(false)
 const clearNotice = ref('')
@@ -279,10 +280,33 @@ async function clearStats(range: ListeningStatsClearRange): Promise<void> {
           </div>
         </section>
 
-        <div class="analytics-content-grid">
-          <div class="analytics-left-stack">
-            <ListeningRhythm :activity="activity" :now="now" />
-            <section class="an-panel formats-panel" aria-labelledby="formats-title">
+        <nav class="analytics-view-switch" aria-label="统计内容">
+          <button
+            v-for="view in [
+              { id: 'overview', label: '聆听概览' },
+              { id: 'rankings', label: '歌曲与歌手' },
+              { id: 'formats', label: '格式分布' }
+            ] as const"
+            :key="view.id"
+            type="button"
+            :aria-pressed="analyticsView === view.id"
+            @click="analyticsView = view.id"
+          >
+            {{ view.label }}
+          </button>
+        </nav>
+        <div class="analytics-content-grid" :class="'analytics-view-' + analyticsView">
+          <div v-show="analyticsView !== 'rankings'" class="analytics-left-stack">
+            <ListeningRhythm
+              v-show="analyticsView === 'overview'"
+              :activity="activity"
+              :now="now"
+            />
+            <section
+              v-show="analyticsView === 'formats'"
+              class="an-panel formats-panel"
+              aria-labelledby="formats-title"
+            >
               <header class="an-section-head">
                 <div>
                   <span class="an-eyebrow">THE SOUND COLLECTION</span>
@@ -341,6 +365,7 @@ async function clearStats(range: ListeningStatsClearRange): Promise<void> {
             </section>
           </div>
           <ListeningRankings
+            v-show="analyticsView === 'rankings'"
             :tracks="rankedTracks"
             :artists="rankedArtists"
             :sort="sort"
@@ -353,13 +378,14 @@ async function clearStats(range: ListeningStatsClearRange): Promise<void> {
             @open-artist="openArtist"
           />
         </div>
-        <ListeningFootprint :activity="activity" :now="now" />
+        <ListeningFootprint v-show="analyticsView === 'overview'" :activity="activity" :now="now" />
       </template>
-      <footer class="journal-footer">
+      <details class="journal-footer">
+        <summary>关于这些统计</summary>
         <p>
           汇总本机各音源的聆听记录 · 每日时长保留 730 天，曲目记录最多 10,000 首。<br />累计榜单不随时长范围变化；记录可能因保留策略而不完整。
         </p>
-      </footer>
+      </details>
     </div>
     <NativeDialogTransition>
       <ListeningStatsClearDialog

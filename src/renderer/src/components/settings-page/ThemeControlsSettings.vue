@@ -7,6 +7,7 @@ import { useExtensionRegistry } from '../../extensions/registry'
 import { getPluginThemeKey } from '../../extensions/themeSelection'
 import { accentColorOptions, colorModeOptions, motionPreferenceOptions } from './types.ts'
 import type { AppTheme, MotionPreference } from '../../types/settings'
+defineProps<{ integrated?: boolean }>()
 
 const emit = defineEmits<{
   openThemeStudio: []
@@ -90,7 +91,12 @@ async function setPluginTheme(event: Event): Promise<void> {
     </div>
   </div>
   <hr />
-  <div data-setting-id="plugin-theme" id="setting-plugin-theme" class="setting-item">
+  <div
+    v-if="!integrated"
+    data-setting-id="plugin-theme"
+    id="setting-plugin-theme"
+    class="setting-item"
+  >
     <div class="setting-copy">
       <strong>插件主题</strong>
     </div>
@@ -123,8 +129,12 @@ async function setPluginTheme(event: Event): Promise<void> {
   </div>
   <SettingsGroup
     id="theme-customization"
-    title="自定义主题与配色"
-    description="需要独立设置深浅色配色、创建或编辑主题时展开。"
+    :title="integrated ? '强调色' : '自定义主题与配色'"
+    :description="
+      integrated
+        ? '分别设置当前窗口的浅色和深色强调色。'
+        : '需要独立设置深浅色配色、创建或编辑主题时展开。'
+    "
     :summary="
       '浅色：' +
       (accentColorOptions.find((option) => option.value === settings.lightAccentColor)?.label ??
@@ -134,7 +144,12 @@ async function setPluginTheme(event: Event): Promise<void> {
         settings.darkAccentColor)
     "
   >
-    <div data-setting-id="theme-studio" id="setting-theme-studio" class="setting-item">
+    <div
+      v-if="!integrated"
+      data-setting-id="theme-studio"
+      id="setting-theme-studio"
+      class="setting-item"
+    >
       <div class="setting-copy">
         <strong>主题创意工坊</strong>
       </div>
@@ -143,7 +158,7 @@ async function setPluginTheme(event: Event): Promise<void> {
         打开主题创意工坊
       </button>
     </div>
-    <div data-setting-id="theme-workshop" class="setting-item">
+    <div v-if="!integrated" data-setting-id="theme-workshop" class="setting-item">
       <div class="setting-copy">
         <strong class="workshop-setting-title"
           >主题插件工坊<small class="workshop-beta-tag">BETA</small></strong
@@ -162,7 +177,7 @@ async function setPluginTheme(event: Event): Promise<void> {
         <i class="ph ph-paint-brush" aria-hidden="true"></i>打开主题插件工坊
       </button>
     </div>
-    <hr />
+    <hr v-if="!integrated" />
     <div data-setting-id="accent-light" id="setting-accent-light" class="setting-item">
       <div class="setting-copy">
         <strong>浅色强调色</strong>
@@ -229,8 +244,8 @@ async function setPluginTheme(event: Event): Promise<void> {
   border-radius: 5px;
   background: var(--te-settings-search-bg);
   color: var(--te-settings-text);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-strong);
   line-height: 1.2;
   letter-spacing: 0.5px;
 }

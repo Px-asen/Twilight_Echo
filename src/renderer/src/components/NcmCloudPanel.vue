@@ -95,25 +95,33 @@ function progressLabel(task: NcmCloudTransferTask): string {
   }
   return `${task.message} · ${formatBytes(task.bytesTransferred)}`
 }
+
+function onSongKeydown(event: KeyboardEvent, song: NcmCloudSong): void {
+  if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (!event.repeat) emit('play', song)
+}
 </script>
 
 <template>
-  <section class="cloud-panel" aria-labelledby="ncm-cloud-title">
+  <section class="cloud-panel" aria-labelledby="ncm-cloud-title" :aria-busy="loading">
     <div class="cloud-header">
       <div>
         <span class="cloud-kicker">网易云音乐</span>
         <h2 id="ncm-cloud-title">我的音乐云盘</h2>
-        <p>{{ total }} 首云盘歌曲 · 上传与下载均由主进程安全处理</p>
+        <p>{{ total }} 首云盘歌曲</p>
       </div>
       <div class="cloud-header-actions">
         <button
           type="button"
           class="cloud-button secondary"
-          :disabled="loading"
+          :disabled="loading || loadingMore"
+          :aria-busy="loading"
           @click="emit('refresh')"
         >
           <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"></i>
-          刷新
+          {{ loading ? '正在刷新…' : '刷新' }}
         </button>
         <button type="button" class="cloud-button primary" @click="emit('chooseFiles')">
           <i class="pi pi-upload"></i>
@@ -122,28 +130,33 @@ function progressLabel(task: NcmCloudTransferTask): string {
       </div>
     </div>
 
+    <div v-if="error && songs.length > 0 && !loading" class="cloud-inline-error" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="cloud-button secondary" @click="emit('refresh')">重试</button>
+    </div>
+    <p v-if="loading && songs.length > 0" class="cloud-loading" role="status">正在刷新云盘歌曲…</p>
+
     <div v-if="selectedFiles.length > 0" class="upload-queue">
       <div class="queue-heading">
         <div>
           <h3>待上传文件</h3>
-          <p>一次最多选择 20 个文件，文件路径不会暴露给页面。</p>
+          <p>一次最多选择 20 个音频文件。</p>
         </div>
       </div>
       <article v-for="file in selectedFiles" :key="file.handle" class="transfer-row">
         <span class="transfer-icon"><i class="pi pi-file"></i></span>
         <div class="transfer-copy">
-          <strong>{{ file.name }}</strong>
+          <strong :title="file.name">{{ file.name }}</strong>
           <span>{{ (file.format || '音频').toUpperCase() }} · {{ formatBytes(file.size) }}</span>
           <div v-if="taskForHandle(file.handle)" class="progress-copy">
-            <div class="progress-track">
-              <span
-                :style="{
-                  transform: `scaleX(${(taskForHandle(file.handle)?.percent ?? 12) / 100})`
-                }"
-              ></span>
-            </div>
+            <progress
+              class="progress-track"
+              max="100"
+              :value="taskForHandle(file.handle)?.percent ?? undefined"
+              :aria-label="`${file.name}：${progressLabel(taskForHandle(file.handle)!)}`"
+            ></progress>
             <small>{{ progressLabel(taskForHandle(file.handle)!) }}</small>
-            <small v-if="taskForHandle(file.handle)?.error" class="task-error">
+            <small v-if="taskForHandle(file.handle)?.error" class="task-error" role="alert">
               {{ taskForHandle(file.handle)?.error }}
             </small>
           </div>
@@ -154,6 +167,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
             type="button"
             class="icon-button danger"
             title="取消上传"
+            :aria-label="`取消上传 ${file.name}`"
             @click="emit('cancel', taskForHandle(file.handle)!.transferId)"
           >
             <i class="pi pi-times"></i>
@@ -163,6 +177,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
               type="button"
               class="icon-button"
               title="移除"
+              :aria-label="`移除待上传文件 ${file.name}`"
               @click="emit('removeSelected', file.handle)"
             >
               <i class="pi pi-trash"></i>
@@ -179,23 +194,27 @@ function progressLabel(task: NcmCloudTransferTask): string {
       </article>
     </div>
 
-    <div v-if="error && songs.length === 0" class="cloud-state error-state">
+    <div
+      v-if="error && songs.length === 0 && !loading"
+      class="cloud-state error-state"
+      role="alert"
+    >
       <i class="pi pi-exclamation-triangle"></i>
       <strong>云盘加载失败</strong>
       <p>{{ error }}</p>
       <button type="button" class="cloud-button primary" @click="emit('refresh')">重试</button>
     </div>
 
-    <div v-else-if="loading && songs.length === 0" class="cloud-state">
+    <div v-else-if="loading && songs.length === 0" class="cloud-state" role="status">
       <i class="pi pi-spin pi-spinner"></i>
       <strong>正在加载云盘歌曲</strong>
       <p>正在从网易云音乐读取当前账号的云盘数据。</p>
     </div>
 
-    <div v-else-if="songs.length === 0" class="cloud-state">
+    <div v-else-if="songs.length === 0" class="cloud-state" role="status">
       <i class="pi pi-cloud"></i>
       <strong>云盘暂时为空</strong>
-      <p>选择本地音频上传后，歌曲会出现在这里并复用现有播放器。</p>
+      <p>选择本地音频上传到云盘，随时播放或下载。</p>
       <button type="button" class="cloud-button primary" @click="emit('chooseFiles')">
         选择音频
       </button>
@@ -220,12 +239,17 @@ function progressLabel(task: NcmCloudTransferTask): string {
           class="cloud-song"
           :class="{ playing: song.track.id === currentTrackId }"
           tabindex="0"
-          role="button"
+          role="group"
+          :aria-label="`${song.track.title} · ${song.track.artist || '未知艺术家'}，按回车播放`"
           @click="emit('play', song)"
-          @keydown.enter.prevent="emit('play', song)"
-          @keydown.space.prevent="emit('play', song)"
+          @keydown="onSongKeydown($event, song)"
         >
-          <span class="song-cover">
+          <button
+            type="button"
+            class="song-cover"
+            :aria-label="`播放 ${song.track.title}`"
+            @click.stop="emit('play', song)"
+          >
             <CoverImg
               :cover="song.track.cover"
               :cover-source="song.track.coverSource"
@@ -234,13 +258,14 @@ function progressLabel(task: NcmCloudTransferTask): string {
               loading="lazy"
             />
             <span class="cover-play"><PlaybackIcon name="play" /></span>
-          </span>
+          </button>
           <span class="song-main">
-            <strong>{{ song.track.title }}</strong>
+            <strong :title="song.track.title">{{ song.track.title }}</strong>
             <small
+              :title="`${song.track.artist || '未知艺术家'} · ${song.track.album || '未知专辑'}`"
               >{{ song.track.artist || '未知艺术家' }} · {{ song.track.album || '未知专辑' }}</small
             >
-            <small class="song-file">{{ song.fileName }}</small>
+            <small class="song-file" :title="song.fileName">{{ song.fileName }}</small>
           </span>
           <span class="song-meta">
             <small>{{ (song.track.format || 'audio').toUpperCase() }}</small>
@@ -256,6 +281,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
               type="button"
               class="icon-button danger"
               title="取消下载"
+              :aria-label="`取消下载 ${song.track.title}`"
               @click.stop="emit('cancel', taskForSong(song)!.transferId)"
             >
               <i class="pi pi-times"></i>
@@ -265,16 +291,19 @@ function progressLabel(task: NcmCloudTransferTask): string {
               type="button"
               class="icon-button"
               title="下载"
+              :aria-label="`下载 ${song.track.title}`"
               @click.stop="emit('download', song)"
             >
               <i class="pi pi-download"></i>
             </button>
           </span>
-          <span v-if="taskForSong(song)" class="song-progress">
-            <span
-              :style="{ transform: `scaleX(${(taskForSong(song)?.percent ?? 12) / 100})` }"
-            ></span>
-          </span>
+          <progress
+            v-if="taskForSong(song)"
+            class="song-progress"
+            max="100"
+            :value="taskForSong(song)?.percent ?? undefined"
+            :aria-label="`${song.track.title}：${progressLabel(taskForSong(song)!)}`"
+          ></progress>
         </article>
       </div>
 
@@ -282,7 +311,8 @@ function progressLabel(task: NcmCloudTransferTask): string {
         v-if="hasMore"
         type="button"
         class="load-more"
-        :disabled="loadingMore"
+        :disabled="loadingMore || loading"
+        :aria-busy="loadingMore"
         @click="emit('loadMore')"
       >
         <i v-if="loadingMore" class="pi pi-spin pi-spinner"></i>
@@ -295,8 +325,11 @@ function progressLabel(task: NcmCloudTransferTask): string {
       <article v-for="task in visibleTasks" :key="task.transferId" class="recent-transfer">
         <i :class="task.kind === 'upload' ? 'pi pi-upload' : 'pi pi-download'"></i>
         <div>
-          <strong>{{ task.fileName }}</strong>
-          <small :class="{ 'task-error': task.stage === 'failed' }">
+          <strong :title="task.fileName">{{ task.fileName }}</strong>
+          <small
+            :class="{ 'task-error': task.stage === 'failed' }"
+            :role="task.stage === 'failed' ? 'alert' : undefined"
+          >
             {{ task.error || progressLabel(task) }}
           </small>
         </div>
@@ -305,6 +338,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
           type="button"
           class="icon-button danger"
           title="取消传输"
+          :aria-label="`取消传输 ${task.fileName}`"
           @click="emit('cancel', task.transferId)"
         >
           <i class="pi pi-times"></i>
@@ -316,11 +350,12 @@ function progressLabel(task: NcmCloudTransferTask): string {
 
 <style scoped>
 .cloud-panel {
-  padding: 28px;
-  border: 1px solid var(--te-card-border, rgba(255, 255, 255, 0.08));
-  border-radius: 24px;
-  background: var(--te-glass-bg-strong);
-  box-shadow: var(--te-glass-shadow);
+  min-width: 0;
+  color: var(--te-settings-text);
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
+  container: te-ncm-cloud / inline-size;
 }
 .cloud-header,
 .song-toolbar,
@@ -328,95 +363,98 @@ function progressLabel(task: NcmCloudTransferTask): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.cloud-header > div:first-child {
+  min-width: 0;
 }
 .cloud-kicker {
-  color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
 }
 .cloud-header h2 {
-  margin: 4px 0 5px;
-  color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
+  margin: 4px 0 8px;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-page-title);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
+  overflow-wrap: anywhere;
 }
 .cloud-header p,
 .queue-heading p {
   margin: 0;
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  overflow-wrap: anywhere;
 }
 .cloud-header-actions,
 .transfer-actions,
 .song-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .cloud-button,
 .icon-button,
 .load-more {
-  border: 0;
-  cursor: pointer;
-  transition: 0.2s ease;
-}
-.cloud-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--te-control-gap);
-  min-height: var(--te-control-height-lg);
-  padding: 0 var(--te-control-pad-x-md);
-  border-radius: var(--te-control-radius-pill);
-  font-size: var(--te-control-font-size-sm);
-  font-weight: var(--te-control-font-weight-bold);
-}
-.cloud-button.primary {
-  color: #111;
-  background: var(--te-primary-500);
-}
-.cloud-button.secondary {
-  color: var(--te-neutral-700);
+  min-height: var(--te-control-height-md);
+  max-width: 100%;
+  padding: 6px var(--te-control-pad-x-md);
+  border: var(--te-control-border-width) solid var(--te-control-border);
+  border-radius: var(--te-control-radius-sm);
   background: var(--te-subtle-bg);
-  border: 1px solid var(--te-card-border);
+  color: var(--te-settings-text);
+  font: inherit;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  line-height: var(--te-type-line-caption);
+  cursor: pointer;
+  transition: background-color var(--te-motion-hover) var(--te-ease-soft);
 }
-.cloud-button.compact {
-  min-height: 34px;
-  padding: 0 14px;
+.song-toolbar .cloud-button.primary {
+  color: var(--te-control-on-accent);
+  background: var(--te-control-accent);
+  border-color: transparent;
 }
 .cloud-button:hover:not(:disabled),
 .load-more:hover:not(:disabled),
 .icon-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  filter: brightness(1.04);
+  background: var(--te-hover-bg);
+}
+.song-toolbar .cloud-button.primary:hover:not(:disabled) {
+  background: var(--te-primary-600);
 }
 .cloud-button:disabled,
 .load-more:disabled {
-  cursor: wait;
-  opacity: 0.6;
+  cursor: default;
+  opacity: 0.5;
 }
 .upload-queue,
 .recent-transfers {
   margin-top: 24px;
-  padding: 18px;
-  border: 1px solid var(--te-card-border);
-  border-radius: 18px;
-  background: var(--te-subtle-bg);
+  border-top: 1px solid var(--te-card-border);
+  padding-top: 16px;
 }
 .queue-heading h3,
 .recent-transfers h3 {
-  margin: 0 0 4px;
-  color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 16 / 14);
+  margin: 0 0 8px;
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
 }
 .transfer-row,
 .recent-transfer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-  padding: 13px 0;
-  border-top: 1px solid var(--te-card-border);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--te-card-border);
 }
 .queue-heading + .transfer-row {
   margin-top: 12px;
@@ -427,9 +465,9 @@ function progressLabel(task: NcmCloudTransferTask): string {
   width: 40px;
   height: 40px;
   place-items: center;
-  border-radius: 12px;
-  color: var(--te-primary-500);
-  background: rgba(var(--te-primary-rgb), 0.12);
+  border-radius: var(--te-control-radius-sm);
+  color: var(--te-settings-text-muted);
+  background: var(--te-subtle-bg);
 }
 .transfer-copy,
 .recent-transfer > div {
@@ -442,147 +480,180 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .transfer-copy strong,
 .recent-transfer strong {
   overflow: hidden;
-  color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  color: var(--te-settings-text);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .transfer-copy > span,
 .recent-transfer small,
 .progress-copy small {
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  overflow-wrap: anywhere;
 }
-.progress-track {
-  width: min(420px, 100%);
-  height: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.18);
+.progress-copy {
+  min-width: 0;
 }
-.progress-track span,
-.song-progress span {
+.progress-track,
+.song-progress {
+  appearance: none;
   display: block;
   width: 100%;
-  height: 100%;
+  height: 4px;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  color: var(--te-primary-500);
+  accent-color: var(--te-primary-500);
+  background: var(--te-subtle-bg);
+}
+.progress-track {
+  max-width: 420px;
+  margin-block: 4px;
+}
+progress::-webkit-progress-bar {
+  background: var(--te-subtle-bg);
+}
+progress::-webkit-progress-value {
   background: var(--te-primary-500);
-  transform: scaleX(0);
-  transform-origin: 0 50%;
-  transition: transform 0.2s linear;
 }
 .icon-button {
-  display: grid;
-  width: var(--te-control-height-md);
-  height: var(--te-control-height-md);
-  place-items: center;
-  border-radius: var(--te-control-radius-md);
-  color: var(--te-neutral-700);
-  background: var(--te-card-bg);
-  border: var(--te-control-border-width) solid var(--te-card-border);
+  width: max(34px, calc(var(--te-font-size-body) * 2));
+  padding: 6px;
+  flex-shrink: 0;
 }
 .icon-button.danger,
-.task-error {
-  color: #fb7185 !important;
+.progress-copy .task-error,
+.recent-transfer .task-error {
+  color: var(--te-danger-soft-fg);
 }
 .cloud-state {
   display: flex;
-  min-height: 220px;
   margin-top: 24px;
-  padding: 32px;
-  align-items: center;
-  justify-content: center;
+  padding: 24px 0;
+  align-items: flex-start;
+  gap: 12px;
   flex-direction: column;
-  text-align: center;
-  border: 1px dashed var(--te-card-border);
-  border-radius: 18px;
-  color: var(--te-neutral-500);
+  color: var(--te-settings-text-muted);
 }
 .cloud-state > i {
-  margin-bottom: 14px;
-  color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 34 / 14);
+  font-size: var(--te-type-section-title);
 }
 .cloud-state strong {
-  color: var(--te-neutral-900);
+  color: var(--te-settings-text);
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
 }
 .cloud-state p {
-  max-width: 520px;
-  margin: 8px 0 18px;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  max-width: 64ch;
+  margin: 0;
+  font-size: var(--te-type-body);
+  overflow-wrap: anywhere;
 }
-.error-state > i {
-  color: #fb7185;
+.error-state > i,
+.cloud-inline-error {
+  color: var(--te-danger-soft-fg);
+}
+.cloud-inline-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+  font-size: var(--te-type-caption);
+}
+.cloud-inline-error p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.cloud-loading {
+  margin: 16px 0 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
 }
 .song-toolbar {
-  margin: 28px 0 14px;
+  margin: 24px 0 12px;
 }
 .song-toolbar > div {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 .song-toolbar strong {
-  color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 17 / 14);
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
 }
 .song-toolbar span {
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
 }
 .cloud-song-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 .cloud-song {
   position: relative;
   display: grid;
-  grid-template-columns: 48px minmax(180px, 1fr) 120px 130px 42px;
+  grid-template-columns: 40px minmax(0, 1fr) 100px 112px max(
+      34px,
+      calc(var(--te-font-size-body) * 2)
+    );
   align-items: center;
-  gap: 14px;
-  min-height: 68px;
-  padding: 9px 12px;
-  overflow: hidden;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: var(--te-subtle-bg);
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px;
+  border-bottom: 1px solid var(--te-card-border);
+  border-radius: var(--te-library-selection-radius);
   cursor: pointer;
-  transition: 0.2s ease;
+  scroll-margin-block: 12px;
+  transition: background-color var(--te-motion-hover) var(--te-ease-soft);
 }
-.cloud-song:hover,
-.cloud-song:focus-visible,
+.cloud-song:hover {
+  background: var(--te-library-row-hover);
+}
 .cloud-song.playing {
-  border-color: rgba(var(--te-primary-rgb), 0.3);
-  background: rgba(var(--te-primary-rgb), 0.09);
-  outline: 0;
+  background: var(--te-playing-row-bg, var(--te-library-selection-bg));
+}
+.cloud-song.playing .song-main strong {
+  color: var(--te-primary-500);
 }
 .song-cover {
   position: relative;
   display: grid;
-  width: 48px;
-  height: 48px;
-  overflow: hidden;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
   place-items: center;
-  border-radius: 10px;
-  color: var(--te-primary-500);
-  background: var(--te-card-bg);
+  border-radius: var(--te-library-cover-radius);
+  background: var(--te-subtle-bg);
+  cursor: pointer;
 }
 .song-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 .cover-play {
   position: absolute;
-  inset: 0;
+  right: 2px;
+  bottom: 2px;
   display: grid;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  color: white;
-  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--te-control-radius-sm);
+  color: var(--te-settings-text);
+  background: var(--te-card-bg);
+  font-size: 16px;
   opacity: 0;
-  transition: opacity 0.2s;
 }
 .cloud-song:hover .cover-play,
+.song-cover:focus-visible .cover-play,
 .cloud-song.playing .cover-play {
   opacity: 1;
 }
@@ -591,90 +662,76 @@ function progressLabel(task: NcmCloudTransferTask): string {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .song-main strong,
-.song-main small {
+.song-main small,
+.song-meta small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .song-main strong {
-  color: var(--te-neutral-900);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  line-height: 1.35;
 }
 .song-main small,
 .song-meta small {
-  color: var(--te-neutral-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-}
-.song-file {
-  opacity: 0.72;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
 }
 .song-progress {
   position: absolute;
-  right: 0;
+  right: 8px;
   bottom: 0;
-  left: 0;
+  left: 8px;
+  width: calc(100% - 16px);
   height: 3px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.12);
 }
 .load-more {
-  display: flex;
-  width: 100%;
-  min-height: 42px;
-  margin-top: 14px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border-radius: 12px;
-  color: var(--te-neutral-700);
-  background: var(--te-subtle-bg);
-  border: 1px solid var(--te-card-border);
-  font-weight: 700;
+  margin-top: 16px;
 }
 .recent-transfer > i {
-  color: var(--te-primary-500);
+  color: var(--te-settings-text-muted);
 }
-@media (max-width: 900px) {
+.cloud-panel :is(button, .cloud-song):focus-visible {
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+}
+@container te-ncm-cloud (max-width: 900px) {
   .cloud-song {
-    grid-template-columns: 48px minmax(160px, 1fr) 100px 42px;
+    grid-template-columns: 40px minmax(0, 1fr) 100px max(34px, calc(var(--te-font-size-body) * 2));
   }
   .secondary-meta {
     display: none;
   }
 }
-@media (max-width: 680px) {
-  .cloud-panel {
-    padding: 18px;
-  }
+@container te-ncm-cloud (max-width: 680px) {
   .cloud-header,
   .song-toolbar,
   .queue-heading {
     align-items: flex-start;
-    flex-direction: column;
   }
   .cloud-header-actions {
     width: 100%;
   }
-  .cloud-header-actions .cloud-button {
-    flex: 1;
-  }
-  .transfer-row {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
   .transfer-actions {
     width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .cloud-song {
-    grid-template-columns: 48px minmax(0, 1fr) 38px;
+    grid-template-columns: 40px minmax(0, 1fr) max(34px, calc(var(--te-font-size-body) * 2));
+    gap: 8px;
   }
   .song-meta {
     display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cloud-panel * {
+    transition: none;
   }
 }
 </style>

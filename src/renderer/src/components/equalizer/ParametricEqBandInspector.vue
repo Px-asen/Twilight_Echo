@@ -74,7 +74,7 @@ defineExpose({ finishInteraction })
         >
           <i class="pi pi-power-off"></i>
         </button>
-        <span class="band-number">BAND {{ String(index + 1).padStart(2, '0') }}</span>
+        <span class="band-number">频段 {{ String(index + 1).padStart(2, '0') }}</span>
       </div>
       <label class="filter-select">
         <svg viewBox="0 0 32 28" aria-hidden="true"><path :d="glyphs[band.filterType]" /></svg>
@@ -138,12 +138,10 @@ defineExpose({ finishInteraction })
   box-sizing: border-box;
   padding: 14px 34px 9px 14px;
   border: 1px solid var(--eq-border);
-  border-radius: 14px;
+  border-radius: 8px;
   color: var(--eq-text);
-  background: linear-gradient(165deg, var(--eq-panel-raised), var(--eq-panel));
-  box-shadow:
-    0 12px 32px var(--eq-shadow),
-    inset 0 1px color-mix(in srgb, var(--eq-highlight) 18%, transparent);
+  background: var(--eq-panel-raised);
+  box-shadow: none;
   cursor: default;
   color-scheme: var(--eq-color-scheme);
 }
@@ -170,8 +168,7 @@ defineExpose({ finishInteraction })
 }
 .band-number {
   font-family: var(--eq-mono);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-size: var(--te-type-caption);
   color: var(--band-color);
 }
 .inspector-icon {
@@ -224,7 +221,7 @@ defineExpose({ finishInteraction })
   color: var(--eq-text);
 }
 .band-state {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--eq-text-subtle);
 }
 .precision-controls {
@@ -244,7 +241,7 @@ defineExpose({ finishInteraction })
 }
 .inspector-icon:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 @media (hover: hover) and (pointer: fine) {

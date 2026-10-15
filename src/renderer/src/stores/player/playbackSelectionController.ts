@@ -1,11 +1,17 @@
 import type { Ref } from 'vue'
-import type { Track } from '@renderer/types/music'
+import type { Track, QueuePlaybackOrigin } from '@renderer/types/music'
 import type { PlayMode } from '@renderer/types/settings'
 import { shuffleArray } from '@renderer/utils/playerQueueUtils.ts'
 import {
   createPlaybackQueueSnapshotCache,
   toPlaybackQueueSnapshots
 } from '@renderer/utils/playbackQueueVirtualization.ts'
+import { withQueuePlaybackOrigin } from '@renderer/utils/queuePlaybackOrigin.ts'
+
+export interface PlaybackSelectionContext {
+  heartModePlaylistId?: number | null
+  queuePlaybackOrigin?: QueuePlaybackOrigin | null
+}
 
 interface PlaybackSelectionOptions {
   queue: Ref<Track[]>
@@ -26,7 +32,7 @@ export function createPlaybackSelectionController(options: PlaybackSelectionOpti
     track: Track,
     positionSeconds: number,
     trackList?: Track[],
-    context?: { heartModePlaylistId?: number | null }
+    context?: PlaybackSelectionContext
   ): void {
     if (trackList) {
       options.setHeartModeContext(context?.heartModePlaylistId ?? null)
@@ -34,7 +40,11 @@ export function createPlaybackSelectionController(options: PlaybackSelectionOpti
     }
     if (trackList || !options.isPersonalizedStreamTrack(track)) options.endPersonalizedStream()
     if (trackList) {
-      const snapshots = queueSnapshots(trackList)
+      const baseSnapshots = queueSnapshots(trackList)
+      const snapshots =
+        context && 'queuePlaybackOrigin' in context
+          ? baseSnapshots.map((item) => withQueuePlaybackOrigin(item, context.queuePlaybackOrigin))
+          : baseSnapshots
       const selectedIndex = track.queueEntryId
         ? snapshots.findIndex((item) => item.queueEntryId === track.queueEntryId)
         : trackList.indexOf(track)
@@ -49,14 +59,22 @@ export function createPlaybackSelectionController(options: PlaybackSelectionOpti
         queue.findIndex((item) => item.queueEntryId === selected.queueEntryId),
         snapshots
       )
-      track = { ...track, queueEntryId: selected.queueEntryId }
+      track = {
+        ...track,
+        queueEntryId: selected.queueEntryId,
+        queuePlaybackOrigin: selected.queuePlaybackOrigin
+      }
     } else {
       const index = options.queue.value.findIndex((item) =>
         track.queueEntryId ? item.queueEntryId === track.queueEntryId : item.id === track.id
       )
       if (index >= 0) {
         options.queueIndex.value = index
-        track = { ...track, queueEntryId: options.queue.value[index].queueEntryId }
+        track = {
+          ...track,
+          queueEntryId: options.queue.value[index].queueEntryId,
+          queuePlaybackOrigin: options.queue.value[index].queuePlaybackOrigin
+        }
       } else {
         const snapshots = toPlaybackQueueSnapshots([track])
         options.replaceQueue(snapshots, 0, [...snapshots])
@@ -69,11 +87,7 @@ export function createPlaybackSelectionController(options: PlaybackSelectionOpti
     void options.loadAndPlay(track, start)
   }
 
-  function playTrack(
-    track: Track,
-    trackList?: Track[],
-    context?: { heartModePlaylistId?: number | null }
-  ): void {
+  function playTrack(track: Track, trackList?: Track[], context?: PlaybackSelectionContext): void {
     playTrackFromPosition(track, 0, trackList, context)
   }
 

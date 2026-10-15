@@ -207,7 +207,7 @@ function confirm(): void {
   font: inherit;
 }
 .stats-clear-field :is(select, input):focus-visible {
-  outline: 2px solid var(--an-accent);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .stats-clear-dates {

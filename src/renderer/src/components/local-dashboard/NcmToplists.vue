@@ -2,6 +2,8 @@
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import CoverImg from '../CoverImg.vue'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
+import { resolveGridLayoutMetrics } from '../song-list/songListVirtualWindow'
 import { useProviderStore } from '@renderer/stores/useProviderStore'
 import { usePlayerStore } from '@renderer/stores/usePlayerStore'
 import { useEscapeToClose, useFocusTrap } from '@renderer/app/useDismissLayer'
@@ -30,6 +32,13 @@ const {
 } = useNcmToplists(providerStore)
 const expanded = ref(false)
 const visibleCharts = computed(() => (expanded.value ? charts.value : featured.value))
+const { setGridElement, gridStyle } = useBoundedGrid(() => visibleCharts.value.length, {
+  metrics: (width, compact) => ({
+    ...resolveGridLayoutMetrics(width, compact),
+    minColumnWidth: compact ? 240 : 280,
+    maxColumnWidth: compact ? 400 : 480
+  })
+})
 const dialog = ref<HTMLElement | null>(null)
 const dialogOpen = computed(() => selected.value !== null)
 const actionError = ref('')
@@ -116,11 +125,8 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
   <section v-if="available" class="ncm-toplists" aria-label="网易云排行榜" :aria-busy="loading">
     <header class="toplists-heading">
       <div class="toplists-heading-copy">
-        <span class="toplists-eyebrow"
-          ><i class="ph ph-chart-line-up" aria-hidden="true"></i> NETEASE CLOUD MUSIC</span
-        >
         <h2>网易云排行榜</h2>
-        <p>听见此刻，正在流行的好音乐。</p>
+        <p>网易云音乐热门榜单</p>
       </div>
       <div class="toplists-heading-actions">
         <button
@@ -154,7 +160,13 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
     <span v-if="loading" class="toplists-sr-only" role="status">{{
       charts.length ? '正在刷新排行榜' : '正在加载排行榜'
     }}</span>
-    <div v-if="loading && !charts.length" class="toplists-grid" aria-hidden="true">
+    <div
+      v-if="loading && !charts.length"
+      :ref="setGridElement"
+      class="toplists-grid"
+      :style="gridStyle"
+      aria-hidden="true"
+    >
       <div v-for="index in 4" :key="index" class="toplist-card toplist-skeleton">
         <div class="toplist-card-heading">
           <span class="toplist-art"></span
@@ -163,7 +175,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
         <div v-for="rank in 3" :key="rank" class="toplist-skeleton-line"></div>
       </div>
     </div>
-    <div v-else-if="charts.length" class="toplists-grid">
+    <div v-else-if="charts.length" :ref="setGridElement" class="toplists-grid" :style="gridStyle">
       <article v-for="chart in visibleCharts" :key="chart.id" class="toplist-card">
         <button
           class="toplist-card-heading"

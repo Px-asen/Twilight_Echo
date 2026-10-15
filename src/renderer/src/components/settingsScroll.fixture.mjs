@@ -52,16 +52,18 @@ window.api = { library: { getWatcherStatus: async () => null } }
 const expanded = ref(false)
 window.makeSettingsSection = (key) => () =>
   h(
-    ['general', 'appearance', 'library', 'connections', 'system'].includes(key) ? 'section' : 'div',
+    ['general', 'appearance', 'library', 'connections', 'system', 'about'].includes(key)
+      ? 'section'
+      : 'div',
     {
       id: key,
-      class: ['general', 'appearance', 'library', 'connections', 'system'].includes(key)
+      class: ['general', 'appearance', 'library', 'connections', 'system', 'about'].includes(key)
         ? 'glass-card preview-section settings-section'
         : 'settings-fixture-block'
     },
     [
       h('h2', key),
-      ...(key === 'system'
+      ...(key === 'about'
         ? [
             h('button', { 'data-setting-id': 'app-update' }, '检查更新'),
             h('button', { 'data-setting-id': 'app-update-install' }, '下载更新'),
@@ -146,7 +148,7 @@ window.runSettingsScrollTests = async () => {
   const nav = (key) => page.querySelector(`[data-settings-category="${key}"]`)
   const visibleSections = () => sections.filter((section) => section.getClientRects().length)
   const select = async (key) => {
-    const selector = page.querySelector('.settings-category-select')
+    const selector = page.querySelector('.settings-market-category-select')
     if (selector.getClientRects().length) {
       selector.value = key
       selector.dispatchEvent(new Event('change', { bubbles: true }))
@@ -158,7 +160,11 @@ window.runSettingsScrollTests = async () => {
     )
     expect(nav(key).getAttribute('aria-current') === 'page', 'active category missing: ' + key)
   }
-  expect(sections.length === 7, 'missing seven mounted category fixtures')
+  // Playback and Audio retain one mounted workspace so switching preserves drafts.
+  expect(
+    sections.length === 7,
+    'missing settings panels: ' + sections.map((section) => section.id).join(', ')
+  )
   await select('connections')
   resolveLoad()
   await settle()
@@ -173,7 +179,15 @@ window.runSettingsScrollTests = async () => {
   const before = page.scrollHeight
   general.querySelector('.test-disclosure').click()
   await settle()
-  expect(before >= page.scrollHeight + 360, 'disclosure did not update category height')
+  expect(
+    before >= page.scrollHeight + 360,
+    'disclosure did not update category height: ' +
+      before +
+      '/' +
+      page.scrollHeight +
+      '; nav=' +
+      page.querySelector('nav').className
+  )
   general.querySelector('.test-disclosure').click()
   await settle()
   const geometry = () => {
@@ -182,7 +196,7 @@ window.runSettingsScrollTests = async () => {
   }
   expect(page.scrollHeight > page.clientHeight, 'long category did not overflow')
   const generalGeometry = geometry()
-  await select('appearance')
+  await select('library')
   expect(
     geometry().every((value, index) => Math.abs(value - generalGeometry[index]) <= 1),
     'category switch changed horizontal geometry'
@@ -197,6 +211,9 @@ window.runSettingsScrollTests = async () => {
   page.dispatchEvent(new Event('scroll'))
   await settle()
   expect(nav('general').getAttribute('aria-current') === 'page', 'scroll changed category')
+  await select('connections')
+  await select('general')
+  expect(Math.abs(page.scrollTop - 300) <= 1, 'category switch lost its saved scroll position')
   expect(
     page.style.getPropertyValue('--te-workshop-scroll-y') === '',
     'decoration scrolling invalidated controls through inheritance'
@@ -207,7 +224,7 @@ window.runSettingsScrollTests = async () => {
     input.value = query
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await settle()
-    const result = page.querySelector('#settings-search-result-0')
+    const result = page.querySelector('#settings-result-0')
     expect(result, 'missing search result: ' + query)
     result.click()
     await settle()
@@ -241,8 +258,7 @@ window.runSettingsScrollTests = async () => {
     const target = await search('硬件加速')
     const rect = target.getBoundingClientRect(),
       pageRect = page.getBoundingClientRect()
-    const navigation = page.querySelector('.settings-preview-nav').getBoundingClientRect()
-    const usableTop = pageRect.top + (width <= 900 ? navigation.height : 0)
+    const usableTop = pageRect.top
     expect(
       rect.top >= usableTop - 2 && rect.bottom <= pageRect.bottom,
       'search result outside usable viewport at ' + width
@@ -259,18 +275,21 @@ window.runSettingsScrollTests = async () => {
   nav('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
   await settle()
   const strip = page.querySelector('.settings-nav-categories')
-  const itemRect = nav('system').getBoundingClientRect(),
+  const itemRect = nav('about').getBoundingClientRect(),
     stripRect = strip.getBoundingClientRect()
-  expect(strip.scrollHeight > strip.clientHeight, 'short viewport did not exercise sidebar scroll')
   expect(
-    document.activeElement === nav('system') && visibleSections()[0].id === 'system',
+    strip.scrollWidth <= strip.clientWidth + 1,
+    'market categories overflow the horizontal navigation'
+  )
+  expect(
+    document.activeElement === nav('about') && visibleSections()[0].id === 'about',
     'End did not focus and select the last category'
   )
   expect(
     itemRect.top >= stripRect.top - 1 && itemRect.bottom <= stripRect.bottom + 1,
     'focused category remained clipped in the sidebar'
   )
-  nav('system').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+  nav('about').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
   await settle()
   expect(
     document.activeElement === nav('general') && strip.scrollTop === 0,
@@ -281,7 +300,6 @@ window.runSettingsScrollTests = async () => {
     'category navigation does not have one Tab stop'
   )
 
-  const header = page.querySelector('.settings-page-header')
   const fades = (element) =>
     element
       .getAnimations()
@@ -293,28 +311,36 @@ window.runSettingsScrollTests = async () => {
     await nextTick()
   }
   document.documentElement.dataset.teMotion = 'full'
-  await pointerSelect('appearance')
-  const firstFade = fades(header)[0]
+  await pointerSelect('library')
+  const firstFade = fades(document.querySelector('#library'))[0]
   expect(
-    firstFade && fades(document.querySelector('#appearance')).length === 1,
-    'pointer switch did not animate the heading and category together'
+    firstFade && fades(document.querySelector('#library')).length === 1,
+    'pointer switch did not animate the selected category'
   )
   expect(
-    visibleSections().length === 1 && visibleSections()[0].id === 'appearance',
+    visibleSections().length === 1 && visibleSections()[0].id === 'library',
     'animation delayed the selected category or left an old panel visible'
   )
   expect(firstFade.effect.getTiming().duration <= 300, 'category fade blocks navigation too long')
-  firstFade.pause()
-  firstFade.currentTime = Number(firstFade.effect.getTiming().duration) / 4
-  const interruptedOpacity = Number(getComputedStyle(header).opacity)
   await pointerSelect('playback')
+  const playback = document.querySelector('#playback')
+  const playbackFade = fades(playback)[0]
   expect(
-    firstFade.playState === 'idle' && fades(header).length === 1,
+    firstFade.playState === 'idle' && playbackFade && fades(playback).length === 1,
     'rapid switches stacked category animations'
   )
+  playbackFade.pause()
+  playbackFade.currentTime = Number(playbackFade.effect.getTiming().duration) / 4
+  const interruptedOpacity = Number(getComputedStyle(playback).opacity)
+  await pointerSelect('audio')
+  const audio = document.querySelector('#audio')
   expect(
-    Math.abs(Number(fades(header)[0].effect.getKeyframes()[0].opacity) - interruptedOpacity) < 0.01,
-    'rapid switch restarted the fade instead of continuing from its visible opacity'
+    audio === playback &&
+      playbackFade.playState === 'idle' &&
+      fades(audio).length === 1 &&
+      Math.abs(Number(fades(audio)[0].effect.getKeyframes()[0].opacity) - interruptedOpacity) <
+        0.01,
+    'shared playback/audio panel restarted the fade instead of continuing from its visible opacity'
   )
   await pointerSelect('general')
   expect(
@@ -324,11 +350,11 @@ window.runSettingsScrollTests = async () => {
   document.documentElement.dataset.teMotion = 'reduced'
   await nextTick()
   expect(
-    fades(header).length === 0 && getComputedStyle(header).opacity === '1',
+    fades(general).length === 0 && getComputedStyle(general).opacity === '1',
     'changing motion preference left a category partially transparent'
   )
-  await pointerSelect('appearance')
-  const reducedFade = fades(header)[0]
+  await pointerSelect('library')
+  const reducedFade = fades(document.querySelector('#library'))[0]
   expect(
     reducedFade &&
       reducedFade.effect.getTiming().duration <= 120 &&
@@ -339,17 +365,18 @@ window.runSettingsScrollTests = async () => {
   await nextTick()
   await pointerSelect('general')
   expect(
-    !fades(header).length && !fades(general).length && getComputedStyle(header).opacity === '1',
+    reducedFade.playState === 'idle' &&
+      !fades(general).length &&
+      getComputedStyle(general).opacity === '1',
     'disabled motion still faded the selected category'
   )
   document.documentElement.dataset.teMotion = 'full'
   nav('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
   await nextTick()
   expect(
-    visibleSections()[0].id === 'system' &&
-      document.activeElement === nav('system') &&
-      !fades(header).length &&
-      !fades(document.querySelector('#system')).length,
+    visibleSections()[0].id === 'about' &&
+      document.activeElement === nav('about') &&
+      !fades(document.querySelector('#about')).length,
     'keyboard category navigation animated or failed to restore focus'
   )
   document.documentElement.dataset.teMotion = 'off'
@@ -365,11 +392,11 @@ window.runSettingsScrollTests = async () => {
   mounted.value = true
   await settle()
   expect(
-    document.querySelector('[aria-current="page"]').textContent.includes('系统与关于'),
+    document.querySelector('[aria-current="page"]').textContent.includes('系统'),
     'reopened settings selected wrong category'
   )
   persistence.stop()
   app.unmount()
   removeDecorations()
-  return 'SETTINGS_SCROLL_OK: category fades/interruption/motion preferences; seven panels; startup/drafts/geometry/search/Tab/sidebar keyboard/restore verified'
+  return 'SETTINGS_SCROLL_OK: category fades/interruption/motion preferences; eight categories and independent appearance entry; startup/drafts/geometry/search/Tab/market navigation/scroll restore verified'
 }

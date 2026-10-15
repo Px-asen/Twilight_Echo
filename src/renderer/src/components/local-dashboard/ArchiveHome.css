@@ -39,7 +39,7 @@
 }
 .archive-home button:focus-visible,
 .archive-activity-panel:focus-visible {
-  outline: 2px solid var(--te-primary-500);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 5px;
 }
 .archive-home button:active:not(:disabled):not(:focus-visible) {
@@ -182,7 +182,7 @@
 }
 .archive-rotation button:focus-visible,
 .archive-activity-panel:focus-visible {
-  outline-color: var(--archive-on-stage);
+  outline-color: var(--te-control-focus-color);
 }
 .archive-rotation-head {
   display: flex;
@@ -288,7 +288,7 @@
 .archive-record-cover {
   display: block;
   position: relative;
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--te-neutral-50) 6%, transparent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--te-content-shadow-color) 6%, transparent);
 }
 .archive-record-cover > .archive-artwork {
   border-radius: 3px;
@@ -864,12 +864,14 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .archive-record-play {
-    transform: none;
-    transition: opacity 120ms ease;
-  }
-  .archive-home button:active:not(:disabled):not(:focus-visible) {
-    transform: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .archive-record-play {
+      transform: none;
+      transition: opacity 120ms ease;
+    }
+    .archive-home button:active:not(:disabled):not(:focus-visible) {
+      transform: none;
+    }
   }
 }
 

@@ -132,3 +132,41 @@ test('drawer queue commands target duplicate tracks by entry identity and save a
   ])
   assert.equal(actions.saveAsPlaylist('   '), null)
 })
+
+test('keyboard moves resolve the current occurrence and respect queue boundaries', () => {
+  const queue = ref([track(0), track(1), track(2)])
+  const reorders: Array<[number, number]> = []
+  const actions = usePlaybackQueueDrawerActions({
+    queue,
+    commands: {
+      enqueueTrack() {},
+      playNextTrack() {},
+      removeQueueItem() {},
+      clearQueue() {},
+      reorderQueue(from, to) {
+        reorders.push([from, to])
+      },
+      saveQueueAsPlaylist() {
+        return 'playlist-id'
+      }
+    },
+    createPlaylistWithTracks() {
+      return 'playlist-id'
+    }
+  })
+
+  actions.move('entry:0', -1)
+  actions.move('entry:2', 1)
+  actions.move('missing', 1)
+  // Duplicate track IDs still address their independent queue occurrences.
+  actions.move('entry:1', -1)
+  queue.value = [track(2), track(0), track(1)]
+  actions.move('entry:1', -1)
+  actions.move('entry:0', 1)
+
+  assert.deepEqual(reorders, [
+    [1, 0],
+    [2, 1],
+    [1, 2]
+  ])
+})

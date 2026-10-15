@@ -136,9 +136,10 @@ const emit = defineEmits<{
 .response-view-switch {
   display: inline-flex;
   padding: 3px;
-  border: 1px solid var(--te-card-border);
+  border: 1px solid var(--te-control-border);
   border-radius: 10px;
-  background: var(--te-neutral-100);
+  background: var(--te-control-bg);
+  color: var(--te-control-fg);
 }
 .response-view-switch button,
 .frequency-response-import,
@@ -148,15 +149,15 @@ const emit = defineEmits<{
   border-radius: 7px;
   padding: 6px 10px;
   background: transparent;
-  color: var(--te-neutral-600);
+  color: var(--te-control-fg-muted);
   font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   cursor: pointer;
 }
 .response-view-switch button.active {
-  background: var(--te-card-bg);
-  color: var(--te-primary-500);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  background: var(--te-control-bg-active);
+  color: var(--te-control-fg);
+  box-shadow: var(--te-chrome-contact);
 }
 .response-view-switch button:disabled {
   cursor: not-allowed;
@@ -365,7 +366,7 @@ const emit = defineEmits<{
   font-size: 10px;
 }
 .is-instrument button:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 </style>

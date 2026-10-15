@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Track, TrackArtistRef } from '../types/music'
 import type {
   MediaProviderPlaylistSummary,
@@ -7,6 +8,7 @@ import type {
 import type { SearchType } from './streaming-page/useStreamingSearch'
 import { albumSearchKey, type AlbumSearchItem } from './streaming-page/albumSearch.ts'
 import CoverImg from './CoverImg.vue'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
 
 interface PageState {
   first: number
@@ -15,31 +17,36 @@ interface PageState {
   pageCount: number
 }
 
-const props = defineProps<{
-  searchType: SearchType
-  searchResults: Track[]
-  searchAlbumsResults?: AlbumSearchItem[]
-  searchPlaylistsResults: MediaProviderPlaylistSummary[]
-  searchArtistsResults: MediaProviderArtistSummary[]
-  searchTotal: number
-  searchOffset: number
-  searchLoading: boolean
-  searchError: string
-  currentTrack: Track | null
-  trackActivationMode: 'singleClick' | 'doubleClick'
-  likingTracks: Set<number>
-  isTrackLiked: (id: number | undefined) => boolean
-  formatTime: (time: number) => string
-  selectedIds?: Set<string>
-  hasSelection?: boolean
-  selectedCount?: number
-  selectionAllFavorited?: boolean
-  favoriteLabel?: string
-  isTrackFavorited?: (track: Track) => boolean
-  canAddToPlaylist?: boolean
-  canOpenTrackArtist?: (track: Track, artist?: TrackArtistRef) => boolean
-  canOpenTrackAlbum?: (track: Track) => boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    queryActive?: boolean
+    searchSourceLabel?: string
+    searchType: SearchType
+    searchResults: Track[]
+    searchAlbumsResults?: AlbumSearchItem[]
+    searchPlaylistsResults: MediaProviderPlaylistSummary[]
+    searchArtistsResults: MediaProviderArtistSummary[]
+    searchTotal: number
+    searchOffset: number
+    searchLoading: boolean
+    searchError: string
+    currentTrack: Track | null
+    trackActivationMode: 'singleClick' | 'doubleClick'
+    likingTracks: Set<number>
+    isTrackLiked: (id: number | undefined) => boolean
+    formatTime: (time: number) => string
+    selectedIds?: Set<string>
+    hasSelection?: boolean
+    selectedCount?: number
+    selectionAllFavorited?: boolean
+    favoriteLabel?: string
+    isTrackFavorited?: (track: Track) => boolean
+    canAddToPlaylist?: boolean
+    canOpenTrackArtist?: (track: Track, artist?: TrackArtistRef) => boolean
+    canOpenTrackAlbum?: (track: Track) => boolean
+  }>(),
+  { queryActive: true }
+)
 
 const emit = defineEmits<{
   searchTrackClick: [track: Track, event: MouseEvent]
@@ -60,9 +67,31 @@ const emit = defineEmits<{
 }>()
 
 const pageSize = 30
+const resultTypeLabel = computed(
+  () => ({ songs: '单曲', albums: '专辑', playlists: '歌单', artists: '歌手' })[props.searchType]
+)
+const { setGridElement, gridStyle } = useBoundedGrid(() =>
+  props.searchType === 'albums'
+    ? (props.searchAlbumsResults?.length ?? 0)
+    : props.searchType === 'artists'
+      ? props.searchArtistsResults.length
+      : props.searchPlaylistsResults.length
+)
 
 function isSelected(trackId: string): boolean {
   return props.selectedIds?.has(trackId) ?? false
+}
+
+function isFavorited(track: Track): boolean {
+  return props.isTrackFavorited?.(track) ?? props.isTrackLiked(track.ncmSongId)
+}
+
+function favoriteActionLabel(track: Track): string {
+  return track.ncmSongId != null
+    ? `在网易云${isFavorited(track) ? '取消喜欢' : '喜欢'}`
+    : isFavorited(track)
+      ? '移出应用收藏'
+      : '加入应用收藏'
 }
 
 function emitPage(first: number): void {
@@ -85,7 +114,9 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
     event.stopPropagation()
-    if (!event.repeat) emit('searchTrackActivate', track)
+    if (event.repeat) return
+    if (event.key === 'Enter') emit('searchTrackActivate', track)
+    else emit('searchTrackClick', track, new MouseEvent('click', { ctrlKey: true }))
   } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()
     event.stopPropagation()
@@ -97,306 +128,304 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
 </script>
 
 <template>
-  <div class="search-view">
-    <div v-if="searchLoading && searchOffset === 0" class="streaming-placeholder">
-      <i
-        class="pi pi-spin pi-spinner"
-        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #999"
-      ></i>
-      <p class="placeholder-title">正在搜索</p>
-    </div>
-    <div v-else-if="searchError" class="streaming-placeholder">
-      <i
-        class="pi pi-exclamation-triangle"
-        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #e74c3c"
-      ></i>
-      <p class="placeholder-title">搜索失败</p>
-      <p class="placeholder-hint">{{ searchError }}</p>
-      <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
-    </div>
-    <div v-else-if="searchTotal === 0 && !searchLoading" class="streaming-placeholder">
-      <i
-        class="pi pi-search"
-        style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #ccc"
-      ></i>
-      <p class="placeholder-title">无搜索结果</p>
-      <p class="placeholder-hint">换个关键词试试吧</p>
-    </div>
-    <div v-else class="search-results-content">
-      <div v-if="searchType === 'songs'" class="detail-content">
-        <div class="track-table-wrapper">
-          <div v-if="hasSelection" class="selection-toolbar">
-            <span class="selection-count">已选择 {{ selectedCount }} 首</span>
-            <div class="selection-actions">
-              <button type="button" class="selection-btn" @click="emit('batchFavorite')">
-                <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                <span>{{
-                  favoriteLabel ?? (selectionAllFavorited ? '移出应用收藏' : '加入应用收藏')
-                }}</span>
-              </button>
-              <button
-                v-if="canAddToPlaylist"
-                type="button"
-                class="selection-btn"
-                @click="emit('batchAddToPlaylist')"
-              >
-                <i class="pi pi-list"></i>
-                <span>添加到歌单</span>
-              </button>
-              <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
-                <i class="pi pi-trash"></i>
-                <span>删除</span>
-              </button>
-              <button type="button" class="selection-btn ghost" @click="emit('clearSelection')">
-                <i class="pi pi-times"></i>
-                <span>取消</span>
-              </button>
+  <div class="search-view" :aria-busy="searchLoading">
+    <p v-if="queryActive === false" class="search-start-hint">
+      输入关键词，搜索本地音乐或在线音源。
+    </p>
+    <div v-else class="search-query-results">
+      <div class="search-results-summary">
+        <h2 class="search-results-heading">{{ resultTypeLabel }}</h2>
+        <p
+          class="search-results-count"
+          :role="!searchLoading && !searchError && searchTotal > 0 ? 'status' : undefined"
+        >
+          {{ searchSourceLabel ?? '全部音源' }}
+          <template v-if="!searchLoading && !searchError">
+            · {{ searchTotal }} {{ searchType === 'songs' ? '首' : '项' }}
+          </template>
+        </p>
+      </div>
+      <div v-if="searchLoading && searchOffset === 0" class="streaming-placeholder" role="status">
+        <i class="pi pi-spin pi-spinner" aria-hidden="true"></i>
+        <p class="placeholder-title">正在搜索</p>
+      </div>
+      <div v-else-if="searchError" class="streaming-placeholder error-state" role="alert">
+        <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+        <p class="placeholder-title">搜索失败</p>
+        <p class="placeholder-hint">{{ searchError }}</p>
+        <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
+      </div>
+      <div
+        v-else-if="searchTotal === 0 && !searchLoading"
+        class="streaming-placeholder"
+        role="status"
+      >
+        <i class="pi pi-search" aria-hidden="true"></i>
+        <p class="placeholder-title">无搜索结果</p>
+        <p class="placeholder-hint">换个关键词试试吧</p>
+      </div>
+      <div v-else class="search-results-content">
+        <p v-if="searchLoading" class="search-loading" role="status">正在加载搜索结果…</p>
+        <div v-if="searchType === 'songs'" class="detail-content">
+          <div class="track-table-wrapper">
+            <div v-if="hasSelection" class="selection-toolbar" role="toolbar" aria-label="批量操作">
+              <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+              <div class="selection-actions">
+                <button type="button" class="selection-btn" @click="emit('batchFavorite')">
+                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <span>{{
+                    favoriteLabel ?? (selectionAllFavorited ? '移出应用收藏' : '加入应用收藏')
+                  }}</span>
+                </button>
+                <button
+                  v-if="canAddToPlaylist"
+                  type="button"
+                  class="selection-btn"
+                  @click="emit('batchAddToPlaylist')"
+                >
+                  <i class="pi pi-list"></i>
+                  <span>添加到歌单</span>
+                </button>
+                <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
+                  <i class="pi pi-trash"></i>
+                  <span>删除</span>
+                </button>
+                <button type="button" class="selection-btn ghost" @click="emit('clearSelection')">
+                  <i class="pi pi-times"></i>
+                  <span>取消</span>
+                </button>
+              </div>
             </div>
-          </div>
-          <table class="track-table">
-            <thead>
-              <tr>
-                <th class="col-cover-header"></th>
-                <th class="col-index">#</th>
-                <th class="col-info">标题</th>
-                <th class="col-like-header"></th>
-                <th class="col-album">专辑</th>
-                <th class="col-duration">时长</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="(track, index) in searchResults"
-                :key="track.id"
-                class="track-row"
-                data-te-interactive
-                tabindex="0"
-                :aria-label="`${track.title} · ${track.artist}，按回车播放`"
-                @keydown="onTrackKeydown($event, track)"
-                :class="{
-                  'track-playing': currentTrack?.id === track.id,
-                  'track-selected': isSelected(track.id)
-                }"
-                @click="emit('searchTrackClick', track, $event)"
-                @dblclick="
-                  trackActivationMode === 'doubleClick' && emit('searchTrackClick', track, $event)
-                "
-                @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
-              >
-                <td class="col-cover">
-                  <CoverImg
-                    :cover="track.cover"
-                    :cover-source="track.coverSource"
-                    :identity="track.id"
-                    class="cover-img"
-                    alt=""
-                    loading="lazy"
-                  />
-                </td>
-                <td class="col-index">
-                  <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                    <i
-                      class="pi pi-volume-up"
-                      style="
-                        font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-                        color: #1a73e8;
-                      "
-                    ></i>
-                  </span>
-                  <span v-else>{{ index + 1 + searchOffset }}</span>
-                </td>
-                <td class="col-info">
-                  <div class="track-title">{{ track.title }}</div>
-                  <div class="track-artist">
-                    <template v-if="track.artists?.length">
-                      <template v-for="(artist, artistIndex) in track.artists" :key="artistIndex">
-                        <span v-if="artistIndex > 0"> / </span>
-                        <button
-                          v-if="canOpenTrackArtist?.(track, artist)"
-                          type="button"
-                          class="metadata-link"
-                          :title="`查看歌手：${artist.name}`"
-                          @click.stop="emit('openTrackArtist', track, artist)"
-                          @dblclick.stop
-                        >
-                          {{ artist.name }}
-                        </button>
-                        <span v-else>{{ artist.name }}</span>
+            <table class="track-table" aria-label="搜索歌曲" :aria-rowcount="searchTotal + 1">
+              <thead>
+                <tr>
+                  <th class="col-cover-header" scope="col" aria-label="封面"></th>
+                  <th class="col-index" scope="col">#</th>
+                  <th class="col-info" scope="col">标题</th>
+                  <th class="col-like-header" scope="col" aria-label="收藏"></th>
+                  <th class="col-album" scope="col">专辑</th>
+                  <th class="col-duration" scope="col">时长</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(track, index) in searchResults"
+                  :key="track.id"
+                  class="track-row"
+                  data-te-interactive
+                  tabindex="0"
+                  :aria-label="`${track.title} · ${track.artist}，按回车播放，空格选择`"
+                  :aria-selected="isSelected(track.id)"
+                  :aria-rowindex="searchOffset + index + 2"
+                  @keydown="onTrackKeydown($event, track)"
+                  :class="{
+                    'track-playing': currentTrack?.id === track.id,
+                    'track-selected': isSelected(track.id)
+                  }"
+                  @click="emit('searchTrackClick', track, $event)"
+                  @dblclick="
+                    trackActivationMode === 'doubleClick' && emit('searchTrackClick', track, $event)
+                  "
+                  @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
+                >
+                  <td class="col-cover">
+                    <CoverImg
+                      :cover="track.cover"
+                      :cover-source="track.coverSource"
+                      :identity="track.id"
+                      class="cover-img"
+                      alt=""
+                      loading="lazy"
+                    />
+                  </td>
+                  <td class="col-index">
+                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                      <i class="pi pi-volume-up" aria-hidden="true"></i>
+                    </span>
+                    <span v-else>{{ index + 1 + searchOffset }}</span>
+                  </td>
+                  <td class="col-info">
+                    <div class="track-title" :title="track.title">{{ track.title }}</div>
+                    <div class="track-artist" :title="track.artist">
+                      <template v-if="track.artists?.length">
+                        <template v-for="(artist, artistIndex) in track.artists" :key="artistIndex">
+                          <span v-if="artistIndex > 0"> / </span>
+                          <button
+                            v-if="canOpenTrackArtist?.(track, artist)"
+                            type="button"
+                            class="metadata-link"
+                            :title="`查看歌手：${artist.name}`"
+                            @click.stop="emit('openTrackArtist', track, artist)"
+                            @dblclick.stop
+                          >
+                            {{ artist.name }}
+                          </button>
+                          <span v-else>{{ artist.name }}</span>
+                        </template>
                       </template>
-                    </template>
+                      <button
+                        v-else-if="canOpenTrackArtist?.(track)"
+                        type="button"
+                        class="metadata-link"
+                        :title="`查看歌手：${track.artist}`"
+                        @click.stop="emit('openTrackArtist', track)"
+                        @dblclick.stop
+                      >
+                        {{ track.artist }}
+                      </button>
+                      <span v-else>{{ track.artist }}</span>
+                    </div>
+                  </td>
+                  <td class="col-like">
                     <button
-                      v-else-if="canOpenTrackArtist?.(track)"
+                      type="button"
+                      class="btn-like"
+                      :class="{
+                        liked: isFavorited(track),
+                        loading: likingTracks.has(track.ncmSongId ?? 0)
+                      }"
+                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                      :title="favoriteActionLabel(track)"
+                      :aria-label="favoriteActionLabel(track)"
+                      :aria-pressed="isFavorited(track)"
+                      @click.stop="emit('likeTrack', track, $event)"
+                    >
+                      <i
+                        v-if="likingTracks.has(track.ncmSongId ?? 0)"
+                        class="pi pi-spin pi-spinner"
+                        style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
+                      ></i>
+                      <i
+                        v-else
+                        :class="isFavorited(track) ? 'pi pi-heart-fill' : 'pi pi-heart'"
+                        style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
+                      ></i>
+                    </button>
+                  </td>
+                  <td class="col-album">
+                    <button
+                      v-if="canOpenTrackAlbum?.(track)"
                       type="button"
                       class="metadata-link"
-                      :title="`查看歌手：${track.artist}`"
-                      @click.stop="emit('openTrackArtist', track)"
+                      :title="`查看专辑：${track.album}`"
+                      @click.stop="emit('openTrackAlbum', track)"
                       @dblclick.stop
                     >
-                      {{ track.artist }}
+                      {{ track.album }}
                     </button>
-                    <span v-else>{{ track.artist }}</span>
-                  </div>
-                </td>
-                <td class="col-like">
-                  <button
-                    class="btn-like"
-                    :class="{
-                      liked: isTrackFavorited?.(track) ?? isTrackLiked(track.ncmSongId),
-                      loading: likingTracks.has(track.ncmSongId ?? 0)
-                    }"
-                    :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                    :title="
-                      track.ncmSongId != null
-                        ? isTrackLiked(track.ncmSongId)
-                          ? '在网易云取消喜欢'
-                          : '在网易云喜欢'
-                        : isTrackFavorited?.(track)
-                          ? '移出应用收藏'
-                          : '加入应用收藏'
-                    "
-                    @click.stop="emit('likeTrack', track, $event)"
-                  >
-                    <i
-                      v-if="likingTracks.has(track.ncmSongId ?? 0)"
-                      class="pi pi-spin pi-spinner"
-                      style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
-                    ></i>
-                    <i
-                      v-else
-                      :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
-                      style="font-size: calc(var(--te-font-size-body, 14px) * 14 / 14)"
-                    ></i>
-                  </button>
-                </td>
-                <td class="col-album">
-                  <button
-                    v-if="canOpenTrackAlbum?.(track)"
-                    type="button"
-                    class="metadata-link"
-                    :title="`查看专辑：${track.album}`"
-                    @click.stop="emit('openTrackAlbum', track)"
-                    @dblclick.stop
-                  >
-                    {{ track.album }}
-                  </button>
-                  <span v-else>{{ track.album }}</span>
-                </td>
-                <td class="col-duration">{{ formatTime(track.duration) }}</td>
-              </tr>
-            </tbody>
-          </table>
+                    <span v-else :title="track.album">{{ track.album }}</span>
+                  </td>
+                  <td class="col-duration">{{ formatTime(track.duration) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
-      <div v-else-if="searchType === 'albums'" class="rec-sections">
-        <div class="playlist-grid album-search-grid">
+        <div v-else-if="searchType === 'albums'" class="rec-sections">
+          <div :ref="setGridElement" class="playlist-grid album-search-grid" :style="gridStyle">
+            <button
+              v-for="album in searchAlbumsResults"
+              :key="albumSearchKey(album)"
+              type="button"
+              class="playlist-grid-card album-search-card"
+              data-te-interactive
+              @click="emit('openAlbum', album)"
+            >
+              <CoverImg
+                v-if="album.cover || album.coverSmall"
+                :cover="album.coverSmall || album.cover"
+                :cover-source="album.coverSmallSource || album.coverSource"
+                class="playlist-grid-cover"
+                alt=""
+              />
+              <div v-else class="playlist-grid-cover-placeholder">
+                <i class="pi pi-headphones" aria-hidden="true"></i>
+              </div>
+              <div class="playlist-grid-name" :title="album.name">{{ album.name }}</div>
+              <div class="album-search-artist" :title="album.artist || '未知艺术家'">
+                {{ album.artist || '未知艺术家' }}
+              </div>
+              <div class="album-search-meta">
+                <span>{{ album.trackCount }} 首</span>
+                <span class="album-search-source" :title="album.providerName">{{
+                  album.providerName
+                }}</span>
+              </div>
+            </button>
+          </div>
+        </div>
+        <div v-else-if="searchType === 'playlists'" class="rec-sections">
+          <div :ref="setGridElement" class="playlist-grid" :style="gridStyle">
+            <button
+              v-for="playlist in searchPlaylistsResults"
+              :key="playlist.id"
+              type="button"
+              class="playlist-grid-card"
+              data-te-interactive
+              @click="emit('openPlaylist', playlist)"
+            >
+              <CoverImg
+                v-if="playlist.cover || playlist.coverSmall"
+                :cover="playlist.coverSmall || playlist.cover"
+                :cover-source="playlist.coverSmallSource || playlist.coverSource"
+                class="playlist-grid-cover"
+                alt=""
+              />
+              <div v-else class="playlist-grid-cover-placeholder">
+                <i class="pi pi-list" aria-hidden="true"></i>
+              </div>
+              <div class="playlist-grid-name" :title="playlist.name">{{ playlist.name }}</div>
+              <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+            </button>
+          </div>
+        </div>
+        <div v-else-if="searchType === 'artists'" class="rec-sections">
+          <div :ref="setGridElement" class="playlist-grid" :style="gridStyle">
+            <button
+              v-for="artist in searchArtistsResults"
+              :key="artist.id"
+              type="button"
+              class="playlist-grid-card artist-card"
+              data-te-interactive
+              @click="emit('openArtist', artist)"
+            >
+              <CoverImg
+                v-if="artist.picUrl"
+                :cover="artist.picUrl"
+                :cover-source="artist.picUrlSource"
+                class="playlist-grid-cover artist-cover"
+                alt=""
+              />
+              <div v-else class="playlist-grid-cover-placeholder artist-cover">
+                <i class="pi pi-user" aria-hidden="true"></i>
+              </div>
+              <div class="playlist-grid-name" :title="artist.name">{{ artist.name }}</div>
+              <div class="playlist-grid-count">{{ artist.musicSize ?? 0 }} 首单曲</div>
+            </button>
+          </div>
+        </div>
+        <div v-if="searchTotal > pageSize" class="search-paginator">
           <button
-            v-for="album in searchAlbumsResults"
-            :key="albumSearchKey(album)"
             type="button"
-            class="playlist-grid-card album-search-card"
-            data-te-interactive
-            @click="emit('openAlbum', album)"
+            class="pager-btn"
+            :disabled="searchLoading || searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
           >
-            <CoverImg
-              v-if="album.cover || album.coverSmall"
-              :cover="album.coverSmall || album.cover"
-              :cover-source="album.coverSmallSource || album.coverSource"
-              class="playlist-grid-cover"
-              alt=""
-            />
-            <div v-else class="playlist-grid-cover-placeholder">
-              <i class="pi pi-headphones" aria-hidden="true"></i>
-            </div>
-            <div class="playlist-grid-name" :title="album.name">{{ album.name }}</div>
-            <div class="album-search-artist" :title="album.artist || '未知艺术家'">
-              {{ album.artist || '未知艺术家' }}
-            </div>
-            <div class="album-search-meta">
-              <span>{{ album.trackCount }} 首</span>
-              <span class="album-search-source" :title="album.providerName">{{
-                album.providerName
-              }}</span>
-            </div>
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchLoading || searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
           </button>
         </div>
-      </div>
-      <div v-else-if="searchType === 'playlists'" class="rec-sections">
-        <div class="playlist-grid">
-          <button
-            v-for="playlist in searchPlaylistsResults"
-            :key="playlist.id"
-            type="button"
-            class="playlist-grid-card"
-            data-te-interactive
-            @click="emit('openPlaylist', playlist)"
-          >
-            <CoverImg
-              v-if="playlist.cover || playlist.coverSmall"
-              :cover="playlist.coverSmall || playlist.cover"
-              :cover-source="playlist.coverSmallSource || playlist.coverSource"
-              class="playlist-grid-cover"
-              alt=""
-            />
-            <div v-else class="playlist-grid-cover-placeholder">
-              <i
-                class="pi pi-list"
-                style="font-size: calc(var(--te-font-size-body, 14px) * 28 / 14); color: #bbb"
-              ></i>
-            </div>
-            <div class="playlist-grid-name">{{ playlist.name }}</div>
-            <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-          </button>
-        </div>
-      </div>
-      <div v-else-if="searchType === 'artists'" class="rec-sections">
-        <div class="playlist-grid">
-          <button
-            v-for="artist in searchArtistsResults"
-            :key="artist.id"
-            type="button"
-            class="playlist-grid-card artist-card"
-            data-te-interactive
-            @click="emit('openArtist', artist)"
-          >
-            <CoverImg
-              v-if="artist.picUrl"
-              :cover="artist.picUrl"
-              :cover-source="artist.picUrlSource"
-              class="playlist-grid-cover artist-cover"
-              alt=""
-            />
-            <div v-else class="playlist-grid-cover-placeholder artist-cover">
-              <i
-                class="pi pi-user"
-                style="font-size: calc(var(--te-font-size-body, 14px) * 28 / 14); color: #bbb"
-              ></i>
-            </div>
-            <div class="playlist-grid-name">{{ artist.name }}</div>
-            <div class="playlist-grid-count">{{ artist.musicSize ?? 0 }} 首单曲</div>
-          </button>
-        </div>
-      </div>
-      <div v-if="searchTotal > pageSize" class="search-paginator">
-        <button
-          type="button"
-          class="pager-btn"
-          :disabled="searchLoading || searchOffset <= 0"
-          @click="emitPage(searchOffset - pageSize)"
-        >
-          上一页
-        </button>
-        <span class="pager-text">
-          {{ Math.floor(searchOffset / pageSize) + 1 }} /
-          {{ Math.ceil(searchTotal / pageSize) }}
-        </span>
-        <button
-          type="button"
-          class="pager-btn"
-          :disabled="searchLoading || searchOffset + pageSize >= searchTotal"
-          @click="emitPage(searchOffset + pageSize)"
-        >
-          下一页
-        </button>
       </div>
     </div>
   </div>
@@ -404,525 +433,392 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
 
 <style scoped>
 .search-view {
-  padding-bottom: 32px;
+  min-width: 0;
+  padding-bottom: 24px;
+  color: var(--te-settings-text);
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
+  container: te-streaming-search / inline-size;
 }
-
+.search-start-hint {
+  margin: 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+}
+.search-results-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+.search-results-heading {
+  margin: 0;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
+  line-height: var(--te-type-line-title);
+}
+.search-results-count {
+  margin: 0;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
+}
 .streaming-placeholder {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  text-align: center;
-  border-radius: 20px;
-  background: var(--te-glass-bg);
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  box-shadow: 0 20px 70px rgba(86, 70, 160, 0.12);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 0;
+  color: var(--te-settings-text-muted);
 }
-
+.streaming-placeholder > i {
+  font-size: var(--te-type-section-title);
+}
 .placeholder-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
-  font-weight: 600;
-  color: var(--te-neutral-900);
-  margin-top: 16px;
+  margin: 0;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-section-title);
+  font-weight: var(--te-type-weight-strong);
 }
-
 .placeholder-hint {
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  color: #999;
-  margin-top: 8px;
-  margin-bottom: 24px;
+  margin: 0;
+  font-size: var(--te-type-body);
+  overflow-wrap: anywhere;
 }
-
-.search-results-content {
-  animation: fadeIn 0.3s ease-out;
+.error-state > i {
+  color: var(--te-danger-soft-fg);
 }
-
+.search-loading {
+  margin: 0 0 12px;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+}
 .track-table-wrapper {
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-radius: 12px;
-  border: 1px solid #eef1f6;
-  background: var(--te-card-bg);
-  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  min-width: 0;
 }
-
 .track-table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
 }
-
-.track-table thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
 .track-table th {
-  height: 36px;
-  padding: 0 12px;
+  padding: 6px 8px;
+  min-height: 36px;
   text-align: left;
-  color: rgba(82, 90, 122, 0.54);
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 700;
-  letter-spacing: 0;
-  background: #fbfcff;
-  border-bottom: 1px solid #eef1f6;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  border-bottom: 1px solid var(--te-card-border);
 }
-
 .selection-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
-  margin: 0 0 10px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: rgba(124, 77, 255, 0.08);
-  border: 1px solid rgba(124, 77, 255, 0.18);
+  padding: 12px 8px;
+  border-block: 1px solid var(--te-card-border);
+  background: var(--te-subtle-bg);
 }
-
 .selection-count {
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 600;
-  color: var(--te-neutral-800, #333);
-  white-space: nowrap;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
 }
-
 .selection-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
-
-.selection-btn {
+.selection-btn,
+.search-action-btn,
+.pager-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--te-control-gap);
-  min-height: var(--te-control-height-sm);
-  border: none;
+  min-height: var(--te-control-height-md);
+  max-width: 100%;
+  border: var(--te-control-border-width) solid var(--te-control-border);
   border-radius: var(--te-control-radius-sm);
-  padding: 0 var(--te-control-pad-x-sm);
-  font-size: var(--te-control-font-size-sm);
-  font-weight: var(--te-control-font-weight);
+  padding: 6px var(--te-control-pad-x-md);
+  background: var(--te-subtle-bg);
+  color: var(--te-settings-text);
+  font: inherit;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
+  line-height: var(--te-type-line-caption);
   cursor: pointer;
-  color: var(--te-neutral-800, #333);
-  background: rgba(255, 255, 255, 0.55);
 }
-
-.selection-btn:hover {
-  background: rgba(255, 255, 255, 0.85);
+.selection-btn:hover,
+.search-action-btn:hover,
+.pager-btn:hover:not(:disabled) {
+  background: var(--te-hover-bg);
 }
-
 .selection-btn.danger {
-  color: #b91c1c;
+  color: var(--te-danger-soft-fg);
 }
-
 .selection-btn.ghost {
   background: transparent;
-  color: var(--te-neutral-600, #666);
+  color: var(--te-settings-text-muted);
 }
-
-.track-row.track-selected {
-  background: rgba(124, 77, 255, 0.12) !important;
-}
-
 .track-row {
   cursor: pointer;
-  transition:
-    background 0.18s,
-    box-shadow 0.18s;
+  scroll-margin-block: 12px;
+  transition: background-color var(--te-motion-hover) var(--te-ease-soft);
 }
-
 .track-row td {
-  padding: 10px 12px;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  color: rgba(54, 62, 96, 0.74);
-  border-bottom: 1px solid #f0f2f7;
+  height: 56px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--te-card-border);
   vertical-align: middle;
 }
-
 .track-row:hover {
-  background: #faf8ff;
-  box-shadow: inset 3px 0 0 rgba(124, 77, 255, 0.28);
+  background: var(--te-library-row-hover);
 }
-
 .track-playing {
-  background: #f5f1ff !important;
+  background: var(--te-playing-row-bg, var(--te-library-selection-bg));
 }
-
-.cover-img,
-.cover-placeholder {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
-  border-radius: 8px;
+.track-row.track-selected {
+  background: var(--te-library-selection-bg);
 }
-
 .cover-img {
   display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--te-library-cover-radius);
   object-fit: cover;
+  background: var(--te-subtle-bg);
 }
-
-.cover-placeholder {
-  background: #f3f0ff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .col-cover,
 .col-cover-header {
-  width: 60px;
+  width: 56px;
 }
-
-.col-cover-header {
-  color: #888;
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14) !important;
-  text-align: left;
-  padding-left: 12px !important;
-}
-
 .col-index {
-  width: 40px;
-  color: rgba(82, 90, 122, 0.58) !important;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14) !important;
+  width: 36px;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-variant-numeric: tabular-nums;
 }
-
 .col-info {
-  width: auto;
-  line-height: 1.4;
+  min-width: 0;
 }
-
 .track-title {
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  font-weight: 800;
-  color: #222744;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  line-height: 1.35;
 }
-
-.track-playing .track-title {
+.track-playing .track-title,
+.playing-indicator {
   color: var(--te-primary-500);
 }
-
 .track-artist {
   margin-top: 2px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: rgba(82, 90, 122, 0.58);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  line-height: var(--te-type-line-caption);
 }
-
+.metadata-link {
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
 .track-artist .metadata-link {
   display: inline;
 }
-
+.metadata-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .col-like,
 .col-like-header {
   width: 44px;
   text-align: center;
 }
-
-.col-like-header {
-  padding: 0 !important;
-}
-
 .btn-like {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--te-control-height-md);
+  min-height: var(--te-control-height-md);
   padding: 0;
-  border: none;
-  border-radius: 50%;
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
   background: transparent;
-  color: rgba(124, 77, 255, 0.32);
+  color: var(--te-settings-text-muted);
   cursor: pointer;
-  transition:
-    color 0.2s,
-    background 0.2s,
-    transform 0.15s;
 }
-
 .btn-like:hover {
-  background: rgba(232, 67, 147, 0.12);
-  color: #e84393;
-  transform: scale(1.15);
+  background: var(--te-hover-bg);
 }
-
 .btn-like.liked {
-  color: #e84393;
+  color: var(--te-danger-soft-fg);
 }
-
-.btn-like.loading,
 .btn-like:disabled {
-  pointer-events: none;
-  opacity: 0.6;
+  cursor: default;
+  opacity: 0.5;
 }
-
 .col-album {
-  width: 180px;
-  color: rgba(82, 90, 122, 0.58) !important;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14) !important;
+  width: 25%;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .col-duration {
-  width: 80px;
-  color: rgba(82, 90, 122, 0.58) !important;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14) !important;
+  width: max(56px, calc(var(--te-font-size-body) * 4.5));
+  text-align: right;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-variant-numeric: tabular-nums;
 }
-
-.playing-indicator {
-  display: flex;
-  align-items: center;
+.track-table th.col-duration {
+  text-align: right;
 }
-
-.rec-sections {
-  padding: 0;
-}
-
 .playlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 18px;
-  margin-top: 0;
-}
-
-@media (max-width: 900px) {
-  .playlist-grid {
-    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-    gap: 12px 10px;
-  }
-
-  .playlist-grid-card {
-    padding: 9px;
-  }
-
-  .playlist-grid-name {
-    margin-top: 9px;
-    font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
-  }
-
-  .playlist-grid-count {
-    margin-top: 3px;
-    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  }
-}
-
-@media (max-width: 640px) {
-  .playlist-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 10px 8px;
-  }
-
-  .playlist-grid-card {
-    padding: 7px;
-  }
-
-  .playlist-grid-name {
-    margin-top: 7px;
-    font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
-  }
-
-  .playlist-grid-count {
-    margin-top: 2px;
-    font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
-  }
-}
-
-.playlist-grid-card {
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--te-card-bg);
-  border: 1px solid #eef1f6;
-  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
-  transition:
-    transform 0.26s var(--te-ease-soft),
-    box-shadow 0.26s;
-}
-
-.playlist-grid-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
-}
-
-.playlist-grid-cover {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
-  object-fit: cover;
-  box-shadow: 0 18px 32px rgba(86, 70, 160, 0.14);
-}
-
-.playlist-grid-cover-placeholder {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
-  background: #f3f0ff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.playlist-grid-name {
-  margin-top: 12px;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  font-weight: 800;
-  color: #242946;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.playlist-grid-count {
-  margin-top: 4px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: rgba(82, 90, 122, 0.62);
-  font-weight: 750;
-}
-
-.album-search-card {
   min-width: 0;
+}
+.playlist-grid-card {
   display: flex;
+  min-width: 0;
+  width: 100%;
   flex-direction: column;
   align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--te-library-cover-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-
-.album-search-card .playlist-grid-cover-placeholder {
-  color: var(--te-primary-500);
-  font-size: 28px;
+.playlist-grid-card:hover {
+  background: var(--te-hover-bg);
 }
-
-.album-search-card .playlist-grid-name {
-  color: var(--te-neutral-900);
+.playlist-grid-cover,
+.playlist-grid-cover-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--te-library-cover-radius);
+  object-fit: cover;
+  background: var(--te-subtle-bg);
 }
-
-.album-search-card:focus-visible {
-  outline: 2px solid var(--te-primary-500);
-  outline-offset: 3px;
+.playlist-grid-cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-page-title);
 }
-
+.playlist-grid-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+  color: var(--te-settings-text);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-medium);
+  line-height: var(--te-type-line-body);
+}
+.playlist-grid-count,
 .album-search-artist,
 .album-search-meta {
-  margin-top: 6px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  color: var(--te-neutral-700);
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-regular);
+  line-height: var(--te-type-line-caption);
 }
-
 .album-search-artist,
 .album-search-source {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .album-search-meta {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   margin-top: auto;
-  padding-top: 6px;
+  padding-top: 4px;
 }
-
 .album-search-meta > :first-child {
   flex-shrink: 0;
 }
-
-.artist-card {
-  text-align: center;
-}
-
 .artist-cover {
-  border-radius: 50% !important;
+  border-radius: 50%;
 }
-
 .search-paginator {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 12px;
   margin-top: 24px;
 }
-
-.search-action-btn,
-.pager-btn {
-  min-height: var(--te-control-height-md);
-  padding: 0 var(--te-control-pad-x-md);
-  border: var(--te-control-border-width) solid var(--te-control-border);
-  border-radius: var(--te-control-radius-sm);
-  background: var(--te-card-bg);
-  color: rgba(52, 61, 87, 0.86);
-  font-size: var(--te-control-font-size-sm);
-  font-weight: var(--te-control-font-weight-bold);
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(86, 70, 160, 0.08);
-  transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover),
-    opacity var(--te-motion-hover);
-}
-
-.search-action-btn:hover,
-.pager-btn:hover:not(:disabled) {
-  background: #f7f5ff;
-  transform: translateY(-1px);
-}
-
 .pager-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.46;
+  cursor: default;
+  opacity: 0.5;
 }
-
 .pager-text {
-  min-width: 72px;
-  text-align: center;
-  color: rgba(80, 88, 116, 0.64);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
+  color: var(--te-settings-text-muted);
+  font-size: var(--te-type-caption);
   font-variant-numeric: tabular-nums;
 }
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
+.search-view :is(button, .track-row):focus-visible {
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+}
+@container te-streaming-search (max-width: 760px) {
+  .col-album {
+    display: none;
   }
-  to {
-    opacity: 1;
+}
+@container te-streaming-search (max-width: 420px) {
+  .col-index {
+    display: none;
+  }
+  .col-cover,
+  .col-cover-header {
+    width: 44px;
+  }
+  .track-row td,
+  .track-table th {
+    padding-inline: 4px;
+  }
+  .cover-img {
+    width: 32px;
+    height: 32px;
   }
 }
-
-:global(html[data-theme='dark'] .search-view .streaming-placeholder),
-:global(html[data-theme='dark'] .search-view .playlist-grid-card),
-:global(html[data-theme='dark'] .search-view .search-action-btn),
-:global(html[data-theme='dark'] .search-view .pager-btn) {
-  background: var(--te-card-bg);
-  border-color: var(--te-card-border);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
-}
-
-:global(html[data-theme='dark'] .search-view .playlist-grid-card:hover) {
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
-}
-
-:global(html[data-theme='dark'] .search-view .playlist-grid-cover-placeholder) {
-  background: #242016;
-  color: var(--te-primary-400);
-}
-
-:global(html[data-theme='dark'] .search-view .pager-btn:hover:not(:disabled)),
-:global(html[data-theme='dark'] .search-view .search-action-btn:hover) {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--te-primary-400);
+@media (prefers-reduced-motion: reduce) {
+  .track-row {
+    transition: none;
+  }
 }
 </style>

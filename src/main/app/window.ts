@@ -1,10 +1,15 @@
 import { app, BrowserWindow, dialog, shell, screen, nativeTheme } from 'electron'
+import {
+  dspEditorWindowOptions,
+  isDspEditorWindowRequest,
+  registerDspEditorWindow
+} from './dspEditorWindow.ts'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
-import { getWindowBackgroundColor, syncWindowFrameAppearance } from './windowAppearance.ts'
+import { getWindowBackgroundColor, syncWindowFrameColor } from './windowAppearance.ts'
 import {
   isWindowsAcrylicBackdropAvailable,
   isWindowsAcrylicBuild,
@@ -183,7 +188,7 @@ export function createWindow(): void {
     }
   })
 
-  syncWindowFrameAppearance(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
+  syncWindowFrameColor(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
   installWindowChromePublisher(runtime.mainWindow)
   runtime.mainWindow.on('ready-to-show', () => {
     if (windowState?.maximized) runtime.mainWindow?.maximize()
@@ -242,11 +247,41 @@ export function createWindow(): void {
     }
   }
 
-  runtime.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  runtime.mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (isDspEditorWindowRequest(url, frameName)) {
+      return {
+        action: 'allow',
+        outlivesOpener: false,
+        overrideBrowserWindowOptions: dspEditorWindowOptions(
+          screen.getDisplayMatching(runtime.mainWindow!.getBounds()).workArea
+        )
+      }
+    }
     if (isSafeExternalUrl(url)) {
       void shell.openExternal(url)
     }
     return { action: 'deny' }
+  })
+
+  runtime.mainWindow.webContents.on('did-create-window', (child, details) => {
+    if (!isDspEditorWindowRequest(details.url, details.frameName)) return
+    const owner = runtime.mainWindow!
+    registerDspEditorWindow(owner, child)
+    child.setMenu(null)
+    child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    child.webContents.on('will-navigate', (event) => event.preventDefault())
+    child.once('closed', () => {
+      if (
+        owner.isDestroyed() ||
+        runtime.forceQuit ||
+        runtime.closingAfterPlaybackSessionSave ||
+        runtime.savingPlaybackSessionBeforeClose
+      )
+        return
+      if (owner.isMinimized()) owner.restore()
+      owner.show()
+      owner.focus()
+    })
   })
 
   runtime.mainWindow.webContents.on('will-navigate', (event, url) => {

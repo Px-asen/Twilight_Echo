@@ -59,6 +59,13 @@ export function usePlaybackQueueDrawerActions({
     if (index !== -1) commands.removeQueueItem(index)
   }
 
+  function move(queueEntryId: string, direction: -1 | 1): void {
+    const index = getEntryIndex(queueEntryId)
+    const target = index + direction
+    if (index !== -1 && target >= 0 && target < queue.value.length)
+      commands.reorderQueue(index, target)
+  }
+
   function clear(): void {
     if (queue.value.length > 0) commands.clearQueue()
   }
@@ -106,6 +113,7 @@ export function usePlaybackQueueDrawerActions({
     playNext,
     addToTail,
     remove,
+    move,
     clear,
     saveAsPlaylist,
     onDragStart,

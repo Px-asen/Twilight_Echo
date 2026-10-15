@@ -4,6 +4,7 @@ import test from 'node:test'
 import { PLAYER_BAR_MODES } from './playerBar.ts'
 import {
   DEFAULT_PLAYER_BAR_LAYOUT,
+  NOW_PLAYING_STANDARD_REGIONS,
   PLAYER_BAR_CONTROL_IDS,
   PLAYER_BAR_REGION_NAMES,
   clonePlayerBarLayout,
@@ -20,9 +21,27 @@ test('ordinary desktop pages retain artwork, transport and utility regions', () 
   assert.deepEqual(DEFAULT_PLAYER_BAR_LAYOUT, {
     standard: {
       left: ['cover', 'trackInfo'],
-      center: ['transport'],
-      right: ['favorite', 'playMode', 'volume', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
+      center: ['playMode', 'transport', 'volume'],
+      right: ['favorite', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
     },
+    mini: {
+      left: ['playMode', 'transport', 'volume'],
+      center: [],
+      right: ['queue', 'hifi', 'exitPlayingPage']
+    },
+    compact: {
+      left: ['cover', 'trackInfo', 'favorite', 'miniPlayer'],
+      center: ['playMode', 'transport', 'volume'],
+      // `exitPlayingPage` renders only while the now-playing page is open, so it
+      // costs the main window nothing — and without it the page could only be
+      // dismissed by clicking the same entry that opened it.
+      right: ['time', 'hifi', 'equalizer', 'desktopLyrics', 'queue', 'exitPlayingPage']
+    }
+  })
+})
+
+test('former dense defaults gain the shared transport group without changing custom layouts', () => {
+  const former = {
     mini: {
       left: ['playPause'],
       center: [],
@@ -31,19 +50,45 @@ test('ordinary desktop pages retain artwork, transport and utility regions', () 
     compact: {
       left: ['cover', 'trackInfo', 'favorite', 'miniPlayer'],
       center: ['playMode', 'transport', 'equalizer'],
-      // `exitPlayingPage` renders only while the now-playing page is open, so it
-      // costs the main window nothing — and without it the page could only be
-      // dismissed by clicking the same entry that opened it.
       right: ['time', 'hifi', 'volume', 'desktopLyrics', 'queue', 'exitPlayingPage']
     }
-  })
+  }
+  const saved = structuredClone(former)
+  const migrated = normalizePlayerBarLayout(former)
+  for (const mode of ['mini', 'compact'] as const) {
+    assert.deepEqual(migrated[mode], DEFAULT_PLAYER_BAR_LAYOUT[mode])
+    for (const playing of [false, true]) {
+      assert.deepEqual(
+        resolvePlayerBarRegions(former as unknown as typeof migrated, mode, playing),
+        DEFAULT_PLAYER_BAR_LAYOUT[mode]
+      )
+    }
+  }
+  assert.deepEqual(former, saved)
+
+  const custom = structuredClone(former)
+  custom.mini.right.reverse()
+  custom.compact.left.reverse()
+  const normalized = normalizePlayerBarLayout(custom)
+  for (const mode of ['mini', 'compact'] as const) {
+    assert.deepEqual(normalized[mode], custom[mode])
+    assert.deepEqual(resolvePlayerBarRegions(normalized, mode, true), custom[mode])
+  }
 })
 
-test('resolving desktop layouts preserves saved settings and custom arrangements', () => {
+test('entering and leaving now-playing switches only its desktop presentation', () => {
   const layout = normalizePlayerBarLayout(undefined)
   const saved = structuredClone(layout)
-  assert.deepEqual(resolvePlayerBarRegions(layout, 'standard'), DEFAULT_PLAYER_BAR_LAYOUT.standard)
-  assert.deepEqual(layout, saved, 'resolving controls cannot rewrite saved settings')
+  assert.deepEqual(
+    resolvePlayerBarRegions(layout, 'standard', false),
+    DEFAULT_PLAYER_BAR_LAYOUT.standard
+  )
+  assert.deepEqual(resolvePlayerBarRegions(layout, 'standard', true), NOW_PLAYING_STANDARD_REGIONS)
+  assert.deepEqual(
+    resolvePlayerBarRegions(layout, 'standard', false),
+    DEFAULT_PLAYER_BAR_LAYOUT.standard
+  )
+  assert.deepEqual(layout, saved, 'page changes cannot rewrite saved settings')
   const custom = {
     ...layout.standard,
     center: ['playMode', 'transport'],
@@ -51,41 +96,22 @@ test('resolving desktop layouts preserves saved settings and custom arrangements
   }
   assert.deepEqual(normalizePlayerBarLayout({ standard: custom }).standard, custom)
   assert.deepEqual(
-    resolvePlayerBarRegions({ ...layout, standard: custom } as never, 'standard'),
+    resolvePlayerBarRegions({ ...layout, standard: custom } as never, 'standard', true),
     custom
   )
 })
 
-test('both PR 123 defaults recover the restored arrangement without changing custom layouts', () => {
-  for (const previous of [
-    {
-      left: ['cover', 'trackInfo'],
-      center: ['playMode', 'transport', 'volume'],
-      right: ['favorite', 'queue', 'miniPlayer', 'desktopLyrics', 'hifi']
-    },
-    {
-      left: ['trackInfo', 'favorite', 'miniPlayer'],
-      center: ['playMode', 'transport', 'volume'],
-      right: ['hifi', 'desktopLyrics', 'queue']
-    }
-  ]) {
-    const saved = structuredClone(previous)
-    assert.deepEqual(
-      normalizePlayerBarLayout({ standard: previous }).standard,
-      DEFAULT_PLAYER_BAR_LAYOUT.standard
-    )
-    assert.deepEqual(
-      resolvePlayerBarRegions({ standard: previous } as never, 'standard'),
-      DEFAULT_PLAYER_BAR_LAYOUT.standard
-    )
-    assert.deepEqual(previous, saved)
-    const custom = { ...previous, right: [...previous.right].reverse() }
-    assert.deepEqual(normalizePlayerBarLayout({ standard: custom }).standard, custom)
-    assert.deepEqual(resolvePlayerBarRegions({ standard: custom } as never, 'standard'), custom)
-  }
+test('profiles saved with the temporary global arrangement recover ordinary defaults', () => {
+  const layout = normalizePlayerBarLayout({ standard: NOW_PLAYING_STANDARD_REGIONS })
+  assert.deepEqual(layout.standard, DEFAULT_PLAYER_BAR_LAYOUT.standard)
+  assert.deepEqual(resolvePlayerBarRegions(layout, 'standard', true), NOW_PLAYING_STANDARD_REGIONS)
+  assert.deepEqual(
+    resolvePlayerBarRegions({ ...layout, standard: NOW_PLAYING_STANDARD_REGIONS }, 'standard'),
+    DEFAULT_PLAYER_BAR_LAYOUT.standard
+  )
 })
 
-test('restored ordinary defaults preserve nearby custom layouts', () => {
+test('former ordinary defaults migrate without mutating or replacing nearby custom layouts', () => {
   const legacy = {
     left: ['cover', 'trackInfo'],
     center: ['transport'],
@@ -103,16 +129,16 @@ test('restored ordinary defaults preserve nearby custom layouts', () => {
   assert.deepEqual(legacy, saved)
   const custom = { ...legacy, right: [...legacy.right].reverse() }
   assert.deepEqual(normalizePlayerBarLayout({ standard: custom }).standard, custom)
-  assert.deepEqual(resolvePlayerBarRegions({ standard: custom } as never, 'standard'), custom)
+  assert.deepEqual(resolvePlayerBarRegions({ standard: custom } as never, 'standard', true), custom)
 })
 
-test('every shape has a default arrangement and every control has a home', () => {
+test('every shape has transport and optional standalone play stays available to the editor', () => {
   // A shape without defaults would normalize to an empty bar.
   assert.deepEqual(Object.keys(DEFAULT_PLAYER_BAR_LAYOUT).sort(), [...PLAYER_BAR_MODES].sort())
   assert.deepEqual([...PLAYER_BAR_REGION_NAMES], ['left', 'center', 'right'])
 
-  // A control no default places anywhere is only reachable through the editor,
-  // which is a good way to ship one nobody ever sees.
+  // Standalone play is an explicit editing choice; every default now carries
+  // previous/play/next together so changing shape never loses track navigation.
   const placed = new Set(
     Object.values(DEFAULT_PLAYER_BAR_LAYOUT).flatMap((regions) => [
       ...regions.left,
@@ -122,7 +148,7 @@ test('every shape has a default arrangement and every control has a home', () =>
   )
   assert.deepEqual(
     PLAYER_BAR_CONTROL_IDS.filter((id) => !placed.has(id)),
-    []
+    ['playPause']
   )
 })
 
@@ -168,10 +194,10 @@ test('a layout that drops every play control gets one back where its shape wants
     assert.deepEqual(layout[mode].left, [], mode)
   }
 
-  // Mini's play control is the standalone button, and it belongs on the left:
+  // Mini's transport group belongs on the left beside its mode and volume:
   // appending to the centre would drop it into the column its rail occupies.
   const mini = normalizePlayerBarLayout({ mini: { left: [], center: [], right: ['queue'] } })
-  assert.deepEqual(mini.mini.left, ['playPause'])
+  assert.deepEqual(mini.mini.left, ['transport'])
   assert.deepEqual(mini.mini.center, [])
 
   // Either play control satisfies the invariant, so neither gets duplicated.
@@ -228,7 +254,7 @@ test('resolving a shape falls back to the default for settings written before la
   const layout = normalizePlayerBarLayout({ mini: { left: ['cover'], center: [], right: [] } })
   // The play-control invariant applies here too, so mini keeps a way to play.
   assert.deepEqual(resolvePlayerBarRegions(layout, 'mini'), {
-    left: ['cover', 'playPause'],
+    left: ['cover', 'transport'],
     center: [],
     right: []
   })

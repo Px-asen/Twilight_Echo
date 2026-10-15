@@ -63,11 +63,7 @@ const args = [command, '--', ...electronArgs]
 
 // Invoke the installed CLI directly. Shell metacharacters in forwarded Electron
 // arguments must stay literal, and installation paths can contain spaces.
-const entry = join(
-  dirname(require.resolve('electron-vite/package.json')),
-  'bin',
-  'electron-vite.js'
-)
+const entry = join(dirname(require.resolve('electron-vite/package.json')), 'bin', 'electron-vite.js')
 const child = spawn(process.execPath, [entry, ...args], {
   stdio: 'inherit',
   shell: false,

@@ -140,6 +140,7 @@ const geometry = shallowRef({
 const compact = ref(false)
 const spectrumGradientId = `eq-spectrum-${useId()}`
 const spectrum = useEqSpectrum({
+  document: () => workspaceRef.value?.ownerDocument ?? document,
   levels: () => props.spectrumLevels,
   visible: () => props.spectrumVisible && props.responseView === 'dsp',
   frozen: () => props.spectrumFrozen === true
@@ -719,18 +720,13 @@ defineExpose({ finishInteraction })
   <section
     ref="workspaceRef"
     class="parametric-workspace"
+    data-te-material="content"
     :class="{ compact }"
     aria-label="参数均衡器"
     data-te-parametric-eq-workspace
   >
     <header class="parametric-stage-header">
-      <div class="stage-brand">
-        <span class="brand-symbol" aria-hidden="true">∿</span>
-        <div>
-          <strong>Twilight <em>EQ</em></strong
-          ><small>PARAMETRIC EQUALIZER</small>
-        </div>
-      </div>
+      <h3 class="stage-title">参数均衡器</h3>
       <div class="stage-commands"><slot name="commands"></slot></div>
     </header>
     <div class="parametric-graph-frame" :class="{ bypassed: !eqEnabled }">
@@ -1179,27 +1175,24 @@ defineExpose({ finishInteraction })
 
 <style scoped>
 .parametric-workspace {
-  --eq-surface: #f4f3f0;
-  --eq-surface-end: #eae8ee;
-  --eq-panel: #e9e8e6;
-  --eq-panel-raised: #fdfcfa;
-  --eq-text: #29282e;
-  --eq-text-muted: color-mix(in srgb, var(--eq-text) 74%, transparent);
-  --eq-text-subtle: color-mix(in srgb, var(--eq-text) 68%, transparent);
-  --eq-border: color-mix(in srgb, var(--eq-text) 20%, transparent);
-  --eq-border-soft: color-mix(in srgb, var(--eq-text) 10%, transparent);
+  --eq-surface: var(--te-app-bg);
+  --eq-panel: var(--te-settings-search-bg);
+  --eq-panel-raised: var(--te-settings-control-bg);
+  --eq-text: var(--te-settings-text);
+  --eq-text-muted: var(--te-settings-text-muted);
+  --eq-text-subtle: var(--te-settings-text-muted);
+  --eq-border: var(--te-settings-control-border);
+  --eq-border-soft: var(--te-settings-control-border);
   --eq-grid: color-mix(in srgb, var(--eq-text) 5%, transparent);
   --eq-grid-major: color-mix(in srgb, var(--eq-text) 9%, transparent);
   --eq-zero-axis: color-mix(in srgb, var(--eq-text) 24%, transparent);
   --eq-response: #927000;
   --eq-spectrum: #636572;
-  --eq-control-bg: color-mix(in srgb, var(--eq-text) 6%, transparent);
-  --eq-shadow: rgba(35, 27, 43, 0.2);
+  --eq-control-bg: var(--te-control-bg-hover);
+  --eq-shadow: transparent;
   --eq-highlight: #ffffff;
-  --eq-knob-light: var(--eq-panel-raised);
-  --eq-knob-dark: #d4d3d6;
-  --eq-knob-track: color-mix(in srgb, var(--eq-text) 22%, transparent);
-  --eq-knob-edge: color-mix(in srgb, var(--eq-text) 32%, transparent);
+  --eq-knob-track: var(--te-settings-control-border);
+  --eq-knob-edge: var(--te-settings-control-border);
   --eq-meter: #419b66;
   --eq-source: var(--te-info-500);
   --eq-target: var(--eq-text-subtle);
@@ -1213,11 +1206,11 @@ defineExpose({ finishInteraction })
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border: 1px solid var(--eq-border);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 0;
   color: var(--eq-text);
-  background: var(--eq-surface);
-  box-shadow: 0 10px 34px var(--eq-shadow);
+  background: var(--te-material-background, transparent);
+  box-shadow: none;
   container: eq-workspace / inline-size;
   isolation: isolate;
 }
@@ -1227,39 +1220,18 @@ defineExpose({ finishInteraction })
   gap: 24px;
   min-height: 54px;
   flex-shrink: 0;
-  padding: 0 18px;
-  border-radius: 14px 14px 0 0;
+  padding: 0;
+  border-radius: 0;
   border-bottom: 1px solid var(--eq-border-soft);
-  background: linear-gradient(180deg, var(--eq-panel-raised), var(--eq-surface));
+  background: transparent;
   z-index: 40;
 }
-.stage-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.stage-title {
+  margin: 0;
   flex-shrink: 0;
-}
-.brand-symbol {
-  font-size: 32px;
-  font-weight: 300;
-  color: var(--eq-response);
-}
-.stage-brand strong {
-  font-size: 18px;
-  font-weight: 550;
-  letter-spacing: -0.04em;
-}
-.stage-brand em {
-  color: var(--eq-response);
-  font-style: normal;
-  font-weight: 650;
-}
-.stage-brand small {
-  display: block;
-  margin-top: 2px;
-  font-size: 7px;
-  letter-spacing: 0.16em;
-  color: var(--eq-text-subtle);
+  color: var(--eq-text);
+  font-size: var(--te-type-body);
+  font-weight: var(--te-type-weight-strong);
 }
 .stage-commands {
   display: flex;
@@ -1276,8 +1248,7 @@ defineExpose({ finishInteraction })
   min-height: 300px;
   padding: 38px 94px 60px 28px;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at 50% 85%, var(--eq-surface-end), transparent 80%), var(--eq-surface);
+  background: transparent;
 }
 .graph-heading {
   position: absolute;
@@ -1314,7 +1285,7 @@ defineExpose({ finishInteraction })
   cursor: default;
 }
 .band-clipboard-actions button:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .graph-range select {
@@ -1328,7 +1299,7 @@ defineExpose({ finishInteraction })
   cursor: pointer;
 }
 .graph-range select:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .parametric-band-handle.outside-range {
@@ -1348,7 +1319,7 @@ defineExpose({ finishInteraction })
   z-index: 12;
 }
 .parametric-graph-surface:focus-visible {
-  outline: 1px solid var(--eq-response);
+  outline: 1px solid var(--te-control-focus-color);
   outline-offset: 4px;
 }
 .parametric-graph-surface.selecting {
@@ -1525,17 +1496,16 @@ defineExpose({ finishInteraction })
   content: '';
   position: absolute;
   inset: 8px;
-  border: 1.5px solid color-mix(in srgb, var(--band-color) 30%, var(--eq-highlight));
+  border: 1.5px solid var(--band-color);
   border-radius: 50%;
   background: var(--band-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--band-color) 12%, transparent);
+  box-shadow: none;
 }
 .parametric-band-handle.selected::before,
 .parametric-band-handle.hovered::before {
   inset: 6px;
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--band-color) 22%, transparent),
-    0 0 12px color-mix(in srgb, var(--band-color) 36%, transparent);
+  outline: 1px solid var(--band-color);
+  outline-offset: 3px;
 }
 .parametric-band-handle.selected::before {
   background: color-mix(in srgb, var(--band-color) 62%, var(--eq-surface));
@@ -1560,7 +1530,7 @@ defineExpose({ finishInteraction })
   cursor: grabbing;
 }
 .parametric-band-handle:focus-visible {
-  outline: 2px solid var(--band-color);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
 }
 .band-tooltip {
@@ -1571,7 +1541,7 @@ defineExpose({ finishInteraction })
   border: 1px solid var(--eq-border);
   border-radius: 8px;
   background: var(--eq-panel-raised);
-  box-shadow: 0 4px 16px var(--eq-shadow);
+  box-shadow: none;
   pointer-events: none;
 }
 .band-tooltip strong {
@@ -1645,9 +1615,9 @@ defineExpose({ finishInteraction })
   cursor: grabbing;
 }
 .floating-band-inspector:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 2px;
-  border-radius: 14px;
+  border-radius: 8px;
 }
 .output-meter {
   position: absolute;
@@ -1764,8 +1734,8 @@ defineExpose({ finishInteraction })
   flex-shrink: 0;
   padding: 0 14px;
   border-top: 1px solid var(--eq-border-soft);
-  border-radius: 0 0 14px 14px;
-  background: var(--eq-panel);
+  border-radius: 0;
+  background: transparent;
   z-index: 40;
 }
 .spectrum-toggle {
@@ -1826,40 +1796,22 @@ defineExpose({ finishInteraction })
 }
 .spectrum-toggle:focus-visible,
 .curve-control:focus-visible {
-  outline: 2px solid var(--eq-response);
+  outline: 2px solid var(--te-control-focus-color);
   outline-offset: 3px;
 }
 :global(html[data-theme='dark'] .parametric-workspace) {
-  --eq-surface: #19181d;
-  --eq-surface-end: #34303a;
-  --eq-panel: #211f26;
-  --eq-panel-raised: #35323c;
-  --eq-text: #eeeaf2;
-  --eq-text-muted: color-mix(in srgb, var(--eq-text) 76%, transparent);
-  --eq-text-subtle: color-mix(in srgb, var(--eq-text) 62%, transparent);
   --eq-grid: color-mix(in srgb, var(--eq-text) 3%, transparent);
   --eq-grid-major: color-mix(in srgb, var(--eq-text) 6%, transparent);
   --eq-response: #f2d34f;
   --eq-spectrum: #d4ccd9;
-  --eq-shadow: rgba(0, 0, 0, 0.38);
-  --eq-highlight: #f9f5ff;
-  --eq-knob-light: #44414b;
-  --eq-knob-dark: #25242b;
-  --eq-knob-edge: color-mix(in srgb, var(--eq-text) 30%, transparent);
   --eq-meter: #9bc445;
   --eq-color-scheme: dark;
 }
 .compact .parametric-stage-header {
   gap: 12px;
-  padding-inline: 12px;
+  padding-inline: 0;
   flex-wrap: wrap;
   padding-block: 10px;
-}
-.compact .stage-brand strong {
-  font-size: 16px;
-}
-.compact .stage-brand small {
-  display: none;
 }
 .compact .stage-commands {
   gap: 8px;
@@ -1889,8 +1841,8 @@ defineExpose({ finishInteraction })
   display: none;
 }
 @container eq-workspace (max-width: 520px) {
-  .stage-brand {
-    display: none;
+  .stage-title {
+    font-size: var(--te-type-caption);
   }
   .parametric-graph-frame {
     padding-right: 52px;
@@ -1906,10 +1858,12 @@ defineExpose({ finishInteraction })
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .parametric-workspace *,
-  .parametric-workspace *::before {
-    animation: none !important;
-    transition: none !important;
+  @scope (:root:not([data-te-motion='full'])) {
+    .parametric-workspace *,
+    .parametric-workspace *::before {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 }
 </style>

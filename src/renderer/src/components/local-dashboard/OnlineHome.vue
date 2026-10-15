@@ -2,6 +2,7 @@
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed } from 'vue'
 import CoverImg from '../CoverImg.vue'
+import { getTrackSource } from '../../utils/trackSourceIdentity'
 import type { ProviderInfo } from '../../stores/useProviderStore'
 import type { Track } from '../../types/music'
 import type { MediaProviderPlaylistSummary } from '../../providers/mediaProvider'
@@ -14,6 +15,8 @@ const props = defineProps<{
   loading: boolean
   loggedIn: boolean
   error: string
+  localTracks: Track[]
+  localCount: number
   tracks: Track[]
   playlists: MediaProviderPlaylistSummary[]
   sectionTitle: string
@@ -36,6 +39,7 @@ const emit = defineEmits<{
   'open-radio': []
   'open-recent': []
   'open-library-settings': []
+  'open-local': []
 }>()
 const greeting = resolveTimeGreeting(new Date().getHours())
 const providerLabel = computed(() =>
@@ -55,6 +59,7 @@ const expectsTracks = computed(() =>
 const heroPlaying = computed(() => props.hero?.id === props.currentTrackId && props.isPlaying)
 const heroLabel = computed(() => {
   if (props.hero?.id === props.currentTrackId) return props.isPlaying ? '正在播放' : '继续收听'
+  if (props.hero && getTrackSource(props.hero) === 'local') return '来自本地音乐库'
   return props.recent.some((track) => track.id === props.hero?.id) ? '最近播放' : '推荐歌曲'
 })
 function primaryAction(): void {
@@ -85,10 +90,14 @@ const primaryLabel = computed(() => {
         </button>
       </header>
 
-      <section class="online-hero" :class="{ 'has-track': hero }">
+      <section
+        class="online-hero feature-card"
+        :class="{ 'has-track': hero }"
+        data-te-material="content"
+      >
         <div class="online-hero-copy">
           <p v-if="hero" class="online-eyebrow">{{ heroLabel }}</p>
-          <h2>{{ hero?.title || '在线音乐' }}</h2>
+          <h2>{{ hero?.title || '听你喜欢的音乐' }}</h2>
           <p v-if="hero" class="online-hero-description">
             {{ hero.artist }}{{ hero.album ? ' · ' + hero.album : '' }}
           </p>
@@ -97,8 +106,13 @@ const primaryLabel = computed(() => {
               <PlaybackIcon :name="heroPlaying ? 'pause' : 'play'" aria-hidden="true" />
               {{ heroPlaying ? '暂停播放' : '开始收听' }}
             </button>
-            <button v-else class="online-primary" type="button" @click="primaryAction">
-              {{ primaryLabel }} <i class="pi pi-arrow-right" aria-hidden="true"></i>
+            <button
+              v-else
+              class="online-primary"
+              type="button"
+              @click="emit('open-library-settings')"
+            >
+              添加本地音乐 <i class="pi pi-arrow-right" aria-hidden="true"></i>
             </button>
             <button
               v-if="canSearch"
@@ -130,30 +144,66 @@ const primaryLabel = computed(() => {
         </div>
       </section>
 
-      <nav class="online-shortcuts" aria-label="探索音乐">
-        <button v-if="canDiscover" type="button" @click="emit('open-streaming', 'discover')">
-          <i class="pi pi-compass" aria-hidden="true"></i><span><strong>发现歌单</strong></span
-          ><i class="pi pi-arrow-up-right" aria-hidden="true"></i>
+      <nav class="home-library-switch" aria-label="音乐库入口">
+        <button type="button" @click="emit('open-local')">
+          <i class="pi pi-folder" aria-hidden="true" /><span
+            ><strong>本地音乐</strong><small>{{ localCount }} 首收藏</small></span
+          ><i class="pi pi-arrow-up-right" aria-hidden="true" />
         </button>
         <button
-          v-if="canLibrary"
           type="button"
-          @click="needsLogin ? emit('login') : emit('open-streaming', 'library')"
+          @click="
+            canLibrary
+              ? needsLogin
+                ? emit('login')
+                : emit('open-streaming', 'library')
+              : primaryAction()
+          "
         >
-          <i class="pi pi-heart" aria-hidden="true"></i
-          ><span><strong>我的在线音乐</strong><small v-if="needsLogin">登录后查看</small></span
-          ><i class="pi pi-arrow-up-right" aria-hidden="true"></i>
-        </button>
-        <button type="button" @click="emit('open-radio')">
-          <i class="pi pi-microphone" aria-hidden="true"></i><span><strong>电台与播客</strong></span
-          ><i class="pi pi-arrow-up-right" aria-hidden="true"></i>
-        </button>
-        <button v-if="!canDiscover || !canLibrary" type="button" @click="emit('open-plugins')">
-          <i class="pi pi-plus-circle" aria-hidden="true"></i
-          ><span><strong>接入更多音源</strong></span
-          ><i class="pi pi-arrow-up-right" aria-hidden="true"></i>
+          <i class="pi pi-cloud" aria-hidden="true" /><span
+            ><strong>在线音乐</strong
+            ><small>{{ provider ? providerLabel : '发现更多音乐' }}</small></span
+          ><i class="pi pi-arrow-up-right" aria-hidden="true" />
         </button>
       </nav>
+      <section class="online-section home-local-section" aria-labelledby="home-local-title">
+        <header class="online-section-heading">
+          <h2 id="home-local-title">本地收藏</h2>
+          <button class="online-text-button" type="button" @click="emit('open-local')">
+            全部音乐 <i class="pi pi-arrow-right" aria-hidden="true" />
+          </button>
+        </header>
+        <div v-if="localTracks.length" class="home-local-grid" aria-label="最近添加的本地音乐">
+          <button
+            v-for="track in localTracks"
+            :key="track.id"
+            type="button"
+            class="home-local-card online-playlist album-card"
+            :aria-label="'播放 ' + track.title"
+            @click="emit('play', track, localTracks)"
+          >
+            <span class="home-local-art online-playlist-cover"
+              ><CoverImg
+                :cover="track.cover"
+                :cover-source="track.coverSource"
+                :identity="track.id"
+                alt="" /><PlaybackIcon name="play" aria-hidden="true"
+            /></span>
+            <strong :title="track.title">{{ track.title }}</strong
+            ><small :title="track.artist">{{ track.artist || '未知艺术家' }}</small>
+          </button>
+        </div>
+        <div v-else class="home-local-empty glass-card">
+          <i class="pi pi-folder-open" aria-hidden="true" />
+          <div>
+            <h3>把你的音乐带进来</h3>
+            <p>添加文件夹，收藏的专辑与歌曲会出现在这里。</p>
+          </div>
+          <button class="online-secondary" type="button" @click="emit('open-library-settings')">
+            添加音乐文件夹
+          </button>
+        </div>
+      </section>
 
       <section v-if="recent.length" class="online-section">
         <header class="online-section-heading">
@@ -195,7 +245,15 @@ const primaryLabel = computed(() => {
 
       <section v-if="provider" class="online-section online-discovery" :aria-busy="loading">
         <header class="online-section-heading online-source-heading">
-          <h2>今天，听什么</h2>
+          <h2>在线发现</h2>
+          <button
+            v-if="canDiscover"
+            type="button"
+            class="online-text-button"
+            @click="emit('open-streaming', 'discover')"
+          >
+            发现歌单 <i class="pi pi-arrow-right" aria-hidden="true" />
+          </button>
           <div class="online-source-actions">
             <label class="online-source-picker"
               ><span class="online-sr-only">选择在线音源</span
@@ -312,9 +370,9 @@ const primaryLabel = computed(() => {
             </header>
             <div class="online-playlist-grid">
               <button
-                v-for="playlist in playlists"
+                v-for="playlist in playlists.slice(0, 6)"
                 :key="playlist.id"
-                class="online-playlist"
+                class="online-playlist playlist-card"
                 type="button"
                 :disabled="
                   !supports('fetchPlaylistTracks') || pendingPlaylist === String(playlist.id)
@@ -361,8 +419,12 @@ const primaryLabel = computed(() => {
       </section>
       <div v-else-if="error" class="online-notice" role="status">{{ error }}</div>
       <footer class="online-footer">
+        <button class="online-text-button" type="button" @click="emit('open-radio')">
+          电台与播客 <i class="pi pi-arrow-up-right" aria-hidden="true" />
+        </button>
         <button class="online-text-button" type="button" @click="emit('open-plugins')">
-          管理音源 <i class="pi pi-arrow-up-right" aria-hidden="true"></i>
+          {{ provider ? '管理音源' : '接入在线音源' }}
+          <i class="pi pi-arrow-up-right" aria-hidden="true"></i>
         </button>
       </footer>
     </div>

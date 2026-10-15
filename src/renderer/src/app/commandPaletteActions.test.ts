@@ -55,4 +55,7 @@ test('building and filtering commands is inert and unavailable actions explain w
   filterCommandPaletteActions(actions, '扫描')[0].run()
   assert.ok(navigation.settingsNavigationTarget.value.entry)
   assert.equal(navigation.settingsNavigationTarget.value.anchor, undefined)
+  actions.find((action) => action.id === 'appearance')!.run()
+  assert.equal(navigation.showAppearancePage.value, true)
+  assert.equal(navigation.showSettingsPage.value, false)
 })

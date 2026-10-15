@@ -18,6 +18,10 @@ test('caption and sidebar share fonts and icon families, rail entries and librar
   try {
     await writeFile(join(directory, 'entry.ts'), runtime)
     await writeFile(
+      join(directory, 'account-login.vue'),
+      '<script setup>defineEmits(["loginSuccess"]);defineExpose({canDismissOutside:()=>true})</script><template><div class="account-login-fixture"><h2>音乐账户</h2><button type="button" @click="$emit(\'loginSuccess\')">进入流媒体</button></div></template>'
+    )
+    await writeFile(
       join(directory, 'fixtures.ts'),
       `import {ref} from 'vue'
 const settings=ref({navigationPages:{version:1,order:[],hidden:[]}})
@@ -29,7 +33,6 @@ export const useAppNoticeStore=()=>({unreadCount:ref(1),activeTaskCount:ref(0),d
 export const useWindowChrome=()=>({maximized:ref(false)})
 export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
     )
-    await writeFile(join(directory, 'import.ts'), `export default {render:()=>null}`)
     await build({
       configFile: false,
       logLevel: 'error',
@@ -40,9 +43,10 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
         alias: [
           { find: '/icon.png', replacement: join(workspace, 'resources/icon.png') },
           {
-            find: '@renderer/components/ImportDialog.vue',
-            replacement: join(directory, 'import.ts')
+            find: /.*\/components\/LoginPage\.vue$/,
+            replacement: join(directory, 'account-login.vue')
           },
+          { find: './LoginPage.vue', replacement: join(directory, 'account-login.vue') },
           {
             find: /^(?:.*\/stores\/use(?:Ncm|Provider|AppNotice|Settings|Music)Store|.*\/app\/use(?:WindowChrome|BackStack))(?:\.ts)?$/,
             replacement: join(directory, 'fixtures.ts')
@@ -81,7 +85,7 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
       app.setPath('userData',require('node:path').join(__dirname,'profile'));
       app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1080,height:800,useContentSize:true,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});
         win.webContents.on('console-message',event=>console.error(event.message));
-        try{await win.loadFile(process.argv.at(-1));win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});await win.webContents.executeJavaScript('window.runChromeHigTests()');
+        try{await win.loadFile(process.argv.at(-1));win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});await win.webContents.executeJavaScript('window.runChromeHigTests()');for(const width of [1360,960,640]){win.setContentSize(width,800);await win.webContents.executeJavaScript('(async()=>{await window.checkPageDockViewport();await window.checkAccountChildViewport()})()')}win.setContentSize(1080,800);
           win.webContents.focus();await win.webContents.executeJavaScript('window.prepareLibraryPortal()');
           win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
           win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
@@ -108,26 +112,86 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
   }
 })
 
-const runtime = `import {createApp,h,ref,nextTick} from 'vue'
+const runtime = `import {createApp,h,ref,shallowRef,nextTick} from 'vue'
 import TitleBar from '@renderer/components/TitleBar.vue'
+import AccountPage from '@renderer/components/AccountPage.vue'
 import SideMenu from '@renderer/components/SideMenu.vue'
+import SidebarBookmark from '@renderer/components/SidebarBookmark.vue'
 import StreamingLibrary from '@renderer/components/StreamingLibrary.vue'
 import '@renderer/assets/base.css'
+import '@renderer/assets/materials.css'
 import '@renderer/assets/bohr.css'
 import '@renderer/assets/fonts.css'
 import '@renderer/assets/icon-fonts.ts'
-const active=ref('streaming-home'),open=ref(true),liquid=ref(false),selected=[]
-let recent=0,ranking=0
+const active=ref('streaming-home'),open=ref(true),liquid=ref(false),home=ref(true),selected=[]
+const account=ref(false),accountAnchor=shallowRef(null);let noticeTarget=null
+const draftValue=ref('原页面编辑内容')
+const closeAccount=async(returnFocus=true)=>{account.value=false;if(returnFocus){await nextTick();accountAnchor.value?.focus()}}
+let recent=0,ranking=0,homes=0,plugins=0,dockRuns=0,accountLogins=0
+const docks=ref([{id:'play',label:'播放全部',icon:'library.play',run:()=>dockRuns++},{id:'shuffle',label:'随机播放',icon:'library.shuffle',run:()=>dockRuns++},{id:'add',label:'添加音乐',icon:'navigation.import',run:()=>dockRuns++}])
 createApp({render:()=>h('div',[
- h(TitleBar,{menuOpen:open.value,preview:true,activeTool:'settings',onToggleMenu:()=>open.value=!open.value}),
- h(SideMenu,{open:open.value,liquidMaterial:liquid.value,activeKey:active.value,onSelectPage:page=>{active.value=page.id;selected.push(page.id)}}),
- h(StreamingLibrary,{isLoggedIn:true,profile:null,profileSignature:'',likedSummary:{name:'喜欢',trackCount:0,cover:null},libraryLoaded:true,userPlaylistEntries:[],showLikedPanel:false,showSocialStats:false,showFeatureCards:true,onOpenRecent:()=>recent++,onOpenRanking:()=>ranking++})
+ h(TitleBar,{menuOpen:open.value,home:home.value,accountOpen:account.value,pageDockActions:docks.value,preview:true,activeTool:'settings',onHome:()=>{home.value=true;homes++},onToggleMenu:()=>open.value=!open.value,onLogin:(_provider,anchor)=>{accountAnchor.value=anchor;account.value=!account.value}}),
+ h(SidebarBookmark,{open:open.value,onToggle:()=>open.value=!open.value}),
+ h(SideMenu,{open:open.value,liquidMaterial:liquid.value,activeKey:active.value,onPlugins:()=>plugins++,onSelectPage:page=>{active.value=page.id;selected.push(page.id)}}),
+ h('div',{class:'retained-page'},[h('input',{class:'parent-draft',tabindex:-1,value:draftValue.value,onInput:event=>draftValue.value=event.target.value}),h(StreamingLibrary,{isLoggedIn:true,profile:null,profileSignature:'',likedSummary:{name:'喜欢',trackCount:0,cover:null},libraryLoaded:true,userPlaylistEntries:[],showLikedPanel:false,showSocialStats:false,showFeatureCards:true,onOpenRecent:()=>recent++,onOpenRanking:()=>ranking++})]),
+ account.value?h(AccountPage,{anchor:accountAnchor.value,onClose:closeAccount,onLoginSuccess:()=>accountLogins++,onNoticeTarget:target=>{noticeTarget=target;if(target)target.textContent='任务与通知'}}):null
 ])}).mount('#app')
 const expect=(condition,message)=>{if(!condition)throw Error(message)}
 const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,350))}
 const visibleGlyph=icon=>[...icon.querySelectorAll('.theme-icon-glyph')].filter(glyph=>getComputedStyle(glyph).display!=='none')
+window.checkAccountChildViewport=async()=>{
+ const parent=document.querySelector('.retained-page'),draft=parent.querySelector('.parent-draft'),avatar=document.querySelector('.login-btn');draft.value='保留原页面状态';draft.dispatchEvent(new Event('input',{bubbles:true}));avatar.click();await settle();
+ const child=document.querySelector('#account-subpage'),rect=child.getBoundingClientRect(),anchor=avatar.getBoundingClientRect();
+ expect(document.querySelector('.retained-page')===parent&&draft.value==='保留原页面状态'&&getComputedStyle(parent).display!=='none','avatar replaced or reset its parent page');
+ expect(child.getAttribute('role')==='dialog'&&child.getAttribute('aria-modal')==='false'&&rect.width<=440&&rect.width<innerWidth&&rect.left>=12&&rect.right<=innerWidth-11&&rect.top>=anchor.bottom&&rect.bottom<=innerHeight,'nonmodal avatar child is not anchored inside the viewport');
+ expect(getComputedStyle(child).borderTopWidth==='0px'&&avatar.getAttribute('aria-expanded')==='true'&&noticeTarget?.isConnected,'avatar child has an outer frame or loses tasks');
+ child.querySelector('button').focus();expect(account.value,'focus inside the child dismissed it');window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));await settle();
+ expect(!account.value&&!noticeTarget&&document.activeElement===avatar&&document.querySelector('.retained-page')===parent,'Escape did not return to the avatar and retain the parent');
+ avatar.click();await settle();draft.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));draft.focus();await settle();expect(!account.value&&document.activeElement===draft&&draft.value==='保留原页面状态','outside dismissal steals focus or resets the parent');
+ avatar.click();await settle();document.querySelector('.appearance-btn').focus();await settle();expect(!account.value,'keyboard navigation outside the child failed to dismiss it');
+ const beforeLogin=accountLogins;avatar.click();await settle();document.querySelector('.account-login-fixture button').click();await nextTick();expect(accountLogins===beforeLogin+1,'account child swallows the login/profile continuation');avatar.click();await settle();
+}
+window.checkPageDockViewport=async()=>{
+ await settle();
+ const dockStyle=getComputedStyle(document.querySelector('.page-dock'));
+ expect(dockStyle.borderTopWidth==='0px'&&dockStyle.backgroundColor==='rgba(0, 0, 0, 0)'&&dockStyle.boxShadow==='none'&&!document.querySelector('.page-dock-label'),'page tools introduce an outer frame or navigation caption');
+ const dock=document.querySelector('.page-dock').getBoundingClientRect(),appearance=document.querySelector('.appearance-btn').getBoundingClientRect(),close=document.querySelector('.close').getBoundingClientRect();
+ expect(dock.right<=appearance.left+1,'page Dock overlaps appearance');
+ expect(dock.left>=document.querySelector('.title-bar-back').getBoundingClientRect().right,'page Dock covers navigation or drag space');
+ expect(close.right<=innerWidth+1,'window controls leave the viewport');
+ const divider=document.querySelector('.page-dock-divider').getBoundingClientRect();
+ expect(divider.width>=1&&divider.height>=14&&Math.abs(divider.top+divider.height/2-dock.top-dock.height/2)<1,'Dock section divider is missing or not centered in its toolbar');
+ for(const button of document.querySelectorAll('.page-dock-action')){
+  const box=button.getBoundingClientRect(),icon=button.querySelector('.theme-icon').getBoundingClientRect(),label=button.querySelector('.page-dock-action-label');
+  expect(Math.abs(icon.top+icon.height/2-box.top-box.height/2)<1,'Dock glyph is not vertically centered');
+  if(getComputedStyle(label).display!=='none'){const text=label.getBoundingClientRect();expect(Math.abs(text.top+text.height/2-icon.top-icon.height/2)<1,'Dock label and icon centers differ')}
+ }
+ for(const button of document.querySelectorAll('.page-dock-action'))expect(button.getBoundingClientRect().width>=28&&button.getAttribute('aria-label')&&button.title,'compact Dock loses its target or hint');
+ const actions=document.querySelector('.page-dock-actions');expect(actions.scrollWidth<=actions.clientWidth+1,'standard page actions overflow the Dock');
+}
 window.runChromeHigTests=async()=>{
  await settle();await document.fonts.ready
+ expect(!document.querySelector('.plugins-btn')&&!document.querySelector('.notification-btn'),'relocated caption entries remained');
+ expect(!document.querySelector('.side-menu .sidebar-header'),'sidebar repeats the bookmark label as an extra heading');
+ const roots=[...document.querySelectorAll('.menu-nav > .menu-item')];
+ expect(roots.findIndex(button=>button.getAttribute('aria-label')==='插件市场')===roots.findIndex(button=>button.getAttribute('aria-label')==='搜索')+1,'plugin market is not immediately below Search');
+ const bookmark=document.querySelector('.sidebar-bookmark');
+ expect(!bookmark.querySelector('.bookmark-body')&&bookmark.getBoundingClientRect().width===32&&bookmark.getBoundingClientRect().height===32,'sidebar toggle regains the protruding tab or loses its hit area');
+ expect(getComputedStyle(bookmark,'::before').opacity==='0'&&getComputedStyle(bookmark,'::after').opacity==='0','idle sidebar toggle retains a visible block');
+ expect(!bookmark.textContent.trim()&&bookmark.querySelector('.theme-icon'),'sidebar bookmark retains cramped vertical text');
+ const bookmarkBox=bookmark.getBoundingClientRect(),titleBox=document.querySelector('.title-bar').getBoundingClientRect();
+ expect(bookmarkBox.top>=titleBox.bottom&&bookmarkBox.top-titleBox.bottom<=16,'sidebar toggle is detached from the content edge or overlaps the title bar');
+ expect(bookmark.querySelector('[data-theme-icon-slot="navigation.expand"]')&&!bookmark.querySelector('[data-theme-icon-slot="navigation.menu"]'),'sidebar bookmark duplicates the title bar menu glyph');
+ expect(bookmark.querySelector('.theme-icon').getBoundingClientRect().top>=titleBox.bottom,'sidebar bookmark glyph overlaps the title bar');
+ bookmark.click();await settle();expect(!open.value&&bookmark.getAttribute('aria-expanded')==='false'&&document.querySelector('.side-menu').inert,'bookmark fails to collapse the sidebar');
+ bookmark.click();await settle();expect(open.value&&bookmark.getAttribute('aria-expanded')==='true','bookmark fails to reopen the sidebar');
+ document.querySelector('.sidebar-plugins').click();expect(plugins===1,'sidebar market entry did not activate');
+ expect(document.querySelector('.appearance-btn .ph-t-shirt'),'appearance does not use the shared shirt icon');
+ expect(Number(document.querySelector('.maximize rect').getAttribute('rx'))>0,'maximize icon remained square');
+ home.value=false;await nextTick();let primary=document.querySelector('.menu-btn');expect(primary.getAttribute('aria-label')==='回到主页'&&!primary.hasAttribute('aria-expanded')&&primary.querySelector('[data-theme-icon-slot="navigation.home"]'),'secondary pages retain the sidebar affordance');
+ primary.click();await nextTick();expect(homes===1&&primary.getAttribute('aria-label')==='侧边栏'&&primary.querySelector('[data-theme-icon-slot="navigation.menu"]'),'home navigation did not restore sidebar behavior');
+ const action=document.querySelector('[data-dock-action="play"]');action.focus();action.click();expect(dockRuns===1,'Dock command did not invoke its page action');
+ docks.value=docks.value.map(item=>({...item,disabled:true}));await nextTick();action.click();expect(dockRuns===1,'disabled Dock command ran');docks.value=docks.value.map(item=>({...item,disabled:false}));await nextTick();
  for(const font of ['Inter, MiSans, sans-serif','Georgia, MiSans, serif']){
   document.documentElement.style.setProperty('--te-font-sans',font)
   for(const tone of ['dark','pureWhite'])for(const family of ['outline','rounded','filled']){
@@ -165,21 +229,19 @@ window.runChromeHigTests=async()=>{
   expect(document.activeElement===children[0],'disclosure arrow keys fail')
   children[1].click();await nextTick();expect(selected.at(-1)==='discover'&&children[1].getAttribute('aria-current')==='page','navigation loses its selected destination')
  }
- // Persistent navigation needs a visible, translucent substrate and an opaque
- // fallback. Assert rendered alpha, not the serialization of color-mix().
+ // Attached navigation repeats the outer foundation's neutral wash over the
+ // content; without diffusion it still needs an opaque fallback.
  for(const tone of ['pureWhite','dark']){
   document.documentElement.dataset.theme=tone;await settle()
   const nav=document.querySelector('.side-menu'),css=getComputedStyle(nav)
   const alpha=color=>{const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d');x.fillStyle=color;x.fillRect(0,0,1,1);return x.getImageData(0,0,1,1).data[3]/255}
-  const caption=getComputedStyle(document.querySelector('.title-bar-background'))
-  expect(alpha(css.backgroundColor)>.7&&alpha(css.backgroundColor)<.81,'navigation loses its material substrate: '+tone+' '+css.backgroundColor)
-  expect(css.backgroundColor===caption.backgroundColor&&css.backdropFilter===caption.backdropFilter,'navigation and caption materials differ: '+tone)
-  expect(css.backdropFilter.includes('blur(24px)'),'navigation loses diffusion')
+  expect(Math.abs(alpha(css.backgroundColor)-.1)<.01,'navigation loses the outer foundation wash: '+tone+' '+css.backgroundColor)
+  expect(css.backdropFilter.includes('blur(20px)'),'navigation loses diffusion')
   document.body.classList.add('te-no-blur');await settle()
   expect(alpha(getComputedStyle(nav).backgroundColor)===1&&getComputedStyle(nav).backdropFilter==='none','navigation remains transparent without diffusion')
   document.body.classList.remove('te-no-blur')
  }
- liquid.value=true;await settle();const materialNav=document.querySelector('.side-menu');expect(getComputedStyle(materialNav).backdropFilter==='none'&&getComputedStyle(materialNav,'::before').backdropFilter.includes('blur(24px)'), 'liquid navigation stacks backdrop passes');expect(getComputedStyle(materialNav,'::before').backgroundImage==='none'&&getComputedStyle(materialNav,'::before').boxShadow==='none','navigation regains a competing highlight');
+ liquid.value=true;await settle();const materialNav=document.querySelector('.side-menu');expect(getComputedStyle(materialNav).backdropFilter==='none'&&getComputedStyle(materialNav,'::before').backdropFilter.includes('blur('), 'liquid navigation stacks backdrop passes');expect(getComputedStyle(materialNav,'::before').backgroundImage==='none'&&getComputedStyle(materialNav,'::before').boxShadow==='none','navigation regains a competing highlight');
  for(const source of ['wallpaper','solid']){
   document.documentElement.dataset.teLiquidGlassSource=source
   document.documentElement.style.setProperty('--te-lg-context-surface-solid','rgb(22 24 26)')
@@ -200,6 +262,6 @@ window.runChromeHigTests=async()=>{
  expect(portals.length===2&&portals.every(button=>button.tagName==='BUTTON'&&button.type==='button'),'library portals are not semantic buttons')
  portals[1].click();expect(ranking===1&&recent===0,'library portal emits the wrong action')
 }
-window.prepareLibraryPortal=()=>{document.querySelector('.side-menu [aria-label="编辑页面"]').focus()}
+window.prepareLibraryPortal=()=>{[...document.querySelectorAll('.side-menu .menu-nav>button')].at(-1).focus()}
 window.checkLibraryActivation=()=>{expect(recent===1,'Enter does not activate the actual library portal');expect(document.activeElement.matches(':focus-visible'),'keyboard portal focus is not visible: '+JSON.stringify({active:document.activeElement.outerHTML.slice(0,180),focused:document.hasFocus(),outline:getComputedStyle(document.activeElement).outline}))}
 `

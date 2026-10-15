@@ -1,6 +1,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { previewAppearance } from '../stores/useThemeStore.ts'
+import { previewAppearance, useThemeStore } from '../stores/useThemeStore.ts'
+import { persistAppearanceLayers } from './appearanceLayersPersistence.ts'
 import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer.ts'
 import {
   appearanceEditorOpen,
@@ -8,6 +9,7 @@ import {
   appearanceFullWindowPreview
 } from './appearanceEditorState.ts'
 import { useAppearanceDraft } from './useAppearanceDraft.ts'
+import { analyzeBackgroundImage } from '../utils/backgroundImagePalette.ts'
 import { loadLiquidGlassContextImage } from '../utils/liquidGlassContextImage.ts'
 import { recommendTransparentAppearance } from '../utils/transparentAppearanceRecipe.ts'
 import {
@@ -16,6 +18,7 @@ import {
   backgroundCssVariables,
   backgroundEffect,
   cardCssVariables,
+  cloneAppearance,
   defaultBackground,
   defaultCardAppearance,
   resolveBackground,
@@ -33,14 +36,75 @@ import type {
   AppBackgroundPage
 } from '../../../shared/appSettings.ts'
 
-export function useBackgroundAppearanceEditor() {
+export function useBackgroundAppearanceEditor(options: { embedded?: boolean } = {}) {
+  const embedded = options.embedded === true
+  let previewFrame: number | undefined
+  let previewRevision = 0
+  let disposed = false
+  let previewError: string | undefined
+  function cancelPendingPreview(): void {
+    previewRevision++
+    if (previewFrame !== undefined) cancelAnimationFrame(previewFrame)
+    previewFrame = undefined
+  }
+  const area = embedded
+    ? ref<typeof appearanceEditorArea.value>('background')
+    : appearanceEditorArea
   const { settings, updateSettings, importBackgroundImage } = useSettingsStore()
+  const themeStore = useThemeStore()
+  const baselineTheme = ref(settings.value.theme)
+  const draftTheme = ref(settings.value.theme)
+  const confirmedAppearance = () =>
+    cloneAppearance({
+      ...settings.value,
+      appearanceLayers:
+        themeStore.activeProfile?.value?.appearanceLayers ?? settings.value.appearanceLayers
+    })
+  const themeKey = () => JSON.stringify(themeStore.activeTheme?.value)
+  let baselineThemeKey = themeKey()
   const session = useAppearanceDraft({
-    confirmed: () => settings.value,
-    persist: updateSettings,
-    preview: previewAppearance
+    confirmed: confirmedAppearance,
+    persist: (draft) =>
+      persistAppearanceLayers(draft, {
+        settings: settings.value,
+        theme: draftTheme.value === baselineTheme.value ? undefined : draftTheme.value,
+        profile: themeStore.activeProfile?.value ?? null,
+        saveProfile: themeStore.saveProfile,
+        updateSettings
+      }),
+    preview: (draft) => {
+      cancelPendingPreview()
+      return draft && (disposed || document.hidden) ? Promise.resolve() : previewAppearance(draft)
+    }
   })
   const { state } = session
+  async function applyPreview(): Promise<void> {
+    const current = ++previewRevision
+    try {
+      await previewAppearance(cloneAppearance(state.draft))
+      if (disposed || current !== previewRevision) return
+      if (previewError !== undefined && state.error === previewError) state.error = ''
+      previewError = undefined
+    } catch (cause) {
+      if (disposed || current !== previewRevision || !state.fullWindow || state.saving) return
+      previewError = cause instanceof Error ? cause.message : '预览未能更新，请重试。'
+      state.error = previewError
+    }
+  }
+  function schedulePreview(): void {
+    if (disposed || document.hidden || !state.fullWindow || state.saving) return
+    if (previewFrame !== undefined) return
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = undefined
+      if (disposed || document.hidden || !state.fullWindow || state.saving) return
+      void applyPreview()
+    })
+  }
+  function previewVisibilityChanged(): void {
+    if (document.hidden) cancelPendingPreview()
+    else schedulePreview()
+  }
+  document.addEventListener('visibilitychange', previewVisibilityChanged)
   const dialogRef = ref<HTMLElement | null>(null)
   const bodyRef = ref<HTMLElement | null>(null)
   const fileInput = ref<HTMLInputElement | null>(null)
@@ -52,9 +116,46 @@ export function useBackgroundAppearanceEditor() {
   const importing = ref(false)
   const matching = ref(false)
   const busy = computed(() => importing.value || matching.value)
-  const advancedOpen = ref(appearanceEditorArea.value === 'advanced')
+  let recipeRequest = null as AbortController | null
+  const imagePaletteNotice = ref('')
   let importRevision = 0
-  let recipeRequest: AbortController | null = null
+  let imageAnalysis: AbortController | undefined
+  function invalidateImageImport(): void {
+    importRevision++
+    recipeRequest?.abort()
+    recipeRequest = null
+    matching.value = false
+    imageAnalysis?.abort()
+    imageAnalysis = undefined
+    importing.value = false
+  }
+  const advancedOpen = ref(area.value === 'advanced')
+  const baseline = ref(JSON.stringify(state.draft))
+  const hasChanges = computed(
+    () => JSON.stringify(state.draft) !== baseline.value || draftTheme.value !== baselineTheme.value
+  )
+  const hasConflict = ref(false)
+  function begin(): void {
+    cancelPendingPreview()
+    invalidateImageImport()
+    imagePaletteNotice.value = ''
+    session.begin()
+    baseline.value = JSON.stringify(state.draft)
+    baselineThemeKey = themeKey()
+    baselineTheme.value = settings.value.theme
+    draftTheme.value = settings.value.theme
+    tone.value =
+      settings.value.theme === 'dark' ||
+      (settings.value.theme === 'system' && document.documentElement.dataset.theme === 'dark')
+        ? 'dark'
+        : 'light'
+    hasConflict.value = false
+  }
+  function setTone(value: AppearanceTone): void {
+    if (state.saving || importing.value) return
+    tone.value = value
+    draftTheme.value = value === 'dark' ? 'dark' : 'pureWhite'
+  }
   let pickerTarget: typeof target.value = 'global'
   const pageOptions: Array<{ value: AppBackgroundPage; label: string }> = [
     { value: 'local', label: '本地音乐' },
@@ -122,40 +223,57 @@ export function useBackgroundAppearanceEditor() {
               : 'none'
     }
   })
-  useFocusTrap(dialogRef, () => appearanceEditorOpen.value && !state.fullWindow)
+  useFocusTrap(dialogRef, () => !embedded && appearanceEditorOpen.value && !state.fullWindow)
   useEscapeToClose(
-    () => appearanceEditorOpen.value,
+    () => (embedded ? state.fullWindow : appearanceEditorOpen.value),
     () => {
       if (state.saving || importing.value) return
       if (state.fullWindow) void fullPreview(false)
       else void cancel()
     }
   )
-  watch(
-    appearanceEditorOpen,
-    (open) => {
-      if (open) session.begin()
-    },
-    { immediate: true }
-  )
+  if (embedded) {
+    begin()
+    watch(
+      () => [JSON.stringify(confirmedAppearance()), themeKey(), settings.value.theme],
+      ([confirmed, key, theme]) => {
+        if (
+          state.saving ||
+          (confirmed === baseline.value &&
+            key === baselineThemeKey &&
+            theme === baselineTheme.value)
+        )
+          return
+        if (!hasChanges.value) begin()
+        else {
+          hasConflict.value = true
+          state.error = '外观已在其他位置更改，请先放弃当前调整后继续。'
+        }
+      }
+    )
+  } else {
+    watch(
+      appearanceEditorOpen,
+      (open) => {
+        if (open) begin()
+      },
+      { immediate: true }
+    )
+  }
   async function scrollToArea(): Promise<void> {
-    if (appearanceEditorArea.value === 'advanced') advancedOpen.value = true
+    if (area.value === 'advanced') advancedOpen.value = true
+    if (embedded) return
     await nextTick()
     bodyRef.value
-      ?.querySelector(`#appearance-${appearanceEditorArea.value}`)
+      ?.querySelector(`#appearance-${area.value}`)
       ?.scrollIntoView({ block: 'start', behavior: 'instant' })
   }
-  watch([appearanceEditorArea, bodyRef], () => void scrollToArea(), { flush: 'post' })
-  watch(
-    () => state.draft,
-    () => {
-      if (state.fullWindow) void previewAppearance(state.draft)
-    },
-    { deep: true }
-  )
+  watch([area, bodyRef], () => void scrollToArea(), { flush: 'post' })
+  watch(() => state.draft, schedulePreview, { deep: true })
   watch(
     () => state.fullWindow,
     (value) => {
+      if (!value) cancelPendingPreview()
       appearanceFullWindowPreview.value = value
     },
     { flush: 'sync' }
@@ -167,7 +285,10 @@ export function useBackgroundAppearanceEditor() {
   function editableBackground(page = target.value, customize = true): AppBackgroundColorPair {
     const background =
       page === 'global' ? state.draft.appBackground.global : state.draft.appBackground.pages[page]
-    if (customize) background.customized = true
+    if (customize) {
+      if (background.kind === 'theme') background.kind = 'color'
+      background.customized = true
+    }
     return background
   }
   function setEffect<K extends keyof AppBackgroundEffect>(
@@ -190,15 +311,18 @@ export function useBackgroundAppearanceEditor() {
       const global = state.draft.appBackground.global
       Object.assign(page, {
         ...global,
+        ...(global.imagePalette ? { imagePalette: { ...global.imagePalette } } : {}),
         effects: {
           light: { ...backgroundEffect(global, 'light') },
           dark: { ...backgroundEffect(global, 'dark') }
         }
       })
+      if (!global.imagePalette) delete page.imagePalette
     }
     page.inherit = inherit
   }
   function chooseImage(): void {
+    if (state.saving || disposed) return
     pickerTarget = target.value
     fileInput.value?.click()
   }
@@ -206,37 +330,57 @@ export function useBackgroundAppearanceEditor() {
     const input = event.target as HTMLInputElement
     const file = input.files?.[0]
     input.value = ''
-    if (!file) return
-    const revision = ++importRevision
+    if (!file || state.saving || disposed) return
+    invalidateImageImport()
+    const revision = importRevision
+    const analysis = new AbortController()
+    imageAnalysis = analysis
     const selectedTarget = pickerTarget
     importing.value = true
     state.error = ''
+    imagePaletteNotice.value = ''
     try {
       if (!/\.(jpe?g|png|webp)$/i.test(file.name) || file.size > 20 * 1024 * 1024)
         throw new Error('请选择 20MB 以内的 JPG、PNG 或 WebP 图片')
       const image = await importBackgroundImage(file)
+      if (revision !== importRevision || disposed) return
       if (!image) throw new Error('图片导入失败，请重新选择')
-      const bitmap = new Image()
-      bitmap.src = image
-      await bitmap.decode()
-      if (revision !== importRevision) return
+      const palette = await analyzeBackgroundImage(image, {
+        signal: analysis.signal,
+        createImage: () => new Image(),
+        createCanvas: () => document.createElement('canvas')
+      })
+      if (revision !== importRevision || disposed) return
       const background = editableBackground(selectedTarget)
       background.image = image
       background.kind = 'image'
+      if (palette) background.imagePalette = palette
+      else {
+        delete background.imagePalette
+        imagePaletteNotice.value = '图片已导入，自动配色未能完成，可继续手动调整文字与控件颜色。'
+      }
     } catch (error) {
-      if (revision === importRevision)
+      if (revision === importRevision && !disposed)
         state.error = error instanceof Error ? error.message : '无法读取这张图片'
     } finally {
-      if (revision === importRevision) importing.value = false
+      if (revision === importRevision) {
+        importing.value = false
+        imageAnalysis = undefined
+      }
     }
   }
   function removeImage(): void {
+    invalidateImageImport()
+    imagePaletteNotice.value = ''
     const background = editableBackground()
     background.image = ''
     background.kind = 'color'
+    delete background.imagePalette
   }
   function resetCurrent(): void {
-    if (appearanceEditorArea.value !== 'background') {
+    invalidateImageImport()
+    imagePaletteNotice.value = ''
+    if (area.value !== 'background') {
       state.draft.cardAppearance = defaultCardAppearance()
       state.draft.liquidGlass = normalizeLiquidGlass(DEFAULT_LIQUID_GLASS)
       state.draft.surfaceMaterial = 'standard'
@@ -333,7 +477,22 @@ export function useBackgroundAppearanceEditor() {
     }
   }
   async function fullPreview(value: boolean): Promise<void> {
-    await session.preview(value)
+    cancelPendingPreview()
+    const update = session.preview(value)
+    const current = previewRevision
+    try {
+      await update
+      if (current === previewRevision) {
+        if (previewError !== undefined && state.error === previewError) state.error = ''
+        previewError = undefined
+      }
+    } catch (cause) {
+      if (!disposed && current === previewRevision) {
+        previewError = cause instanceof Error ? cause.message : '预览未能更新，请重试。'
+        state.error = previewError
+      }
+      return
+    }
     if (!value) {
       await nextTick()
       dialogRef.value?.focus({ preventScroll: true })
@@ -341,29 +500,45 @@ export function useBackgroundAppearanceEditor() {
   }
   async function cancel(): Promise<void> {
     if (state.saving) return
-    recipeRequest?.abort()
-    importRevision++
+    cancelPendingPreview()
+    invalidateImageImport()
+    imagePaletteNotice.value = ''
     await session.cancel()
-    appearanceEditorOpen.value = false
+    if (embedded) begin()
+    else appearanceEditorOpen.value = false
   }
   async function save(): Promise<void> {
-    if (!busy.value && (await session.save())) appearanceEditorOpen.value = false
+    if (busy.value || hasConflict.value) return
+    cancelPendingPreview()
+    if (await session.save()) {
+      if (embedded) begin()
+      else appearanceEditorOpen.value = false
+    }
   }
   onBeforeUnmount(() => {
-    recipeRequest?.abort()
-    importRevision++
-    appearanceFullWindowPreview.value = false
-    void session.cancel()
+    disposed = true
+    cancelPendingPreview()
+    document.removeEventListener('visibilitychange', previewVisibilityChanged)
+    invalidateImageImport()
+    if (!embedded || state.fullWindow) {
+      appearanceFullWindowPreview.value = false
+      void session.cancel()
+    }
   })
   return {
     state,
+    area,
+    hasChanges,
+    hasConflict,
     dialogRef,
     bodyRef,
     fileInput,
     target,
     previewPage,
     tone,
+    setTone,
     importing,
+    imagePaletteNotice,
     matching,
     busy,
     advancedOpen,

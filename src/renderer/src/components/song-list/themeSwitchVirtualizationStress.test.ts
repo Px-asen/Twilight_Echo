@@ -14,7 +14,7 @@ import {
 } from './songListVirtualWindow.ts'
 
 const TRACK_COUNT = 10_000
-const ROW_HEIGHT = 68
+const ROW_HEIGHT = 56
 const VIEWPORT_HEIGHT = 720
 const PREVIEW_P95_BUDGET_MS = 32
 
@@ -64,7 +64,9 @@ test('theme runtime cannot rebuild the library or become a SongList reset source
   const songList = readFileSync(new URL('../SongList.vue', import.meta.url), 'utf8')
 
   assert.doesNotMatch(themeStore, /useMusicStore|tracks\.value\s*=/)
-  assert.doesNotMatch(virtualScroll, /useThemeStore|data-te-|dataset\.theme/)
+  // DOM attributes may trigger a geometry remeasure for larger type or density.
+  // They must not couple the virtual window to a global theme/library store.
+  assert.doesNotMatch(virtualScroll, /useThemeStore|useMusicStore|tracks\.value\s*=/)
   assert.match(songList, /v-for="\(track, index\) in visibleTracks"/)
   assert.doesNotMatch(songList.match(/resetSources:\s*\[[\s\S]*?\]/)?.[0] ?? '', /theme/i)
 })

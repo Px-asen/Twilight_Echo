@@ -40,9 +40,9 @@ export interface UnifiedMusicSearchState {
   clear: () => void
 }
 
-export function useUnifiedMusicSearch(): UnifiedMusicSearchState {
+export function useUnifiedMusicSearch(options: { sync?: boolean } = {}): UnifiedMusicSearchState {
   const musicStore = useMusicStore()
-  const providers = useMediaProviders()
+  const providers = useMediaProviders(options)
   return createUnifiedMusicSearch({
     getLocalTracks: () => musicStore.tracks.value,
     searchNetworkLibrary: async (query) => {

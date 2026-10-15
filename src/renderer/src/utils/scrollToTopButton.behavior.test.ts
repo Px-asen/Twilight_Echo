@@ -35,6 +35,7 @@ test('the shared back-to-top control reveals, anchors, retargets and themes in a
     })
     assert.doesNotMatch(stderr, /SCROLL_TOP_FAILED/)
     assert.match(stderr, /SCROLL_TOP_OK/)
+    assert.match(stderr, /SCROLL_POINTER_STABLE/)
   } finally {
     await rm(directory, { force: true, recursive: true })
   }
@@ -224,6 +225,43 @@ window.runScrollTopChecks = async () => {
     if (thumbStyle().backgroundColor !== 'rgba(0, 0, 0, 0)') fail('idle thumb did not hide in ' + tone)
   }
   delete html.dataset.theme
+
+  // A stable pointer must not produce root-class mutations: appearance watches
+  // genuine theme changes there, so redundant writes used to rebuild its scene.
+  const moveAt = (target, x, y) => target.dispatchEvent(new PointerEvent('pointermove', {
+    bubbles: true, clientX: x, clientY: y
+  }))
+  const pageRect = page.getBoundingClientRect()
+  const mutationCounts = {}
+  const checkStablePointer = async (label, target, x, y) => {
+    moveAt(target, x, y)
+    await settle()
+    let mutations = 0
+    const observer = new MutationObserver((records) => { mutations += records.length })
+    observer.observe(html, { attributes: true, attributeFilter: ['class'] })
+    if (target !== html) observer.observe(target, { attributes: true, attributeFilter: ['class'] })
+    for (let index = 0; index < 8; index++) {
+      moveAt(target, x, y)
+      await frames(1)
+    }
+    await settle()
+    observer.disconnect()
+    mutationCounts[label] = mutations
+    if (mutations !== 0) fail(label + ' produced ' + mutations + ' redundant class mutations')
+  }
+  await checkStablePointer('root', document.body, 200, 80)
+  await checkStablePointer('far', page, pageRect.left + 40, pageRect.top + 80)
+  await checkStablePointer('near', page, pageRect.right - 4, pageRect.top + 100)
+  for (const boundary of ['leave', 'blur']) {
+    moveAt(page, pageRect.left + 40, pageRect.top + 80)
+    await settle()
+    moveAt(page, pageRect.right - 4, pageRect.top + 100)
+    if (boundary === 'leave') document.dispatchEvent(new PointerEvent('pointerleave'))
+    else window.dispatchEvent(new Event('blur'))
+    await settle()
+    if (page.classList.contains('is-scrollbar-near')) fail(boundary + ' replayed a stale pointer frame')
+  }
+  console.log('SCROLL_POINTER_STABLE', JSON.stringify(mutationCounts))
 
   page.scrollTop = revealFor(page) - 40
   await settle()

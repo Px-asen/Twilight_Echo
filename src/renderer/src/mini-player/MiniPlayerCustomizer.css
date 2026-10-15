@@ -386,10 +386,12 @@ html[data-te-motion='reduced'] .mini-customizer-panel-leave-active {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mini-customizer *,
-  .mini-customizer *::before,
-  .mini-customizer *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+  @scope (:root:not([data-te-motion='full'])) {
+    .mini-customizer *,
+    .mini-customizer *::before,
+    .mini-customizer *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

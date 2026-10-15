@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useBoundedGrid } from '@renderer/composables/useBoundedGrid'
 import type {
   MediaProviderPlaylistCatalogue,
   MediaProviderPlaylistSummary
@@ -60,12 +61,7 @@ const subline = computed(() => {
     if (props.supportsSort === false) return `共 ${totalLabel.value} 张歌单`
     return `共 ${totalLabel.value} 张歌单 · 按${props.order === 'hot' ? '最热' : '最新'}排列`
   }
-  return '每一张歌单，都是一次有主张的收藏'
-})
-
-const featureRibbon = computed(() => {
-  if (props.highQuality) return "编辑精选 · EDITOR'S PICK"
-  return props.order === 'new' ? '新鲜出炉 · FRESH' : '本页主打 · FEATURED'
+  return '按分类浏览歌单'
 })
 
 // ─── Channel rail ───────────────────────────────────────────────────────────
@@ -80,8 +76,9 @@ const isSelectedTagInRail = computed(() => railTags.value.includes(props.selecte
 
 // ─── Mosaic ─────────────────────────────────────────────────────────────────
 
-const featured = computed(() => props.playlists[0] ?? null)
-const restPlaylists = computed(() => props.playlists.slice(1))
+const { setGridElement: playlistGrid, gridStyle: playlistGridStyle } = useBoundedGrid(
+  () => props.playlists.length || 10
+)
 
 // ─── Pagination ─────────────────────────────────────────────────────────────
 
@@ -109,14 +106,11 @@ function emitPage(nextOffset: number): void {
 </script>
 
 <template>
-  <div class="disc">
+  <div class="disc" :aria-busy="listLoading || loadingMore">
     <!-- ── Masthead ──────────────────────────────────────────────────── -->
     <header class="disc-masthead">
       <div class="disc-masthead-copy">
-        <p class="disc-kicker">
-          <span class="disc-kicker-dot" aria-hidden="true"></span>
-          发现歌单 · PLAYLIST&nbsp;DISCOVERY
-        </p>
+        <p class="disc-kicker">{{ providerLabel }} · 发现歌单</p>
         <Transition name="disc-headline" mode="out-in">
           <h1 :key="headline" class="disc-title">{{ headline }}</h1>
         </Transition>
@@ -167,15 +161,14 @@ function emitPage(nextOffset: number): void {
     </header>
 
     <!-- ── Channel rail ─────────────────────────────────────────────── -->
-    <nav v-if="supportsCategories" class="disc-rail" role="tablist" aria-label="热门歌单标签">
+    <nav v-if="supportsCategories" class="disc-rail" role="group" aria-label="热门歌单标签">
       <button
         v-for="tag in railTags"
         :key="tag"
         type="button"
         class="disc-chip"
         data-te-interactive
-        role="tab"
-        :aria-selected="selectedTag === tag"
+        :aria-pressed="selectedTag === tag && !highQuality"
         :class="{ active: selectedTag === tag && !highQuality }"
         @click="emit('selectTag', tag)"
       >
@@ -235,6 +228,7 @@ function emitPage(nextOffset: number): void {
               class="disc-atlas-chip"
               data-te-interactive
               :class="{ active: selectedTag === tag.name, hot: tag.hot }"
+              :aria-pressed="selectedTag === tag.name"
               @click="emit('selectTag', tag.name)"
             >
               {{ tag.name }}
@@ -245,9 +239,15 @@ function emitPage(nextOffset: number): void {
     </SettingsDisclosure>
 
     <!-- ── Skeleton ─────────────────────────────────────────────────── -->
-    <div v-if="listLoading && playlists.length === 0" class="disc-mosaic" aria-label="正在加载歌单">
-      <div class="disc-feature disc-sk disc-shimmer"></div>
-      <div v-for="i in 9" :key="i" class="disc-sk-tile">
+    <div
+      v-if="listLoading && playlists.length === 0"
+      :ref="playlistGrid"
+      class="disc-mosaic"
+      :style="playlistGridStyle"
+      role="status"
+      aria-label="正在加载歌单"
+    >
+      <div v-for="i in 10" :key="i" class="disc-sk-tile">
         <div class="disc-sk-cover disc-shimmer"></div>
         <div class="disc-sk-line disc-shimmer"></div>
         <div class="disc-sk-line disc-sk-line-short disc-shimmer"></div>
@@ -255,7 +255,7 @@ function emitPage(nextOffset: number): void {
     </div>
 
     <!-- ── Error ────────────────────────────────────────────────────── -->
-    <div v-else-if="listError && playlists.length === 0" class="disc-state">
+    <div v-else-if="listError && playlists.length === 0" class="disc-state" role="alert">
       <span class="disc-state-icon"><i class="pi pi-exclamation-triangle"></i></span>
       <p class="disc-state-title">歌单加载失败</p>
       <p class="disc-state-hint">{{ listError }}</p>
@@ -268,59 +268,19 @@ function emitPage(nextOffset: number): void {
     <!-- ── Empty ────────────────────────────────────────────────────── -->
     <div v-else-if="playlists.length === 0" class="disc-state">
       <span class="disc-state-icon"><i class="pi pi-inbox"></i></span>
-      <p class="disc-state-title">这个频道还很安静</p>
-      <p class="disc-state-hint">换一个标签，也许就有惊喜</p>
+      <p class="disc-state-title">暂无歌单</p>
+      <p class="disc-state-hint">尝试其他分类，或稍后重新加载</p>
     </div>
 
     <!-- ── Mosaic wall ──────────────────────────────────────────────── -->
     <div v-else class="disc-results" :class="{ 'is-refreshing': listLoading }">
-      <div class="disc-mosaic">
+      <p v-if="listError" class="disc-atlas-status" role="status">
+        {{ listError }}
+        <button type="button" class="disc-ghost-btn" @click="emit('retry')">重试</button>
+      </p>
+      <div :ref="playlistGrid" class="disc-mosaic" :style="playlistGridStyle">
         <article
-          v-if="featured"
-          :key="`feature:${featured.id}`"
-          class="disc-feature"
-          data-te-interactive
-          role="button"
-          tabindex="0"
-          :aria-label="`打开歌单 ${featured.name}`"
-          @click="emit('openPlaylist', featured)"
-          @keydown.enter="emit('openPlaylist', featured)"
-        >
-          <div class="disc-feature-media" aria-hidden="true">
-            <CoverImg
-              v-if="featured.cover"
-              :cover="featured.cover"
-              :cover-source="featured.coverSource"
-              class="disc-feature-img"
-              alt=""
-            />
-            <span v-else class="disc-feature-empty"><i class="pi pi-list"></i></span>
-          </div>
-          <div class="disc-feature-scrim" aria-hidden="true"></div>
-          <div class="disc-feature-copy">
-            <span class="disc-feature-ribbon" :class="{ gold: highQuality }">{{
-              featureRibbon
-            }}</span>
-            <h2 class="disc-feature-name">{{ featured.name }}</h2>
-            <p class="disc-feature-meta">
-              <span v-if="featured.creatorName" class="disc-feature-meta-item">
-                <i class="pi pi-user"></i>{{ featured.creatorName }}
-              </span>
-              <span class="disc-feature-meta-item">
-                <i class="pi pi-list"></i>{{ featured.trackCount }} 首
-              </span>
-              <span v-if="formatPlayCount(featured.playCount)" class="disc-feature-meta-item">
-                <i class="pi pi-headphones"></i>{{ formatPlayCount(featured.playCount) }}
-              </span>
-            </p>
-          </div>
-          <span class="disc-feature-go" aria-hidden="true">
-            <i class="pi pi-arrow-up-right"></i>
-          </span>
-        </article>
-
-        <article
-          v-for="playlist in restPlaylists"
+          v-for="playlist in playlists"
           :key="playlist.id"
           class="disc-card"
           data-te-interactive
@@ -328,7 +288,8 @@ function emitPage(nextOffset: number): void {
           tabindex="0"
           :aria-label="`打开歌单 ${playlist.name}`"
           @click="emit('openPlaylist', playlist)"
-          @keydown.enter="emit('openPlaylist', playlist)"
+          @keydown.enter.self.prevent="emit('openPlaylist', playlist)"
+          @keydown.space.self.prevent="emit('openPlaylist', playlist)"
         >
           <div class="disc-card-media">
             <CoverImg
@@ -347,11 +308,14 @@ function emitPage(nextOffset: number): void {
               <i class="pi pi-arrow-up-right"></i>
             </span>
           </div>
-          <p class="disc-card-name">{{ playlist.name }}</p>
+          <p class="disc-card-name" :title="playlist.name">{{ playlist.name }}</p>
           <p class="disc-card-meta">
             {{ playlist.trackCount }} 首{{
               playlist.creatorName ? ` · ${playlist.creatorName}` : ''
             }}
+            <span v-if="formatPlayCount(playlist.playCount)">
+              · {{ formatPlayCount(playlist.playCount) }} 次播放</span
+            >
           </p>
         </article>
       </div>
@@ -401,923 +365,287 @@ function emitPage(nextOffset: number): void {
 
 <style scoped>
 .disc {
-  --disc-ink: var(--te-neutral-900);
-  --disc-ink-soft: var(--te-neutral-500);
-  --disc-line: var(--te-card-border);
-  --disc-card: var(--te-card-bg);
-  --disc-accent: var(--te-primary-500);
-  --disc-gold: var(--te-warning-500);
-  --disc-radius-lg: 22px;
-  --disc-radius-md: 14px;
-  --disc-shadow: 0 18px 44px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
-  --disc-shadow-lift: 0 24px 56px color-mix(in srgb, var(--te-neutral-900) 13%, transparent);
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  animation: disc-rise 0.55s var(--te-ease-out-quint) both;
+  min-width: 0;
+  container-type: inline-size;
+  color: var(--te-text);
+  font-family: var(--te-font-sans);
+  font-size: var(--te-type-body);
 }
-
-@keyframes disc-rise {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.disc :is(h1, p) {
+  margin: 0;
 }
-
-/* ── Masthead ─────────────────────────────────────────────────────── */
-
+.disc button {
+  font: inherit;
+  cursor: pointer;
+}
+.disc button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.disc :is(button, [role='button']):focus-visible {
+  outline: 2px solid var(--te-control-focus-color);
+  outline-offset: 3px;
+}
 .disc-masthead {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 18px;
   flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px 24px;
+  margin-bottom: 16px;
 }
-
 .disc-masthead-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   min-width: 0;
 }
-
-.disc-kicker {
+.disc-kicker,
+.disc-sub {
+  color: var(--te-text-secondary);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+}
+.disc-title {
+  font-size: var(--te-type-section-title);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  margin: 4px 0 !important;
+}
+.disc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.disc-order {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.disc-order-btn,
+.disc-hq,
+.disc-chip,
+.disc-atlas-chip,
+.disc-ghost-btn,
+.disc-ink-btn,
+.disc-more-btn,
+.disc-pager-btn {
+  min-height: var(--te-control-height-md);
+  border: 0;
+  border-radius: var(--te-control-radius-sm);
+  padding: 7px 12px;
+  font-size: var(--te-type-caption) !important;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--te-text-secondary);
+  background: transparent;
+}
+.disc-order-btn.active,
+.disc-hq.active,
+.disc-chip.active,
+.disc-atlas-chip.active {
+  color: var(--te-text);
+  background: var(--te-subtle-bg);
+  font-weight: 500;
+}
+.disc
+  :is(
+    .disc-order-btn,
+    .disc-hq,
+    .disc-chip,
+    .disc-atlas-chip,
+    .disc-ghost-btn,
+    .disc-pager-btn
+  ):hover:enabled {
+  color: var(--te-text);
+  background: var(--te-subtle-bg);
+}
+.disc-hq,
+.disc-chip-more {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  color: var(--disc-ink-soft);
 }
-
-.disc-kicker-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--disc-accent), var(--te-accent-cyan));
-}
-
-.disc-title {
-  margin: 0;
-  font-family: var(--te-font-display);
-  font-size: clamp(28px, 3.6vw, 38px);
-  font-weight: 800;
-  line-height: 1.12;
-  letter-spacing: 0.01em;
-  color: var(--disc-ink);
-}
-
-.disc-headline-enter-active,
-.disc-headline-leave-active {
-  transition:
-    opacity var(--te-motion-return) var(--te-ease-out-quint),
-    transform var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.disc-headline-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
-.disc-headline-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-.disc-sub {
-  margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 600;
-  color: var(--disc-ink-soft);
-  font-variant-numeric: tabular-nums;
-}
-
-.disc-tools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-bottom: 4px;
-}
-
-.disc-order {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--disc-line);
-  border-radius: 999px;
-  background: var(--disc-card);
-}
-
-.disc-order-btn {
-  min-height: 28px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--disc-ink-soft);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    color var(--te-motion-hover);
-}
-
-.disc-order-btn:hover {
-  color: var(--disc-ink);
-}
-
-.disc-order-btn.active {
-  background: var(--disc-ink);
-  color: var(--disc-card);
-}
-
-.disc-hq {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 36px;
-  padding: 0 18px;
-  border: 1px solid var(--disc-line);
-  border-radius: 999px;
-  background: var(--disc-card);
-  color: var(--disc-ink-soft);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 750;
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    border-color var(--te-motion-hover),
-    color var(--te-motion-hover),
-    transform var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.disc-hq:hover {
-  transform: translateY(var(--te-motion-hover-translate));
-  color: color-mix(in srgb, var(--disc-gold) 62%, var(--disc-ink));
-  border-color: color-mix(in srgb, var(--disc-gold) 44%, transparent);
-}
-
-.disc-hq.active {
-  background: color-mix(in srgb, var(--disc-gold) 16%, var(--disc-card));
-  border-color: color-mix(in srgb, var(--disc-gold) 52%, transparent);
-  color: color-mix(in srgb, var(--disc-gold) 62%, var(--disc-ink));
-}
-
-/* ── Channel rail ─────────────────────────────────────────────────── */
-
 .disc-rail {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  gap: 4px;
+  padding: 0 0 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--te-card-border);
 }
-
-.disc-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 15px;
-  border: 1px solid var(--disc-line);
-  border-radius: 999px;
-  background: var(--disc-card);
-  color: color-mix(in srgb, var(--disc-ink) 82%, transparent);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    border-color var(--te-motion-hover),
-    color var(--te-motion-hover),
-    transform var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.disc-chip:hover {
-  transform: translateY(var(--te-motion-hover-translate));
-  background: var(--te-hover-bg);
-  color: var(--disc-ink);
-}
-
-.disc-chip.active {
-  background: var(--disc-ink);
-  border-color: var(--disc-ink);
-  color: var(--disc-card);
-}
-
-.disc-chip-more {
-  margin-left: auto;
-  color: var(--disc-ink-soft);
-}
-
 .disc-chip-caret {
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
+  font-size: 0.8em;
 }
-
-.disc-chip-more.open .disc-chip-caret {
-  transform: rotate(180deg);
-}
-
-/* ── Category atlas ───────────────────────────────────────────────── */
-
 .disc-atlas {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px 22px;
-  border: 1px solid var(--disc-line);
-  border-radius: var(--disc-radius-lg);
-  background: var(--disc-card);
-  box-shadow: var(--disc-shadow);
+  margin: 0 0 24px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--te-card-border);
 }
-
 .disc-atlas-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  color: var(--disc-ink-soft);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 700;
+  gap: 8px;
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+  line-height: 1.5;
+  padding: 12px 0;
 }
-
 .disc-atlas-group {
   display: grid;
-  grid-template-columns: 64px 1fr;
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 12px;
-  align-items: baseline;
+  padding: 8px 0;
 }
-
 .disc-atlas-name {
-  margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  color: var(--disc-ink-soft);
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  font-weight: 500;
+  padding-top: 7px;
 }
-
 .disc-atlas-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 4px;
+  min-width: 0;
 }
-
-.disc-atlas-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 13px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--te-hover-bg);
-  color: color-mix(in srgb, var(--disc-ink) 78%, transparent);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    border-color var(--te-motion-hover),
-    color var(--te-motion-hover);
-}
-
-.disc-atlas-chip:hover {
-  border-color: color-mix(in srgb, var(--disc-ink) 24%, transparent);
-  color: var(--disc-ink);
-}
-
-.disc-atlas-chip.active {
-  background: var(--disc-ink);
-  color: var(--disc-card);
-}
-
-.disc-atlas-chip.hot::after {
-  content: '';
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--disc-accent);
-}
-
-.disc-atlas-chip.active.hot::after {
-  background: var(--disc-card);
-}
-
-/* ── States ───────────────────────────────────────────────────────── */
-
 .disc-state {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 72px 20px;
-  text-align: center;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 0;
 }
-
 .disc-state-icon {
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 6px;
-  border-radius: 50%;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--disc-accent) 14%, transparent),
-    color-mix(in srgb, var(--te-accent-cyan) 14%, transparent)
-  );
-  color: var(--disc-accent);
-  font-size: calc(var(--te-font-size-body, 14px) * 24 / 14);
+  display: none;
 }
-
 .disc-state-title {
-  margin: 0;
-  font-family: var(--te-font-display);
-  font-size: calc(var(--te-font-size-body, 14px) * 18 / 14);
-  font-weight: 800;
-  color: var(--disc-ink);
-}
-
-.disc-state-hint {
-  margin: 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  font-size: var(--te-type-headline);
   font-weight: 600;
-  color: var(--disc-ink-soft);
+  line-height: 1.4;
 }
-
-.disc-ink-btn {
+.disc-state-hint {
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+  line-height: 1.5;
+}
+.disc-ink-btn,
+.disc-more-btn {
+  color: var(--te-text);
+  background: var(--te-subtle-bg);
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
-  margin-top: 12px;
-  padding: 0 22px;
-  border: none;
-  border-radius: 999px;
-  background: var(--disc-ink);
-  color: var(--disc-card);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 750;
-  cursor: pointer;
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--disc-ink) 24%, transparent);
-  transition:
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    box-shadow var(--te-motion-return) var(--te-ease-out-quint),
-    background var(--te-motion-hover);
 }
-
-.disc-ink-btn:hover {
-  transform: translateY(var(--te-motion-hover-translate));
-  background: color-mix(in srgb, var(--disc-ink) 86%, var(--disc-accent));
-  box-shadow: 0 18px 38px color-mix(in srgb, var(--disc-ink) 30%, transparent);
-}
-
-.disc-ink-btn:active {
-  transform: scale(var(--te-motion-press-scale));
-  transition-duration: var(--te-motion-press);
-}
-
-.disc-ghost-btn {
-  min-height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--disc-line);
-  border-radius: 999px;
-  background: var(--disc-card);
-  color: var(--disc-ink);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-  cursor: pointer;
-  transition: background var(--te-motion-hover);
-}
-
-.disc-ghost-btn:hover {
-  background: var(--te-hover-bg);
-}
-
-/* ── Mosaic wall ──────────────────────────────────────────────────── */
-
-.disc-results {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: opacity var(--te-motion-hover);
-}
-
-.disc-results.is-refreshing {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
 .disc-mosaic {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  gap: 20px 18px;
-}
-
-@media (max-width: 900px) {
-  .disc-mosaic {
-    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-    gap: 14px 12px;
-  }
-
-  .disc-card-name {
-    font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
-  }
-
-  .disc-card-meta {
-    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  }
-}
-
-@media (max-width: 640px) {
-  .disc-mosaic {
-    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-    gap: 12px 10px;
-  }
-
-  .disc-card-name {
-    font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
-  }
-
-  .disc-card-meta {
-    font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
-  }
-
-  .disc-card-plays {
-    left: 6px;
-    bottom: 6px;
-    font-size: calc(var(--te-font-size-body, 14px) * 9.5 / 14);
-    padding: 2px 7px;
-  }
-
-  .disc-card-go {
-    right: 6px;
-    bottom: 6px;
-    width: 28px;
-    height: 28px;
-    font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  }
-}
-
-/* Featured cover story — spans a 2×2 cell of the wall */
-
-.disc-feature {
-  position: relative;
-  grid-column: span 2;
-  grid-row: span 2;
-  min-height: 340px;
-  border-radius: var(--disc-radius-lg);
-  overflow: hidden;
-  cursor: pointer;
-  box-shadow: var(--disc-shadow);
-  transition:
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.disc-feature:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--disc-shadow-lift);
-}
-
-.disc-feature:focus-visible,
-.disc-card:focus-visible {
-  outline: 2px solid var(--disc-accent);
-  outline-offset: 3px;
-}
-
-.disc-feature-media {
-  position: absolute;
-  inset: 0;
-}
-
-.disc-feature-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform var(--te-motion-settle) var(--te-ease-out-quint);
-}
-
-.disc-feature:hover .disc-feature-img {
-  transform: scale(1.045);
-}
-
-.disc-feature-empty {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--disc-accent) 22%, var(--disc-card)),
-    color-mix(in srgb, var(--te-accent-cyan) 18%, var(--disc-card))
-  );
-  color: var(--disc-accent);
-  font-size: calc(var(--te-font-size-body, 14px) * 40 / 14);
-}
-
-.disc-feature-scrim {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    195deg,
-    rgba(9, 11, 20, 0) 34%,
-    rgba(9, 11, 20, 0.42) 62%,
-    rgba(9, 11, 20, 0.82) 100%
-  );
-}
-
-.disc-feature-copy {
-  position: absolute;
-  inset: auto 0 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 22px 24px;
-}
-
-.disc-feature-ribbon {
-  align-self: flex-start;
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: rgba(9, 11, 20, 0.44);
-  backdrop-filter: blur(8px);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-  font-weight: 800;
-  letter-spacing: 0.14em;
-}
-
-.disc-feature-ribbon.gold {
-  background: color-mix(in srgb, var(--disc-gold) 78%, rgba(9, 11, 20, 0.4));
-  color: rgba(20, 14, 2, 0.92);
-}
-
-.disc-feature-name {
-  margin: 0;
-  font-family: var(--te-font-display);
-  font-size: clamp(19px, 2.1vw, 25px);
-  font-weight: 800;
-  line-height: 1.28;
-  color: #fff;
-  text-shadow: 0 2px 18px rgba(9, 11, 20, 0.5);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.disc-feature-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 0;
-  color: rgba(255, 255, 255, 0.78);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.disc-feature-meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-
-.disc-feature-meta-item .pi {
-  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
-  opacity: 0.85;
-}
-
-.disc-feature-go {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(9, 11, 20, 0.4);
-  backdrop-filter: blur(8px);
-  color: #fff;
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity var(--te-motion-return) var(--te-ease-out-quint),
-    transform var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.disc-feature:hover .disc-feature-go {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Regular cards */
-
 .disc-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  min-width: 0;
   cursor: pointer;
-  border-radius: var(--disc-radius-md);
+  border-radius: 0;
 }
-
 .disc-card-media {
   position: relative;
   width: 100%;
   aspect-ratio: 1;
-  border-radius: var(--disc-radius-md);
   overflow: hidden;
-  box-shadow: var(--disc-shadow);
-  transition:
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
+  border-radius: 6px;
+  background: var(--te-subtle-bg);
+  transition: filter var(--te-motion-hover);
 }
-
-.disc-card:hover .disc-card-media {
-  transform: translateY(-4px);
-  box-shadow: var(--disc-shadow-lift);
+.disc-card:is(:hover, :focus-visible) .disc-card-media {
+  filter: brightness(0.96);
 }
-
 .disc-card-img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--te-motion-settle) var(--te-ease-out-quint);
 }
-
-.disc-card:hover .disc-card-img {
-  transform: scale(1.06);
-}
-
 .disc-card-empty {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--disc-accent) 14%, var(--disc-card)),
-    color-mix(in srgb, var(--te-accent-cyan) 12%, var(--disc-card))
-  );
-  color: var(--disc-accent);
-  font-size: calc(var(--te-font-size-body, 14px) * 26 / 14);
+  color: var(--te-text-secondary);
 }
-
 .disc-card-plays {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: rgba(9, 11, 20, 0.5);
-  backdrop-filter: blur(6px);
-  color: rgba(255, 255, 255, 0.92);
-  font-size: calc(var(--te-font-size-body, 14px) * 10.5 / 14);
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
+  display: none;
 }
-
-.disc-card-plays .pi {
-  font-size: calc(var(--te-font-size-body, 14px) * 10 / 14);
-}
-
 .disc-card-go {
   position: absolute;
   right: 8px;
   bottom: 8px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
   border-radius: 50%;
-  background: rgba(9, 11, 20, 0.46);
-  backdrop-filter: blur(6px);
-  color: #fff;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  background: var(--te-card-bg-solid, var(--te-settings-control-bg));
+  color: var(--te-control-fg);
   opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity var(--te-motion-return) var(--te-ease-out-quint),
-    transform var(--te-motion-return) var(--te-ease-out-quint);
+  transition: opacity var(--te-motion-hover);
 }
-
-.disc-card:hover .disc-card-go {
+.disc-card:is(:hover, :focus-visible) .disc-card-go {
   opacity: 1;
-  transform: translateY(0);
 }
-
 .disc-card-name {
-  margin: 8px 2px 0;
-  font-size: calc(var(--te-font-size-body, 14px) * 13.5 / 14);
-  font-weight: 750;
+  margin-top: 8px !important;
+  font-size: var(--te-type-body);
+  font-weight: 500;
   line-height: 1.4;
-  color: var(--disc-ink);
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
-  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-
 .disc-card-meta {
-  margin: 0 2px;
-  font-size: calc(var(--te-font-size-body, 14px) * 11.5 / 14);
-  font-weight: 650;
-  color: var(--disc-ink-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-top: 4px !important;
+  font-size: var(--te-type-caption);
+  line-height: 1.5;
+  color: var(--te-text-secondary);
+  overflow-wrap: anywhere;
+}
+.disc-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  margin-top: 24px;
+}
+.disc-pager-text {
+  font-size: var(--te-type-caption);
+  color: var(--te-text-secondary);
+  line-height: 1.5;
+}
+.disc-pager-text em {
+  font-style: normal;
   font-variant-numeric: tabular-nums;
 }
-
-/* ── Skeleton ─────────────────────────────────────────────────────── */
-
-.disc-sk {
-  animation: none;
-  box-shadow: none;
-  cursor: default;
-}
-
-.disc-sk-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .disc-sk-cover {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: var(--disc-radius-md);
-}
-
-.disc-sk-line {
-  height: 12px;
-  width: 82%;
+  background: var(--te-subtle-bg);
   border-radius: 6px;
 }
-
+.disc-sk-line {
+  height: 16px;
+  margin-top: 8px;
+  width: 80%;
+  background: var(--te-subtle-bg);
+  border-radius: 4px;
+}
 .disc-sk-line-short {
-  width: 52%;
+  width: 55%;
 }
-
-.disc-shimmer {
-  background: linear-gradient(
-    100deg,
-    var(--te-hover-bg) 36%,
-    color-mix(in srgb, var(--te-hover-bg) 40%, var(--disc-card)) 50%,
-    var(--te-hover-bg) 64%
-  );
-  background-size: 220% 100%;
-  animation: disc-shimmer 1.5s ease-in-out infinite;
-}
-
-@keyframes disc-shimmer {
-  from {
-    background-position: 130% 0;
-  }
-  to {
-    background-position: -80% 0;
-  }
-}
-
-/* ── Pager ────────────────────────────────────────────────────────── */
-
-.disc-pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  margin-top: 22px;
-}
-
-.disc-pager-btn {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--disc-line);
-  border-radius: 50%;
-  background: var(--disc-card);
-  color: var(--disc-ink);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover),
-    border-color var(--te-motion-hover),
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    opacity var(--te-motion-hover);
-}
-
-.disc-pager-btn:hover:not(:disabled) {
-  transform: translateY(var(--te-motion-hover-translate));
-  background: var(--te-hover-bg);
-  border-color: color-mix(in srgb, var(--disc-ink) 26%, transparent);
-}
-
-.disc-pager-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.36;
-}
-
-.disc-pager-text {
-  min-width: 118px;
-  text-align: center;
-  color: var(--disc-ink-soft);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.disc-pager-text em {
-  font-style: normal;
-  color: var(--disc-ink);
-  font-weight: 800;
-}
-
-.disc-more-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 26px;
-  border: 1px solid var(--disc-line);
-  border-radius: 999px;
-  background: var(--disc-card);
-  color: var(--disc-ink);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 750;
-  cursor: pointer;
-  box-shadow: var(--disc-shadow);
-  transition:
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    background var(--te-motion-hover),
-    box-shadow var(--te-motion-return) var(--te-ease-out-quint),
-    opacity var(--te-motion-hover);
-}
-
-.disc-more-btn:hover:not(:disabled) {
-  transform: translateY(var(--te-motion-hover-translate));
-  background: var(--te-hover-bg);
-  box-shadow: var(--disc-shadow-lift);
-}
-
-.disc-more-btn:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-/* ── Narrow layout ────────────────────────────────────────────────── */
-
-@media (max-width: 560px) {
-  .disc-feature {
-    grid-column: 1 / -1;
-    grid-row: auto;
-    min-height: 240px;
-  }
-}
-
-/* ── Dark theme: neutral-900 flips light, so shadow mixes glow — pin to black */
-
-:global(html[data-theme='dark']) .disc {
-  --disc-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-  --disc-shadow-lift: 0 24px 56px rgba(0, 0, 0, 0.42);
-}
-
-:global(html[data-theme='dark']) .disc .disc-ink-btn {
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.34);
-}
-
-/* ── Reduced motion ───────────────────────────────────────────────── */
-
-@media (prefers-reduced-motion: reduce) {
-  .disc,
-  .disc-feature,
-  .disc-card,
-  .disc-shimmer {
-    animation: none;
-  }
-
-  .disc-feature:hover .disc-feature-img,
-  .disc-card:hover .disc-card-img {
-    transform: none;
+@container (max-width:480px) {
+  .disc-atlas-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 }
 </style>

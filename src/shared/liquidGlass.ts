@@ -12,14 +12,11 @@
  * computed style and binds them as attributes.
  */
 
-export type SurfaceMaterial = 'standard' | 'transparent' | 'liquidGlass'
+import { MATERIAL_MODES, resolveMaterialMode, type MaterialMode } from './materials.ts'
+export type SurfaceMaterial = MaterialMode
 export type LiquidGlassCoverage = 'functional' | 'expanded'
 
-export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = [
-  'standard',
-  'transparent',
-  'liquidGlass'
-]
+export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = MATERIAL_MODES
 
 /** Filter ids referenced from CSS. Cards and the playbar differ in aspect ratio. */
 export const LIQUID_GLASS_CARD_FILTER_ID = 'te-lg-card'
@@ -99,6 +96,19 @@ export interface LiquidGlassSettings {
   homeCards: LiquidGlassHomeCardsSettings
 }
 
+export type LiquidGlassTone = 'light' | 'dark'
+
+/** Resolves the shared chrome profile without changing the application's tone. */
+export function resolveLiquidGlassTone(
+  tone: LiquidGlassTone,
+  settings: Pick<LiquidGlassSettings, 'overLight' | 'adaptiveTone'>,
+  adaptiveTone?: unknown
+): LiquidGlassTone {
+  return tone === 'dark' || settings.overLight || (settings.adaptiveTone && adaptiveTone === 'dark')
+    ? 'dark'
+    : 'light'
+}
+
 export interface LiquidGlassHomeCardsSettings {
   enabled: boolean
   /** Tint the homepage dark profile over a light background for legibility. */
@@ -112,7 +122,10 @@ export function functionalLiquidGlassSettings(settings: LiquidGlassSettings): Li
   return {
     ...settings,
     coverage: 'functional',
-    homeCards: { ...settings.homeCards, enabled: false }
+    homeCards: {
+      ...settings.homeCards,
+      enabled: resolveMaterialMode('content', { mode: 'liquidGlass' }) === 'liquidGlass'
+    }
   }
 }
 

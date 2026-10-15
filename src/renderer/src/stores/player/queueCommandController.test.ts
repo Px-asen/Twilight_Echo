@@ -61,6 +61,32 @@ function harness(tracks = [track('a'), track('a'), track('b')]) {
   }
 }
 
+test('mixed collection origins survive append, move, removal and undo per queue occurrence', (t) => {
+  const album = { kind: 'album' as const, scope: 'local' as const, id: 'album-1', name: 'Album' }
+  const playlist = {
+    kind: 'playlist' as const,
+    scope: 'aggregate' as const,
+    id: 'playlist-1',
+    name: 'Playlist'
+  }
+  const state = harness([
+    { ...track('a'), queuePlaybackOrigin: album },
+    { ...track('a'), queuePlaybackOrigin: album }
+  ])
+  t.after(state.commands.dispose)
+  state.commands.add([{ ...track('a'), queuePlaybackOrigin: playlist }], 2, 2)
+  state.commands.move(2, 0)
+  assert.deepEqual(
+    state.queue.value.map((entry) => entry.queuePlaybackOrigin),
+    [playlist, album, album]
+  )
+  state.commands.remove(0)
+  assert.ok(state.queue.value.every((entry) => entry.queuePlaybackOrigin?.id === album.id))
+  assert.equal(state.commands.undo(), true)
+  assert.deepEqual(state.queue.value[0].queuePlaybackOrigin, playlist)
+  assert.equal(new Set(state.queue.value.map((entry) => entry.queueEntryId)).size, 3)
+})
+
 test('duplicate additions get new entry IDs without cloning existing queue objects and undo rebases prior commands', (t) => {
   const state = harness()
   t.after(state.commands.dispose)

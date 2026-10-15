@@ -145,7 +145,7 @@ function onCompositionCancel(): void {
 }
 
 .animated-input:has(.animated-input-field:focus-visible) {
-  outline: var(--ai-focus-outline, 2px solid var(--te-primary-500));
+  outline: var(--ai-focus-outline, 2px solid var(--te-control-focus-color));
   outline-offset: 2px;
 }
 
@@ -240,10 +240,12 @@ function onCompositionCancel(): void {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-char-enter-active,
-  .ai-char-leave-active,
-  .ai-char-move {
-    transition: none;
+  @scope (:root:not([data-te-motion='full'])) {
+    .ai-char-enter-active,
+    .ai-char-leave-active,
+    .ai-char-move {
+      transition: none;
+    }
   }
 }
 </style>

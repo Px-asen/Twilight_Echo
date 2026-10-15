@@ -97,7 +97,7 @@ app.whenReady().then(async()=>{
  const capture=async name=>{if(process.env.TWILIGHT_HOME_SCREENSHOTS){await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await new Promise(resolve=>setTimeout(resolve,50));fs.mkdirSync(process.env.TWILIGHT_HOME_SCREENSHOTS,{recursive:true});fs.writeFileSync(path.join(process.env.TWILIGHT_HOME_SCREENSHOTS,name+'.png'),(await win.webContents.capturePage()).toPNG())}}
  try{
   await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runOnlineHomeTests()')
-  for(const [name,width,dark,mode] of [['ready',1200,false,'ready'],['dark',1200,true,'ready'],['mobile',390,false,'ready'],['guest',1200,false,'guest'],['no-provider',1200,false,'none']]){
+  for(const [name,width,dark,mode] of [['ready',1200,false,'ready'],['dark',1200,true,'ready'],['mobile',390,false,'ready'],['local',1200,false,'local'],['local-dark',1200,true,'local'],['local-mobile',390,false,'local'],['guest',1200,false,'guest'],['no-provider',1200,false,'none']]){
    win.setSize(width,980);await win.webContents.executeJavaScript('window.previewOnlineHome('+JSON.stringify({dark,mode})+')');await new Promise(resolve=>setTimeout(resolve,150))
    const overflow=await win.webContents.executeJavaScript('document.querySelector(".online-home").scrollWidth > document.querySelector(".online-home").clientWidth + 1')
    if(overflow)throw new Error('Horizontal overflow: '+name);await capture(name)
@@ -144,14 +144,14 @@ const pause=()=>new Promise(resolve=>setTimeout(resolve,60))
 const expect=(value,message)=>{if(!value)throw new Error(message)}
 const events=[],visible=ref(true)
 const discovery=ref(null)
-const app=createApp({render:()=>discovery.value?h(StreamingDiscovery,{...discovery.value,onOpenPlaylist:item=>events.push('playlist:'+item.id)}):visible.value?h(LocalHome,{preview:state.preview.value,onOpenStreaming:tab=>events.push(tab),onLogin:id=>events.push('login:'+id),onOpenPlugins:()=>events.push('plugins'),onOpenRadio:()=>events.push('radio'),onOpenLibrarySettings:()=>events.push('local-settings')}):null})
+const app=createApp({render:()=>discovery.value?h(StreamingDiscovery,{...discovery.value,onOpenPlaylist:item=>events.push('playlist:'+item.id)}):visible.value?h(LocalHome,{preview:state.preview.value,onOpenStreaming:tab=>events.push(tab),onLogin:id=>events.push('login:'+id),onOpenPlugins:()=>events.push('plugins'),onOpenRadio:()=>events.push('radio'),onSelectView:(category)=>events.push(category),onOpenLibrarySettings:()=>events.push('local-settings')}):null})
 app.config.errorHandler=error=>{window.runtimeError=error.stack||String(error)}
 app.mount('#app')
 const click=text=>{const button=[...document.querySelectorAll('button')].find(button=>button.textContent.includes(text));expect(button,'Missing button: '+text);button.click()}
 const remount=async()=>{visible.value=false;await nextTick();visible.value=true;await pause()}
 window.runOnlineHomeTests=async()=>{
  await pause();expect(document.querySelector('.online-home'),'No online home for empty library: '+(window.runtimeError||document.body.innerHTML.slice(0,500)))
- expect(document.querySelectorAll('.online-playlist').length===6,'Guest discovery not shown')
+ expect(document.querySelector('.home-local-empty')&&document.querySelectorAll('.home-library-switch button').length===2,'Empty local library lost equal library entrances');expect(document.querySelectorAll('.online-discovery .online-playlist').length===6,'Guest discovery not shown')
  expect(!state.requests.some(([,method])=>method==='daily'),'Guest requested personalized data')
  click('发现歌单');expect(events.at(-1)==='discover','Discovery navigation failed')
  click('添加本地音乐');expect(events.at(-1)==='local-settings','Import entry failed')
@@ -166,11 +166,11 @@ window.runOnlineHomeTests=async()=>{
  expect(document.querySelector('.online-playlist .pi-spinner.pi-spin'),'Pending playlist indicator is static')
  const count=state.played.length;const select=document.querySelector('select');select.value='other';select.dispatchEvent(new Event('change',{bubbles:true}));await pause()
  release([state.song('ncm:stale')]);state.setPending(null);await pause();expect(state.played.length===count,'Old provider request started playback');expect(state.settings.value.streamingActiveProvider==='other','Source preference not persisted')
- state.tracks.value=[state.song('local:import')];await pause();expect(document.querySelector('[data-local-home]')&&!document.querySelector('.online-home'),'Import did not restore local dashboard')
- state.tracks.value=[];state.preview.value=true;await pause();expect(document.querySelector('[data-local-home]'),'Theme preview uses online home')
+ state.tracks.value=[state.song('local:import')];await pause();expect(document.querySelector('.online-home')&&document.querySelectorAll('.home-local-card').length===1,'Import must populate local shelf without replacing homepage');document.querySelector('.home-library-switch button').click();expect(events.at(-1)==='allSongs','Local library navigation failed');const playedBefore=state.played.length;document.querySelector('.home-local-card').click();await pause();expect(state.played.length===playedBefore+1&&state.played.at(-1).track.id==='local:import','Local shelf playback failed')
+ const requestsBeforePreview=state.requests.length;state.tracks.value=[];state.preview.value=true;await pause();expect(document.querySelector('.home-local-empty')&&state.requests.length===requestsBeforePreview,'Theme preview must retain local section without provider requests')
  state.preview.value=false;state.providers.value=[];state.currentTrack.value=null;await pause();click('接入在线音源');expect(events.at(-1)==='plugins','No-provider setup failed');click('电台与播客');expect(events.at(-1)==='radio','Radio navigation failed')
 }
-window.previewOnlineHome=async({dark,mode})=>{document.documentElement.dataset.theme=dark?'dark':'light';state.providers.value=mode==='none'?[]:[state.source('ncm'),state.source('other')];state.settings.value={streamingActiveProvider:'ncm'};state.authenticated.value=mode==='ready';state.currentTrack.value=null;state.recent.value=mode==='ready'?[state.song('ncm:recent','把今天的心情，留给音乐')]:[];await remount()}
+window.previewOnlineHome=async({dark,mode})=>{document.documentElement.dataset.theme=dark?'dark':'light';state.providers.value=mode==='none'?[]:[state.source('ncm'),state.source('other')];state.settings.value={streamingActiveProvider:'ncm'};state.authenticated.value=mode==='ready'||mode==='local';state.tracks.value=mode==='local'?Array.from({length:6},(_,i)=>({...state.song('local:collection:'+i,['黄昏的海岸','一张旧唱片','窗边的旋律','缓慢时光','回家的路','属于你的声音'][i]),source:'local'})):[];state.currentTrack.value=null;state.recent.value=mode==='ready'?[state.song('ncm:recent','把今天的心情，留给音乐')]:[];await remount()}
 let refreshProbe=null
 window.prepareRefreshProbe=async motion=>{
  document.documentElement.dataset.teMotion=motion
@@ -187,7 +187,9 @@ window.beginRefreshProbe=async()=>{
  expect(document.querySelector('.online-recommendations .online-track')===refreshProbe.first,'Refresh remounted song row')
  expect(!document.querySelector('.online-loading-content'),'Refresh replaced loaded content with skeleton')
  expect(document.querySelector('.online-discovery').getAttribute('aria-busy')==='true','Refresh is missing busy semantics')
- const styles=getComputedStyle(refreshProbe.results),expected=refreshProbe.motion==='off'?'0s':refreshProbe.motion==='reduced'?'0.12s':'0.16s'
+ const styles=getComputedStyle(refreshProbe.results),hover=getComputedStyle(document.documentElement).getPropertyValue('--te-motion-hover').trim()
+ const sharedHover=hover.endsWith('ms')?parseFloat(hover)/1000+'s':hover
+ const expected=refreshProbe.motion==='off'?'0s':refreshProbe.motion==='reduced'?'0.12s':sharedHover
  expect(styles.transitionDuration===expected,'Wrong refresh duration for '+refreshProbe.motion+': '+styles.transitionDuration)
  expect(styles.transform==='none','Refresh moves the result container')
  expect(document.querySelector('.online-sr-only[role="status"]').textContent.includes('正在刷新'),'Refresh status missing')

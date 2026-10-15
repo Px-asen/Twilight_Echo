@@ -1,4 +1,6 @@
 import type { Track } from '../types/music'
+import { isQueuePlaybackOrigin } from '../../../shared/queueWorkspace.ts'
+import { preserveQueueEntryContext, queuePlaybackOriginsMatch } from './queuePlaybackOrigin.ts'
 
 export const PLAYBACK_QUEUE_ROW_HEIGHT = 54
 export const PLAYBACK_QUEUE_OVERSCAN = 6
@@ -25,10 +27,17 @@ export function toPlaybackQueueSnapshot(track: Track): Track {
   return {
     id: track.id,
     queueEntryId: track.queueEntryId,
+    // Origins are immutable queue context. Keep the reference so native playback
+    // updates do not replace a 20k queue solely because the origin was cloned.
+    queuePlaybackOrigin: isQueuePlaybackOrigin(track.queuePlaybackOrigin)
+      ? track.queuePlaybackOrigin
+      : undefined,
     title: track.title,
     artist: track.artist,
     artists: track.artists,
     album: track.album,
+    albumId: track.albumId,
+    albumArtist: track.albumArtist,
     filePath: track.filePath,
     fileName: track.fileName,
     dir: track.dir,
@@ -86,9 +95,16 @@ export function patchPlaybackQueueTrack(tracks: Track[], updatedTrack: Track): T
   let updated: Track[] | null = null
   for (let index = 0; index < tracks.length; ++index) {
     const track = tracks[index]
-    if (track.id !== updatedTrack.id || matchesPlaybackQueueSnapshot(track, snapshot)) continue
+    if (
+      track.id !== updatedTrack.id ||
+      matchesPlaybackQueueSnapshot(track, {
+        ...snapshot,
+        queuePlaybackOrigin: track.queuePlaybackOrigin
+      })
+    )
+      continue
     updated ??= tracks.slice()
-    updated[index] = { ...snapshot, queueEntryId: track.queueEntryId }
+    updated[index] = preserveQueueEntryContext(snapshot, track)
   }
   return updated ?? tracks
 }
@@ -97,6 +113,7 @@ export function patchPlaybackQueueTrack(tracks: Track[], updatedTrack: Track): T
 export function matchesPlaybackQueueSnapshot(track: Track, snapshot: Track): boolean {
   return (
     track.id === snapshot.id &&
+    queuePlaybackOriginsMatch(track.queuePlaybackOrigin, snapshot.queuePlaybackOrigin) &&
     track.title === snapshot.title &&
     track.artist === snapshot.artist &&
     (track.artists === snapshot.artists ||
@@ -106,6 +123,8 @@ export function matchesPlaybackQueueSnapshot(track: Track, snapshot: Track): boo
             artist.id === snapshot.artists![i].id && artist.name === snapshot.artists![i].name
         ))) &&
     track.album === snapshot.album &&
+    track.albumId === snapshot.albumId &&
+    track.albumArtist === snapshot.albumArtist &&
     track.filePath === snapshot.filePath &&
     track.fileName === snapshot.fileName &&
     track.dir === snapshot.dir &&

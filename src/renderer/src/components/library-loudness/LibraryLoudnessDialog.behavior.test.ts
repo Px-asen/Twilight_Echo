@@ -53,7 +53,7 @@ test('loudness dialog handles scope, progress, cancel, retry, stale queries and 
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron');const fs=require('node:fs');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runLoudnessTests()');if(process.env.TWILIGHT_LOUDNESS_SCREENSHOT){await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');fs.writeFileSync(process.env.TWILIGHT_LOUDNESS_SCREENSHOT,(await win.webContents.capturePage()).toPNG())}console.log('LOUDNESS_UI_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
+      `const {app,BrowserWindow}=require('electron');const fs=require('node:fs');app.setPath('userData',__dirname+'/profile');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runLoudnessTests()');for(const [width,height] of [[760,692],[1100,600]]){win.setContentSize(width,height);await new Promise(resolve=>setTimeout(resolve,50));for(const font of [14,28])await win.webContents.executeJavaScript('window.runLoudnessLayoutTests('+font+')')}if(process.env.TWILIGHT_LOUDNESS_SCREENSHOT){await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');fs.writeFileSync(process.env.TWILIGHT_LOUDNESS_SCREENSHOT,(await win.webContents.capturePage()).toPNG())}console.log('LOUDNESS_UI_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
     )
     const result = await promisify(execFile)(
       require('electron'),
@@ -67,7 +67,8 @@ test('loudness dialog handles scope, progress, cancel, retry, stale queries and 
   }
 })
 
-const runtime = `import {createApp,h,nextTick,ref,shallowRef} from 'vue'
+const runtime = `import '@renderer/assets/base.css'
+import {createApp,h,nextTick,ref,shallowRef} from 'vue'
 import Dialog from '@renderer/components/library-loudness/LibraryLoudnessDialog.vue'
 const expect=(value,message)=>{if(!value)throw new Error(message)}
 const pause=()=>new Promise(resolve=>setTimeout(resolve,20))
@@ -136,12 +137,24 @@ window.runLoudnessTests=async()=>{
   failQuery=false;await click('重试操作');await until(()=>!document.querySelector('[role="alert"]')&&enabled('开始分析'),'query retry failed')
   document.querySelector('input[value="track"]').click();selection.value=null;library.value=Array.from({length:10000},(_,index)=>track(String(index)));await until(()=>document.querySelector('[role="grid"]').getAttribute('aria-rowcount')==='10000'&&enabled('刷新结果'),'large scope did not load')
   const grid=document.querySelector('[role="grid"]')
-  const maxMountedRows=Math.ceil(grid.clientHeight/64)+8
+  let actualHeight=document.querySelector('.loudness-row').getBoundingClientRect().height
+  let maxMountedRows=Math.ceil(grid.clientHeight/actualHeight)+8
   expect(document.querySelectorAll('.loudness-row').length<=maxMountedRows,'large results mounted unbounded rows')
   grid.focus();grid.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true,cancelable:true}));await pause()
-  expect(grid.scrollTop>600000,'End did not reach the virtual tail')
+  expect(grid.scrollTop>actualHeight*9900,'End did not reach the virtual tail')
   expect(document.querySelector('[aria-selected="true"]').textContent.includes('曲目 9999'),'keyboard selection lost last row')
   expect(document.querySelectorAll('.loudness-row').length<=maxMountedRows,'tail rendered unbounded rows')
+  document.documentElement.style.setProperty('--te-font-size-body','28px')
+  await until(()=>document.querySelector('.loudness-row').getBoundingClientRect().height>=112,'large type did not resize virtual rows')
+  actualHeight=document.querySelector('.loudness-row').getBoundingClientRect().height
+  maxMountedRows=Math.ceil(grid.clientHeight/actualHeight)+8
+  grid.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true,cancelable:true}));await pause()
+  expect(document.querySelector('[aria-selected="true"]').textContent.includes('曲目 9999'),'large type lost virtual tail selection')
+  expect(document.querySelectorAll('.loudness-row').length<=maxMountedRows,'large type mounted unbounded rows')
+  const name=document.querySelector('.loudness-row .result-name')
+  expect(name.scrollHeight<=actualHeight,'large type clipped row content')
+  document.documentElement.style.setProperty('--te-font-size-body','14px')
+  await until(()=>document.querySelector('.loudness-row').getBoundingClientRect().height===56,'restored type did not restore row geometry')
   library.value=[track('one'),track('two')];selection.value=[library.value[0]];albums.value=[{id:'id:release',name:'示例专辑',tracks:library.value,trackCount:2,cover:null}]
   records.set(group.id,{id:group.id,status:'measured',measurement:measured(-21),tracks:[measured(-20),measured(-24)]});document.querySelector('input[value="album"]').click();await until(()=>document.querySelector('.loudness-results').textContent.includes('-21.00'),'final preview did not load')
   await click('开始分析');await until(()=>enabled('取消分析'),'remeasure did not start')
@@ -149,5 +162,21 @@ window.runLoudnessTests=async()=>{
   items[0].state='failed';items[0].reason='source changed';status.processed=1;status.failed=1;publish(items[0]);status.state='completed';publish();await pause()
   expect(!document.querySelector('.loudness-results').textContent.includes('-21.00'),'failure published a previous complete album')
   await click('刷新结果');await until(()=>document.querySelector('.loudness-results').textContent.includes('-21.00'),'final cache refresh did not finish')
+}
+window.runLoudnessLayoutTests=async(font)=>{
+  document.documentElement.style.setProperty('--te-font-size-body',font+'px')
+  await until(()=>document.querySelector('.loudness-row').getBoundingClientRect().height===font*4,'dialog row scale did not settle')
+  const dialog=document.querySelector('.loudness-dialog'),grid=document.querySelector('.loudness-results')
+  const bounds=dialog.getBoundingClientRect()
+  expect(Math.abs(bounds.left-(innerWidth-bounds.width)/2)<2&&Math.abs(bounds.top-(innerHeight-bounds.height)/2)<2,'dialog is not centered in the available window at '+font+'px')
+  expect(dialog.scrollWidth<=dialog.clientWidth+1,'dialog horizontally clips content at '+font+'px')
+  expect(grid.scrollWidth<=grid.clientWidth+1,'result grid horizontally clips content at '+font+'px')
+  const headings=[...document.querySelector('.loudness-head').children],cells=[...document.querySelector('.loudness-row').children]
+  expect(headings.length===cells.length,'heading and row columns differ')
+  headings.forEach((heading,index)=>expect(Math.abs(heading.getBoundingClientRect().left-cells[index].getBoundingClientRect().left)<3,'column '+index+' is misaligned at '+font+'px'))
+  dialog.scrollTop=dialog.scrollHeight;await pause()
+  const footer=dialog.querySelector('footer').getBoundingClientRect()
+  expect(footer.bottom<=innerHeight-20&&footer.top>=0,'dialog footer is unreachable in short window')
+  dialog.scrollTop=0
 }
 `

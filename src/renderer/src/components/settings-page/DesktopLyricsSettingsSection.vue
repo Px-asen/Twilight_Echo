@@ -324,7 +324,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
             </select>
           </label>
           <label data-setting-id="desktop-writing" id="setting-desktop-writing" class="field">
-            <span>文字排列</span>
+            <span>文字排列方向</span>
             <select
               :value="draft.writingMode"
               aria-label="文字排列方向"
@@ -339,7 +339,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
             </select>
           </label>
           <label data-setting-id="desktop-align" id="setting-desktop-align" class="field">
-            <span>对齐方式</span>
+            <span>歌词对齐方式</span>
             <select
               :value="draft.textAlign"
               aria-label="歌词对齐方式"
@@ -363,7 +363,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
         <h3>更改配色方案</h3>
         <div class="palette-control-grid">
           <label data-setting-id="desktop-palette" id="setting-desktop-palette" class="field">
-            <span>配色方案</span>
+            <span>歌词配色方案</span>
             <select
               :value="draft.palette"
               aria-label="歌词配色方案"
@@ -644,7 +644,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
   align-items: center;
   gap: 7px;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--te-type-caption);
   white-space: nowrap;
 }
 
@@ -705,8 +705,8 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
 
 .field b {
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--te-type-caption);
+  font-weight: var(--te-type-weight-medium);
 }
 
 .field select {
@@ -885,7 +885,7 @@ function updatePaletteColor(key: 'customActiveColor' | 'customInactiveColor', ev
 
 .advanced summary {
   cursor: pointer;
-  font-weight: 650;
+  font-weight: var(--te-type-weight-strong);
 }
 
 .advanced-grid {

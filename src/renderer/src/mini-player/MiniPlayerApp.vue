@@ -12,7 +12,11 @@ import {
   type MiniPlayerWindowSize
 } from '../../../shared/miniPlayer.ts'
 import MiniGlyph from './MiniGlyph.vue'
-import DEFAULT_TRACK_COVER from '../assets/images/default-track-cover.webp'
+import PlaybackModeIcon from '../components/icons/PlaybackModeIcon.vue'
+import ThemeIcon from '../components/ThemeIcon.vue'
+import { observeMiniPlayerThemeIcons } from '../app/themeIconRuntime'
+import DEFAULT_TRACK_COVER from '../assets/images/default-track-cover-light.png'
+import '../assets/default-track-cover.css'
 import MiniPlayerCustomizer from './MiniPlayerCustomizer.vue'
 import ScrollingText from './ScrollingText.vue'
 import {
@@ -232,13 +236,6 @@ const playModeTitle = computed(() => {
   if (state.value.playMode === 'repeat') return '单曲循环'
   if (state.value.playMode === 'shuffle') return '随机播放'
   return '顺序播放'
-})
-const playModeIcon = computed(() => {
-  if (state.value.playMode === 'heart') return 'ph ph-heart-half'
-  if (state.value.playMode === 'listLoop') return 'ph ph-repeat'
-  if (state.value.playMode === 'repeat') return 'ph ph-repeat-once'
-  if (state.value.playMode === 'shuffle') return 'ph ph-shuffle'
-  return 'ph ph-arrow-right'
 })
 const volumePercent = computed(() => Math.round(state.value.volume * 100))
 const volumeIcon = computed(() => {
@@ -625,8 +622,10 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 let removeStateListener: (() => void) | null = null
 let removeSettingsListener: (() => void) | null = null
 let removeMotionPreferenceListener: (() => void) | null = null
+let removeThemeIconListener: (() => void) | null = null
 
 onMounted(async () => {
+  removeThemeIconListener = observeMiniPlayerThemeIcons()
   clockTimer = setInterval(() => {
     clockNow.value = Date.now()
   }, 50)
@@ -692,6 +691,7 @@ onBeforeUnmount(() => {
   removeStateListener?.()
   removeSettingsListener?.()
   removeMotionPreferenceListener?.()
+  removeThemeIconListener?.()
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('resize', updateViewportSize)
   document.removeEventListener('pointermove', onPointerMove)
@@ -746,6 +746,7 @@ onBeforeUnmount(() => {
             :key="`art:${trackKey}:${coverSrc}`"
             :src="hasCover ? coverSrc || DEFAULT_TRACK_COVER : DEFAULT_TRACK_COVER"
             class="mini-artwork"
+            :class="{ 'default-track-cover': !hasCover }"
             alt="专辑封面"
             draggable="false"
             @error="coverFailed = true"
@@ -794,7 +795,10 @@ onBeforeUnmount(() => {
               :disabled="state.favoriteLoading"
               @click="toggleFavorite"
             >
-              <i :class="state.favoriteLiked ? 'ph-fill ph-heart' : 'ph ph-heart'"></i>
+              <ThemeIcon
+                :icon-slot="state.favoriteLiked ? 'playback.favoriteActive' : 'playback.favorite'"
+                ><i :class="state.favoriteLiked ? 'ph-fill ph-heart' : 'ph ph-heart'"></i
+              ></ThemeIcon>
             </button>
           </div>
         </Transition>
@@ -849,7 +853,7 @@ onBeforeUnmount(() => {
             :disabled="!hasTrack"
             @click="sendCommand({ type: 'cycle-play-mode' })"
           >
-            <i :class="playModeIcon"></i>
+            <PlaybackModeIcon :mode="state.playMode" variant="font" />
           </button>
         </div>
 
@@ -912,7 +916,9 @@ onBeforeUnmount(() => {
               :aria-label="state.volume > 0.001 ? '静音' : '取消静音'"
               @click="toggleMute()"
             >
-              <i :class="volumeIcon"></i>
+              <ThemeIcon :icon-slot="state.volume <= 0.001 ? 'playback.muted' : 'playback.volume'"
+                ><i :class="volumeIcon"></i
+              ></ThemeIcon>
             </button>
           </div>
         </div>

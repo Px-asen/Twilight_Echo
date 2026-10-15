@@ -70,7 +70,7 @@ const dspInputText = computed(() => {
 })
 
 const dspProcessText = computed(() => {
-  if (!audioProcessing.value.dspEnabled) return 'Bypass'
+  if (!audioProcessing.value.dspEnabled) return '已旁路'
   return playbackInfo.value?.dspActive ? '正在处理' : '处理链待命'
 })
 
@@ -397,8 +397,8 @@ onMounted(() => {
         <div class="signal-node-circle active">
           <i class="pi pi-file" aria-hidden="true"></i>
         </div>
-        <span class="signal-node-label">Input</span>
-        <span class="signal-node-name">SOURCE</span>
+        <span class="signal-node-label">输入</span>
+        <span class="signal-node-name">音源</span>
       </div>
       <div class="signal-line" :class="{ active: eqChainActive }"></div>
       <div
@@ -416,8 +416,8 @@ onMounted(() => {
         <div class="signal-node-circle" :class="{ active: eqChainActive }">
           <i class="pi pi-sliders-h"></i>
         </div>
-        <span class="signal-node-label">{{ eqChainActive ? 'Active' : 'Bypass' }}</span>
-        <span class="signal-node-name">EQ</span>
+        <span class="signal-node-label">{{ eqChainActive ? '生效' : '旁路' }}</span>
+        <span class="signal-node-name">均衡器</span>
       </div>
       <div class="signal-line" :class="{ active: crossfeedChainActive }"></div>
       <div
@@ -435,8 +435,8 @@ onMounted(() => {
         <div class="signal-node-circle" :class="{ active: crossfeedChainActive }">
           <i class="pi pi-arrows-h"></i>
         </div>
-        <span class="signal-node-label">{{ crossfeedChainActive ? 'Active' : 'Bypass' }}</span>
-        <span class="signal-node-name">CROSSFEED</span>
+        <span class="signal-node-label">{{ crossfeedChainActive ? '生效' : '旁路' }}</span>
+        <span class="signal-node-name">声道混合</span>
       </div>
       <div class="signal-line" :class="{ active: convolverChainActive }"></div>
       <div
@@ -454,32 +454,32 @@ onMounted(() => {
         <div class="signal-node-circle" :class="{ active: convolverChainActive }">
           <i class="pi pi-microchip"></i>
         </div>
-        <span class="signal-node-label">{{ convolverChainActive ? 'Active' : 'Bypass' }}</span>
-        <span class="signal-node-name">CONVOLVER</span>
+        <span class="signal-node-label">{{ convolverChainActive ? '生效' : '旁路' }}</span>
+        <span class="signal-node-name">卷积</span>
       </div>
       <div class="signal-line active"></div>
       <div class="signal-node static" :class="{ active: true }">
         <div class="signal-node-circle active">
           <i class="pi pi-volume-up"></i>
         </div>
-        <span class="signal-node-label">DAC</span>
-        <span class="signal-node-name">OUTPUT</span>
+        <span class="signal-node-label">声卡</span>
+        <span class="signal-node-name">输出</span>
       </div>
     </div>
 
     <div class="dsp-status-grid">
       <div class="dsp-meter">
-        <span>Input</span>
+        <span>输入</span>
         <strong>{{ dspInputText }}</strong>
         <small>源信号格式</small>
       </div>
       <div class="dsp-meter">
-        <span>Process</span>
+        <span>处理</span>
         <strong>{{ dspProcessText }}</strong>
         <small>{{ dspModuleCount }} 个模块激活</small>
       </div>
       <div class="dsp-meter">
-        <span>Output</span>
+        <span>输出</span>
         <strong>{{ dspOutputText }}</strong>
         <small>{{ outputFormatText }}</small>
       </div>
@@ -552,6 +552,7 @@ onMounted(() => {
               </div>
               <select
                 class="preview-select"
+                aria-label="音量标准化"
                 :value="audioProcessing.volumeNormalization"
                 @change="setReplayGainFromSelect"
               >
@@ -583,6 +584,7 @@ onMounted(() => {
               <input
                 class="number-input"
                 type="number"
+                aria-label="预增益（dB）"
                 step="0.1"
                 :value="audioProcessing.replayGainPreamp"
                 @input="setReplayGainPreamp"
@@ -600,6 +602,7 @@ onMounted(() => {
               <input
                 class="number-input"
                 type="number"
+                aria-label="缺少响度标签时的增益（dB）"
                 step="0.1"
                 min="-12"
                 max="12"
@@ -710,6 +713,7 @@ onMounted(() => {
               <input
                 class="number-input"
                 type="number"
+                aria-label="声道混合延迟（毫秒）"
                 step="0.05"
                 min="0.05"
                 max="2"
@@ -729,6 +733,7 @@ onMounted(() => {
               <input
                 class="number-input"
                 type="number"
+                aria-label="声道混合截止频率（Hz）"
                 step="10"
                 min="80"
                 max="4000"

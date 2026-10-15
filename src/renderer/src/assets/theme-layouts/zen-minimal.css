@@ -256,7 +256,7 @@ html[data-te-preset-layout='zen-minimal'] .home .now-cover {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 14%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home .now-info {
@@ -475,12 +475,12 @@ html[data-te-preset-layout='zen-minimal'] .home .track-card {
 html[data-te-preset-layout='zen-minimal'] .home .track-cover {
   border: 0;
   border-radius: 2px;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 12%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home .track-card:hover .track-cover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-content-shadow-color) 14%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home .format-badge {
@@ -550,7 +550,7 @@ html[data-te-preset-layout='zen-minimal'] .home .champion-badge {
 html[data-te-preset-layout='zen-minimal'] .home .champion-cover {
   border: 0;
   border-radius: 2px;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 12%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home .champion-copy strong {
@@ -599,7 +599,7 @@ html[data-te-preset-layout='zen-minimal'] .home .album-tile {
 html[data-te-preset-layout='zen-minimal'] .home .album-art {
   border: 0;
   border-radius: 2px;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 12%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home .album-text {
@@ -777,7 +777,7 @@ html[data-te-preset-layout='zen-minimal'] .home-view .hero-stage .hero-collage-c
   height: 100%;
   transform: none;
   border-radius: 2px;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 12%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal']
@@ -904,12 +904,12 @@ html[data-te-preset-layout='zen-minimal'] .home-view .shelf-grid {
 
 html[data-te-preset-layout='zen-minimal'] .home-view .shelf-cover {
   border-radius: 2px;
-  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-content-shadow-color) 12%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home-view .shelf-tile:hover .shelf-cover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-content-shadow-color) 14%, transparent);
 }
 
 html[data-te-preset-layout='zen-minimal'] .home-view .shelf-scrim,
@@ -987,7 +987,7 @@ html[data-te-preset-layout='zen-minimal'] .playing-music .layout--single .cover-
 html[data-te-preset-layout='zen-minimal'] .playing-music .cover-frame {
   width: min(100%, clamp(200px, 44vmin, 380px));
   background: transparent;
-  box-shadow: 0 2px 10px oklch(from var(--te-neutral-900) 0.1 0.01 h / 0.28);
+  box-shadow: 0 2px 10px oklch(from var(--te-content-shadow-color) 0.1 0.01 h / 0.28);
 }
 
 html[data-te-preset-layout='zen-minimal'] .playing-music .track-title {

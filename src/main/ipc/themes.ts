@@ -20,7 +20,7 @@ import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import { updateAppSettings } from '../app/settingsRuntime.ts'
 import { runtime } from '../core/runtime.ts'
-import { syncWindowFrameAppearance } from '../app/windowAppearance.ts'
+import { syncWindowFrameColor } from '../app/windowAppearance.ts'
 import {
   copyThemeAssets,
   deleteThemeAssets,
@@ -56,7 +56,7 @@ export function setupThemeIpc(): void {
     nativeTheme.on('updated', () => {
       const tone = nativeTheme.shouldUseDarkColors ? 'dark' : 'pureWhite'
       if (runtime.mainWindow && !runtime.mainWindow.isDestroyed()) {
-        syncWindowFrameAppearance(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
+        syncWindowFrameColor(runtime.mainWindow, nativeTheme.shouldUseHighContrastColors)
       }
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('themes:systemToneChanged', tone)
@@ -318,7 +318,10 @@ function normalizeShortText(value: unknown): string {
 
 async function assertThemeProfileAssetsAvailable(profile: ThemeProfileV2): Promise<void> {
   const boundIds = new Set(
-    Object.values(profile.assetBindings ?? {}).filter((id): id is string => typeof id === 'string')
+    [
+      ...Object.values(profile.assetBindings ?? {}),
+      ...Object.values(profile.iconBindings ?? {})
+    ].filter((id): id is string => typeof id === 'string')
   )
   if (boundIds.size === 0) return
   const assets = (profile.assets ?? []).filter((asset) => boundIds.has(asset.id))
