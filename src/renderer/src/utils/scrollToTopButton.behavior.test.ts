@@ -365,6 +365,67 @@ window.runScrollTopChecks = async () => {
   if (!/opacity/.test(motionStyle.transitionProperty)) fail('opacity is not animated: ' + motionStyle.transitionProperty)
   if (!/[1-9]/.test(motionStyle.transitionDuration)) fail('the reveal has no duration: ' + motionStyle.transitionDuration)
 
+  // The locator uses the same reveal and dismissal transitions as the arrow,
+  // including the first frame after a list registers its floating action.
+  page.scrollTo({ top: 1800, behavior: 'instant' })
+  hover(page)
+  await nudge()
+  let locateVisible = true
+  const companion = registerScrollToTopCompanion(page, {
+    label: 'Locate animation probe', icon: 'ph ph-crosshair',
+    isVisible: () => locateVisible, activate: () => {}
+  })
+  companion.refresh()
+  await frames(2)
+  const locator = document.querySelector('.te-scroll-companion')
+  if (!locator || locator.dataset.teScrollTopVisible !== 'true') fail('locator did not reveal')
+  const animationProperties = (target) => target.getAnimations().map(animation => animation.transitionProperty)
+  const assertAnimating = (target, label) => {
+    const properties = animationProperties(target)
+    if (!properties.includes('opacity') || !properties.includes('transform'))
+      fail(label + ' must animate opacity and transform: ' + properties.join(','))
+  }
+  assertAnimating(locator, 'new locator reveal')
+  // Mount a visible action without a prior hidden paint, as happens on page entry.
+  const firstPaint = locator.cloneNode(true)
+  firstPaint.style.left = '700px'
+  firstPaint.style.top = '500px'
+  document.body.append(firstPaint)
+  await frames(2)
+  assertAnimating(firstPaint, 'first-paint locator reveal')
+  firstPaint.remove()
+  const locatorStyle = getComputedStyle(locator), arrowStyle = getComputedStyle(control())
+  for (const property of ['transitionProperty', 'transitionDuration', 'transitionTimingFunction']) {
+    if (locatorStyle[property] !== arrowStyle[property]) fail('locator differs from arrow: ' + property)
+  }
+  await new Promise(resolve => setTimeout(resolve, 350))
+  const arrowSlot = control().offsetTop
+  locateVisible = false; companion.refresh()
+  await frames(2)
+  assertAnimating(locator, 'locator dismissal')
+  // Sample the transition itself; a busy compositor may still be on its first frame.
+  const fade = locator.getAnimations().find(animation => animation.transitionProperty === 'opacity')
+  fade.pause()
+  fade.currentTime = Number(fade.effect.getTiming().duration) / 2
+  const fadingOpacity = parseFloat(getComputedStyle(locator).opacity)
+  if (!(fadingOpacity > 0 && fadingOpacity < 1)) fail('locator disappeared without fading')
+  fade.play()
+  if (getComputedStyle(locator).pointerEvents !== 'none') fail('fading locator still accepts clicks')
+  if (control().offsetTop !== arrowSlot) fail('locator dismissal moved the arrow')
+  await new Promise(resolve => setTimeout(resolve, 350))
+  if (getComputedStyle(locator).visibility !== 'hidden') fail('dismissed locator remains visible')
+  locateVisible = true; companion.refresh()
+  await frames(2)
+  assertAnimating(locator, 'locator reappearance')
+  if (control().offsetTop !== arrowSlot) fail('locator reappearance moved the arrow')
+  html.dataset.teMotion = 'off'
+  await frames(2)
+  locateVisible = false; companion.refresh()
+  await frames(2)
+  if (locator.getAnimations().length || getComputedStyle(locator).opacity !== '0')
+    fail('off motion preference must hide locator immediately')
+  companion.dispose()
+
   html.dataset.teMotion = 'off'
   await showPage()
   if (!page.classList.contains('is-scrollbar-active')) fail('scrolling did not reveal its thumb')

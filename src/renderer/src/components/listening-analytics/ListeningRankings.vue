@@ -8,6 +8,7 @@ import type {
 } from '@renderer/stores/useListeningStatsStore'
 import type { Track } from '@renderer/types/music'
 import { formatListeningDuration } from '@renderer/components/listening-analytics/listeningAnalyticsData'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const props = defineProps<{
   tracks: Array<ListeningTrackStat & { id: string; resolvedTrack: Track | null }>
@@ -24,6 +25,7 @@ const emit = defineEmits<{
   'open-artist': [artist: ListeningArtistStat]
 }>()
 const tab = ref<'tracks' | 'artists'>('tracks')
+useDomTrackLocator('locatorRoot', () => props.currentTrack?.id ?? null)
 const expanded = ref(false)
 const visibleTracks = computed(() => props.tracks.slice(0, expanded.value ? 10 : 5))
 const visibleArtists = computed(() => props.artists.slice(0, expanded.value ? 10 : 5))
@@ -46,7 +48,7 @@ function isCurrent(track: Track | null): boolean {
 </script>
 
 <template>
-  <section class="an-panel rankings-panel" aria-labelledby="rankings-title">
+  <section ref="locatorRoot" class="an-panel rankings-panel" aria-labelledby="rankings-title">
     <header class="an-section-head">
       <div>
         <span class="an-eyebrow">02 / ON REPEAT</span>
@@ -89,6 +91,7 @@ function isCurrent(track: Track | null): boolean {
       <li
         v-for="(track, index) in visibleTracks"
         :key="track.id"
+        :data-te-track-id="track.resolvedTrack?.id"
         :class="{ 'is-leading': index === 0, 'is-current': isCurrent(track.resolvedTrack) }"
       >
         <button

@@ -65,7 +65,7 @@ test('recommendation charts support browsing, login, playback, dismissal and res
     const files = await readdir(join(directory, 'bundle'))
     await writeFile(
       join(directory, 'index.html'),
-      `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">${files
+      `<!doctype html><html lang="zh-CN" data-te-motion="off"><head><meta charset="utf-8">${files
         .filter((file) => file.endsWith('.css'))
         .map((file) => `<link rel="stylesheet" href="bundle/${file}">`)
         .join(
@@ -108,6 +108,7 @@ export const usePlayerStore=()=>({currentTrack,isPlaying,playTrack:(track,queue)
 const runtime = `import {createApp,h,nextTick,ref} from 'vue'
 import NcmToplists from '@renderer/components/local-dashboard/NcmToplists.vue'
 import StreamingHome from '@renderer/components/StreamingHome.vue'
+import {installScrollToTopButton} from '@renderer/utils/scrollToTopButton.ts'
 import '@renderer/assets/base.css'
 import '@phosphor-icons/web/src/regular/style.css'
 import '@phosphor-icons/web/src/fill/style.css'
@@ -115,10 +116,12 @@ import 'primeicons/primeicons.css'
 import * as state from './fixtures.ts'
 const pause=async()=>{await nextTick();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await new Promise(resolve=>setTimeout(resolve,20))}
 const expect=(value,message)=>{if(!value)throw new Error(message)}
+const waitFor=async(predicate,message)=>{for(let i=0;i<50;i++){if(predicate())return;await pause(40)}expect(false,message)}
 const events=[]
 const presentation=ref({requiresLogin:false}),recsLoading=ref(false),recsError=ref('')
 const app=createApp({render:()=>h(StreamingHome,{providerLabel:'网易云音乐',presentation:presentation.value,isLoggedIn:false,recsLoading:recsLoading.value,recsError:recsError.value,recSections:[],recommendPlaylists:[]},{rankings:()=>h(NcmToplists,{onLogin:()=>events.push('login')})})})
 app.config.errorHandler=error=>{window.runtimeError=error.stack||String(error)}
+const stopScrollControls=installScrollToTopButton()
 app.mount('#app')
 const click=label=>{const target=[...document.querySelectorAll('button')].find(button=>button.getAttribute('aria-label')===label||button.textContent.trim()===label);expect(target,'Missing button '+label);target.focus();target.click()}
 window.runToplistTests=async()=>{
@@ -127,11 +130,21 @@ window.runToplistTests=async()=>{
  presentation.value={requiresLogin:false};recsLoading.value=false;recsError.value='';await pause()
  click('全部榜单');await nextTick();expect(document.querySelectorAll('.toplist-card').length===6,'More charts did not expand');click('收起榜单')
  click('查看飙升榜');await pause();expect(document.querySelectorAll('.toplist-song').length===60,'Complete chart not rendered');expect(state.requests.at(-1)[2][1]===true,'Chart tracks must bypass stale playlist cache');expect(document.querySelector('.toplists-dialog').contains(document.activeElement),'Dialog did not capture focus')
- click('播放全部');await pause();expect(events.length===1&&state.played.length===0,'Guest playback must open login');expect(!document.querySelector('.toplists-dialog'),'Login left a modal above login page')
+ const locator=()=>[...document.querySelectorAll('[aria-label="定位正在播放的歌曲"]')].find(button=>button.dataset.teScrollTopVisible==='true'),list=document.querySelector('.toplists-song-list'),target=()=>document.querySelector('[data-te-track-id="ncm:40"]')
+ expect(target(),'Locator fixture needs more than forty real chart rows')
+ state.currentTrack.value=state.songs[40];state.isPlaying.value=true;await waitFor(()=>locator()?.dataset.teScrollTopVisible==='true','Offscreen current chart row did not expose locator')
+ const modalLocator=locator()
+ const before=JSON.stringify({track:state.currentTrack.value,playing:state.isPlaying.value,played:state.played.length})
+ locator().click();await pause();const row=target().getBoundingClientRect(),viewport=list.getBoundingClientRect()
+ expect(Math.abs((row.top+row.bottom)/2-(viewport.top+viewport.bottom)/2)<8,'Chart locator did not center the actual modal row')
+ expect(modalLocator.dataset.teScrollTopVisible==='false','Visible current chart row did not hide its locator')
+ expect(JSON.stringify({track:state.currentTrack.value,playing:state.isPlaying.value,played:state.played.length})===before,'Chart locator triggered play or toggle')
+ click('播放全部');await pause();expect(events.length===1&&state.played.length===0,'Guest playback must open login');expect(!document.querySelector('.toplists-dialog'),'Login left a modal above login page');expect(!modalLocator.isConnected,'Closing chart dialog leaked its locator registration');expect(![...document.querySelectorAll('[aria-label="定位正在播放的歌曲"]')].some(button=>button.dataset.teScrollTopVisible==='true'),'Closing chart dialog left a visible modal locator')
  state.setAuthenticated(true);click('播放新歌榜');await pause();expect(state.played.length===1&&state.played[0].queue.length===60,'Chart playback lost queue');click('播放全部');await pause();expect(state.played.length===2&&state.isPlaying.value,'Play-all paused the current song instead of replacing the queue');click('暂停 '+state.songs[0].title);await pause();expect(!state.isPlaying.value,'Current track pause did not work');window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await pause();expect(!document.querySelector('.toplists-dialog'),'Escape failed');expect(document.activeElement?.getAttribute('aria-label')==='播放新歌榜','Dialog did not restore trigger focus')
  let release;state.setPending(new Promise(resolve=>release=resolve));click('播放热歌榜');await nextTick();click('关闭排行榜');release(state.songs);state.setPending(null);await pause();expect(state.played.length===2,'Closed dialog caused stale autoplay')
  state.setFailure(true);click('刷新网易云排行榜');await pause();expect(document.querySelectorAll('.toplist-card').length===4&&document.querySelector('.toplists-notice'),'Refresh failure must retain usable charts');state.setFailure(false);click('刷新网易云排行榜');await pause();expect(!document.querySelector('.toplists-notice'),'Retry did not recover')
  state.providers.value=[];await nextTick();expect(!document.querySelector('.ncm-toplists'),'Disabled provider left live chart actions');state.providers.value=[state.source];await pause()
+ stopScrollControls();expect(!document.querySelector('.te-scroll-controls'),'Scroll controls leaked after toplist fixture cleanup')
 }
 window.prepareToplistPreview=async({dark,detail})=>{
  document.documentElement.dataset.theme=dark?'dark':'pureWhite'
@@ -146,7 +159,7 @@ app.whenReady().then(async()=>{
  try{
   await win.loadFile(process.argv.at(-1));await win.webContents.executeJavaScript('window.runToplistTests()')
   for(const [name,width,dark,detail,columns] of [['light',1280,false,false,4],['dark',1280,true,false,4],['narrow',760,false,false,2],['small',390,false,false,1],['detail',1280,false,true,4],['detail-dark',1280,true,true,4],['detail-small',390,false,true,1]]){
-   win.setSize(width,1100);await win.webContents.executeJavaScript('window.prepareToplistPreview('+JSON.stringify({dark,detail})+')');await new Promise(resolve=>setTimeout(resolve,100))
+  win.setSize(width,1100);await win.webContents.executeJavaScript('window.prepareToplistPreview('+JSON.stringify({dark,detail})+')');await new Promise(resolve=>setTimeout(resolve,100))
    const geometry=await win.webContents.executeJavaScript('window.toplistGeometry()');if(geometry.overflow||geometry.dialogOverflow||geometry.columns!==columns)throw new Error(name+' invalid geometry: '+JSON.stringify(geometry))
    if(process.env.TWILIGHT_TOPLIST_SCREENSHOTS){fs.mkdirSync(process.env.TWILIGHT_TOPLIST_SCREENSHOTS,{recursive:true});fs.writeFileSync(path.join(process.env.TWILIGHT_TOPLIST_SCREENSHOTS,name+'.png'),(await win.webContents.capturePage()).toPNG())}
   }

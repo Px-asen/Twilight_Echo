@@ -36,6 +36,20 @@ test('product gate owns every product suite once without invoking application or
   }
 })
 
+test('home, history, search/cloud and network locator regressions run once in the product gate', () => {
+  for (const file of [
+    'src/renderer/src/components/local-dashboard/HomeTrackLocator.behavior.test.ts',
+    'src/renderer/src/components/navigation/RecentTrackLocator.behavior.test.ts',
+    'src/renderer/src/components/streaming-page/StreamingAuxiliaryLocator.behavior.test.ts',
+    'src/renderer/src/components/network-sources/NetworkTrackLocator.behavior.test.ts'
+  ]) {
+    const owners = PRODUCT_SCRIPTS.filter((script) =>
+      packageJson.scripts[script].split(/\s+/).includes(file)
+    )
+    assert.equal(owners.length, 1, `${file} must run exactly once in the product gate`)
+  }
+})
+
 test('suite failures and launch errors are all reported and do not skip remaining outcomes', async () => {
   const called = []
   const report = await runProductQualityGate(async (script) => {

@@ -89,6 +89,16 @@ test('queue snapshots keep a unique stable entry identity for duplicate tracks t
   assert.equal(reordered[1]?.queueEntryId, snapshots[0]?.queueEntryId)
 })
 
+test('virtual window bounds a 3k middle range with streaming row height and overscan', () => {
+  const rowHeight = 64
+  const overscan = 8
+  const viewportHeight = 720
+  const range = getPlaybackQueueWindow(3_000, 64_000, viewportHeight, rowHeight, overscan)
+  assert.ok(range.end - range.start <= Math.ceil(viewportHeight / rowHeight) + overscan * 2)
+  assert.ok(range.start > 0)
+  assert.ok(range.end < 3_000)
+})
+
 test('virtual queue window mounts only bounded rows at 5k and 20k positions', () => {
   for (const total of [5_000, 20_000]) {
     const window = getPlaybackQueueWindow(total, (total - 1) * 54, 324)

@@ -3,6 +3,7 @@ import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const props = defineProps<{
   summary: {
@@ -27,6 +28,7 @@ const props = defineProps<{
   isPlaying: boolean
   currentTrackId: string | null
 }>()
+useDomTrackLocator('locatorRoot', () => props.currentTrackId)
 const emit = defineEmits<{
   play: [track: Track]
   shuffle: []
@@ -112,7 +114,7 @@ function trackFormat(track: Track): string {
 </script>
 
 <template>
-  <main class="archive-home dashboard-wrapper">
+  <main ref="locatorRoot" class="archive-home dashboard-wrapper">
     <div class="archive-page">
       <header class="archive-masthead">
         <div class="archive-intro">
@@ -234,6 +236,7 @@ function trackFormat(track: Track): string {
             <button
               v-for="track in visibleTracks"
               :key="track.id"
+              :data-te-track-id="track.id"
               class="archive-record"
               type="button"
               :aria-label="`${isPlaying && currentTrackId === track.id ? '暂停' : '播放'} ${track.title} · ${track.artist}`"

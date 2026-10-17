@@ -6,6 +6,7 @@ const {
   clonePodcastSubscriptionsDocument,
   isPodcastSubscriptionsDocument,
   podcastEpisodeProgressRatio,
+  podcastEpisodeTrackId,
   parsePodcastTrackId
 } = (await import(
   new URL('./podcastSubscriptions.ts', import.meta.url).href
@@ -40,6 +41,10 @@ test('podcast subscriptions document validates and clones', () => {
 })
 
 test('parsePodcastTrackId splits subscription id and guid with colons', () => {
+  assert.deepEqual(parsePodcastTrackId(podcastEpisodeTrackId('sub1', 'guid:with:colons')), {
+    subscriptionId: 'sub1',
+    episodeGuid: 'guid:with:colons'
+  })
   assert.deepEqual(parsePodcastTrackId('podcast:sub1:ep-1'), {
     subscriptionId: 'sub1',
     episodeGuid: 'ep-1'

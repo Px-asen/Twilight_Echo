@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Track } from '@renderer/types/music'
 import ArchiveArtwork from '@renderer/components/local-dashboard/ArchiveArtwork.vue'
 import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const props = defineProps<{
   summary: { tracks: number; albums: number; artists: number; hours: number; minutes: number }
@@ -24,6 +25,7 @@ const props = defineProps<{
   currentTime: number
   duration: number
 }>()
+useDomTrackLocator('locatorRoot', () => props.currentTrackId)
 const emit = defineEmits<{
   play: [track: Track]
   shuffle: []
@@ -77,7 +79,7 @@ function openActivity(): void {
 </script>
 
 <template>
-  <main class="night-harbor dashboard-wrapper">
+  <main ref="locatorRoot" class="night-harbor dashboard-wrapper">
     <div class="nh-page">
       <section class="nh-intro" aria-labelledby="nh-title">
         <div>
@@ -246,6 +248,7 @@ function openActivity(): void {
           <button
             v-for="(track, index) in visibleTracks"
             :key="track.id"
+            :data-te-track-id="track.id"
             class="nh-track"
             type="button"
             :class="{ 'is-current': currentTrackId === track.id }"

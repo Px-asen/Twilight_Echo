@@ -84,6 +84,7 @@ import { useSongListGridRendering } from './song-list/useSongListGridRendering'
 import { usePlaylistLifecycleActions } from './song-list/usePlaylistLifecycleActions.ts'
 import { useSongListSearch } from './song-list/useSongListSearch'
 import { useSongListVirtualScroll } from './song-list/useSongListVirtualScroll'
+import { useLocatePlayingTrack } from './song-list/useLocatePlayingTrack'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
 
 const props = defineProps<{
@@ -1429,6 +1430,19 @@ const {
 })
 
 const availableIndexLetters = computed(() => availableCollectionLetters(filteredGridItems.value))
+
+useLocatePlayingTrack({
+  containerRef,
+  tbodyRef,
+  displayTracks,
+  // Application playlists and device history can retain online snapshots.
+  libraryTracks: computed(() =>
+    props.category === 'playlists' || props.category === 'recent' ? displayTracks.value : tracks.value
+  ),
+  currentTrack,
+  enabled: computed(() => showTable.value && !isSwitching.value),
+  rowHeight
+})
 
 function collectionLetterDisabled(letter: string): boolean {
   return !availableIndexLetters.value.has(letter)

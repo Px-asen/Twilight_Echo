@@ -4,13 +4,17 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRadioStore, radioStationToTrack } from '../stores/useRadioStore'
 import { usePodcastStore, podcastEpisodeToTrack } from '../stores/usePodcastStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useDomTrackLocator } from '../composables/useDomTrackLocator'
 import { isInsecureHttpUrl } from '../../../shared/radioStations.ts'
 import type { PodcastSubscription } from '../../../shared/podcastSubscriptions.ts'
+import { podcastEpisodeTrackId } from '../../../shared/podcastSubscriptions.ts'
 import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 
 const radio = useRadioStore()
 const podcast = usePodcastStore()
-const { playTrack, playTrackFromPosition } = usePlayerStore()
+const player = usePlayerStore()
+const { playTrack, playTrackFromPosition } = player
+useDomTrackLocator('locatorRoot', () => player.currentTrack.value?.id)
 const { pushNotice } = useAppNoticeStore()
 const removingSubscriptions = ref(new Set<string>())
 
@@ -289,7 +293,7 @@ function formatDuration(seconds: number): string {
 </script>
 
 <template>
-  <div class="radio-podcast-page">
+  <div ref="locatorRoot" class="radio-podcast-page">
     <header class="page-header">
       <div class="page-heading">
         <span class="page-kicker">ONLINE LISTENING</span>
@@ -436,7 +440,12 @@ function formatDuration(seconds: number): string {
           <span class="collection-count">{{ radio.stations.value.length }} 个电台</span>
         </div>
         <div v-if="radio.stations.value.length > 0" class="station-grid">
-          <article v-for="station in radio.stations.value" :key="station.id" class="station-card">
+          <article
+            v-for="station in radio.stations.value"
+            :key="station.id"
+            class="station-card"
+            :data-te-track-id="station.id"
+          >
             <div class="station-main">
               <span class="station-icon"><i class="pi pi-broadcast"></i></span>
               <div>
@@ -556,7 +565,11 @@ function formatDuration(seconds: number): string {
             </button>
           </div>
           <ul class="episode-list">
-            <li v-for="episode in selectedPodcast.episodes" :key="episode.guid">
+            <li
+              v-for="episode in selectedPodcast.episodes"
+              :key="episode.guid"
+              :data-te-track-id="podcastEpisodeTrackId(selectedPodcast.id, episode.guid)"
+            >
               <div>
                 <strong>{{ episode.title }}</strong>
                 <small>

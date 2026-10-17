@@ -2384,11 +2384,6 @@ const streamingListTracks = computed(() => {
   return visibleDetailTracks.value
 })
 
-const detailTrackIds = computed(() => new Set(detailTracks.value.map((track) => track.id)))
-const canLocateDetailTrack = computed(
-  () => !!currentTrack.value && detailTrackIds.value.has(currentTrack.value.id)
-)
-
 const multiSelectEnabled = computed(
   () =>
     !!currentDetail.value ||
@@ -3977,7 +3972,6 @@ onMounted(async () => {
                 v-model:sort="detailSort"
                 v-model:direction="detailSortDirection"
                 :total-tracks="detailTracks.length"
-                :can-locate="canLocateDetailTrack"
                 :refreshing="detailLoading"
                 @refresh="retryCurrentView"
                 :current-track-id="currentTrack?.id ?? null"

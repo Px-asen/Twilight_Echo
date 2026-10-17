@@ -7,6 +7,7 @@ import type {
 import type { SearchType } from './streaming-page/useStreamingSearch'
 import { albumSearchKey, type AlbumSearchItem } from './streaming-page/albumSearch.ts'
 import CoverImg from './CoverImg.vue'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 interface PageState {
   first: number
@@ -60,6 +61,7 @@ const emit = defineEmits<{
 }>()
 
 const pageSize = 30
+useDomTrackLocator('locatorRoot', () => props.currentTrack?.id)
 
 function isSelected(trackId: string): boolean {
   return props.selectedIds?.has(trackId) ?? false
@@ -124,7 +126,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
     </div>
     <div v-else class="search-results-content">
       <div v-if="searchType === 'songs'" class="detail-content">
-        <div class="track-table-wrapper">
+        <div ref="locatorRoot" class="track-table-wrapper">
           <div v-if="hasSelection" class="selection-toolbar">
             <span class="selection-count">已选择 {{ selectedCount }} 首</span>
             <div class="selection-actions">
@@ -169,6 +171,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
                 v-for="(track, index) in searchResults"
                 :key="track.id"
                 class="track-row"
+                :data-te-track-id="track.id"
                 data-te-interactive
                 tabindex="0"
                 :aria-label="`${track.title} · ${track.artist}，按回车播放`"

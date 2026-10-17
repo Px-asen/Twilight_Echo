@@ -7,6 +7,7 @@ import type { Track } from '@renderer/types/music'
 import type { MediaProviderPlaylistSummary } from '@renderer/providers/mediaProvider'
 import type { ProviderHomeSection } from '@renderer/components/streaming-page/providerHomeTypes'
 import type { ProviderHomePresentation } from '../../../../shared/providerHome'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const props = defineProps<{
   providerLabel: string
@@ -20,6 +21,7 @@ const props = defineProps<{
   recommendPlaylists: MediaProviderPlaylistSummary[]
   currentTrackId?: string | null
 }>()
+useDomTrackLocator('locatorRoot', () => props.currentTrackId ?? null)
 
 const emit = defineEmits<{
   loadRecommendations: []
@@ -74,6 +76,7 @@ function count(value: number | undefined): string {
 <template>
   <div
     class="music-home"
+    ref="locatorRoot"
     :style="{ '--provider-accent': providerColor || 'var(--te-primary-500)' }"
     :aria-busy="recsLoading"
   >
@@ -205,6 +208,7 @@ function count(value: number | undefined): string {
           <button
             v-for="(track, index) in tracks"
             :key="track.id"
+            :data-te-track-id="track.id"
             type="button"
             class="music-track"
             :class="{ 'is-current': currentTrackId === track.id }"
@@ -264,6 +268,7 @@ function count(value: number | undefined): string {
           <button
             v-for="(track, position) in section.tracks.slice(0, 3)"
             :key="track.id"
+            :data-te-track-id="track.id"
             type="button"
             class="music-feature-track"
             :class="{ 'is-current': currentTrackId === track.id }"

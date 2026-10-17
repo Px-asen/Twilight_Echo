@@ -201,6 +201,10 @@ export function podcastEpisodeProgressRatio(episode: PodcastEpisode): number | n
   return Math.min(1, progress / episode.durationSeconds)
 }
 
+export function podcastEpisodeTrackId(subscriptionId: string, episodeGuid: string): string {
+  return `podcast:${subscriptionId}:${episodeGuid}`
+}
+
 /**
  * Parse player track ids of the form `podcast:{subscriptionId}:{episodeGuid}`.
  * Episode guids may themselves contain `:`.

@@ -9,11 +9,13 @@ import type { MediaProviderToplistSummary } from '@renderer/providers/mediaProvi
 import type { Track } from '@renderer/types/music'
 import { friendlyStreamingError } from '../streaming-page/friendlyStreamingError'
 import { useNcmToplists } from './useNcmToplists'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const emit = defineEmits<{ login: [] }>()
 const providerStore = useProviderStore()
 const player = usePlayerStore()
 const { currentTrack, isPlaying } = player
+useDomTrackLocator('locatorRoot', () => currentTrack.value?.id)
 const {
   available,
   charts,
@@ -283,12 +285,12 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
               重试
             </button>
           </div>
-          <div class="toplists-song-list" :aria-busy="detailLoading">
+          <div ref="locatorRoot" class="toplists-song-list" :aria-busy="detailLoading">
             <div v-if="detailLoading" class="toplists-detail-loading" role="status">
               <i class="ph ph-hourglass" aria-hidden="true"></i> 正在加载榜单歌曲…
             </div>
             <ol v-else aria-label="榜单歌曲">
-              <li v-for="(track, index) in tracks" :key="track.id">
+              <li v-for="(track, index) in tracks" :key="track.id" :data-te-track-id="track.id">
                 <button
                   class="toplist-song"
                   :class="{ 'is-current': currentTrack?.id === track.id }"

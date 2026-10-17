@@ -6,6 +6,7 @@ import { usePlayerStore } from '@renderer/stores/usePlayerStore'
 import { useProviderHistory } from '@renderer/components/navigation/useProviderHistory.ts'
 import CoverImg from '@renderer/components/CoverImg.vue'
 import type { Track } from '@renderer/types/music'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const SongList = defineAsyncComponent(() => import('@renderer/components/SongList.vue'))
 const props = defineProps<{
@@ -31,6 +32,7 @@ watch(
 )
 const providers = useProviderStore()
 const player = usePlayerStore()
+useDomTrackLocator('locatorRoot', () => player.currentTrack.value?.id)
 const options = computed(() =>
   providers.providers.value.filter((provider) =>
     provider.supportedMethods.includes('fetchRecentSongs')
@@ -160,11 +162,12 @@ function play(track: Track): void {
       <p v-else-if="!history.tracks.value.length" class="history-empty">
         这个平台暂时没有最近播放记录。
       </p>
-      <div v-else class="history-tracks">
+      <div v-else ref="locatorRoot" class="history-tracks">
         <div
           v-for="track in visibleTracks"
           :key="`${track.source}:${track.id}`"
           class="history-track"
+          :data-te-track-id="track.id"
         >
           <CoverImg
             :cover="track.cover"

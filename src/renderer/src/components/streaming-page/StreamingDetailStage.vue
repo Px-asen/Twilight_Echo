@@ -2,7 +2,8 @@
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import TrackInfoDialog from '@renderer/components/TrackInfoDialog.vue'
-import { computed, shallowRef, nextTick, watch } from 'vue'
+import { computed, shallowRef, watch } from 'vue'
+import { useStreamingTrackLocator } from './useStreamingTrackLocator.ts'
 import StreamingTrackToolbar from '@renderer/components/streaming-page/StreamingTrackToolbar.vue'
 import type {
   StreamingTrackSort,
@@ -42,7 +43,6 @@ const props = withDefaults(
     direction?: StreamingSortDirection
     totalTracks?: number
     refreshing?: boolean
-    canLocate?: boolean
     currentTrackId?: string | null
     trackActivationMode?: 'singleClick' | 'doubleClick'
     isExternal?: boolean
@@ -193,6 +193,8 @@ const {
   paddingTop,
   totalHeight,
   listRef,
+  scrollContainer,
+  itemBounds,
   scrollToIndex
 } = useProgressiveList(() => props.tracks)
 
@@ -202,12 +204,7 @@ watch(
   { flush: 'post' }
 )
 
-async function locateCurrentTrack(): Promise<void> {
-  emit('update:query', '')
-  await nextTick()
-  const index = props.tracks.findIndex((track) => track.id === props.currentTrackId)
-  if (index >= 0) scrollToIndex(index)
-}
+useStreamingTrackLocator({ scrollContainer, itemBounds }, props)
 
 function trackIndex(offset: number): number {
   return visibleStart.value + offset
@@ -344,12 +341,10 @@ const infoTrack = shallowRef<Track | null>(null)
       :count="tracks.length"
       :total="totalTracks ?? tracks.length"
       :refreshing="refreshing"
-      :can-locate="canLocate ?? false"
       @update:query="emit('update:query', $event)"
       @update:sort="emit('update:sort', $event)"
       @update:direction="emit('update:direction', $event)"
       @refresh="emit('refresh')"
-      @locate="locateCurrentTrack"
     />
     <div v-if="likedFooter?.hasMore" class="stage-footer" role="status">
       <span class="stage-footer-msg">

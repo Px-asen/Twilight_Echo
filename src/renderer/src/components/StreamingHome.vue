@@ -12,6 +12,7 @@ import type {
   ProviderHomePresentation,
   ProviderHomeSectionPresentation
 } from '../../../shared/providerHome'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 interface RecSection extends ProviderHomeSectionPresentation {
   key: string
@@ -38,6 +39,7 @@ const props = defineProps<{
   recommendPlaylists: MediaProviderPlaylistSummary[]
   currentTrackId?: string | null
 }>()
+useDomTrackLocator('locatorRoot', () => props.currentTrackId ?? null)
 
 const emit = defineEmits<{
   loadRecommendations: []
@@ -226,7 +228,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   >
     <template v-if="$slots.rankings" #rankings><slot name="rankings" /></template>
   </ProviderMusicHome>
-  <div v-else class="home-view">
+  <div v-else ref="locatorRoot" class="home-view">
     <!-- ── Signed-out invite ─────────────────────────────────────────── -->
     <section v-if="!isLoggedIn" class="hero-invite">
       <div class="invite-orb invite-orb-a" aria-hidden="true"></div>
@@ -417,6 +419,7 @@ function playPersonalizedStream(section: RecSection | null): void {
           <div
             v-for="(track, index) in chartTracks"
             :key="track.id"
+            :data-te-track-id="track.id"
             role="button"
             tabindex="0"
             @keydown.enter.self.prevent="playChartTrack(track)"

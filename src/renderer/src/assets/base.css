@@ -412,14 +412,19 @@
    styles above remain for in-flow controls (onboarding stepper, mini player,
    login error recovery). */
 
-/* Shared back-to-top control. scrollToTopButton.ts keeps exactly one of these in
-   the document and anchors it to whichever container is scrolled, so `left`/`top`
-   are written from script while everything else stays theme-owned here. */
-.te-scroll-top {
+/* One floating anchor; its buttons occupy stable absolute slots. */
+.te-scroll-controls {
   position: fixed;
   top: 0;
   left: 0;
   z-index: 16000;
+  pointer-events: none;
+}
+
+.te-scroll-top {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: grid;
   place-items: center;
   border: 1px solid var(--te-scroll-top-border);
@@ -450,6 +455,14 @@
   visibility: visible;
   transform: none;
   pointer-events: auto;
+}
+
+/* Both floating actions animate even when created already visible on a page. */
+@starting-style {
+  .te-scroll-top[data-te-scroll-top-visible='true'] {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.92);
+  }
 }
 
 .te-scroll-top:hover {

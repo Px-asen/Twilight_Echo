@@ -25,6 +25,7 @@ import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
 import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
 import CoverImg from './CoverImg.vue'
 import DEFAULT_COVER from '../assets/images/default-track-cover.webp'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const emit = defineEmits<{
   (event: 'select-view', category: string, filter: string | null): void
@@ -45,6 +46,7 @@ const audioOutputDspStore = useAudioOutputDspStore()
 const { currentTrack, isPlaying } = playbackStore
 const { audioProcessing, playbackInfo, outputInfo } = storeToRefs(audioOutputDspStore)
 const { playTrack, togglePlay, next, prev, setPlayMode } = playbackStore
+useDomTrackLocator('locatorRoot', () => currentTrack.value?.id ?? null)
 
 const now = ref(new Date())
 
@@ -809,7 +811,11 @@ function closeDspRouteDialog(): void {
 </script>
 
 <template>
-  <div class="home dashboard-wrapper" :class="{ 'has-route-dialog': dspRouteDialogOpen }">
+  <div
+    ref="locatorRoot"
+    class="home dashboard-wrapper"
+    :class="{ 'has-route-dialog': dspRouteDialogOpen }"
+  >
     <div class="ambient" aria-hidden="true">
       <span class="blob blob-a"></span>
       <span class="blob blob-b"></span>
@@ -1075,6 +1081,7 @@ function closeDspRouteDialog(): void {
             <button
               v-for="track in recentlyAdded"
               :key="track.id"
+              :data-te-track-id="track.id"
               type="button"
               class="fresh-tile"
               @click="playDashboardTrack(track)"
@@ -1120,6 +1127,7 @@ function closeDspRouteDialog(): void {
                 <button
                   v-for="(entry, index) in topTracks"
                   :key="entry.id"
+                  :data-te-track-id="entry.track?.id"
                   type="button"
                   class="chart-row"
                   @click="playDashboardTrack(entry.track)"

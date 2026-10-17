@@ -6,6 +6,7 @@ import TrackArtistLinks from '../TrackArtistLinks.vue'
 import CoverImg from '../CoverImg.vue'
 import ExplicitBadge from '../ExplicitBadge.vue'
 import { useProgressiveList } from './useProgressiveList.ts'
+import { useStreamingTrackLocator } from './useStreamingTrackLocator.ts'
 
 export type SocialStageKind = 'artist' | 'user_list' | 'user_playlists' | string
 
@@ -141,8 +142,12 @@ const {
   visibleStart,
   paddingTop,
   totalHeight,
-  listRef
+  listRef,
+  scrollContainer,
+  itemBounds
 } = useProgressiveList(() => props.tracks)
+
+useStreamingTrackLocator({ scrollContainer, itemBounds }, props)
 
 function trackIndex(offset: number): number {
   return visibleStart.value + offset

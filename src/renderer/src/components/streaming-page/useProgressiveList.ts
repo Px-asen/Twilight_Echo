@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef } from 'vue'
+import {computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type ComputedRef, type Ref} from 'vue'
 import { getPlaybackQueueWindow } from '../../utils/playbackQueueVirtualization.ts'
 
 const STREAMING_ROW_HEIGHT = 64
@@ -29,6 +29,8 @@ export function useProgressiveList<T>(
   totalHeight: ComputedRef<number>
   hasMoreToRender: ComputedRef<boolean>
   listRef: (el: unknown) => void
+  scrollContainer: Readonly<Ref<HTMLElement | null>>
+  itemBounds: (index: number) => { top: number; bottom: number } | null
   scrollToIndex: (index: number) => void
 } {
   const rowHeight = ref(options.rowHeight ?? STREAMING_ROW_HEIGHT)
@@ -37,30 +39,33 @@ export function useProgressiveList<T>(
   const scrollTop = ref(0)
   const viewportHeight = ref(720)
   const listOffsetTop = ref(0)
+  let listInsetTop = 0
   let rowObserver: ResizeObserver | null = null
   let observedRow: Element | null = null
   let listEl: HTMLElement | null = null
-  let scrollRoot: HTMLElement | null = null
+  const scrollContainer = shallowRef<HTMLElement | null>(null)
   let listParent: HTMLElement | null = null
   let measureFrame: number | null = null
   let disposed = false
   const layoutElements = new Set<Element>()
 
   function onScroll(): void {
-    if (!scrollRoot || document.hidden) return
-    scrollTop.value = scrollRoot.scrollTop
+    const root = scrollContainer.value
+    if (!root || document.hidden) return
+    scrollTop.value = root.scrollTop
   }
 
   function bindScrollRoot(element: HTMLElement | null): void {
-    if (scrollRoot === element) return
-    if (scrollRoot) {
-      scrollRoot.removeEventListener('scroll', onScroll)
-      rowObserver?.unobserve(scrollRoot)
+    const previous = scrollContainer.value
+    if (previous === element) return
+    if (previous) {
+      previous.removeEventListener('scroll', onScroll)
+      rowObserver?.unobserve(previous)
     }
-    scrollRoot = element
-    if (scrollRoot) {
-      scrollRoot.addEventListener('scroll', onScroll, { passive: true })
-      rowObserver?.observe(scrollRoot)
+    scrollContainer.value = element
+    if (element) {
+      element.addEventListener('scroll', onScroll, { passive: true })
+      rowObserver?.observe(element)
     }
   }
 
@@ -77,7 +82,7 @@ export function useProgressiveList<T>(
     const next = new Set<Element>()
     for (let node: Element | null = listEl; node; node = node.parentElement) {
       next.add(node)
-      if (node === scrollRoot) break
+      if (node === scrollContainer.value) break
       for (
         let sibling = node.previousElementSibling;
         sibling;
@@ -98,7 +103,8 @@ export function useProgressiveList<T>(
   function measure(): void {
     if (!listEl || document.hidden) return
     bindScrollRoot(findScrollParent(listEl))
-    if (!scrollRoot) return
+    const root = scrollContainer.value
+    if (!root) return
     observeLayout()
     observeRow()
     const actualRowHeight = observedRow?.getBoundingClientRect().height
@@ -106,10 +112,12 @@ export function useProgressiveList<T>(
       rowHeight.value = actualRowHeight
     }
     const listRect = listEl.getBoundingClientRect()
-    const rootRect = scrollRoot.getBoundingClientRect()
-    listOffsetTop.value = listRect.top - rootRect.top + scrollRoot.scrollTop
-    viewportHeight.value = scrollRoot.clientHeight
-    scrollTop.value = scrollRoot.scrollTop
+    const rootRect = root.getBoundingClientRect()
+    listInsetTop =
+      listEl.clientTop + (Number.parseFloat(window.getComputedStyle(listEl).paddingTop) || 0)
+    listOffsetTop.value = listRect.top + listInsetTop - rootRect.top + root.scrollTop
+    viewportHeight.value = root.clientHeight
+    scrollTop.value = root.scrollTop
   }
 
   function scheduleMeasure(): void {
@@ -135,13 +143,23 @@ export function useProgressiveList<T>(
     measure()
   }
 
+  function itemBounds(index: number): { top: number; bottom: number } | null {
+    if (!listEl || index < 0 || index >= items.value.length) return null
+    const top = listEl.getBoundingClientRect().top + listInsetTop + index * rowHeight.value
+    return { top, bottom: top + rowHeight.value }
+  }
+
   function scrollToIndex(index: number): void {
     measure()
-    if (!scrollRoot || index < 0 || index >= items.value.length) return
-    scrollRoot.scrollTo({
+    const root = scrollContainer.value
+    if (!root || index < 0 || index >= items.value.length) return
+    root.scrollTo({
       top: Math.max(
         0,
-        listOffsetTop.value + index * rowHeight.value - (viewportHeight.value - rowHeight.value) / 2
+        listOffsetTop.value +
+          index * rowHeight.value +
+          rowHeight.value / 2 -
+          viewportHeight.value / 2
       ),
       behavior: 'instant'
     })
@@ -201,8 +219,8 @@ export function useProgressiveList<T>(
     document.removeEventListener('visibilitychange', onVisibilityChange)
     if (measureFrame !== null) cancelAnimationFrame(measureFrame)
     measureFrame = null
-    if (scrollRoot) scrollRoot.removeEventListener('scroll', onScroll)
-    scrollRoot = null
+    scrollContainer.value?.removeEventListener('scroll', onScroll)
+    scrollContainer.value = null
     listEl = null
     listParent = null
     observedRow = null
@@ -216,6 +234,8 @@ export function useProgressiveList<T>(
     totalHeight,
     hasMoreToRender,
     listRef,
+    scrollContainer,
+    itemBounds,
     scrollToIndex
   }
 }

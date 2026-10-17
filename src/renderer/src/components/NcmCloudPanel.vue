@@ -2,6 +2,7 @@
 import CoverImg from './CoverImg.vue'
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { computed } from 'vue'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 import type { NcmCloudSelectedFile } from '../../../shared/ncmCloud.ts'
 import type { NcmCloudSong, NcmCloudTransferTask } from '../stores/useNcmStore.ts'
 
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const tasks = computed(() => Object.values(props.transferTasks))
+useDomTrackLocator('locatorRoot', () => props.currentTrackId)
 const visibleTasks = computed(() =>
   tasks.value
     .filter(
@@ -213,11 +215,12 @@ function progressLabel(task: NcmCloudTransferTask): string {
         </button>
       </div>
 
-      <div class="cloud-song-list">
+      <div ref="locatorRoot" class="cloud-song-list">
         <article
           v-for="song in songs"
           :key="String(song.cloudSongId)"
           class="cloud-song"
+          :data-te-track-id="song.track.id"
           :class="{ playing: song.track.id === currentTrackId }"
           tabindex="0"
           role="button"

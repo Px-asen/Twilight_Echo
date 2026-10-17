@@ -4,6 +4,7 @@ import {
   MAX_PODCAST_SUBSCRIPTIONS,
   clonePodcastSubscriptionsDocument,
   podcastEpisodeProgressRatio,
+  podcastEpisodeTrackId,
   parsePodcastTrackId,
   type PodcastEpisode,
   type PodcastSubscription,
@@ -51,7 +52,7 @@ export function podcastEpisodeToTrack(
   episode: PodcastEpisode
 ): Track {
   return {
-    id: `podcast:${subscription.id}:${episode.guid}`,
+    id: podcastEpisodeTrackId(subscription.id, episode.guid),
     title: episode.title,
     artist: subscription.author || subscription.title || '播客',
     album: subscription.title,

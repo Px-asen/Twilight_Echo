@@ -6,6 +6,7 @@ import CoverImg from '../CoverImg.vue'
 import ThemeIcon from '../ThemeIcon.vue'
 import { formatDuration } from '../song-list/formatDuration'
 import { useSongListVirtualScroll } from '../song-list/useSongListVirtualScroll'
+import { useLocatePlayingTrack } from '../song-list/useLocatePlayingTrack'
 import { useBackHandler } from '../../app/useBackStack.ts'
 import { useMusicStore } from '../../stores/useMusicStore'
 import { usePlayerStore } from '../../stores/usePlayerStore'
@@ -141,6 +142,16 @@ const {
 // 这两个只在模板里以 ref="…" 字符串出现，vue-tsc 不把那当使用（SongList 同样处理）。
 void containerRef.value
 void tbodyRef.value
+
+useLocatePlayingTrack({
+  containerRef,
+  tbodyRef,
+  displayTracks,
+  currentTrack,
+  enabled: computed(() => props.active && !!activePlaylist.value),
+  rowHeight,
+  playingRowSelector: '.is-playing'
+})
 
 // ─── 音源展示 ──────────────────────────────────────────────────────────────
 function sourceLabel(source: string): string {
@@ -472,7 +483,7 @@ function rowNumber(index: number): number {
               class="aggregate-row"
               data-te-interactive
               :class="{ 'is-playing': currentTrack?.id === track.id }"
-              :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+              :style="{ height: rowHeight + 'px', display: 'flex' }"
               @click="onRowClick(track)"
               @dblclick="onRowDoubleClick(track)"
             >

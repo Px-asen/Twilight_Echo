@@ -6,10 +6,10 @@ import SoundFieldArtwork from '@renderer/components/local-dashboard/SoundFieldAr
 import { soundFieldPlaybackKey } from '@renderer/components/local-dashboard/soundFieldPlayback'
 import { usePlayerStore } from '@renderer/stores/usePlayerStore'
 import { resolveTimeGreeting } from '@renderer/utils/timeGreeting'
+import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
 
 const playback = inject(soundFieldPlaybackKey, null)
 const { volume, setVolume, playMode, setPlayMode, queue } = usePlayerStore()
-const surface = ref<HTMLElement | null>(null)
 const lastVolume = ref(1)
 const now = ref(new Date())
 let resizeObserver: ResizeObserver | null = null
@@ -79,6 +79,7 @@ const props = defineProps<{
   currentTime: number
   duration: number
 }>()
+const surface = useDomTrackLocator('surface', () => props.currentTrackId)
 const emit = defineEmits<{
   play: [track: Track]
   shuffle: []
@@ -519,6 +520,7 @@ function seekFromInput(event: Event): void {
               <button
                 v-for="(track, index) in visibleTracks"
                 :key="track.id"
+                :data-te-track-id="track.id"
                 type="button"
                 class="sf-track"
                 :class="{ 'is-current': track.id === currentTrackId }"
