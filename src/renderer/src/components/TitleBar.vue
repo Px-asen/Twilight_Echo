@@ -31,6 +31,7 @@ defineEmits<{
   back: []
   login: [providerId?: string | null]
   settings: []
+  reportIssue: []
   plugins: []
   library: []
   notifications: [event: MouseEvent]
@@ -165,6 +166,15 @@ function close(): void {
     </div>
     <div class="title-bar-controls no-drag" @pointerdown="setPressOrigin">
       <div v-if="!closeOnly" class="title-bar-tools" role="group" aria-label="应用工具">
+        <button
+          type="button"
+          aria-label="上报问题"
+          class="settings-btn report-issue-btn"
+          title="上报问题"
+          @click="$emit('reportIssue')"
+        >
+          <TitleBarIcon name="bug" />
+        </button>
         <button
           type="button"
           aria-label="扩展中心"

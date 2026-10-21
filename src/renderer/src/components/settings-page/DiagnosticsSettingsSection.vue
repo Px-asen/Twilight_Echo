@@ -62,7 +62,7 @@ onUnmounted(() => clearInterval(timer))
 
 <template>
   <div id="application-diagnostics" class="section-block">
-    <h3>日志与问题排查</h3>
+    <h3>上报问题</h3>
     <p class="diagnostic-description">
       运行日志会自动保存在本机。遇到问题后可以记下时间，并导出诊断包用于排查。
     </p>

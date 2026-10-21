@@ -1158,6 +1158,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @back="handleTitleBack"
         @login="handleTitleLogin"
         @settings="toggleSettingsPage"
+        @report-issue="openSettingsPage('system', { anchor: 'application-diagnostics' })"
         @plugins="togglePluginPage"
         @library="selectSidebarPage({ kind: 'local', category: 'allSongs', filter: null })"
         :notifications-open="noticeHostRef?.historyOpen ?? false"

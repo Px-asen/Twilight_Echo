@@ -1398,6 +1398,12 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     terms: '系统 性能 备份 关于 版本 更新 备份 数据 曲库 歌单 队列 迁移'
   },
   {
+    id: 'application-diagnostics',
+    section: 'system',
+    title: '上报问题',
+    terms: '系统 上报 问题 反馈 日志 排查 诊断 导出 报告 bug report'
+  },
+  {
     id: 'mini-player',
     section: 'appearance',
     title: '迷你播放器',

@@ -6,6 +6,7 @@ const iconSlots = {
   search: 'navigation.search',
   settings: 'navigation.settings',
   puzzle_piece: 'navigation.plugin',
+  bug: 'navigation.report',
   arrow_left: 'navigation.back',
   person: 'navigation.person',
   bell: 'navigation.notification',

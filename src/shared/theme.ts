@@ -312,6 +312,7 @@ export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
   'navigation.radio': themeIconSlot('navigation', 'radio'),
   'navigation.import': themeIconSlot('navigation', 'plus'),
   'navigation.plugin': themeIconSlot('navigation', 'puzzle-piece'),
+  'navigation.report': themeIconSlot('navigation', 'bug'),
   'navigation.menu': themeIconSlot('navigation', 'list'),
   'navigation.back': themeIconSlot('navigation', 'arrow-left'),
   'navigation.settings': themeIconSlot('navigation', 'gear-six'),
