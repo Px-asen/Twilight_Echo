@@ -56,6 +56,66 @@ test('playback derives its cache key and size in main and rejects profile mismat
   assert.equal(closed, 1)
 })
 
+test('an existing sources manager uses the current cache directory for playback and cover enrichment', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'manager-cache-switch-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let currentRoot = join(root, 'before')
+  const cover = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+  const pictureData = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.from('image/jpeg\0'),
+    Buffer.from([3, 0]),
+    cover
+  ])
+  const pictureHeader = Buffer.alloc(10)
+  pictureHeader.write('APIC', 0, 'ascii')
+  pictureHeader.writeUInt32BE(pictureData.length, 4)
+  const frames = Buffer.concat([textFrame('TIT2', 'Cover title'), pictureHeader, pictureData])
+  const bytes = Buffer.concat([
+    Buffer.from('ID3'),
+    Buffer.from([3, 0, 0]),
+    syncsafe(frames.length),
+    frames
+  ])
+  const entry: NetworkEntry = {
+    id: buildNetworkEntryId('webdav', 'p1', '/music/cover.mp3'),
+    profileId: 'p1',
+    path: '/music/cover.mp3',
+    name: 'cover.mp3',
+    kind: 'audio',
+    sizeBytes: bytes.length
+  }
+  const library = createNetworkLibrary({ filePath: join(root, 'library.json') })
+  await library.addEntries('p1', '/music', [entry])
+  const manager = createNetworkSourcesManager({
+    store: fakeStore,
+    cacheRoot: () => join(currentRoot, 'network-cache'),
+    coverCacheRoot: () => join(currentRoot, 'cover-cache'),
+    library,
+    getAdapter: async () => ({
+      protocol: 'webdav',
+      createSession: async () => ({
+        protocol: 'webdav',
+        list: async () => [],
+        stat: async () => entry,
+        resolvePlaybackUrl: async () => null,
+        readStream: async () => Readable.from([bytes]),
+        close: async () => {}
+      })
+    })
+  })
+  const before = await manager.resolvePlayback('p1', entry)
+  assert.equal(before.cacheFilePath, join(currentRoot, 'network-cache', `${entry.id}.mp3`))
+  currentRoot = join(root, 'after')
+  const after = await manager.resolvePlayback('p1', entry)
+  assert.equal(after.cacheFilePath, join(currentRoot, 'network-cache', `${entry.id}.mp3`))
+  assert.deepEqual(await readFile(after.cacheFilePath!), bytes)
+  assert.deepEqual(await manager.enrichLibrary('p1'), { enriched: 1, failed: 0 })
+  const [enriched] = await library.listEntries('p1')
+  assert.equal(enriched.coverPath, join(currentRoot, 'cover-cache', `${entry.id}.jpeg`))
+  assert.deepEqual(await readFile(enriched.coverPath!), cover)
+})
+
 function syncsafe(value: number): Buffer {
   return Buffer.from([
     (value >> 21) & 0x7f,

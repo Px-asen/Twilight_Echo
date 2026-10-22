@@ -462,7 +462,10 @@ export const NOMINAL_CARD_GEOMETRY: DisplacementGeometry = {
 export function measureSurfaceGeometry(element: Element): DisplacementGeometry | null {
   const rect = element.getBoundingClientRect()
   if (rect.width < 1 || rect.height < 1) return null
-  const radius = Number.parseFloat(getComputedStyle(element).borderTopLeftRadius)
+  const view = element.ownerDocument.defaultView
+  const radius = Number.parseFloat(
+    (view ? view.getComputedStyle(element) : getComputedStyle(element)).borderTopLeftRadius
+  )
   return {
     width: rect.width,
     height: rect.height,

@@ -4,7 +4,10 @@ import { useMusicStore } from '../stores/useMusicStore.ts'
 
 /** Lazy, component-owned reads. Rendering an unused search (including previews)
  * must not load a library. All local consumers share the same invalidation rules. */
-export function useLibraryUnifiedSearch(onInvalidate?: (revision?: number) => void) {
+export function useLibraryUnifiedSearch(
+  onInvalidate?: (revision?: number) => void,
+  options?: { listen?: boolean }
+) {
   const store = useMusicStore()
   let source: ReturnType<typeof store.createUnifiedSearchSource> | null = null
   let minimumRevision = 0
@@ -19,6 +22,7 @@ export function useLibraryUnifiedSearch(onInvalidate?: (revision?: number) => vo
     return source
   }
   onMounted(() => {
+    if (options?.listen === false) return
     unsubscribe = window.api?.library?.onChanged?.((change) => {
       if (change?.kind !== 'database' || change.revision <= minimumRevision) return
       minimumRevision = change.revision

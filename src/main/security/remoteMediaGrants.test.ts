@@ -322,3 +322,121 @@ test('remote media proxy refuses credentialed redirect targets and oversized res
   const oversized = await oversizedHandler(new Request(granted))
   assert.equal(oversized.status, 413)
 })
+
+test('an aborted remote media request starts neither an upstream request nor a cache write', async () => {
+  const grants = new RemoteMediaGrantService()
+  const granted = grants.grant('https://cover.example/aborted.jpg', 'image')
+  const controller = new AbortController()
+  controller.abort()
+  let requests = 0
+  let writes = 0
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    imageCache: {
+      read: async () => null,
+      write: async () => {
+        writes++
+      }
+    },
+    fetch: async () => {
+      requests++
+      return new Response('image', { headers: { 'content-type': 'image/jpeg' } })
+    }
+  })
+  await assert.rejects(handler(new Request(granted, { signal: controller.signal })), {
+    name: 'AbortError'
+  })
+  assert.equal(requests, 0)
+  assert.equal(writes, 0)
+})
+
+test('cancelling a buffered remote cover propagates through redirects and releases its upstream body', async () => {
+  const grants = new RemoteMediaGrantService()
+  const granted = grants.grant('https://cover.example/slow.jpg', 'image')
+  const controller = new AbortController()
+  let reading!: () => void
+  const started = new Promise<void>((resolve) => {
+    reading = resolve
+  })
+  const signals: Array<AbortSignal | null | undefined> = []
+  let cancelled = false
+  let writes = 0
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    imageCache: {
+      read: async () => null,
+      write: async () => {
+        writes++
+      }
+    },
+    fetch: async (_source, init) => {
+      signals.push(init.signal)
+      if (signals.length === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://cdn.example/slow.jpg' }
+        })
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull() {
+            reading()
+          },
+          cancel() {
+            cancelled = true
+          }
+        }),
+        { headers: { 'content-type': 'image/jpeg' } }
+      )
+    }
+  })
+  const pending = handler(new Request(granted, { signal: controller.signal }))
+  await started
+  controller.abort()
+  await assert.rejects(pending, { name: 'AbortError' })
+  assert.equal(signals.length, 2)
+  assert.ok(signals.every((signal) => signal?.aborted))
+  assert.equal(cancelled, true)
+  assert.equal(writes, 0)
+})
+
+test('remote media rejection releases bodies for HTTP, type, size and invalid redirects', async () => {
+  const grants = new RemoteMediaGrantService()
+  const granted = grants.grant('https://cover.example/rejected.jpg', 'image')
+  const cases: Array<{ status: number; headers: Record<string, string>; expectedStatus: number }> =
+    [
+      { status: 403, headers: { 'content-type': 'text/html' }, expectedStatus: 502 },
+      { status: 200, headers: { 'content-type': 'text/html' }, expectedStatus: 415 },
+      {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(25 * 1024 * 1024 + 1) },
+        expectedStatus: 413
+      },
+      {
+        status: 302,
+        headers: { location: 'https://user:secret@cdn.example/image.jpg' },
+        expectedStatus: 502
+      },
+      { status: 302, headers: {}, expectedStatus: 502 }
+    ]
+  for (const entry of cases) {
+    let cancelled = false
+    const handler = createRemoteMediaRequestHandler({
+      grants,
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true
+            }
+          }),
+          {
+            status: entry.status,
+            headers: entry.headers
+          }
+        )
+    })
+    assert.equal((await handler(new Request(granted))).status, entry.expectedStatus)
+    assert.equal(cancelled, true, `response ${entry.status} / ${JSON.stringify(entry.headers)}`)
+  }
+})

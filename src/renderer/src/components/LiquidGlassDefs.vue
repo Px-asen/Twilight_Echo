@@ -7,7 +7,8 @@ import {
   LIQUID_GLASS_PLAYBAR_SELECTOR,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   resolveAberrationBlur,
-  resolveChannelScales
+  resolveChannelScales,
+  type LiquidGlassTheme
 } from '../../../shared/liquidGlass.ts'
 import {
   displacementScaleForRadius,
@@ -17,9 +18,13 @@ import {
   type DisplacementGeometry
 } from '../utils/liquidGlassDisplacement.ts'
 import { glassRasterDensity, observeDevicePixelRatio } from '../utils/glassRasterDensity.ts'
-import { createFrameCoalescer } from '../utils/liquidGlassPointer.ts'
+import { createFrameCoalescer, type FrameCoalescer } from '../utils/liquidGlassPointer.ts'
 
-const props = defineProps<{ active: boolean }>()
+const props = defineProps<{
+  active: boolean
+  targetDocument?: Document | null
+  theme?: LiquidGlassTheme
+}>()
 const playbarMapUrl = ref('')
 const playbarGeometry = ref<DisplacementGeometry>(NOMINAL_PLAYBAR_GEOMETRY)
 const displacementScale = ref(DEFAULT_LIQUID_GLASS_LIGHT.displacementScale)
@@ -35,10 +40,22 @@ let geometryObserver: ResizeObserver | null = null
 let mountObserver: MutationObserver | null = null
 let target: Element | null = null
 let stopObservingPixelRatio: (() => void) | null = null
+let targetWindow: Window | null = null
+let geometryFrames: FrameCoalescer<void> | null = null
+
+function ownerDocument(): Document {
+  return props.targetDocument ?? document
+}
 
 function syncFilterInputs(): void {
   if (!props.active) return
-  const style = getComputedStyle(document.documentElement)
+  if (props.theme) {
+    displacementScale.value = props.theme.displacementScale
+    aberrationIntensity.value = props.theme.aberrationIntensity
+    return
+  }
+  const doc = ownerDocument()
+  const style = (doc.defaultView ?? window).getComputedStyle(doc.documentElement)
   const number = (name: string, fallback: number): number => {
     const value = Number.parseFloat(style.getPropertyValue(name))
     return Number.isFinite(value) ? value : fallback
@@ -55,7 +72,8 @@ function syncFilterInputs(): void {
 
 function ensureMaps(): void {
   if (!props.active) return
-  const surface = document.querySelector(LIQUID_GLASS_PLAYBAR_SELECTOR)
+  const doc = ownerDocument()
+  const surface = doc.querySelector(LIQUID_GLASS_PLAYBAR_SELECTOR)
   if (surface !== target) {
     if (target) geometryObserver?.unobserve(target)
     target = surface
@@ -67,15 +85,20 @@ function ensureMaps(): void {
     return
   }
   playbarGeometry.value = geometry
-  playbarMapUrl.value = getDisplacementMapUrl(geometry, glassRasterDensity(window.devicePixelRatio))
+  playbarMapUrl.value = getDisplacementMapUrl(
+    geometry,
+    glassRasterDensity((doc.defaultView ?? window).devicePixelRatio)
+  )
 }
 
 // Resize storms share one trailing update; raster generation is also memoized.
-const geometryFrames = createFrameCoalescer<void>(ensureMaps, { minIntervalMs: 120 })
 function affectsPlaybar(node: Node): boolean {
+  if (node.nodeType !== 1) return false
+  const element = node as Element
   return (
-    node instanceof Element &&
-    (node === target || node.matches('.player-bar') || Boolean(node.querySelector('.player-bar')))
+    element === target ||
+    element.matches('.player-bar') ||
+    Boolean(element.querySelector('.player-bar'))
   )
 }
 function clearObservers(): void {
@@ -84,9 +107,12 @@ function clearObservers(): void {
   mountObserver?.disconnect()
   mountObserver = null
   target = null
-  geometryFrames.cancel()
+  geometryFrames?.cancel()
+  geometryFrames = null
   stopObservingPixelRatio?.()
   stopObservingPixelRatio = null
+  targetWindow?.removeEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
+  targetWindow = null
 }
 function syncActive(): void {
   clearObservers()
@@ -94,45 +120,49 @@ function syncActive(): void {
     playbarMapUrl.value = ''
     return
   }
-  geometryObserver = new ResizeObserver(() => geometryFrames.schedule(undefined))
+  const doc = ownerDocument()
+  const view = doc.defaultView ?? window
+  targetWindow = view
+  geometryFrames = createFrameCoalescer<void>(ensureMaps, {
+    minIntervalMs: 120,
+    requestFrame: (callback) => view.requestAnimationFrame(callback),
+    cancelFrame: (handle) => view.cancelAnimationFrame(handle),
+    now: () => view.performance.now()
+  })
+  geometryObserver = new view.ResizeObserver(() => geometryFrames?.schedule(undefined))
   // Observe only the player host, so unrelated list/lyric mutations do no work.
-  mountObserver = new MutationObserver((records) => {
+  mountObserver = new view.MutationObserver((records) => {
     if (
       records.some((record) =>
         record.type === 'attributes'
-          ? record.target instanceof Element && record.target.matches('.player-bar')
+          ? record.target.nodeType === 1 && (record.target as Element).matches('.player-bar')
           : [...record.addedNodes, ...record.removedNodes].some(affectsPlaybar)
       )
     ) {
-      geometryFrames.schedule(undefined)
+      geometryFrames?.schedule(undefined)
     }
   })
-  mountObserver.observe(document.querySelector('.app-shell-player') ?? document.body, {
+  mountObserver.observe(doc.querySelector('.app-shell-player') ?? doc.body, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ['class']
   })
-  stopObservingPixelRatio = observeDevicePixelRatio(
-    () => geometryFrames.schedule(undefined),
-    window
-  )
+  stopObservingPixelRatio = observeDevicePixelRatio(() => geometryFrames?.schedule(undefined), view)
+  view.addEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
   syncFilterInputs()
   ensureMaps()
 }
 function onTuningChanged(): void {
   syncFilterInputs()
-  if (props.active) geometryFrames.schedule(undefined)
+  if (props.active) geometryFrames?.schedule(undefined)
 }
-onMounted(() => {
-  syncActive()
-  window.addEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
+onMounted(syncActive)
+onBeforeUnmount(clearObservers)
+watch(() => [props.active, props.targetDocument], syncActive, { flush: 'post' })
+watch(() => [props.theme?.displacementScale, props.theme?.aberrationIntensity], onTuningChanged, {
+  flush: 'post'
 })
-onBeforeUnmount(() => {
-  clearObservers()
-  window.removeEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
-})
-watch(() => props.active, syncActive, { flush: 'post' })
 </script>
 
 <template>

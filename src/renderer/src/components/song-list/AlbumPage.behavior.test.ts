@@ -99,7 +99,7 @@ const expect = (ok,message) => {if(!ok) throw new Error(message)}
 const png = color => {const c=document.createElement('canvas');c.width=c.height=320;const x=c.getContext('2d');const gradient=x.createLinearGradient(0,0,320,320);gradient.addColorStop(0,color);gradient.addColorStop(1,'#23324a');x.fillStyle=gradient;x.fillRect(0,0,320,320);x.strokeStyle='#ffffff66';x.lineWidth=2;for(let i=0;i<8;i++){x.beginPath();x.arc(160,160,25+i*15,0,Math.PI*2);x.stroke()}return c.toDataURL()}
 const blue=png('#64a0d5'), green=png('#62ae95'), red=png('#cc7960')
 const errors=[]
-window.api={data:{loadPlaybackBookmarks:async()=>null},providers:{list:async()=>[]}}
+window.api={data:{loadPlaybackBookmarks:async()=>null},providers:{list:async()=>[]},library:{getStorageMode:async()=>'json',onChanged:()=>()=>{}}}
 window.albumPlayer={currentTrack:ref(null),isPlaying:ref(false),plays:[],mode:'order',playTrack(t,q){window.albumPlayer.plays.push({track:t.id,count:q.length})},setPlayMode(mode){window.albumPlayer.mode=mode},playNextTrack(){},appendQueueTracks(){}}
 const music=useMusicStore()
 music.tracks.value=Array.from({length:6000},(_,i)=>({id:'track-'+i,title:i===0?'晨光':'Song '+i,artist:i===0?'周末乐队':'Artist '+i,album:i===0?'A 晨光与远方':i===1?'B 一张有着很长很长名称的专辑：那些跨过山海与时间的声音':i===2?'C 合辑 / Various Artists':String.fromCharCode(65+i%26)+' Album '+String(i).padStart(4,'0'),albumId:'album-'+i,filePath:'C:/Music/'+i+'/song.flac',fileName:'song.flac',duration:182,size:1,cover:i===3?null:i===4?'data:image/png;base64,broken':i%3===0?blue:i%3===1?green:red,releaseDate:i===3?undefined:i===2?'1998':i===1?'2019-08':'2020-05-12',genre:'Rock',lyrics:'[00:00]lyrics',source:'local'}))

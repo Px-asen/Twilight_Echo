@@ -14,6 +14,8 @@ import type {
 import { appendUniqueTracks } from './streamingPageModel.ts'
 import { createNcmPlaylistEditor } from './ncmPlaylistEditor.ts'
 import { getTrackSource } from '../../utils/logicalTrackModel.ts'
+import { createLibraryUnifiedSearch } from '../../stores/library/libraryUnifiedSearch.ts'
+import type { LibraryItem } from '../../stores/library/musicStoreTypes.ts'
 import {
   findStreamingArtistById,
   matchStreamingArtistsByName
@@ -24,6 +26,23 @@ const homeSource = readFileSync(new URL('../StreamingHome.vue', import.meta.url)
 const discoverySource = readFileSync(new URL('../StreamingDiscovery.vue', import.meta.url), 'utf8')
 const providerHomeSource = readFileSync(new URL('./ProviderMusicHome.vue', import.meta.url), 'utf8')
 const headerSource = readFileSync(new URL('./StreamingContentHeader.vue', import.meta.url), 'utf8')
+
+function createLocalAlbumSource(albums: () => readonly LibraryItem[]) {
+  return createLibraryUnifiedSearch({
+    getStorageMode: async () => 'json',
+    getJsonTracks: () => albums().flatMap((album) => album.tracks),
+    getJsonAlbums: albums,
+    getPreferences: () => ({ revision: 0, sources: [] }),
+    api: {
+      queryTracks: async () => {
+        throw new Error('JSON album navigation must not query SQLite')
+      },
+      getMetadata: async () => {
+        throw new Error('JSON album navigation must not query SQLite')
+      }
+    }
+  })
+}
 
 function createAlbumPlaylistHarness() {
   const owned = source.match(/const ownedUserPlaylists = computed\([\s\S]*?\n\)/)?.[0]
@@ -125,12 +144,22 @@ test('album search detail opens the result source, retries in place and ignores 
   assert.ok(code)
   assert.match(source, /@open-album="openSearchAlbum"/)
   const stack: Array<{ providerId: string }> = []
-  const local = [createTrack('local:1', 'local')]
+  const resultTracks = [createTrack('qq:1', 'qq')]
+  const localViews: unknown[][] = []
   let finishRemote!: (tracks: Track[]) => void
   let token = 0
   const calls: Array<{ providerId: string; id: string }> = []
   const scope = {
     activeProvider: { value: 'another-provider' },
+    detailNavigationToken: 0,
+    isCurrentDetailNavigation: (request: number) => request === scope.detailNavigationToken,
+    localSearchSource: {
+      resolveAlbum: async (selection: { albumId: string }) => ({
+        mode: 'sqlite',
+        albumId: selection.albumId
+      })
+    },
+    emit: (...args: unknown[]) => localViews.push(args),
     beginDetailTransition: () => {},
     pushDetail: (view: { providerId: string }) => stack.push(view),
     replaceTopDetail: (view: { providerId: string }) => {
@@ -144,7 +173,7 @@ test('album search detail opens the result source, retries in place and ignores 
     albumSearch: {
       loadAlbumTracks: async (album: { providerId: string; id: string }) => {
         calls.push(album)
-        if (album.providerId === 'local') return local
+        if (album.providerId === 'qq') return resultTracks
         return new Promise<Track[]>((resolve) => {
           finishRemote = resolve
         })
@@ -164,25 +193,28 @@ test('album search detail opens the result source, retries in place and ignores 
     name: 'Album',
     trackCount: 1,
     cover: null,
-    providerName: 'Local',
-    providerId: 'local'
+    providerName: 'QQ',
+    providerId: 'qq'
   }
   const remote = handlers.openSearchAlbum({ ...album, providerId: 'ncm' })
   await handlers.openSearchAlbum(album)
   finishRemote([createTrack('ncm:1', 'ncm')])
   await remote
-  assert.equal(scope.detailTracks.value, local)
+  assert.equal(scope.detailTracks.value, resultTracks)
   assert.equal(scope.activeProvider.value, 'another-provider')
   assert.equal(scope.detailLoading.value, false)
   assert.equal(scope.detailError.value, '')
-  assert.equal(stack.at(-1)?.providerId, 'local')
+  assert.equal(stack.at(-1)?.providerId, 'qq')
   const depth = stack.length
-  await handlers.openAlbum(album, 'local', true)
+  await handlers.openAlbum(album, 'qq', true)
   assert.equal(stack.length, depth)
   assert.deepEqual(
     calls.map((call) => call.providerId),
-    ['ncm', 'local', 'local']
+    ['ncm', 'qq', 'qq']
   )
+  await handlers.openSearchAlbum({ ...album, providerId: 'local' })
+  assert.deepEqual(localViews, [['selectView', 'albums', 'album:1']])
+  assert.equal(calls.length, 3, 'SQLite local albums navigate without a full album track load')
 })
 test('album links retain native local release navigation and online source', async () => {
   const code = source.match(
@@ -192,6 +224,9 @@ test('album links retain native local release navigation and online source', asy
   const track = createTrack('local:1', 'local')
   const opened: Array<{ providerId: string; id: string | number }> = []
   const localViews: unknown[][] = []
+  const localSearchSource = createLocalAlbumSource(() => [
+    { id: 'release:1', name: 'Album', tracks: [track], cover: null, trackCount: 1 }
+  ])
   const handler = runInNewContext(`${stripTypeScriptTypes(code)}\nopenTrackAlbum`, {
     detailNavigationToken: 0,
     getTrackSource,
@@ -199,11 +234,8 @@ test('album links retain native local release navigation and online source', asy
     selectDetailProvider: async () => undefined,
     isCurrentDetailNavigation: () => true,
     emit: (...args: unknown[]) => localViews.push(args),
-    musicStore: {
-      albums: {
-        value: [{ id: 'release:1', name: 'Album', tracks: [track], cover: null, trackCount: 1 }]
-      }
-    },
+    localSearchSource,
+    friendlyStreamingError: (error: Error) => error.message,
     openAlbum: async (album: { id: string | number }, providerId: string) =>
       opened.push({ providerId, id: album.id }),
     pushNotice: () => assert.fail('the local library supplies the album identity')
@@ -328,6 +360,10 @@ function createTrackMetadataNavigationHarness() {
   const localViews: unknown[][] = []
   const providerSelections: Array<[string, boolean]> = []
   const methods = ['fetchArtistTopSongs', 'searchArtists', 'fetchAlbumTracks']
+  const localAlbums = ref<LibraryItem[]>([
+    { id: 'local-release', name: 'Local Release', tracks: [], cover: null, trackCount: 0 }
+  ])
+  const localSearchSource = createLocalAlbumSource(() => localAlbums.value)
   const scope = {
     getTrackSource,
     findStreamingArtistById,
@@ -351,7 +387,8 @@ function createTrackMetadataNavigationHarness() {
         ]
       })
     },
-    musicStore: { albums: { value: [{ id: 'local-release', tracks: [] as Track[] }] } },
+    musicStore: { albums: localAlbums },
+    localSearchSource,
     selectProvider: (id: string, persist = true) => {
       providerSelections.push([id, persist])
       scope.activeProvider.value = id
@@ -438,6 +475,11 @@ function createTrackMetadataNavigationHarness() {
     popDetail: () => void
     resetDetail: () => void
     stop: () => void
+  }
+  const stopNavigation = runtime.stop
+  runtime.stop = () => {
+    stopNavigation()
+    localSearchSource.dispose()
   }
   return {
     track,

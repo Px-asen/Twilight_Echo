@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import { TWILIGHT_PLUGIN_API_VERSION } from '../../../main/plugins/types.ts'
 import {
   THEME_MODE_DEFINITIONS,
   THEME_TOKEN_DEFINITIONS,
@@ -39,6 +40,11 @@ const equalizerSurfaces = [
   equalizerToolbar
 ].join('\n')
 const dspRack = readFileSync(new URL('./DspRackPage.vue', import.meta.url), 'utf8')
+const audioWorkspace = readFileSync(new URL('./AudioWorkspace.vue', import.meta.url), 'utf8')
+const dspWorkbenchStyle = readFileSync(
+  new URL('./dsp-rack/DspWorkbench.css', import.meta.url),
+  'utf8'
+)
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const obsidianGlassLayout = readFileSync(
@@ -185,7 +191,8 @@ test('every registered playback token is wired into a real playback or DSP surfa
     playerBar,
     playbackQueueDrawer,
     equalizerSurfaces,
-    dspRack
+    dspRack,
+    dspWorkbenchStyle
   ].join('\n')
   assert.ok(playbackVariables.length >= 20)
   for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
@@ -395,7 +402,23 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(equalizerSurfaces, /data-te-equalizer-panel='glass'/)
   assert.match(equalizerSurfaces, /data-te-equalizer-spectrum='bars'/)
   assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
-  assert.match(dspRack, /data-te-equalizer-button='solid'/)
+  assert.match(equalizerSurfaces, /data-te-equalizer-button='solid'/)
+  assert.match(audioWorkspace, /import DspRackPage from '\.\/DspRackPage\.vue'/)
+  assert.match(audioWorkspace, /class="audio-workspace"/)
+  assert.match(audioWorkspace, /<DspRackPage\b/)
+  assert.match(audioWorkspace, /<style src="\.\/dsp-rack\/DspWorkbench\.css"><\/style>/)
+  assert.match(
+    dspWorkbenchStyle,
+    /\.audio-workspace\s*\{[^}]*--dsp-accent: var\(--te-primary-500\)/
+  )
+  assert.match(
+    dspWorkbenchStyle,
+    /\.audio-workspace button\s*\{[^}]*border-radius: var\(--te-equalizer-button-radius, 6px\)/
+  )
+  assert.match(
+    dspWorkbenchStyle,
+    /\.audio-workspace \.primary-button\s*\{[^}]*background: var\(--dsp-accent\)/
+  )
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
 })
 
@@ -421,8 +444,11 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
 })
 
-test('phase six plugin shell layouts are API v3, host-owned, and compatibility-reporting', () => {
-  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 3/)
+test('phase six plugin shell layouts preserve schema v3 compatibility under the current host API', () => {
+  assert.match(
+    pluginApi,
+    new RegExp(`TWILIGHT_PLUGIN_API_VERSION = ${TWILIGHT_PLUGIN_API_VERSION}\\b`)
+  )
   assert.match(pluginApi, /interface TwilightStructuredThemeV2/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV3/)
   assert.match(pluginThemeTemplate, /"apiVersion": 3/)
@@ -441,7 +467,7 @@ test('phase six plugin shell layouts are API v3, host-owned, and compatibility-r
   assert.match(app, /grid-template-areas: var\(--te-shell-template-areas\)/)
   assert.match(studioEditor, /profile\.modes = normalizeThemeModes/)
   assert.match(studioSurfaces, /selectedPluginTheme\?\.compatibilityNotes/)
-  assert.equal(pluginThemeContract.pluginApiVersion, 3)
+  assert.equal(pluginThemeContract.pluginApiVersion, TWILIGHT_PLUGIN_API_VERSION)
   assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 3)
   assert.deepEqual(
     pluginThemeContract.tokens.map(({ id }) => id),

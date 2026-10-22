@@ -11,9 +11,77 @@ import { createLibraryTrackPages } from './libraryTrackPages.ts'
 import { libraryTrack } from '../../utils/libraryQueuePlayback.ts'
 import type { Playlist } from './musicStoreTypes.ts'
 import { toPlaylistTrackSnapshot } from './musicStoreData.ts'
+import { reconcileImportEntries } from '../../../../shared/externalPlaylist.ts'
 
 const preferences = { revision: 1, versions: [] }
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+test('ordinary and imported uploads inspect only one member window before the first append', async (t) => {
+  for (const imported of [false, true]) {
+    await t.test(imported ? 'imported members' : 'ordinary members', async () => {
+      const trackIds = Array.from({ length: 605 }, (_, index) => String(index))
+      let inspected = 0,
+        count = 0
+      const sizes: number[] = []
+      const playlist: Playlist = { id: 'bounded', name: 'Bounded', createdAt: '', trackIds }
+      if (imported) {
+        let serial = 0
+        const entries = reconcileImportEntries(
+          [],
+          trackIds.map((title) => ({ title })),
+          () => String(serial++)
+        )
+        playlist.imported = {
+          version: 1,
+          source: { kind: 'file', label: 'Import' },
+          entries: new Proxy(entries, {
+            get(target, key, receiver) {
+              if (typeof key === 'string' && /^\d+$/.test(key)) inspected++
+              return Reflect.get(target, key, receiver)
+            }
+          }),
+          complete: true,
+          importedAt: '',
+          generation: 'one',
+          membershipRevision: 0
+        }
+      } else {
+        playlist.trackSnapshots = new Proxy({}, {
+          get() {
+            inspected++
+            return undefined
+          }
+        })
+      }
+      const owner = createLibraryPlaylistView({
+        syncPlaylistView: async (request) => {
+          if (request.kind === 'begin' || request.kind === 'drop')
+            return { id: request.id, sequence: 0, count: 0, committed: false }
+          if (request.kind === 'append') {
+            if (!sizes.length) assert.equal(inspected, 200)
+            sizes.push(request.entries.length)
+            count += request.entries.length
+          }
+          return {
+            id: request.id,
+            sequence: request.sequence,
+            count,
+            committed: request.kind === 'commit'
+          }
+        }
+      }, () => 'bounded-view')
+      try {
+        await owner.setPlaylist(playlist, preferences)
+        assert.equal(owner.state.value.error, '')
+        assert.deepEqual(sizes, [200, 200, 200, 5])
+        assert.equal(inspected, 605)
+      } finally {
+        await owner.dispose()
+      }
+    })
+  }
+})
+
 function fixture(t: TestContext) {
   const db = new LibraryDatabase(':memory:')
   db.replaceDocument({

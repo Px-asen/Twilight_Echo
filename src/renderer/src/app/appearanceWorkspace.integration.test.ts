@@ -159,6 +159,13 @@ createApp({components:{TitleBar,AppearanceLayersHost,AppearancePage},setup(){
 },render:compile('<div class="app-shell"><div class="app-shell-content"><button id="probe">Native control</button></div></div>'+__TEMPLATE__)}).mount('#app');
 const expect=(value,message)=>{if(!value)throw Error(message)};
 const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,70));await nextTick()};
+const waitForLayers=async()=>{
+ const deadline=performance.now()+2000;
+ while(document.querySelector('#probe').dataset.teAppearanceBody!=='controls'){
+  expect(performance.now()<deadline,'appearance layers did not reach the control: '+JSON.stringify({hidden:document.hidden,theme:document.documentElement.dataset.theme,sheet:!!document.querySelector('style[data-appearance-layers]'),preview:appearanceFullWindowPreview.value}));
+  await new Promise(resolve=>setTimeout(resolve,16));await nextTick();
+ }
+};
 window.runShellTests=async()=>{
  const nav=window.shellNavigation;
  document.querySelector('.appearance-btn').click();await settle();
@@ -170,6 +177,7 @@ window.runShellTests=async()=>{
  const draft=cloneAppearance(settings.value);
  draft.appearanceLayers.scopes.controls.dark.body={enabled:true,color:'#ee2255',opacity:100};
  await previewAppearance(draft);appearanceFullWindowPreview.value=true;await settle();
+ await waitForLayers();
  expect(appearancePreview===draft&&modes.at(-1)==='preview','store did not use transient preview');
  expect(appearanceChromePreview.value.appearanceLayers===draft.appearanceLayers,'layers lost in chrome forwarding');
  expect(document.querySelector('#probe').dataset.teAppearanceBody==='controls','full-window host not mounted with draft layers');
@@ -188,6 +196,7 @@ window.runShellTests=async()=>{
  expect(!appearanceChromePreview.value&&modes.at(-1)==='apply','discard did not restore confirmed runtime');
  expect(!document.querySelector('#probe').hasAttribute('data-te-appearance-body'),'discard retained draft decoration');
  settings.value=cloneAppearance(draft);await settle();
+ await waitForLayers();
  expect(document.querySelector('#probe').dataset.teAppearanceBody==='controls','applied layers do not survive leaving editor');
  nav.openAppearancePage();await settle();nav.navigate({kind:'network'});await settle();
  expect(nav.pageTarget.value.kind==='network'&&!workspaceRetained.value,'approved navigation failed to release workspace');

@@ -2,11 +2,95 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { runInNewContext } from 'node:vm'
-import { computed, reactive, ref } from 'vue'
+import { computed, effectScope, reactive, ref, shallowRef, watch } from 'vue'
 import ts from 'typescript'
 import { parse } from '@vue/compiler-sfc'
 import type { Track } from '../types/music'
 import { resolveLibraryArtistTracks } from '../utils/libraryCollectionView.ts'
+import { movePlaylistEntry, orderPlaylistEntries } from './streaming-page/playlistLibraryView.ts'
+
+test('preview playlist order is local while live order still restores and persists', () => {
+  const source = readFileSync(
+    new URL('./song-list/useLocalPlaylistOrder.ts', import.meta.url),
+    'utf8'
+  )
+  const saved = new Map([['te-local-playlist-order:test', '["c","b","a"]']])
+  let reads = 0,
+    writes = 0
+  const exports: {
+    useLocalPlaylistOrder?: (
+      source: ReturnType<typeof ref<Array<{ id: string }>>>,
+      key: () => string,
+      report: () => void,
+      options?: { persist?: boolean }
+    ) => {
+      playlists: { value: Array<{ id: string }> }
+      move: (from: string, to: string, visible: Array<{ id: string }>) => void
+    }
+  } = {}
+  runInNewContext(
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      exports,
+      require: (id: string) => {
+        if (id === 'vue') return { computed, shallowRef, watch }
+        if (id === '@renderer/components/streaming-page/playlistLibraryView')
+          return { movePlaylistEntry, orderPlaylistEntries }
+        throw new Error(`Unexpected dependency: ${id}`)
+      },
+      localStorage: {
+        getItem: (key: string) => {
+          reads++
+          return saved.get(key) ?? null
+        },
+        setItem: (key: string, value: string) => {
+          writes++
+          saved.set(key, value)
+        }
+      }
+    }
+  )
+  const scope = effectScope()
+  try {
+    const entries = ref(['a', 'b', 'c'].map((id) => ({ id })))
+    const preview = scope.run(() =>
+      exports.useLocalPlaylistOrder!(
+        entries,
+        () => 'test',
+        () => {},
+        { persist: false }
+      )
+    )!
+    assert.deepEqual(
+      preview.playlists.value.map((entry) => entry.id),
+      ['a', 'b', 'c']
+    )
+    preview.move('a', 'c', preview.playlists.value)
+    assert.deepEqual(
+      preview.playlists.value.map((entry) => entry.id),
+      ['b', 'c', 'a']
+    )
+    assert.deepEqual([reads, writes], [0, 0])
+    const live = scope.run(() =>
+      exports.useLocalPlaylistOrder!(
+        entries,
+        () => 'test',
+        () => {}
+      )
+    )!
+    assert.deepEqual(
+      live.playlists.value.map((entry) => entry.id),
+      ['c', 'b', 'a']
+    )
+    live.move('c', 'a', live.playlists.value)
+    assert.deepEqual([reads, writes], [1, 1])
+    assert.equal(saved.get('te-local-playlist-order:test'), '["b","a","c"]')
+  } finally {
+    scope.stop()
+  }
+})
 
 test('local artist navigation resolves collaborations and reacts to the selected performer', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')

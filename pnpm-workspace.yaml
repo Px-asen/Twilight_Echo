@@ -7,6 +7,8 @@ overrides:
   # Fix Axios request/proxy advisories and FTP listing-parser DoS in every runtime branch.
   axios: 1.20.0
   basic-ftp: 6.2.1
+  # Strip array-form credentials safely on redirects and escape custom header names.
+  follow-redirects: 1.16.1
   # Bound malformed MP4, EBML, ID3, APEv2 and DSF metadata parsing in all runtime branches.
   music-metadata: 11.16.0
   form-data: 4.0.6

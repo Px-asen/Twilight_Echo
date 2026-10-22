@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import test from 'node:test'
 import vue from '@vitejs/plugin-vue'
 import { build } from 'vite'
+import { THEME_ICON_SLOTS } from '../../../shared/theme.ts'
 
 const require = createRequire(import.meta.url)
 const { build: buildNode } = createRequire(require.resolve('vite/package.json'))('esbuild')
@@ -90,7 +91,7 @@ test('real theme icons retain default shapes, image alpha, state, fallback and i
     const evidence = JSON.parse(result.stdout.match(/THEME_ICONS_RESULT (.*)/)![1])
     assert.equal(evidence.networkRequests, 0)
     assert.equal(evidence.defaultMatrices.length, 18)
-    assert.equal(evidence.slots, 61)
+    assert.equal(evidence.slots, THEME_ICON_SLOTS.length)
     const capture = PNG.sync.read(await readFile(join(directory, 'alpha.png')))
     const expected = [
       [16, 32, 48, 255],

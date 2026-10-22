@@ -22,6 +22,9 @@ import { NativeQueueLoader } from '../utils/nativeQueueLoader.ts'
 import { patchPlaybackQueueTrack } from '../utils/playbackQueueVirtualization.ts'
 import { getTrackSource, isLikelyLocalFilePath } from '../utils/playerTrackUtils.ts'
 import { shouldReuseResolvedStreamUrl } from '../utils/playbackRouting.ts'
+import { captureQueueSession } from '../utils/queueSessionTrack.ts'
+import { createPlaybackHistoryController } from './player/playbackHistoryController.ts'
+import { createPlaybackSelectionController } from './player/playbackSelectionController.ts'
 
 test('each playback load clears stale pending positions before asynchronous work starts', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
@@ -313,6 +316,89 @@ test('track activation hydrates cover and lyrics stripped by queue snapshots', (
   assert.match(source, /lyrics: null,\s*translatedLyrics: null,\s*romanizedLyrics: null/)
   assert.match(source, /function activateCurrentTrack/)
 })
+
+for (const selection of ['different song', 'duplicate occurrence', 'same occurrence'] as const) {
+  test(`manual activation captures outgoing podcast progress before resetting its clock (${selection})`, async () => {
+    const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+    const body = ts.transpileModule(extractFunctionBody(source, 'activateCurrentTrack'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText
+    const old = {
+      id: 'podcast:subscription:episode',
+      source: 'podcast',
+      queueEntryId: 'entry:first',
+      title: 'Episode',
+      filePath: 'https://podcast.invalid/episode',
+      duration: 600
+    } as Track
+    const next = {
+      ...old,
+      id: selection === 'different song' ? 'podcast:subscription:next' : old.id,
+      queueEntryId: selection === 'same occurrence' ? old.queueEntryId : 'entry:second'
+    }
+    const currentTrack = ref<Track | null>(old)
+    const currentTime = ref(123.75)
+    const bookmarkWrites: Array<{ id: string; position: number }> = []
+    const episodeWrites: Array<{ id: string; position: number }> = []
+    const history = createPlaybackHistoryController({
+      currentTrack,
+      currentTime,
+      getLatestPlaybackTime: () => currentTime.value,
+      seekPlayback: () => {},
+      now: () => 0,
+      getPlaybackBookmarks: () => ({
+        ensureLoaded: async () => {},
+        shouldOfferLongTrackResume: () => true,
+        resumeBookmarkFor: () => null,
+        addBookmark: async (track, position) => {
+          bookmarkWrites.push({ id: track.id, position })
+        }
+      }),
+      getPodcastStore: () => ({
+        updateEpisodeProgress: async (_subscription, id, position) => {
+          episodeWrites.push({ id, position })
+        }
+      })
+    })
+    const activate = vm.runInNewContext(`(track, options = {}) => { ${body} }`, {
+      currentTrack,
+      lastActiveTrack: old,
+      loadedTrackId: old.id,
+      playbackHistoryController: history,
+      hydratePlaybackTrack: (track: Track) => ({ ...track }),
+      resetPlaybackUiForTrackSwitch: () => {
+        currentTime.value = 0
+      },
+      hydrateActiveTrackFromDatabase: () => {},
+      lyricsLoader: { ensureCurrentTrackLyricsLoaded: async () => {} }
+    })
+    const player = createPlaybackSelectionController({
+      queue: ref([old, next]),
+      queueIndex: ref(0),
+      playMode: ref('sequential'),
+      setHeartModeContext: () => {},
+      exitHeartModeForManualQueueReplacement: () => {},
+      isPersonalizedStreamTrack: () => false,
+      endPersonalizedStream: () => {},
+      activateCurrentTrack: activate,
+      loadAndPlay: async () => {},
+      replaceQueue: () => {}
+    })
+    player.playTrack(next)
+    await Promise.resolve()
+    assert.deepEqual(
+      bookmarkWrites,
+      selection === 'same occurrence' ? [] : [{ id: old.id, position: 123.75 }]
+    )
+    assert.deepEqual(
+      episodeWrites,
+      selection === 'same occurrence' ? [] : [{ id: 'episode', position: 123 }]
+    )
+    assert.equal(currentTrack.value?.id, next.id)
+    assert.equal(currentTime.value, 0)
+    history.dispose()
+  })
+}
 
 test('desktop lyrics publishing is isolated from the player store', () => {
   const store = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
@@ -608,6 +694,60 @@ test('player state persists a selected track before shell-level autosave is avai
     setupSideEffects,
     /currentTrack\.value\?\.id[\s\S]*persistSelectedTrackSession\(\)[\s\S]*flush: 'sync'/
   )
+})
+
+test('source recovery within the same occurrence schedules a fresh startup session save', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const file = ts.createSourceFile('store.ts', source, ts.ScriptTarget.Latest, true)
+  const setup = file.statements.find(
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'setupPlayerIntegrationSideEffects'
+  )!
+  let persistenceWatch = ''
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(file) === 'watch' &&
+      node.getText(file).includes('persistSelectedTrackSession()')
+    )
+      persistenceWatch = node.getText(file)
+    ts.forEachChild(node, visit)
+  }
+  visit(setup)
+  assert.ok(persistenceWatch)
+  const helper = file.statements.find(
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'replaceFailedPlaybackOccurrence'
+  )!
+  const failed = { id: 'ncm:one', queueEntryId: 'selected', source: 'ncm', filePath: '' } as Track
+  const replacement = { ...failed, id: 'bilibili:one', source: 'bilibili' } as Track
+  const currentTrack = ref<Track | null>(failed)
+  const saved: string[] = []
+  const scope = effectScope()
+  const context = vm.createContext({
+    currentTrack,
+    queue: ref([failed]),
+    originalQueue: ref([failed]),
+    queueIndex: ref(0),
+    crypto,
+    watch,
+    toPlaybackQueueSnapshot: (track: Track) => ({ ...track }),
+    persistSelectedTrackSession: () => saved.push(currentTrack.value!.id)
+  })
+  scope.run(() =>
+    vm.runInContext(
+      ts.transpileModule(helper.getText(file) + '\n' + persistenceWatch, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 }
+      }).outputText,
+      context
+    )
+  )
+  const recover = vm.runInContext('replaceFailedPlaybackOccurrence', context)
+  currentTrack.value = recover(failed, replacement)
+  assert.deepEqual(saved, [replacement.id])
+  currentTrack.value = { ...currentTrack.value!, title: 'Metadata refreshed' }
+  assert.deepEqual(saved, [replacement.id], 'metadata hydration does not save the selection again')
+  scope.stop()
 })
 
 test('local removal normalizes paths in the renderer without Node globals', () => {
@@ -1325,9 +1465,9 @@ test('mini player switching recovers from stale unauthorized local tracks', () =
   assert.match(resolvePlayTarget, /window\.api\.fs\.isAudioFileAuthorized\(track\.filePath\)/)
   assert.match(preloadSource, /ipcRenderer\.invoke\('fs:isAudioFileAuthorized', filePath\)/)
   assert.match(preloadSource, /ipcRenderer\.invoke\('fs:areAudioFilesAuthorized', filePaths\)/)
-  assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
+  assert.match(handlePlaybackFallback, /await loadAndPlay\(recovered\)/)
   assert.match(handleProviderRematchFallback, /if \(failedSource !== 'local'\)/)
-  assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
+  assert.match(handleProviderRematchFallback, /await loadAndPlay\(recovered\)/)
   assert.doesNotMatch(windowSource, /backgroundThrottling: false/)
 })
 
@@ -1982,11 +2122,139 @@ test('playback failure tries a same-song fallback variant from the queue', () =>
   assert.match(handlePlaybackFallback, /failedTrack/)
   assert.match(handlePlaybackFallback, /candidates: queue\.value/)
   assert.match(handlePlaybackFallback, /sourceReliability: getProviderSourceReliability\(\)/)
-  assert.match(handlePlaybackFallback, /queue\.value = queue\.value\.map/)
-  assert.match(handlePlaybackFallback, /currentTrack\.value = fallback/)
-  assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
+  assert.match(handlePlaybackFallback, /replaceFailedPlaybackOccurrence\(failedTrack, fallback\)/)
+  assert.match(handlePlaybackFallback, /currentTrack\.value = recovered/)
+  assert.match(handlePlaybackFallback, /await loadAndPlay\(recovered\)/)
   assert.match(loadAndPlay, /if \(await handlePlaybackFallback\(track, err, loadToken\)\) return/)
 })
+
+for (const recovery of ['queue variant', 'provider rematch'] as const) {
+  for (const identity of ['occurrence', 'legacy', 'standalone'] as const) {
+    test(`${recovery} recovers only the failed occurrence (${identity}) and preserves navigation and saved selection`, async () => {
+      const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+      const file = ts.createSourceFile('store.ts', source, ts.ScriptTarget.Latest, true)
+      const names = [
+        'replaceFailedPlaybackOccurrence',
+        'handlePlaybackFallback',
+        'handleProviderRematchFallback',
+        'next'
+      ]
+      const declarations = file.statements.filter(
+        (node): node is ts.FunctionDeclaration =>
+          ts.isFunctionDeclaration(node) && names.includes(node.name?.text ?? '')
+      )
+      const code = ts.transpileModule(declarations.map((node) => node.getText(file)).join('\n'), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 }
+      }).outputText
+      const failed = {
+        id: 'ncm:one',
+        source: 'ncm',
+        title: 'Song',
+        artist: 'Artist',
+        filePath: '',
+        queueEntryId: identity === 'occurrence' ? 'failed:second' : undefined
+      } as Track
+      const alternative = {
+        ...failed,
+        id: 'bilibili:one',
+        source: 'bilibili',
+        queueEntryId: 'alternative:existing'
+      } as Track
+      const first = {
+        ...failed,
+        queueEntryId: identity === 'occurrence' ? 'failed:first' : undefined
+      }
+      const middle = { ...failed, id: 'middle', queueEntryId: 'middle' }
+      const tail = { ...failed, id: 'tail', queueEntryId: 'tail' }
+      const queue = ref<Track[]>(
+        identity === 'standalone' ? [] : [alternative, first, middle, failed, tail]
+      )
+      const originalQueue = ref<Track[]>(
+        identity === 'standalone'
+          ? []
+          : [first, failed, middle, alternative, tail].map((track) => ({ ...track }))
+      )
+      const currentTrack = ref<Track | null>(failed)
+      const queueIndex = ref(identity === 'standalone' ? -1 : 3)
+      const loaded: Track[] = []
+      const references: string[] = []
+      const nextTracks: Track[] = []
+      const context = vm.createContext({
+        queue,
+        originalQueue,
+        currentTrack,
+        queueIndex,
+        crypto,
+        libraryPlayback: { active: ref(false) },
+        isActiveLoad: () => true,
+        getTrackSource: (track: Track) => track.source,
+        findPlaybackFallbackTrack: () => (recovery === 'queue variant' ? alternative : null),
+        getProviderSourceReliability: () => ({}),
+        findProviderRematchCandidate: () => ({ ...alternative, queueEntryId: undefined }),
+        syncPluginProviders: async () => {},
+        useMediaProviders: () => ({
+          searchAllSongs: async () => ({ items: [{ track: alternative }] })
+        }),
+        useMusicStore: () => ({ replaceTrackReference: (id: string) => references.push(id) }),
+        currentLocale: () => 'zh-CN',
+        translate: () => '',
+        presentError: () => '',
+        setAudioEngineError: () => {},
+        nativePlaybackActive: false,
+        loadedTrackId: failed.id,
+        stopVisualizationPolling: () => {},
+        stopRendererAudio: () => {},
+        toPlaybackQueueSnapshot: (track: Track) => ({ ...track }),
+        loadAndPlay: async (track: Track) => {
+          loaded.push(track)
+        },
+        playMode: ref('sequential'),
+        clearCrossfadeTimer: () => {},
+        castTargetUsn: ref(null),
+        applyPendingRendererPlayModeAtBoundary: () => {},
+        playQueueTrack: (track: Track) => nextTracks.push(track)
+      })
+      vm.runInContext(code, context)
+      await vm.runInContext(
+        'handlePlaybackFallback(currentTrack.value, new Error("unavailable"), 1)',
+        context
+      )
+
+      const recoveredEntryId = currentTrack.value?.queueEntryId
+      assert.equal(queueIndex.value, identity === 'standalone' ? 0 : 3)
+      assert.ok(recoveredEntryId)
+      if (identity === 'occurrence') assert.equal(recoveredEntryId, failed.queueEntryId)
+      else assert.notEqual(recoveredEntryId, alternative.queueEntryId)
+      assert.equal(loaded[0].queueEntryId, recoveredEntryId)
+      assert.equal(queue.value[queueIndex.value].id, alternative.id)
+      if (identity !== 'standalone') {
+        assert.equal(queue.value[1].id, failed.id, 'another occurrence retains its original source')
+        assert.equal(queue.value[0].queueEntryId, alternative.queueEntryId)
+        assert.equal(originalQueue.value[1].id, alternative.id)
+        assert.equal(originalQueue.value[1].queueEntryId, recoveredEntryId)
+        assert.equal(originalQueue.value[0].id, failed.id)
+      } else {
+        assert.equal(originalQueue.value[0].queueEntryId, recoveredEntryId)
+      }
+      const saved = captureQueueSession(
+        'Recovered',
+        queue.value,
+        originalQueue.value,
+        currentTrack.value,
+        12,
+        'sequential'
+      )
+      assert.equal(saved.currentEntryId, recoveredEntryId)
+      assert.equal(
+        saved.entries.find((entry) => entry.queueEntryId === saved.currentEntryId)?.id,
+        alternative.id
+      )
+      vm.runInContext('next()', context)
+      assert.equal(nextTracks[0].id, identity === 'standalone' ? alternative.id : tail.id)
+      assert.deepEqual(references, recovery === 'provider rematch' ? [failed.id] : [])
+    })
+  }
+}
 
 test('audio engine errors use the global notice channel instead of the player bar', () => {
   const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
@@ -2571,9 +2839,12 @@ test('provider playback failure searches provider results to rematch expired ids
     handleProviderRematchFallback,
     /findProviderRematchCandidate\(failedTrack, candidates\)/
   )
-  assert.match(handleProviderRematchFallback, /queue\.value = queue\.value\.map/)
-  assert.match(handleProviderRematchFallback, /currentTrack\.value = rematched/)
-  assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
+  assert.match(
+    handleProviderRematchFallback,
+    /replaceFailedPlaybackOccurrence\(failedTrack, rematched\)/
+  )
+  assert.match(handleProviderRematchFallback, /currentTrack\.value = recovered/)
+  assert.match(handleProviderRematchFallback, /await loadAndPlay\(recovered\)/)
 })
 
 test('missing local playback searches provider results instead of stopping at the local file error', () => {

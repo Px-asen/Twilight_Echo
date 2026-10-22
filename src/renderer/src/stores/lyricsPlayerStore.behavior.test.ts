@@ -97,6 +97,7 @@ let document = {
   tracks: {}
 }
 let revision = 1
+let bookmarkRevision = 0
 let latestDesktopLyricsSession = null
 let deferProvider = false
 let providerFailuresRemaining = 0
@@ -131,6 +132,12 @@ window.api = {
   },
   data: {
     getLyrics: async () => null,
+    loadPlaybackBookmarks: async () => null,
+    savePlaybackBookmarks: async (next, expectedRevision) => {
+      expect(expectedRevision === bookmarkRevision, 'bookmark CAS revision should be current')
+      bookmarkRevision += 1
+      return { version: 1, revision: bookmarkRevision, data: clone(next) }
+    },
     loadLyricsManagement: async () => ({ version: 2, revision, savedAt: '2026-07-18T00:00:00.000Z', data: clone(document) }),
     saveLyricsManagement: async (next, expectedRevision) => {
       expect(expectedRevision === revision, 'lyrics management CAS revision should be current')
@@ -140,6 +147,7 @@ window.api = {
     }
   },
   providers: {
+    cancel: async () => {},
     list: async () => [{ id: 'fixture-provider', name: 'Fixture provider', capabilities: ['lyrics'], health: { available: true } }],
     call: async (_providerId, method) => {
       expect(method === 'getLyrics', 'forced resolver should request provider lyrics')
@@ -531,7 +539,10 @@ window.runLyricsPlayerRuntime = async () => {
 
   let nativePlayCalls = 0
   let fallbackChecks = 0
-  window.api.fs = { isAudioFileAuthorized: async () => true }
+  window.api.fs = {
+    isAudioFileAuthorized: async () => true,
+    getAudioFileUrl: async () => 'twilight-media://fixture/cancelled.flac'
+  }
   Object.assign(window.api.audioEngine, {
     stop: async () => {}, loadQueue: async () => {}, setPlayMode: async () => {},
     play: async () => {
@@ -572,6 +583,16 @@ const subscribe = (list, cb) => { list.push(cb); return () => { const i = list.i
 const noopSubscribe = () => () => {}
 window.api = {
   ncmCloud: { onProgress: noopSubscribe },
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: {
+      queryTracks: async () => ({ tracks: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      queryCollections: async () => ({ items: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      getTracksByIds: async () => ({ tracks: [], revision: 0 }),
+      readQueue: async () => { throw new Error('lyrics fixture has no database queue') }
+    }
+  },
   audioEngine: {
     onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),
     onPlaybackInfo: (cb) => subscribe(window.__audioFixture.playbackInfoCallbacks, cb),

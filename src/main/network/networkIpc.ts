@@ -48,10 +48,12 @@ const secureStorageCodec: CredentialCodec = {
 
 let manager: NetworkSourcesManager | null = null
 
+function currentMusicCacheRoot(): string {
+  return runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+}
+
 export function getNetworkSourcesManager(): NetworkSourcesManager {
   if (!manager) {
-    const musicCacheRoot =
-      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
     manager = createNetworkSourcesManager({
       store: createNetworkProfileStore({
         filePath: join(app.getPath('userData'), 'network-sources', 'profiles.json'),
@@ -60,8 +62,8 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
       library: createNetworkLibrary({
         filePath: join(app.getPath('userData'), 'network-sources', 'library.json')
       }),
-      cacheRoot: join(musicCacheRoot, 'network-cache'),
-      coverCacheRoot: join(musicCacheRoot, 'cover-cache'),
+      cacheRoot: () => networkCacheDir(currentMusicCacheRoot()),
+      coverCacheRoot: () => join(currentMusicCacheRoot(), 'cover-cache'),
       getAdapter: async (protocol) => {
         if (protocol === 'webdav') return createWebDavAdapter()
         if (protocol === 'ftp' || protocol === 'ftps') return createFtpAdapter()
@@ -169,24 +171,18 @@ export function setupNetworkSourceIpc(): void {
     assertTrusted(event)
     normalizeProfileId(id)
     const normalizedEntryId = normalizeIpcString(entryId, 'entry id', 128)
-    const musicCacheRoot =
-      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
-    return readCoverDataUrl(normalizedEntryId, join(musicCacheRoot, 'cover-cache'))
+    return readCoverDataUrl(normalizedEntryId, join(currentMusicCacheRoot(), 'cover-cache'))
   })
 
   ipcMain.handle('networkSources:cacheInfo', (event) => {
     assertTrusted(event)
-    const musicCacheRoot =
-      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
-    return getDirectorySize(networkCacheDir(musicCacheRoot)).then((sizeBytes) => ({
+    return getDirectorySize(networkCacheDir(currentMusicCacheRoot())).then((sizeBytes) => ({
       sizeBytes
     }))
   })
 
   ipcMain.handle('networkSources:clearCache', (event) => {
     assertTrusted(event)
-    const musicCacheRoot =
-      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
-    return clearDirectory(networkCacheDir(musicCacheRoot)).then(() => ({ ok: true }))
+    return clearDirectory(networkCacheDir(currentMusicCacheRoot())).then(() => ({ ok: true }))
   })
 }

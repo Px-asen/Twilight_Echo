@@ -81,11 +81,12 @@ const button=text=>[...document.querySelectorAll('button')].find(el=>el.textCont
 const click=async text=>{const el=button(text);expect(el&&!el.disabled,'button unavailable: '+text);el.click();await tick()}
 window.runAuditionTests=async()=>{
   let resolveMeasure,resolveSelect,ends=0,selected=null
+  const requests=[]
   const measured={id:'session',a:{integratedLufs:-14,truePeakDb:-2,processingVersion:1},b:{integratedLufs:-20,truePeakDb:-8,processingVersion:1},gainA:-6,gainB:0,targetLufs:-20,selected:null}
-  window.api={audioEngine:{audition:{measure:()=>new Promise(resolve=>resolveMeasure=resolve),select:(_id,side)=>new Promise(resolve=>resolveSelect=()=>{selected=side;resolve({...measured,selected:side})}),end:async()=>{ends++},status:async()=>({...measured,selected})}}}
+  window.api={audioEngine:{audition:{measure:request=>{structuredClone(request);requests.push(request);return new Promise(resolve=>resolveMeasure=resolve)},select:(_id,side)=>new Promise(resolve=>resolveSelect=()=>{selected=side;resolve({...measured,selected:side})}),end:async()=>{ends++},status:async()=>({...measured,selected})}}}
   const graph=()=>({version:2,nodes:[],outputStage:{targetSampleRate:'device',resamplerQuality:'native',dither:'off',safetyClamp:true}})
-  const a=ref(null),b=ref(graph())
-  const app=createApp({setup:()=>()=>h(Panel,{a:a.value,b:b.value})});app.mount('#app');await tick()
+  const a=ref(null),b=ref(graph()),current=ref(graph())
+  const app=createApp({setup:()=>()=>h(Panel,{a:a.value,b:b.value,current:current.value})});app.mount('#app');await tick()
   expect(button('测量并匹配').disabled,'snapshot A required')
   a.value=graph();await tick();await click('测量并匹配')
   expect(!button('A ·'),'no matched controls before measurement')
@@ -97,10 +98,16 @@ window.runAuditionTests=async()=>{
   expect(button('B ·').getAttribute('aria-pressed')==='false','selection awaits ACK')
   resolveSelect();await tick()
   expect(button('B ·').getAttribute('aria-pressed')==='true','ACK selects B')
-  b.value={...graph(),nodes:[{id:'eq',type:'equalizer',enabled:true,params:{mode:'parametric',preampDb:-3,bands:[]}}]};await tick()
+  b.value={...graph(),nodes:[{id:'eq',type:'equalizer',enabled:true,params:{mode:'parametric',preampDb:-3,bands:[{frequency:1000,gain:-2,q:1.2}]}}]};current.value={...graph(),nodes:b.value.nodes};await tick()
   expect(!button('A ·'),'editing B invalidates old result')
   expect(document.querySelector('[role=status]').textContent.includes('失效'),'explain invalidation')
+  b.value.nodes[0].params.bands[0].q=0;await tick()
+  expect(button('测量并匹配').disabled,'invalid reactive EQ still fails shared validation')
+  expect(document.querySelector('[role=status]').textContent.includes('频段无效'),'explain invalid EQ band')
+  b.value.nodes[0].params.bands[0].q=1.2;await tick()
   await click('测量并匹配');resolveMeasure(measured);await tick()
+  expect(requests.at(-1).b.nodes[0].params.bands[0].q===1.2,'edited reactive EQ is sent as cloneable data')
+  expect(button('A ·'),'valid edited EQ can be measured again')
   const before=ends;app.unmount();await tick();expect(ends>before,'unmount restores original graph')
   createApp({setup:()=>()=>h(Panel,{a:graph(),b:b.value})}).mount('#app');await tick()
 }

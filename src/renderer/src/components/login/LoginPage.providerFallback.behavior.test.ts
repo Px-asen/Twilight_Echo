@@ -238,6 +238,7 @@ window.fixtureRequire = id => {
   if (id.endsWith('/ThemeIcon.vue')) return { default: window.ThemeIcon };
   if (id.includes('shared/theme')) return { THEME_ICON_SLOT_REGISTRY: window.themeIconRegistry };
   if (id.includes('titleBarIconPaths')) return window.titleBarIconPaths;
+  if (id.includes('themeIconRuntime')) return { useThemeIconImage: () => ({ imageUrl: ref(''), customReady: ref(false), failed: ref(false), imageLoaded() {}, imageFailed() {} }) };
   if (id.endsWith('.vue')) return { default: { render: () => h('span') } };
   if (id.includes('useProviderStore')) return window.providerStoreModule;
   if (id.includes('visibilityPolling')) return window.visibilityPolling;
@@ -359,7 +360,9 @@ window.runProviderFallbackTests = async () => {
     const frame = document.querySelector('#title .title-bar').getBoundingClientRect();
     const tools = document.querySelector('#title .title-bar-tools').getBoundingClientRect();
     expect(frame.height === 40 && tools.right > frame.width / 2, 'title height or right tool placement changed');
-    button.click(); expect(selected === 'ncm', 'persistent account lost its enabled provider');
+    button.click();
+    if (surface.preview) expect(selected === null && button.title === '流媒体登录' && button.getAttribute('aria-label') === '流媒体登录' && !button.querySelector('img'), 'preview account exposes a live provider or profile');
+    else expect(selected === 'ncm', 'persistent account lost its enabled provider');
   }
   titleProps.value = { streaming: false }; await settle();
 

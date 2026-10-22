@@ -51,19 +51,28 @@ const ui = [
   'src/renderer/src/utils/backgroundImagePalette.behavior.test.ts'
 ]
 
-const result = spawnSync(
-  process.execPath,
-  [
-    '--experimental-strip-types',
-    '--test',
-    '--test-concurrency=1',
-    ...(process.argv.includes('--unit') ? ['--test-skip-pattern', '^Chromium projects'] : []),
-    '--import',
-    './scripts/register-renderer-aliases.mjs',
-    ...unit,
-    ...(process.argv.includes('--unit') ? [] : ui)
-  ],
-  { cwd: resolve(__dirname, '..'), stdio: 'inherit', windowsHide: true }
-)
-if (result.error) throw result.error
-process.exitCode = result.status ?? 1
+function runAppearanceTests(args = process.argv.slice(2), run = spawnSync) {
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--unit')) {
+    throw new Error('Usage: node scripts/run-appearance-tests.cjs [--unit]')
+  }
+  const unitOnly = args[0] === '--unit'
+  const result = run(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      '--test',
+      '--test-concurrency=1',
+      ...(unitOnly ? ['--test-skip-pattern', '^Chromium projects'] : []),
+      '--import',
+      './scripts/register-renderer-aliases.mjs',
+      ...unit,
+      ...(unitOnly ? [] : ui)
+    ],
+    { cwd: resolve(__dirname, '..'), stdio: 'inherit', windowsHide: true }
+  )
+  if (result.error) throw result.error
+  return result.status ?? 1
+}
+
+module.exports = { unit, ui, runAppearanceTests }
+if (require.main === module) process.exitCode = runAppearanceTests()

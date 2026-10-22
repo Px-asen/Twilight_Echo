@@ -223,6 +223,13 @@ export function uiMotionFor(document: Document): UiMotionController {
       layer.dataset.edges = options.edges ?? 'all'
       layer.setAttribute('aria-hidden', 'true')
       Object.assign(layer.style, {
+        position: 'fixed',
+        zIndex: '2147483647',
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+        borderStyle: 'solid',
+        borderColor: 'var(--te-ui-motion-edge-color, currentColor)',
+        borderWidth: options.edges === 'bottom' ? '0 0 1px' : '1px',
         left: `${rect.left}px`,
         top: `${rect.top}px`,
         width: `${rect.width}px`,

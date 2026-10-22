@@ -428,13 +428,14 @@ window.runUxCoreTests = async () => {
   const row = document.querySelector('.track-row')
   row.focus()
   await window.pressKey('Enter')
+  expect(activated === 1 && rowClicks === 0, 'Enter must activate the focused song')
   await window.pressKey('Space')
-  expect(activated === 2, 'song activation in double-click mode')
+  expect(activated === 1 && rowClicks === 1, 'Space must select without starting playback')
   await window.pressKey('ArrowDown')
   expect(document.activeElement === row.nextElementSibling, 'row arrow navigation')
   row.querySelector('.btn-like').focus()
   await window.pressKey('Space')
-  expect(liked === 1 && activated === 2, 'favorite key bubbled into playback')
+  expect(liked === 1 && activated === 1 && rowClicks === 1, 'favorite key bubbled into the row')
 
   for (const mode of ['singleClick', 'doubleClick']) {
     activationMode.value = mode
@@ -448,7 +449,7 @@ window.runUxCoreTests = async () => {
       await window.pressKey('Enter')
       await window.pressKey('Space')
     }
-    expect(rowClicks === 0 && activated === 2, `${mode} metadata links triggered playback`)
+    expect(rowClicks === 1 && activated === 1, `${mode} metadata links triggered row actions`)
   }
   expect(
     artistRequests.length === 6 &&

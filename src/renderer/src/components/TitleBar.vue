@@ -41,8 +41,9 @@ defineEmits<{
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
-const providerStore = useProviderStore()
+const providerStore = useProviderStore({ listen: !props.preview })
 const loginProvider = computed(() => {
+  if (props.preview) return undefined
   const providers = providerStore.providers.value.filter((provider) =>
     provider.capabilities.includes('login')
   )
@@ -60,9 +61,15 @@ const { canGoBack, backHint } = useBackStack()
 const { unreadCount, activeTaskCount, doNotDisturb } = useAppNoticeStore()
 const { maximized } = useWindowChrome(() => props.preview === true)
 const avatarLoadFailed = ref(false)
-watch([() => profile.value?.userId, () => profile.value?.avatarUrl], () => {
-  avatarLoadFailed.value = false
-})
+watch(
+  [
+    () => (props.preview ? undefined : profile.value?.userId),
+    () => (props.preview ? undefined : profile.value?.avatarUrl)
+  ],
+  () => {
+    avatarLoadFailed.value = false
+  }
+)
 const titleBar = ref<HTMLElement | null>(null)
 let titleObserver: ResizeObserver | undefined
 onMounted(() => {

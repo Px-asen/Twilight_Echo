@@ -9,6 +9,7 @@ export default defineConfig(
     ignores: [
       '**/node_modules/**',
       '**/.cache/**',
+      '**/.artifacts/**',
       '**/.birdview/**',
       '**/.workbuddy/**',
       '**/.codex-tools/**',

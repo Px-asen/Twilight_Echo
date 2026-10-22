@@ -326,6 +326,8 @@
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px;
+  font-size: var(--te-type-body);
+  line-height: var(--te-type-line-body);
   border: 0;
   border-radius: var(--te-editor-panel-radius, 10px);
   background: var(--te-editor-panel, var(--te-settings-backplate, var(--te-card-bg)));

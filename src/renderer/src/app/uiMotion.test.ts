@@ -1,6 +1,78 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import test from 'node:test'
+import { build } from 'vite'
 import { uiMotionFor, type UiMotionPreset } from './uiMotion.ts'
+
+test('real input edge overlays follow viewport geometry without taking input or retaining work', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-motion-edge-'))
+  try {
+    const motionPath = fileURLToPath(new URL('./uiMotion.ts', import.meta.url)).replaceAll(
+      '\\',
+      '/'
+    )
+    await writeFile(
+      join(directory, 'entry.ts'),
+      `import {uiMotionFor} from ${JSON.stringify(motionPath)}
+      const check=(ok,message)=>{if(!ok)throw Error(message)}
+      window.runMotionEdge=async()=>{
+        const input=document.createElement('input');input.style.cssText='position:fixed;left:22px;bottom:12px;width:140px;height:28px;transform:translate(3px,2px);border-radius:7px';document.body.append(input)
+        const before=input.style.cssText,target=input.getBoundingClientRect(),motion=uiMotionFor(document)
+        const all=motion.edge(input,{radius:7,duration:5000,color:'var(--outline-color)'})
+        const layer=document.querySelector('.te-ui-motion-edge'),rect=layer.getBoundingClientRect(),style=getComputedStyle(layer)
+        check(all.enabled&&['left','top','width','height'].every(key=>Math.abs(rect[key]-target[key])<.1),'edge bounds differ from the transformed input: '+JSON.stringify({target:target.toJSON(),layer:rect.toJSON()}))
+        check(style.position==='fixed'&&style.boxSizing==='border-box'&&style.pointerEvents==='none'&&style.borderRadius==='7px'&&style.borderTopWidth==='1px'&&style.borderBottomWidth==='1px'&&style.borderColor==='rgb(81, 113, 163)','edge lacks its own overlay presentation')
+        check(document.elementFromPoint(target.left+target.width/2,target.top+target.height/2)===input,'edge intercepts native input')
+        const bottom=motion.edge(input,{edges:'bottom',radius:0,duration:5000});await all.finished
+        const next=document.querySelector('.te-ui-motion-edge'),nextStyle=getComputedStyle(next)
+        check(!layer.isConnected&&nextStyle.borderTopWidth==='0px'&&nextStyle.borderRightWidth==='0px'&&nextStyle.borderLeftWidth==='0px'&&nextStyle.borderBottomWidth==='1px','superseding bottom edge retains a stale full outline')
+        bottom.cancel();await bottom.finished;check(!document.querySelector('.te-ui-motion-edge'),'cancel retains the body overlay')
+        for(const mode of ['reduced','off']){document.documentElement.dataset.teMotion=mode;check(!motion.edge(input).enabled&&!document.querySelector('.te-ui-motion-edge'),mode+' paints decorative edges')}
+        check(input.style.cssText===before,'edge changes the real input style');motion.dispose();input.remove()
+        return {edges:2,policyModes:2,layersAfterCleanup:document.querySelectorAll('.te-ui-motion-edge').length}
+      }`
+    )
+    await build({
+      configFile: false,
+      logLevel: 'error',
+      build: {
+        outDir: join(directory, 'bundle'),
+        emptyOutDir: true,
+        lib: {
+          entry: join(directory, 'entry.ts'),
+          name: 'MotionEdge',
+          formats: ['iife'],
+          fileName: () => 'runtime.js'
+        }
+      }
+    })
+    await writeFile(
+      join(directory, 'index.html'),
+      '<!doctype html><html data-te-motion="full"><head><style>:root{--outline-color:rgb(81,113,163)}body{margin:0}</style></head><body><script src="bundle/runtime.js"></script></body></html>'
+    )
+    await writeFile(
+      join(directory, 'runner.cjs'),
+      `const {app,BrowserWindow}=require('electron');app.setPath('userData',require('node:path').join(__dirname,'profile'));
+      app.whenReady().then(async()=>{let win;try{win=new BrowserWindow({show:false,width:480,height:320,webPreferences:{offscreen:true,contextIsolation:false,backgroundThrottling:false}});await win.loadFile(require('node:path').join(__dirname,'index.html'));console.log('MOTION_EDGE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.runMotionEdge()')));win.destroy();app.exit(0)}catch(error){console.error(error);win?.destroy();app.exit(1)}});`
+    )
+    const env = { ...process.env }
+    delete env.ELECTRON_RUN_AS_NODE
+    const { stdout } = await promisify(execFile)(
+      createRequire(import.meta.url)('electron') as string,
+      [join(directory, 'runner.cjs')],
+      { windowsHide: true, timeout: 30_000, env }
+    )
+    assert.match(stdout, /MOTION_EDGE_OK {"edges":2,"policyModes":2,"layersAfterCleanup":0}/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 interface FakeAnimation {
   keyframes: Keyframe[]

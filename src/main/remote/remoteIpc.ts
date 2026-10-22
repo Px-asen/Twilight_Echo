@@ -45,6 +45,23 @@ let server: RemoteHttpServer | null = null
 let lastDlnaDevices: DlnaDeviceInfo[] = []
 let activeCastUsn: string | null = null
 let syncDesiredEnabled: boolean | null = null
+// Main outlives renderer reloads. Device commands and their target commits must
+// share this owner so an old renderer's in-flight stop cannot clear a newer cast.
+let castTransportQueue: Promise<void> = Promise.resolve()
+function serializeCastTransport<T>(action: () => T | Promise<T>): Promise<T> {
+  const command = castTransportQueue.then(action)
+  castTransportQueue = command.then(
+    () => undefined,
+    () => undefined
+  )
+  return command
+}
+
+function serializedCastListener(
+  listener: Parameters<typeof ipcMain.handle>[1]
+): Parameters<typeof ipcMain.handle>[1] {
+  return (event, ...args) => serializeCastTransport(() => listener(event, ...args))
+}
 const rendererRequests = new Map<
   string,
   {
@@ -153,15 +170,21 @@ async function dispatchRemoteCommand(command: PlayerRemoteCommand): Promise<void
   switch (command.action) {
     case 'playPause':
       await sendPlayerCommand('playPause')
-      if (activeCastUsn) await tryDlnaPlayPause()
+      await serializeCastTransport(async () => {
+        if (activeCastUsn) await tryDlnaPlayPause()
+      })
       return
     case 'play':
       await sendPlayerCommand('play')
-      if (activeCastUsn) await tryDlnaTransport('play')
+      await serializeCastTransport(async () => {
+        if (activeCastUsn) await tryDlnaTransport('play')
+      })
       return
     case 'pause':
       await sendPlayerCommand('pause')
-      if (activeCastUsn) await tryDlnaTransport('pause')
+      await serializeCastTransport(async () => {
+        if (activeCastUsn) await tryDlnaTransport('pause')
+      })
       return
     case 'previous':
       await sendPlayerCommand('previous')
@@ -171,11 +194,15 @@ async function dispatchRemoteCommand(command: PlayerRemoteCommand): Promise<void
       return
     case 'seek':
       await sendPlayerCommand({ action: 'seek', positionSeconds: command.positionSeconds })
-      if (activeCastUsn) await tryDlnaSeek(command.positionSeconds)
+      await serializeCastTransport(async () => {
+        if (activeCastUsn) await tryDlnaSeek(command.positionSeconds)
+      })
       return
     case 'setVolume':
       await sendPlayerCommand({ action: 'setVolume', volume: command.volume })
-      if (activeCastUsn) await tryDlnaVolume(command.volume)
+      await serializeCastTransport(async () => {
+        if (activeCastUsn) await tryDlnaVolume(command.volume)
+      })
       return
     case 'setPlayMode':
       if (isAfterglowModeActive()) {
@@ -469,177 +496,187 @@ export function setupRemoteIpc(): void {
 
   ipcMain.handle(
     'remote:castToDevice',
-    async (
-      event,
-      payload: {
-        usn?: unknown
-        filePath?: unknown
-        /** Direct http(s) stream URL (podcast / radio / provider). Proxied via media token. */
-        mediaUrl?: unknown
-        contentType?: unknown
-        title?: unknown
-        artist?: unknown
-        album?: unknown
-        positionSeconds?: unknown
-      }
-    ) => {
-      assertTrustedIpcSender(event, 'remote control IPC')
-      const usn = normalizeIpcString(payload?.usn, 'DLNA device usn', 512)
-      const title = typeof payload?.title === 'string' ? payload.title.slice(0, 256) : undefined
-      const artist = typeof payload?.artist === 'string' ? payload.artist.slice(0, 256) : undefined
-      const album = typeof payload?.album === 'string' ? payload.album.slice(0, 256) : undefined
-      const contentTypeHint =
-        typeof payload?.contentType === 'string' ? payload.contentType.slice(0, 128) : undefined
-      const positionSeconds =
-        typeof payload?.positionSeconds === 'number' && Number.isFinite(payload.positionSeconds)
-          ? Math.max(0, payload.positionSeconds)
-          : 0
+    serializedCastListener(
+      async (
+        event,
+        payload: {
+          usn?: unknown
+          filePath?: unknown
+          /** Direct http(s) stream URL (podcast / radio / provider). Proxied via media token. */
+          mediaUrl?: unknown
+          contentType?: unknown
+          title?: unknown
+          artist?: unknown
+          album?: unknown
+          positionSeconds?: unknown
+        }
+      ) => {
+        assertTrustedIpcSender(event, 'remote control IPC')
+        const usn = normalizeIpcString(payload?.usn, 'DLNA device usn', 512)
+        const title = typeof payload?.title === 'string' ? payload.title.slice(0, 256) : undefined
+        const artist =
+          typeof payload?.artist === 'string' ? payload.artist.slice(0, 256) : undefined
+        const album = typeof payload?.album === 'string' ? payload.album.slice(0, 256) : undefined
+        const contentTypeHint =
+          typeof payload?.contentType === 'string' ? payload.contentType.slice(0, 128) : undefined
+        const positionSeconds =
+          typeof payload?.positionSeconds === 'number' && Number.isFinite(payload.positionSeconds)
+            ? Math.max(0, payload.positionSeconds)
+            : 0
 
-      const device = lastDlnaDevices.find((d) => d.usn === usn)
-      if (!device) {
-        throw new Error('Cast device not found — refresh discovery and try again')
-      }
-      const protocol = deviceProtocol(device)
-      if (protocol === 'dlna' && !device.avTransportUrl) {
-        throw new Error('DLNA device missing AVTransport')
-      }
-      if (protocol === 'chromecast' && !device.host) {
-        throw new Error('Chromecast device host is missing')
-      }
+        const device = lastDlnaDevices.find((d) => d.usn === usn)
+        if (!device) {
+          throw new Error('Cast device not found — refresh discovery and try again')
+        }
+        const protocol = deviceProtocol(device)
+        if (protocol === 'dlna' && !device.avTransportUrl) {
+          throw new Error('DLNA device missing AVTransport')
+        }
+        if (protocol === 'chromecast' && !device.host) {
+          throw new Error('Chromecast device host is missing')
+        }
 
-      const hasFile = typeof payload?.filePath === 'string' && payload.filePath.trim().length > 0
-      const hasRemote = typeof payload?.mediaUrl === 'string' && payload.mediaUrl.trim().length > 0
-      if (hasFile === hasRemote) {
-        throw new Error('Cast requires exactly one of filePath or mediaUrl')
-      }
+        const hasFile = typeof payload?.filePath === 'string' && payload.filePath.trim().length > 0
+        const hasRemote =
+          typeof payload?.mediaUrl === 'string' && payload.mediaUrl.trim().length > 0
+        if (hasFile === hasRemote) {
+          throw new Error('Cast requires exactly one of filePath or mediaUrl')
+        }
 
-      // Cast needs a media token host. When remote control is off, bind media-only
-      // so pair/UI/command surfaces stay closed (remote remains default-off).
-      // On failure before activeCastUsn is set, release orphan mediaOnly binds.
-      let castSucceeded = false
-      try {
-        const instance = await ensureCastMediaServer()
+        // Cast needs a media token host. When remote control is off, bind media-only
+        // so pair/UI/command surfaces stay closed (remote remains default-off).
+        // On failure before activeCastUsn is set, release orphan mediaOnly binds.
+        let castSucceeded = false
+        try {
+          const instance = await ensureCastMediaServer()
 
-        let castUrl: string | null = null
-        let didlContentType: string | undefined = contentTypeHint
+          let castUrl: string | null = null
+          let didlContentType: string | undefined = contentTypeHint
 
-        if (hasFile) {
-          const filePath = normalizeIpcString(payload?.filePath, 'media file path', 4096)
-          // Only stream authorized library/managed-cache files.
-          const authorizedPath = await resolveAuthorizedAudioFile(filePath)
-          castUrl = instance.issueMediaUrl(authorizedPath, title)
-          didlContentType = contentTypeHint
-        } else {
-          const rawUrl = normalizeIpcString(payload?.mediaUrl, 'media stream URL', 8192)
-          let upstream = rawUrl
-          // Provider streams are exposed to the renderer as twilight-media grants.
-          // Resolve them in main so cast never accepts bare untrusted schemes.
-          if (rawUrl.startsWith('twilight-media:')) {
+          if (hasFile) {
+            const filePath = normalizeIpcString(payload?.filePath, 'media file path', 4096)
+            // Only stream authorized library/managed-cache files.
+            const authorizedPath = await resolveAuthorizedAudioFile(filePath)
+            castUrl = instance.issueMediaUrl(authorizedPath, title)
+            didlContentType = contentTypeHint
+          } else {
+            const rawUrl = normalizeIpcString(payload?.mediaUrl, 'media stream URL', 8192)
+            let upstream = rawUrl
+            // Provider streams are exposed to the renderer as twilight-media grants.
+            // Resolve them in main so cast never accepts bare untrusted schemes.
+            if (rawUrl.startsWith('twilight-media:')) {
+              try {
+                upstream = remoteMediaGrants.resolve(rawUrl, 'audio').source
+              } catch {
+                throw new Error('Cast media grant is unknown or expired')
+              }
+            }
+            let parsed: URL
             try {
-              upstream = remoteMediaGrants.resolve(rawUrl, 'audio').source
+              parsed = new URL(upstream)
             } catch {
-              throw new Error('Cast media grant is unknown or expired')
+              throw new Error('Cast media URL is invalid')
+            }
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              throw new Error('Cast media URL protocol is not authorized')
+            }
+            if (parsed.username || parsed.password) {
+              throw new Error('Cast media URL must not include credentials')
+            }
+            // Align with offline download: never open-proxy private/loopback hosts.
+            if (isPrivateOrLoopbackHost(parsed.hostname)) {
+              throw new Error('Cast media URL host is not authorized')
+            }
+            // Always proxy through our LAN token so the cast device never sees CDN secrets
+            // and so private LAN devices can reach sources that need app-side fetch.
+            castUrl = instance.issueRemoteMediaUrl(parsed.toString(), {
+              title,
+              contentType: contentTypeHint
+            })
+            didlContentType = contentTypeHint
+          }
+
+          if (!castUrl) throw new Error('Unable to issue media stream URL')
+
+          if (protocol === 'chromecast') {
+            await chromecastLoad(toCastDevice(device), {
+              deviceId: device.usn,
+              mediaUrl: castUrl,
+              title,
+              artist,
+              album,
+              contentType: didlContentType,
+              positionSeconds
+            })
+          } else {
+            const metadata = buildDidlLiteMetadata({
+              title: title ?? 'Twilight Echo',
+              artist,
+              album,
+              resUrl: castUrl,
+              contentType: didlContentType
+            })
+            await dlnaSetAvTransportUri(device.avTransportUrl!, castUrl, metadata)
+            await dlnaPlay(device.avTransportUrl!)
+            if (positionSeconds > 1) {
+              try {
+                await dlnaSeek(device.avTransportUrl!, positionSeconds)
+              } catch {
+                // Some renderers reject seek before buffering completes.
+              }
             }
           }
-          let parsed: URL
-          try {
-            parsed = new URL(upstream)
-          } catch {
-            throw new Error('Cast media URL is invalid')
-          }
-          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-            throw new Error('Cast media URL protocol is not authorized')
-          }
-          if (parsed.username || parsed.password) {
-            throw new Error('Cast media URL must not include credentials')
-          }
-          // Align with offline download: never open-proxy private/loopback hosts.
-          if (isPrivateOrLoopbackHost(parsed.hostname)) {
-            throw new Error('Cast media URL host is not authorized')
-          }
-          // Always proxy through our LAN token so the cast device never sees CDN secrets
-          // and so private LAN devices can reach sources that need app-side fetch.
-          castUrl = instance.issueRemoteMediaUrl(parsed.toString(), {
-            title,
-            contentType: contentTypeHint
-          })
-          didlContentType = contentTypeHint
-        }
 
-        if (!castUrl) throw new Error('Unable to issue media stream URL')
-
-        if (protocol === 'chromecast') {
-          await chromecastLoad(toCastDevice(device), {
-            deviceId: device.usn,
-            mediaUrl: castUrl,
-            title,
-            artist,
-            album,
-            contentType: didlContentType,
-            positionSeconds
-          })
-        } else {
-          const metadata = buildDidlLiteMetadata({
-            title: title ?? 'Twilight Echo',
-            artist,
-            album,
-            resUrl: castUrl,
-            contentType: didlContentType
-          })
-          await dlnaSetAvTransportUri(device.avTransportUrl!, castUrl, metadata)
-          await dlnaPlay(device.avTransportUrl!)
-          if (positionSeconds > 1) {
-            try {
-              await dlnaSeek(device.avTransportUrl!, positionSeconds)
-            } catch {
-              // Some renderers reject seek before buffering completes.
-            }
+          activeCastUsn = usn
+          castSucceeded = true
+          // Pause local engine via renderer.
+          void sendPlayerCommand('pause').catch(() => {})
+          return {
+            ok: true as const,
+            usn,
+            friendlyName: device.friendlyName,
+            mediaUrl: castUrl
           }
-        }
-
-        activeCastUsn = usn
-        castSucceeded = true
-        // Pause local engine via renderer.
-        void sendPlayerCommand('pause').catch(() => {})
-        return {
-          ok: true as const,
-          usn,
-          friendlyName: device.friendlyName,
-          mediaUrl: castUrl
-        }
-      } finally {
-        if (!castSucceeded) {
-          await releaseOrphanMediaOnlyServer()
+        } finally {
+          if (!castSucceeded) {
+            await releaseOrphanMediaOnlyServer()
+          }
         }
       }
-    }
+    )
   )
 
-  ipcMain.handle('remote:stopCast', async (event) => {
-    assertTrustedIpcSender(event, 'remote control IPC')
-    if (activeCastUsn) {
-      await tryDlnaTransport('stop')
-    }
-    activeCastUsn = null
-    // Tear down media-only cast bind when full remote control remains off.
-    if (server?.isMediaOnly() && runtime.appSettings.remoteControlEnabled !== true) {
-      try {
-        await server.stop()
-      } catch {
-        // ignore
+  ipcMain.handle(
+    'remote:stopCast',
+    serializedCastListener(async (event) => {
+      assertTrustedIpcSender(event, 'remote control IPC')
+      if (activeCastUsn) {
+        await tryDlnaTransport('stop')
       }
-    }
-    return { ok: true as const }
-  })
+      activeCastUsn = null
+      // Tear down media-only cast bind when full remote control remains off.
+      if (server?.isMediaOnly() && runtime.appSettings.remoteControlEnabled !== true) {
+        try {
+          await server.stop()
+        } catch {
+          // ignore
+        }
+      }
+      return { ok: true as const }
+    })
+  )
 
-  ipcMain.handle('remote:getCastTarget', async (event) => {
-    assertTrustedIpcSender(event, 'remote control IPC')
-    if (!activeCastUsn) return null
-    const device = findActiveDevice()
-    return device
-      ? { usn: device.usn, friendlyName: device.friendlyName }
-      : { usn: activeCastUsn, friendlyName: activeCastUsn }
-  })
+  ipcMain.handle(
+    'remote:getCastTarget',
+    serializedCastListener(async (event) => {
+      assertTrustedIpcSender(event, 'remote control IPC')
+      if (!activeCastUsn) return null
+      const device = findActiveDevice()
+      return device
+        ? { usn: device.usn, friendlyName: device.friendlyName }
+        : { usn: activeCastUsn, friendlyName: activeCastUsn }
+    })
+  )
 
   /**
    * Fan-out in-app transport/volume to the active DLNA renderer while casting.
@@ -647,37 +684,39 @@ export function setupRemoteIpc(): void {
    */
   ipcMain.handle(
     'remote:controlCast',
-    async (
-      event,
-      payload: {
-        seek?: unknown
-        volume?: unknown
-        pause?: unknown
-        play?: unknown
+    serializedCastListener(
+      async (
+        event,
+        payload: {
+          seek?: unknown
+          volume?: unknown
+          pause?: unknown
+          play?: unknown
+        }
+      ) => {
+        assertTrustedIpcSender(event, 'remote control IPC')
+        if (!activeCastUsn) return { ok: false as const, reason: 'no-active-cast' as const }
+        if (payload?.seek !== undefined) {
+          const seek =
+            typeof payload.seek === 'number' && Number.isFinite(payload.seek)
+              ? Math.max(0, payload.seek)
+              : null
+          if (seek === null) throw new Error('Cast seek position is invalid')
+          await tryDlnaSeek(seek)
+        }
+        if (payload?.volume !== undefined) {
+          const volume =
+            typeof payload.volume === 'number' && Number.isFinite(payload.volume)
+              ? Math.min(1, Math.max(0, payload.volume))
+              : null
+          if (volume === null) throw new Error('Cast volume is invalid')
+          await tryDlnaVolume(volume)
+        }
+        if (payload?.pause === true) await tryDlnaTransport('pause')
+        if (payload?.play === true) await tryDlnaTransport('play')
+        return { ok: true as const }
       }
-    ) => {
-      assertTrustedIpcSender(event, 'remote control IPC')
-      if (!activeCastUsn) return { ok: false as const, reason: 'no-active-cast' as const }
-      if (payload?.seek !== undefined) {
-        const seek =
-          typeof payload.seek === 'number' && Number.isFinite(payload.seek)
-            ? Math.max(0, payload.seek)
-            : null
-        if (seek === null) throw new Error('Cast seek position is invalid')
-        await tryDlnaSeek(seek)
-      }
-      if (payload?.volume !== undefined) {
-        const volume =
-          typeof payload.volume === 'number' && Number.isFinite(payload.volume)
-            ? Math.min(1, Math.max(0, payload.volume))
-            : null
-        if (volume === null) throw new Error('Cast volume is invalid')
-        await tryDlnaVolume(volume)
-      }
-      if (payload?.pause === true) await tryDlnaTransport('pause')
-      if (payload?.play === true) await tryDlnaTransport('play')
-      return { ok: true as const }
-    }
+    )
   )
 
   void syncRemoteControlWithSettings().catch((error) => {
@@ -686,6 +725,7 @@ export function setupRemoteIpc(): void {
 }
 
 export async function destroyRemoteIpc(): Promise<void> {
+  await castTransportQueue
   rejectRendererRequests()
   runtime.publishRemotePlaybackSnapshot = null
   activeCastUsn = null

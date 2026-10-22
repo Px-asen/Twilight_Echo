@@ -75,9 +75,10 @@ test('content material stays flat while playback optics have bounded work and cl
   }
 })
 
-const runtime = `import {h,render,ref,nextTick} from 'vue'
+const runtime = `import {h,render,ref,shallowRef,nextTick} from 'vue'
 import LiquidGlassDefs from '@renderer/components/LiquidGlassDefs.vue'
-import {functionalLiquidGlassSettings,DEFAULT_LIQUID_GLASS} from '@shared/liquidGlass.ts'
+import {functionalLiquidGlassSettings,DEFAULT_LIQUID_GLASS,resolveChannelScales,LIQUID_GLASS_TUNING_CHANGED_EVENT} from '@shared/liquidGlass.ts'
+import {displacementScaleForRadius} from '@renderer/utils/liquidGlassDisplacement.ts'
 const metrics={rasters:0,callbacks:0,liveObservers:0}
 const toDataURL=HTMLCanvasElement.prototype.toDataURL
 HTMLCanvasElement.prototype.toDataURL=function(...args){metrics.rasters++;return toDataURL.apply(this,args)}
@@ -140,6 +141,55 @@ window.runContentMaterial=async()=>{
  check(metrics.rasters===inactiveRasters,'inactive surfaces keep generating maps')
  render(null,host);await wait()
  check(metrics.liveObservers===0,'unmount retains optical observers')
- return {contentCards:200,contentMutations:2000,materialSwitches:40,rasters:metrics.rasters,observersAfterUnmount:metrics.liveObservers}
+ // A teleported preview owns its geometry, tuning, animation frames and window resources.
+ const frames=[document.createElement('iframe'),document.createElement('iframe')]
+ const documents=frames.map((frame,index)=>{
+  document.body.append(frame);const doc=frame.contentDocument
+  doc.open();doc.write('<!doctype html><html><head><style>:root{--te-lg-displacement:31;--te-lg-aberration:7}.player-bar{width:'+(413+index*100)+'px;height:64px;border-radius:'+(12+index*8)+'px}</style></head><body><div class="app-shell-player"><div class="player-bar player-bar-liquid"></div></div></body></html>');doc.close()
+  return doc
+ })
+ const windows=documents.map(doc=>doc.defaultView),resources=windows.map(view=>{
+  const state={observers:0,listeners:new Map(),frames:new Set()}
+  for(const name of ['ResizeObserver','MutationObserver']){
+   const Original=view[name];view[name]=class extends Original{
+    live=false
+    observe(...args){if(!this.live){this.live=true;state.observers++}return super.observe(...args)}
+    disconnect(){if(this.live){this.live=false;state.observers--}return super.disconnect()}
+   }
+  }
+  const add=view.addEventListener.bind(view),remove=view.removeEventListener.bind(view),request=view.requestAnimationFrame.bind(view),cancel=view.cancelAnimationFrame.bind(view)
+  view.addEventListener=(name,callback,...args)=>{if(name==='resize'||name===LIQUID_GLASS_TUNING_CHANGED_EVENT){if(!state.listeners.has(name))state.listeners.set(name,new Set());state.listeners.get(name).add(callback)}return add(name,callback,...args)}
+  view.removeEventListener=(name,callback,...args)=>{state.listeners.get(name)?.delete(callback);return remove(name,callback,...args)}
+  view.requestAnimationFrame=callback=>{const handle=request(time=>{state.frames.delete(handle);callback(time)});state.frames.add(handle);return handle}
+  view.cancelAnimationFrame=handle=>{state.frames.delete(handle);return cancel(handle)}
+  return state
+ })
+ const targetDocument=shallowRef(documents[0]),theme=ref({...DEFAULT_LIQUID_GLASS.light,displacementScale:68,aberrationIntensity:19})
+ const baseline=JSON.stringify(theme.value),parentDisplacement=document.documentElement.style.getPropertyValue('--te-lg-displacement')
+ document.documentElement.style.setProperty('--te-lg-displacement','99')
+ const parentPlayer=document.createElement('div');parentPlayer.className='app-shell-player';parentPlayer.innerHTML='<div class="player-bar player-bar-liquid" style="width:800px;height:150px;border-radius:50px"></div>';document.body.append(parentPlayer)
+ const scale=()=>Number(host.querySelector('feDisplacementMap').getAttribute('scale'))
+ const expected=(radius,displacement,aberration)=>resolveChannelScales(displacementScaleForRadius(radius,displacement/100),aberration).red
+ const released=state=>state.observers===0&&[...state.listeners.values()].every(listeners=>listeners.size===0)&&state.frames.size===0
+ render(h({setup:()=>()=>h(LiquidGlassDefs,{active:true,targetDocument:targetDocument.value,theme:theme.value})}),host);await wait()
+ check(scale()===expected(12,68,19)&&host.querySelector('feImage').getAttribute('href').startsWith('data:image/png'),'preview uses host geometry or loses its displacement raster')
+ check(resources[0].observers===2&&resources[0].listeners.get(LIQUID_GLASS_TUNING_CHANGED_EVENT)?.size===1&&resources[0].listeners.get('resize')?.size===1&&metrics.liveObservers===0,'preview resources belong to the host window')
+ window.dispatchEvent(new Event(LIQUID_GLASS_TUNING_CHANGED_EVENT));await wait()
+ check(scale()===expected(12,68,19)&&JSON.stringify(theme.value)===baseline,'host tuning contaminates an explicit preview draft')
+ theme.value.displacementScale=31;await wait()
+ check(scale()===expected(12,31,19),'reactive draft optics do not update')
+ // Leave an old-window frame pending, then move the same instance to another document.
+ windows[0].dispatchEvent(new windows[0].Event(LIQUID_GLASS_TUNING_CHANGED_EVENT));targetDocument.value=documents[1];await wait()
+ check(released(resources[0])&&resources[1].observers===2&&scale()===expected(20,31,19),'document switch retains old resources or stale geometry')
+ const switchedScale=scale();documents[0].querySelector('.player-bar').style.borderRadius='5px';windows[0].dispatchEvent(new windows[0].Event(LIQUID_GLASS_TUNING_CHANGED_EVENT));await wait()
+ check(scale()===switchedScale,'detached document still drives preview optics')
+ theme.value=undefined;await wait()
+ check(scale()===expected(20,31,7),'implicit tuning reads the parent document')
+ documents[1].documentElement.style.setProperty('--te-lg-displacement','52');windows[1].dispatchEvent(new windows[1].Event(LIQUID_GLASS_TUNING_CHANGED_EVENT));await wait()
+ check(scale()===expected(20,52,7),'target-window tuning event is ignored')
+ render(null,host);await wait()
+ check(resources.every(released),'cross-document unmount retains observers, listeners or frames')
+ parentPlayer.remove();for(const frame of frames)frame.remove();if(parentDisplacement)document.documentElement.style.setProperty('--te-lg-displacement',parentDisplacement);else document.documentElement.style.removeProperty('--te-lg-displacement')
+ return {contentCards:200,contentMutations:2000,materialSwitches:40,rasters:metrics.rasters,observersAfterUnmount:metrics.liveObservers,crossDocumentSwitches:1,windowResourcesAfterUnmount:resources.map(state=>state.observers)}
 }
 `

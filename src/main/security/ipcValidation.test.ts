@@ -15,7 +15,8 @@ function readDataIpcSources(): string {
     '../ipc/coverIpc.ts',
     '../ipc/lyricsIpc.ts',
     '../ipc/persistenceIpc.ts',
-    '../ipc/persistenceReporting.ts'
+    '../ipc/persistenceReporting.ts',
+    '../persistence/playbackSessionStore.ts'
   ]
     .map((rel) => readFileSync(new URL(rel, import.meta.url), 'utf8'))
     .join('\n')
@@ -180,6 +181,7 @@ test('data IPC applies path and storage limits before touching local files', () 
   assert.match(source, /filterAuthorizedLibraryRoots\(snapshot\.folders\)/)
   assert.match(repositorySource, /loadJsonFileWithBackup\(filePath, MUSIC_LIBRARY_JSON_OPTIONS\)/)
   assert.match(source, /new VersionedDataStore<PlaybackSession \| null>/)
+  assert.match(source, /getPlaybackSessionStoreBundle\(\)/)
   assert.match(
     source,
     /return await saveVersionedData\(playbackSessionStorage, session, expectedRevision\)/

@@ -662,7 +662,8 @@ test('cached audio service calls swallow timeout rejections', async () => {
   }
 })
 
-test('a timed out status RPC keeps a service that answers the health probe alive', async () => {
+test('a timed out status RPC keeps a service that answers the health probe alive', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const child = new ManualUtilityProcess()
   const binding = new AudioEngineServiceBinding({
     serviceEntry: 'audioEngineService.js',
@@ -674,12 +675,14 @@ test('a timed out status RPC keeps a service that answers the health probe alive
   binding.on('crash', (reason: string) => crashes.push(reason))
 
   try {
-    await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    const timedOut = assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    context.mock.timers.tick(10)
+    await timedOut
     assert.equal(child.killCount, 0)
     const probe = child.messages.find((message) => (message as { kind: string }).kind === 'ping')
     assert.ok(probe)
     child.emit('message', { kind: 'pong', requestId: (probe as { requestId: string }).requestId })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    context.mock.timers.tick(30)
     assert.equal(child.killCount, 0)
     assert.deepEqual(crashes, [])
   } finally {
@@ -687,7 +690,8 @@ test('a timed out status RPC keeps a service that answers the health probe alive
   }
 })
 
-test('successful volume replies cancel the watchdog after a status timeout', async () => {
+test('successful volume replies cancel the watchdog after a status timeout', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const child = new ManualUtilityProcess()
   const binding = new AudioEngineServiceBinding({
     serviceEntry: 'audioEngineService.js',
@@ -696,21 +700,24 @@ test('successful volume replies cancel the watchdog after a status timeout', asy
     electron: { utilityProcess: { fork: () => child } }
   })
   try {
-    await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    const timedOut = assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    context.mock.timers.tick(10)
+    await timedOut
     for (const volume of [0.5, 0.4, 0.3]) {
       const pending = binding.callAsync('SetVolume', [volume])
       const request = child.messages.at(-1) as { requestId: string }
       child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
       await pending
     }
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    context.mock.timers.tick(30)
     assert.equal(child.killCount, 0)
   } finally {
     binding.destroy()
   }
 })
 
-test('concurrent status timeouts share one probe and stale pongs cannot rescue a replacement', async () => {
+test('concurrent status timeouts share one probe and stale pongs cannot rescue a replacement', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const children: ManualUtilityProcess[] = []
   const binding = new AudioEngineServiceBinding({
     serviceEntry: 'audioEngineService.js',
@@ -727,32 +734,64 @@ test('concurrent status timeouts share one probe and stale pongs cannot rescue a
     }
   })
   try {
-    await Promise.all([
+    const timeouts = Promise.all([
       assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/),
       assert.rejects(binding.callAsync('GetVisualizationData', ['{}']), /音频服务调用超时/)
     ])
+    context.mock.timers.tick(10)
+    await timeouts
     const probes = children[0].messages.filter(
       (message) => (message as { kind: string }).kind === 'ping'
     )
     assert.equal(probes.length, 1)
     children[0].emit('message', { kind: 'pong', requestId: 'unrelated-probe' })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    context.mock.timers.tick(9)
+    assert.equal(children[0].killCount, 0)
+    context.mock.timers.tick(1)
     assert.equal(children[0].killCount, 1)
+    // Restart backoff begins when the watchdog runs. A loaded event loop can
+    // run a fixed wall-clock wait before this newly scheduled timer is due.
+    assert.equal(children.length, 1)
+    context.mock.timers.tick(4)
+    assert.equal(children.length, 1)
+    context.mock.timers.tick(1)
     assert.equal(children.length, 2)
-    await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+
+    const replacementTimeout = assert.rejects(
+      binding.callAsync('GetPlaybackInfo', []),
+      /音频服务调用超时/
+    )
+    context.mock.timers.tick(10)
+    await replacementTimeout
+    const replacementProbes = children[1].messages.filter(
+      (message) => (message as { kind: string }).kind === 'ping'
+    ) as Array<{ requestId: string }>
+    assert.equal(replacementProbes.length, 1)
+    assert.notEqual(replacementProbes[0].requestId, (probes[0] as { requestId: string }).requestId)
     children[0].emit('message', {
       kind: 'pong',
       requestId: (probes[0] as { requestId: string }).requestId
     })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    children[1].emit('message', {
+      kind: 'pong',
+      requestId: (probes[0] as { requestId: string }).requestId
+    })
+    context.mock.timers.tick(9)
+    assert.equal(children[1].killCount, 0)
+    context.mock.timers.tick(1)
     assert.equal(children[1].killCount, 1)
+    assert.equal(children.length, 2)
+    context.mock.timers.tick(9)
+    assert.equal(children.length, 2)
+    context.mock.timers.tick(1)
     assert.equal(children.length, 3)
   } finally {
     binding.destroy()
   }
 })
 
-test('starting a slow operation cancels a pending health probe until the operation replies', async () => {
+test('starting a slow operation cancels a pending health probe until the operation replies', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const child = new ManualUtilityProcess()
   const binding = new AudioEngineServiceBinding({
     serviceEntry: 'audioEngineService.js',
@@ -761,10 +800,12 @@ test('starting a slow operation cancels a pending health probe until the operati
     electron: { utilityProcess: { fork: () => child } }
   })
   try {
-    await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    const timedOut = assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    context.mock.timers.tick(10)
+    await timedOut
     const pause = binding.callAsync('Pause', [])
     const request = child.messages.at(-1) as { requestId: string }
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    context.mock.timers.tick(30)
     assert.equal(child.killCount, 0)
     child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
     await pause
@@ -773,7 +814,8 @@ test('starting a slow operation cancels a pending health probe until the operati
   }
 })
 
-test('destroy cancels an outstanding health probe without restarting or emitting a crash', async () => {
+test('destroy cancels an outstanding health probe without restarting or emitting a crash', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const child = new ManualUtilityProcess()
   let forks = 0
   const crashes: string[] = []
@@ -791,9 +833,11 @@ test('destroy cancels an outstanding health probe without restarting or emitting
     }
   })
   binding.on('crash', (reason: string) => crashes.push(reason))
-  await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+  const timedOut = assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+  context.mock.timers.tick(10)
+  await timedOut
   binding.destroy()
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  context.mock.timers.tick(30)
   assert.equal(forks, 1)
   assert.equal(child.killCount, 1)
   assert.deepEqual(crashes, [])
@@ -1140,7 +1184,8 @@ test('pause can finish its fade and device release beyond the status polling dea
   }
 })
 
-test('timed out audio service RPC terminates and restarts only after an unanswered health probe', async () => {
+test('timed out audio service RPC terminates and restarts only after an unanswered health probe', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   const children: ManualUtilityProcess[] = []
   const electron = {
     utilityProcess: {
@@ -1163,11 +1208,25 @@ test('timed out audio service RPC terminates and restarts only after an unanswer
   try {
     // A status timeout alone is insufficient. An unanswered event-loop probe
     // confirms that this generation cannot respond and needs replacement.
-    await assert.rejects(() => binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    const timedOut = assert.rejects(binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    context.mock.timers.tick(5)
+    await timedOut
     assert.equal(children[0].killCount, 0)
-    await new Promise((resolve) => setTimeout(resolve, 30))
-
+    assert.equal(
+      children[0].messages.filter((message) => (message as { kind: string }).kind === 'ping')
+        .length,
+      1
+    )
+    context.mock.timers.tick(4)
+    assert.equal(children[0].killCount, 0)
+    context.mock.timers.tick(1)
     assert.equal(children[0].killCount, 1)
+    // The restart delay starts at the watchdog callback, independently of
+    // the original RPC deadline or how late the event loop ran that callback.
+    assert.equal(children.length, 1)
+    context.mock.timers.tick(4)
+    assert.equal(children.length, 1)
+    context.mock.timers.tick(1)
     assert.equal(children.length, 2)
     assert.equal(crashes.length, 1)
     assert.match(crashes[0], /GetPlaybackInfo/)

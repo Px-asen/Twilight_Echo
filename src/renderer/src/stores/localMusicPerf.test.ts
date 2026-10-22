@@ -261,6 +261,7 @@ function installDefaultWindowApi(): void {
         }
       },
       library: {
+        getStorageMode: async () => 'json',
         removeTracks: async (): Promise<never> => {
           throw new Error('unexpected local library removal')
         },
@@ -1918,7 +1919,8 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
             }
           ]
         }
-      }
+      },
+      library: { getStorageMode: async () => 'json' }
     }
   }
 
@@ -1928,29 +1930,7 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
   assert.equal(scanCallCount, 1, 'scanMusicFiles should be called once')
   assert.equal(store.tracks.value.length, tracksBefore + 1, 'track should be added')
 
-  // Restore default mock
-  ;(globalThis as Record<string, unknown>).window = {
-    api: {
-      data: {
-        saveMusicLibrary: async (snapshot: unknown) => {
-          saveCallCount++
-          return createSavedMusicLibraryDocument(snapshot)
-        },
-        loadMusicLibrary: async (): Promise<unknown[]> => {
-          loadCallCount++
-          return []
-        },
-        savePlaylists: async (): Promise<void> => {},
-        loadPlaylists: async (): Promise<unknown[]> => []
-      },
-      fs: {
-        scanMusicFiles: async (): Promise<unknown[]> => {
-          scanCallCount++
-          return generateMockTracks(1)
-        }
-      }
-    }
-  }
+  installDefaultWindowApi()
 
   store.clearTracks()
 })

@@ -38,7 +38,7 @@ const navigation=useAppNavigation()
 window.homeNavigation=navigation
 const {menuOpen,pageTarget,localViewVisible,activeCategory,activeFilter,songlistTransitionName,
  showPlayingPage,showPluginPage,showDspRackPage,showRadioPodcastPage,showLoginPage,
- showSettingsPage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
+ showSettingsPage,showAppearancePage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
 const appearanceFullWindowPreview=ref(false)
 ${sidebarVisibility}
 const hasPlayerBar=ref(false), mainContentMinHeight='100vh'

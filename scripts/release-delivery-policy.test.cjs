@@ -189,6 +189,49 @@ test('Linux release builds keep the validated Ubuntu LTS image', () => {
   assert.doesNotMatch(workflow, /runs-on: ubuntu-latest/)
 })
 
+test('manual release rebuilds use the requested tag in both build and publish checkouts', () => {
+  const releaseRef =
+    "${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}"
+  for (const file of ['build-linux.yml', 'build-macos.yml']) {
+    const workflow = read(`.github/workflows/${file}`)
+    const checkouts = [...workflow.matchAll(/^ {8}uses: actions\/checkout@[^\r\n]+/gm)]
+    assert.equal(checkouts.length, 2, `${file} must check out source for both jobs`)
+    for (const checkout of checkouts) {
+      const settings = workflow.slice(checkout.index + checkout[0].length)
+      const ref = settings.match(/^\r?\n {8}with:\r?\n {10}ref: ([^\r\n]+)/)?.[1]
+      assert.equal(ref, releaseRef, `${file} must build and publish the requested release tag`)
+    }
+  }
+})
+
+test('package publication keeps build success and scoped write permission gates', () => {
+  for (const platform of ['linux', 'macos']) {
+    const workflow = read(`.github/workflows/build-${platform}.yml`)
+    const publishIndex = workflow.search(/^ {2}publish:\r?$/m)
+    assert.notEqual(publishIndex, -1, `${platform} must publish through a separate job`)
+    const publish = workflow.slice(publishIndex)
+    const build = workflow.slice(0, publishIndex)
+    assert.match(workflow, /^permissions:\r?\n {2}contents: read\r?\n/m)
+    assert.doesNotMatch(build, /contents: write/)
+    assert.match(publish, /^ {4}permissions:\r?\n {6}contents: write\r?\n/m)
+    assert.match(publish, new RegExp(`^ {4}needs: ${platform}\\r?\\n`, 'm'))
+    assert.match(
+      publish,
+      new RegExp(
+        `^ {4}if: needs\\.${platform}\\.result == 'success' && \\(github\\.event_name == 'push' \\|\\| inputs\\.release_tag\\)\\r?$`,
+        'm'
+      )
+    )
+    assert.match(build, /--publish never/)
+    assert.match(build, /if-no-files-found: error/)
+    assert.match(publish, /test "v\$\{version\}" = "\$RELEASE_TAG"/)
+    assert.ok(
+      publish.indexOf('Verify the release tag matches the packaged version') <
+        publish.indexOf('bash scripts/publish-release-assets.sh')
+    )
+  }
+})
+
 test('release packaging writes an SHA-256 companion file for the installer', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-release-checksum-'))
   try {

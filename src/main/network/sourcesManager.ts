@@ -52,12 +52,14 @@ const SCAN_LIMITS = {
 
 export function createNetworkSourcesManager(deps: {
   store: NetworkProfileStore
-  cacheRoot: string
-  coverCacheRoot: string
+  cacheRoot: string | (() => string)
+  coverCacheRoot: string | (() => string)
   getAdapter: (protocol: NetworkSourceProfile['protocol']) => Promise<NetworkSourceAdapter | null>
   library: NetworkLibraryIndex
 }): NetworkSourcesManager {
-  const { store, cacheRoot, coverCacheRoot, getAdapter, library } = deps
+  const { store, getAdapter, library } = deps
+  const currentDirectory = (directory: string | (() => string)) =>
+    typeof directory === 'function' ? directory() : directory
 
   async function openSession(profileId: string): Promise<{
     profile: NetworkSourceProfile
@@ -117,6 +119,7 @@ export function createNetworkSourcesManager(deps: {
         throw new NetworkSourceFailure('denied', '网络条目与播放源不匹配')
       }
       const path = normalizeRemotePath(entry.path)
+      const cacheRoot = currentDirectory(deps.cacheRoot)
       const { session, profile } = await openSession(profileId)
       try {
         const directUrl = await session.resolvePlaybackUrl(path, signal)
@@ -179,6 +182,10 @@ export function createNetworkSourcesManager(deps: {
       return library.removeEntry(profileId, entryId)
     },
     async enrichLibrary(profileId) {
+      // Snapshot both directories for this operation. Later operations follow
+      // settings changes without replacing the manager or its library index.
+      const cacheRoot = currentDirectory(deps.cacheRoot)
+      const coverCacheRoot = currentDirectory(deps.coverCacheRoot)
       const entries = await library.listEntries(profileId)
       if (entries.length === 0) return { enriched: 0, failed: 0 }
       const { session } = await openSession(profileId)

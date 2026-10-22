@@ -70,6 +70,7 @@ const pending = {
   progress: 0.5
 }
 const scan = ref({ state: 'running', current: 2, total: 10, error: '' })
+const libraryChanged = new Set()
 window.__uxMusic = {
   tracks: ref([]),
   libraryScanStatus: scan,
@@ -98,6 +99,13 @@ window.__uxPlayer = {
 let restoreRequest = null,
   acknowledged = ''
 window.api = {
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: (callback) => {
+      libraryChanged.add(callback)
+      return () => libraryChanged.delete(callback)
+    }
+  },
   providerDownloads: {
     onChanged: (callback) => {
       connects++
@@ -186,6 +194,10 @@ window.runUxFeatureTests = async () => {
     document.querySelector('.notice-history').textContent.includes('已下载歌曲'),
     'global center omitted completed download'
   )
+  expect(libraryChanged.size === 1, 'download result omitted its library change subscription')
+  for (const callback of libraryChanged) callback(undefined)
+  await settle()
+  expect(button('加入曲库（复制）'), 'JSON library refresh lost the unindexed download action')
   await window.captureFeature('task-center')
   await click('暂停')
   expect(scanned === 1 && button('继续'), 'pause should route to scan service')
@@ -231,6 +243,7 @@ window.runUxFeatureTests = async () => {
   second()
   await mount(PersonalBackupSection)
   expect(stopped === 1, 'last consumer failed to release download subscription')
+  expect(libraryChanged.size === 0, 'unmounted download result retained its library subscription')
   await click('选择备份并预览')
   expect(
     document.querySelector('table').textContent.includes('歌单与收藏'),

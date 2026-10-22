@@ -1531,6 +1531,16 @@ const subscribe = (list, cb) => {
 const noopSubscribe = () => () => {}
 window.api = {
   ncmCloud: { onProgress: noopSubscribe },
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: {
+      queryTracks: async () => ({ tracks: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      queryCollections: async () => ({ items: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      getTracksByIds: async () => ({ tracks: [], revision: 0 }),
+      readQueue: async () => { throw new Error('lyrics fixture has no database queue') }
+    }
+  },
   settings: {
     get: async () => settingsSnapshot(),
     update: async (patch) => {

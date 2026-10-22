@@ -157,8 +157,8 @@ async function callProvider<T>(
   return result
 }
 
-export function useProviderStore() {
-  ensurePluginChangeListener()
+export function useProviderStore(options?: { listen?: boolean }) {
+  if (options?.listen !== false) ensurePluginChangeListener()
 
   function hasProvider(id: string): boolean {
     return providerIds.value.has(id)

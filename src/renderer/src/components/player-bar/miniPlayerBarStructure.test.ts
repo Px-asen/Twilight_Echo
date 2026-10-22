@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
+import { computed, reactive, ref } from 'vue'
 
 import { compileStyle } from '@vue/compiler-sfc'
 
 import { DEFAULT_PLAYER_BAR_LAYOUT } from '../../../../shared/playerBarLayout.ts'
+import type { SurfaceMaterial } from '../../../../shared/liquidGlass.ts'
 
 const playerBar = readFileSync(new URL('../PlayerBar.vue', import.meta.url), 'utf8')
 const seekProgress = readFileSync(new URL('./PlayerSeekProgress.vue', import.meta.url), 'utf8')
@@ -295,10 +298,42 @@ test('the mini shape opts out of the liquid glass material at the source', () =>
   // with `!important`, so a mini bar that kept the class could not win its own
   // surface back: it rendered as a transparent pane ringed by the rim highlight.
   // Compact is a flat strip for the same reason, so only standard wears it.
-  assert.match(
-    playerBar,
-    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*isStandard\.value\s*&&[\s\S]{0,260}effectiveLiquidGlass\.value\.playbarEnabled/
-  )
+  const gate = playerBar.match(/const liquidGlassActive = computed\([\s\S]*?\n\)/)?.[0]
+  assert.ok(gate)
+  const mode = ref('standard')
+  const props = reactive({
+    previewAppearance: undefined as
+      | { surfaceMaterial: SurfaceMaterial; liquidGlass: { playbarEnabled: boolean } }
+      | undefined
+  })
+  const material = ref<SurfaceMaterial>('liquidGlass')
+  const glass = ref({ playbarEnabled: true })
+  const active = runInNewContext(`${gate}\nliquidGlassActive`, {
+    computed,
+    isStandard: computed(() => mode.value === 'standard'),
+    props,
+    effectiveSurfaceMaterial: material,
+    effectiveLiquidGlass: glass
+  }) as { readonly value: boolean }
+  for (const preview of [false, true]) {
+    props.previewAppearance = preview
+      ? { surfaceMaterial: 'liquidGlass', liquidGlass: { playbarEnabled: true } }
+      : undefined
+    for (const shape of ['mini', 'compact']) {
+      mode.value = shape
+      assert.equal(active.value, false, `${shape} must exclude glass with preview=${preview}`)
+    }
+    mode.value = 'standard'
+    assert.equal(active.value, true, 'standard retains the selected liquid glass material')
+  }
+  props.previewAppearance = undefined
+  material.value = 'transparent'
+  assert.equal(active.value, false, 'transparent standard bars also opt out of the material')
+  material.value = 'standard'
+  glass.value.playbarEnabled = false
+  assert.equal(active.value, false)
+  glass.value.playbarEnabled = true
+  assert.equal(active.value, true, 'the explicit playbar glass switch remains effective')
   // Which also means neither strip mounts a refracting layer or runs pointer writes.
   assert.match(playerBar, /v-if="liquidGlassActive" class="player-bar-warp"/)
   assert.match(playerBar, /shouldTrack =\s*\n?\s*liquidGlassActive\.value/)

@@ -45,12 +45,18 @@ export interface UnifiedMusicSearchState {
   invalidateLibrary: (revision: number) => void
 }
 
-export function useUnifiedMusicSearch(): UnifiedMusicSearchState {
-  const providers = useMediaProviders()
-  const localSource = useLibraryUnifiedSearch((revision) => {
-    if (revision === undefined) search.refresh()
-    else search.invalidateLibrary(revision)
-  })
+export function useUnifiedMusicSearch(options?: {
+  sync?: boolean
+  listen?: boolean
+}): UnifiedMusicSearchState {
+  const providers = useMediaProviders({ sync: options?.sync })
+  const localSource = useLibraryUnifiedSearch(
+    (revision) => {
+      if (revision === undefined) search.refresh()
+      else search.invalidateLibrary(revision)
+    },
+    { listen: options?.listen }
+  )
   const search = createUnifiedMusicSearch({
     getLocalTracks: () => [],
     localSource,

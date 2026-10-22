@@ -4,8 +4,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { Agent, MockAgent, request as requestLoopbackApi } from 'undici'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
-import { waitForListeningPort } from './serverBinding.ts'
+import type { NcmApiRequestOptions } from './api.ts'
+import { getListeningPort, waitForListeningPort } from './serverBinding.ts'
 
 async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
   if (!server.listening) return
@@ -14,7 +16,9 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
   })
 }
 
-test('FM and radar requests bypass gateway caches while ordinary playback requests retain caching', async () => {
+async function loadRequestNcmApi(
+  overrides: Record<string, unknown> = {}
+): Promise<(path: string, cookie?: string, options?: NcmApiRequestOptions) => Promise<unknown>> {
   const source = await readFile(new URL('./api.ts', import.meta.url), 'utf8')
   const ast = ts.createSourceFile('api.ts', source, ts.ScriptTarget.Latest, true)
   const names = new Set([
@@ -42,24 +46,35 @@ test('FM and radar requests bypass gateway caches while ordinary playback reques
     nodes.map((node) => node.getText(ast).replace(/^export /, '')).join('\n'),
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
   ).outputText
-  let now = 1000
-  const urls: URL[] = []
-  const request = runInNewContext(`${code}\nrequestNcmApi`, {
+  return runInNewContext(`${code}\nrequestNcmApi`, {
     URL,
+    Error,
     AbortController,
     setTimeout,
     clearTimeout,
     normalizeIpcString,
-    Date: { now: () => now },
+    redactSensitiveText: (text: string) => text,
+    console: { error: () => undefined },
     runtime: { ncmServer: {} },
     getListeningPort: () => 3101,
     ensureNcmServer: async () => undefined,
+    requestLoopbackApi,
+    ...overrides
+  })
+}
+
+test('FM and radar requests bypass gateway caches while ordinary playback requests retain caching', async () => {
+  let now = 1000
+  const urls: URL[] = []
+  const respond = async (url: string): Promise<unknown> => {
+    urls.push(new URL(url))
+    return { body: { text: async () => '{"code":200,"data":[]}' } }
+  }
+  const request = await loadRequestNcmApi({
+    Date: { now: () => now },
     NCM_KEEP_ALIVE_AGENT: {},
-    fetch: async (url: string) => {
-      urls.push(new URL(url))
-      return { text: async () => '{"code":200,"data":[]}' }
-    }
-  }) as (path: string) => Promise<unknown>
+    requestLoopbackApi: respond
+  })
   for (const path of ['/personal_fm', '/personal/fm/mode?mode=DEFAULT']) {
     await request(path)
     now += 1
@@ -74,12 +89,106 @@ test('FM and radar requests bypass gateway caches while ordinary playback reques
   assert.equal(urls.at(-1)!.searchParams.get('id'), '93')
 })
 
+test('NCM loopback requests retain redirects and invalid JSON diagnostics', async () => {
+  const agent = new MockAgent()
+  agent.disableNetConnect()
+  const server = agent.get('http://127.0.0.1:6000')
+  server.intercept({ path: '/redirect', method: 'GET' }).reply(302, '', {
+    headers: { location: '/result' }
+  })
+  server.intercept({ path: '/result', method: 'GET' }).reply(200, { code: 200 })
+  server.intercept({ path: '/invalid', method: 'GET' }).reply(503, '<html>unavailable</html>', {
+    headers: { 'content-type': 'text/html' }
+  })
+  const request = await loadRequestNcmApi({
+    NCM_KEEP_ALIVE_AGENT: agent,
+    getListeningPort: () => 6000
+  })
+  try {
+    assert.equal(JSON.stringify(await request('/redirect')), '{"code":200}')
+    const invalid = (await request('/invalid')) as { code: number; message: string }
+    assert.equal(invalid.code, -1)
+    assert.match(invalid.message, /invalid JSON \(HTTP 503, text\/html\)/)
+    agent.assertNoPendingInterceptors()
+  } finally {
+    await agent.close()
+  }
+})
+
+for (const cancellation of ['caller', 'deadline'] as const) {
+  test(`NCM loopback requests retain ${cancellation} cancellation and clear the deadline`, async () => {
+    let startRequest!: () => void
+    const started = new Promise<void>((resolve) => (startRequest = resolve))
+    let expire!: () => void
+    let forwardedSignal!: AbortSignal
+    let cleared = 0
+    const request = await loadRequestNcmApi({
+      NCM_KEEP_ALIVE_AGENT: {},
+      setTimeout: (callback: () => void, timeout: number) => {
+        assert.equal(timeout, 25_000)
+        expire = callback
+        return 1
+      },
+      clearTimeout: () => (cleared += 1),
+      requestLoopbackApi: (_url: string, options: { signal: AbortSignal }) => {
+        forwardedSignal = options.signal
+        startRequest()
+        return new Promise((_resolve, reject) => {
+          forwardedSignal.addEventListener('abort', () => reject(forwardedSignal.reason), {
+            once: true
+          })
+        })
+      }
+    })
+    const caller = new AbortController()
+    const pending = request('/song/url?id=93', undefined, { signal: caller.signal })
+    await started
+    if (cancellation === 'caller') caller.abort(new Error('caller cancelled'))
+    else expire()
+    const result = (await pending) as { code: number }
+    assert.equal(result.code, -1)
+    assert.equal(forwardedSignal.aborted, true)
+    assert.equal(cleared, 1)
+  })
+}
+
+test('NCM API requests reach their isolated listener on a Fetch-restricted port', async () => {
+  const agent = new MockAgent()
+  agent.disableNetConnect()
+  agent
+    .get('http://127.0.0.1:6000')
+    .intercept({
+      path: '/song/url?id=93',
+      method: 'GET',
+      headers: { cookie: 'MUSIC_U=test; __csrf=csrf', 'x-twilight-idempotency-key': 'request-1' }
+    })
+    .reply(200, { code: 200, service: 'ncm' })
+  const request = await loadRequestNcmApi({
+    NCM_KEEP_ALIVE_AGENT: agent,
+    getListeningPort: () => 6000
+  })
+  try {
+    const result = await request('/song/url?id=93', 'MUSIC_U=test;  __csrf=csrf', {
+      idempotencyKey: 'request-1'
+    })
+    assert.equal(JSON.stringify(result), '{"code":200,"service":"ncm"}')
+    agent.assertNoPendingInterceptors()
+  } finally {
+    await agent.close()
+  }
+})
+
 test('NCM API binding reports its actual isolated port instead of a foreign listener', async () => {
-  const foreignServer = createServer((_request, response) => response.end('foreign-service'))
+  let foreignRequests = 0
+  const foreignServer = createServer((_request, response) => {
+    foreignRequests += 1
+    response.end('foreign-service')
+  })
   const ncmServer = createServer((_request, response) => {
     response.setHeader('content-type', 'application/json')
     response.end('{"service":"ncm"}')
   })
+  const agent = new Agent()
 
   try {
     foreignServer.listen(0, '127.0.0.1')
@@ -89,9 +198,16 @@ test('NCM API binding reports its actual isolated port instead of a foreign list
     const ncmPort = await waitForListeningPort(ncmServer)
 
     assert.notEqual(ncmPort, foreignPort)
-    const response = await fetch(`http://127.0.0.1:${ncmPort}/login/qr/key`)
-    assert.deepEqual(await response.json(), { service: 'ncm' })
+    const request = await loadRequestNcmApi({
+      NCM_KEEP_ALIVE_AGENT: agent,
+      runtime: { ncmServer },
+      getListeningPort
+    })
+    const response = await request('/login/qr/key')
+    assert.equal(JSON.stringify(response), '{"service":"ncm"}')
+    assert.equal(foreignRequests, 0)
   } finally {
+    await agent.close()
     await Promise.all([closeServer(ncmServer), closeServer(foreignServer)])
   }
 })
@@ -114,7 +230,7 @@ test('NCM API binding rejects when the server cannot listen', async () => {
   }
 })
 
-test('NCM API server starts once on the first request and gates fetch on readiness', async () => {
+test('NCM API server starts once on the first request and gates loopback requests on readiness', async () => {
   const source = await readFile(new URL('./api.ts', import.meta.url), 'utf8')
 
   assert.match(source, /export function ensureNcmServer\(\): Promise<void>/)
@@ -124,8 +240,8 @@ test('NCM API server starts once on the first request and gates fetch on readine
   assert.match(source, /port: NCM_API_EPHEMERAL_PORT/)
   assert.match(source, /await waitForListeningPort\(ncmApp\.server\)/)
   assert.match(source, /getListeningPort\(runtime\.ncmServer\)/)
-  assert.match(source, /const res = await fetch\(url, \{/)
-  assert.match(source, /const responseText = await res\.text\(\)/)
+  assert.match(source, /const res = await requestLoopbackApi\(url, \{/)
+  assert.match(source, /const responseText = await res\.body\.text\(\)/)
   assert.match(source, /signal: controller\.signal,/)
   assert.match(source, /headers,/)
   assert.match(source, /dispatcher: NCM_KEEP_ALIVE_AGENT/)

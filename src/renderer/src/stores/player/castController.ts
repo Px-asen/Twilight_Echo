@@ -1,4 +1,4 @@
-import type { Ref } from 'vue'
+import { watch, type Ref } from 'vue'
 import type { Track } from '../../types/music'
 
 export function createCastController({
@@ -20,7 +20,26 @@ export function createCastController({
   isCurrentTrackLiveStream: () => boolean
   recordPlaybackStart: (track: Track) => void
 }) {
+  let generation = 0
+  let disposed = false
+  let transport = Promise.resolve()
+  const stopSelectionWatch = watch(
+    [() => currentTrack.value?.id, () => currentTrack.value?.queueEntryId],
+    () => {
+      generation++
+    },
+    { flush: 'sync' }
+  )
+  function serializeTransport(action: () => Promise<void>): Promise<void> {
+    const result = transport.then(action, action)
+    transport = result.catch(() => {})
+    return result
+  }
+
   async function castCurrentTrackToDevice(usn: string): Promise<void> {
+    if (disposed) return
+    const request = ++generation
+    const isCurrent = (): boolean => !disposed && request === generation
     const track = currentTrack.value
     if (!track) throw new Error('当前没有可投送的曲目')
     const remoteApi = getRemoteApi()
@@ -48,6 +67,7 @@ export function createCastController({
     } catch {
       // Fall through to direct fields when resolvePlayTarget fails.
     }
+    if (!isCurrent()) return
     if (!filePath && !mediaUrl) {
       classifyCastTarget(track.streamUrl || track.filePath || '')
     }
@@ -55,26 +75,49 @@ export function createCastController({
       throw new Error('当前曲目不支持投送（缺少本地路径或流地址）')
     }
 
-    const result = await remoteApi.castToDevice({
-      usn,
-      ...(filePath ? { filePath } : { mediaUrl }),
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      // Live radio: do not seek after load.
-      positionSeconds: isCurrentTrackLiveStream() ? 0 : currentTime.value
+    const positionSeconds = isCurrentTrackLiveStream() ? 0 : currentTime.value
+    await serializeTransport(async () => {
+      if (!isCurrent()) return
+      try {
+        const result = await remoteApi.castToDevice({
+          usn,
+          ...(filePath ? { filePath } : { mediaUrl }),
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          // Live radio: do not seek after load.
+          positionSeconds
+        })
+        if (!isCurrent()) {
+          // An issued device command cannot be recalled. Finish its cleanup in
+          // this lane before a newer cast can begin, so it cannot stop that cast.
+          // Disposed runtimes have handed global transport ownership to their
+          // replacement, whose independent lane may already have started a cast.
+          if (!disposed) await remoteApi.stopCast?.().catch(() => {})
+          return
+        }
+        castTargetUsn.value = result.usn
+        castTargetName.value = result.friendlyName
+        recordPlaybackStart(track)
+        // Main process already dispatches a 'pause' shortcut for local engine.
+      } catch (error) {
+        // The queue skip caller falls back to local playback on rejection.
+        // A superseded cast must never start its departed track through that path.
+        if (isCurrent()) throw error
+      }
     })
-    castTargetUsn.value = result.usn
-    castTargetName.value = result.friendlyName
-    recordPlaybackStart(track)
-    // Main process already dispatches a 'pause' shortcut for local engine.
   }
 
   async function stopCastSession(): Promise<void> {
+    if (disposed) return
+    generation++
     const remoteApi = getRemoteApi()
-    if (remoteApi?.stopCast) await remoteApi.stopCast()
-    castTargetUsn.value = null
-    castTargetName.value = null
+    await serializeTransport(async () => {
+      if (disposed) return
+      if (remoteApi?.stopCast) await remoteApi.stopCast()
+      castTargetUsn.value = null
+      castTargetName.value = null
+    })
   }
 
   async function discoverCastDevices(): Promise<
@@ -86,6 +129,8 @@ export function createCastController({
   }
 
   async function refreshCastTarget(): Promise<void> {
+    if (disposed) return
+    const request = generation
     const remoteApi = getRemoteApi()
     if (!remoteApi?.getCastTarget) {
       castTargetUsn.value = null
@@ -93,8 +138,20 @@ export function createCastController({
       return
     }
     const target = await remoteApi.getCastTarget()
+    if (disposed || request !== generation) return
     castTargetUsn.value = target?.usn ?? null
     castTargetName.value = target?.friendlyName ?? null
   }
-  return { castCurrentTrackToDevice, stopCastSession, discoverCastDevices, refreshCastTarget }
+  function dispose(): void {
+    disposed = true
+    generation++
+    stopSelectionWatch()
+  }
+  return {
+    castCurrentTrackToDevice,
+    stopCastSession,
+    discoverCastDevices,
+    refreshCastTarget,
+    dispose
+  }
 }

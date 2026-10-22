@@ -864,6 +864,20 @@ html:not([data-theme='dark']) :is(.audio-workspace, .settings-preview-page) {
     --te-control-accent-text: var(--te-overlay-settings-text);
     color: var(--te-overlay-settings-text) !important;
   }
+  /* A thin accent tint follows raw background ink. An image reading wash
+     paints the mode's surface beneath it, so that surface supplies the ink. */
+  html:is([data-te-settings-text-tone='light'], [data-te-settings-text-tone='dark'])
+    .settings-preview-page
+    .brand-soft-button {
+    color: var(--te-control-accent-text) !important;
+  }
+  html:is([data-te-settings-text-tone='light'], [data-te-settings-text-tone='dark']):has(
+      .app-background-layer--reading[data-background-page='settings'][data-background-image-state='ready']
+    )
+    .settings-preview-page
+    .brand-soft-button {
+    --te-control-accent-text: var(--te-overlay-settings-text);
+  }
   /* Legacy translucent panels need enough of their theme surface behind the
      theme foreground; wallpaper contrast cannot protect text inside them. */
   html:is([data-te-settings-text-tone='light'], [data-te-settings-text-tone='dark'])

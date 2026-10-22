@@ -7,13 +7,15 @@ import {
 export function useLocalPlaylistOrder<T extends { id: string }>(
   source: Readonly<Ref<T[]>>,
   scope: () => string,
-  report: (message: string) => void
+  report: (message: string) => void,
+  options?: { persist?: boolean }
 ) {
   const order = shallowRef<string[]>([])
   watch(
     scope,
     (key) => {
       order.value = []
+      if (options?.persist === false) return
       try {
         const saved: unknown = JSON.parse(
           localStorage.getItem(`te-local-playlist-order:${key}`) ?? '[]'
@@ -40,6 +42,7 @@ export function useLocalPlaylistOrder<T extends { id: string }>(
     order.value = playlists.value.map((playlist) =>
       shown.has(playlist.id) ? ids[index++] : playlist.id
     )
+    if (options?.persist === false) return
     try {
       localStorage.setItem(`te-local-playlist-order:${scope()}`, JSON.stringify(order.value))
       report('已保存歌单顺序')

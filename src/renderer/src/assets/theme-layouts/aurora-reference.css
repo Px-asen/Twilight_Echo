@@ -1,5 +1,5 @@
 html[data-te-preset-layout='aurora-reference'] body .side-menu.side-menu {
-  top: 32px;
+  top: var(--te-titlebar-inset, 40px);
   left: 0;
   bottom: var(--te-side-menu-bottom, 0px);
   border: 0;

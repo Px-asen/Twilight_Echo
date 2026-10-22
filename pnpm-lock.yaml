@@ -7,6 +7,7 @@ settings:
 overrides:
   axios: 1.20.0
   basic-ftp: 6.2.1
+  follow-redirects: 1.16.1
   music-metadata: 11.16.0
   form-data: 4.0.6
   postcss: 8.5.26
@@ -37,7 +38,7 @@ importers:
         version: 0.2.2
       '@electron-toolkit/utils':
         specifier: ^4.0.0
-        version: 4.0.0(electron@43.5.0)
+        version: 4.0.0(electron@43.7.0)
       '@neteasecloudmusicapienhanced/api':
         specifier: ^4.35.1
         version: 4.35.1(patch_hash=784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf)
@@ -114,8 +115,8 @@ importers:
         specifier: 21.3.4
         version: 21.3.4
       follow-redirects:
-        specifier: 1.16.0
-        version: 1.16.0
+        specifier: 1.16.1
+        version: 1.16.1
       form-data:
         specifier: 4.0.6
         version: 4.0.6
@@ -268,8 +269,8 @@ importers:
         specifier: ^6.0.2
         version: 6.0.6(vite@7.3.2(@types/node@22.19.17)(jiti@2.7.0))(vue@3.5.33(typescript@5.9.3))
       electron:
-        specifier: 43.5.0
-        version: 43.5.0
+        specifier: 43.7.0
+        version: 43.7.0
       electron-builder:
         specifier: ^26.0.12
         version: 26.8.1(electron-builder-squirrel-windows@26.8.1)
@@ -1745,8 +1746,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@43.5.0:
-    resolution: {integrity: sha512-nV2aWuKatmUrxrAWP2pNIynNX7dy83TCAz+6KnsbK7hDVLE+6fa2iouOtir41AboZTa+J5w2UgicWHAqUaaUJw==}
+  electron@43.7.0:
+    resolution: {integrity: sha512-m98FUehwnoo6q2D9Mr+n602Natb2CRFeKD81GhTdJlKh/Iyud0R1X8hChjpaMBLSsIX9r2ZEFnz0sdIALiO9ZQ==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -2023,8 +2024,8 @@ packages:
   flatted@3.4.2:
     resolution: {integrity: sha512-PjDse7RzhcPkIJwy5t7KPWQSZ9cAbzQXcafsetQoD7sOJRQlGikNbx7yZp2OotDnJyrDcbyRq3Ttb18iYOqkxA==}
 
-  follow-redirects@1.16.0:
-    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
+  follow-redirects@1.16.1:
+    resolution: {integrity: sha512-FNvFGzoMLWmE6Yj9spb/zjd7yiNCHiAW9/Tg9CXrQ8wuu32HtlJOwWO11OJafl5FfY3DxTdQ0vj42zU1kvv5jg==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -3564,9 +3565,9 @@ snapshots:
     dependencies:
       '@types/node': 22.19.17
 
-  '@electron-toolkit/utils@4.0.0(electron@43.5.0)':
+  '@electron-toolkit/utils@4.0.0(electron@43.7.0)':
     dependencies:
-      electron: 43.5.0
+      electron: 43.7.0
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -4441,7 +4442,7 @@ snapshots:
 
   axios@1.20.0:
     dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.1
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -4905,7 +4906,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@43.5.0:
+  electron@43.7.0:
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0
@@ -5310,7 +5311,7 @@ snapshots:
 
   flatted@3.4.2: {}
 
-  follow-redirects@1.16.0: {}
+  follow-redirects@1.16.1: {}
 
   form-data@4.0.6:
     dependencies:

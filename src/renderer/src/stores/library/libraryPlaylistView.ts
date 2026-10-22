@@ -130,12 +130,14 @@ export function createLibraryPlaylistView(
           // window at a time. Small playlists share a window, rather than each
           // requiring a separate RPC for a single member.
           for (const group of current) {
-            const members = group.imported
-              ? group.imported.entries.map(entry => ({ id: entry.entryId, snapshot: importEntryViewRecord(entry) as LibraryTrackRecord }))
-              : group.trackIds.map(id => ({ id, snapshot: group.trackSnapshots?.[id] as unknown as LibraryTrackRecord | undefined }))
-            for (const member of members) {
+            const memberCount = group.imported?.entries.length ?? group.trackIds.length
+            for (let index = 0; index < memberCount; index++) {
               if (stale()) break
-              const {id: trackId, snapshot} = member
+              const importedEntry = group.imported?.entries[index]
+              const trackId = importedEntry ? importedEntry.entryId : group.trackIds[index]
+              const snapshot = importedEntry
+                ? importEntryViewRecord(importedEntry)
+                : group.trackSnapshots?.[trackId]
               entries.push({
                 id: trackId,
                 ...(isCatalog ? { collectionId: group.id } : {}),

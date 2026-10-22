@@ -8,7 +8,7 @@ import { redactSensitiveText } from '../security/secureStorage.ts'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
 import { setupNcmCloudTransferIpc } from './cloudTransfer.ts'
 import { getListeningPort, waitForListeningPort } from './serverBinding.ts'
-import { Agent } from 'undici'
+import { Agent, request as requestLoopbackApi } from 'undici'
 
 export const NCM_API_HOST = '127.0.0.1'
 export const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
@@ -105,17 +105,21 @@ export async function requestNcmApi(
   else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
   const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetch(url, {
+    // The OS can assign a valid loopback port that Fetch's browser port policy
+    // blocks (for example 6000). This main-process client talks to our listener
+    // directly while retaining the same pool, cancellation and redirect limit.
+    const res = await requestLoopbackApi(url, {
       signal: controller.signal,
       headers,
-      dispatcher: NCM_KEEP_ALIVE_AGENT
-    } as RequestInit)
-    const responseText = await res.text()
+      dispatcher: NCM_KEEP_ALIVE_AGENT,
+      maxRedirections: 20
+    })
+    const responseText = await res.body.text()
     try {
       return JSON.parse(responseText) as unknown
     } catch {
-      const contentType = res.headers.get('content-type') || 'unknown content type'
-      throw new Error(`NetEase API returned invalid JSON (HTTP ${res.status}, ${contentType})`)
+      const contentType = res.headers['content-type'] || 'unknown content type'
+      throw new Error(`NetEase API returned invalid JSON (HTTP ${res.statusCode}, ${contentType})`)
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

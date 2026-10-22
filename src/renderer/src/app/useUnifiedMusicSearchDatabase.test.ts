@@ -14,6 +14,89 @@ import type { UnifiedMusicSearchState } from './useUnifiedMusicSearch.ts'
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
+test('preview search hooks stay idle while default live hooks still synchronize and subscribe', () => {
+  const scope = vue.effectScope()
+  const mounts: Array<() => void> = []
+  const unmounts: Array<() => void> = []
+  let syncs = 0,
+    subscriptions = 0,
+    unsubscriptions = 0,
+    sources = 0
+  const dependencies: Record<string, unknown> = {
+    vue: {
+      ...vue,
+      onMounted: (fn: () => void) => mounts.push(fn),
+      onBeforeUnmount: (fn: () => void) => unmounts.push(fn)
+    },
+    '@renderer/stores/musicVersions.ts': { musicVersionRevision },
+    '../stores/musicVersions.ts': { musicVersionRevision },
+    '@renderer/utils/logicalTrackModel.ts': { buildLogicalTracks },
+    '../providers/index.ts': {
+      useMediaProviders: (options?: { sync?: boolean }) => {
+        if (options?.sync !== false) syncs++
+        return { searchAllSongs: () => assert.fail('unused hook searched providers') }
+      }
+    },
+    '../stores/useMusicStore.ts': {
+      useMusicStore: () => ({
+        createUnifiedSearchSource: () => {
+          sources++
+          assert.fail('unused hook loaded the library')
+        }
+      })
+    }
+  }
+  const load = (file: string) => {
+    const exports = {}
+    runInNewContext(
+      ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+      }).outputText,
+      {
+        exports,
+        require: (id: string) => {
+          assert.ok(id in dependencies, id)
+          return dependencies[id]
+        },
+        window: {
+          api: {
+            library: {
+              onChanged: () => {
+                subscriptions++
+                return () => unsubscriptions++
+              }
+            }
+          }
+        },
+        AbortController,
+        DOMException,
+        queueMicrotask
+      }
+    )
+    return exports
+  }
+  dependencies['./useLibraryUnifiedSearch.ts'] = load('./useLibraryUnifiedSearch.ts')
+  const hooks = load('./useUnifiedMusicSearch.ts') as {
+    useUnifiedMusicSearch: (options?: {
+      sync?: boolean
+      listen?: boolean
+    }) => UnifiedMusicSearchState
+  }
+  try {
+    scope.run(() => hooks.useUnifiedMusicSearch({ sync: false, listen: false }))
+    mounts.splice(0).forEach((mount) => mount())
+    assert.deepEqual([syncs, subscriptions, sources], [0, 0, 0])
+    scope.run(() => hooks.useUnifiedMusicSearch())
+    mounts.splice(0).forEach((mount) => mount())
+    assert.deepEqual([syncs, subscriptions, sources], [1, 1, 0])
+    unmounts.splice(0).forEach((unmount) => unmount())
+    assert.equal(unsubscriptions, 1, 'only the live subscription is released')
+  } finally {
+    unmounts.splice(0).forEach((unmount) => unmount())
+    scope.stop()
+  }
+})
+
 test('production unified-search hooks query SQLite with an empty renderer, coalesce scan refreshes, preserve deep offsets and dispose their source', async (t) => {
   const db = new LibraryDatabase(':memory:'),
     store = useMusicStore()

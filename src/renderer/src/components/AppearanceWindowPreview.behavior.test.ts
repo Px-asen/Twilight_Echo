@@ -5,11 +5,13 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import { build } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { compileStyle, parse } from '@vue/compiler-sfc'
 import { PNG } from 'pngjs'
+import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { resolveLiquidGlassTone } from '../../../shared/liquidGlass.ts'
 
 const require = createRequire(import.meta.url)
@@ -28,6 +30,92 @@ test('shared glass tone honors forced and adaptive profiles without changing its
   assert.equal(resolveLiquidGlassTone('dark', automatic, 'light'), 'dark')
   assert.deepEqual(automatic, { overLight: false, adaptiveTone: true })
   assert.deepEqual(manual, { overLight: true, adaptiveTone: false })
+})
+test('preview title chrome never reads private login state and live chrome retains it', async () => {
+  const source = await readFile(new URL('./TitleBar.vue', import.meta.url), 'utf8')
+  const bindings = source.slice(
+    source.indexOf('const loginProvider = computed'),
+    source.indexOf('const { canGoBack')
+  )
+  const avatarWatch = source.slice(
+    source.indexOf('const avatarLoadFailed = ref'),
+    source.indexOf('const titleBar = ref')
+  )
+  const props = reactive({ preview: true })
+  const account = ref({
+    userId: 123,
+    nickname: 'PRIVATE_PROFILE_SENTINEL',
+    avatarUrl: 'private.png'
+  })
+  const loggedIn = ref(true)
+  const providers = ref([{ id: 'ncm', name: '网易云音乐', capabilities: ['login'] }])
+  let profileReads = 0
+  let providerReads = 0
+  let loginReads = 0
+  const scope = effectScope()
+  try {
+    const chrome = scope.run(() =>
+      runInNewContext(
+        `${bindings}\n${avatarWatch}\n;({loginProvider,showNcmProfile,loginLabel,avatarLoadFailed})`,
+        {
+          props,
+          computed,
+          ref,
+          watch,
+          profile: {
+            get value() {
+              profileReads++
+              return account.value
+            }
+          },
+          isLoggedIn: {
+            get value() {
+              loginReads++
+              return loggedIn.value
+            }
+          },
+          providerStore: {
+            providers: {
+              get value() {
+                providerReads++
+                return providers.value
+              }
+            }
+          }
+        }
+      )
+    )!
+    const assertPreview = (): void => {
+      assert.equal(chrome.loginProvider.value, undefined)
+      assert.equal(chrome.showNcmProfile.value, false)
+      assert.equal(chrome.loginLabel.value, '流媒体登录')
+      assert.equal(profileReads, 0)
+      assert.equal(providerReads, 0)
+      assert.equal(loginReads, 0)
+    }
+    assertPreview()
+    props.preview = false
+    await nextTick()
+    assert.equal(chrome.loginProvider.value.id, 'ncm')
+    assert.equal(chrome.showNcmProfile.value, true)
+    assert.equal(chrome.loginLabel.value, 'PRIVATE_PROFILE_SENTINEL')
+    chrome.avatarLoadFailed.value = true
+    account.value.avatarUrl = 'updated-private.png'
+    await nextTick()
+    assert.equal(chrome.avatarLoadFailed.value, false)
+    loggedIn.value = false
+    assert.equal(chrome.showNcmProfile.value, false)
+    assert.equal(chrome.loginLabel.value, '网易云音乐登录')
+    props.preview = true
+    await nextTick()
+    profileReads = providerReads = loginReads = 0
+    account.value.nickname = 'UPDATED_PRIVATE_PROFILE_SENTINEL'
+    account.value.avatarUrl = 'updated-again-private.png'
+    await nextTick()
+    assertPreview()
+  } finally {
+    scope.stop()
+  }
 })
 test('real window preview preserves controls, isolated drafts, hidden work and one contextual camera', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-window-preview-'))
@@ -72,9 +160,12 @@ test('real window preview preserves controls, isolated drafts, hidden work and o
     )
     await writeFile(
       join(directory, 'fixtures.ts'),
-      (
-        await readFile(resolve('scripts/fixtures/appearance-preview-stores.mjs'), 'utf8')
-      ).replaceAll('__SHARED__', shared)
+      (await readFile(resolve('scripts/fixtures/appearance-preview-stores.mjs'), 'utf8'))
+        .replaceAll('__SHARED__', shared)
+        .replaceAll(
+          'PRIVATE_AVATAR_SENTINEL',
+          'https://private-avatar.invalid/PRIVATE_AVATAR_SENTINEL.png'
+        )
     )
     const compiledComponents = new Set<string>()
     await build({
@@ -88,10 +179,10 @@ test('real window preview preserves controls, isolated drafts, hidden work and o
           resolveId(source) {
             if (source === '/icon.png') return resolve('resources/icon.png')
             if (
-              /\/(useSettingsStore|useMusicStore|usePlayerStore|useThemeStore|useListeningStatsStore|useAudioOutputDspStore|useNcmStore|useProviderStore|useAppNoticeStore|playbackBookmarks|lyricsManagement)(?:\.ts)?$/.test(
+              /\/(useSettingsStore|useMusicStore|usePlayerStore|useThemeStore|useListeningStatsStore|useAudioOutputDspStore|useNcmStore|useAppNoticeStore|playbackBookmarks|lyricsManagement)(?:\.ts)?$/.test(
                 source
               ) ||
-              /\/(?:providers(?:\/index(?:\.ts)?)?|extensions\/registry(?:\.ts)?)$/.test(source)
+              /\/extensions\/registry(?:\.ts)?$/.test(source)
             )
               return isolatedStores
             if (
@@ -434,7 +525,7 @@ test('real window preview preserves controls, isolated drafts, hidden work and o
 })
 
 const runtime = `
-import {createApp,h,reactive,ref,nextTick} from 'vue';
+import {createApp,h,reactive,ref,nextTick,computed} from 'vue';
 import Preview from '__COMPONENTS__/AppearanceWindowPreview.vue';
 import {installPreviewBoundary} from './fixtures.ts';
 installPreviewBoundary();
@@ -455,6 +546,12 @@ import {createWorkshopProject,copyWorkshopDraft,compileWorkshopProject,workshopR
 import {createWorkshopLayer} from '__SHARED__/themeWorkshopLayers.ts';
 import {workshopCanvasBoxes} from '__COMPONENTS__/theme-workshop/workshopCanvas.ts';
 import {measureAppearanceSurfaces} from '__COMPONENTS__/../editor/appearanceSurfaces.ts';
+import {useProviderStore} from '__COMPONENTS__/../stores/useProviderStore.ts';
+import {useSongListSearch} from '__COMPONENTS__/song-list/useSongListSearch.ts';
+import {libraryViewKey} from '__COMPONENTS__/../utils/libraryViewPreferences.ts';
+const providerStore=useProviderStore({listen:false});providerStore.providers.value=[{id:'ncm',name:'Fixture',capabilities:['login'],supportedMethods:[]}];
+const liveSearchProbe=(value)=>{let current;const node=document.createElement('div'),probe=createApp({setup(){const search=useSongListSearch(computed(()=>libraryViewKey('allSongs',null)));if(value!==undefined)search.searchQuery.value=value;current=search.searchQuery.value;return()=>null;}});probe.mount(node);probe.unmount();return current;};liveSearchProbe('PRIVATE_SEARCH_SENTINEL');
+Storage.prototype.getItem=key=>{window.previewBoundary.persistence++;const error=Error('preview reads persisted preferences: '+key);console.error(error.stack);throw error;};
 for(const [name,value] of Object.entries(themeTokensToCssVariables(TWILIGHT_DEFAULT_THEME.variants.dark.tokens)))document.documentElement.style.setProperty(name,value);
 for(const [name,value] of Object.entries(themeModesToDataAttributes(resolveThemeProfileModes(TWILIGHT_DEFAULT_THEME))))document.documentElement.setAttribute(name,value);
 const applyGlassEnvironment=nextTone=>{const root=document.documentElement,environment=analyzeLiquidGlassColor(getComputedStyle(root).getPropertyValue('--te-app-bg'),nextTone==='dark');for(const [name,value] of Object.entries(environment.variables))root.style.setProperty(name,value);root.dataset.teLiquidGlassContext=environment.context;root.dataset.teLiquidGlassAdaptiveTone=nextTone==='dark'?'dark':'light';};
@@ -476,6 +573,13 @@ let selected='',propertyActions=0;const app=createApp({setup:()=>()=>h('div',{cl
 const settle=async()=>{await nextTick();await new Promise(r=>setTimeout(r,220));await nextTick()};
 const expect=(v,message)=>{if(!v)throw Error(message)};
 const waitFor=async(condition,message)=>{const deadline=performance.now()+3000;while(!condition()&&performance.now()<deadline){await nextTick();await new Promise(resolve=>setTimeout(resolve,30));}expect(condition(),message);};
+const previewViewReady=(host,layered)=>{
+ const doc=host.querySelector('iframe')?.contentDocument,source=doc?.querySelector('body > .appearance-preview-scene'),clone=doc?.querySelector('.appearance-layer-view');
+ if(!source||preview.value.layeredView!==layered||host.dataset.viewTransition!=='idle'||preview.value.layerTransitioning||host.getAttribute('aria-busy')!=='false'||preview.value.getCameraZoom().pending)return false;
+ if(!previewActive.value||document.hidden||document.documentElement.dataset.teVisibility==='hidden')return !clone&&source.style.visibility==='';
+ return doc.documentElement.dataset.teMotion===document.documentElement.dataset.teMotion&&host.dataset.previewView===(layered?'layered':'flat')&&(layered?!!clone?.querySelector('[data-appearance-layer-scene]')&&source.style.visibility==='hidden':!clone&&source.style.visibility==='');
+};
+const waitForPreviewView=(host,message,layered=preview.value.layeredView)=>waitFor(()=>previewViewReady(host,layered),message);
 const noExpandedNavigationHotspot=host=>!host.querySelector('[aria-label="调整侧边栏材质"]')||host.querySelector('[aria-label="调整侧边栏材质"]').getBoundingClientRect().width<=80;
 const actualElements=(scope,selector)=>[...scope.querySelectorAll(selector)].filter(element=>element.ownerDocument.defaultView.getComputedStyle(element).display!=='none'&&!element.closest('[data-appearance-material-context]')&&(!element.closest('[data-appearance-surface-key]')||element.closest('[data-appearance-detail]')));
 const actualElement=(scope,selector)=>actualElements(scope,selector)[0];
@@ -528,7 +632,7 @@ const isolatedBoundary=()=>{expect(Object.values(window.previewBoundary).every(v
 const realScene=doc=>{
  for(const element of [doc.documentElement,doc.body]){const paint=doc.defaultView.getComputedStyle(element);expect(paint.backgroundColor==='rgba(0, 0, 0, 0)'&&paint.backgroundImage==='none','preview document paints a flat stage behind the native window');}
  for(const pseudo of ['::before','::after'])expect(doc.defaultView.getComputedStyle(doc.body,pseudo).display==='none','preview document leaves an independent background decoration');
- const shell=doc.querySelector('.app-shell');expect(shell&&shell.inert,'real scene is not isolated');expect(!/PRIVATE_.*_SENTINEL/.test(shell.textContent),'preview exposes private library, playback or profile data');
+ const shell=doc.querySelector('.app-shell');expect(shell&&shell.inert,'real scene is not isolated');expect(!/PRIVATE_.*_SENTINEL|private-library-fixture|private-fixture[.]flac/.test(shell.outerHTML),'preview exposes private library, playback or profile attributes');expect(!shell.querySelector('.login-btn img')&&shell.querySelector('.login-btn').getAttribute('aria-label')==='流媒体登录'&&shell.querySelector('.login-btn').getAttribute('title')==='流媒体登录','preview title retains a live login label or avatar source');
  const home=shell.querySelector('.app-shell-content > .main-content > .online-home');expect(home&&!shell.querySelector('.home,.dashboard-wrapper'),'default appearance scene mounts a dashboard instead of the pure native home');
  const heroTitle=home.querySelector('.online-hero h2')?.textContent.trim(),recentTracks=home.querySelectorAll('.online-track').length,localCards=home.querySelectorAll('.home-local-card').length,hasLocalSection=!!home.querySelector('.home-local-section'),libraryEntries=home.querySelectorAll('.home-library-switch > button').length,providerSections=home.querySelectorAll('.online-discovery,.online-source-picker').length;
  expect(heroTitle==='夜空中的旋律'&&recentTracks===6&&providerSections===0,'pure home uses live data or loses its static local hero/recent props');if(hasLocalSection)expect(localCards===6&&libraryEntries===2,'upstream local/online home drops the supplied local sample or equal library entries');
@@ -544,7 +648,7 @@ const sourceLayout=doc=>{
  const rect=sourceGeometry(doc),root=doc.querySelector('.app-shell'),size=root.getBoundingClientRect();expect(Math.abs(size.width-doc.defaultView.innerWidth)<0.1&&Math.abs(size.height-doc.defaultView.innerHeight)<0.1,'real source shell has been laid out at thumbnail dimensions');
  for(const element of doc.querySelectorAll('.app-shell,.app-shell-title,.app-shell-navigation,.app-shell-content,.app-shell-player,.main-content'))expect(element.hasAttribute('data-v-fixture-app'),'App shell scope is not mirrored onto the real scene');
  expect(doc.querySelector('.app-shell-content > .main-content > .online-home'),'real home no longer shares the actual content shell');
- if(root.dataset.previewNavigation==='collapsed')expect(rect.navigation.width===0&&rect.navigation.height===0&&doc.defaultView.getComputedStyle(doc.querySelector('[data-preview-module="navigation"]')).display==='none','collapsed sidebar retains a visible rail');else expect(rect.navigation.width>0&&rect.navigation.top>=rect.material.top+rect.material.height&&rect.navigation.left>=0&&rect.navigation.left+rect.navigation.width<=doc.defaultView.innerWidth&&rect.navigation.top+rect.navigation.height<=doc.defaultView.innerHeight,'real sidebar is placed outside the source window');
+ if(root.dataset.previewNavigation==='collapsed')expect(rect.navigation.width===0&&rect.navigation.height===0&&doc.defaultView.getComputedStyle(doc.querySelector('[data-preview-module="navigation"]')).display==='none','collapsed sidebar retains a visible rail');else expect(rect.navigation.width>0&&rect.navigation.top>=rect.material.top+rect.material.height&&rect.navigation.left>=0&&rect.navigation.left+rect.navigation.width<=doc.defaultView.innerWidth&&rect.navigation.top+rect.navigation.height<=doc.defaultView.innerHeight,'real sidebar is placed outside the source window: '+JSON.stringify({preset:doc.documentElement.dataset.tePresetLayout,navigation:rect.navigation,title:rect.material}));
  expect(rect.material.width===doc.defaultView.innerWidth&&rect.material.height===40,'real title strip is resized independently');
 };
 const colorChannels=color=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const context=canvas.getContext('2d');expect(context,'fixture cannot read native contour colors');context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data]};
@@ -703,9 +807,12 @@ window.fixture={
   const sleep=time=>new Promise(resolve=>setTimeout(resolve,time));let clearAuto,clearTop;
   try{
    root.dataset.teMotion='full';focused.value='card';floatingEnabled.value=true;preview.value.setLayeredView(true);preview.value.setViewAngles({x:17,y:-29});preview.value.setCameraZoom(1.3);await settle();await settle();clearAuto=installAutoHideScrollbars();clearTop=installScrollToTopButton();await settle();
+   const ready=()=>group()&&previewViewReady(host,true)&&host.classList.contains('has-motion');
+   await waitFor(ready,'boundary fixture never settles its layered view');
    const area=host.getBoundingClientRect(),basis=group().style.transform,angles=JSON.stringify(preview.value.viewAngles),zoom=preview.value.getCameraZoom().zoom;
    const dispatch=(type,point,target=host)=>target.dispatchEvent(new PointerEvent(type,{pointerId:77,pointerType:'mouse',clientX:point?.x??area.right-10,clientY:point?.y??area.top+10,bubbles:type!=='pointerenter'&&type!=='pointerleave'}));
-   const enter=async()=>{dispatch('pointerenter');await sleep(150);expect(group().style.transform!==basis,'boundary fixture never applies real mouse feedback')};
+   // Offscreen rAF can arrive after a wall-clock delay; observe the actual pose.
+   const enter=async()=>{await waitFor(ready,'boundary fixture never settles its layered view');dispatch('pointerenter');await waitFor(()=>group()&&group().style.transform!==basis,'boundary fixture never applies real mouse feedback')};
    Node.prototype.cloneNode=function(deep){if(this===source)clones++;return nativeClone.call(this,deep)};doc.defaultView.Node.prototype.cloneNode=function(deep){if(this===source)clones++;return nativeChildClone.call(this,deep)};
    Element.prototype.getBoundingClientRect=function(){if(this.ownerDocument===doc&&source.contains(this))sourceMeasures++;return nativeRect.call(this)};doc.defaultView.Element.prototype.getBoundingClientRect=function(){if(source.contains(this))sourceMeasures++;return nativeChildRect.call(this)};
    window.requestAnimationFrame=callback=>{const handle=nativeRequest.call(window,time=>{pending.delete(handle);callback(time)});pending.add(handle);return handle};window.cancelAnimationFrame=handle=>{pending.delete(handle);nativeCancel.call(window,handle)};
@@ -733,15 +840,17 @@ window.fixture={
    clones=0;root.setAttribute('class',root.getAttribute('class'));root.setAttribute('style',root.getAttribute('style'));root.setAttribute('data-fixture-public-theme','updated');await settle();stats.noDifferenceClones=clones;expect(clones===0,'identical root attributes trigger a scene reconstruction');
    for(const mode of ['hidden','inactive','flat']){
     await enter();dispatch('pointermove',{x:area.left+10,y:area.bottom-10});if(mode==='hidden')root.dataset.teVisibility='hidden';else if(mode==='inactive')previewActive.value=false;else preview.value.setLayeredView(false);await nextTick();await waitFor(()=>!doc.querySelector('.appearance-layer-view')&&pending.size===0,'suspended '+mode+' view keeps a layered scene or pointer frames');
-    if(mode==='hidden')root.dataset.teVisibility='visible';else if(mode==='inactive')previewActive.value=true;else preview.value.setLayeredView(true);await settle();await settle();expect(group().style.transform===basis&&JSON.stringify(preview.value.viewAngles)===angles&&preview.value.getCameraZoom().zoom===zoom,'resume restores stale mouse feedback or changes the base pose: '+mode);stats.lifecycleCases++;
+    if(mode==='flat')await waitForPreviewView(host,'flat suspension never finishes its view transition',false);
+    if(mode==='hidden')root.dataset.teVisibility='visible';else if(mode==='inactive')previewActive.value=true;else preview.value.setLayeredView(true);await settle();await settle();await waitFor(ready,'resumed '+mode+' view never settles its layered presentation');expect(group().style.transform===basis&&JSON.stringify(preview.value.viewAngles)===angles&&preview.value.getCameraZoom().zoom===zoom,'resume restores stale mouse feedback or changes the base pose: '+mode);stats.lifecycleCases++;
    }
    Object.assign(stats,{baseAnglesPreserved:JSON.stringify(preview.value.viewAngles)===angles,zoomPreserved:preview.value.getCameraZoom().zoom===zoom,draftSettingsPreserved:JSON.stringify(draft)===original.draft&&JSON.stringify(window.previewSettings.value)===original.settings});window.previewPointerBoundaries=stats;isolatedBoundary();
   }finally{
-   for(const observer of observers)observer.disconnect();Node.prototype.cloneNode=nativeClone;doc.defaultView.Node.prototype.cloneNode=nativeChildClone;Element.prototype.getBoundingClientRect=nativeRect;doc.defaultView.Element.prototype.getBoundingClientRect=nativeChildRect;window.requestAnimationFrame=nativeRequest;window.cancelAnimationFrame=nativeCancel;clearAuto?.();clearTop?.();previewActive.value=original.active;floatingEnabled.value=original.floating;preview.value.setLayeredView(original.layered);preview.value.setViewAngles(original.angles);preview.value.setCameraZoom(original.zoom);focused.value=original.focused;for(const attribute of [...root.attributes])if(!original.attributes.has(attribute.name))root.removeAttribute(attribute.name);for(const [name,value]of original.attributes)root.setAttribute(name,value);await settle();await settle();
+   for(const observer of observers)observer.disconnect();Node.prototype.cloneNode=nativeClone;doc.defaultView.Node.prototype.cloneNode=nativeChildClone;Element.prototype.getBoundingClientRect=nativeRect;doc.defaultView.Element.prototype.getBoundingClientRect=nativeChildRect;window.requestAnimationFrame=nativeRequest;window.cancelAnimationFrame=nativeCancel;clearAuto?.();clearTop?.();previewActive.value=original.active;floatingEnabled.value=original.floating;preview.value.setLayeredView(original.layered);preview.value.setViewAngles(original.angles);preview.value.setCameraZoom(original.zoom);focused.value=original.focused;for(const attribute of [...root.attributes])if(!original.attributes.has(attribute.name))root.removeAttribute(attribute.name);for(const [name,value]of original.attributes)root.setAttribute(name,value);await settle();await settle();await waitForPreviewView(host,'boundary cleanup leaves its original view unsettled',original.layered);
   }
  },
  async prepareBoundaryCapture(kind){
   const host=document.querySelector('.appearance-window-preview'),doc=host.querySelector('iframe').contentDocument;window.boundaryCapture={kind,original:{motion:document.documentElement.getAttribute('data-te-motion'),angles:{...preview.value.viewAngles},zoom:preview.value.getCameraZoom().zoom,layered:preview.value.layeredView,focused:focused.value},draft:JSON.stringify(draft),settings:JSON.stringify(window.previewSettings.value)};document.documentElement.dataset.teMotion='full';focused.value='overview';preview.value.setLayeredView(true);preview.value.setViewAngles({x:17,y:-29});preview.value.setCameraZoom(1.3);await settle();await settle();
+  await waitForPreviewView(host,'native boundary capture starts before its layered view and camera settle',true);
   const state=window.boundaryCapture,area=host.getBoundingClientRect();state.basis='perspective(2400px) rotateX(17deg) rotateY(-29deg)';state.angles=JSON.stringify(preview.value.viewAngles);state.zoom=preview.value.getCameraZoom().zoom;state.area=area.toJSON();state.listen=event=>{state.id=event.pointerId};host.addEventListener('pointerdown',state.listen,{once:true});return {point:{x:area.left+area.width/2,y:area.top+area.height/2},outside:{x:area.left-4,y:area.top+area.height/2}};
  },
  async boundaryCaptureAction(){
@@ -751,7 +860,7 @@ window.fixture={
  async checkBoundaryCapture(){
   await nextTick();const state=window.boundaryCapture,host=document.querySelector('.appearance-window-preview'),doc=host.querySelector('iframe').contentDocument;
   expect(!host.classList.contains('is-dragging')&&!host.hasPointerCapture(state.id),'native '+state.kind+' leaves pointer capture or drag state active');expect(doc.querySelector('[data-appearance-layer-scene]').style.transform===state.basis&&JSON.stringify(preview.value.viewAngles)===state.angles&&preview.value.getCameraZoom().zoom===state.zoom,'native '+state.kind+' keeps an edge tilt or changes the user angle/zoom');expect(JSON.stringify(draft)===state.draft&&JSON.stringify(window.previewSettings.value)===state.settings,'native pointer boundary changes saved settings or draft');window.previewPointerBoundaries.nativeCaptureCases=(window.previewPointerBoundaries.nativeCaptureCases??0)+1;
-  const original=state.original;preview.value.setLayeredView(original.layered);preview.value.setViewAngles(original.angles);preview.value.setCameraZoom(original.zoom);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.setAttribute('data-te-motion',original.motion);await settle();await settle();isolatedBoundary();
+  const original=state.original;preview.value.setLayeredView(original.layered);preview.value.setViewAngles(original.angles);preview.value.setCameraZoom(original.zoom);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.setAttribute('data-te-motion',original.motion);await settle();await settle();await waitForPreviewView(host,'native boundary cleanup leaves its original view unsettled',original.layered);isolatedBoundary();
  },
  async pointerRouting(){
   const original={motion:document.documentElement.getAttribute('data-te-motion'),focused:focused.value,layered:preview.value.layeredView,htmlAuto:document.documentElement.classList.contains('te-auto-scrollbar'),bodyAuto:document.body.classList.contains('te-auto-scrollbar')};
@@ -761,7 +870,9 @@ window.fixture={
   try{
    document.documentElement.dataset.teMotion='full';focused.value='card';preview.value.setLayeredView(true);await settle();await settle();
    clearAuto=installAutoHideScrollbars();clearTop=installScrollToTopButton();await settle();
-   const host=document.querySelector('.appearance-window-preview'),doc=host.querySelector('iframe').contentDocument,group=doc.querySelector('[data-appearance-layer-scene]'),area=host.getBoundingClientRect();
+   const host=document.querySelector('.appearance-window-preview'),doc=host.querySelector('iframe').contentDocument;
+   await waitForPreviewView(host,'pointer routing observes an unsettled layered view',true);
+   const group=doc.querySelector('[data-appearance-layer-scene]'),area=host.getBoundingClientRect();
    host.dispatchEvent(new PointerEvent('pointerenter',{pointerType:'mouse',clientX:(area.left+area.right)/2,clientY:(area.top+area.bottom)/2}));await new Promise(resolve=>setTimeout(resolve,150));
    document.addEventListener('pointermove',onMove);Element.prototype.getBoundingClientRect=function(){if(this.ownerDocument===document)geometryReads++;return nativeRect.call(this)};
    observer=new MutationObserver(records=>{pointerFrames+=records.filter(record=>record.target===group&&record.attributeName==='style').length});observer.observe(group,{attributes:true});
@@ -778,7 +889,7 @@ window.fixture={
   }finally{
    observer?.disconnect();Element.prototype.getBoundingClientRect=nativeRect;document.removeEventListener('pointermove',onMove);clearAuto?.();clearTop?.();ordinary.remove();
    if(!original.htmlAuto)document.documentElement.classList.remove('te-auto-scrollbar');if(!original.bodyAuto)document.body.classList.remove('te-auto-scrollbar');
-   preview.value.setLayeredView(original.layered);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.setAttribute('data-te-motion',original.motion);await settle();
+   preview.value.setLayeredView(original.layered);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.setAttribute('data-te-motion',original.motion);await settle();await waitForPreviewView(document.querySelector('.appearance-window-preview'),'pointer routing cleanup leaves its original view unsettled',original.layered);
   }
  },
  async beginFloating(){
@@ -839,7 +950,7 @@ window.fixture={
   await nextTick();const item=window.layerHitCurrent;expect(selected===item.part&&focused.value===item.part,'native CSS3D pointer selects the wrong module');window.previewLayerHits.cases.push({...item,pointerSelected:true});
  },
  async finishLayerHits(){
-  const original=window.layerHitOriginal;preview.value.setLayeredView(false);preview.value.setViewAngles(original.angles);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.dataset.teMotion=original.motion;await settle();window.previewLayerHits.draftSettingsUnchanged=JSON.stringify(draft)===original.draft&&JSON.stringify(window.previewSettings.value)===original.settings;expect(window.previewLayerHits.draftSettingsUnchanged,'native hit verification changed personal settings or draft');return window.previewLayerHits;
+  const original=window.layerHitOriginal;preview.value.setLayeredView(false);preview.value.setViewAngles(original.angles);focused.value=original.focused;if(original.motion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.dataset.teMotion=original.motion;await settle();await waitForPreviewView(document.querySelector('.appearance-window-preview'),'native hit verification leaves the flat view unsettled',false);window.previewLayerHits.draftSettingsUnchanged=JSON.stringify(draft)===original.draft&&JSON.stringify(window.previewSettings.value)===original.settings;expect(window.previewLayerHits.draftSettingsUnchanged,'native hit verification changed personal settings or draft');return window.previewLayerHits;
  },
  diagnostics(){const host=document.querySelector('.appearance-window-preview'),frame=host?.querySelector('iframe'),doc=frame?.contentDocument;return {boundary:window.previewBoundary,errors:window.previewErrors,roots:{parent:{...document.documentElement.dataset},child:doc?{...doc.documentElement.dataset}:null},viewport:doc?{parentWidth:innerWidth,parentHeight:innerHeight,childWidth:doc.defaultView.innerWidth,childHeight:doc.defaultView.innerHeight,frameStyle:getComputedStyle(frame).cssText,frameWidth:getComputedStyle(frame).width,frameHeight:getComputedStyle(frame).height,world:host.querySelector('.appearance-preview-world')?.style.cssText}:null,workshop:workshopModel.value?workshopSnapshot():null,source:doc?.querySelector(moduleSelectors.card)?sourceGeometry(doc):null,controls:doc?Object.fromEntries(['.title-bar','.side-menu','.main-content','.player-bar','.player-cover-slot','.player-center','.player-controls','.btn-play','.mini-play-button','.player-title','.progress-area','.player-bar-warp'].map(selector=>{const element=doc.querySelector(selector);if(!element)return [selector,null];const style=doc.defaultView.getComputedStyle(element),rect=element.getBoundingClientRect();return [selector,{className:element.className,width:rect.width,height:rect.height,background:style.backgroundColor,backdrop:style.backdropFilter,font:style.fontSize,transform:style.transform,grid:style.gridTemplateColumns}]})):null}},
  async initial(){await settle();const host=document.querySelector('.appearance-window-preview'),frame=host.querySelector('iframe'),doc=frame.contentDocument;await waitFor(()=>!!host.dataset.cameraScale&&doc.querySelector('.side-menu'),'initial preview did not mount its source');expect(!preview.value.navigationExpanded&&doc.querySelector('.side-menu').getBoundingClientRect().width===0&&noExpandedNavigationHotspot(host),'overview initially obscures the content with navigation');window.previewDefaultNavigation='collapsed';preview.value.toggleNavigation();await waitFor(()=>{const a=host.getBoundingClientRect(),b=frame.getBoundingClientRect();return !!host.dataset.cameraScale&&doc.querySelector('.side-menu')?.getBoundingClientRect().width>0&&b.left>=a.left&&b.top>=a.top&&b.right<=a.right&&b.bottom<=a.bottom;},'initial preview did not settle after styles and viewport became ready');
@@ -1035,7 +1146,7 @@ window.fixture={
    document.documentElement.dataset.teMotion='off';focused.value='overview';await settle();Object.defineProperty(document,'hidden',{configurable:true,get:()=>hidden});window.requestAnimationFrame=callback=>{if(hidden)hiddenSchedules++;const handle=nativeRequest.call(window,time=>{pending.delete(handle);callback(time)});pending.add(handle);return handle};window.cancelAnimationFrame=handle=>{pending.delete(handle);nativeCancel.call(window,handle)};doc.defaultView.requestAnimationFrame=callback=>{if(hidden)hiddenSchedules++;const handle=nativeChildRequest.call(doc.defaultView,time=>{childPending.delete(handle);callback(time)});childPending.add(handle);return handle};doc.defaultView.cancelAnimationFrame=handle=>{childPending.delete(handle);nativeChildCancel.call(doc.defaultView,handle)};
    hidden=true;document.dispatchEvent(new Event('visibilitychange'));await nextTick();expect(!root()&&scene.style.visibility===''&&pending.size===0&&childPending.size===0,'hidden 3D retains its clone, hides its native source or keeps pending frames');childWrites=0;clones=0;sourceMeasures=0;childCounter.observe(doc.documentElement,{subtree:true,attributes:true,childList:true,characterData:true});
    for(let i=0;i<100;i++){draft.appBackground.global.dark='#39'+i.toString(16).padStart(4,'0');draft.appBackground.global.customized=true;document.documentElement.dataset.previewLayerHidden=String(i);preview.value.setLayerSpacing(i%81);focused.value=i===99?'background':'card';window.previewSettings.value.playerBar.mode=i===99?'mini':i%2?'standard':'compact';await nextTick();}window.dispatchEvent(new Event('resize'));await new Promise(resolve=>setTimeout(resolve,170));await nextTick();Object.assign(stats,{hiddenChildWrites:childWrites,hiddenClones:clones,hiddenSourceMeasures:sourceMeasures,hiddenScheduledFrames:hiddenSchedules});expect(childWrites===0&&clones===0&&sourceMeasures===0&&hiddenSchedules===0&&!root(),'hidden 3D continues work: '+JSON.stringify(stats));childCounter.disconnect();
-   clones=0;sourceMeasures=0;let latestWrites=0;rootCounter=new MutationObserver(records=>{latestWrites+=records.filter(record=>record.attributeName==='data-preview-layer-hidden').length});rootCounter.observe(doc.documentElement,{attributes:true});hidden=false;document.dispatchEvent(new Event('visibilitychange'));await waitFor(()=>!!root()&&doc.documentElement.dataset.previewLayerHidden==='99'&&pending.size===0&&childPending.size===0,'3D does not rebuild the latest hidden state');await new Promise(resolve=>setTimeout(resolve,170));await nextTick();rootCounter.disconnect();stats.resumeClones=clones;stats.resumeSourceMeasures=sourceMeasures;stats.resumeLatestWrites=latestWrites;expect(clones===1&&sourceMeasures>0&&sourceMeasures<=160&&latestWrites===1,'3D resume replays hidden changes: '+JSON.stringify(stats));expect(preview.value.layeredView&&preview.value.layerSpacing===18&&scene.style.visibility==='hidden'&&doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue('--te-app-bg').trim()==='#390063'&&scene.querySelector('.player-bar').getBoundingClientRect().height===44,'3D resume does not preserve its latest spacing, draft and native player mode');expect(group()!==clone,'3D resume reuses an obsolete detached clone');isolatedBoundary();stats.projectionCases=projectionCases;window.previewLayers=stats;
+   clones=0;sourceMeasures=0;let latestWrites=0;rootCounter=new MutationObserver(records=>{latestWrites+=records.filter(record=>record.attributeName==='data-preview-layer-hidden').length});rootCounter.observe(doc.documentElement,{attributes:true});hidden=false;document.dispatchEvent(new Event('visibilitychange'));await waitFor(()=>!!root()&&doc.documentElement.dataset.previewLayerHidden==='99'&&pending.size===0&&childPending.size===0,'3D does not rebuild the latest hidden state');await new Promise(resolve=>setTimeout(resolve,170));await nextTick();rootCounter.disconnect();stats.resumeClones=clones;stats.resumeSourceMeasures=sourceMeasures;stats.resumeLatestWrites=latestWrites;expect(clones===1&&sourceMeasures>0&&sourceMeasures<=160&&latestWrites===1,'3D resume replays hidden changes: '+JSON.stringify(stats));expect(preview.value.layeredView&&preview.value.layerSpacing===18&&scene.style.visibility==='hidden'&&doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue('--te-app-bg').trim()==='#390063'&&scene.querySelector('.player-bar').getBoundingClientRect().height===40,'3D resume does not preserve its latest spacing, draft and native player mode');expect(group()!==clone,'3D resume reuses an obsolete detached clone');isolatedBoundary();stats.projectionCases=projectionCases;window.previewLayers=stats;
   }finally{
    childCounter?.disconnect();worldCounter?.disconnect();rootCounter?.disconnect();Node.prototype.cloneNode=nativeClone;doc.defaultView.Node.prototype.cloneNode=nativeChildClone;Element.prototype.getBoundingClientRect=nativeRect;doc.defaultView.Element.prototype.getBoundingClientRect=nativeChildRect;window.requestAnimationFrame=nativeRequest;window.cancelAnimationFrame=nativeCancel;doc.defaultView.requestAnimationFrame=nativeChildRequest;doc.defaultView.cancelAnimationFrame=nativeChildCancel;hidden=false;if(hiddenDescriptor)Object.defineProperty(document,'hidden',hiddenDescriptor);else delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));preview.value.setLayeredView(false);preview.value.setLayerSpacing(originalSpacing);Object.assign(draft,draftSnapshot);window.previewSettings.value=settingsSnapshot;if(preview.value.navigationExpanded!==originalExpanded)preview.value.toggleNavigation();document.documentElement.removeAttribute('data-preview-layer-hidden');document.documentElement.removeAttribute('data-preview-layer-refresh');if(originalMotion===null)document.documentElement.removeAttribute('data-te-motion');else document.documentElement.setAttribute('data-te-motion',originalMotion);focused.value='overview';await settle();expect(!root()&&scene.style.visibility==='','3D close does not restore its native source');
   }
@@ -1060,7 +1171,7 @@ window.fixture={
    const hiddenStats={hiddenChildWrites:childWrites,hiddenSourceMeasures:sourceMeasures,hiddenCameraFrames:cameraFrames,hiddenScheduledFrames:hiddenSchedules};expect(Object.values(hiddenStats).every(value=>value===0),'hidden preview continues rendering or scheduling: '+JSON.stringify(hiddenStats));
    childCounter.disconnect();worldCounter.disconnect();sourceMeasures=0;cameraFrames=0;worldCounter.observe(world,{attributes:true,attributeFilter:['style']});rootCounter=new MutationObserver(records=>{resumeLatestWrites+=records.filter(record=>record.attributeName==='data-preview-hidden').length});rootCounter.observe(doc.documentElement,{attributes:true});
    hidden=false;document.dispatchEvent(new Event('visibilitychange'));await waitFor(()=>doc.documentElement.dataset.previewHidden==='99'&&pending.size===0,'resumed preview did not render its latest target once');await new Promise(resolve=>setTimeout(resolve,170));await nextTick();
-   rootCounter.disconnect();worldCounter.disconnect();const resumeSourceMeasures=sourceMeasures;expect(doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue('--te-app-bg').trim()==='#280063','resumed preview discards the latest hidden draft');const resumedNavigationWidth=doc.querySelector('.side-menu').getBoundingClientRect().width;expect(preview.value.navigationExpanded===!sourceNavigationExpanded&&doc.querySelector('.app-shell').dataset.previewNavigation===(sourceNavigationExpanded?'collapsed':'expanded')&&(sourceNavigationExpanded?resumedNavigationWidth===0:resumedNavigationWidth>0),'resumed preview loses the final navigation state');expect(JSON.stringify(navigationRows(doc))===JSON.stringify(['local-library','local-home','search','streaming']),'resumed preview ignores latest saved navigation order or visibility');expect(JSON.stringify(playerArrangement(doc))===JSON.stringify({left:['trackInfo'],center:['playPause'],right:['volume','queue','time']}),'resumed preview ignores latest saved player arrangement');expect(doc.querySelector('.player-bar-shell').dataset.tePlaybarMode==='mini'&&doc.querySelector('.player-bar').getBoundingClientRect().height===44,'resumed preview loses the final player mode');expect(world.style.willChange==='','resumed camera replays intermediate animations');window.previewLifecycle={...hiddenStats,resumeLatestWrites,resumeCameraFrames:cameraFrames,resumeSourceMeasures};expect(resumeLatestWrites===1&&cameraFrames===1&&resumeSourceMeasures>0&&resumeSourceMeasures<=160,'resume replays hidden intermediate updates: '+JSON.stringify(window.previewLifecycle));
+   rootCounter.disconnect();worldCounter.disconnect();const resumeSourceMeasures=sourceMeasures;expect(doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue('--te-app-bg').trim()==='#280063','resumed preview discards the latest hidden draft');const resumedNavigationWidth=doc.querySelector('.side-menu').getBoundingClientRect().width;expect(preview.value.navigationExpanded===!sourceNavigationExpanded&&doc.querySelector('.app-shell').dataset.previewNavigation===(sourceNavigationExpanded?'collapsed':'expanded')&&(sourceNavigationExpanded?resumedNavigationWidth===0:resumedNavigationWidth>0),'resumed preview loses the final navigation state');expect(JSON.stringify(navigationRows(doc))===JSON.stringify(['local-library','local-home','search','streaming']),'resumed preview ignores latest saved navigation order or visibility');expect(JSON.stringify(playerArrangement(doc))===JSON.stringify({left:['trackInfo'],center:['playPause'],right:['volume','queue','time']}),'resumed preview ignores latest saved player arrangement');expect(doc.querySelector('.player-bar-shell').dataset.tePlaybarMode==='mini'&&doc.querySelector('.player-bar').getBoundingClientRect().height===40,'resumed preview loses the final player mode');expect(world.style.willChange==='','resumed camera replays intermediate animations');window.previewLifecycle={...hiddenStats,resumeLatestWrites,resumeCameraFrames:cameraFrames,resumeSourceMeasures};expect(resumeLatestWrites===1&&cameraFrames===1&&resumeSourceMeasures>0&&resumeSourceMeasures<=160,'resume replays hidden intermediate updates: '+JSON.stringify(window.previewLifecycle));
   }finally{
    childCounter?.disconnect();worldCounter?.disconnect();rootCounter?.disconnect();doc.defaultView.Element.prototype.getBoundingClientRect=nativeRect;Element.prototype.getBoundingClientRect=nativeParentRect;window.requestAnimationFrame=nativeRequest;window.cancelAnimationFrame=nativeCancel;hidden=false;if(hiddenDescriptor)Object.defineProperty(document,'hidden',hiddenDescriptor);else delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));systemReduced=false;motionMedia.dispatchEvent(new Event('change'));Object.assign(draft,snapshot);if(preview.value.navigationExpanded!==sourceNavigationExpanded)preview.value.toggleNavigation();window.previewSettings.value=sourceSettings;document.documentElement.removeAttribute('data-preview-hidden');document.documentElement.dataset.teMotion='off';focused.value='overview';await settle();
   }
@@ -1080,14 +1191,15 @@ window.fixture={
   const paint=(element,pseudo)=>doc.defaultView.getComputedStyle(element,pseudo),material=part=>doc.querySelector({material:'.title-bar-background',navigation:'.side-menu','player-bar':'.player-bar-warp'}[part]);
   try{
    focused.value='overview';tone.value='dark';themeEditing.value=true;draft.surfaceMaterial='standard';draft.cardAppearance.enabled=false;draft.liquidGlass.navigationEnabled=false;draft.liquidGlass.playbarEnabled=false;
-   const variables={'--te-app-bg':'#314159','--te-local-bg':'#192837','--te-player-bar-play-surface':'#674839','--te-player-bar-play-text':'#eddfcd','--te-player-bar-progress-track':'#314159','--te-player-bar-progress-fill':'#456789','--te-font-size-body':'20px'};
+   const variables={'--te-app-bg':'#314159','--te-local-bg':'#192837','--te-player-bar-play-surface':'#674839','--te-player-bar-play-text':'#eddfcd','--te-player-bar-progress-track':'#314159','--te-player-bar-progress-fill':'#456789','--te-font-size-body':'20px','--te-chrome-frosted-blur':'27px','--te-chrome-frosted-saturation':'145%'};
    for(const [name,value] of Object.entries(variables))root.style.setProperty(name,value);await settle();realScene(doc);
    const play=doc.querySelector('.btn-play'),progress=doc.querySelector('.progress-track');expect(paint(play).backgroundColor==='rgb(103, 72, 57)'&&paint(play).color==='rgb(237, 223, 205)'&&paint(progress).backgroundColor==='rgb(49, 65, 89)','real controls do not consume host theme tokens');
    expect(Math.abs(Number.parseFloat(paint(doc.querySelector('.player-title')).fontSize)-20*16/14)<0.1,'real player typography does not consume the font token');
    for(const mode of ['standard','compact','mini']){window.previewSettings.value.playerBar.mode=mode;await settle();const shell=doc.querySelector('.player-bar-shell');expect(shell.dataset.tePlaybarMode===mode,'real player mode is stale: '+mode);focused.value='player-bar';await settle();const hit=host.querySelector('[aria-label="调整播放条布局"]'),a=hit.getBoundingClientRect(),b=host.getBoundingClientRect(),source=doc.querySelector('.player-bar').getBoundingClientRect(),scale=uniformCamera(host);expect(Math.abs(a.height-source.height*scale)<0.1&&Math.abs(a.width-source.width*scale)<0.1,'mode change leaves stale playback geometry: '+mode);expect(a.left>=b.left&&a.top>=b.top&&a.right<=b.right+0.01&&a.bottom<=b.bottom+0.01,'real player mode is cropped: '+mode);}
    window.previewSettings.value.playerBar.mode='standard';draft.liquidGlass.navigationEnabled=true;draft.liquidGlass.playbarEnabled=true;Object.assign(draft.liquidGlass.dark,{blurAmount:11,tintOpacity:23,saturation:154});await settle();
-   const before={};for(const part of ['material','navigation','player-bar']){const surface=paint(material(part),part==='navigation'?'::before':undefined);before[part]={blur:surface.backdropFilter,tint:surface.backgroundColor};expect(surface.backdropFilter.includes('blur(11px)')&&surface.backdropFilter.includes('saturate(1.54)'),'real glass does not consume the draft: '+part+' '+JSON.stringify(before[part]));}expect(before['player-bar'].blur.includes('te-lg-playbar'),'real playback glass loses the optical filter');
-   Object.assign(draft.liquidGlass.dark,{blurAmount:23,tintOpacity:42,saturation:166});await settle();for(const part of ['material','navigation','player-bar']){const surface=paint(material(part),part==='navigation'?'::before':undefined);expect(surface.backdropFilter.includes('blur(23px)')&&surface.backdropFilter.includes('saturate(1.66)')&&surface.backdropFilter!==before[part].blur&&surface.backgroundColor!==before[part].tint,'draft adjustment does not change painted real glass: '+part+' '+JSON.stringify({before:before[part],after:{blur:surface.backdropFilter,tint:surface.backgroundColor}}));}
+   const before={};for(const part of ['material','navigation','player-bar']){const surface=paint(material(part),part==='navigation'?'::before':undefined),playback=part==='player-bar';before[part]={blur:surface.backdropFilter,tint:surface.backgroundColor};expect(surface.backdropFilter.includes(playback?'blur(11px)':'blur(27px)')&&surface.backdropFilter.includes(playback?'saturate(1.54)':'saturate(1.45)'),'real material does not consume its own tuning: '+part+' '+JSON.stringify(before[part]));expect(surface.backdropFilter.includes('te-lg-playbar')===playback,'refraction escapes the playback backdrop: '+part);}
+   Object.assign(draft.liquidGlass.dark,{blurAmount:23,tintOpacity:42,saturation:166});await settle();for(const part of ['material','navigation','player-bar']){const surface=paint(material(part),part==='navigation'?'::before':undefined);if(part==='player-bar')expect(surface.backdropFilter.includes('blur(23px)')&&surface.backdropFilter.includes('saturate(1.66)')&&surface.backdropFilter!==before[part].blur&&surface.backgroundColor!==before[part].tint,'draft adjustment does not change painted real glass: '+part+' '+JSON.stringify({before:before[part],after:{blur:surface.backdropFilter,tint:surface.backgroundColor}}));else expect(surface.backdropFilter===before[part].blur&&surface.backgroundColor===before[part].tint,'playback optics contaminate ordinary chrome: '+part);}
+   root.style.setProperty('--te-chrome-frosted-blur','17px');root.style.setProperty('--te-chrome-frosted-saturation','136%');await settle();for(const part of ['material','navigation']){const surface=paint(material(part),part==='navigation'?'::before':undefined);expect(surface.backdropFilter.includes('blur(17px)')&&surface.backdropFilter.includes('saturate(1.36)')&&surface.backdropFilter!==before[part].blur,'ordinary chrome does not update its own material: '+part);}expect(paint(material('player-bar')).backdropFilter.includes('blur(23px)'),'chrome tuning contaminates playback optics');
    draft.liquidGlass.navigationEnabled=false;draft.liquidGlass.playbarEnabled=false;await settle();expect(!doc.querySelector('.title-bar-liquid,.side-menu-liquid,.player-bar-liquid,.player-bar-warp'),'disabled glass retains its refracting layer');
    draft.surfaceMaterial='transparent';await settle();for(const part of ['material','navigation','player-bar']){const element=doc.querySelector(part==='material'?'.title-bar-background':moduleSelectors[part]),surface=paint(element);expect(surface.backgroundColor==='rgba(0, 0, 0, 0)'&&surface.backdropFilter==='none','transparent material keeps a background or glass filter: '+part);}
   }finally{Object.assign(draft,snapshot);root.style.cssText=sourceStyle;window.previewSettings.value.playerBar.mode=sourceMode;themeEditing.value=sourceEditing;tone.value=sourceTone;focused.value='overview';await settle();}
@@ -1122,11 +1234,10 @@ window.fixture={
     for(const mode of ['standard','mini','compact']){
      window.previewSettings.value.playerBar.mode=mode;focused.value='overview';await settle();realScene(doc);sourceLayout(doc);const source=sourceGeometry(doc),dimensions=controls(),bar=box('.player-bar'),play=box('.btn-play,.mini-play-button');
      expect(dimensions['.menu-btn'].width===46&&dimensions['.menu-btn'].height===40&&dimensions['.title-bar-icon'].width===18&&dimensions['.window-control-icon'].width===16,'real title bar no longer uses its actual slots and icons');
-     expect(Math.abs(dimensions['.menu-nav > .menu-item'].height-Math.max(40,font*15/14*1.5+12))<.1&&Math.abs(dimensions['.menu-nav > .menu-item .item-icon'].width-Math.max(22,font*22/14))<.1,'real navigation row or icon box does not accommodate the user font size: '+JSON.stringify({font,row:dimensions['.menu-nav > .menu-item'],icon:dimensions['.menu-nav > .menu-item .item-icon']}));
-     if(mode==='standard'&&font===14)expect(bar.height===90&&dimensions['.player-cover-slot'].width===70&&dimensions['.player-cover-slot'].height===70&&play.width===84&&play.height===48,'standard player no longer uses its real 90px bar, 70px cover and 84×48px play control: '+JSON.stringify({bar,play,cover:dimensions['.player-cover-slot']}));
-     if(mode==='standard'&&font>14)expect(bar.height>90&&dimensions['.player-cover-slot'].height>70&&play.width>84&&play.height>48,'real source ignores larger font/control settings');
-     if(mode==='mini')expect(bar.height===44&&play.width===56&&play.height===32,'mini player differs from the real flat 44px source');
-     if(mode==='compact')expect(bar.height===72&&play.width===70&&play.height===40,'compact player differs from the real 72px source');
+     expect(dimensions['.menu-nav > .menu-item'].height===40&&dimensions['.menu-nav > .menu-item .item-icon'].width===22&&dimensions['.menu-nav > .menu-item .item-icon'].height===22,'real navigation changes its fixed row or icon slot geometry: '+JSON.stringify({font,row:dimensions['.menu-nav > .menu-item'],icon:dimensions['.menu-nav > .menu-item .item-icon']}));expect(Math.abs(Number.parseFloat(doc.defaultView.getComputedStyle(doc.querySelector('.menu-nav > .menu-item .item-label')).fontSize)-font)<.1&&Math.abs(Number.parseFloat(doc.defaultView.getComputedStyle(doc.querySelector('.menu-nav > .menu-item .item-icon')).fontSize)-font*18/14)<.1,'real navigation label or glyph ignores the user font token');
+     if(mode==='standard'){const playHeight=playSize*8/11,barHeight=Math.max(playHeight,controlSize)+Math.max(22,font*11/14*1.65+4)+18,coverSize=barHeight-20;expect(Math.abs(bar.height-barHeight)<.1&&Math.abs(dimensions['.player-cover-slot'].width-coverSize)<.1&&Math.abs(dimensions['.player-cover-slot'].height-coverSize)<.1&&Math.abs(play.width-playHeight*15/8)<.1&&Math.abs(play.height-playHeight)<.1,'standard player ignores its transport, progress and font token geometry: '+JSON.stringify({font,playSize,controlSize,bar,play,cover:dimensions['.player-cover-slot']}));}
+     if(mode==='mini')expect(bar.height===40&&play.width===26&&play.height===26,'mini player differs from the real flat 40px source and 26px control');
+     if(mode==='compact')expect(bar.height===72&&play.width===40&&play.height===40,'compact player differs from the real 72px source and 40px control');
      const overviewScale=uniformCamera(host);focused.value='player-bar';await settle();const fittedScale=uniformCamera(host);expect(fittedScale>overviewScale,'real player focus does not enlarge the common camera');preview.value.zoomIn();await settle();expect(uniformCamera(host)>fittedScale,'real controls do not zoom through the common camera');preview.value.fitPart();await settle();uniformCamera(host);unchangedGeometry(doc,source,'camera reflows a real window component');expect(JSON.stringify(controls())===JSON.stringify(dimensions),'zoom independently resizes real controls or typography');
      const hit=host.querySelector('[aria-label="调整播放条布局"]'),physical=hit.getBoundingClientRect(),native=doc.querySelector('.player-bar').getBoundingClientRect(),scale=uniformCamera(host);expect(Math.abs(physical.width-native.width*scale)<0.1&&Math.abs(physical.height-native.height*scale)<0.1,'real player controls are not transformed with the exact common scale');measurements.push({font,playSize,controlSize,mode,bar,play,scale});
     }
@@ -1164,7 +1275,9 @@ window.fixture={
    for(const preset of BUILT_IN_THEME_PRESET_IDS)for(const nextTone of ['dark','light']){
     const profile=getBuiltInThemePreset(preset),key=nextTone==='dark'?'dark':'pureWhite';tone.value=nextTone;root.dataset.theme=key;root.dataset.tePresetLayout=preset.startsWith('builtin:')?preset.slice(8):preset;for(const [name,value] of Object.entries(themeModesToDataAttributes(resolveThemeProfileModes(profile))))root.setAttribute(name,value);for(const [name,value] of Object.entries(themeTokensToCssVariables(resolveThemeProfileTokens(profile,key))))root.style.setProperty(name,value);
     for(const expanded of [true,false]){
-     if(preview.value.navigationExpanded!==expanded)preview.value.toggleNavigation();focused.value=expanded?'navigation':'overview';await settle();await doc.fonts.ready;realScene(doc);sourceLayout(doc);const source=sourceGeometry(doc),rail=resolveThemeProfileModes(profile).navigation.style==='rail';expect(expanded?source.navigation.width>=(rail?72:160):source.navigation.width===0&&source.navigation.height===0,'preset sidebar disagrees with its real overlay surface or expanded state: '+preset+' '+nextTone+' '+expanded+' '+source.navigation.width);
+     if(preview.value.navigationExpanded!==expanded)preview.value.toggleNavigation();focused.value=expanded?'navigation':'overview';await settle();await doc.fonts.ready;
+     await waitFor(()=>doc.documentElement.dataset.theme===key&&doc.documentElement.dataset.tePresetLayout===root.dataset.tePresetLayout&&doc.querySelector('body > .appearance-preview-scene')?.dataset.previewNavigation===(expanded?'expanded':'collapsed'),'preset layout does not commit its requested tone and navigation state: '+preset+' '+nextTone+' '+expanded);
+     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await nextTick();realScene(doc);sourceLayout(doc);const source=sourceGeometry(doc),rail=resolveThemeProfileModes(profile).navigation.style==='rail';expect(expanded?source.navigation.width>=(rail?72:160):source.navigation.width===0&&source.navigation.height===0,'preset sidebar disagrees with its real overlay surface or expanded state: '+preset+' '+nextTone+' '+expanded+' '+source.navigation.width);
      const hit=host.querySelector('[aria-label="调整侧边栏材质"]'),b=host.getBoundingClientRect(),scale=uniformCamera(host);if(expanded){expect(hit,'expanded preset navigation hotspot missing');const a=hit.getBoundingClientRect();expect(Math.abs(a.width-source.navigation.width*scale)<0.1&&Math.abs(a.height-source.navigation.height*scale)<0.1&&a.left>=b.left&&a.top>=b.top&&a.right<=b.right+0.01&&a.bottom<=b.bottom+0.01,'preset navigation focus is stale or cropped: '+preset+' '+nextTone);if(rail)expect(navigationItems(doc).every(row=>doc.defaultView.getComputedStyle(row.querySelector('.item-label')).display==='none'),'rail navigation retains expanded labels');}else expect(!hit||hit.getBoundingClientRect().width<=80,'collapsed preset retains a full navigation hotspot: '+preset+' '+nextTone);checked++;
     }
    }
@@ -1193,7 +1306,7 @@ window.fixture={
   Object.assign(draft.liquidGlass.light,{blurAmount:7,tintOpacity:12,saturation:133,displacementScale:31});Object.assign(draft.liquidGlass.dark,{blurAmount:19,tintOpacity:47,saturation:177,displacementScale:68});
   draft.cardAppearance.enabled=true;draft.cardAppearance.light.backgroundColor='#667788';draft.cardAppearance.dark.backgroundColor='#bbccdd';draft.appBackground.global.light='#e6e8ee';draft.appBackground.global.customized=true;document.documentElement.dataset.teLiquidGlassAdaptiveTone='light';await settle();
   expect(preview.value.glassTone==='dark'&&host.dataset.glassTone==='dark','forced dark tone is not exposed');expect(variable('--te-lg-blur')==='19px'&&Number(variable('--te-lg-tint'))===0.47&&variable('--te-lg-saturate')==='177%','forced glass preview uses light tuning');
-  expect(doc.documentElement.dataset.theme==='pureWhite'&&variable('--te-app-bg')==='#e6e8ee'&&variable('--te-card-bg')==='#667788ff','glass override changes background, card or application tone');const darkScale=opticalScale();expect(darkScale>0,'rendered optical profile has no displacement input');
+  expect(doc.documentElement.dataset.theme==='pureWhite'&&variable('--te-app-bg')==='#e6e8ee'&&variable('--te-card-bg')==='#667788ff','glass override changes background, card or application tone');const darkScale=opticalScale();expect(darkScale>0,'rendered optical profile has no displacement input');expect(doc.querySelector('#te-lg-playbar feImage').getAttribute('href').startsWith('data:image/png'),'isolated preview has no raster for its own playback geometry');
   draft.liquidGlass.overLight=false;document.documentElement.dataset.teLiquidGlassAdaptiveTone='dark';await settle();expect(preview.value.glassTone==='light'&&variable('--te-lg-blur')==='7px'&&opticalScale()<darkScale,'disabled adaptation still uses the dark profile');
   draft.liquidGlass.adaptiveTone=true;await settle();expect(preview.value.glassTone==='dark'&&variable('--te-lg-blur')==='19px'&&opticalScale()===darkScale,'adaptive CSS and optical profile disagree');const adaptiveDraft=JSON.stringify(draft);document.documentElement.dataset.teLiquidGlassAdaptiveTone='light';await settle();expect(preview.value.glassTone==='light'&&variable('--te-lg-blur')==='7px'&&JSON.stringify(draft)===adaptiveDraft,'root environment change mutates the theme draft or retains dark tuning');
   expect(doc.documentElement.dataset.theme==='pureWhite'&&variable('--te-app-bg')==='#e6e8ee'&&variable('--te-card-bg')==='#667788ff','adaptive change leaks its tone into non-glass settings');
@@ -1234,8 +1347,8 @@ window.fixture={
   expect(['app','local','settings','streaming','player'].every(page=>!doc.documentElement.hasAttribute('data-te-'+page+'-image-palette')),'host image palette leaks into an independent workshop project');
   expect(doc.documentElement.dataset.teLibraryDensity==='compact'&&document.documentElement.dataset.teLibraryDensity==='comfortable','workshop mode contaminates or follows the host');
   const surfaceClasses=[...doc.body.classList].filter(value=>['te-local-surface','te-streaming-surface','te-settings-surface'].includes(value));expect(surfaceClasses.length===1&&surfaceClasses[0]===(scene.surface.startsWith('streaming')?'te-streaming-surface':scene.surface==='settings'?'te-settings-surface':'te-local-surface'),'shared workshop retains conflicting body surface classes: '+surfaceClasses);
-  expect(!/PRIVATE_.*_SENTINEL/.test(source.textContent),'workshop exposes private library, playback or account data');
-  if(scene.surface==='library')expect(!source.querySelector('.song-list .song-title'),'empty workshop library renders private or stale tracks');
+  expect(!/PRIVATE_.*_SENTINEL/.test(source.outerHTML),'workshop exposes private library, playback or account attributes');
+  if(scene.surface==='library'){expect(!source.querySelector('.song-list .song-title'),'empty workshop library renders private or stale tracks');expect(source.querySelector('.song-list .search-input').value==='','workshop reads the live library search query');}
   if(scene.surface==='streaming-list')expect(source.querySelector('.streaming-content .selected'),'selected workshop state is not reflected by the real track row');
   if(scene.surface==='settings'){
    expect(frame.getAttribute('aria-hidden')==='false'&&frame.tabIndex===0&&getComputedStyle(frame).pointerEvents==='auto','settings experience does not expose the real iframe for native input');
@@ -1285,7 +1398,7 @@ window.fixture={
   isolatedBoundary();window.previewWorkshop.dragCases++;return workshopSnapshot();
  },
  async workshopLayered(){
-  await setWorkshopScene(workshopScenes[0],true);preview.value.setLayeredView(true);await settle();const {host,doc,source}=workshopContext(),layers=doc.querySelector('.appearance-layer-view');
+  await setWorkshopScene(workshopScenes[0],true);preview.value.setLayeredView(true);await settle();const {host,doc,source}=workshopContext();await waitForPreviewView(host,'shared workshop 3D view never finishes unfolding',true);const layers=doc.querySelector('.appearance-layer-view');
   await waitFor(()=>layers&&doc.defaultView.getComputedStyle(layers).opacity==='1','shared workshop 3D did not finish revealing');
   expect(host.dataset.previewView==='layered'&&!host.querySelector('.workshop-canvas-overlay'),'3D workshop retains a misleading 2D layer-edit overlay');
   expect(layers.querySelectorAll('[data-appearance-layer]').length===6&&source.style.visibility==='hidden','shared workshop fails to reuse the six-layer view or paints a second source');
@@ -1293,7 +1406,7 @@ window.fixture={
   const diagnostics=await preview.value.inspectWorkshop();expect(Array.isArray(diagnostics)&&source.style.visibility==='hidden','3D diagnostics reveal a duplicate source scene');
   window.previewWorkshop.layerCount=6;return workshopSnapshot();
  },
- async leaveWorkshopLayered(){preview.value.setLayeredView(false);await settle();const {host,doc,source}=workshopContext();expect(!doc.querySelector('.appearance-layer-view')&&source.style.visibility!=='hidden'&&host.querySelector('.workshop-canvas-overlay'),'return to shared 2D does not restore layer editing');},
+ async leaveWorkshopLayered(){preview.value.setLayeredView(false);await settle();const {host,doc,source}=workshopContext();await waitForPreviewView(host,'shared workshop 2D view never finishes restoring',false);expect(!doc.querySelector('.appearance-layer-view')&&source.style.visibility!=='hidden'&&host.querySelector('.workshop-canvas-overlay'),'return to shared 2D does not restore layer editing');},
  async prepareWorkshopInput(kind){
   await setWorkshopScene(workshopScenes[4],false);const {host,frame,doc,source}=workshopContext(),input=source.querySelector(kind==='checkbox'?'input[type=checkbox]':'input:not([type])');
   if(preview.value.navigationExpanded){const nav=source.querySelector('.side-menu').getBoundingClientRect(),content=source.querySelector('.main-content').getBoundingClientRect();expect(source.dataset.previewNavigation==='expanded'&&nav.width>0&&content.left<nav.right&&content.right>nav.right,'settings fixture does not exercise the real expanded overlay navigation');preview.value.toggleNavigation();await settle();}
@@ -1317,7 +1430,7 @@ window.fixture={
  async finishWorkshop(){
   preview.value.setLayeredView(false);workshopModel.value=undefined;for(const style of workshopHostStyles)style.remove();workshopHostStyles=[];
   const root=document.documentElement;for(const attribute of [...root.attributes])root.removeAttribute(attribute.name);for(const [name,value]of workshopOriginal.attributes)root.setAttribute(name,value);tone.value=workshopOriginal.tone;themeEditing.value=workshopOriginal.themeEditing;if(preview.value.navigationExpanded!==workshopOriginal.navigationExpanded)preview.value.toggleNavigation();focused.value='overview';await settle();
-  expect(JSON.stringify(draft)===workshopOriginal.draft&&JSON.stringify(window.previewSettings.value)===workshopOriginal.settings,'shared workshop changes daily appearance or playback settings');realScene(workshopContext().doc);window.previewWorkshop.draftUnchanged=true;return window.previewWorkshop;
+  expect(JSON.stringify(draft)===workshopOriginal.draft&&JSON.stringify(window.previewSettings.value)===workshopOriginal.settings,'shared workshop changes daily appearance or playback settings');expect(liveSearchProbe()==='PRIVATE_SEARCH_SENTINEL','workshop overwrites the live library search query');realScene(workshopContext().doc);window.previewWorkshop.draftUnchanged=true;return window.previewWorkshop;
  },
  async visual(nextTone,part,expanded,layered=false,spacing=56){
   if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
@@ -1350,10 +1463,14 @@ app.whenReady().then(async()=>{let win;const captureCssPage=async()=>{const imag
  await win.webContents.executeJavaScript('window.fixture.backgroundOwnership()');console.log('PREVIEW_BACKGROUND_OWNERSHIP',JSON.stringify(await win.webContents.executeJavaScript('window.previewBackgroundOwnership')));
  console.log('PREVIEW_HOME',JSON.stringify(await win.webContents.executeJavaScript('window.previewHome')));
  console.log('PREVIEW_PERF',JSON.stringify(await win.webContents.executeJavaScript('window.previewPerf')));
+ // The real shell reserves sidebar clearance on wide windows. Exercise its
+ // overlapping navigation state below the 900px responsive breakpoint.
+ win.setContentSize(880,800);
  await win.webContents.executeJavaScript('window.fixture.canvasBehavior()');
  win.webContents.debugger.attach('1.3');
  for(const kind of ['blank','background']){const point=await win.webContents.executeJavaScript('window.fixture.prepareCanvasReset('+JSON.stringify(kind)+')');await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});await win.webContents.executeJavaScript('window.fixture.checkCanvasReset()');}
  console.log('PREVIEW_CANVAS',JSON.stringify(await win.webContents.executeJavaScript('window.previewCanvas')));
+ win.setContentSize(1280,800);
  await win.webContents.executeJavaScript('window.fixture.beginFloating()');
  for(const [width,height]of [[1280,800],[960,640],[640,640]]){win.setContentSize(width,height);for(const [part,layered]of [['material',false],['navigation',false],['player-bar',true]])await win.webContents.executeJavaScript('window.fixture.floatingGeometry('+JSON.stringify(part)+','+layered+')');}
  win.setContentSize(1280,800);await win.webContents.executeJavaScript('window.fixture.floatingMotion()');
@@ -1392,7 +1509,7 @@ app.whenReady().then(async()=>{let win;const captureCssPage=async()=>{const imag
  const failures=[];for(const check of ['motionApi','lifecycle','loading']){try{await win.webContents.executeJavaScript('window.fixture.'+check+'()')}catch(error){failures.push(check+': '+error.message)}}
  console.log('PREVIEW_LIFECYCLE',JSON.stringify(await win.webContents.executeJavaScript('window.previewLifecycle')));
  if(failures.length)throw Error(failures.join('; '));
- for(const tone of ['dark','light']){await win.webContents.executeJavaScript('window.fixture.prepareSelectionFeedback('+JSON.stringify(tone)+')');for(const label of ['调整内框背景','调整外框','调整标题栏材质','调整播放条布局','调整内容卡片']){
+ for(const tone of ['dark','light']){await win.webContents.executeJavaScript('window.fixture.prepareSelectionFeedback('+JSON.stringify(tone)+')');for(const label of ['调整内框背景','调整外框','调整侧边栏材质','调整标题栏材质','调整播放条布局','调整内容卡片']){
   await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9});await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9});await win.webContents.executeJavaScript('window.fixture.checkSelectionFocus('+JSON.stringify(label)+')');
  }}
  let layerFocusCases=0;for(const tone of ['dark','light']){await win.webContents.executeJavaScript('window.fixture.prepareLayerFocus('+JSON.stringify(tone)+')');for(const label of ['调整内框背景','调整外框','调整侧边栏材质','调整标题栏材质','调整播放条布局','调整内容卡片']){await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9});await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9,nativeVirtualKeyCode:9});await win.webContents.executeJavaScript('window.fixture.checkLayerFocus('+JSON.stringify(label)+')');layerFocusCases++;}}await win.webContents.executeJavaScript('window.fixture.closeLayerFocus()');console.log('PREVIEW_LAYER_FOCUS',layerFocusCases);

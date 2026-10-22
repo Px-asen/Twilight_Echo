@@ -413,6 +413,7 @@ export function startApp(): void {
           fetch: async (source, init) => {
             const upstream = await undiciFetch(source, {
               method: init.method,
+              signal: init.signal,
               headers: init.headers as Record<string, string> | undefined,
               // Manual so remoteMediaGrants can re-apply NetEase Referer on each hop.
               redirect: 'manual'

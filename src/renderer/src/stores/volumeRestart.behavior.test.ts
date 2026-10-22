@@ -122,6 +122,16 @@ window.api = {
     update: async patch => snapshot(await ipcRenderer.invoke('fixture:write', patch)),
     onChanged: noopSubscribe
   },
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: {
+      queryTracks: async () => ({ tracks: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      queryCollections: async () => ({ items: [], total: 0, offset: 0, limit: 100, revision: 0 }),
+      getTracksByIds: async () => ({ tracks: [], revision: 0 }),
+      readQueue: async () => { throw new Error('volume fixture has no database playback queue') }
+    }
+  },
   audioEngine: {
     onReady: cb => { window.__ready = cb; return () => {} },
     onPropertyChange: noopSubscribe, onPlaybackInfo: noopSubscribe, onEndFile: noopSubscribe,

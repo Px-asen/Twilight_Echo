@@ -11,7 +11,8 @@ const NATIVE_INTERACTIVE_TAGS = new Set([
   'select',
   'textarea',
   'label',
-  'dialog'
+  'dialog',
+  'summary'
 ])
 const PASSIVE_CLICK_STOP_CLASSES = [
   'playlist-row-actions',
@@ -25,6 +26,40 @@ const PASSIVE_CLICK_STOP_CLASSES = [
 ]
 const CLICKABLE_TEMPLATE_ELEMENT =
   /<(?<tag>[a-z][\w-]*)\b(?<attributes>[^>]*\s@click(?:[.=]|\s)[^>]*)>/gs
+
+function hasMotionCoverage(tag: string, attributes: string): boolean {
+  if (NATIVE_INTERACTIVE_TAGS.has(tag)) return true
+  if (attributes.includes('@click.self')) return true
+  // Modifier-only boundaries do not invoke an action. A handler after `=` still counts.
+  if (/(?:^|\s)@click\.stop(?!\s*=)(?=\s|$)/.test(attributes)) return true
+  if (attributes.includes('@click.capture=') && attributes.includes('@pointerdown.capture='))
+    return true
+  if (attributes.includes('data-reorder-group') && attributes.includes('@click.capture='))
+    return true
+  // A keyboard-accessible canvas owns continuous pan/zoom feedback; fading the
+  // whole surface on press would also fade every nested control during a drag.
+  if (
+    /\brole\s*=\s*['"]group['"]/.test(attributes) &&
+    [
+      '@pointerdown=',
+      '@pointermove.stop=',
+      '@pointerup=',
+      '@pointercancel=',
+      '@wheel.prevent=',
+      '@keydown='
+    ].every((handler) => attributes.includes(handler))
+  )
+    return true
+  if (
+    attributes.includes('@click.stop') &&
+    PASSIVE_CLICK_STOP_CLASSES.some((className) => attributes.includes(className))
+  )
+    return true
+  return (
+    attributes.includes('data-te-interactive') ||
+    /role\s*=\s*['"](?:button|switch)['"]/.test(attributes)
+  )
+}
 
 async function readVueSources(directory: URL): Promise<Array<{ path: string; source: string }>> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -89,6 +124,19 @@ test('motion stylesheet covers native and custom interactive controls', async ()
   assert.match(streamingSearch, /data-te-interactive/)
 })
 
+test('motion audit distinguishes native disclosure, passive boundaries, gestures and actions', () => {
+  assert.equal(hasMotionCoverage('summary', '@click="blockBusy"'), true)
+  assert.equal(hasMotionCoverage('div', '@click.stop @pointerdown.stop'), true)
+  for (const click of ['@click="select"', '@click.stop="select"', '@click.stop = "select"'])
+    assert.equal(hasMotionCoverage('div', click), false, click)
+  const gesture =
+    'role="group" tabindex="0" @click="resetFocus" @pointerdown="down" @pointermove.stop="move" @pointerup="up" @pointercancel="up" @wheel.prevent="zoom" @keydown="key"'
+  assert.equal(hasMotionCoverage('div', gesture), true)
+  assert.equal(hasMotionCoverage('div', gesture.replace('@pointercancel="up"', '')), false)
+  assert.equal(hasMotionCoverage('tr', '@click="select"'), false)
+  assert.equal(hasMotionCoverage('tr', 'data-te-interactive @click="select"'), true)
+})
+
 test('every custom renderer click target declares motion coverage', async () => {
   const rendererRoot = new URL('../', import.meta.url)
   const missingCoverage: string[] = []
@@ -97,20 +145,7 @@ test('every custom renderer click target declares motion coverage', async () => 
     for (const match of source.matchAll(CLICKABLE_TEMPLATE_ELEMENT)) {
       const tag = match.groups?.tag ?? ''
       const attributes = match.groups?.attributes ?? ''
-      if (NATIVE_INTERACTIVE_TAGS.has(tag)) continue
-      if (attributes.includes('@click.self')) continue
-      if (attributes.includes('@click.capture=') && attributes.includes('@pointerdown.capture='))
-        continue
-      if (attributes.includes('data-reorder-group') && attributes.includes('@click.capture='))
-        continue
-      if (
-        attributes.includes('@click.stop') &&
-        PASSIVE_CLICK_STOP_CLASSES.some((className) => attributes.includes(className))
-      ) {
-        continue
-      }
-      if (attributes.includes('data-te-interactive')) continue
-      if (/role\s*=\s*['"](?:button|switch)['"]/.test(attributes)) continue
+      if (hasMotionCoverage(tag, attributes)) continue
 
       const line = source.slice(0, match.index).split('\n').length
       missingCoverage.push(`${path}:${line} <${tag}>`)

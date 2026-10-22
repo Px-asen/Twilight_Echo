@@ -42,7 +42,7 @@ import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import PlayerControlIcon from '@renderer/components/player-bar/PlayerControlIcon.vue'
 import PlayerSeekProgress from '@renderer/components/player-bar/PlayerSeekProgress.vue'
 const mode=ref('standard'),isMini=computed(()=>mode.value==='mini'),isCompact=computed(()=>mode.value==='compact'),isStandard=computed(()=>mode.value==='standard')
-const currentTrack=ref(null),showOnboarding=ref(false),showLoginPage=ref(false),showSettingsPage=ref(false),appearanceFullWindowPreview=ref(false),showThemeStudioPage=ref(false),showEqualizerPage=ref(false),showDspRackPage=ref(false),showPluginPage=ref(false),activePluginPage=ref(false),visualizerActive=ref(false)
+const currentTrack=ref(null),showOnboarding=ref(false),showLoginPage=ref(false),showSettingsPage=ref(false),showAppearancePage=ref(false),appearanceFullWindowPreview=ref(false),showThemeStudioPage=ref(false),showEqualizerPage=ref(false),showDspRackPage=ref(false),showPluginPage=ref(false),activePluginPage=ref(false),visualizerActive=ref(false)
 ${visibilitySource}
 const shellDataAttrs=computed(()=>({'data-te-playbar-mode':mode.value,'data-te-playbar-hidden':'false','data-te-playbar-visibility':'auto'}))
 const sequentialIcon='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>';const formatTime=()=>'0:00',playerBarShellRef=ref(null),playerBarRef=ref(null)

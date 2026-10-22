@@ -9,10 +9,16 @@ import { toProviderIpcArgs } from '../providers/mediaProvider.ts'
 
 const source = readFileSync(new URL('./useProviderStore.ts', import.meta.url), 'utf8')
 
-function providerStoreFixture(list: () => Promise<unknown[]>) {
+function providerStoreFixture(
+  list: () => Promise<unknown[]>,
+  initialOptions?: { listen?: boolean }
+) {
   const listeners: Array<() => void> = []
+  const intervals = new Map<number, () => void>()
+  let intervalId = 0
+  let clearCalls = 0
   const exports: {
-    useProviderStore?: () => {
+    useProviderStore?: (options?: { listen?: boolean }) => {
       syncProviders: () => Promise<void>
       hasProvider: (id: string) => boolean
     }
@@ -29,8 +35,15 @@ function providerStoreFixture(list: () => Promise<unknown[]>) {
         throw new Error(`Unexpected dependency: ${id}`)
       },
       window: {
-        setInterval: () => 1,
-        clearInterval: () => {},
+        setInterval: (callback: () => void, delay: number) => {
+          assert.equal(delay, 30_000)
+          intervals.set(++intervalId, callback)
+          return intervalId
+        },
+        clearInterval: (id: number) => {
+          clearCalls++
+          intervals.delete(id)
+        },
         api: {
           providers: { list },
           plugins: { onChanged: (listener: () => void) => listeners.push(listener) }
@@ -38,8 +51,72 @@ function providerStoreFixture(list: () => Promise<unknown[]>) {
       }
     }
   )
-  return { store: exports.useProviderStore!(), changed: () => listeners.forEach((fn) => fn()) }
+  return {
+    store: exports.useProviderStore!(initialOptions),
+    useStore: exports.useProviderStore!,
+    changed: () => listeners.forEach((fn) => fn()),
+    poll: () => intervals.forEach((fn) => fn()),
+    get listenerCount() {
+      return listeners.length
+    },
+    get intervalCount() {
+      return intervals.size
+    },
+    get clearCalls() {
+      return clearCalls
+    }
+  }
 }
+
+test('preview-first provider store stays idle and a later live caller starts shared listeners once', async () => {
+  let calls = 0
+  const f = providerStoreFixture(
+    async () => {
+      calls++
+      return [{ id: 'ncm', name: 'NCM', capabilities: ['login'] }]
+    },
+    { listen: false }
+  )
+  assert.equal(f.listenerCount, 0)
+  assert.equal(f.intervalCount, 0)
+  f.changed()
+  f.poll()
+  assert.equal(calls, 0, 'a preview does not initialize background provider requests')
+
+  const live = f.useStore()
+  f.useStore()
+  f.useStore({ listen: false })
+  assert.equal(f.listenerCount, 1)
+  assert.equal(f.intervalCount, 1)
+  assert.equal(f.clearCalls, 0)
+  f.changed()
+  await live.syncProviders()
+  assert.equal(calls, 1)
+  assert.equal(live.hasProvider('ncm'), true)
+  f.poll()
+  await live.syncProviders()
+  assert.equal(calls, 2, 'the live caller still receives provider health polling')
+})
+
+test('live-first provider store keeps its listener and polling when previews join', async () => {
+  let calls = 0
+  const f = providerStoreFixture(async () => {
+    calls++
+    return []
+  })
+  assert.equal(f.listenerCount, 1)
+  assert.equal(f.intervalCount, 1)
+  f.useStore({ listen: false })
+  f.useStore({ listen: false })
+  assert.equal(f.listenerCount, 1, 'previews do not register another lifecycle listener')
+  assert.equal(f.intervalCount, 1, 'previews do not replace or remove the live interval')
+  assert.equal(f.clearCalls, 0)
+  f.changed()
+  await f.store.syncProviders()
+  f.poll()
+  await f.store.syncProviders()
+  assert.equal(calls, 2, 'both live update paths survive preview initialization')
+})
 
 test('provider navigation waits for fresh lifecycle state when a list is already pending', async () => {
   let resolve!: (value: unknown[]) => void

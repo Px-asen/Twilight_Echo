@@ -1208,6 +1208,7 @@ function Get-GatePlan {
     [pscustomobject]@{ id = 'test-playback-routing'; command = 'corepack pnpm@11.7.0 run test:playback-routing'; timeout = 900 },
     [pscustomobject]@{ id = 'test-local-perf'; command = 'corepack pnpm@11.7.0 run test:local-perf'; timeout = 900 },
     [pscustomobject]@{ id = 'test-themes'; command = 'corepack pnpm@11.7.0 run test:themes'; timeout = 900 },
+    [pscustomobject]@{ id = 'test-appearance-workspace'; command = 'corepack pnpm@11.7.0 run test:appearance-workspace'; timeout = 900 },
     [pscustomobject]@{ id = 'test-playlist-lifecycle'; command = 'corepack pnpm@11.7.0 run test:playlist-lifecycle'; timeout = 900 },
     [pscustomobject]@{ id = 'test-tag-duplicate-management'; command = 'corepack pnpm@11.7.0 run test:tag-duplicate-management'; timeout = 900 },
     [pscustomobject]@{ id = 'test-duplicate-detection'; command = 'corepack pnpm@11.7.0 run test:duplicate-detection'; timeout = 600 },

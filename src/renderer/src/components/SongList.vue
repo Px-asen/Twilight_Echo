@@ -191,11 +191,14 @@ const settingsStore = useSettingsStore()
 const { currentTrack } = playbackStore
 const { playTrack, playTrackFromPosition, setPlayMode, playNextTrack } = playbackStore
 const playbackBookmarks = usePlaybackBookmarks()
-void playbackBookmarks.ensureLoaded()
-const mediaProviders = useMediaProviders()
-const unifiedSearch = useUnifiedMusicSearch()
-const rematchSearchSource = useLibraryUnifiedSearch()
-const providerStore = useProviderStore()
+if (!props.previewTracks) void playbackBookmarks.ensureLoaded()
+const mediaProviders = useMediaProviders({ sync: !props.previewTracks })
+const unifiedSearch = useUnifiedMusicSearch({
+  sync: !props.previewTracks,
+  listen: !props.previewTracks
+})
+const rematchSearchSource = useLibraryUnifiedSearch(undefined, { listen: !props.previewTracks })
+const providerStore = useProviderStore({ listen: !props.previewTracks })
 const { listeningStats } = useListeningStatsStore()
 const EMPTY_LAST_PLAYED_BY_TRACK_ID: ReadonlyMap<string, number> = new Map()
 const libraryStorage = createLibraryStorageState({
@@ -206,8 +209,9 @@ onMounted(() => {
 })
 
 const currentLibraryViewKey = computed(() => libraryViewKey(props.category, props.filter))
-const { searchQuery, debouncedSearchQuery, searchInputFocused } =
-  useSongListSearch(currentLibraryViewKey)
+const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch(
+  props.previewTracks ? undefined : currentLibraryViewKey
+)
 
 // ─── Recent playback source selector ──────────────────────────────────────
 const recentSource = ref('all')
@@ -218,6 +222,7 @@ const recentSourceOptions = computed(() => {
     { id: 'local', label: '本地音乐', icon: 'pi pi-desktop' },
     { id: 'all', label: '全平台', icon: 'pi pi-bolt' }
   ]
+  if (props.previewTracks) return options
   for (const provider of providerStore.providers.value) {
     if (provider.capabilities.includes('library')) {
       options.push({
@@ -349,7 +354,9 @@ const baseDisplayTracks = computed(() => {
   return []
 })
 
-const libraryViewPreferences = new LibraryViewPreferences()
+const libraryViewPreferences = new LibraryViewPreferences(
+  props.previewTracks ? { getItem: () => null, setItem: () => {} } : undefined
+)
 const libraryViewState = ref<LibraryViewState>(
   libraryViewPreferences.read(currentLibraryViewKey.value, props.category)
 )
@@ -639,10 +646,10 @@ watch(
     () => props.previewTracks
   ],
   () => {
-    const document = getMusicVersions()
+    const versions = props.previewTracks ? [] : getMusicVersions().tracks.versions
     void databasePlaylistView.setPlaylist(
       !props.previewTracks && libraryStorage.mode.value === 'sqlite' ? currentPlaylist.value : null,
-      { revision: musicVersionRevision.value, versions: document.tracks.versions }
+      { revision: musicVersionRevision.value, versions }
     )
   },
   { immediate: true, flush: 'sync' }
@@ -745,6 +752,7 @@ watch(
 )
 let unsubscribeDatabasePages: (() => void) | undefined
 onMounted(() => {
+  if (props.previewTracks) return
   unsubscribeDatabasePages = window.api?.library?.onChanged((change) => {
     const revision = change?.kind === 'scan' ? change.update.libraryRevision : change?.revision
     if (
@@ -780,7 +788,7 @@ function retryDatabaseRead(): void {
   else databasePages.retry()
 }
 const libraryRepairStatusText = computed(() => {
-  if (props.category !== 'allSongs' || props.filter) return ''
+  if (props.previewTracks || props.category !== 'allSongs' || props.filter) return ''
   const report = libraryRepairReport.value
   if (!report || (report.repairedCount === 0 && report.unresolvedCount === 0)) return ''
   const parts: string[] = []
@@ -971,7 +979,9 @@ const isCollectionGrid = computed(
   () => showGrid.value && (props.category === 'artists' || props.category === 'albums')
 )
 
-const collectionViewPreferences = new LibraryCollectionViewPreferences()
+const collectionViewPreferences = new LibraryCollectionViewPreferences(
+  props.previewTracks ? null : undefined
+)
 const collectionViewState = ref<LibraryCollectionViewState>(
   collectionViewPreferences.read(props.category)
 )
@@ -1003,14 +1013,17 @@ function setCollectionGenre(value: string): void {
 
 const playlistOrderNotice = ref('')
 const localPlaylistEntries = computed(() =>
-  localPlaylists.value.map((playlist) => ({ ...playlist, id: playlist.id ?? playlist.name }))
+  props.previewTracks
+    ? []
+    : localPlaylists.value.map((playlist) => ({ ...playlist, id: playlist.id ?? playlist.name }))
 )
 const localPlaylistOrder = useLocalPlaylistOrder(
   localPlaylistEntries,
   () => 'library',
   (message) => {
     playlistOrderNotice.value = message
-  }
+  },
+  { persist: !props.previewTracks }
 )
 const databasePlaylistCatalog = createLibraryPlaylistView({
   syncPlaylistView: (request) => window.api.library.database.syncPlaylistView(request)
@@ -1045,7 +1058,7 @@ watch(
   ({ enabled, playlists, revision }) =>
     void databasePlaylistCatalog.setCatalog(enabled ? playlists : null, {
       revision,
-      versions: getMusicVersions().tracks.versions
+      versions: props.previewTracks ? [] : getMusicVersions().tracks.versions
     }),
   { immediate: true, flush: 'sync' }
 )
@@ -1193,7 +1206,9 @@ const collectionGridItems = computed(() =>
 
 watch(
   () => settingsStore.settings.value.genreSeparators,
-  () => refreshLibraryIndex()
+  () => {
+    if (!props.previewTracks) refreshLibraryIndex()
+  }
 )
 const localPlaylistReorderEntries = computed(() => {
   if (!databaseGridEnabled.value) return filteredGridItems.value as Array<GridItem & { id: string }>
@@ -1691,15 +1706,17 @@ const {
         (databaseGridEnabled.value && databaseCollectionState.value.total !== null))
   ),
   resetSources: [],
-  viewIdentity: currentLibraryViewKey,
-  viewKey: computed(() =>
-    JSON.stringify([
-      currentLibraryViewKey.value,
-      debouncedSearchQuery.value,
-      libraryViewState.value,
-      databaseGridEnabled.value ? collectionViewState.value : null
-    ])
-  ),
+  viewIdentity: props.previewTracks ? undefined : currentLibraryViewKey,
+  viewKey: props.previewTracks
+    ? undefined
+    : computed(() =>
+        JSON.stringify([
+          currentLibraryViewKey.value,
+          debouncedSearchQuery.value,
+          libraryViewState.value,
+          databaseGridEnabled.value ? collectionViewState.value : null
+        ])
+      ),
   shouldResetOnSearch: showTable,
   debouncedSearchQuery
 })
@@ -1727,6 +1744,7 @@ const providerCoverRequests = new Map<string, Promise<void>>()
 const providerCoverTails = new Map<string, Promise<unknown>>()
 const providerCoverController = new AbortController()
 async function resolveMissingTrackCover(track: Track): Promise<void> {
+  if (props.previewTracks) return
   if (track.cover || track.coverSource || track.coverSmall || track.coverSmallSource) return
   const source = getLogicalTrackSource(track)
   if (
@@ -3339,9 +3357,11 @@ watch(
                 >
                   <i class="pi pi-sitemap"></i>
                   <span>库管理</span>
-                  <span v-if="excludedTracks.length > 0" class="library-tools-badge">{{
-                    excludedTracks.length
-                  }}</span>
+                  <span
+                    v-if="!previewTracks && excludedTracks.length > 0"
+                    class="library-tools-badge"
+                    >{{ excludedTracks.length }}</span
+                  >
                   <i
                     class="pi pi-chevron-down"
                     style="font-size: calc(var(--te-font-size-body, 14px) * 10 / 14)"

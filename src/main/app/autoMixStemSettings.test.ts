@@ -30,6 +30,7 @@ test('stem enable and device changes publish new preferences before cancelling o
     '../integrations/miniPlayer': {},
     '../integrations/desktopLyrics': {},
     '../integrations/shortcutsTray': { applyRuntimeSettings() {} },
+    './AfterglowModeService.ts': { reassertAfterglowShortcuts() {} },
     '../audio/state.ts': {},
     './windowAppearance.ts': {},
     '../cache/ncmCache': {},

@@ -857,6 +857,9 @@ test('Chromium projects every DOM corner and pointer frames touch only two cache
       ['--no-sandbox', join(directory, 'runner.cjs')],
       { windowsHide: true, timeout: 30_000 }
     )
+    const viewport = JSON.parse(result.stdout.match(/LAYER_VIEWPORT (.+)/)![1])
+    assert.deepEqual(viewport, { width: 1280, height: 800 })
+    console.info('Layer Chromium captured viewport:', JSON.stringify(viewport))
     const counters = JSON.parse(result.stdout.match(/LAYER_PROJECTION (.+)/)![1])
     assert.equal(counters.initialClones, 1)
     assert.ok(
@@ -873,13 +876,19 @@ test('Chromium projects every DOM corner and pointer frames touch only two cache
     console.info('Layer Chromium material:', JSON.stringify(material))
     for (const sample of material.samples) {
       assert.equal(sample.contexts, sample.mode === 'layered' ? 3 : 0)
-      for (const region of sample.regions)
+      for (const region of sample.regions) {
+        assert.equal(
+          region.sampleCount,
+          12 * 64,
+          `${sample.mode} ${sample.background} ${region.id} is outside the captured viewport`
+        )
         assert.ok(
           sample.background === 'striped' && !sample.opaque
             ? region.meanDelta > 2
             : region.meanDelta < 0.2,
           `${sample.mode} ${sample.background} ${region.id} changes pixels incorrectly`
         )
+      }
     }
     for (const state of material.colors) {
       assert.equal(state.visibleContexts, state.selected === 'background' ? 0 : 3)
@@ -1043,7 +1052,7 @@ window.configureNativeAppTint=async(mode,tone,transparent)=>{
 const browserProjectionRunner = `
 const {app,BrowserWindow}=require('electron'),path=require('node:path');app.setPath('userData',path.join(__dirname,'profile'));app.commandLine.appendSwitch('force-device-scale-factor','1');
 let width,height;
-function bitmap(image){const png=image.toPNG();width=png.readUInt32BE(16);height=png.readUInt32BE(20);const pixels=image.toBitmap();if(pixels.length!==width*height*4)throw Error('Screenshot bitmap does not match its native pixel dimensions');return pixels}
+function bitmap(image){const png=image.toPNG();width=png.readUInt32BE(16);height=png.readUInt32BE(20);const pixels=image.toBitmap();if(pixels.length!==width*height*4)throw Error('Screenshot bitmap does not match its native pixel dimensions');if(width!==1280||height!==800)throw Error('Screenshot does not cover the 1280x800 fixture: '+JSON.stringify({width,height}));return pixels}
 function compare(first,second,state,includeCard=false){
  return [...state.regions,...(includeCard?[state.card]:[])].map(rect=>{
   let delta=0,count=0;const sums=[0,0,0],next=[0,0,0],ratio=width/state.viewport.width,[a,b,c,d]=rect.points;
@@ -1054,11 +1063,14 @@ function compare(first,second,state,includeCard=false){
    if(x<0||y<0||x>=width||y>=height)continue;
    for(let channel=0;channel<3;channel++){const at=(y*width+x)*4+channel;delta+=Math.abs(first[at]-second[at]);sums[channel]+=first[at];next[channel]+=second[at];count++}
   }
-  return {id:rect.id,meanDelta:count?delta/count:0,meanColorDelta:count?sums.reduce((sum,value,channel)=>sum+Math.abs(value-next[channel]),0)/count:0};
+  return {id:rect.id,sampleCount:count/3,meanDelta:count?delta/count:0,meanColorDelta:count?sums.reduce((sum,value,channel)=>sum+Math.abs(value-next[channel]),0)/count:0};
  })
 }
 app.whenReady().then(async()=>{let win;try{
- win=new BrowserWindow({show:false,width:1280,height:800,useContentSize:true,webPreferences:{contextIsolation:false,offscreen:true,backgroundThrottling:false}});await win.loadFile(path.join(__dirname,'index.html'));console.log('LAYER_PROJECTION',JSON.stringify(await win.webContents.executeJavaScript('window.checkLayerProjection()')));
+ // Initial BrowserWindow bounds can be clamped to the CI display work area.
+ // Start short to exercise the explicit content resize on every host.
+ win=new BrowserWindow({show:false,width:1280,height:700,useContentSize:true,webPreferences:{contextIsolation:false,offscreen:true,backgroundThrottling:false}});await win.loadFile(path.join(__dirname,'index.html'));win.setContentSize(1280,800);
+ console.log('LAYER_VIEWPORT',JSON.stringify(await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve({width:innerWidth,height:innerHeight}))))')));console.log('LAYER_PROJECTION',JSON.stringify(await win.webContents.executeJavaScript('window.checkLayerProjection()')));
  const samples=[];
  for(const mode of ['flat','layered'])for(const [background,opaque]of [['striped',false],['solid',false],['striped',true]]){
   const images=[];let state;

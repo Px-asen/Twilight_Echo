@@ -1585,6 +1585,15 @@ function activateCurrentTrack(
   options: { resetUi?: boolean; position?: number } = {}
 ): void {
   const next = hydratePlaybackTrack(track)
+  const previousTrack = currentTrack.value
+  if (
+    previousTrack &&
+    (previousTrack.id !== next.id || previousTrack.queueEntryId !== next.queueEntryId)
+  ) {
+    // Selection replaces the active track and resets its clock before load.
+    // Capture the departing occurrence while its last position still belongs to it.
+    playbackHistoryController.recordTrackDeparture(previousTrack)
+  }
   // Fresh object every activation so cover/lyrics watchers always rebind.
   currentTrack.value = { ...next }
   loadedTrackId = next.id
@@ -3370,6 +3379,69 @@ async function resolvePlayTarget(track: Track): Promise<string> {
   return streamUrl
 }
 
+function replaceFailedPlaybackOccurrence(failedTrack: Track, replacement: Track): Track | null {
+  const active = currentTrack.value
+  if (
+    !active ||
+    active.id !== failedTrack.id ||
+    (failedTrack.queueEntryId && active.queueEntryId !== failedTrack.queueEntryId)
+  )
+    return null
+
+  // Older direct-play state may have no array queue. Give that playback its
+  // own occurrence so recovery remains playable, navigable and restorable.
+  if (!queue.value.length) {
+    const recovered = {
+      ...replacement,
+      queueEntryId:
+        failedTrack.queueEntryId ?? active.queueEntryId ?? `queue:${crypto.randomUUID()}`
+    }
+    const snapshot = toPlaybackQueueSnapshot(recovered)
+    queue.value = [snapshot]
+    originalQueue.value = [snapshot]
+    queueIndex.value = 0
+    return recovered
+  }
+
+  const index = failedTrack.queueEntryId
+    ? queue.value.findIndex((track) => track.queueEntryId === failedTrack.queueEntryId)
+    : queueIndex.value
+  const failedEntry = queue.value[index]
+  if (
+    !failedEntry ||
+    failedEntry.id !== failedTrack.id ||
+    (currentTrack.value?.queueEntryId &&
+      currentTrack.value.queueEntryId !== failedEntry.queueEntryId)
+  )
+    return null
+
+  // Recovery changes the source of this occurrence. The candidate may already
+  // occupy another slot, so neither its id nor its entry id owns our cursor.
+  const recovered = {
+    ...replacement,
+    queueEntryId: failedEntry.queueEntryId ?? `queue:${crypto.randomUUID()}`
+  }
+  const snapshot = toPlaybackQueueSnapshot(recovered)
+  let originalIndex = failedEntry.queueEntryId
+    ? originalQueue.value.findIndex((track) => track.queueEntryId === failedEntry.queueEntryId)
+    : originalQueue.value.indexOf(failedEntry)
+  if (!failedEntry.queueEntryId && originalIndex < 0) {
+    const occurrence = queue.value
+      .slice(0, index)
+      .filter((track) => track.id === failedEntry.id).length
+    let seen = 0
+    originalIndex = originalQueue.value.findIndex(
+      (track) => track.id === failedEntry.id && seen++ === occurrence
+    )
+  }
+  queue.value = queue.value.map((track, entryIndex) => (entryIndex === index ? snapshot : track))
+  originalQueue.value = originalQueue.value.map((track, entryIndex) =>
+    entryIndex === originalIndex ? snapshot : track
+  )
+  queueIndex.value = index
+  return recovered
+}
+
 async function handlePlaybackFallback(
   failedTrack: Track,
   reason: unknown,
@@ -3388,6 +3460,8 @@ async function handlePlaybackFallback(
     sourceReliability: getProviderSourceReliability()
   })
   if (!fallback) return await handleProviderRematchFallback(failedTrack, loadToken)
+  const recovered = replaceFailedPlaybackOccurrence(failedTrack, fallback)
+  if (!recovered) return false
 
   // A fallback succeeded: audio is still playing, so this is a warning.
   const fallbackLocale = currentLocale()
@@ -3404,17 +3478,8 @@ async function handlePlaybackFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  const fallbackSnapshot = toPlaybackQueueSnapshot(fallback)
-  queue.value = queue.value.map((track) =>
-    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
-  )
-  originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
-  )
-  queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
-  if (queueIndex.value < 0) queueIndex.value = 0
-  currentTrack.value = fallback
-  await loadAndPlay(fallback)
+  currentTrack.value = recovered
+  await loadAndPlay(recovered)
   return true
 }
 
@@ -3450,6 +3515,8 @@ async function handleProviderRematchFallback(
     )
   const rematched = findProviderRematchCandidate(failedTrack, candidates)
   if (!rematched || !isActiveLoad(loadToken, failedTrack)) return false
+  const recovered = replaceFailedPlaybackOccurrence(failedTrack, rematched)
+  if (!recovered) return false
 
   // Rematch succeeded: playback continues from another source.
   const rematchLocale = currentLocale()
@@ -3465,22 +3532,13 @@ async function handleProviderRematchFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  const rematchedSnapshot = toPlaybackQueueSnapshot(rematched)
-  queue.value = queue.value.map((track) =>
-    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
-  )
-  originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
-  )
-  queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
-  if (queueIndex.value < 0) queueIndex.value = 0
-  currentTrack.value = rematched
+  currentTrack.value = recovered
   // Persist the rematch so playlists/library references to the expired
   // provider track are replaced — not just the transient playback queue.
   if (failedSource !== 'local') {
     useMusicStore().replaceTrackReference(failedTrack.id, rematched)
   }
-  await loadAndPlay(rematched)
+  await loadAndPlay(recovered)
   return true
 }
 
@@ -4041,6 +4099,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     let nativeStarted = false
     let nativeFallbackReason = ''
+    let nativePlaySuperseded = false
 
     if (useNativePlayback) {
       try {
@@ -4121,6 +4180,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
             return
           }
           if (playResult?.superseded) {
+            nativePlaySuperseded = true
             releaseLoadIfOwned()
             return
           }
@@ -4146,7 +4206,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       }
     }
 
-    if (!isActiveLoad(loadToken, track)) {
+    if (nativePlaySuperseded || !isActiveLoad(loadToken, track)) {
       releaseLoadIfOwned()
       return
     }
@@ -4549,9 +4609,9 @@ function setupPlayerIntegrationSideEffects(): void {
   // application shell. A user can select a track before asynchronous startup
   // work completes, and that selection must still survive a later restart.
   watch(
-    () => currentTrack.value?.queueEntryId ?? currentTrack.value?.id,
-    (trackId, previousTrackId) => {
-      if (!trackId || trackId === previousTrackId) return
+    [() => currentTrack.value?.queueEntryId, () => currentTrack.value?.id],
+    ([entryId, trackId], [previousEntryId, previousTrackId]) => {
+      if (!trackId || (entryId === previousEntryId && trackId === previousTrackId)) return
       persistSelectedTrackSession()
     },
     { flush: 'sync' }
@@ -4768,18 +4828,24 @@ const progress = computed(() => {
   return (currentTime.value / duration.value) * 100
 })
 
-const { castCurrentTrackToDevice, stopCastSession, discoverCastDevices, refreshCastTarget } =
-  createCastController({
-    currentTrack,
-    currentTime,
-    castTargetName,
-    castTargetUsn,
-    getRemoteApi: () => window.api?.remote,
-    resolvePlayTarget,
-    isCurrentTrackLiveStream,
-    recordPlaybackStart: (track) =>
-      playbackHistoryController.recordPlaybackStart(track, playMode.value)
-  })
+const {
+  castCurrentTrackToDevice,
+  stopCastSession,
+  discoverCastDevices,
+  refreshCastTarget,
+  dispose: disposeCastController
+} = createCastController({
+  currentTrack,
+  currentTime,
+  castTargetName,
+  castTargetUsn,
+  getRemoteApi: () => window.api?.remote,
+  resolvePlayTarget,
+  isCurrentTrackLiveStream,
+  recordPlaybackStart: (track) =>
+    playbackHistoryController.recordPlaybackStart(track, playMode.value)
+})
+cleanupFns.push(disposeCastController)
 
 export function usePlayerStore() {
   setupPlayerIntegrationSideEffects()

@@ -28,12 +28,20 @@ test('settings wallpaper preserves home and control contrast across pointer, foc
       app.indexOf('const settingsOverlayLeaves ='),
       app.indexOf('const { pushNotice }')
     )
+    const surfaceContextStart = app.indexOf(
+      '[showSettingsPage, showPluginPage, showAppearancePage, appearanceFullWindowPreview]'
+    )
+    assert.notEqual(surfaceContextStart, -1, 'settings surface context watcher is missing')
+    const surfaceContext = app.slice(
+      app.lastIndexOf('watch(', surfaceContextStart),
+      app.indexOf('watch(', surfaceContextStart)
+    )
     await writeFile(join(directory, 'entry.ts'), runtime)
     await writeFile(
       join(directory, 'Shell.vue'),
       `
 <script setup lang="ts">
-import {computed,ref,defineComponent,h} from 'vue'
+import {computed,ref,watch,defineComponent,h} from 'vue'
 import BackgroundAppearanceCustomizer from '@renderer/components/BackgroundAppearanceCustomizer.vue'
 import AppBackgroundLayer from '@renderer/components/AppBackgroundLayer.vue'
 import BackgroundEditorSettings from '@renderer/components/settings-page/BackgroundEditorSettings.vue'
@@ -47,6 +55,7 @@ const {showSettingsPage,showAppearancePage,showPluginPage,localViewVisible,setti
 const appearancePageRetained=computed(()=>showAppearancePage.value),appearancePageRef=ref(null),appearanceNavigationTarget=ref({revision:0}),navigationPages=[]
 const closeAppearancePage=()=>navigation.closeAppearancePage(),openAppearancePage=()=>navigation.openAppearancePage()
 ${lifecycle}
+${surfaceContext}
 const noop=()=>{}
 const openEqualizerPage=noop,openDspRackPage=noop,openThemeStudioPage=noop,openThemeWorkshop=noop,handleReopenOnboarding=noop,onSelectPluginPage=noop
 const SettingsPage=defineComponent({render:()=>h('section',{class:'settings-preview-page','data-settings-layout':'categories'},[
@@ -167,7 +176,7 @@ app.whenReady().then(async()=>{
    await js('window.checkHeroLayers()');
    await js('window.showSettings()');await pixel('.settings-marker',[90,180,30]);await js('window.checkSurfaceContrast()');
    for(const [selector,labels] of [['.dsp-meter',['strong','small']],['.signal-node-circle',['i']],['.preset-btn',['']],['.path-control input',['']],['.segmented-control',['button.active','button:not(.active)']],['.diagnostic-note',['']]])await surfaceContrast(selector,labels);
-   if(text==='light')await surfaceContrast('.brand-soft-button',['']);
+   await surfaceContrast('.brand-soft-button',['']);
    await js('window.checkWallpaperControl()');
    await js('window.checkFlattenedPanel()');
    win.webContents.sendInputEvent({type:'mouseMove',x:1050,y:20});
@@ -180,6 +189,11 @@ app.whenReady().then(async()=>{
    await js('window.flashRow()');await rowContrast('search');
    await js('window.clearRowFlash()');await js('window.checkIdleRow()');
    await js('window.closeSettingsDuringFade()');await js('window.waitOverlay()');await pixel('.home-marker',[60,30,210]);
+  }
+  for(const tone of ['pureWhite','dark'])for(const text of ['light','dark']){
+   await js('window.prepareColorSettings('+JSON.stringify(tone)+','+JSON.stringify(text)+')');
+   await surfaceContrast('.brand-soft-button',['']);
+   await js('window.closeSettingsDuringFade()');await js('window.waitOverlay()');
   }
   await js('window.runAutomaticRecipe()');await pixel('.home-marker',[60,30,210]);
   await js('window.returnFromPreview()');await pixel('.settings-marker',[90,180,30]);await js('window.checkSurfaceContrast()');
@@ -226,12 +240,14 @@ const checkContrast=selector=>{const el=document.querySelector(selector),styles=
 window.checkSurfaceContrast=()=>{for(const selector of ['.preview-select','.preview-nav-item.active','.appearance-entry'])checkContrast(selector);expect(getComputedStyle(document.querySelector('#wallpaper-label')).color===getComputedStyle(document.querySelector('.settings-preview-page')).color,'wallpaper label stopped following background text')}
 window.surfacePoint=selector=>{const rect=document.querySelector(selector).getBoundingClientRect();return{x:rect.left+8,y:rect.top+rect.height/2}}
 window.checkPaintedSurface=(selector,labels,background)=>{
- const surface=document.querySelector(selector),canvas=document.createElement('canvas'),context=canvas.getContext('2d');
- for(const label of labels){const el=label?surface.querySelector(label):surface;context.clearRect(0,0,1,1);context.fillStyle=getComputedStyle(el).color;context.fillRect(0,0,1,1);const [r,g,b,a]=context.getImageData(0,0,1,1).data;const color='rgba('+r+','+g+','+b+','+a/255+')';expect((themeContrastRatio(color,background)??0)>=4.5,'unreadable surface '+selector+' '+label+': '+color+' / '+background)}
+ const surface=document.querySelector(selector),canvas=document.createElement('canvas'),context=canvas.getContext('2d'),root=document.documentElement,styles=getComputedStyle(surface);
+ const detail=JSON.stringify({theme:root.dataset.theme,material:root.dataset.teSurfaceMaterial,text:root.dataset.teSettingsTextTone,body:document.body.className,paint:styles.backgroundColor,settingsText:styles.getPropertyValue('--te-settings-text'),accentText:styles.getPropertyValue('--te-control-accent-text')});
+ for(const label of labels){const el=label?surface.querySelector(label):surface;context.clearRect(0,0,1,1);context.fillStyle=getComputedStyle(el).color;context.fillRect(0,0,1,1);const [r,g,b,a]=context.getImageData(0,0,1,1).data;const color='rgba('+r+','+g+','+b+','+a/255+')';expect((themeContrastRatio(color,background)??0)>=4.5,'unreadable surface '+selector+' '+label+': '+color+' / '+background+' '+detail)}
 }
 window.checkHeroLayers=()=>{expect(document.querySelector('.hero-art-frame img').checkVisibility(),'front cover disappeared');if(document.documentElement.dataset.teSurfaceMaterial==='transparent')expect(getComputedStyle(document.querySelector('.feature-backdrop')).display==='none','transparent hero still paints a theme gradient over the wallpaper')}
 window.checkFlattenedPanel=()=>{const page=getComputedStyle(document.querySelector('.settings-preview-page')),label=getComputedStyle(document.querySelector('.dsp-module-card strong'));expect(label.getPropertyValue('--te-settings-text')===page.getPropertyValue('--te-settings-text'),'flattened DSP panel stopped following wallpaper text')}
-window.checkWallpaperControl=()=>{const button=getComputedStyle(document.querySelector('.brand-soft-button')),page=getComputedStyle(document.querySelector('.settings-preview-page'));expect(button.getPropertyValue('--te-control-accent-text')===page.getPropertyValue('--te-settings-text'),'tinted accent button inherited an opaque control foreground')}
+window.checkWallpaperControl=()=>{const button=getComputedStyle(document.querySelector('.brand-soft-button')),page=getComputedStyle(document.querySelector('.settings-preview-page')),reading=document.querySelector('.app-background-layer--reading[data-background-page="settings"][data-background-image-state="ready"]');expect(button.getPropertyValue('--te-control-accent-text')===(reading?button.getPropertyValue('--te-overlay-settings-text'):page.getPropertyValue('--te-settings-text')),'tinted accent button stopped following its painted settings surface')}
+window.prepareColorSettings=async(tone,text)=>{await theme.setPreviewTone(tone);const draft=cloneAppearance(confirmed);draft.surfaceMaterial='transparent';draft.appBackground.global.kind='color';for(const mode of ['light','dark']){draft.appBackground.global[mode]=text==='light'?'#14202f':'#f0f3f8';draft.appBackground.global.effects[mode].textTone=text}await previewAppearance(draft);await wait();window.overlayNavigation.openSettingsPage();await wait()}
 window.hoverPoint=()=>{const rect=document.querySelector('.hover-row').getBoundingClientRect();return{x:rect.left+5,y:rect.top+5}}
 window.rowBackgroundPoint=()=>{const rect=document.querySelector('.hover-row').getBoundingClientRect();return{x:rect.left+8,y:rect.top+rect.height/2}}
 window.checkIdleRow=()=>{
@@ -259,7 +275,7 @@ window.runAutomaticRecipe=async()=>{
 }
 window.returnFromPreview=async()=>{click('返回编辑');await wait();click('保存并使用');await wait();expect(store.settings.value.surfaceMaterial==='transparent','automatic recipe did not persist');expect(!store.settings.value.cardAppearance.enabled&&!store.settings.value.liquidGlass.homeCards.enabled&&!store.settings.value.liquidGlass.navigationEnabled&&!store.settings.value.liquidGlass.playbarEnabled&&!store.settings.value.liquidGlass.settingsNavigationEnabled,'automatic recipe retained previous card or glass layers');expect(store.settings.value.appBackground.global.effects.light.textTone==='light','dark image was not analyzed');expect(store.settings.value.appBackground.global.effects.light.dim===0,'dark image got an unnecessary mask')}
 window.saveAutomaticRecipe=async()=>{window.overlayNavigation.closeSettingsPage();await wait();expect(getComputedStyle(document.querySelector('.settings-overlay-root')).display==='none','saved settings covered home')}
-window.runBrightRecipe=async tone=>{await theme.setPreviewTone(tone);const backgrounds=normalizeAppBackgroundSettings(store.settings.value.appBackground);backgrounds.global.kind='image';backgrounds.global.image='background://bright.png';await store.updateSettings({appBackground:backgrounds});await wait();window.overlayNavigation.openSettingsPage();await wait();openAppearanceEditor();await wait();click('图片通透推荐搭配');await wait();click('全窗口预览');await wait()}
+window.runBrightRecipe=async tone=>{const backgrounds=normalizeAppBackgroundSettings(store.settings.value.appBackground);backgrounds.global.kind='image';backgrounds.global.image='background://bright.png';await store.updateSettings({theme:tone,appBackground:backgrounds});await theme.setPreviewTone(tone);await wait();window.overlayNavigation.openSettingsPage();await wait();openAppearanceEditor();await wait();click('图片通透推荐搭配');await wait();click('全窗口预览');await wait()}
 window.saveBrightRecipe=async()=>{click('返回编辑');await wait();click('保存并使用');await wait();const tone=document.documentElement.dataset.theme==='dark'?'dark':'light';expect(store.settings.value.appBackground.global.effects[tone].textTone==='dark'&&store.settings.value.appBackground.global.effects[tone].dim===0,'bright image recipe did not preserve unmasked dark text');window.overlayNavigation.closeSettingsPage();await wait()}
 window.showPlugin=async()=>{window.overlayNavigation.openPluginPage();await wait()}
 window.closePlugin=async()=>{window.overlayNavigation.hidePluginPage();await wait()}

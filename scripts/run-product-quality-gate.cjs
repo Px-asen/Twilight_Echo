@@ -34,6 +34,7 @@ const PRODUCT_GATES = [
       'test:plugins',
       'test:plugin-tooling',
       'test:themes',
+      'test:appearance-workspace',
       'test:app',
       'test:renderer-data-tooling',
       'test:cross-cutting-regressions'

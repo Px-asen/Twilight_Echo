@@ -58,7 +58,8 @@ test('content surfaces no longer register optical filters or geometry/pointer ob
   assert.doesNotMatch(liquidGlassSettings, /扩展实验|首页媒体焦点液态玻璃|setLiquidGlassCoverage/)
   assert.match(liquidGlassSettings, /内容卡片使用普通材质/)
   assert.match(app, /:active="playbarRefractionActive"/)
-  assert.match(defs, /document.querySelector\('\.app-shell-player'\)/)
+  assert.match(defs, /props.targetDocument \?\? document/)
+  assert.match(defs, /doc.querySelector\('\.app-shell-player'\)/)
 })
 
 test('every theme runtime return path emits all chrome material targets', () => {
@@ -130,7 +131,7 @@ test('the one optical filter remains on the playback backdrop rather than foregr
 
 test('playback controls use transmission without specular composites', () => {
   assert.doesNotMatch(defs, /SPECULAR|getSpecularMapUrl|feComposite/)
-  assert.match(defs, /getDisplacementMapUrl\(geometry, glassRasterDensity/)
+  assert.match(defs, /getDisplacementMapUrl\(\s*geometry,\s*glassRasterDensity/)
 })
 
 test('no chain masks refraction against an feImage-derived alpha', () => {
@@ -171,7 +172,10 @@ test('playbar pointer tracking remains element-local', () => {
   assert.match(playerBar, /@pointermove="onGlassPointerMove"/)
   assert.match(playerBar, /playerBarRef\.value/)
   assert.doesNotMatch(playerBar, /document\.elementFromPoint/)
-  assert.match(playerBar, /effectiveSurfaceMaterial\.value !== 'transparent'/)
+  assert.match(
+    playerBar,
+    /isStandard\.value\s*&&\s*\(props\.previewAppearance\?\.surfaceMaterial \?\? effectiveSurfaceMaterial\.value\)\s*!==\s*'transparent'/
+  )
   assert.match(playerBar, /effectiveLiquidGlass\.value\.followPointer/)
   assert.doesNotMatch(playerBar, /settings\.value\.(surfaceMaterial|liquidGlass)/)
 })
