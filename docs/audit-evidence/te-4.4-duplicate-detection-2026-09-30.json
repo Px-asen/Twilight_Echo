@@ -30,7 +30,7 @@
     },
     "packageManifest": {
       "path": "package.json",
-      "sha256": "c72598f0a5a6369d9140bd493d44b8a0fc7114aaf00959112a7db0a0dca047a3"
+      "sha256": "a72561ae1ccaeb53f68ea10b7d8786bb864d67472ba6433153b8f21da40f72ea"
     },
     "lockfile": {
       "path": "pnpm-lock.yaml",

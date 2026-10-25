@@ -1861,6 +1861,7 @@ onBeforeUnmount(() => {
     :data-navigation-relief="navigationBehind ? 'behind' : 'normal'"
     :aria-busy="!revealed"
     :class="{ 'is-dragging': dragging, 'has-motion': animated }"
+    data-te-interactive
     tabindex="0"
     role="group"
     aria-label="外观画布，滚轮缩放，拖动平移，按 0 适合部件"

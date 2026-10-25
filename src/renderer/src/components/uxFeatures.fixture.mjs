@@ -98,6 +98,10 @@ window.__uxPlayer = {
 let restoreRequest = null,
   acknowledged = ''
 window.api = {
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: () => () => {}
+  },
   providerDownloads: {
     onChanged: (callback) => {
       connects++

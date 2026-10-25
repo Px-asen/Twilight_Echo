@@ -297,7 +297,7 @@ test('the mini shape opts out of the liquid glass material at the source', () =>
   // Compact is a flat strip for the same reason, so only standard wears it.
   assert.match(
     playerBar,
-    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*isStandard\.value\s*&&[\s\S]{0,260}effectiveLiquidGlass\.value\.playbarEnabled/
+    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*isStandard\.value\s*&&[\s\S]{0,520}effectiveLiquidGlass\.value\)\.playbarEnabled/
   )
   // Which also means neither strip mounts a refracting layer or runs pointer writes.
   assert.match(playerBar, /v-if="liquidGlassActive" class="player-bar-warp"/)

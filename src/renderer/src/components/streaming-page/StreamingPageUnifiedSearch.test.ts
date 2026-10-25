@@ -153,6 +153,11 @@ test('album search detail opens the result source, retries in place and ignores 
     detailTracks: { value: [] as Track[] },
     detailLoading: { value: false },
     detailError: { value: '' },
+    detailNavigationToken: 0,
+    isCurrentDetailNavigation: () => true,
+    localSearchSource: {
+      resolveAlbum: async ({ albumId }: { albumId: string }) => ({ mode: 'json', albumId })
+    },
     friendlyStreamingError: (error: Error) => error.message
   }
   const handlers = runInNewContext(
@@ -194,10 +199,13 @@ test('album links retain native local release navigation and online source', asy
   const localViews: unknown[][] = []
   const handler = runInNewContext(`${stripTypeScriptTypes(code)}\nopenTrackAlbum`, {
     detailNavigationToken: 0,
+    activeProvider: { value: 'ncm' },
     getTrackSource,
+    localSearchSource: { resolveAlbum: async () => ({ mode: 'sqlite', albumId: 'release:1' }) },
     canOpenTrackAlbum: () => true,
     selectDetailProvider: async () => undefined,
     isCurrentDetailNavigation: () => true,
+    friendlyStreamingError: (error: Error) => error.message,
     emit: (...args: unknown[]) => localViews.push(args),
     musicStore: {
       albums: {
@@ -352,6 +360,9 @@ function createTrackMetadataNavigationHarness() {
       })
     },
     musicStore: { albums: { value: [{ id: 'local-release', tracks: [] as Track[] }] } },
+    localSearchSource: {
+      resolveAlbum: async () => ({ mode: 'sqlite', albumId: 'local-release' })
+    },
     selectProvider: (id: string, persist = true) => {
       providerSelections.push([id, persist])
       scope.activeProvider.value = id

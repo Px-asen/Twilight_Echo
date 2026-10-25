@@ -167,7 +167,7 @@ test('every shape renders the same three regions, in a fixed order, with fixed c
   assert.match(playerBar, /className:\s*`player-\$\{name\}`/)
   assert.match(
     playerBar,
-    /resolvePlayerBarRegions\(settings\.value\.playerBar\.layout, props\.mode\)/
+    /resolvePlayerBarRegions\(previewPlayerSettings\.value\.layout, props\.mode\)/
   )
   // The left rail keeps remounting on track change; that remount is what fixed
   // stale covers, and a plain region name as the key would have dropped it.

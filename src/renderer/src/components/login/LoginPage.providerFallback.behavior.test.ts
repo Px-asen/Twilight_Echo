@@ -240,6 +240,7 @@ window.fixtureRequire = id => {
   if (id.includes('titleBarIconPaths')) return window.titleBarIconPaths;
   if (id.endsWith('.vue')) return { default: { render: () => h('span') } };
   if (id.includes('useProviderStore')) return window.providerStoreModule;
+  if (id.includes('themeIconRuntime')) return { setThemeIconProfile() {}, observeMiniPlayerThemeIcons: () => () => {}, useThemeIconImage: () => ({ imageUrl: ref(''), customReady: ref(false), failed: ref(false), imageLoaded() {}, imageFailed() {} }) };
   if (id.includes('visibilityPolling')) return window.visibilityPolling;
   if (id.includes('mediaProvider')) return { toProviderIpcArgs: args => args };
   if (id.includes('useNcmStore')) return { useNcmStore: () => ({ isLoggedIn: loggedIn, profile, checkLogin: async () => { calls.push({ id: 'ncm', method: 'ncmCheckLogin' }); } }) };

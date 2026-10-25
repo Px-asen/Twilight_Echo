@@ -261,6 +261,7 @@ function installDefaultWindowApi(): void {
         }
       },
       library: {
+        getStorageMode: async () => 'json',
         removeTracks: async (): Promise<never> => {
           throw new Error('unexpected local library removal')
         },
@@ -1918,7 +1919,8 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
             }
           ]
         }
-      }
+      },
+      library: { getStorageMode: async () => 'json' }
     }
   }
 
@@ -1948,7 +1950,8 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
           scanCallCount++
           return generateMockTracks(1)
         }
-      }
+      },
+      library: { getStorageMode: async () => 'json' }
     }
   }
 

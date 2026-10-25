@@ -1530,6 +1530,11 @@ const subscribe = (list, cb) => {
 }
 const noopSubscribe = () => () => {}
 window.api = {
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: new Proxy({}, { get: () => async () => ({ items: [], total: 0, tracks: [] }) })
+  },
   ncmCloud: { onProgress: noopSubscribe },
   settings: {
     get: async () => settingsSnapshot(),

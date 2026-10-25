@@ -117,6 +117,11 @@ const snapshot = saved => ({
   appVersion: 'test', platform: 'win32', restartReasons: []
 })
 window.api = {
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: new Proxy({}, { get: () => async () => ({ items: [], total: 0, tracks: [] }) })
+  },
   settings: {
     get: async () => snapshot(await ipcRenderer.invoke('fixture:read')),
     update: async patch => snapshot(await ipcRenderer.invoke('fixture:write', patch)),

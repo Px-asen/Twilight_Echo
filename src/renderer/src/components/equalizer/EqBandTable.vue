@@ -46,6 +46,7 @@ function number(index: number, key: 'frequency' | 'gain' | 'q', event: Event): v
           v-for="(band, index) in bands"
           :key="index"
           :class="{ selected: selectedIndices.includes(index) }"
+          data-te-interactive
           @click="emit('select', index)"
         >
           <th>

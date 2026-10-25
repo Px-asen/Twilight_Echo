@@ -11,7 +11,8 @@ const NATIVE_INTERACTIVE_TAGS = new Set([
   'select',
   'textarea',
   'label',
-  'dialog'
+  'dialog',
+  'summary'
 ])
 const PASSIVE_CLICK_STOP_CLASSES = [
   'playlist-row-actions',
@@ -21,7 +22,9 @@ const PASSIVE_CLICK_STOP_CLASSES = [
   'aggregate-dialog',
   'aggregate-variant-menu',
   'excluded-tracks-dialog',
-  'streaming-context-menu'
+  'streaming-context-menu',
+  'appearance-view-angles',
+  'appearance-context-tools'
 ]
 const CLICKABLE_TEMPLATE_ELEMENT =
   /<(?<tag>[a-z][\w-]*)\b(?<attributes>[^>]*\s@click(?:[.=]|\s)[^>]*)>/gs

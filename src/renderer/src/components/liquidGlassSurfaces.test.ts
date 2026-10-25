@@ -171,9 +171,8 @@ test('playbar pointer tracking remains element-local', () => {
   assert.match(playerBar, /@pointermove="onGlassPointerMove"/)
   assert.match(playerBar, /playerBarRef\.value/)
   assert.doesNotMatch(playerBar, /document\.elementFromPoint/)
-  assert.match(playerBar, /effectiveSurfaceMaterial\.value !== 'transparent'/)
+  assert.match(playerBar, /\(props\.previewAppearance\?\.surfaceMaterial \?\? effectiveSurfaceMaterial\.value\) !==\s*'transparent'/)
   assert.match(playerBar, /effectiveLiquidGlass\.value\.followPointer/)
-  assert.doesNotMatch(playerBar, /settings\.value\.(surfaceMaterial|liquidGlass)/)
 })
 
 test('Linux playbar accessibility preferences override the backdrop fallback', async () => {

@@ -828,7 +828,7 @@ test('playbar settings UI exposes shape and visibility as independent dimensions
   // Auto-hide needs a shape with its own progress readout (mini's rail, compact's
   // top edge), so that one step is marked unavailable per scope instead of being
   // silently ineffective — and the precondition comes from the shared policy.
-  assert.match(source, /playerBarShapeCanAutoHide\(settings\.value\.playerBar\.mode\)/)
+  assert.match(source, /playerBarShapeCanAutoHide\(playerBar\.value\.mode\)/)
   assert.match(
     source,
     /playerBarShapeCanAutoHide\(\s*bar\.playingPageMode === 'inherit' \? bar\.mode : bar\.playingPageMode\s*\)/
@@ -862,7 +862,7 @@ test('playbar control placement is editable per shape and written through the no
   // it must never write `mode`, or opening the panel would switch the live shape.
   assert.match(
     source,
-    /const editingShape = ref<PlayerBarMode>\(settings\.value\.playerBar\.mode\)/
+    /const editingShape = ref<PlayerBarMode>\(playerBar\.value\.mode\)/
   )
   assert.match(source, /@click="editingShape = option\.value"/)
   // Three regions, from the shared region list rather than hand-written names.
@@ -886,7 +886,7 @@ test('playbar control placement is editable per shape and written through the no
   // layout missing its play control is repaired before it reaches the bar, and
   // the region arrays are never shared with the previous settings object.
   assert.match(source, /layout: normalizePlayerBarLayout\(layout\)/)
-  assert.match(source, /clonePlayerBarLayout\(settings\.value\.playerBar\.layout\)/)
+  assert.match(source, /clonePlayerBarLayout\(playerBar\.value\.layout\)/)
   // Reset is per shape, and disabled once this shape already matches the default.
   assert.match(source, /DEFAULT_PLAYER_BAR_LAYOUT\[editingShape\.value\]/)
   assert.match(source, /:disabled="shapeIsDefault"/)

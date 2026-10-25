@@ -4041,6 +4041,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     let nativeStarted = false
     let nativeFallbackReason = ''
+    let nativePlaySuperseded = false
 
     if (useNativePlayback) {
       try {
@@ -4121,6 +4122,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
             return
           }
           if (playResult?.superseded) {
+            nativePlaySuperseded = true
             releaseLoadIfOwned()
             return
           }
@@ -4144,6 +4146,11 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
           engineErr
         )
       }
+    }
+
+    if (nativePlaySuperseded) {
+      clearNativePlaybackInfoIntentForLoad(loadToken)
+      return
     }
 
     if (!isActiveLoad(loadToken, track)) {

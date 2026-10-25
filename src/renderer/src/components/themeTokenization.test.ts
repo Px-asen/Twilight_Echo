@@ -395,7 +395,7 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(equalizerSurfaces, /data-te-equalizer-panel='glass'/)
   assert.match(equalizerSurfaces, /data-te-equalizer-spectrum='bars'/)
   assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
-  assert.match(dspRack, /data-te-equalizer-button='solid'/)
+  assert.match(equalizer, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
 })
 
@@ -421,8 +421,8 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
 })
 
-test('phase six plugin shell layouts are API v3, host-owned, and compatibility-reporting', () => {
-  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 3/)
+test('phase six plugin shell layouts are API v4, host-owned, and compatibility-reporting', () => {
+  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 4/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV2/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV3/)
   assert.match(pluginThemeTemplate, /"apiVersion": 3/)
@@ -441,7 +441,7 @@ test('phase six plugin shell layouts are API v3, host-owned, and compatibility-r
   assert.match(app, /grid-template-areas: var\(--te-shell-template-areas\)/)
   assert.match(studioEditor, /profile\.modes = normalizeThemeModes/)
   assert.match(studioSurfaces, /selectedPluginTheme\?\.compatibilityNotes/)
-  assert.equal(pluginThemeContract.pluginApiVersion, 3)
+  assert.equal(pluginThemeContract.pluginApiVersion, 4)
   assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 3)
   assert.deepEqual(
     pluginThemeContract.tokens.map(({ id }) => id),

@@ -243,12 +243,13 @@ test('required Windows CI runs complete product outcomes with native fixtures an
   )
 })
 
-test('CI keeps Windows checks automatic and package workflows manual', () => {
+test('CI keeps Windows checks automatic and package workflows manual with release builds', () => {
   assert.doesNotMatch(workflow, /mac-release:|runs-on: (?:macos|ubuntu)|build:(?:mac|linux)/)
   for (const file of ['build-linux.yml', 'build-macos.yml']) {
     const packaging = readFileSync(join(root, '.github', 'workflows', file), 'utf8')
     const triggers = packaging.match(/^on:\r?\n([\s\S]*?)(?=^[^\s#])/m)?.[1]
-    assert.equal(triggers?.trim(), 'workflow_dispatch:', `${file} must only run manually`)
+    assert.match(triggers ?? '', /^\s*workflow_dispatch:/, `${file} must support manual packaging`)
+    assert.match(triggers ?? '', /push:\s+tags:\s+- ['"]v\*['"]/, `${file} builds release tags`)
   }
   const macPackaging = readFileSync(join(root, '.github', 'workflows', 'build-macos.yml'), 'utf8')
   assert.match(macPackaging, /runner: macos-15-intel/)
@@ -294,7 +295,14 @@ test('every repository test file is explicitly owned by a package test script', 
     .filter(([name]) => name.startsWith('test:'))
     .map(([, command]) => command)
     .join('\n')
-  const missing = recursivelyOwnedTestFiles.filter((file) => !testCommands.includes(file))
+  const appearanceRunner = packageJson.scripts['test:appearance-workspace']?.includes(
+    'run-appearance-tests.cjs'
+  )
+    ? readFileSync(join(root, 'scripts', 'run-appearance-tests.cjs'), 'utf8')
+    : ''
+  const missing = recursivelyOwnedTestFiles.filter(
+    (file) => !testCommands.includes(file) && !appearanceRunner.includes(file)
+  )
   assert.deepEqual(missing, [], `Unowned test files: ${missing.join(', ')}`)
 })
 

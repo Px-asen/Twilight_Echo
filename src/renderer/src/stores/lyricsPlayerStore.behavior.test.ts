@@ -141,6 +141,7 @@ window.api = {
   },
   providers: {
     list: async () => [{ id: 'fixture-provider', name: 'Fixture provider', capabilities: ['lyrics'], health: { available: true } }],
+    cancel: async () => true,
     call: async (_providerId, method) => {
       expect(method === 'getLyrics', 'forced resolver should request provider lyrics')
       if (providerFailuresRemaining > 0) {
@@ -531,7 +532,10 @@ window.runLyricsPlayerRuntime = async () => {
 
   let nativePlayCalls = 0
   let fallbackChecks = 0
-  window.api.fs = { isAudioFileAuthorized: async () => true }
+  window.api.fs = {
+    isAudioFileAuthorized: async () => true,
+    getAudioFileUrl: async filePath => 'file:///' + filePath.split(String.fromCharCode(92)).join('/')
+  }
   Object.assign(window.api.audioEngine, {
     stop: async () => {}, loadQueue: async () => {}, setPlayMode: async () => {},
     play: async () => {
@@ -571,6 +575,11 @@ window.__audioFixture = {
 const subscribe = (list, cb) => { list.push(cb); return () => { const i = list.indexOf(cb); if (i >= 0) list.splice(i, 1) } }
 const noopSubscribe = () => () => {}
 window.api = {
+  library: {
+    getStorageMode: async () => 'json',
+    onChanged: noopSubscribe,
+    database: new Proxy({}, { get: () => async () => ({ items: [], total: 0, tracks: [] }) })
+  },
   ncmCloud: { onProgress: noopSubscribe },
   audioEngine: {
     onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),

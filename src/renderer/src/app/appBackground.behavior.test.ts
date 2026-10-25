@@ -16,6 +16,16 @@ const workspace = fileURLToPath(new URL('../../../../', import.meta.url))
 test('wallpapers remain visible and adaptive glass sampling survives duplicate updates and teardown', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-background-'))
   try {
+    await Promise.all([
+      writeFile(
+        join(directory, 'global.svg'),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><path fill="#123456" d="M0 0h800v600H0z"/></svg>'
+      ),
+      writeFile(
+        join(directory, 'page.svg'),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><path fill="#654321" d="M0 0h800v600H0z"/></svg>'
+      )
+    ])
     const [base, home] = await Promise.all([
       readFile(new URL('../assets/base.css', import.meta.url), 'utf8'),
       readFile(new URL('../components/LocalDashboard.css', import.meta.url), 'utf8')
@@ -58,9 +68,16 @@ test('wallpapers remain visible and adaptive glass sampling survives duplicate u
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron')
-app.setPath('userData',require('node:path').join(__dirname,'profile'))
+      `const {app,BrowserWindow,protocol}=require('electron')
+const {readFile}=require('node:fs/promises')
+const path=require('node:path')
+protocol.registerSchemesAsPrivileged([{scheme:'background',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}])
+app.setPath('userData',path.join(__dirname,'profile'))
 app.whenReady().then(async()=>{
+  protocol.handle('background',async request=>{
+    const file=path.join(__dirname,new URL(request.url).hostname)
+    return new Response(await readFile(file),{headers:{'content-type':'image/svg+xml'}})
+  })
   const win=new BrowserWindow({show:false,width:800,height:600,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}})
   try{
     await win.loadFile(process.argv.at(-1))
@@ -94,8 +111,8 @@ import {useLiquidGlassEnvironment} from '@renderer/composables/useLiquidGlassEnv
 import {createApp,h,ref} from 'vue'
 const expect=(value,message)=>{if(!value)throw new Error(message)}
 const wallpaper=(color)=>'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><path fill="'+color+'" d="M0 0h800v600H0z"/></svg>')
-const globalImage=wallpaper('#123456')
-const pageImage=wallpaper('#654321')
+const globalImage='background://global.svg'
+const pageImage='background://page.svg'
 const pair={kind:'image',light:'#f4f4f7',dark:'#0f1114',image:globalImage}
 const pages=Object.fromEntries(['local','settings','streaming','player'].map(page=>[page,{...pair,inherit:true}]))
 const settings={theme:'pureWhite',accentColor:'blue',uiDensity:'comfortable',surfaceMaterial:'liquidGlass',appBackground:{global:{...pair},pages}}
@@ -115,7 +132,9 @@ const apply=async(tone)=>{
 const checkImage=(expected,label)=>{
   const actual=getComputedStyle(document.body).backgroundImage
   if(expected){
-    expect(actual.startsWith('url("'+expected+'")'),label+': configured image is not the top layer: '+actual)
+    const displayed = new URL(expected)
+    displayed.searchParams.set('display', 'v1')
+    expect(actual.startsWith('url("'+displayed.toString()+'")'),label+': configured image is not the top layer: '+actual)
   }else{
     expect(!actual.includes('url('),label+': removed image is still visible: '+actual)
   }
