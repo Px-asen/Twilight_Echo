@@ -22,14 +22,16 @@ overrides:
   nanoid: 3.3.18
   # GHSA-mwp4-54f8-5fhr / GHSA-4xrf-jv44-h6hh / GHSA-22jq-vg5j-6vgg: ip-address SSRF/信任边界绕过（经由 socks → pac-proxy-agent 引入）
   # GHSA-j6r3-76f7-8jcv / GHSA-h3mg-xc3c-68pw: subnet-family checks and bounded diagnostics.
-  ip-address: 10.7.1
-  # GHSA-3wwx-pv8p-q78v: fix both runtime and Electron download branches.
-  undici@6.28.0: 6.28.1
-  undici@7.29.0: 7.29.1
+  # GHSA-rxp7-6hxx-x8q5: bound long IPv6 zone-identifier parsing.
+  ip-address: 10.7.4
+  # Keep runtime and Electron download branches patched for GHSA-3wwx-pv8p-q78v and current Undici advisories.
+  undici@6.28.0: 6.29.1
+  undici@7.29.0: 7.30.1
+  # GHSA-27r3-jxmh-p828: fix compressed-body trailing-byte DoS in both Express major lines.
   # S8: CVE-2026-12590 — body-parser invalid `limit` 静默禁用请求体大小校验。
   # express@4 依赖 1.x 线，express@5 依赖 2.x 线，分别钉到修复版本。
-  body-parser@1.20.5: 1.20.6
-  body-parser@2.2.2: 2.3.0
+  body-parser@1.20.5: 1.20.9
+  body-parser@2.2.2: 2.4.0
   # electron-builder 需要识别 Electron 43 的 ABI（@electron/rebuild → node-abi）
   node-abi: 4.33.0
 
