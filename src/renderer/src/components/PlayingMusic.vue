@@ -1425,6 +1425,21 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   align-self: center;
 }
 
+/* The standard layout sizes the lyric column from --te-lyric-max-width, so the
+   surrounding .stage must be allowed to grow with it. Otherwise the stage's
+   1560px cap clips the layout and the "lyrics max width" slider does nothing
+   past ~1000px on wide screens (issue #200). Mirror the layout's own width and
+   add the stage's 72px horizontal padding (36px each side) so the layout fits. */
+:global(html[data-te-player-layout='standard'] .playing-music .stage) {
+  width: min(
+    100%,
+    calc(
+      360px + var(--te-lyric-cover-gap, var(--te-playback-stage-spread, 40px)) +
+        var(--te-lyric-max-width, var(--te-playback-stage-span, 820px)) + 72px
+    )
+  );
+}
+
 :global(html[data-te-player-layout='standard'] .playing-music .layout:not(.layout--single)) {
   width: min(
     100%,
