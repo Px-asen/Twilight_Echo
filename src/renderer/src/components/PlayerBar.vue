@@ -1546,6 +1546,7 @@ onBeforeUnmount(() => {
         :busy="libraryQueueBusy"
         :is-playing="isPlaying"
         :glass="glass"
+        :resolve-core-artwork="true"
         :read-page="readLibraryQueuePage"
         :play-entry="playLibraryQueueEntry"
         :edit-queue="editLibraryQueue"

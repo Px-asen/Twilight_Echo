@@ -19,6 +19,7 @@ import type { CoreAutoMixWorkerRequest } from './coreAutoMix.ts'
 import type { CorePlayerPresentation } from './coreSystemPlayer.ts'
 import type { CorePlatformId } from './audioEngineTypes.ts'
 import { PERSONAL_MUSIC_ARTWORK_MAX_BYTES } from './personalMusicArtwork.ts'
+import { isAuthorizedProviderQueueCover } from './coreQueueSubmission.ts'
 /** Platform capabilities, not a generic main-process method invocation surface. */
 export interface CorePlatformOperations extends CoreModelPackPlatformOperations {
   'audio.confirmWindowsRestart': { input: Record<string, never>; output: boolean }
@@ -110,6 +111,10 @@ export interface CorePlatformOperations extends CoreModelPackPlatformOperations 
   'files.trashAudio': { input: { path: string }; output: void }
   'artwork.normalizeCachedCover': { input: { handle: string }; output: string }
   'artwork.remotePreview': { input: { cover: string | null }; output: string | null }
+  'artwork.resolveQueueCovers': {
+    input: { covers: string[] }
+    output: Record<string, { cover: string | null; coverSource: string | null }>
+  }
   'artwork.present': {
     input: { cover: string | null; coverSource: string | null; imageExpiresAt?: number; retainMetadata?: boolean }
     output: Pick<CorePlayerPresentation, 'cover' | 'coverSource'>
@@ -196,6 +201,15 @@ export function validCorePlatformPayload(request: CorePlatformRequest): boolean 
             field === null ||
             (typeof field === 'string' && field.length <= 2 * 1024 * 1024 && !field.includes('\0'))
         )
+      )
+    }
+    case 'artwork.resolveQueueCovers': {
+      const { covers } = payload as CorePlatformOperations['artwork.resolveQueueCovers']['input']
+      return (
+        Object.keys(payload).length === 1 &&
+        Array.isArray(covers) &&
+        covers.length <= 200 &&
+        covers.every(isAuthorizedProviderQueueCover)
       )
     }
     case 'themes.importArchive':

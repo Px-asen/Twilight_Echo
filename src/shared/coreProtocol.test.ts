@@ -224,6 +224,52 @@ test('playback presentation and queue upload expose finite, revision-fenced iden
   assert.equal(isCoreRequest(request('queue.submit', page)), true)
   assert.equal(isCoreRequest(request('queue.submit', { ...page, items: Array(201).fill(provider) })), false)
   assert.equal(isCoreRequest(request('queue.submit', { ...page, items: [{ ...provider, track: { ...provider.track, streamUrl: 'https://private' } }] })), false)
+  for (const cover of [
+    null,
+    'twilight-media://image/token_abc-123',
+    'cover://cached_art.jpg',
+    'data:image/jpeg;base64,AA=='
+  ]) {
+    assert.equal(
+      isCoreRequest(
+        request('queue.submit', {
+          ...page,
+          items: [{ ...provider, track: { ...provider.track, cover } }]
+        })
+      ),
+      true
+    )
+  }
+  for (const invalidCover of [
+    'https://p2.music.126.net/raw.jpg',
+    'http://example.com/raw.jpg',
+    'file:///C:/Users/private.jpg',
+    'twilight-media://audio/token_abc-123'
+  ]) {
+    assert.equal(
+      isCoreRequest(
+        request('queue.submit', {
+          ...page,
+          items: [{ ...provider, track: { ...provider.track, cover: invalidCover } }]
+        })
+      ),
+      false
+    )
+  }
+  assert.equal(
+    isCoreRequest(
+      request('queue.submit', {
+        ...page,
+        items: [
+          {
+            ...provider,
+            track: { ...provider.track, coverSource: 'https://p2.music.126.net/raw.jpg' }
+          }
+        ]
+      })
+    ),
+    false
+  )
   const queue = { id: 'queue', revision: 3 }
   assert.equal(isCoreRequest(request('queue.locate', { ...queue, occurrenceId: 'entry' }, 'query')), true)
   assert.equal(isCoreRequest(request('queue.insert', { ...queue, items: [{ kind: 'occurrence', queueId: queue.id, revision: queue.revision, occurrenceId: 'entry' }] })), true)

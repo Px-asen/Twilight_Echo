@@ -18,6 +18,7 @@ import { validCoreRemotePayload } from './coreRemote.ts'
 import { validCoreAudioDiagnosticsPayload } from './coreAudioDiagnostics.ts'
 import { validCoreLibraryReadPayload } from './coreLibrary.ts'
 import { validCorePlaylistProjectionPayload, validCorePlaylistSubmitPayload } from './corePlaylists.ts'
+import { isAuthorizedProviderQueueCover } from './coreQueueSubmission.ts'
 import { trackCueRangePropertyIsValid } from './cue.ts'
 import { validCoreSettingsBackupPayload } from './coreSettingsBackup.ts'
 import { validCoreThemePayload } from './coreThemes.ts'
@@ -101,12 +102,13 @@ function queueInput(v: unknown): boolean {
       return (
         keys(v, ['kind', 'track']) &&
         record(v.track) &&
-        keys(v.track, ['id', 'source', 'title', 'artist', 'album', 'duration', 'ncmSongId']) &&
+        keys(v.track, ['id', 'source', 'title', 'artist', 'album', 'duration', 'ncmSongId', 'cover']) &&
         text(v.track.id) &&
         text(v.track.source, 128) &&
         !['local', 'network', 'radio', 'podcast'].includes(v.track.source) &&
         display(v.track) &&
-        optional(v.track.ncmSongId, (id) => uint(id) && id > 0)
+        optional(v.track.ncmSongId, (id) => uint(id) && id > 0) &&
+        optional(v.track.cover, (cover) => cover === null || isAuthorizedProviderQueueCover(cover))
       )
     case 'network':
       return (

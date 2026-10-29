@@ -57,3 +57,45 @@ export function createArtworkProjection(platform: ArtworkPlatform) {
     return { cover, coverSource: null }
   }
 }
+
+/** Resolve client-submitted queue artwork handles back to durable Core snapshot
+ * fields (`cover://` or `coverSource`). Unknown or expiring grants degrade to null. */
+export function createQueueCoverResolver(
+  platform: Pick<ArtworkPlatform, 'normalizeCachedCover' | 'migrateBase64Cover' | 'resolve'>
+) {
+  return async (
+    input: { covers: readonly string[] },
+    signal: AbortSignal
+  ): Promise<Record<string, { cover: string | null; coverSource: string | null }>> => {
+    signal.throwIfAborted()
+    const resolved: Record<string, { cover: string | null; coverSource: string | null }> = {}
+    for (const raw of new Set(input.covers)) {
+      signal.throwIfAborted()
+      const handle = raw.trim()
+      if (!handle) continue
+      let cover: string | null = null
+      let coverSource: string | null = null
+      if (handle.startsWith('cover://')) {
+        try {
+          cover = await platform.normalizeCachedCover(handle.split(/[?#]/, 1)[0])
+        } catch {
+          cover = null
+        }
+      } else if (handle.startsWith('data:image/')) {
+        cover = platform.migrateBase64Cover(handle)
+      } else if (handle.startsWith('twilight-media://image/')) {
+        try {
+          const original = platform.resolve(handle)
+          if (original.expiresAt === undefined && /^https?:\/\//i.test(original.source)) {
+            coverSource = original.source
+          }
+        } catch {
+          // Expired or revoked image grants must not fail queue/playlist submission.
+        }
+      }
+      resolved[raw] = { cover, coverSource }
+    }
+    signal.throwIfAborted()
+    return resolved
+  }
+}

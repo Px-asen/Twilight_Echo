@@ -796,10 +796,18 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       catalog?.invalidate()
     }
   })
+  const presentTrackArtwork = async (track: TrackData, signal: AbortSignal) => {
+    let cover = track.cover ?? null
+    const coverSource = track.coverSource ?? null
+    if (!cover && !coverSource && track.networkSource) {
+      cover = await network
+        .cover(track.networkSource.profileId, track.networkSource.entry.id)
+        .catch(() => null)
+    }
+    return platform!.call('artwork.present', { cover, coverSource }, signal)
+  }
   const presentation = new CorePlayerPresentationService({
-    artwork: (track, signal) => platform!.call('artwork.present', {
-      cover: track.cover ?? null, coverSource: track.coverSource ?? null
-    }, signal),
+    artwork: presentTrackArtwork,
     playlists,
     supportedMethods: (id) => plugins?.listProviders().find((provider) => provider.id === id)?.supportedMethods ?? [],
     callProvider: (id, method, args, signal) => {
@@ -1688,7 +1696,21 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
               .map((provider) => provider.id)
           ),
         network: (request, signal) => network.playback(request, signal),
-        streams: () => streams.savedStreams()
+        streams: () => streams.savedStreams(),
+        resolveProviderCovers: async (covers, signal) => {
+          try {
+            return await platform!.call(
+              'artwork.resolveQueueCovers',
+              { covers: [...covers] },
+              signal
+            )
+          } catch (error) {
+            signal.throwIfAborted()
+            if (error instanceof Error && /artwork\.resolveQueueCovers/.test(error.message))
+              return {}
+            throw error
+          }
+        }
       })
   const schedule = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay)
@@ -1775,7 +1797,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       ...config.diagnostics, engine: audio, settings: () => settings.read(),
       failed: (error) => console.error('[core.diagnostics]', error)
     }) : undefined,
-    artwork: (track, signal) => platform!.call('artwork.present', { cover: track.cover, coverSource: track.coverSource ?? null }, signal),
+    artwork: presentTrackArtwork,
     playlistSubmission: new CorePlaylistSubmission({ playlists, newId: randomUUID, schedule, resolve: createPlaylistInputResolver(resolveQueueInput, database) }),
     presentation,
     outputInfo: async () => (await audio!.getPlaybackInfo()).outputInfo,

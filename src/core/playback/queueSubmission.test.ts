@@ -61,6 +61,17 @@ function fixture(t: test.TestContext) {
       },
       providers: () => new Set(['ncm']),
       streams: () => new Map(),
+      resolveProviderCovers: async (covers) =>
+        Object.fromEntries(
+          covers.map((handle) => [
+            handle,
+            handle === 'twilight-media://image/granted_cover'
+              ? { cover: null, coverSource: 'https://p2.music.126.net/cover.jpg' }
+              : handle.startsWith('cover://')
+                ? { cover: handle, coverSource: null }
+                : { cover: null, coverSource: null }
+          ])
+        ),
       network: async () => {
         throw new Error('Not indexed')
       }
@@ -250,4 +261,48 @@ test('existing occurrences copy private source identity without accepting a rend
   assert.equal(f.db.readLibraryQueue(before.id).total, 4)
   const undone = f.db.editLibraryQueue(before.id, f.state().queue!.revision, { kind: 'undo' })
   assert.equal(undone.queue.total, 2)
+})
+
+test('provider queue submissions persist durable coverSource in SQLite snapshots and degrade expired image grants cleanly', async (t) => {
+  const f = fixture(t)
+  const start = await f.service.submit('window', { kind: 'begin', selectedIndex: 0 })
+  await f.service.submit('window', {
+    kind: 'append',
+    id: start.id,
+    sequence: 1,
+    items: [
+      {
+        kind: 'provider',
+        track: {
+          id: 'ncm:101',
+          source: 'ncm',
+          ncmSongId: 101,
+          title: 'Is this love?',
+          artist: 'twenty4-7',
+          album: 'Letter',
+          duration: 277,
+          cover: 'twilight-media://image/granted_cover'
+        }
+      },
+      {
+        kind: 'provider',
+        track: {
+          id: 'ncm:102',
+          source: 'ncm',
+          ncmSongId: 102,
+          title: 'Expired Token Song',
+          artist: 'Artist',
+          album: 'Album',
+          duration: 200,
+          cover: 'twilight-media://image/expired_cover'
+        }
+      }
+    ]
+  })
+  await f.service.submit('window', { kind: 'commit', id: start.id, sequence: 2 })
+  const page = f.db.readLibraryQueue(f.state().queue!.id)
+  assert.equal(page.items[0].track?.cover, null)
+  assert.equal(page.items[0].track?.coverSource, 'https://p2.music.126.net/cover.jpg')
+  assert.equal(page.items[1].track?.cover, null)
+  assert.equal(page.items[1].track?.coverSource, undefined)
 })

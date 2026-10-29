@@ -161,3 +161,48 @@ test('artwork resolves database-owned origins through the platform and returns d
   })
   assert.equal(JSON.stringify(result).includes('secret'), false)
 })
+
+test('artwork resolves fallback streaming snapshot tracks not stored in the local tracks table', async () => {
+  const signal = new AbortController().signal
+  const result = await executeLibraryArtwork(
+    {
+      getTracksByIds: async () => ({
+        revision: 5,
+        offset: 0,
+        total: 0,
+        versions: {},
+        tracks: []
+      })
+    },
+    { ids: ['ncm:42'], revision: 5 },
+    async (track) => ({
+      cover: track.coverSource ? 'twilight-media://image/streaming_42' : null
+    }),
+    signal,
+    async () =>
+      new Map([
+        [
+          'ncm:42',
+          {
+            id: 'ncm:42',
+            source: 'ncm',
+            title: 'Is this love?',
+            artist: 'twenty4-7',
+            album: 'Letter',
+            filePath: '',
+            fileName: 'Is this love?',
+            duration: 277,
+            size: 0,
+            cover: null,
+            coverSource: 'https://p2.music.126.net/private.jpg',
+            lyrics: null
+          }
+        ]
+      ])
+  )
+  assert.deepEqual(result, {
+    revision: 5,
+    items: [{ id: 'ncm:42', cover: 'twilight-media://image/streaming_42' }]
+  })
+  assert.equal(JSON.stringify(result).includes('private.jpg'), false)
+})

@@ -58,7 +58,7 @@ import {
   maintainCoverCache,
   migrateBase64Cover
 } from '../library/coverCache.ts'
-import { createArtworkProjection } from './artworkProjection.ts'
+import { createArtworkProjection, createQueueCoverResolver } from './artworkProjection.ts'
 import { mediaCoverCache, metadataArtworkCache } from '../cache/mediaCoverCache.ts'
 import { clearProtocolAssetCache } from '../cache/protocolAssetCache.ts'
 import { createPlatformCacheMaintenance } from '../cache/platformCacheMaintenance.ts'
@@ -288,6 +288,11 @@ export function createElectronCoreSupervisor(
       'paths.authorizeLibraryDirectory': ({ path }) => resolveAuthorizedLibraryDirectory(path),
       'artwork.normalizeCachedCover': ({ handle }) => normalizeCachedCoverHandle(handle),
       'artwork.remotePreview': ({ cover }, signal) => resolveRemoteArtwork(cover, signal),
+      'artwork.resolveQueueCovers': createQueueCoverResolver({
+        normalizeCachedCover: normalizeCachedCoverHandle,
+        migrateBase64Cover,
+        resolve: (handle) => remoteMediaGrants.resolve(handle, 'image')
+      }),
       'artwork.present': createArtworkProjection({
         retainMetadata: (source, signal) => metadataArtworkCache.retain(source, signal),
         normalizeCachedCover: normalizeCachedCoverHandle,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createArtworkProjection } from './artworkProjection.ts'
+import { createArtworkProjection, createQueueCoverResolver } from './artworkProjection.ts'
 
 test('metadata artwork projection carries absolute permission expiry to the original grant service', async () => {
   let expires: number | undefined
@@ -57,4 +57,40 @@ test('only approved non-expiring metadata is retained, and disk failures preserv
   assert.equal(saves,0)
   assert.equal((await project({...input,retainMetadata:true},signal)).cover,'twilight-media://image/photo')
   assert.equal(saves,1)
+})
+
+test('queue cover resolver recovers durable origins for issued grants and rejects unknown or expiring tokens cleanly', async () => {
+  const resolveQueueCovers = createQueueCoverResolver({
+    normalizeCachedCover: async (handle) => `${handle}`,
+    migrateBase64Cover: () => 'cover://migrated.jpg',
+    resolve: (handle) => {
+      if (handle === 'twilight-media://image/durable')
+        return { source: 'https://p2.music.126.net/song.jpg' }
+      if (handle === 'twilight-media://image/expiring')
+        return { source: 'https://p2.music.126.net/temp.jpg', expiresAt: 5000 }
+      throw new Error('Unknown grant')
+    }
+  })
+  const result = await resolveQueueCovers(
+    {
+      covers: [
+        'twilight-media://image/durable',
+        'twilight-media://image/expiring',
+        'twilight-media://image/missing',
+        'cover://local_hash.jpg?rev=1',
+        'data:image/png;base64,AA=='
+      ]
+    },
+    new AbortController().signal
+  )
+  assert.deepEqual(result, {
+    'twilight-media://image/durable': {
+      cover: null,
+      coverSource: 'https://p2.music.126.net/song.jpg'
+    },
+    'twilight-media://image/expiring': { cover: null, coverSource: null },
+    'twilight-media://image/missing': { cover: null, coverSource: null },
+    'cover://local_hash.jpg?rev=1': { cover: 'cover://local_hash.jpg', coverSource: null },
+    'data:image/png;base64,AA==': { cover: 'cover://migrated.jpg', coverSource: null }
+  })
 })

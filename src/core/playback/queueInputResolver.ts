@@ -1,4 +1,4 @@
-import type { CoreQueueTrackInput } from '../../shared/coreQueueSubmission.ts'
+import { isAuthorizedProviderQueueCover, type CoreQueueTrackInput } from '../../shared/coreQueueSubmission.ts'
 import type { LibraryDatabaseApi } from '../../shared/libraryDatabase.ts'
 import type { LibraryQueueSeedItem } from '../../shared/libraryQueueBuild.ts'
 import type { TrackData } from '../../shared/track.ts'
@@ -11,6 +11,10 @@ export function createQueueInputResolver(options: {
   providers(): ReadonlySet<string>
   network(request: CoreNetworkPlayback, signal: AbortSignal): Promise<TrackData>
   streams(): ReadonlyMap<string, TrackData>
+  resolveProviderCovers?(
+    covers: readonly string[],
+    signal: AbortSignal
+  ): Promise<Record<string, { cover: string | null; coverSource: string | null }>>
 }) {
   return async (
     inputs: readonly CoreQueueTrackInput[],
@@ -20,7 +24,25 @@ export function createQueueInputResolver(options: {
     const ids = [
       ...new Set(inputs.filter((input) => input.kind === 'local').map((input) => input.id))
     ]
-    const records = ids.length ? await options.database.getTracksByIds(ids) : null
+    const providerCovers = [
+      ...new Set(
+        inputs
+          .filter(
+            (input): input is Extract<CoreQueueTrackInput, { kind: 'provider' }> =>
+              input.kind === 'provider'
+          )
+          .map((input) => input.track.cover)
+          .filter(isAuthorizedProviderQueueCover)
+      )
+    ]
+    const [records, resolvedCovers] = await Promise.all([
+      ids.length ? options.database.getTracksByIds(ids) : Promise.resolve(null),
+      providerCovers.length && options.resolveProviderCovers
+        ? options.resolveProviderCovers(providerCovers, signal)
+        : Promise.resolve(
+            {} as Record<string, { cover: string | null; coverSource: string | null }>
+          )
+    ])
     const local = new Map(records?.tracks.map((record) => [record.id, libraryTrack(record)]))
     const providers = options.providers()
     const streams = options.streams()
@@ -65,17 +87,27 @@ export function createQueueInputResolver(options: {
           items.push({ id: track.id, localSnapshot: { ...track } })
           continue
         }
-        case 'provider':
+        case 'provider': {
           if (!providers.has(input.track.source)) throw new Error('音源未安装、未启用或不可用')
+          const rawCover = isAuthorizedProviderQueueCover(input.track.cover)
+            ? input.track.cover
+            : null
+          const resolvedCover = rawCover ? resolvedCovers[rawCover] : undefined
+          const fallbackCover =
+            rawCover && !options.resolveProviderCovers && rawCover.startsWith('cover://')
+              ? rawCover.split(/[?#]/, 1)[0]
+              : null
           track = {
             ...input.track,
             filePath: '',
             fileName: input.track.title,
             size: 0,
-            cover: null,
+            cover: resolvedCover ? resolvedCover.cover : fallbackCover,
+            ...(resolvedCover?.coverSource ? { coverSource: resolvedCover.coverSource } : {}),
             lyrics: null
           }
           break
+        }
         case 'network':
           track = await options.network(
             { revision: input.revision, profileId: input.profileId, entryId: input.entryId },

@@ -201,3 +201,84 @@ test('unsupported provider favorites stay unavailable rather than writing the lo
     /不支持收藏/
   )
 })
+
+test('provider tracks missing persisted artwork recover exact-identity cover via searchSongs and never borrow title-only matches', async (t) => {
+  let searches = 0
+  const f = fixture(t, {
+    artwork: async (track) =>
+      track.coverSource || track.cover
+        ? { cover: 'twilight-media://image/recovered', coverSource: null }
+        : { cover: null, coverSource: null },
+    supportedMethods: () => ['likeTrack', 'isTrackLiked', 'searchSongs'],
+    callProvider: async (_providerId, method, args) => {
+      if (method === 'isTrackLiked') return false
+      if (method === 'searchSongs') {
+        searches++
+        const query = String(args[0] ?? '')
+        if (query.includes('Mismatch')) {
+          return {
+            items: [
+              {
+                id: 'ncm:999',
+                source: 'ncm',
+                title: 'Mismatch',
+                cover: 'twilight-media://image/wrong',
+                coverSource: 'https://p2.music.126.net/wrong.jpg'
+              }
+            ]
+          }
+        }
+        return {
+          items: [
+            {
+              id: 'ncm:999',
+              source: 'ncm',
+              title: 'Is this love?',
+              cover: 'twilight-media://image/wrong',
+              coverSource: 'https://p2.music.126.net/wrong.jpg'
+            },
+            {
+              id: 'ncm:42',
+              source: 'ncm',
+              ncmSongId: 42,
+              title: 'Is this love?',
+              artist: 'twenty4-7',
+              cover: 'twilight-media://image/provider_grant',
+              coverSource: 'https://p2.music.126.net/exact.jpg'
+            }
+          ]
+        }
+      }
+      return null
+    }
+  })
+  f.service.observe(
+    { ...song('ncm:88', 'ncm'), ncmSongId: 88, title: 'Mismatch', artist: 'Artist' },
+    'occ-1'
+  )
+  await turn()
+  await turn()
+  assert.equal(f.service.snapshot().cover, null)
+  assert.equal(searches, 1)
+
+  const exactTrack = {
+    ...song('ncm:42', 'ncm'),
+    ncmSongId: 42,
+    title: 'Is this love?',
+    artist: 'twenty4-7'
+  }
+  f.service.observe(exactTrack, 'occ-2')
+  await turn()
+  await turn()
+  assert.equal(f.service.snapshot().cover, 'twilight-media://image/recovered')
+  assert.equal(f.service.snapshot().coverSource, null)
+  assert.equal(searches, 2)
+
+  // Repeated occurrence of the same track reuses the cached cover match without re-searching.
+  f.service.observe(exactTrack, 'occ-3')
+  await turn()
+  await turn()
+  assert.equal(f.service.snapshot().cover, 'twilight-media://image/recovered')
+  assert.equal(searches, 2)
+  assert.deepEqual(f.errors, [])
+})
