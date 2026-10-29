@@ -139,3 +139,44 @@ test('Core retains backup recovery and preserves user EQ separately from effecti
   assert.equal(effective.eqPreamp, -6)
   assert.equal(recovered.read().audioProcessing.eqPreamp, -2)
 })
+
+test('built-in and custom EQ presets persist modifications, full deletion, and factory restoration', (t) => {
+  const f = fixture(t)
+  const repository = new CoreSettingsRepository(f.options)
+  assert.equal(repository.read().audioEqBuiltInPresets, null)
+  assert.deepEqual(repository.read().audioEqPresets, [])
+
+  repository.update({
+    audioEqBuiltInPresets: [
+      {
+        id: 'warm',
+        name: '  Warm V2  ',
+        eqMode: 'graphic',
+        eqPreamp: -2.5,
+        eqBands: [{ frequency: 62, gain: 3.5, q: 1, filterType: 'peak' }]
+      }
+    ],
+    audioEqPresets: [
+      {
+        id: 'custom-1',
+        name: 'My Custom',
+        eqMode: 'parametric',
+        eqPreamp: -1,
+        eqBands: [{ frequency: 1000, gain: -2, q: 1.4, filterType: 'peak' }]
+      }
+    ]
+  })
+  assert.equal(repository.read().audioEqBuiltInPresets?.length, 1)
+  assert.equal(repository.read().audioEqBuiltInPresets?.[0]?.name, 'Warm V2')
+  assert.equal(repository.read().audioEqPresets.length, 1)
+
+  // Deleting all built-in presets persists an explicit empty list instead of reverting to null.
+  repository.update({ audioEqBuiltInPresets: [], audioEqPresets: [] })
+  const reopened = new CoreSettingsRepository(f.options)
+  assert.deepEqual(reopened.read().audioEqBuiltInPresets, [])
+  assert.deepEqual(reopened.read().audioEqPresets, [])
+
+  // Restoring factory defaults sets audioEqBuiltInPresets back to null.
+  reopened.update({ audioEqBuiltInPresets: null })
+  assert.equal(reopened.read().audioEqBuiltInPresets, null)
+})

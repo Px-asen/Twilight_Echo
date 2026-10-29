@@ -101,6 +101,8 @@ const autoPreampEnabled = ref(false)
 const appSettings = ref<AppSettings | null>(null)
 const presetName = ref('')
 const presetError = ref('')
+const editingPresetKey = ref('')
+const editingPresetName = ref('')
 const saving = ref(false)
 const presetMenuOpen = ref(false)
 const filterMenuOpen = ref(false)
@@ -134,6 +136,12 @@ const eqHistory = useEqualizerHistory(audioProcessing.value, applyEqualizerSnaps
 const { activeSlot, busy: historyBusy, canUndo, canRedo } = eqHistory
 const historyLoading = ref(true)
 
+const builtInPresets = computed<AudioEqPreset[]>(
+  () => appSettings.value?.audioEqBuiltInPresets ?? builtInEqPresets
+)
+const hasCustomBuiltInPresets = computed(() =>
+  Array.isArray(appSettings.value?.audioEqBuiltInPresets)
+)
 const userPresets = computed(() => appSettings.value?.audioEqPresets ?? [])
 const headphoneCompensation = computed<HeadphoneCompensationSettings>(
   () =>
@@ -357,6 +365,13 @@ async function loadAppSettings(): Promise<void> {
     appSettings.value = {
       ...settings,
       audioProcessing: normalizeAudioProcessing(settings.audioProcessing),
+      audioEqBuiltInPresets: Array.isArray(settings.audioEqBuiltInPresets)
+        ? settings.audioEqBuiltInPresets.map((preset) => ({
+            ...preset,
+            eqBands: normalizeAudioProcessing({ eqMode: preset.eqMode, eqBands: preset.eqBands })
+              .eqBands
+          }))
+        : null,
       audioEqPresets: settings.audioEqPresets.map((preset) => ({
         ...preset,
         eqBands: normalizeAudioProcessing({ eqMode: preset.eqMode, eqBands: preset.eqBands })
@@ -923,8 +938,14 @@ async function saveEqPreset(): Promise<void> {
   saving.value = true
   presetError.value = ''
   try {
+    const baseId = `custom-${Date.now()}`
+    let nextId = baseId
+    let suffix = 1
+    while (userPresets.value.some((preset) => preset.id === nextId)) {
+      nextId = `${baseId}-${suffix++}`
+    }
     const nextPreset: AudioEqPreset = {
-      id: `custom-${Date.now()}`,
+      id: nextId,
       name,
       eqMode: audioProcessing.value.eqMode,
       eqPreamp: audioProcessing.value.eqPreamp,
@@ -949,6 +970,150 @@ async function saveEqPreset(): Promise<void> {
 
 function saveAsCurrentPreset(): void {
   void saveEqPreset()
+}
+
+function cloneEqPresets(presets: AudioEqPreset[]): AudioEqPreset[] {
+  return presets.map((preset) => ({
+    id: preset.id,
+    name: preset.name,
+    eqMode: preset.eqMode,
+    eqPreamp: preset.eqPreamp,
+    eqBands: cloneBands(preset.eqBands)
+  }))
+}
+
+function startRenameEqPreset(scope: 'builtin' | 'custom', preset: AudioEqPreset): void {
+  editingPresetKey.value = `${scope}:${preset.id}`
+  editingPresetName.value = preset.name
+  presetError.value = ''
+}
+
+function cancelRenameEqPreset(): void {
+  editingPresetKey.value = ''
+  editingPresetName.value = ''
+}
+
+async function renameEqPreset(
+  scope: 'builtin' | 'custom',
+  presetId: string,
+  nextRawName = editingPresetName.value
+): Promise<void> {
+  const name = nextRawName.trim().slice(0, 40)
+  if (!name) {
+    presetError.value = '预设名称不能为空'
+    return
+  }
+  if (!appSettings.value || saving.value) return
+  const source = scope === 'builtin' ? builtInPresets.value : userPresets.value
+  if (!source.some((preset) => preset.id === presetId)) {
+    cancelRenameEqPreset()
+    return
+  }
+  saving.value = true
+  presetError.value = ''
+  try {
+    const nextPresets = cloneEqPresets(source).map((preset) =>
+      preset.id === presetId ? { ...preset, name } : preset
+    )
+    appSettings.value = await window.api.settings.update(
+      scope === 'builtin'
+        ? { audioEqBuiltInPresets: nextPresets }
+        : { audioEqPresets: nextPresets }
+    )
+    editingPresetKey.value = ''
+    editingPresetName.value = ''
+    presetMenuOpen.value = true
+  } catch (err) {
+    presetError.value = `修改预设失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    saving.value = false
+  }
+}
+
+async function updateEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void> {
+  finishParametricEdits()
+  await commitChain
+  if (!appSettings.value || saving.value) return
+  const source = scope === 'builtin' ? builtInPresets.value : userPresets.value
+  if (!source.some((preset) => preset.id === presetId)) return
+  const activeEditKey = `${scope}:${presetId}`
+  const pendingName =
+    editingPresetKey.value === activeEditKey ? editingPresetName.value.trim().slice(0, 40) : ''
+  saving.value = true
+  presetError.value = ''
+  try {
+    const nextPresets = cloneEqPresets(source).map((preset) =>
+      preset.id === presetId
+        ? {
+            ...preset,
+            name: pendingName || preset.name,
+            eqMode: audioProcessing.value.eqMode,
+            eqPreamp: audioProcessing.value.eqPreamp,
+            eqBands: cloneBands(audioProcessing.value.eqBands)
+          }
+        : preset
+    )
+    appSettings.value = await window.api.settings.update(
+      scope === 'builtin'
+        ? { audioEqBuiltInPresets: nextPresets }
+        : { audioEqPresets: nextPresets }
+    )
+    if (editingPresetKey.value === activeEditKey) {
+      editingPresetKey.value = ''
+      editingPresetName.value = ''
+    }
+    presetMenuOpen.value = true
+  } catch (err) {
+    presetError.value = `修改预设失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    saving.value = false
+  }
+}
+
+async function deleteEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void> {
+  if (!appSettings.value || saving.value) return
+  const source = scope === 'builtin' ? builtInPresets.value : userPresets.value
+  const filtered = source.filter((preset) => preset.id !== presetId)
+  if (filtered.length === source.length) return
+  saving.value = true
+  presetError.value = ''
+  try {
+    const nextPresets = cloneEqPresets(filtered)
+    appSettings.value = await window.api.settings.update(
+      scope === 'builtin'
+        ? { audioEqBuiltInPresets: nextPresets }
+        : { audioEqPresets: nextPresets }
+    )
+    if (editingPresetKey.value === `${scope}:${presetId}`) {
+      editingPresetKey.value = ''
+      editingPresetName.value = ''
+    }
+    presetMenuOpen.value = true
+  } catch (err) {
+    presetError.value = `删除预设失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    saving.value = false
+  }
+}
+
+async function restoreBuiltInEqPresets(): Promise<void> {
+  if (!appSettings.value || saving.value) return
+  saving.value = true
+  presetError.value = ''
+  try {
+    appSettings.value = await window.api.settings.update({
+      audioEqBuiltInPresets: null
+    })
+    if (editingPresetKey.value.startsWith('builtin:')) {
+      editingPresetKey.value = ''
+      editingPresetName.value = ''
+    }
+    presetMenuOpen.value = true
+  } catch (err) {
+    presetError.value = `恢复默认预设失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    saving.value = false
+  }
 }
 
 async function switchTab(tab: EqualizerTab): Promise<void> {
@@ -993,7 +1158,19 @@ async function resetEqualizer(): Promise<void> {
 
 function togglePresetMenu(): void {
   presetMenuOpen.value = !presetMenuOpen.value
-  if (presetMenuOpen.value) filterMenuOpen.value = false
+  if (presetMenuOpen.value) {
+    filterMenuOpen.value = false
+  } else {
+    cancelRenameEqPreset()
+  }
+}
+
+function onEqualizerPointerDown(event: PointerEvent): void {
+  if (!presetMenuOpen.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.preset-menu-anchor')) return
+  presetMenuOpen.value = false
+  cancelRenameEqPreset()
 }
 
 async function selectFilterType(filterType: EqualizerFilterType): Promise<void> {
@@ -1113,6 +1290,7 @@ defineExpose({
     class="eq-page"
     :class="{ 'is-parametric': activeTab === 'parametric', 'eq-embedded': embedded }"
     @keydown="onEqualizerKeydown"
+    @pointerdown="onEqualizerPointerDown"
   >
     <div
       class="eq-container"
@@ -1168,32 +1346,189 @@ defineExpose({
             </button>
             <div v-if="presetMenuOpen" class="preset-menu">
               <div class="preset-menu-section">
-                <span class="preset-menu-title">内置预设</span>
-                <button
-                  v-for="preset in builtInEqPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
+                <div class="preset-section-header">
+                  <span class="preset-menu-title">内置预设</span>
+                  <button
+                    v-if="hasCustomBuiltInPresets"
+                    type="button"
+                    class="preset-restore-btn"
+                    :disabled="saving"
+                    title="恢复默认内置预设"
+                    @click.stop="restoreBuiltInEqPresets"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <div v-for="preset in builtInPresets" :key="preset.id" class="preset-menu-row">
+                  <template v-if="editingPresetKey === `builtin:${preset.id}`">
+                    <input
+                      v-model="editingPresetName"
+                      type="text"
+                      class="preset-rename-input"
+                      maxlength="40"
+                      aria-label="预设名称"
+                      @keydown.enter.prevent="renameEqPreset('builtin', preset.id)"
+                      @keydown.esc.stop.prevent="cancelRenameEqPreset"
+                    />
+                    <div class="preset-item-actions is-editing">
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving || !editingPresetName.trim()"
+                        title="保存名称"
+                        aria-label="保存名称"
+                        @click.stop="renameEqPreset('builtin', preset.id)"
+                      >
+                        <i class="pi pi-check"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="取消重命名"
+                        aria-label="取消重命名"
+                        @click.stop="cancelRenameEqPreset"
+                      >
+                        <i class="pi pi-times"></i>
+                      </button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="preset-menu-item"
+                      :title="preset.name"
+                      @click="applyEqPreset(preset)"
+                    >
+                      {{ preset.name }}
+                    </button>
+                    <div class="preset-item-actions">
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="将当前均衡器参数更新到此预设"
+                        aria-label="更新预设参数"
+                        @click.stop="updateEqPreset('builtin', preset.id)"
+                      >
+                        <i class="pi pi-sync"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="重命名预设"
+                        aria-label="重命名预设"
+                        @click.stop="startRenameEqPreset('builtin', preset)"
+                      >
+                        <i class="pi pi-pencil"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn is-danger"
+                        :disabled="saving"
+                        title="删除预设"
+                        aria-label="删除预设"
+                        @click.stop="deleteEqPreset('builtin', preset.id)"
+                      >
+                        <i class="pi pi-trash"></i>
+                      </button>
+                    </div>
+                  </template>
+                </div>
+                <span v-if="builtInPresets.length === 0" class="preset-empty">暂无内置预设</span>
               </div>
               <div class="preset-menu-section">
-                <span class="preset-menu-title">自定义预设</span>
-                <button
-                  v-for="preset in userPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
+                <div class="preset-section-header">
+                  <span class="preset-menu-title">自定义预设</span>
+                </div>
+                <div v-for="preset in userPresets" :key="preset.id" class="preset-menu-row">
+                  <template v-if="editingPresetKey === `custom:${preset.id}`">
+                    <input
+                      v-model="editingPresetName"
+                      type="text"
+                      class="preset-rename-input"
+                      maxlength="40"
+                      aria-label="预设名称"
+                      @keydown.enter.prevent="renameEqPreset('custom', preset.id)"
+                      @keydown.esc.stop.prevent="cancelRenameEqPreset"
+                    />
+                    <div class="preset-item-actions is-editing">
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving || !editingPresetName.trim()"
+                        title="保存名称"
+                        aria-label="保存名称"
+                        @click.stop="renameEqPreset('custom', preset.id)"
+                      >
+                        <i class="pi pi-check"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="取消重命名"
+                        aria-label="取消重命名"
+                        @click.stop="cancelRenameEqPreset"
+                      >
+                        <i class="pi pi-times"></i>
+                      </button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="preset-menu-item"
+                      :title="preset.name"
+                      @click="applyEqPreset(preset)"
+                    >
+                      {{ preset.name }}
+                    </button>
+                    <div class="preset-item-actions">
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="将当前均衡器参数更新到此预设"
+                        aria-label="更新预设参数"
+                        @click.stop="updateEqPreset('custom', preset.id)"
+                      >
+                        <i class="pi pi-sync"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn"
+                        :disabled="saving"
+                        title="重命名预设"
+                        aria-label="重命名预设"
+                        @click.stop="startRenameEqPreset('custom', preset)"
+                      >
+                        <i class="pi pi-pencil"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-action-btn is-danger"
+                        :disabled="saving"
+                        title="删除预设"
+                        aria-label="删除预设"
+                        @click.stop="deleteEqPreset('custom', preset.id)"
+                      >
+                        <i class="pi pi-trash"></i>
+                      </button>
+                    </div>
+                  </template>
+                </div>
                 <span v-if="userPresets.length === 0" class="preset-empty">暂无自定义预设</span>
               </div>
               <div class="preset-create">
-                <input v-model="presetName" type="text" placeholder="新建预设名称" />
+                <input
+                  v-model="presetName"
+                  type="text"
+                  maxlength="40"
+                  placeholder="新建预设名称"
+                  @keydown.enter.prevent="saveEqPreset"
+                />
                 <button
                   type="button"
                   :disabled="saving || !presetName.trim()"
@@ -1413,34 +1748,197 @@ defineExpose({
                   </button>
                   <div v-if="presetMenuOpen" class="preset-menu">
                     <div class="preset-menu-section">
-                      <span class="preset-menu-title">内置预设</span>
-                      <button
-                        v-for="preset in builtInEqPresets"
+                      <div class="preset-section-header">
+                        <span class="preset-menu-title">内置预设</span>
+                        <button
+                          v-if="hasCustomBuiltInPresets"
+                          type="button"
+                          class="preset-restore-btn"
+                          :disabled="saving"
+                          title="恢复默认内置预设"
+                          @click.stop="restoreBuiltInEqPresets"
+                        >
+                          恢复默认
+                        </button>
+                      </div>
+                      <div
+                        v-for="preset in builtInPresets"
                         :key="preset.id"
-                        type="button"
-                        class="preset-menu-item"
-                        @click="applyEqPreset(preset)"
+                        class="preset-menu-row"
                       >
-                        {{ preset.name }}
-                      </button>
+                        <template v-if="editingPresetKey === `builtin:${preset.id}`">
+                          <input
+                            v-model="editingPresetName"
+                            type="text"
+                            class="preset-rename-input"
+                            maxlength="40"
+                            aria-label="预设名称"
+                            @keydown.enter.prevent="renameEqPreset('builtin', preset.id)"
+                            @keydown.esc.stop.prevent="cancelRenameEqPreset"
+                          />
+                          <div class="preset-item-actions is-editing">
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving || !editingPresetName.trim()"
+                              title="保存名称"
+                              aria-label="保存名称"
+                              @click.stop="renameEqPreset('builtin', preset.id)"
+                            >
+                              <i class="pi pi-check"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="取消重命名"
+                              aria-label="取消重命名"
+                              @click.stop="cancelRenameEqPreset"
+                            >
+                              <i class="pi pi-times"></i>
+                            </button>
+                          </div>
+                        </template>
+                        <template v-else>
+                          <button
+                            type="button"
+                            class="preset-menu-item"
+                            :title="preset.name"
+                            @click="applyEqPreset(preset)"
+                          >
+                            {{ preset.name }}
+                          </button>
+                          <div class="preset-item-actions">
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="将当前均衡器参数更新到此预设"
+                              aria-label="更新预设参数"
+                              @click.stop="updateEqPreset('builtin', preset.id)"
+                            >
+                              <i class="pi pi-sync"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="重命名预设"
+                              aria-label="重命名预设"
+                              @click.stop="startRenameEqPreset('builtin', preset)"
+                            >
+                              <i class="pi pi-pencil"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn is-danger"
+                              :disabled="saving"
+                              title="删除预设"
+                              aria-label="删除预设"
+                              @click.stop="deleteEqPreset('builtin', preset.id)"
+                            >
+                              <i class="pi pi-trash"></i>
+                            </button>
+                          </div>
+                        </template>
+                      </div>
+                      <span v-if="builtInPresets.length === 0" class="preset-empty"
+                        >暂无内置预设</span
+                      >
                     </div>
                     <div class="preset-menu-section">
-                      <span class="preset-menu-title">自定义预设</span>
-                      <button
-                        v-for="preset in userPresets"
-                        :key="preset.id"
-                        type="button"
-                        class="preset-menu-item"
-                        @click="applyEqPreset(preset)"
-                      >
-                        {{ preset.name }}
-                      </button>
+                      <div class="preset-section-header">
+                        <span class="preset-menu-title">自定义预设</span>
+                      </div>
+                      <div v-for="preset in userPresets" :key="preset.id" class="preset-menu-row">
+                        <template v-if="editingPresetKey === `custom:${preset.id}`">
+                          <input
+                            v-model="editingPresetName"
+                            type="text"
+                            class="preset-rename-input"
+                            maxlength="40"
+                            aria-label="预设名称"
+                            @keydown.enter.prevent="renameEqPreset('custom', preset.id)"
+                            @keydown.esc.stop.prevent="cancelRenameEqPreset"
+                          />
+                          <div class="preset-item-actions is-editing">
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving || !editingPresetName.trim()"
+                              title="保存名称"
+                              aria-label="保存名称"
+                              @click.stop="renameEqPreset('custom', preset.id)"
+                            >
+                              <i class="pi pi-check"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="取消重命名"
+                              aria-label="取消重命名"
+                              @click.stop="cancelRenameEqPreset"
+                            >
+                              <i class="pi pi-times"></i>
+                            </button>
+                          </div>
+                        </template>
+                        <template v-else>
+                          <button
+                            type="button"
+                            class="preset-menu-item"
+                            :title="preset.name"
+                            @click="applyEqPreset(preset)"
+                          >
+                            {{ preset.name }}
+                          </button>
+                          <div class="preset-item-actions">
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="将当前均衡器参数更新到此预设"
+                              aria-label="更新预设参数"
+                              @click.stop="updateEqPreset('custom', preset.id)"
+                            >
+                              <i class="pi pi-sync"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn"
+                              :disabled="saving"
+                              title="重命名预设"
+                              aria-label="重命名预设"
+                              @click.stop="startRenameEqPreset('custom', preset)"
+                            >
+                              <i class="pi pi-pencil"></i>
+                            </button>
+                            <button
+                              type="button"
+                              class="preset-action-btn is-danger"
+                              :disabled="saving"
+                              title="删除预设"
+                              aria-label="删除预设"
+                              @click.stop="deleteEqPreset('custom', preset.id)"
+                            >
+                              <i class="pi pi-trash"></i>
+                            </button>
+                          </div>
+                        </template>
+                      </div>
                       <span v-if="userPresets.length === 0" class="preset-empty"
                         >暂无自定义预设</span
                       >
                     </div>
                     <div class="preset-create">
-                      <input v-model="presetName" type="text" placeholder="新建预设名称" />
+                      <input
+                        v-model="presetName"
+                        type="text"
+                        maxlength="40"
+                        placeholder="新建预设名称"
+                        @keydown.enter.prevent="saveEqPreset"
+                      />
                       <button
                         type="button"
                         :disabled="saving || !presetName.trim()"
@@ -1650,13 +2148,16 @@ defineExpose({
   backdrop-filter: blur(20px);
   border: 1px solid var(--te-glass-border);
   border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.14);
   padding: 12px;
-  width: 240px;
+  width: 296px;
+  max-width: calc(100vw - 32px);
+  max-height: min(440px, calc(100vh - 160px));
+  overflow-y: auto;
   z-index: 100;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .preset-menu-section {
@@ -1665,33 +2166,140 @@ defineExpose({
   gap: 4px;
 }
 
+.preset-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 4px;
+}
+
 .preset-menu-title {
   font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
   font-weight: 700;
   color: var(--te-neutral-400);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 0 8px 4px;
+}
+
+.preset-restore-btn {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
+  font-weight: 600;
+  color: var(--te-primary-500);
+  cursor: pointer;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
+}
+
+.preset-restore-btn:hover:not(:disabled) {
+  background: var(--te-primary-50);
+  color: var(--te-primary-600);
+}
+
+.preset-restore-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preset-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  padding-right: 4px;
+  transition: background-color 0.2s var(--te-ease-soft);
+}
+
+.preset-menu-row:hover,
+.preset-menu-row:focus-within {
+  background: var(--te-primary-50);
 }
 
 .preset-menu-item {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: transparent;
   border: none;
-  padding: 8px;
+  padding: 7px 8px;
   text-align: left;
   font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
   font-weight: 600;
   color: var(--te-neutral-700);
   border-radius: 8px;
   cursor: pointer;
-  transition:
-    background-color 0.2s var(--te-ease-soft),
-    color 0.2s var(--te-ease-soft);
+  transition: color 0.2s var(--te-ease-soft);
 }
 
-.preset-menu-item:hover {
-  background: var(--te-primary-50);
+.preset-menu-row:hover .preset-menu-item,
+.preset-menu-item:focus-visible {
   color: var(--te-primary-600);
+}
+
+.preset-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.preset-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--te-neutral-400);
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  cursor: pointer;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
+}
+
+.preset-menu-row:hover .preset-action-btn,
+.preset-item-actions.is-editing .preset-action-btn {
+  color: var(--te-neutral-600);
+}
+
+.preset-action-btn:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--te-primary-600);
+}
+
+.preset-action-btn.is-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.preset-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.preset-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--te-card-bg);
+  color: var(--te-neutral-800);
+  border: 1px solid var(--te-primary-400);
+  border-radius: 7px;
+  padding: 5px 8px;
+  margin: 3px 0 3px 4px;
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
+  font-weight: 500;
+  outline: none;
 }
 
 .preset-empty {
@@ -1704,12 +2312,13 @@ defineExpose({
   display: flex;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  border-top: 1px solid var(--te-glass-border);
 }
 
 .preset-create input {
   flex: 1;
   background: rgba(15, 23, 42, 0.04);
+  color: var(--te-neutral-800);
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 6px 10px;
@@ -2313,7 +2922,7 @@ defineExpose({
   font-size: calc(var(--te-font-size-body, 14px) * 11 / 14);
 }
 .instrument-presets .preset-menu {
-  width: 280px;
+  width: 304px;
   max-width: calc(100vw - 48px);
   background: var(--eq-panel-raised);
   border-color: var(--eq-border);
@@ -2327,9 +2936,40 @@ defineExpose({
 .instrument-presets .preset-empty {
   color: var(--eq-text-subtle);
 }
-.instrument-presets .preset-menu-item:hover {
+.instrument-presets .preset-restore-btn {
   color: var(--eq-response);
+}
+.instrument-presets .preset-restore-btn:hover:not(:disabled) {
   background: var(--eq-control-bg);
+  color: var(--eq-response);
+}
+.instrument-presets .preset-menu-row:hover,
+.instrument-presets .preset-menu-row:focus-within {
+  background: var(--eq-control-bg);
+}
+.instrument-presets .preset-menu-row:hover .preset-menu-item,
+.instrument-presets .preset-menu-item:focus-visible {
+  color: var(--eq-response);
+}
+.instrument-presets .preset-action-btn {
+  color: var(--eq-text-subtle);
+}
+.instrument-presets .preset-menu-row:hover .preset-action-btn,
+.instrument-presets .preset-item-actions.is-editing .preset-action-btn {
+  color: var(--eq-text-muted);
+}
+.instrument-presets .preset-action-btn:hover:not(:disabled) {
+  background: var(--eq-panel);
+  color: var(--eq-response);
+}
+.instrument-presets .preset-action-btn.is-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+.instrument-presets .preset-rename-input {
+  background: var(--eq-control-bg);
+  color: var(--eq-text);
+  border-color: var(--eq-response);
 }
 .instrument-presets .preset-create {
   border-color: var(--eq-border-soft);
@@ -2693,6 +3333,51 @@ defineExpose({
 .eq-embedded .preset-menu-title {
   font-size: var(--dsp-t12);
   color: var(--dsp-muted);
+}
+.eq-embedded .preset-menu-item {
+  color: var(--dsp-text);
+}
+.eq-embedded .preset-menu-row:hover,
+.eq-embedded .preset-menu-row:focus-within {
+  background: var(--dsp-hover);
+}
+.eq-embedded .preset-menu-row:hover .preset-menu-item,
+.eq-embedded .preset-menu-item:focus-visible {
+  color: var(--dsp-accent-text);
+}
+.eq-embedded .preset-action-btn {
+  color: var(--dsp-muted);
+}
+.eq-embedded .preset-menu-row:hover .preset-action-btn,
+.eq-embedded .preset-item-actions.is-editing .preset-action-btn {
+  color: var(--dsp-text);
+}
+.eq-embedded .preset-action-btn:hover:not(:disabled) {
+  background: var(--dsp-press);
+  color: var(--dsp-accent-text);
+}
+.eq-embedded .preset-action-btn.is-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+}
+.eq-embedded .preset-restore-btn {
+  color: var(--dsp-accent-text);
+}
+.eq-embedded .preset-restore-btn:hover:not(:disabled) {
+  background: var(--dsp-hover);
+}
+.eq-embedded .preset-rename-input {
+  background: var(--dsp-hover);
+  color: var(--dsp-text);
+  border-color: var(--dsp-line-strong);
+}
+.eq-embedded .preset-create {
+  border-color: var(--dsp-line);
+}
+.eq-embedded .preset-create input {
+  background: var(--dsp-hover);
+  color: var(--dsp-text);
+  border-color: var(--dsp-line);
 }
 .eq-embedded :deep(:is(.chart-card, .sliders-board)) {
   margin: 0;

@@ -23,6 +23,7 @@ export {
   normalizeProxyMode,
   compareVersions,
   normalizeAudioEqPresets,
+  normalizeBuiltInAudioEqPresets,
   normalizeAppTheme,
   normalizePlaybackResumeMode,
   normalizePreviousButtonAction,

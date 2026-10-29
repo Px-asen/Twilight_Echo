@@ -271,6 +271,7 @@ const BASE_SETTINGS: AppSettings = {
   dspPinnedSceneId: null,
   audioDeviceProfiles: normalizeAudioDeviceProfileSettings(),
   headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
+  audioEqBuiltInPresets: null,
   audioEqPresets: [],
   audioEqAutoPreamp: null,
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
@@ -325,6 +326,7 @@ export function compareVersions(a: string, b: string): number {
 export function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
   if (!Array.isArray(presets)) return []
 
+  const seenIds = new Set<string>()
   return presets
     .map((preset, index): AudioEqPreset | null => {
       if (!preset || typeof preset !== 'object') return null
@@ -334,17 +336,29 @@ export function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
         eqPreamp: raw.eqPreamp,
         eqBands: raw.eqBands
       })
+      const trimmedName = typeof raw.name === 'string' ? raw.name.trim() : ''
+      const baseId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `custom-${index}`
+      let id = baseId
+      let suffix = 1
+      while (seenIds.has(id)) {
+        id = `${baseId}-${suffix++}`
+      }
+      seenIds.add(id)
       return {
-        id: typeof raw.id === 'string' && raw.id ? raw.id : `custom-${index}`,
-        name:
-          typeof raw.name === 'string' && raw.name ? raw.name.slice(0, 40) : `Preset ${index + 1}`,
+        id,
+        name: trimmedName ? trimmedName.slice(0, 40) : `Preset ${index + 1}`,
         eqMode: normalized.eqMode,
         eqPreamp: normalized.eqPreamp,
         eqBands: normalized.eqBands
       }
     })
     .filter((preset): preset is AudioEqPreset => Boolean(preset))
-    .slice(0, 24)
+    .slice(0, 64)
+}
+
+export function normalizeBuiltInAudioEqPresets(presets: unknown): AudioEqPreset[] | null {
+  if (!Array.isArray(presets)) return null
+  return normalizeAudioEqPresets(presets)
 }
 
 export function normalizeAppTheme(theme: unknown): AppTheme {
@@ -777,6 +791,7 @@ export function normalizeAppSettings(
         ? settings.dspPinnedSceneId
         : null,
     headphoneCompensation: normalizeHeadphoneCompensationSettings(settings.headphoneCompensation),
+    audioEqBuiltInPresets: normalizeBuiltInAudioEqPresets(settings.audioEqBuiltInPresets),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
     audioEqAutoPreamp: normalizeEqualizerAutoPreamp(settings.audioEqAutoPreamp),
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),
