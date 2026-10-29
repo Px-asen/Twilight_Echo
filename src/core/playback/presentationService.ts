@@ -1,13 +1,21 @@
 import type { TrackData } from '../../shared/track.ts'
 import type { CorePlayerPresentation } from '../../shared/coreSystemPlayer.ts'
 import type { CoreLyricsCurrent } from '../../shared/coreLyrics.ts'
-import { getNcmSongId } from '../../shared/ncmTrack.ts'
+import {
+  providerTrackIdentity,
+  recoverProviderTrackArtwork,
+  type ProviderTrackIdentity
+} from './providerArtworkRecovery.ts'
 
 export interface CorePlayerPresentationOptions {
   artwork(
     track: TrackData,
     signal: AbortSignal
   ): Promise<Pick<CorePlayerPresentation, 'cover' | 'coverSource'>>
+  artworkRecovered?(
+    track: TrackData,
+    artwork: { cover: string | null; coverSource: string | null }
+  ): void
   playlists: {
     isFavorite(track: TrackData): Promise<boolean>
     toggleFavorite(track: TrackData, assertCurrent: () => void): Promise<boolean>
@@ -21,25 +29,6 @@ export interface CorePlayerPresentationOptions {
   ): Promise<unknown>
   changed(): void
   failed(error: unknown): void
-}
-
-function providerIdentity(
-  track: TrackData
-): { providerId: string; trackId: string | number | null } | null {
-  const path = /^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)
-  const providerId = (track.source || (!path ? track.id.split(':')[0] : '')).trim().toLowerCase()
-  if (!providerId || providerId === 'local' || (!track.source && !track.id.includes(':')))
-    return null
-  const prefix = `${providerId}:`
-  return {
-    providerId,
-    trackId:
-      providerId === 'ncm'
-        ? getNcmSongId(track)
-        : track.id.startsWith(prefix)
-          ? track.id.slice(prefix.length).trim() || null
-          : null
-  }
 }
 
 /** Current artwork and favorite state, independent of every presentation window. */
@@ -112,7 +101,7 @@ export class CorePlayerPresentationService {
     if (!track || !expected || this.stopped || this.writing) return
     this.currentRequest?.abort()
     const request = (this.currentRequest = new AbortController())
-    const provider = providerIdentity(track)
+    const provider = providerTrackIdentity(track)
     const methods = provider ? this.options.supportedMethods(provider.providerId) : []
     this.state.favorite.available =
       !provider || (provider.trackId != null && methods.includes('likeTrack'))
@@ -172,7 +161,7 @@ export class CorePlayerPresentationService {
         await this.favoriteRead
         assertCurrent()
         const track = this.track!
-        const provider = providerIdentity(track)
+        const provider = providerTrackIdentity(track)
         if (!this.state.favorite.available) throw new Error('当前音源不支持收藏')
         this.writing = true
         this.state.favorite.loading = true
@@ -210,7 +199,7 @@ export class CorePlayerPresentationService {
   }
   private async resolveTrackArtwork(
     track: TrackData,
-    provider: { providerId: string; trackId: string | number | null } | null,
+    provider: ProviderTrackIdentity | null,
     methods: readonly string[],
     signal: AbortSignal
   ): Promise<Pick<CorePlayerPresentation, 'cover' | 'coverSource'>> {
@@ -220,52 +209,23 @@ export class CorePlayerPresentationService {
     const cacheKey = `${provider.providerId}:${track.id}`
     let recovered = this.fallbackArtworkCache.get(cacheKey)
     if (!recovered && methods.includes('searchSongs') && track.title?.trim()) {
-      const query = [track.title, track.artist].filter(Boolean).join(' ').trim()
       try {
-        const result = await this.options.callProvider(
-          provider.providerId,
-          'searchSongs',
-          [query, 20, 0],
+        const candidate = await recoverProviderTrackArtwork(
+          track,
+          {
+            supportedMethods: (id) => (id === provider.providerId ? methods : this.options.supportedMethods(id)),
+            callProvider: (id, method, args, currentSignal) =>
+              this.options.callProvider(id, method, args, currentSignal)
+          },
           signal
         )
-        signal.throwIfAborted()
-        const items = Array.isArray(result)
-          ? result
-          : result && typeof result === 'object' && Array.isArray((result as { items?: unknown[] }).items)
-            ? (result as { items: unknown[] }).items
-            : []
-        for (const entry of items) {
-          if (!entry || typeof entry !== 'object') continue
-          const candidate = entry as Partial<TrackData> & {
-            coverSmall?: string | null
-            coverSmallSource?: string | null
-          }
-          const sameId =
-            candidate.id === track.id ||
-            (provider.providerId === 'ncm' &&
-              provider.trackId != null &&
-              getNcmSongId(candidate as TrackData) === Number(provider.trackId))
-          const sameSource =
-            !candidate.source ||
-            candidate.source.trim().toLowerCase() === provider.providerId
-          if (!sameId || !sameSource) continue
-          const cover =
-            (typeof candidate.cover === 'string' && candidate.cover.trim()) ||
-            (typeof candidate.coverSmall === 'string' && candidate.coverSmall.trim()) ||
-            null
-          const coverSource =
-            (typeof candidate.coverSource === 'string' && candidate.coverSource.trim()) ||
-            (typeof candidate.coverSmallSource === 'string' && candidate.coverSmallSource.trim()) ||
-            null
-          if (cover || coverSource) {
-            recovered = { cover, coverSource }
-            this.fallbackArtworkCache.delete(cacheKey)
-            this.fallbackArtworkCache.set(cacheKey, recovered)
-            if (this.fallbackArtworkCache.size > 256) {
-              const oldest = this.fallbackArtworkCache.keys().next().value
-              if (oldest !== undefined) this.fallbackArtworkCache.delete(oldest)
-            }
-            break
+        if (candidate) {
+          recovered = candidate
+          this.fallbackArtworkCache.delete(cacheKey)
+          this.fallbackArtworkCache.set(cacheKey, recovered)
+          if (this.fallbackArtworkCache.size > 256) {
+            const oldest = this.fallbackArtworkCache.keys().next().value
+            if (oldest !== undefined) this.fallbackArtworkCache.delete(oldest)
           }
         }
       } catch {
@@ -273,6 +233,8 @@ export class CorePlayerPresentationService {
       }
     }
     if (!recovered) return direct
+    signal.throwIfAborted()
+    this.options.artworkRecovered?.(track, recovered)
     return this.options.artwork(
       { ...track, cover: recovered.cover, coverSource: recovered.coverSource ?? undefined },
       signal

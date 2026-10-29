@@ -40,6 +40,18 @@ test('Core artwork projects cache handles and re-grants durable or session image
   }
   assert.equal(sources.length, 3)
   assert.deepEqual(await project({ cover: 'file:///private.jpg', coverSource: null }, signal), { cover: null, coverSource: null })
+  const expiredProject = createArtworkProjection({
+    normalizeCachedCover: async (handle) => handle,
+    migrateBase64Cover: () => null,
+    grant: () => 'twilight-media://image/granted',
+    resolve: () => {
+      throw new Error('Unknown or expired remote image handle')
+    }
+  })
+  assert.deepEqual(
+    await expiredProject({ cover: 'twilight-media://image/expired', coverSource: null }, signal),
+    { cover: null, coverSource: null }
+  )
   const controller = new AbortController()
   controller.abort()
   await assert.rejects(project({ cover: null, coverSource: null }, controller.signal), { name: 'AbortError' })

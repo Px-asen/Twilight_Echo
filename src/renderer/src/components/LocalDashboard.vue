@@ -181,7 +181,7 @@ interface RankedStat {
 const rankedStats = computed<RankedStat[]>(() => {
   if (props.previewTracks) return []
   return dashboardTopStats.value.map((stat) => {
-    const track = stat.displayTrack
+    const track = stat.displayTrack ? { ...stat.displayTrack, cover: stat.cover ?? null } : null
     return {
       id: stat.id,
       seconds: stat.seconds,
@@ -197,7 +197,8 @@ const rankedStats = computed<RankedStat[]>(() => {
 
 const lastPlayedTrack = computed<Track | null>(() => {
   if (props.previewTracks) return props.previewTracks[0] ?? null
-  return dashboardLatestStat.value?.displayTrack ?? null
+  const stat = dashboardLatestStat.value
+  return stat?.displayTrack ? { ...stat.displayTrack, cover: stat.cover ?? null } : null
 })
 
 const heroTrack = computed<Track | null>(() => {

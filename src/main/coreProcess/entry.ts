@@ -94,6 +94,10 @@ import { readPlaylistImportFile } from '../../core/playlists/readFile.ts'
 import { createImportLocalCandidates } from '../../core/playlists/importLocalCandidates.ts'
 import type { ImportProvider } from '../../core/playlists/importResolver.ts'
 import { isPluginProviderEnabled } from '../../shared/providerAvailability.ts'
+import {
+  isRecoverableProviderTrack,
+  recoverProviderTrackArtwork
+} from '../../core/playback/providerArtworkRecovery.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { CoreRecordingVersions } from '../../core/playlists/recordingVersions.ts'
 import { CoreRecordingCatalog } from '../../core/playlists/recordingCatalog.ts'
@@ -478,6 +482,16 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     sync: (request) => database!.syncListeningHistory(request),
     identity: randomUUID
   })
+  const supportedStatisticProviderMethods = (id: string): readonly string[] => {
+    const provider = plugins?.listProviders().find((item) => item.id === id)
+    if (
+      !provider ||
+      provider.health?.available === false ||
+      !isPluginProviderEnabled(provider.health)
+    )
+      return []
+    return provider.supportedMethods ?? []
+  }
   const statistics = new CoreStatisticsService({
     repository: new CoreStatisticsRepository({ database, newId: randomUUID }),
     history,
@@ -485,6 +499,22 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     timers: {
       setTimeout: (callback, delay) => setTimeout(callback, delay),
       clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout)
+    },
+    artwork: (track, signal) => presentTrackArtwork(track, signal),
+    recoverArtwork: {
+      canRecover: (track) => isRecoverableProviderTrack(track, supportedStatisticProviderMethods),
+      recover: (track, signal) =>
+        recoverProviderTrackArtwork(
+          track,
+          {
+            supportedMethods: supportedStatisticProviderMethods,
+            callProvider: (id, method, args, currentSignal) => {
+              if (!plugins) throw new Error('Provider runtime is not configured')
+              return plugins.callProvider(id, method, args, { signal: currentSignal })
+            }
+          },
+          signal
+        )
     },
     changed: () => application?.changed()
   })
@@ -808,6 +838,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   }
   const presentation = new CorePlayerPresentationService({
     artwork: presentTrackArtwork,
+    artworkRecovered: (track, artwork) => statistics.rememberArtwork(track, artwork),
     playlists,
     supportedMethods: (id) => plugins?.listProviders().find((provider) => provider.id === id)?.supportedMethods ?? [],
     callProvider: (id, method, args, signal) => {

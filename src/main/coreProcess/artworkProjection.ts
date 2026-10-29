@@ -31,11 +31,18 @@ export function createArtworkProjection(platform: ArtworkPlatform) {
     } else if (/^https?:\/\//i.test(handle ?? '')) {
       cover = platform.grant(handle!, input.imageExpiresAt)
     } else if (handle?.startsWith('twilight-media://image/')) {
-      const original = platform.resolve(handle)
-      const deadlines = [original.expiresAt, input.imageExpiresAt].filter(
-        (v): v is number => v !== undefined
-      )
-      cover = platform.grant(original.source, deadlines.length ? Math.min(...deadlines) : undefined)
+      try {
+        const original = platform.resolve(handle)
+        const deadlines = [original.expiresAt, input.imageExpiresAt].filter(
+          (v): v is number => v !== undefined
+        )
+        cover = platform.grant(
+          original.source,
+          deadlines.length ? Math.min(...deadlines) : undefined
+        )
+      } catch {
+        cover = null
+      }
     }
     signal.throwIfAborted()
     if (
