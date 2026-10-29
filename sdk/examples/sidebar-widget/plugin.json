@@ -1,0 +1,24 @@
+{
+  "id": "com.example.sidebar-battery",
+  "name": "侧栏电量示例",
+  "version": "1.0.0",
+  "description": "演示侧边栏自定义 HTML、外观同步和按钮交互；电量为示例数据。",
+  "author": "Twilight Echo",
+  "license": "Apache-2.0",
+  "type": ["ui"],
+  "apiVersion": 4,
+  "engines": { "twilightEcho": ">=1.4.0-0" },
+  "permissions": ["ui:inject"],
+  "contributes": {
+    "experiences": [
+      {
+        "id": "battery",
+        "name": "设备电量",
+        "entry": "ui/index.html",
+        "bridgeVersion": 2,
+        "launch": "sidebar",
+        "sidebar": { "height": 128 }
+      }
+    ]
+  }
+}

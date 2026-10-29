@@ -16,6 +16,8 @@
 
 `useAppNavigation` 保存当前页面及参数，前景工具页面保存来源页面和上一层工具，并继续使用分层返回机制。已访问的流媒体入口分别按需挂载、保留音源、筛选、详情栈和滚动状态；播放器编排不随切页改变。侧栏开关为会话状态，每次启动收起，切页保持当前开关状态。
 
+API v4 插件可通过 `contributes.experiences[].launch: "sidebar"` 在导航列表末尾嵌入 HTML 小组件。`extensions/registry.ts` 将其与页面目录分开，`SideMenu` 只在真实侧栏打开时加载 `experience/SidebarWidgets.vue`；图标栏用精确 experience ID 打开已有 flyout。`EmbeddedExperience.vue` 复用权限桥，管理来源校验、连接／重试、外观事件和卸载清理，不改变播放器或页面导航。示例与字段见 [侧栏小组件](./plugin-sidebar-widgets.md)。
+
 `AppSettings.navigationPages` 为版本 1 的 `order`／`hidden` 配置，复用现有设置 IPC。旧设置采用默认目录，启动主页选择沿用 `startupHomePage`。插件 ID 为 `plugin:<pluginId>:<pageId>`，停用不清理偏好；新增页面追加，重新启用恢复已存位置。允许隐藏全部页面，固定保留底部“编辑页面”入口；全部隐藏时还可通过“添加常用页面”打开编辑器，重新勾选页面。编辑对话框仅在保存时持久化，取消撤销草稿，恢复默认也需保存。
 
 侧栏内容独立滚动，底部固定纵向“导入歌曲、编辑页面”工具栏，导航列表伸展填满剩余空间，工具按钮支持上下键切换。播放栏与侧栏并排时不预留播放栏高度，只有实际重叠时才避让。顶部“音乐空间”仅保留标题，编辑入口统一放在底部；普通窗口内容让位，窄窗口覆盖显示。自定义主题外壳的常驻／隐藏设置继续生效，隐藏外壳仍可用菜单按钮临时打开侧栏。主题样式和页面偏好分别管理，切换主题不写入页面配置。应用收藏与平台喜欢、设备记录与平台历史的归属见 [playlist-lifecycle.md](./playlist-lifecycle.md)，搜索请求与来源约束见 [search-and-library-identity.md](./search-and-library-identity.md)。

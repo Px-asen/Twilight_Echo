@@ -1,6 +1,6 @@
 # @twilight-echo/plugin-api
 
-TypeScript typings for Twilight Echo plugin API v1 and v2.
+TypeScript typings for Twilight Echo plugin API v1–v4.
 
 ```ts
 import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
@@ -16,9 +16,18 @@ through `activate(context)`.
 The v1 UI typings include the controlled extension points currently exposed by
 the host: `playerBarButton`, `settingsPanel`, `sidebarPage`,
 `localSidebarItem`, and `streamingHome`. Commands may return text or
-JSON-serializable data for host rendering. Arbitrary plugin-provided HTML is not
-a supported extension path; the legacy `renderMode` field is retained only for
+JSON-serializable data for host rendering. These command contributions do not
+execute HTML; the legacy `renderMode` field is retained only for
 API v1 source compatibility and is ignored by the host.
+
+API v4 `PluginExperience` entries load packaged HTML in an isolated iframe.
+Set `launch: 'sidebar'` to embed a custom widget below navigation, or use
+`'page'` (default) / `'panel'` for the existing full-window and flyout views.
+Optional `sidebar.height` is an integer from 64–480 CSS px, default 144, capped
+at 55vh when embedded. Embedded views receive `PluginExperienceAppearance`
+through the bridge's `appearance` event on connect and host appearance changes.
+See `docs/plugin-sidebar-widgets.md` and `sdk/examples/sidebar-widget` in the
+Twilight Echo repository for the complete runnable example and lifecycle contract.
 
 Themes are declared in `plugin.json` under `contributes.themes`. The legacy
 `twilight.themes.register()` signature is retained for API v1 source

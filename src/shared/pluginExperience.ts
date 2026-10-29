@@ -7,8 +7,11 @@ export interface PluginExperience {
    * How the host surfaces this experience. `page` (default) lists it in the
    * sidebar navigation; `panel` hides it from navigation — the plugin opens it
    * through its own `titleBarButton` and the host mounts it in a flyout.
+   * `sidebar` embeds it below navigation, above the import/edit tools.
    */
-  launch?: 'page' | 'panel'
+  launch?: 'page' | 'panel' | 'sidebar'
+  /** Only for launch: sidebar. The iframe height in CSS px, default 144 (64–480). */
+  sidebar?: { height?: number }
 }
 
 export interface InstalledExperience extends PluginExperience {
@@ -81,15 +84,38 @@ export function normalizeExperiences(manifest: {
       throw new Error('Experience entry must be a packaged HTML file')
     if (bridgeVersion !== 1 && bridgeVersion !== 2)
       throw new Error('Unsupported experience bridge version')
-    if (value.launch !== undefined && value.launch !== 'page' && value.launch !== 'panel')
-      throw new Error('Experience launch must be page or panel')
+    if (
+      value.launch !== undefined &&
+      value.launch !== 'page' &&
+      value.launch !== 'panel' &&
+      value.launch !== 'sidebar'
+    )
+      throw new Error('Experience launch must be page, panel or sidebar')
+    let sidebar: PluginExperience['sidebar']
+    if (value.sidebar !== undefined) {
+      if (
+        value.launch !== 'sidebar' ||
+        !value.sidebar ||
+        typeof value.sidebar !== 'object' ||
+        Array.isArray(value.sidebar)
+      )
+        throw new Error('Experience sidebar options require launch: sidebar')
+      const { height } = value.sidebar as Record<string, unknown>
+      if (
+        height !== undefined &&
+        (typeof height !== 'number' || !Number.isInteger(height) || height < 64 || height > 480)
+      )
+        throw new Error('Experience sidebar height must be an integer between 64 and 480')
+      sidebar = height === undefined ? {} : { height }
+    }
     ids.add(id)
     return {
       id,
       name: name.trim(),
       entry,
       bridgeVersion,
-      ...(value.launch === 'panel' ? { launch: 'panel' as const } : {})
+      ...(value.launch === 'panel' || value.launch === 'sidebar' ? { launch: value.launch } : {}),
+      ...(sidebar ? { sidebar } : {})
     }
   })
 }

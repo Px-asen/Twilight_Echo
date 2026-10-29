@@ -18,7 +18,7 @@ export function androidPluginRuntime(raw: unknown): AndroidPluginRuntime {
   return { ...value, permissions: [...new Set(value.permissions)], networkHosts: [...new Set(value.networkHosts)] }
 }
 
-export function mobilePluginManifest(raw: any, appVersion = '1.4.0-perview.1') {
+export function mobilePluginManifest(raw: any, appVersion = '1.4.0-perview0') {
   const manifest = validatePluginManifest(raw)
   if (!isCompatibleTwilightRange(manifest.engines.twilightEcho, appVersion)) throw new Error('插件需要其他版本的 Twilight Echo')
   if (manifest.type.length !== 1 || manifest.type[0] !== 'provider' || manifest.binary ||

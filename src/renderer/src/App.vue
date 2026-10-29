@@ -588,7 +588,7 @@ watch(
 const { loadSettings, hydrateStartupSnapshot, settings, updateSettings } = useSettingsStore()
 useMotionPreference(computed(() => settings.value.motionPreference))
 useLanguagePreference(computed(() => settings.value.language))
-const { uiContributions, syncExtensions } = useExtensionRegistry()
+const { uiContributions, sidebarExperiences, syncExtensions } = useExtensionRegistry()
 const availablePluginPages = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
 )
@@ -1014,6 +1014,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         :liquid-material="liquidGlassChromeActive"
         :active-key="sideMenuActiveKey"
         :pages="navigationPages"
+        :widgets="sidebarExperiences"
         @vue:mounted="startSideMenuMonitor"
         @select-page="selectSidebarPage($event.target)"
       />

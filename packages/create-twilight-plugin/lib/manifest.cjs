@@ -189,6 +189,15 @@ function validatePluginManifest(raw) {
       if (typeof item.entry !== 'string' || !/^[a-zA-Z0-9_/-]+\.html$/.test(item.entry) || item.entry.startsWith('/') || item.entry.split('/').includes('..'))
         throw new Error('Experience entry must be a packaged HTML file')
       if (item.bridgeVersion !== 1 && item.bridgeVersion !== 2) throw new Error('Unsupported experience bridge version')
+      if (item.launch !== undefined && !['page', 'panel', 'sidebar'].includes(item.launch))
+        throw new Error('Experience launch must be page, panel or sidebar')
+      if (item.sidebar !== undefined) {
+        if (item.launch !== 'sidebar' || !isRecord(item.sidebar))
+          throw new Error('Experience sidebar options require launch: sidebar')
+        const { height } = item.sidebar
+        if (height !== undefined && (!Number.isInteger(height) || height < 64 || height > 480))
+          throw new Error('Experience sidebar height must be an integer between 64 and 480')
+      }
       ids.add(item.id)
     }
   }

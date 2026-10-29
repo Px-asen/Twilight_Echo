@@ -3,7 +3,7 @@ import { useCoreConnection } from '../stores/coreConnection.ts'
 import { corePlugins } from './corePlugins.ts'
 import type { InstalledExperience } from '../../../shared/pluginExperience.ts'
 import type { StructuredPluginTheme } from '../../../shared/theme.ts'
-import { useAppNoticeStore } from '../stores/useAppNoticeStore'
+import { useAppNoticeStore } from '../stores/useAppNoticeStore.ts'
 
 export type UiContributionKind =
   | 'sidebarPage'
@@ -55,6 +55,9 @@ export function useExtensionRegistry(options: { listen?: boolean } = {}) {
     uiContributions: computed(() => uiContributions.value),
     themeContributions: computed(() => themeContributions.value),
     experiences: computed(() => experienceContributions.value),
+    sidebarExperiences: computed(() =>
+      experienceContributions.value.filter((experience) => experience.launch === 'sidebar')
+    ),
     syncExtensions
   }
 }
@@ -87,9 +90,8 @@ export async function syncExtensions(): Promise<void> {
     experienceContributions.value = experiences as InstalledExperience[]
     const nextUi: UiContribution[] = []
     for (const experience of experiences) {
-      // Panel experiences are opened from their plugin's titlebar button in a
-      // flyout; they intentionally stay out of sidebar navigation.
-      if (experience.launch === 'panel') continue
+      // Embedded experiences are mounted separately; neither is a page or startup interface.
+      if (experience.launch === 'panel' || experience.launch === 'sidebar') continue
       nextUi.push({
         pluginId: experience.pluginId,
         id: experience.id,

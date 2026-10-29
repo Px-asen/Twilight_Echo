@@ -71,7 +71,7 @@ const pluginTitleButtons = computed(() =>
   )
 )
 const pluginFlyoutOpenFor = (pluginId: string): boolean =>
-  pluginFlyout.target.value?.pluginId === pluginId
+  pluginFlyout.target.value?.pluginId === pluginId && !pluginFlyout.target.value?.experienceId
 const togglePluginFlyout = (contribution: { pluginId: string; title: string }): void => {
   pluginFlyout.toggle({ pluginId: contribution.pluginId, title: contribution.title })
 }

@@ -185,6 +185,7 @@ bridge 会在失败后保留该 key，payload 改变或上一次调用成功后�
 | `MediaProvider` | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现）  |
 | 事件总线        | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停        |
 | 侧边栏页面      | ui       | 插件提供自定义页面渲染入口                               |
+| 侧栏小组件（v4） | ui      | `contributes.experiences[].launch: "sidebar"`，包内 HTML 独立嵌入侧栏 |
 | PlayerBar 按钮  | ui       | 附加操作按钮                                             |
 | 设置页配置区    | ui       | 插件自有设置界面                                         |
 | 主题            | theme    | CSS 变量、样式表与宿主托管布局；**仅声明式，不执行脚本** |
@@ -194,6 +195,14 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 和 `settingsPanel` 均通过 command 回到插件宿主进程执行业务逻辑，不向插件开放
 任意 DOM 权限。主题插件由用户在外观设置中显式选择后生效；宿主一次只应用一个
 插件主题，且 stylesheet 必须位于插件包目录内。
+
+API v4 的自定义 HTML 使用 `contributes.experiences` 和 `plugin-ui://` 隔离 iframe，
+不改变上述 command 扩展的语义。`launch` 为 `page`（默认）、`panel` 或 `sidebar`；
+侧栏小组件要求 `ui` 类型与 `ui:inject`，不会新增页面入口或完整界面选项。
+仅 `sidebar` 可声明 `sidebar.height`（默认 144 CSS px，64–480 整数，显示时最多 55vh）。
+展开／紧凑侧栏内嵌，图标栏通过宿主 flyout 打开；挂载时连接受限桥与外观事件，
+收起、侧栏关闭和停用时移除 iframe 并释放端口与订阅。完整契约见
+[侧栏小组件](./plugin-sidebar-widgets.md) 和 [experience 桥](./plugin-experiences.md)。
 
 `contributes.themes[]` 在 API v1 内可选增加 `structured` 字段：`schemaVersion: 1`，
 `variants.pureWhite/dark.tokens` 使用宿主登记的稳定主题令牌 ID，并可声明受控的

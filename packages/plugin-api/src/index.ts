@@ -53,7 +53,7 @@ export interface TwilightPluginManifest {
   androidRuntime?: TwilightAndroidPluginRuntime
 }
 
-/** API v4: isolated, packaged full-window interface. No preload or Node access. */
+/** API v4: isolated, packaged page, panel or sidebar interface. No preload or Node access. */
 export interface PluginExperience {
   id: string
   name: string
@@ -63,9 +63,12 @@ export interface PluginExperience {
   /**
    * `page` (default) lists the experience in sidebar navigation; `panel` keeps
    * it out of navigation so the plugin's `titleBarButton` opens it in the
-   * host-owned right-side flyout instead.
+   * host-owned right-side flyout instead. `sidebar` embeds a widget below
+   * navigation and above the import/edit tools, without adding a page.
    */
-  launch?: 'page' | 'panel'
+  launch?: 'page' | 'panel' | 'sidebar'
+  /** Only for launch: sidebar. Iframe height in CSS px, default 144 (integer, 64–480). */
+  sidebar?: { height?: number }
 }
 
 export interface PluginExperienceContribution {
@@ -78,10 +81,20 @@ export interface PluginExperienceRequest {
   args?: Record<string, unknown>
 }
 
+/** Host appearance supplied to embedded (sidebar/flyout) experiences on connect and changes. */
+export interface PluginExperienceAppearance {
+  theme: 'dark' | 'pureWhite'
+  colors: { text: string; muted: string; accent: string; surface: string; border: string }
+  fontFamily: string
+  fontSize: string
+  reducedMotion: boolean
+}
+
 export type PluginExperienceMessage =
   | { id: number; value: unknown }
   | { id: number; error: string }
   | { event: 'player' | 'queue' | 'lyrics' | 'library'; value: unknown }
+  | { event: 'appearance'; value: PluginExperienceAppearance }
   /** Live event pushed by this plugin's own background code (requires the `network` permission). */
   | { event: 'plugin'; value: { event: string; value: unknown } }
 

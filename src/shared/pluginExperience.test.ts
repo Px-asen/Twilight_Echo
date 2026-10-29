@@ -130,3 +130,42 @@ test('panel launch keeps an experience out of sidebar navigation', () => {
     })
   )
 })
+
+test('sidebar launch accepts packaged widgets with an optional bounded height', () => {
+  for (const sidebar of [undefined, {}, { height: 64 }, { height: 144 }, { height: 480 }]) {
+    const widget = { ...experience, launch: 'sidebar', ...(sidebar ? { sidebar } : {}) }
+    const source = { ...manifest, contributes: { experiences: [widget] } }
+    assert.deepEqual(normalizeExperiences(source), [widget])
+    assert.equal(validatePluginManifest(source).main, undefined)
+  }
+})
+
+test('sidebar sizing rejects malformed options without changing page or panel defaults', () => {
+  for (const sidebar of [
+    null,
+    [],
+    '144',
+    { height: 63 },
+    { height: 481 },
+    { height: 64.5 },
+    { height: '144' },
+    { height: NaN },
+    { height: Infinity }
+  ]) {
+    assert.throws(() =>
+      normalizeExperiences({
+        ...manifest,
+        contributes: { experiences: [{ ...experience, launch: 'sidebar', sidebar }] }
+      })
+    )
+  }
+  for (const launch of [undefined, 'page', 'panel']) {
+    assert.throws(() =>
+      normalizeExperiences({
+        ...manifest,
+        contributes: { experiences: [{ ...experience, launch, sidebar: { height: 144 } }] }
+      })
+    )
+  }
+  assert.deepEqual(normalizeExperiences(manifest), [experience])
+})
