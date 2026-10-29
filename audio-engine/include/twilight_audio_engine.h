@@ -123,6 +123,9 @@ TAE_API TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, s
 
 TAE_API TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json);
 TAE_API TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json);
+/** DSP state may include an optional outputConfig object (same fields as
+ * TAE_SetOutputConfig). Send it with graph.outputStage when changing a fixed
+ * rate and its allowed set together; legacy processing/graph payloads remain valid. */
 TAE_API TAE_Result TAE_ApplyDspState(
     TAE_EngineHandle engine,
     uint64_t revision,

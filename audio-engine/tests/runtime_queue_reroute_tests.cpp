@@ -1,6 +1,7 @@
 #include "../core/TwilightAudioEngine.h"
 #include "../core/AudioPipeline.h"
 #include "../core/AudioPipelineRenderUtils.h"
+#include "../core/PcmSampleRatePolicy.h"
 #include "../core/FixedSpscQueue.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
@@ -810,6 +811,7 @@ std::atomic<bool> g_fakeTopologyDeviceInvalidated{false};
 std::atomic<size_t> g_renderFramesDuringStart{0};
 std::atomic<int> g_maxNativeDsdSampleRate{0};
 std::atomic<int> g_maxDopCarrierSampleRate{0};
+std::atomic<int> g_negotiatedPcmSampleRate{0};
 // Simulates a compatibility-route device that is configured but not present
 // (proxy driver uninstalled, or the device is busy). Any open() for this id fails.
 constexpr const char* kMissingDsdProxyDeviceId = "missing-dsd-proxy";
@@ -819,6 +821,10 @@ std::atomic<int> g_blockedDecodeReaders{0};
 std::atomic<int> g_injectedRemoteReadFailures{0};
 std::atomic<bool> g_blockNextReconnect{false};
 std::atomic<int> g_blockedReconnects{0};
+std::atomic<bool> g_blockSeekPreloadOpen{false};
+std::atomic<bool> g_seekPreloadOpenBlocked{false};
+std::atomic<bool> g_releaseSeekPreloadOpen{false};
+std::atomic<bool> g_failNextSeek{false};
 std::mutex g_decoderSeekMutex;
 std::vector<double> g_decoderSeekSeconds;
 void resetDecoderSeekProbe() {
@@ -1126,6 +1132,7 @@ class FakeOutputBackend final : public IOutputBackend {
       }
     } else {
       opened = requestedFormat;
+      if (g_negotiatedPcmSampleRate.load() > 0) opened.sampleRate = g_negotiatedPcmSampleRate.load();
     }
     state_->openedFormat = opened;
 
@@ -1145,6 +1152,8 @@ class FakeOutputBackend final : public IOutputBackend {
     info.actualBitDepth = opened.bitDepth;
     info.actualChannels = opened.channelCount;
     info.actualOutputFormat = sampleFormatToString(opened.sampleFormat);
+    info.requestedSampleRate = requestedFormat.sampleRate;
+    info.requestedSampleFormat = sampleFormatToString(requestedFormat.sampleFormat);
     info.bufferSizeFrames = state_->outputConfig.preferredBufferSize == 0
                                 ? 256
                                 : static_cast<int>(state_->outputConfig.preferredBufferSize);
@@ -1393,6 +1402,10 @@ TrackProfile buildTrackProfile(const std::string& source) {
     profile.stream.sourceFormat = makePcmFormat(48000, 1, 16, AudioSampleFormat::Int16Interleaved);
   } else if (source.find("pcm-surround") != std::string::npos) {
     profile.stream.sourceFormat = makePcmFormat(96000, 6, 24, AudioSampleFormat::Int24Interleaved);
+  } else if (source.find("pcm-88k") != std::string::npos) {
+    profile.stream.sourceFormat.sampleRate = 88200;
+  } else if (source.find("pcm-48k") != std::string::npos) {
+    profile.stream.sourceFormat.sampleRate = 48000;
   }
   profile.stream.decodedFormat = profile.stream.sourceFormat;
   profile.defaultOutput = profile.stream.decodedFormat;
@@ -1456,6 +1469,7 @@ class EngineHarness {
     g_renderFramesDuringStart = 0;
     g_maxNativeDsdSampleRate = 0;
     g_maxDopCarrierSampleRate = 0;
+    g_negotiatedPcmSampleRate = 0;
     engine_.setOutputBackend("wasapi-exclusive");
   }
 
@@ -1469,6 +1483,7 @@ class EngineHarness {
     g_renderFramesDuringStart = 0;
     g_maxNativeDsdSampleRate = 0;
     g_maxDopCarrierSampleRate = 0;
+    g_negotiatedPcmSampleRate = 0;
     g_decodeFirstReadDelayMs = 0;
     g_decodeEveryReadDelayMs = 0;
     std::error_code ignored;
@@ -4713,6 +4728,126 @@ void testDecodedTimelineOverridesRoundedQueueDurations() {
   assert(playbackJsonNumber(info.substr(upcoming), "duration") == 298.701234567891);
 }
 
+void testPcmSampleRateSelection() {
+  OutputConfig config;
+  config.deviceSampleRates = {48000};
+  assert(selectPcmSampleRate(44100, 44100, config) == 44100); // Legacy auto is not gated.
+  assert(selectPcmSampleRate(44100, 96000, config, true) == 96000); // Legacy fixed too.
+  config.sampleRateFamilySync = true;
+  config.deviceSampleRates = {48000, 88200, 96000, 176400};
+  assert(selectPcmSampleRate(44100, 44100, config) == 88200);
+  assert(selectPcmSampleRate(88200, 88200, config) == 88200);
+  assert(selectPcmSampleRate(352800, 352800, config) == 176400);
+  assert(selectPcmSampleRate(192000, 192000, config) == 96000);
+  config.allowedSampleRates = {48000, 96000};
+  assert(selectPcmSampleRate(44100, 44100, config) == 48000);
+  config.deviceSampleRates = {44100};
+  assert(!selectPcmSampleRate(44100, 44100, config));
+  config.deviceSampleRates.clear();
+  config.allowedSampleRates.clear();
+  assert(selectPcmSampleRate(44100, 44100, config) == 44100); // Undeclared is not unavailable.
+  config.allowedSampleRates = {40000, 56000};
+  assert(selectPcmSampleRate(48000, 48000, config) == 56000); // Nearest tie goes up.
+  config.sampleRateFamilySync = false;
+  assert(!selectPcmSampleRate(44100, 96000, config, true));
+  config.allowedSampleRates = {96000, 48000};
+  assert(selectPcmSampleRate(44100, 48000, config, true) == 48000);
+  assert(!validPcmSampleRates({7999}) && !validPcmSampleRates({384001}));
+  assert(!validPcmSampleRates({48000, 48000}) && !validPcmSampleRates(std::vector<int>(33, 48000)));
+  config.sampleRateFamilySync = config.continuityFirst = true;
+  assert(!pcmSampleRateConstraintsCompatible(config));
+}
+
+void testPcmRateCapabilityChangePreservesPauseAndNegotiatedFacts() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setOutputConfig(R"({"sampleRateFamilySync":true,"deviceSampleRates":[88200,96000]})") == TAE_RESULT_OK);
+  g_negotiatedPcmSampleRate = 48000;
+  assert(engine.play("current.flac", 0.1) == TAE_RESULT_OK);
+  auto backend = waitForLatestStartedBackendState();
+  assert(backend && backend->requestedFormat.sampleRate == 88200 && backend->openedFormat.sampleRate == 48000);
+  assertLatestPlaybackContains(engine, "\"requestedSampleRate\":88200");
+  assertLatestPlaybackContains(engine, "\"actualSampleRate\":48000");
+  assertLatestPlaybackContains(engine, "\"decodedSampleRate\":48000");
+  assertLatestPlaybackContains(engine, "\"resampled\":true");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assert(engine.pause() == TAE_RESULT_OK);
+  const auto position = playbackJsonNumber(engine.getPlaybackInfoJson(), "position");
+  g_negotiatedPcmSampleRate = 0;
+  assert(engine.setOutputConfig(R"({"sampleRateFamilySync":true,"deviceSampleRates":[96000]})") == TAE_RESULT_OK);
+  backend = waitForLatestStartedBackendState();
+  assert(backend && backend->requestedFormat.sampleRate == 96000);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - position) < 0.001);
+  const auto count = g_backendRegistry.snapshots().size();
+  for (const auto& invalid : {R"({"allowedSampleRates":[44100],"deviceSampleRates":[48000]})",
+       R"({"allowedSampleRates":"bad"})", R"({"allowedSampleRates":[48000,]})",
+       R"({"sampleRateFamilySync":"true"})", R"({"allowedSampleRates":[48000.5]})",
+       R"({"allowedSampleRates":[48000,48000]})"}) {
+    assert(engine.setOutputConfig(invalid) == TAE_RESULT_INVALID_ARGUMENT);
+    assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+    assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
+    assert(g_backendRegistry.snapshots().size() == count);
+  }
+  assert(engine.play("current.flac", position) == TAE_RESULT_OK);
+  assert(engine.setOutputConfig(R"({"sampleRateFamilySync":true,"deviceSampleRates":[88200,96000]})") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"requestedSampleRate\":88200");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - position) < 0.001);
+}
+
+void testPcmRatePreloadUsesRequestsRatherThanNegotiatedRate() {
+  for (const bool family : {false, true}) {
+    EngineHarness harness;
+    AudioPipeline pipeline;
+    OutputConfig config;
+    config.sampleRateFamilySync = family;
+    config.allowedSampleRates = {88200, 96000};
+    std::string error;
+    assert(pipeline.setOutputConfig(config, &error));
+    QueueItem current, next, other;
+    current.id = "current"; current.source = "current.flac";
+    next.id = "same-family"; next.source = "pcm-88k.flac";
+    other.id = "other-family"; other.source = "pcm-192k.flac";
+    g_negotiatedPcmSampleRate = 48000;
+    assert(pipeline.play(current, next, 0, "wasapi-exclusive", "auto", 0.5,
+                         "{\"gapless\":true}", true, &error) == TAE_RESULT_OK);
+    assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+    assert(!pipeline.preloadNext(other, &error));
+    assert(pipeline.status().gaplessBlockedReason == "format_mismatch");
+    pipeline.stop();
+  }
+}
+
+void testPcmGraphAndAllowedSetCommitTogether() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.play("current.flac", 0.1) == TAE_RESULT_OK);
+  assert(engine.pause() == TAE_RESULT_OK);
+  for (const int rate : {48000, 96000}) {
+    const auto state = "{\"revision\":" + std::to_string(rate) +
+        ",\"processing\":{\"gapless\":true},\"graph\":{\"nodes\":[],\"outputStage\":{\"targetSampleRate\":" +
+        std::to_string(rate) + "}},\"outputConfig\":{\"allowedSampleRates\":[" + std::to_string(rate) + "]}}";
+    assert(engine.applyDspState(rate, state) == TAE_RESULT_OK);
+    assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+    assert(waitForLatestStartedBackendState()->requestedFormat.sampleRate == rate);
+  }
+  const auto count = g_backendRegistry.snapshots().size();
+  assert(engine.setOutputConfig(R"({"allowedSampleRates":[48000]})") == TAE_RESULT_INVALID_ARGUMENT);
+  assert(g_backendRegistry.snapshots().size() == count);
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
+  assert(engine.applyDspState(100000, R"({"revision":100000,"processing":{},"graph":{"nodes":[],"outputStage":{"targetSampleRate":48000}},"outputConfig":{"allowedSampleRates":[96000]}})") == TAE_RESULT_INVALID_ARGUMENT);
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
+  // A graph preparation failure must roll the proposed policy back too.
+  assert(engine.applyDspState(100001, R"({"revision":100001,"processing":{},"graph":{"nodes":[{"id":"missing","type":"convolver","enabled":true,"params":{"impulseResponsePath":"Z:/twilight-definitely-missing/p2.wav"}}],"outputStage":{"targetSampleRate":48000}},"outputConfig":{"allowedSampleRates":[48000]}})") == TAE_RESULT_INVALID_ARGUMENT);
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
+  assert(waitForLatestStartedBackendState()->outputConfig.allowedSampleRates == std::vector<int>{96000});
+  assert(engine.seek(0.1) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+}
+
 void testContinuityPolicyConvertsMixedFormatsAndRejectsDsdPreload() {
   for (const auto& nextSource : {"pcm-192k.flac", "pcm-mono-16.flac", "pcm-surround.flac"}) {
     EngineHarness harness;
@@ -4869,6 +5004,82 @@ void testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain() {
   // one frame plus its serialized decimal rounding error.
   assert(std::abs(clampedPosition - 0.08) <= (1.1 / 44100.0));
   assert(decoderSeekObserved(0.11));
+}
+
+void testSeekEndSurvivesSlowPreloadReset(bool paused, bool cue, double volume) {
+  EngineHarness harness;
+  AudioPipeline pipeline;
+  QueueItem current;
+  current.id = "seek-current";
+  current.source = "seek-current.flac";
+  if (cue) {
+    current.cueStartSeconds = 0.02;
+    current.cueEndSeconds = 0.04;
+  }
+  QueueItem next;
+  next.id = "seek-next";
+  next.source = "seek-preload-next.flac";
+  std::string error;
+  assert(pipeline.play(current, next, 0.0, "wasapi-exclusive", "auto", volume,
+      kUnityGainProcessingConfigJson, true, &error, paused) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  // Hold the successor's reopen after the active decoder has sought to EOF.
+  // Real network sources can take much longer than the former 300 ms lead.
+  g_seekPreloadOpenBlocked = false;
+  g_releaseSeekPreloadOpen = false;
+  g_blockSeekPreloadOpen = true;
+  TAE_Result result = TAE_RESULT_INTERNAL_ERROR;
+  std::thread seeker([&] { result = pipeline.seek(cue ? 99.0 : 30.0, &error); });
+  assert(waitUntil([] { return g_seekPreloadOpenBlocked.load(); }));
+  const auto callbackStarted = std::chrono::steady_clock::now();
+  const auto duringSeek = renderBackendFrames(backend, 256);
+  const auto callbackTime = std::chrono::steady_clock::now() - callbackStarted;
+  std::this_thread::sleep_for(std::chrono::milliseconds(350));
+  renderBackendFrames(backend, 256);
+  g_releaseSeekPreloadOpen = true;
+  seeker.join();
+  assert(result == TAE_RESULT_OK);
+  assert(pipeline.preloadNext(std::nullopt, &error));
+  assert(callbackTime < std::chrono::milliseconds(100));
+  assert(std::all_of(duringSeek.begin(), duringSeek.end(), [](float value) { return value == 0.0f; }));
+  assert(!pipeline.consumeEnded());
+  assert(pipeline.status().state == (paused ? PipelineState::Paused : PipelineState::Playing));
+  if (paused) {
+    renderBackendFrames(backend, 256);
+    assert(!pipeline.consumeEnded());
+    assert(pipeline.togglePause() == TAE_RESULT_OK);
+  }
+  // EOF must be observed on the resumed callback, not cleared after a callback
+  // has stopped rendering. Promotion is disabled in this direct pipeline test.
+  renderBackendFrames(backend, 256);
+  assert(pipeline.status().state == PipelineState::Stopped);
+  assert(pipeline.consumeEnded());
+  pipeline.stop();
+}
+
+void testFailedSeekRestoresRenderState(bool paused) {
+  EngineHarness harness;
+  AudioPipeline pipeline;
+  QueueItem item;
+  item.id = item.source = "seek-failure.flac";
+  std::string error;
+  assert(pipeline.play(item, std::nullopt, 0.0, "wasapi-exclusive", "auto", 0.5,
+      kUnityGainProcessingConfigJson, true, &error, paused) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  g_failNextSeek = true;
+  assert(pipeline.seek(2.0, &error) == TAE_RESULT_INTERNAL_ERROR);
+  assert(error == "Injected seek failure");
+  assert(pipeline.status().state == (paused ? PipelineState::Paused : PipelineState::Playing));
+  if (paused) {
+    const auto silence = renderBackendFrames(backend, 256);
+    assert(std::all_of(silence.begin(), silence.end(), [](float value) { return value == 0.0f; }));
+    assert(pipeline.togglePause() == TAE_RESULT_OK);
+  }
+  assert(waitUntil([&] { return bufferHasSampleAbove(renderBackendFrames(backend, 256), 0.01f); }));
+  pipeline.stop();
 }
 
 void testCueVirtualPregapRendersExactPcmSilenceAndMapsSeek() {
@@ -5206,6 +5417,10 @@ void FFmpegDecoder::setInputFactory(std::shared_ptr<const SeekableInputFactory>)
 bool FFmpegDecoder::cancelInput() { return false; }
 
 bool FFmpegDecoder::open(const std::string& source, std::string* error) {
+  if (source == "seek-preload-next.flac" && g_blockSeekPreloadOpen.exchange(false)) {
+    g_seekPreloadOpenBlocked = true;
+    while (!g_releaseSeekPreloadOpen.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
   if (impl_->positionFrames > 0 && source.find("blocked-reconnect") != std::string::npos &&
       g_blockNextReconnect.exchange(false)) {
     // A real reopen closes its previous AVFormatContext before new IO starts.
@@ -5334,6 +5549,10 @@ size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
 }
 
 bool FFmpegDecoder::seek(double seconds, std::string* error) {
+  if (g_failNextSeek.exchange(false)) {
+    if (error) *error = "Injected seek failure";
+    return false;
+  }
   if (!impl_->opened) {
     if (error) *error = "Audio source is not open";
     return false;
@@ -5381,6 +5600,21 @@ void FFmpegDecoder::pollStreamMetadata() {}
   } while (false)
 
 int main() {
+  if (std::getenv("TAE_RUNTIME_PCM_RATE_ONLY")) {
+    RUN_RUNTIME_CASE(testPcmSampleRateSelection());
+    RUN_RUNTIME_CASE(testPcmRateCapabilityChangePreservesPauseAndNegotiatedFacts());
+    RUN_RUNTIME_CASE(testPcmRatePreloadUsesRequestsRatherThanNegotiatedRate());
+    RUN_RUNTIME_CASE(testPcmGraphAndAllowedSetCommitTogether());
+    return 0;
+  }
+  if (std::getenv("TAE_RUNTIME_SEEK_END_ONLY")) {
+    for (const bool paused : {false, true})
+      for (const bool cue : {false, true})
+        for (const double volume : {0.5, 1.0})
+          RUN_RUNTIME_CASE(testSeekEndSurvivesSlowPreloadReset(paused, cue, volume));
+    for (const bool paused : {false, true}) RUN_RUNTIME_CASE(testFailedSeekRestoresRenderState(paused));
+    return 0;
+  }
   if (std::getenv("TAE_RUNTIME_AB_LOOP_ONLY")) {
     RUN_RUNTIME_CASE(testLoopRangeKeepsSameOccurrenceButClearsDuplicateAndCue());
     RUN_RUNTIME_CASE(testLoopRangeClearsBeforePromotedDuplicateCanSeek(false, false));
@@ -5573,8 +5807,17 @@ int main() {
   RUN_RUNTIME_CASE(testDecodedTimelineOverridesRoundedQueueDurations());
   RUN_RUNTIME_CASE(testAutoNextPrefersPreloadedPromoteWithoutReopen());
   RUN_RUNTIME_CASE(testContinuityPolicyConvertsMixedFormatsAndRejectsDsdPreload());
+  RUN_RUNTIME_CASE(testPcmSampleRateSelection());
+  RUN_RUNTIME_CASE(testPcmRateCapabilityChangePreservesPauseAndNegotiatedFacts());
+  RUN_RUNTIME_CASE(testPcmRatePreloadUsesRequestsRatherThanNegotiatedRate());
+  RUN_RUNTIME_CASE(testPcmGraphAndAllowedSetCommitTogether());
   RUN_RUNTIME_CASE(testOriginalPolicyRejectsMixedFormatAndPolicySwitchRetainsPause());
   RUN_RUNTIME_CASE(testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain());
+  for (const bool paused : {false, true}) RUN_RUNTIME_CASE(testFailedSeekRestoresRenderState(paused));
+  for (const bool paused : {false, true})
+    for (const bool cue : {false, true})
+      for (const double volume : {0.5, 1.0})
+        RUN_RUNTIME_CASE(testSeekEndSurvivesSlowPreloadReset(paused, cue, volume));
   RUN_RUNTIME_CASE(testCueVirtualPregapRendersExactPcmSilenceAndMapsSeek());
   RUN_RUNTIME_CASE(testCueSameSourcePreloadPreservesFullVirtualPregapWithCrossfadeEnabled());
   RUN_RUNTIME_CASE(testCueNativeDsdSegmentUsesBitSampleFrameRate());

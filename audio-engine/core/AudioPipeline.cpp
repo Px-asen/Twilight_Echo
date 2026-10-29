@@ -1,6 +1,7 @@
 #include "AudioPipeline.h"
 #include "AudioPipelineDsdUtils.h"
 #include "AudioPipelineRenderUtils.h"
+#include "PcmSampleRatePolicy.h"
 #include "CrossfadePolicy.h"
 #include "DiagnosticLog.h"
 #include "../dsp/ChannelRouter.h"
@@ -2957,6 +2958,20 @@ TAE_Result AudioPipeline::playInternal(
       requestedPcmFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
     }
 
+    if (!active->stream.isDsd) {
+      if (outputConfig.sampleRateFamilySync && outputStageRequest.targetSampleRate > 0) {
+        if (error) *error = "家族同步不能与固定采样率同时启用";
+        return TAE_RESULT_INVALID_ARGUMENT;
+      }
+      const auto rate = selectPcmSampleRate(active->stream.sourceFormat.sampleRate, requestedPcmFormat.sampleRate,
+          outputConfig, outputStageRequest.targetSampleRate > 0 && !outputConfig.continuityFirst);
+      if (!rate) {
+        if (error) *error = "PCM 采样率与设备能力或允许集合不兼容";
+        return TAE_RESULT_INVALID_ARGUMENT;
+      }
+      requestedPcmFormat.sampleRate = *rate;
+    }
+
     switch (outputConfig.routingMode) {
       case ChannelRoutingMode::MonoToStereo:
       case ChannelRoutingMode::Stereo:
@@ -3819,17 +3834,37 @@ TAE_Result AudioPipeline::stopUnlocked() {
 }
 
 TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
+  std::lock_guard<std::recursive_mutex> transportLock(transportMutex_);
   cancelAutoMix("seek");
   std::shared_ptr<DecodeStream> active;
   {
     std::lock_guard lock(mutex_);
     synchronizeRenderPromotionLocked();
     if (!activeStream_ || outputFormat_.sampleRate <= 0) return TAE_RESULT_NOT_INITIALIZED;
+    // Mute callbacks while the decoder and lookahead are repositioned. In
+    // particular, a slow successor reopen must not let a callback consume EOF
+    // and stop rendering before this seek has committed its new clock.
+    // Seq-cst pairs with callback registration and its render-state sample.
+    renderState_.store(PipelineState::Paused);
+  }
+  // Callbacks never wait for the control path. Drain any callback that sampled
+  // Playing before the pause; later callbacks render transport-safe silence.
+  while (queueTransitionReaders_.load() != 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  {
+    std::lock_guard lock(mutex_);
+    synchronizeRenderPromotionLocked();
     active = activeStream_;
   }
 
   const double boundedSeconds = active->clampRelativePosition(seconds);
-  if (!active->seek(boundedSeconds, error)) return TAE_RESULT_INTERNAL_ERROR;
+  if (!active->seek(boundedSeconds, error)) {
+    std::lock_guard lock(mutex_);
+    renderState_.store(state_, std::memory_order_release);
+    publishStatusLocked();
+    return TAE_RESULT_INTERNAL_ERROR;
+  }
   resetPreloadOverlap();
 
   {
@@ -3851,6 +3886,7 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     dspStatus_ = activeDspChain.status();
     recomputeDspActiveLocked();
     updatePerfectLocked();
+    renderState_.store(state_, std::memory_order_release);
     publishStatusLocked();
   }
   return TAE_RESULT_OK;
@@ -4312,6 +4348,10 @@ void AudioPipeline::recordRenderPerformance(
 }
 
 bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
+  if (!pcmSampleRateConstraintsCompatible(config)) {
+    if (error) *error = "PCM 采样率与设备能力或允许集合不兼容";
+    return false;
+  }
   cancelAutoMix("output_changed");
   std::unique_lock lock(mutex_);
   synchronizeRenderPromotionLocked();
@@ -4750,6 +4790,8 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   DspResamplerQuality resamplerQuality = DspResamplerQuality::Native;
   DspResamplerPhase resamplerPhase = DspResamplerPhase::Linear;
   bool continuityFirst = false;
+  OutputConfig rateConfig;
+  int fixedSampleRate = 0;
   bool activeIsDsd = false;
   bool typedPassthrough = false;
   AudioFormat activeSourceFormat;
@@ -4767,6 +4809,8 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     resamplerQuality = activeStream_ ? activeStream_->actualResamplerQuality : dspConfig_.resamplerQuality;
     resamplerPhase = activeStream_ ? activeStream_->actualResamplerPhase : dspConfig_.resamplerPhase;
     continuityFirst = outputConfig_.continuityFirst;
+    rateConfig = outputConfig_;
+    fixedSampleRate = outputStageRequestFromGraphJson(dspGraphJson_).targetSampleRate;
     activeIsDsd = stream_.isDsd;
     typedPassthrough = activeStream_ && activeStream_->typedPassthrough;
     if (activeStream_) activeSourceFormat = activeStream_->stream.sourceFormat;
@@ -4789,7 +4833,20 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
       ? pcmFormatsSemanticallyMatch(sourceFormat, activeSourceFormat) &&
               pcmFormatsPreserveSource(sourceFormat, outputFormat)
       : pcmFormatsExactMatch(sourceFormat, activeSourceFormat);
-  if (stream->stream.isDsd || activeIsDsd || (!continuityFirst && !autoMixEnabled && !sourceCompatible)) {
+  // A constrained request can put different source rates on the same PCM stream.
+  // A family boundary that selects another rate must still reopen normally.
+  const bool ratePolicyActive = rateConfig.sampleRateFamilySync || !rateConfig.allowedSampleRates.empty();
+  const auto selectedRate = [&](int sourceRate) {
+    const int preferred = continuityFirst ? rateConfig.continuitySampleRate : fixedSampleRate > 0 ? fixedSampleRate : sourceRate;
+    return selectPcmSampleRate(sourceRate, preferred, rateConfig, fixedSampleRate > 0 && !continuityFirst);
+  };
+  const auto activeRate = selectedRate(activeSourceFormat.sampleRate);
+  const auto nextRate = selectedRate(sourceFormat.sampleRate);
+  const bool policyCompatible = ratePolicyActive && !typedPassthrough && activeRate && nextRate &&
+      *activeRate == *nextRate && sourceFormat.channelCount == activeSourceFormat.channelCount;
+  if (stream->stream.isDsd || activeIsDsd ||
+      (!continuityFirst && !autoMixEnabled && !sourceCompatible && !policyCompatible) ||
+      (ratePolicyActive && activeRate != nextRate)) {
     if (error) *error = stream->stream.isDsd || activeIsDsd ? "DSD 不参与 PCM 连续预加载" : "原样优先：相邻来源格式不同";
     std::lock_guard lock(mutex_);
     lastPreloadFormatMismatch_ = true;
@@ -5791,7 +5848,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
   // recordRenderPerformance on every exit path. Any stream retired under a
   // higher epoch may still be referenced by this callback and must outlive it.
   renderObservedStreamEpoch_ = retiredStreamEpoch_.load(std::memory_order_acquire);
-  const PipelineState state = renderState_.load(std::memory_order_acquire);
+  const PipelineState state = renderState_.load();
   DecodeStream* active = renderActiveStream_.load(std::memory_order_acquire);
   const AudioFormat outputFormat = renderOutputFormat_;
   const bool typedPassthroughActive = renderTypedPassthroughActive_.load(std::memory_order_acquire);
@@ -6051,7 +6108,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
   // See renderTyped: sample the retirement epoch before the pointer loads.
   renderObservedStreamEpoch_ = retiredStreamEpoch_.load(std::memory_order_acquire);
-  const PipelineState state = renderState_.load(std::memory_order_acquire);
+  const PipelineState state = renderState_.load();
   const AudioFormat outputFormat = renderOutputFormat_;
   const AudioFormat decodeFormat = renderDecodeFormat_;
   const int channels = std::max(1, outputFormat.channelCount);

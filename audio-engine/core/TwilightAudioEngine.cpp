@@ -9,6 +9,7 @@
 #include "../output/OutputBackendFactory.h"
 #include "../utils/JsonUtils.h"
 #include "DiagnosticLog.h"
+#include "PcmSampleRatePolicy.h"
 
 #include <algorithm>
 #include <atomic>
@@ -681,6 +682,33 @@ float parseFloatField(const std::string& json, const std::string& key, float fal
 
 OutputConfig parseOutputConfigJson(const std::string& json) {
   OutputConfig config;
+  config.sampleRateFamilySync = json_utils::fieldBool(json, "sampleRateFamilySync").value_or(false);
+  const auto parseRates = [&](const char* key) {
+    std::vector<int> rates;
+    const std::string array = json_utils::fieldArray(json, key);
+    if (array.empty()) return json_utils::topLevelFieldValueStart(json, key) ? std::vector<int>{-1} : rates;
+    std::istringstream input(array.substr(1, array.size() - 2));
+    input >> std::ws;
+    while (input.peek() != EOF) {
+      double rate = 0;
+      if (!(input >> rate) || !std::isfinite(rate) || rate < 8000 || rate > 384000 || std::floor(rate) != rate) {
+        return std::vector<int>{-1};
+      }
+      rates.push_back(static_cast<int>(rate));
+      input >> std::ws;
+      if (input.peek() == EOF) break;
+      if (input.get() != ',') return std::vector<int>{-1};
+      input >> std::ws;
+      if (input.peek() == EOF) return std::vector<int>{-1};
+    }
+    return rates;
+  };
+  config.allowedSampleRates = parseRates("allowedSampleRates");
+  config.deviceSampleRates = parseRates("deviceSampleRates");
+  if (json_utils::topLevelFieldValueStart(json, "sampleRateFamilySync") &&
+      !json_utils::fieldBool(json, "sampleRateFamilySync").has_value()) config.allowedSampleRates = {-1};
+  std::sort(config.allowedSampleRates.begin(), config.allowedSampleRates.end());
+  std::sort(config.deviceSampleRates.begin(), config.deviceSampleRates.end());
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.asioOutputChannelStart = std::min<uint32_t>(255, parseUintField(json, "asioOutputChannelStart", 0));
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
@@ -1717,14 +1745,45 @@ TAE_Result TwilightAudioEngine::applyDspState(
   const DspConfig nextConfig = DspChain::parseConfigJson(processingJson);
   DspConfig previousConfig;
   std::string previousGraphJson;
+  OutputConfig previousOutputConfig;
   {
     std::lock_guard lock(mutex_);
     previousConfig = dspConfig_;
     previousGraphJson = dspGraphJson_;
+    previousOutputConfig = outputConfig_;
   }
 
+  // Optional output policy travels with the graph so a valid fixed-rate/set
+  // change cannot be rejected against the preceding graph or preceding set.
+  const auto outputStart = json_utils::topLevelFieldValueStart(stateJson, "outputConfig");
+  const std::string outputJson = json_utils::fieldObject(stateJson, "outputConfig");
+  const OutputConfig nextOutputConfig = outputStart ? parseOutputConfigJson(outputJson) : previousOutputConfig;
+  const bool outputConfigChanged = nextOutputConfig != previousOutputConfig;
+  const std::string nextStage = json_utils::fieldObject(json_utils::fieldObject(stateJson, "graph"), "outputStage");
+  const int fixedRate = static_cast<int>(std::clamp(
+      json_utils::fieldNumber(nextStage, "targetSampleRate").value_or(0.0), 0.0, 384000.0));
+  if ((outputStart && outputJson.empty()) || !pcmSampleRateConstraintsCompatible(nextOutputConfig) ||
+      (nextOutputConfig.sampleRateFamilySync && fixedRate > 0) ||
+      (nextOutputConfig.continuityFirst && (nextOutputConfig.routingMode != ChannelRoutingMode::Auto ||
+       nextOutputConfig.pcmToDsdMode != PcmToDsdMode::Off)) ||
+      (!nextOutputConfig.continuityFirst && fixedRate > 0 &&
+       !selectPcmSampleRate(fixedRate, fixedRate, nextOutputConfig, true))) {
+    emitError("PCM 采样率与设备能力或允许集合不兼容", TAE_RESULT_INVALID_ARGUMENT, "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  const bool ratePolicyChanged = previousOutputConfig.continuityFirst != nextOutputConfig.continuityFirst ||
+      (nextOutputConfig.continuityFirst && previousOutputConfig.continuitySampleRate != nextOutputConfig.continuitySampleRate) ||
+      previousOutputConfig.sampleRateFamilySync != nextOutputConfig.sampleRateFamilySync ||
+      previousOutputConfig.allowedSampleRates != nextOutputConfig.allowedSampleRates ||
+      ((nextOutputConfig.sampleRateFamilySync || !nextOutputConfig.allowedSampleRates.empty()) &&
+       previousOutputConfig.deviceSampleRates != nextOutputConfig.deviceSampleRates);
   std::string error;
+  if (outputConfigChanged && pipeline_ && !pipeline_->setOutputConfig(nextOutputConfig, &error)) {
+    emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   if (!pipeline_ || !pipeline_->applyDspState(revision, stateJson, &error)) {
+    if (outputConfigChanged && pipeline_) pipeline_->setOutputConfig(previousOutputConfig, nullptr);
     emitError(
         error.empty() ? "DSP state application failed" : error,
         TAE_RESULT_INVALID_ARGUMENT,
@@ -1764,8 +1823,14 @@ TAE_Result TwilightAudioEngine::applyDspState(
     dspConfig_ = nextConfig;
     dspConfigJson_ = processingJson;
     dspGraphJson_ = stateJson;
+    if (outputStart) outputConfig_ = nextOutputConfig;
     applyPipelineStatusLocked(pipeline_->status());
     if (pipeline_ && info_.state != PlaybackState::Stopped && !pausedOutputReleased_) {
+      if (ratePolicyChanged) {
+        rerouteReason = "PCM output policy changed";
+        reroutePosition = info_.positionSeconds;
+        rerouteState = info_.state;
+      }
       if (info_.isDsd) {
         const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
         const bool wantsNative =
@@ -1812,7 +1877,8 @@ TAE_Result TwilightAudioEngine::applyDspState(
         return static_cast<int>(std::clamp(
             json_utils::fieldNumber(stage, "targetSampleRate").value_or(0.0), 0.0, 768000.0));
       }();
-      const int desiredPcmRate = nextTargetRate > 0 ? nextTargetRate : info_.sourceSampleRate;
+      const int desiredPcmRate = selectPcmSampleRate(info_.sourceSampleRate,
+          nextTargetRate > 0 ? nextTargetRate : info_.sourceSampleRate, outputConfig_, nextTargetRate > 0).value_or(0);
       const bool exclusiveRateMismatch =
           (info_.outputBackend == "asio" || info_.outputBackend == "wasapi-exclusive" ||
            info_.outputBackend == "coreaudio-exclusive" || info_.outputInfo.exclusive) &&
@@ -1858,6 +1924,17 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
+  const int fixedRate = [&] {
+    std::lock_guard lock(mutex_);
+    const auto graph = json_utils::fieldObject(dspGraphJson_, "graph");
+    const auto stage = json_utils::fieldObject(graph.empty() ? dspGraphJson_ : graph, "outputStage");
+    return static_cast<int>(std::clamp(json_utils::fieldNumber(stage, "targetSampleRate").value_or(0.0), 0.0, 384000.0));
+  }();
+  if (!pcmSampleRateConstraintsCompatible(parsed) || (parsed.sampleRateFamilySync && fixedRate > 0) ||
+      (!parsed.continuityFirst && fixedRate > 0 && !selectPcmSampleRate(fixedRate, fixedRate, parsed, true))) {
+    emitError("PCM 采样率与设备能力或允许集合不兼容", TAE_RESULT_INVALID_ARGUMENT, "output-config");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   if (parsed.continuityFirst &&
       (parsed.routingMode != ChannelRoutingMode::Auto || parsed.pcmToDsdMode != PcmToDsdMode::Off)) {
     emitError("连续优先需要自动声道路由且关闭 PCM 转 DSD", TAE_RESULT_INVALID_ARGUMENT, "output-config");
@@ -1884,6 +1961,9 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
     }
     const bool outputTopologyChanged =
         outputConfig_.continuityFirst != parsed.continuityFirst ||
+        outputConfig_.sampleRateFamilySync != parsed.sampleRateFamilySync ||
+        outputConfig_.allowedSampleRates != parsed.allowedSampleRates ||
+        ((parsed.sampleRateFamilySync || !parsed.allowedSampleRates.empty()) && outputConfig_.deviceSampleRates != parsed.deviceSampleRates) ||
         (parsed.continuityFirst && outputConfig_.continuitySampleRate != parsed.continuitySampleRate) ||
         outputConfig_.routingMode != parsed.routingMode ||
         outputConfig_.pcmToDsdMode != parsed.pcmToDsdMode;
