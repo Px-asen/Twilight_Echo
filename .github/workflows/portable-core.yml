@@ -1,0 +1,55 @@
+name: Portable Core
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: Bundle and scenario corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile --config.ignore-scripts=true
+
+      - name: Type-check the shared Core
+        run: npx tsc --noEmit -p tsconfig.core.json
+
+      # A CI checkout is clean, so this also proves the bundle builds without ALLOW_DIRTY_CORE.
+      - name: Build music-core.js
+        run: pnpm run build:portable-core
+
+      - name: Replay scenarios and host tests
+        run: >-
+          node --test
+          scripts/portable-core-scenarios.test.cjs
+          scripts/portable-embedded-host.test.cjs
+          scripts/portable-audio.test.cjs
+          scripts/core-portable-runtime.test.cjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-core
+          path: dist/portable-core/

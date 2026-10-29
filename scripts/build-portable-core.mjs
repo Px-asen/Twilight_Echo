@@ -211,7 +211,7 @@ async function main() {
     commit: source.commit,
     sourceDirty: source.sourceDirty,
     ...(source.sourceDiffSha256 ? { sourceDiffSha256: source.sourceDiffSha256 } : {}),
-    musicCoreVersion: pkg.version ?? '1.4.0-perview',
+    musicCoreVersion: pkg.version ?? '1.4.0-perview0',
     audioCoreVersion: '0.1.0',
     protocolVersion: 1,
     hostApiVersion: '2.0.0',

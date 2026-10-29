@@ -3703,6 +3703,41 @@ test('Pause remains responsive while cache maintenance gates new source loads, a
   assert.deepEqual(transportCalls(f.engine), [...calls, 'pause'])
 })
 
+for (const control of ['pause', 'seek'] as const) {
+  test(`${control} during lookahead ACK preserves the committed mapping across maintenance restart`, async (t) => {
+    const f = await fixture(t)
+    const entered = deferred<void>(),
+      release = deferred<void>()
+    const rebind = f.engine.rebindQueue.bind(f.engine)
+    f.engine.rebindQueue = async (request) => {
+      const result = await rebind(request)
+      if (request.items.length === 2) {
+        entered.resolve()
+        await release.promise
+      }
+      return result
+    }
+    await f.session.fromQuery({ ids: ['a', 'b'], sort: 'playlist' }, 'a')
+    await entered.promise
+    const controlling = control === 'pause' ? f.session.pause() : f.session.seek(12)
+    release.resolve()
+    await controlling
+    if (control === 'pause') await f.session.play()
+    await tick()
+    assert.equal(f.session.snapshot().error, null)
+    assert.equal(f.engine.items.length, 2)
+    // The successor must remain mappable after the old maintainer was revoked.
+    const next = f.engine.items[1]
+    f.engine.info = { ...f.engine.info, queueIndex: 1, source: next.source, position: 0 }
+    f.engine.emit('playback-info', f.engine.info)
+    await tick()
+    assert.equal(f.session.snapshot().track?.id, 'b')
+    assert.equal(f.session.snapshot().queue?.index, 1)
+    assert.equal(f.session.snapshot().error, null)
+    assert.equal(f.engine.calls.filter((call) => call === 'loadQueue').length, 1)
+  })
+}
+
 test('lookahead holds its resource lease until native rebind ACK, so pruning sees both acknowledged sources', async (t) => {
   const resources = new SourceResources(),
     entered = deferred<void>(),

@@ -40,6 +40,9 @@ import {
 } from '../shared/playbackBookmarks.ts'
 import type { Playlist } from '../shared/playlists.ts'
 import type { TrackData } from '../shared/track.ts'
+import { LIBRARY_PAGE_SIZE } from '../shared/libraryDatabase.ts'
+import { normalizeCueRange, type CueRange } from '../shared/cue.ts'
+import { pickOnlineLyricsText, rankOnlineLyricsCandidates } from './lyrics/onlineLyricsSearch.ts'
 
 ensurePortableRuntimeGlobals()
 
@@ -424,7 +427,7 @@ function migrateLegacyPayload(legacy: Json): Json {
       const at = new Date(num(bookmark.createdAtMs, Date.now())).toISOString()
       return {
         id: str(bookmark.id) || `legacy-bookmark-${trackId}-${int(bookmark.positionSec, 0)}`,
-        trackKey: `local:${record?.filePath || trackId}`,
+        trackKey: `local:${record?.filePath || trackId}${record?.cueRange ? `#cue:${record.cueRange.startSeconds}` : ''}`,
         trackId,
         ...(record?.title ? { title: record.title } : {}),
         ...(record?.artist ? { artist: record.artist } : {}),
@@ -485,7 +488,8 @@ function createSessionStore(rt: Runtime): PortableSessionStorePort {
         log('info', 'Migrating legacy Android Core session payload')
         return { revision, payloadJson: JSON.stringify(migrateLegacyPayload(parsed)) }
       }
-      return { revision, payloadJson }
+      migrateCueSources(parsed)
+      return { revision, payloadJson: JSON.stringify(parsed) }
     },
     async save(payloadJson, expectedRevision) {
       const result = await callPort<Json>(rt, 'sessionStore', 'save', {
@@ -540,6 +544,7 @@ function wireQueueItem(item: AudioEngineQueueItem): Json {
     source: item.source
   }
   setOpt(row, 'queueEntryId', optStr(item.queueEntryId))
+  setOpt(row, 'cueRange', item.cueRange)
   return row
 }
 
@@ -719,14 +724,65 @@ function wireTrack(rt: Runtime, view: Json): Json {
   setOpt(track, 'bpm', optPositiveNum(merged.bpm))
   setOpt(track, 'isrc', optStr(merged.isrc))
   setOpt(track, 'catalog', optStr(merged.catalog))
+  setOpt(track, 'cueRange', normalizeCueRange(merged.cueRange) ?? undefined)
   return track
+}
+
+/** Read P1 Android sessions without leaving a segment encoded in a file URI. */
+function legacyCueSource(source: string | undefined): { source: string | undefined; range?: CueRange } {
+  if (!source) return { source }
+  const at = source.lastIndexOf('#cue=')
+  if (at <= 0) return { source }
+  const parts = source.slice(at + 5).split(',')
+  if (![2, 4].includes(parts.length) || parts.some((part) => !/^\d+(?:\.\d+)?(?:E-?\d+)?$/.test(part)))
+    return { source }
+  const [startSeconds, endSeconds, virtualPregapSeconds = 0, sourcePregapSeconds = 0] = parts.map(Number)
+  const range = normalizeCueRange({ startSeconds, endSeconds, virtualPregapSeconds, sourcePregapSeconds,
+    pregapSeconds: virtualPregapSeconds || sourcePregapSeconds })
+  return range ? { source: source.slice(0, at), range } : { source }
+}
+
+function migrateCueSources(envelope: Json): void {
+  const bookmarkKeys = new Map<string, string>()
+  const migrateTrack = (record: unknown) => {
+    if (!isObject(record)) return
+    const previous = optStr(record.filePath)
+    const legacy = legacyCueSource(previous)
+    if (!legacy.range || record.cueRange !== undefined) return
+    record.filePath = legacy.source
+    record.cueRange = legacy.range
+    bookmarkKeys.set(`local:${previous}`, `local:${legacy.source}#cue:${legacy.range.startSeconds}`)
+  }
+  if (Array.isArray(envelope.tracks)) envelope.tracks.forEach(migrateTrack)
+  if (isObject(envelope.session)) {
+    migrateTrack(envelope.session.track)
+    if (Array.isArray(envelope.session.queue)) envelope.session.queue.forEach(migrateTrack)
+  }
+  if (Array.isArray(envelope.queues)) for (const queue of envelope.queues) {
+    if (isObject(queue) && Array.isArray(queue.rows))
+      for (const row of queue.rows) if (isObject(row)) migrateTrack(row.snapshot)
+  }
+  if (isObject(envelope.bookmarks) && Array.isArray(envelope.bookmarks.bookmarks)) {
+    for (const bookmark of envelope.bookmarks.bookmarks) {
+      if (isObject(bookmark)) {
+        const key = bookmarkKeys.get(str(bookmark.trackKey))
+        if (key) bookmark.trackKey = key
+      }
+    }
+  }
 }
 
 function trackFromWire(raw: unknown): TrackData | null {
   if (!isObject(raw)) return null
   const id = optStr(raw.id)
   if (!id) return null
-  const source = optStr(raw.source)
+  const legacy = legacyCueSource(optStr(raw.source))
+  const source = legacy.source
+  const cueRange = raw.cueRange === undefined ? legacy.range : normalizeCueRange(raw.cueRange)
+  if (raw.cueRange !== undefined && !cueRange)
+    throw wireFailure('INVALID_REQUEST', `CUE range is invalid: ${id}`, false)
+  if (legacy.range && cueRange && JSON.stringify(legacy.range) !== JSON.stringify(cueRange))
+    throw wireFailure('INVALID_REQUEST', `CUE range conflicts with its source: ${id}`, false)
   const fileName = source ? fileNameOf(source) : id
   const track: Json = {
     id,
@@ -760,6 +816,7 @@ function trackFromWire(raw: unknown): TrackData | null {
   setOpt(track, 'bitrate', optPositiveNum(raw.bitrate))
   setOpt(track, 'bpm', optPositiveNum(raw.bpm))
   setOpt(track, 'addedAt', optNonNegativeInt(raw.addedAt))
+  setOpt(track, 'cueRange', cueRange)
   return track as unknown as TrackData
 }
 
@@ -801,15 +858,46 @@ function wirePlaylists(playlists: readonly Playlist[]): Json[] {
 
 function mergeTranslation(
   lines: EmbeddedLyricLine[],
-  translation: string | null | undefined
+  translation: string | null | undefined,
+  synced = true
 ): EmbeddedLyricLine[] {
   if (!translation || !translation.trim()) return lines
   const parsed = parseEmbeddedLrcLines(translation)
-  if (!parsed.synced) return lines
-  const byTime = new Map(parsed.lines.map((line) => [line.timeMs, line.text]))
-  return lines.map((line) =>
-    line.translation ? line : { ...line, translation: byTime.get(line.timeMs) ?? null }
-  )
+  if (!synced) {
+    if (parsed.synced) return lines
+    return lines.map((line, index) =>
+      line.translation ? line : { ...line, translation: parsed.lines[index]?.text ?? null }
+    )
+  }
+  if (!parsed.synced || parsed.lines.length === 0) return lines
+  const used = new Set<number>()
+  const byTime = new Map<number, { index: number; text: string }>()
+  parsed.lines.forEach((line, index) => {
+    if (!byTime.has(line.timeMs)) byTime.set(line.timeMs, { index, text: line.text })
+  })
+  const exactMerged = lines.map((line) => {
+    if (line.translation) return line
+    const exact = byTime.get(line.timeMs)
+    if (!exact) return line
+    used.add(exact.index)
+    return { ...line, translation: exact.text }
+  })
+  return exactMerged.map((line) => {
+    if (line.translation) return line
+    let bestIndex = -1
+    let bestDelta = 1501
+    for (let i = 0; i < parsed.lines.length; i++) {
+      if (used.has(i)) continue
+      const delta = Math.abs(parsed.lines[i]!.timeMs - line.timeMs)
+      if (delta <= 1500 && delta < bestDelta) {
+        bestDelta = delta
+        bestIndex = i
+      }
+    }
+    if (bestIndex < 0) return line
+    used.add(bestIndex)
+    return { ...line, translation: parsed.lines[bestIndex]!.text }
+  })
 }
 
 function lyricsView(rt: Runtime, requestedTrackId?: string | null): Json {
@@ -843,7 +931,7 @@ function lyricsView(rt: Runtime, requestedTrackId?: string | null): Json {
       ? 'imported'
       : 'embedded'
   const parsed = parseEmbeddedLrcLines(original)
-  const lines = parsed.synced ? mergeTranslation(parsed.lines, translation) : parsed.lines
+  const lines = mergeTranslation(parsed.lines, translation, parsed.synced)
   return {
     trackId,
     source,
@@ -959,6 +1047,7 @@ function projectPlayback(rt: Runtime, core: CoreSnapshot): Json | undefined {
       duration: Math.max(0, num(upcoming.duration, 0))
     }
     setOpt(row, 'queueEntryId', optStr(upcoming.queueEntryId))
+    setOpt(row, 'cueRange', normalizeCueRange(upcoming.cueRange) ?? undefined)
     view.upcomingTrack = row
   }
   return view
@@ -1158,7 +1247,8 @@ async function editTrackLyrics(
   rt: Runtime,
   wire: WireRequest,
   trackId: string,
-  original: string
+  original: string,
+  translation: string | null = null
 ): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -1171,7 +1261,13 @@ async function editTrackLyrics(
           edit: {
             kind: 'track',
             trackId,
-            patch: { source: 'manual', originalSelection: 'manual', original, translation: null }
+            patch: {
+              source: 'manual',
+              originalSelection: 'manual',
+              original,
+              ...(translation ? { translationSelection: 'manual' as const } : {}),
+              translation: translation ?? null
+            }
           }
         },
         wire
@@ -1209,24 +1305,7 @@ function pickLyricsText(body: string): string {
   return ''
 }
 
-async function fetchOnlineLyrics(rt: Runtime, wire: WireRequest, payload: Json): Promise<Json> {
-  const trackId = lyricsTarget(rt, payload)
-  const record = rt.host.queueStore.getTrack(trackId) as Json
-  let url = optStr(payload.url)
-  if (url) {
-    if (!/^https:\/\//i.test(url)) {
-      throw wireFailure('INVALID_REQUEST', '在线歌词地址必须使用 HTTPS', false)
-    }
-  } else {
-    const title = str(record.title).trim()
-    if (!title) throw wireFailure('INVALID_REQUEST', '曲目缺少标题，无法匹配在线歌词', false)
-    const enc = encodeURIComponent
-    url =
-      `https://lrclib.net/api/get?track_name=${enc(title)}` +
-      `&artist_name=${enc(str(record.artist))}&album_name=${enc(str(record.album))}`
-    const duration = Math.round(num(record.duration, 0))
-    if (duration > 0) url += `&duration=${duration}`
-  }
+async function requestOnlineLyricsUrl(rt: Runtime, url: string): Promise<{ status: number; body: string }> {
   const response = await callPort<Json>(rt, 'network', 'request', {
     url,
     method: 'GET',
@@ -1235,12 +1314,84 @@ async function fetchOnlineLyrics(rt: Runtime, wire: WireRequest, payload: Json):
   })
   const status = int(response?.statusCode, 200)
   const body = str(response?.bodyUtf8 ?? response?.bodyText)
-  if (status === 404) throw wireFailure('NOT_FOUND', '未找到在线歌词', false)
-  if (status < 200 || status >= 300) {
-    throw wireFailure('FAILED', `在线歌词请求失败（HTTP ${status}）`, status === 429 || status >= 500)
-  }
   if (body.length > MAX_ONLINE_LYRICS_BYTES) throw wireFailure('FAILED', '在线歌词过大', false)
-  const lrc = pickLyricsText(body)
+  return { status, body }
+}
+
+function pickRankedSearchLyrics(
+  body: string,
+  query: { title: string; artist: string; album?: string; durationSeconds?: number }
+): string {
+  const trimmed = body.trim()
+  if (!trimmed.startsWith('[')) return ''
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return ''
+  }
+  if (!Array.isArray(parsed)) return ''
+  const hits = parsed.filter(isObject) as Parameters<typeof rankOnlineLyricsCandidates>[1]
+  if (!query.artist) {
+    return pickLyricsText(trimmed)
+  }
+  const candidates = rankOnlineLyricsCandidates(query, hits)
+  return (pickOnlineLyricsText(candidates[0]) ?? '').trim()
+}
+
+async function fetchOnlineLyrics(rt: Runtime, wire: WireRequest, payload: Json): Promise<Json> {
+  const trackId = lyricsTarget(rt, payload)
+  const record = rt.host.queueStore.getTrack(trackId) as Json
+  const customUrl = optStr(payload.url)
+  let lrc = ''
+  if (customUrl) {
+    if (!/^https:\/\//i.test(customUrl)) {
+      throw wireFailure('INVALID_REQUEST', '在线歌词地址必须使用 HTTPS', false)
+    }
+    const { status, body } = await requestOnlineLyricsUrl(rt, customUrl)
+    if (status === 404) throw wireFailure('NOT_FOUND', '未找到在线歌词', false)
+    if (status < 200 || status >= 300) {
+      throw wireFailure('FAILED', `在线歌词请求失败（HTTP ${status}）`, status === 429 || status >= 500)
+    }
+    lrc = pickLyricsText(body)
+  } else {
+    const title = str(record.title).trim()
+    if (!title) throw wireFailure('INVALID_REQUEST', '曲目缺少标题，无法匹配在线歌词', false)
+    const artist = str(record.artist).trim()
+    const album = str(record.album).trim()
+    const duration = Math.round(num(record.duration, 0))
+    const enc = encodeURIComponent
+    let getUrl =
+      `https://lrclib.net/api/get?track_name=${enc(title)}` +
+      `&artist_name=${enc(artist)}&album_name=${enc(album)}`
+    if (duration > 0) getUrl += `&duration=${duration}`
+    const primary = await requestOnlineLyricsUrl(rt, getUrl)
+    if (primary.status >= 200 && primary.status < 300) {
+      lrc = pickLyricsText(primary.body)
+    } else if (primary.status === 429 || primary.status >= 500) {
+      throw wireFailure('FAILED', `在线歌词请求失败（HTTP ${primary.status}）`, true)
+    }
+    if (!lrc) {
+      const searchUrl = artist
+        ? `https://lrclib.net/api/search?track_name=${enc(title)}&artist_name=${enc(artist)}`
+        : `https://lrclib.net/api/search?q=${enc(title)}`
+      const fallback = await requestOnlineLyricsUrl(rt, searchUrl)
+      if (fallback.status === 404) throw wireFailure('NOT_FOUND', '未找到在线歌词', false)
+      if (fallback.status < 200 || fallback.status >= 300) {
+        throw wireFailure(
+          'FAILED',
+          `在线歌词请求失败（HTTP ${fallback.status}）`,
+          fallback.status === 429 || fallback.status >= 500
+        )
+      }
+      lrc = pickRankedSearchLyrics(fallback.body, {
+        title,
+        artist,
+        ...(album ? { album } : {}),
+        ...(duration > 0 ? { durationSeconds: duration } : {})
+      })
+    }
+  }
   if (!lrc) throw wireFailure('NOT_FOUND', '未找到在线歌词', false)
   await editTrackLyrics(rt, wire, trackId, `${LYRICS_ONLINE_MARKER}\n${lrc}`)
   return lyricsView(rt, trackId)
@@ -1250,7 +1401,8 @@ async function importLrc(rt: Runtime, wire: WireRequest, payload: Json): Promise
   const trackId = lyricsTarget(rt, payload)
   const text = str(payload.lrcText ?? payload.content).trim()
   if (!text) throw wireFailure('INVALID_REQUEST', '歌词内容为空', false)
-  await editTrackLyrics(rt, wire, trackId, text)
+  const translation = optStr(payload.translation)?.trim() || null
+  await editTrackLyrics(rt, wire, trackId, text, translation)
   return lyricsView(rt, trackId)
 }
 
@@ -1309,16 +1461,18 @@ async function replaceQueue(rt: Runtime, payload: Json): Promise<void> {
   const selectedIndex = Math.min(Math.max(0, int(payload.startIndex, 0)), records.length - 1)
   await rt.host.playback.fromPages(
     async (append) => {
-      await append(
-        records.map((track) => {
-          const record = {
-            ...track,
-            id: String(track.id),
-            filePath: typeof track.filePath === 'string' ? track.filePath : ''
-          }
-          return { id: record.id, snapshot: record, localSnapshot: record }
-        })
-      )
+      for (let offset = 0; offset < records.length; offset += LIBRARY_PAGE_SIZE) {
+        await append(
+          records.slice(offset, offset + LIBRARY_PAGE_SIZE).map((track) => {
+            const record = {
+              ...track,
+              id: String(track.id),
+              filePath: typeof track.filePath === 'string' ? track.filePath : ''
+            }
+            return { id: record.id, snapshot: record, localSnapshot: record }
+          })
+        )
+      }
     },
     { selectedIndex, play: payload.play !== false }
   )

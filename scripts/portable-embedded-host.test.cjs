@@ -4,6 +4,152 @@ const { PortError, createEmbeddedHarness, createFakePlatform, wireTrack } = requ
 
 const TRACKS = ['a', 'b', 'c'].map((id) => wireTrack(id))
 
+test('PCM family and allowed-rate settings persist, migrate defaults, and reject incompatible requests', async () => {
+  const platform = createFakePlatform()
+  const first = createEmbeddedHarness({ platform })
+  await first.boot({ epoch: 'pcm-1' })
+  const initial = (await first.snapshot()).eqConfig
+  assert.equal(initial.dsp.sampleRateFamilySync, false)
+  assert.deepEqual(initial.dsp.allowedSampleRates, [])
+  const dsp = { ...initial.dsp, sampleRateFamilySync: true, allowedSampleRates: [96000, 44100] }
+  await first.value('audio.setEq', { bitPerfect: true, dsp })
+  assert.deepEqual(platform.appliedDsp.dsp.allowedSampleRates, [44100, 96000])
+  for (const patch of [{ bitPerfect: false },
+    { dsp: { ...dsp, outputStage: { ...dsp.outputStage, targetSampleRate: 96000 } } },
+    ...[[48000, 48000], [7999], [48000.5], '48000', Array.from({ length: 33 }, (_, i) => 8000 + i)]
+      .map(allowedSampleRates => ({ dsp: { ...dsp, allowedSampleRates } }))]) {
+    const response = await first.request('audio.setEq', patch)
+    assert.equal(response.ok, false)
+    const accepted = (await first.snapshot()).eqConfig
+    assert.equal(accepted.bitPerfect, true)
+    assert.equal(accepted.dsp.sampleRateFamilySync, true)
+    assert.deepEqual(accepted.dsp.allowedSampleRates, [44100, 96000])
+  }
+  await first.shutdown()
+  assert.equal(JSON.parse(platform.stored).eqConfig.dsp.deviceSampleRates, undefined)
+  const restored = createEmbeddedHarness({ platform })
+  await restored.boot({ epoch: 'pcm-2' })
+  assert.deepEqual((await restored.snapshot()).eqConfig.dsp.allowedSampleRates, [44100, 96000])
+  assert.equal((await restored.snapshot()).eqConfig.dsp.sampleRateFamilySync, true)
+  await restored.shutdown()
+  const legacy = JSON.parse(platform.stored)
+  delete legacy.eqConfig.dsp.sampleRateFamilySync
+  delete legacy.eqConfig.dsp.allowedSampleRates
+  platform.stored = JSON.stringify(legacy)
+  const migrated = createEmbeddedHarness({ platform })
+  await migrated.boot({ epoch: 'pcm-3' })
+  assert.equal((await migrated.snapshot()).eqConfig.dsp.sampleRateFamilySync, false)
+  assert.deepEqual((await migrated.snapshot()).eqConfig.dsp.allowedSampleRates, [])
+  // A legacy fixed request remains legal even without an advertised capability.
+  const current = (await migrated.snapshot()).eqConfig
+  await migrated.value('audio.setEq', { bitPerfect: true, dsp: { ...current.dsp,
+    outputStage: { ...current.dsp.outputStage, targetSampleRate: 96000 } } })
+  await migrated.shutdown()
+})
+
+test('CUE ranges survive library, native queue, projections and session reconstruction', async () => {
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'cue-1' })
+  const source = 'content://documents/disc.flac'
+  const ranges = [
+    { startSeconds: 0, endSeconds: 20, pregapSeconds: 0, virtualPregapSeconds: 0, sourcePregapSeconds: 0 },
+    { startSeconds: 20, endSeconds: 40, pregapSeconds: 2, virtualPregapSeconds: 2, sourcePregapSeconds: 0 }
+  ]
+  const tracks = ranges.map((cueRange, index) => ({ ...wireTrack(`cue-${index}`), source, cueRange,
+    duration: cueRange.endSeconds - cueRange.startSeconds + cueRange.virtualPregapSeconds }))
+  await h.value('library.syncTracks', { tracks })
+  const page = await h.value('search.songs', { query: 'Title cue' }, 'query')
+  assert.equal(page.items.length, 2)
+  for (const track of page.items) {
+    assert.equal(track.source, source)
+    assert.deepEqual(track.cueRange, tracks.find((entry) => entry.id === track.id).cueRange)
+  }
+  await h.value('playback.replaceQueue', { tracks: tracks.map(({ id }) => ({ id })), startIndex: 1, play: true })
+  assert.deepEqual(platform.queue[platform.audio.queueIndex].cueRange, ranges[1])
+  assert.equal(platform.queue[platform.audio.queueIndex].source, source)
+  const window = await h.value('playback.getQueueWindow', { offset: 0, limit: 10 }, 'query')
+  assert.deepEqual(window.items.map((item) => item.track.cueRange), ranges)
+  assert.deepEqual((await h.snapshot()).track.cueRange, ranges[1])
+  platform.audio.positionMs = 12_750
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  await h.value('playback.pause')
+  await h.shutdown()
+
+  const restored = createEmbeddedHarness({ platform })
+  await restored.boot({ epoch: 'cue-2' })
+  const snapshot = await restored.snapshot()
+  assert.equal(snapshot.track.source, source)
+  assert.deepEqual(snapshot.track.cueRange, ranges[1])
+  assert.equal(snapshot.playback.state, 'paused')
+  await restored.value('playback.play')
+  assert.deepEqual(platform.queue[platform.audio.queueIndex].cueRange, ranges[1])
+})
+
+test('legacy Android CUE sources migrate in persisted rows, active selection and bookmarks', async () => {
+  const platform = createFakePlatform()
+  const first = createEmbeddedHarness({ platform })
+  await first.boot({ epoch: 'legacy-cue-1' })
+  const source = 'content://documents/disc.flac'
+  const cueRange = { startSeconds: 20, endSeconds: 40, pregapSeconds: 1, virtualPregapSeconds: 1, sourcePregapSeconds: 0 }
+  const track = { ...wireTrack('cue-legacy'), source, cueRange, duration: 21 }
+  await first.value('library.syncTracks', { tracks: [track] })
+  await first.value('playback.replaceQueue', { tracks: [{ id: track.id }], play: true })
+  await first.value('bookmarks.add', { trackId: track.id, positionSec: 5, label: 'CUE bookmark' })
+  await first.shutdown()
+  const legacy = JSON.parse(platform.stored)
+  const encoded = source + '#cue=20.0,40.0,1.0,0.0'
+  const downgrade = (record) => { record.filePath = encoded; delete record.cueRange }
+  legacy.tracks.forEach(downgrade)
+  downgrade(legacy.session.track)
+  for (const queue of legacy.queues) for (const row of queue.rows) downgrade(row.snapshot)
+  for (const bookmark of legacy.bookmarks.bookmarks) bookmark.trackKey = `local:${encoded}`
+  platform.stored = JSON.stringify(legacy)
+
+  const second = createEmbeddedHarness({ platform })
+  await second.boot({ epoch: 'legacy-cue-2' })
+  const snapshot = await second.snapshot()
+  assert.equal(snapshot.track.source, source)
+  assert.deepEqual(snapshot.track.cueRange, cueRange)
+  assert.equal(snapshot.bookmarks.find((item) => item.label === 'CUE bookmark').trackId, track.id)
+  const window = await second.value('playback.getQueueWindow', { offset: 0, limit: 10 }, 'query')
+  assert.deepEqual(window.items[0].track.cueRange, cueRange)
+  await second.value('playback.play')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, source)
+  assert.deepEqual(platform.queue[platform.audio.queueIndex].cueRange, cueRange)
+  await second.shutdown()
+  assert.ok(JSON.parse(platform.stored).bookmarks.bookmarks.some((item) => item.trackKey === `local:${source}#cue:20`))
+})
+
+test('the Kotlin-mirror migration keeps CUE bookmarks attached to their segment', async () => {
+  const platform = createFakePlatform()
+  const source = 'content://documents/disc.flac'
+  const track = { ...wireTrack('cue-mirror'), source: source + '#cue=20.0,40.0,1.0,0.0', duration: 21 }
+  platform.stored = JSON.stringify({ libraryTracks: [track], queueTracks: [track], currentQueueIndex: 0,
+    bookmarks: [{ id: 'cue-bookmark', trackId: track.id, positionSec: 5, label: 'Cue', createdAtMs: 1700000000000 }] })
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'cue-mirror' })
+  assert.equal((await h.snapshot()).track.cueRange.startSeconds, 20)
+  await h.shutdown()
+  assert.equal(JSON.parse(platform.stored).bookmarks.bookmarks.find((entry) => entry.id === 'cue-bookmark').trackKey,
+    `local:${source}#cue:20`)
+})
+
+test('CUE wire import accepts saved fragments and rejects malformed ranges before replacing the library', async () => {
+  const h = createEmbeddedHarness()
+  await h.boot({ epoch: 'cue-validation' })
+  const source = 'content://documents/disc.flac'
+  await h.value('library.syncTracks', { tracks: [{ ...wireTrack('cue-old'), source: source + '#cue=20.0,40.0' }] })
+  const page = await h.value('search.songs', { query: 'Title cue-old' }, 'query')
+  assert.equal(page.items[0].source, source)
+  assert.equal(page.items[0].cueRange.startSeconds, 20)
+  for (const cueRange of [null, { startSeconds: 30, endSeconds: 20 }, { startSeconds: 20, endSeconds: 40, sourcePregapSeconds: 21 }]) {
+    const response = await h.request('library.syncTracks', { tracks: [{ ...wireTrack('bad'), source, cueRange }] })
+    assert.equal(response.error.code, 'INVALID_REQUEST')
+    assert.equal((await h.snapshot()).libraryTrackCount, 1)
+  }
+})
+
 function assertNoNulls(value, at = 'snapshot') {
   if (value === null) assert.fail(`${at} is null; the Kotlin decoder rejects nulls for required fields`)
   if (Array.isArray(value)) value.forEach((item, index) => assertNoNulls(item, `${at}[${index}]`))
