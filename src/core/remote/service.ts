@@ -12,6 +12,8 @@ import type {
 import type { CorePlaylistViewQuery, CorePlaylistViewPage } from '../../shared/corePlaylists.ts'
 import type { LibraryPage, LibraryQuery, LibraryTrackRecord } from '../../shared/libraryDatabase.ts'
 import type { CoreTrackView } from '../../shared/coreViews.ts'
+import type { CoreLyricsContent } from '../../shared/coreLyrics.ts'
+import type { TrackData } from '../../shared/track.ts'
 import {
   createEmptyRemotePlaybackSnapshot,
   type PlayerRemoteCommand,
@@ -38,6 +40,10 @@ export interface CoreRemoteOptions {
   now(): number
   media?: RemoteMediaResolver
   providerSession?(): Promise<RemoteProviderSession>
+  resolveTrackLyrics?(
+    track: TrackData,
+    options?: { allowOnlineFallback?: boolean; signal?: AbortSignal }
+  ): Promise<CoreLyricsContent>
 }
 type TrackToken =
   | { kind: 'library'; id: string; query: LibraryQuery }
@@ -86,7 +92,8 @@ export class CoreRemoteService {
       signal: this.controller.signal,
       failed: options.failed,
       media: options.media,
-      providerSession: options.providerSession
+      providerSession: options.providerSession,
+      resolveTrackLyrics: options.resolveTrackLyrics
     })
     options.server.setCommandHandler((command) => this.command(command))
     options.server.setBrowseHandler((request) => this.browse(request))

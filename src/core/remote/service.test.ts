@@ -10,7 +10,12 @@ import type { LibraryPage } from '../../shared/libraryDatabase.ts'
 import { createDefaultSettings } from '../settings/normalization.ts'
 import { CoreRemoteService } from './service.ts'
 import type { CorePlaybackSession } from '../playback/session.ts'
-import type { RemoteProviderSession } from '../../shared/remoteCoreBridge.ts'
+import {
+  negotiateRemoteProtocol,
+  REMOTE_CORE_LOCAL_ZONE,
+  REMOTE_CORE_PROTOCOL_RANGE,
+  type RemoteProviderSession
+} from '../../shared/remoteCoreBridge.ts'
 
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve))
 const track = (id: string) => ({
@@ -600,7 +605,8 @@ test('bridge exposes only bounded public operations and rejects malformed envelo
     rpc('search.songs', { query: '', limit: 201 }),
     rpc('search.songs', { query: '', offset: -1 }),
     rpc('search.songs', { query: '', folder: 'D:/music' }),
-    rpc('search.songs', {}, { protocolVersion: 99 }),
+    rpc('search.songs', {}, { protocolVersion: '1' }),
+    rpc('search.songs', {}, { targetId: '' }),
     rpc('search.songs', {}, { kind: 'cancel' }),
     rpc('search.songs', {}, { role: 'desktop' }),
     rpc('search.songs', {}, { requestId: '' }),
@@ -621,6 +627,28 @@ test('bridge exposes only bounded public operations and rejects malformed envelo
     offset: 100,
     limit: 20
   })
+})
+
+test('version negotiation, target and zone are checked before any Core request', async (t) => {
+  const f = fixture(t, true)
+  await turn()
+  const before = f.requests.length
+  const desktop = { encrypted: true, serverId: 'desktop-a' }
+  for (const [extra, expected] of [
+    [{ protocolVersion: 0 }, 'UNSUPPORTED_PROTOCOL'],
+    [{ protocolVersion: REMOTE_CORE_PROTOCOL_RANGE.max + 1 }, 'UNSUPPORTED_PROTOCOL'],
+    [{ targetId: 'desktop-b' }, 'WRONG_TARGET'],
+    [{ zoneId: 'kitchen' }, 'UNKNOWN_ZONE']
+  ] as const)
+    assert.equal(code(await f.service.handleCoreRpc(rpc('search.songs', { query: '' }, extra), undefined, desktop)), expected)
+  // Without a server identity no target can be confirmed.
+  assert.equal(code(await f.service.handleCoreRpc(rpc('search.songs', { query: '' }, { targetId: 'desktop-a' }))), 'WRONG_TARGET')
+  assert.equal(f.requests.length, before)
+  for (const extra of [{}, { protocolVersion: 1, targetId: 'desktop-a', zoneId: REMOTE_CORE_LOCAL_ZONE }])
+    assert.equal((await f.service.handleCoreRpc(rpc('search.songs', { query: '' }, extra), undefined, desktop)).ok, true)
+  assert.equal(negotiateRemoteProtocol({ min: 1, max: 3 }, { min: 1, max: 2 }), 2)
+  assert.equal(negotiateRemoteProtocol({ min: 1, max: 1 }, { min: 1, max: 2 }), 1)
+  assert.equal(negotiateRemoteProtocol({ min: 3, max: 4 }, { min: 1, max: 2 }), null)
 })
 
 test('RPC and SSE use the same Android-compatible, path-free track projection', async (t) => {
@@ -927,4 +955,47 @@ test('bridge bounds outstanding requests and releases capacity after failures', 
   for (const result of await Promise.all(pending)) assert.equal(code(result), 'FAILED')
   f.query(async () => ({ tracks: [], total: 0, offset: 0, revision: 4 }))
   assert.equal((await f.service.handleCoreRpc(rpc('search.songs'))).ok, true)
+})
+
+test('remote lyrics.current projects bilingual synced lines with opaque track reference', async (t) => {
+  const f = fixture(t, true)
+  await turn()
+  f.query(async (request) => {
+    if (request.name === 'lyrics.current') {
+      return {
+        current: null,
+        effective: {
+          original: '[00:10.00]Line 1\n[00:15.50]Line 2',
+          originalSource: 'online',
+          translation: '[00:10.00]第一行\n[00:15.50]第二行',
+          translationSource: 'online',
+          romanization: null,
+          romanizationSource: null
+        },
+        offsetSeconds: 0.5,
+        override: null,
+        policy: {
+          enableEmbeddedLyrics: true,
+          enableLocalLrcSidecar: true,
+          enableOnlineFallback: true
+        }
+      }
+    }
+    throw new Error(`Unexpected ${request.name}`)
+  })
+  const result = await f.service.handleCoreRpc(rpc('lyrics.current'))
+  assert.equal(result.ok, true)
+  const view = result.value as {
+    trackId: string
+    source: string
+    synced: boolean
+    lines: Array<{ timeMs: number; text: string; translation?: string }>
+  }
+  assert.match(view.trackId, /^remote-track:/)
+  assert.equal(view.source, 'online')
+  assert.equal(view.synced, true)
+  assert.deepEqual(view.lines, [
+    { timeMs: 10500, text: 'Line 1', translation: '第一行' },
+    { timeMs: 16000, text: 'Line 2', translation: '第二行' }
+  ])
 })

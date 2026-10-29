@@ -117,6 +117,8 @@ export function guessAudioContentType(filePathOrUrl: string): string {
   if (lower.endsWith('.aac')) return 'audio/aac'
   if (lower.endsWith('.aiff') || lower.endsWith('.aif')) return 'audio/aiff'
   if (lower.endsWith('.opus')) return 'audio/opus'
+  if (lower.endsWith('.ape')) return 'audio/x-ape'
+  if (lower.endsWith('.wv')) return 'audio/x-wavpack'
   if (lower.endsWith('.dsf') || lower.endsWith('.dff')) return 'application/octet-stream'
   return 'application/octet-stream'
 }

@@ -2,7 +2,7 @@ import '../../adapters-node/index.ts'
 import { CoreMusicExplorationService } from '../../core/library/explorationService.ts'
 import { networkInterfaces, hostname } from 'node:os'
 import { CoreDiscoveryAdvertisement } from '../remote/coreDiscovery.ts'
-import { createPersistentDevicePairing } from '../remote/deviceTrust.ts'
+import { createPersistentDevicePairing, loadRemoteTlsIdentity } from '../remote/deviceTrust.ts'
 import { persistentLibraryId } from '../remote/libraryIdentity.ts'
 import { RemoteMediaResolver } from '../../core/remote/media.ts'
 import { CoreCastService } from '../../core/cast/service.ts'
@@ -824,8 +824,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const sourceResources = new SourceResources()
   const mediaServer = new RemoteHttpServer({
       serverName: hostname(), devicePairing: createPersistentDevicePairing(config.root),
+      tls: loadRemoteTlsIdentity(config.root),
       discovery: new CoreDiscoveryAdvertisement(),
-      confirmDevice: ({ deviceName, address }, signal) => platform!.call('remote.confirmDevice', { deviceName, address }, signal),
+      confirmDevice: ({ deviceName, address, verificationCode }, signal) => platform!.call('remote.confirmDevice',
+        { deviceName, address, ...(verificationCode ? { verificationCode } : {}) }, signal),
       staticRoot: config.remoteStaticRoot ?? '',
       addresses: () =>
         Object.values(networkInterfaces()).flatMap((entries) =>
@@ -1703,6 +1705,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       },
       authorizeFile: (path) => platform!.call('paths.authorizeAudioFile', { path }),
       grants: mediaServer.getMediaGrants() }),
+    resolveTrackLyrics: (track, options) => lyrics.resolveTrack(track, options),
     playlistRecords: (query, signal) => playlists.records(query, signal),
     castActive: () => cast.active(),
     resolveCover: (cover) => platform!.call('artwork.remotePreview', { cover }),

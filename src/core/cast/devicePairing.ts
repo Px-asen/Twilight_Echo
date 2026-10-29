@@ -10,6 +10,9 @@ type Ticket = RemotePairingRequest & {
   claimSecret: string
   state: 'pending' | 'approved' | 'rejected'
   token?: string
+  /** TLS pairing: SHA-256 (base64url) of the phone's nonce, which stays hidden until the desktop's nonce is out. */
+  commitment?: string
+  serverNonce?: string
 }
 const verifier = (token: string) => createHash('sha256').update(token).digest('hex')
 
@@ -35,13 +38,16 @@ export class RemoteDevicePairing {
   }
   pending(): RemotePairingRequest[] {
     this.prune()
-    return [...this.tickets.values()].filter(t => t.state === 'pending')
-      .map(({ id, deviceName, address, expiresAt }) => ({ id, deviceName, address, expiresAt }))
+    // A committed request is offered for approval only once its verification code exists.
+    return [...this.tickets.values()].filter(t => t.state === 'pending' && (!t.commitment || t.verificationCode))
+      .map(({ id, deviceName, address, expiresAt, verificationCode }) =>
+        ({ id, deviceName, address, expiresAt, ...(verificationCode ? { verificationCode } : {}) }))
   }
   devices(): RemoteTrustedDevice[] {
     return this.document.devices.map(({ id, name, createdAt }) => ({ id, name, createdAt }))
   }
-  request(deviceName: unknown, address: string): { requestId: string; claimSecret: string; expiresAt: number } {
+  request(deviceName: unknown, address: string, commitment?: string):
+    { requestId: string; claimSecret: string; expiresAt: number; serverNonce?: string } {
     // eslint-disable-next-line no-control-regex -- Device labels must not inject control characters into approval prompts.
     if (typeof deviceName !== 'string' || !deviceName.trim() || deviceName.length > 80 || /[\x00-\x1f\x7f]/.test(deviceName))
       throw new Error('invalid_device_name')
@@ -49,14 +55,28 @@ export class RemoteDevicePairing {
     if (!this.limiter.tryConsume() || this.tickets.size >= 4 || this.document.devices.length + this.pending().length >= 16)
       throw new Error('too_many_pair_requests')
     const ticket: Ticket = { id: randomUUID(), deviceName: deviceName.trim(), address,
-      claimSecret: randomBytes(32).toString('base64url'), state: 'pending', expiresAt: this.now() + 120_000 }
+      claimSecret: randomBytes(32).toString('base64url'), state: 'pending', expiresAt: this.now() + 120_000,
+      ...(commitment ? { commitment, serverNonce: randomBytes(32).toString('base64url') } : {}) }
     this.tickets.set(ticket.id, ticket)
-    return { requestId: ticket.id, claimSecret: ticket.claimSecret, expiresAt: ticket.expiresAt }
+    return { requestId: ticket.id, claimSecret: ticket.claimSecret, expiresAt: ticket.expiresAt,
+      ...(ticket.serverNonce ? { serverNonce: ticket.serverNonce } : {}) }
+  }
+  /** Opens the phone's commitment once; the code then depends on both nonces and the certificate. */
+  reveal(requestId: string, claimSecret: string, nonce: string, code: (serverNonce: string) => string): boolean {
+    this.prune()
+    const ticket = this.tickets.get(requestId)
+    if (!ticket || !safeEqualText(ticket.claimSecret, claimSecret) || ticket.state !== 'pending' ||
+      !ticket.commitment || !ticket.serverNonce || ticket.verificationCode) return false
+    if (!safeEqualText(createHash('sha256').update(nonce).digest('base64url'), ticket.commitment)) return false
+    ticket.verificationCode = code(ticket.serverNonce)
+    return true
   }
   decide(requestId: string, allow: boolean): boolean {
     this.prune()
     const ticket = this.tickets.get(requestId)
     if (!ticket || ticket.state !== 'pending') return false
+    // Nobody can approve a TLS request before both screens could compare its code.
+    if (allow && ticket.commitment && !ticket.verificationCode) return false
     if (allow) {
       const token = randomBytes(32).toString('base64url')
       const next = { ...this.document, devices: [...this.document.devices,

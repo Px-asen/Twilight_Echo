@@ -1,4 +1,11 @@
 import { createLyricsLoader, type LyricsLoaderOptions, type LyricsLoadState } from './loader.ts'
+import {
+  eligibleForAml,
+  resolveLyricsWithSources,
+  shouldLoadAutomaticOriginal,
+  type LyricResolverSource
+} from './lyricSourceResolution.ts'
+import { resolverLyricsInput } from './managedLyricsSource.ts'
 import { createLyricsManagement, type LyricsManagementOptions } from './management.ts'
 import {
   DEFAULT_LYRICS_MANAGEMENT,
@@ -12,7 +19,9 @@ import type {
   CoreLyricsMutation,
   CoreLyricsState
 } from '../../shared/coreLyrics.ts'
+import { getNcmSongId } from '../../shared/ncmTrack.ts'
 import type { TrackData } from '../../shared/track.ts'
+import { getTrackSource } from '../../shared/trackSourceIdentity.ts'
 import { isPersistentDataRevisionConflict } from '../../shared/versionedPersistence.ts'
 import { projectCoreError } from '../projections.ts'
 
@@ -207,6 +216,129 @@ export class CoreLyricsService {
   }
   search(current: CoreLyricsCurrent, signal?: AbortSignal): Promise<OnlineLyricsSearchResult> {
     return this.options.search(this.fenceCurrent(current), signal)
+  }
+  async resolveTrack(
+    track: TrackData,
+    options: { allowOnlineFallback?: boolean; signal?: AbortSignal } = {}
+  ): Promise<CoreLyricsContent> {
+    try {
+      await this.management.ensureLoaded()
+    } catch {
+      // Optional management document must not block automatic resolution.
+    }
+    const signal = options.signal ?? new AbortController().signal
+    const override = this.management.entryFor(track.id)
+    const requestedSource = override?.source ?? 'auto'
+    if (requestedSource === 'manual') {
+      const automatic = {
+        original: track.lyrics ?? '',
+        translation: track.translatedLyrics ?? null,
+        romanization: track.romanizedLyrics ?? null,
+        originalSource: track.lyricsSource ?? null,
+        translationSource: track.translatedLyricsSource ?? null,
+        romanizationSource: track.romanizedLyricsSource ?? null
+      }
+      return {
+        revision: this.getRevision(),
+        contentRevision: this.contentRevision,
+        current: { trackId: track.id, occurrenceId: track.queueEntryId ?? null },
+        automatic,
+        effective: projectManagedLyrics(automatic, override),
+        override: override ? { ...override } : null,
+        offsetSeconds: this.management.effectiveOffsetSeconds(track.id)
+      }
+    }
+    const layerSource = (
+      key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
+    ): LyricResolverSource => {
+      const selection = override?.[key]
+      if (selection === 'local' || selection === 'amll' || selection === 'provider') return selection
+      if (requestedSource === 'local' || requestedSource === 'amll' || requestedSource === 'provider')
+        return requestedSource
+      return 'automatic'
+    }
+    const originalSource = layerSource('originalSelection')
+    const translationSource = layerSource('translationSelection')
+    const romanizationSource = layerSource('romanizationSelection')
+    const resolverTrack = resolverLyricsInput(track, undefined, requestedSource)
+    const source = getTrackSource(resolverTrack)
+    const hasOriginal = typeof resolverTrack.lyrics === 'string' && resolverTrack.lyrics.trim().length > 0
+    const canLoadLocal =
+      source === 'local' &&
+      (!!resolverTrack.dir || !!resolverTrack.filePath) &&
+      !!resolverTrack.fileName
+    const canLoadOnline =
+      originalSource === 'automatic' &&
+      (options.allowOnlineFallback === true ||
+        this.options.sources.getAppSettings().value?.onlineLyricsFallback === true) &&
+      !!resolverTrack.title?.trim() &&
+      !!resolverTrack.artist?.trim() &&
+      !hasOriginal
+    const amlId = (() => {
+      const direct = getNcmSongId(resolverTrack)
+      if (direct != null && (resolverTrack.source === 'ncm' || resolverTrack.id.startsWith('ncm:')))
+        return direct
+      return Number(resolverTrack.metadataMatch?.trackId)
+    })()
+    const resolved = await resolveLyricsWithSources({
+      track: resolverTrack,
+      originalSource,
+      translationSource,
+      romanizationSource,
+      loadLocalLyrics:
+        canLoadLocal &&
+        (originalSource === 'local' ||
+          (originalSource === 'automatic' && shouldLoadAutomaticOriginal(resolverTrack, 'local')))
+          ? () => this.options.sources.loadLocalLyrics(resolverTrack, 'original', signal).catch(() => null)
+          : undefined,
+      loadLocalTranslatedLyrics: canLoadLocal
+        ? () => this.options.sources.loadLocalLyrics(resolverTrack, 'translated', signal).catch(() => null)
+        : undefined,
+      loadLocalRomanizedLyrics: canLoadLocal
+        ? () => this.options.sources.loadLocalLyrics(resolverTrack, 'romanized', signal).catch(() => null)
+        : undefined,
+      loadAmlTtml:
+        eligibleForAml(resolverTrack) && Number.isFinite(amlId) && amlId > 0
+          ? () => this.options.sources.loadAmlTtml(amlId, signal)
+          : undefined,
+      loadProviderLyrics: () => this.options.sources.resolveProviderLyrics(resolverTrack, signal),
+      loadOnlineLyrics: canLoadOnline
+        ? () =>
+            this.options.sources.loadOnlineLyrics(
+              {
+                title: resolverTrack.title,
+                artist: resolverTrack.artist,
+                album: resolverTrack.album || undefined,
+                durationSeconds: Number.isFinite(resolverTrack.duration)
+                  ? resolverTrack.duration
+                  : undefined
+              },
+              signal
+            )
+        : undefined,
+      loadOnlineTranslation: canLoadOnline
+        ? async () =>
+            (await this.options.sources.resolveProviderLyrics(resolverTrack, signal))
+              ?.translatedLyrics ?? null
+        : undefined
+    })
+    const automatic = {
+      original: resolved.lyrics ?? '',
+      translation: resolved.translatedLyrics,
+      romanization: resolved.romanizedLyrics,
+      originalSource: resolved.lyricsSource,
+      translationSource: resolved.translatedLyricsSource,
+      romanizationSource: resolved.romanizedLyricsSource
+    }
+    return {
+      revision: this.getRevision(),
+      contentRevision: this.contentRevision,
+      current: { trackId: track.id, occurrenceId: track.queueEntryId ?? null },
+      automatic,
+      effective: projectManagedLyrics(automatic, override),
+      override: override ? { ...override } : null,
+      offsetSeconds: this.management.effectiveOffsetSeconds(track.id)
+    }
   }
   importDraft(signal?: AbortSignal): Promise<string | null> {
     return this.options.importDraft(signal)

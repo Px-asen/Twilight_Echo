@@ -588,6 +588,8 @@ export interface CoreCryptoPort {
   randomInt(minOrMax: number, max?: number): number
   timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean
   createPublicKey(key: string | ArrayBufferView | Record<string, any>): any
+  generateKeyPairSync(type: 'ec', options: { namedCurve: string }): { publicKey: any; privateKey: any }
+  sign(algorithm: string | null | undefined, data: ArrayBufferView, key: any): PortableBuffer
   verify(
     algorithm: string | null | undefined,
     data: ArrayBufferView,

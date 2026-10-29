@@ -24,7 +24,7 @@ export interface CorePlatformOperations extends CoreModelPackPlatformOperations 
   'audio.confirmWindowsRestart': { input: Record<string, never>; output: boolean }
   'audio.restartWindowsServices': { input: Record<string, never>; output: void }
   'remote.confirmDevice': {
-    input: { deviceName: string; address: string }
+    input: { deviceName: string; address: string; verificationCode?: string }
     output: boolean
   }
   'themes.importArchive': { input: Record<string, never>; output: ThemeProfileV2 | null }
@@ -166,7 +166,9 @@ export function validCorePlatformPayload(request: CorePlatformRequest): boolean 
   switch (request.name) {
     case 'remote.confirmDevice': {
       const value = payload as CorePlatformOperations['remote.confirmDevice']['input']
-      return Object.keys(payload).length === 2 && typeof value.deviceName === 'string' &&
+      const keys = Object.keys(payload).length
+      return (keys === 2 || (keys === 3 && typeof value.verificationCode === 'string' && /^\d{6}$/.test(value.verificationCode))) &&
+        typeof value.deviceName === 'string' &&
         // eslint-disable-next-line no-control-regex -- Native approval prompts only accept printable device labels.
         value.deviceName.length > 0 && value.deviceName.length <= 80 && !/[\x00-\x1f\x7f]/.test(value.deviceName) &&
         typeof value.address === 'string' && value.address.length <= 64 && /^[a-fA-F0-9:.]*$/.test(value.address)

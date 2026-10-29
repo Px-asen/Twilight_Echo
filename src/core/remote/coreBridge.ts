@@ -1,23 +1,28 @@
 import { randomUUID } from '../../shared/portableCrypto.ts'
 import {
-  CORE_PROTOCOL_VERSION,
   isCoreRequest,
   type CoreCommands,
   type CoreQueries,
   type CoreSnapshot
 } from '../../shared/coreProtocol.ts'
 import { CORE_PLAYBACK_FIELDS, type CoreTrackView } from '../../shared/coreViews.ts'
+import type { CoreLyricsContent } from '../../shared/coreLyrics.ts'
 import type { EntityMetadataDetail } from '../../shared/entityMetadata.ts'
+import { buildLyricLines } from '../../shared/lyrics/lyricLineBuilder.ts'
 import type { CatalogTrackReferences } from '../../shared/musicCatalog.ts'
 import type { MusicArtwork } from '../../shared/musicArtwork.ts'
 import {
   REMOTE_CORE_ARTWORK_LIMIT,
   REMOTE_CORE_COMMANDS,
+  REMOTE_CORE_LOCAL_ZONE,
   REMOTE_CORE_PAGE_LIMIT,
+  REMOTE_CORE_PROTOCOL_RANGE,
   REMOTE_CORE_QUERIES,
   type RemoteCoreRpcContext,
   type RemoteProviderSession
 } from '../../shared/remoteCoreBridge.ts'
+import { REMOTE_STREAM_FORMATS } from '../../shared/remoteMedia.ts'
+import type { TrackData } from '../../shared/track.ts'
 import type { CorePlaybackSession } from '../playback/session.ts'
 import type { RemoteMediaResolver } from './media.ts'
 
@@ -44,6 +49,58 @@ interface Options {
   failed(error: unknown): void
   media?: RemoteMediaResolver
   providerSession?(): Promise<RemoteProviderSession>
+  resolveTrackLyrics?(
+    track: TrackData,
+    options?: { allowOnlineFallback?: boolean; signal?: AbortSignal }
+  ): Promise<CoreLyricsContent>
+}
+
+export interface RemoteLyricsLineView {
+  timeMs: number
+  text: string
+  translation?: string
+}
+
+export interface RemoteLyricsView {
+  trackId: string
+  source: string
+  synced: boolean
+  lines: RemoteLyricsLineView[]
+}
+
+export function projectRemoteLyricsView(
+  trackId: string,
+  content: CoreLyricsContent | null | undefined
+): RemoteLyricsView {
+  const effective = content?.effective
+  const original = typeof effective?.original === 'string' ? effective.original.trim() : ''
+  const translation = typeof effective?.translation === 'string' ? effective.translation.trim() : ''
+  if (!original && !translation) {
+    return { trackId, source: 'none', synced: false, lines: [] }
+  }
+  const built = buildLyricLines(
+    original || null,
+    translation || null,
+    effective?.romanization ?? null
+  ).filter((line) => line.text.trim().length > 0 || (line.translation?.trim().length ?? 0) > 0)
+  if (built.length === 0) {
+    return { trackId, source: 'none', synced: false, lines: [] }
+  }
+  const synced = built.some((line) => line.timed && line.time != null)
+  const offsetMs = Math.round((content?.offsetSeconds ?? 0) * 1000)
+  const rawSource = effective?.originalSource ?? effective?.translationSource ?? 'embedded'
+  const source = rawSource === 'manual' ? 'imported' : rawSource
+  const lines: RemoteLyricsLineView[] = built.map((line, index) => {
+    const timeMs =
+      synced && line.time != null ? Math.max(0, Math.round(line.time * 1000) + offsetMs) : index * 4000
+    const trimmedTranslation = line.translation?.trim()
+    return {
+      timeMs,
+      text: line.text,
+      ...(trimmedTranslation ? { translation: trimmedTranslation } : {})
+    }
+  })
+  return { trackId, source, synced, lines }
 }
 interface Envelope {
   requestId: string
@@ -80,6 +137,9 @@ const messages: Record<string, string> = {
   PERMISSION_EXPIRED: '音源访问权限已失效',
   UNSUPPORTED_CAPABILITY: '此远程连接暂不支持该音源或操作',
   SOURCE_CHANGED: '电脑上的音频文件已更换，请重新选择歌曲',
+  UNSUPPORTED_PROTOCOL: '手机与电脑的远程协议版本不兼容，请将两端更新到最新版本',
+  WRONG_TARGET: '此请求是发给另一台电脑的，请重新选择电脑',
+  UNKNOWN_ZONE: '这台电脑没有所选的播放区域',
   FAILED: '桌面操作失败，请检查桌面状态'
 }
 
@@ -229,14 +289,17 @@ export class RemoteCoreBridge {
       versionsRevision: state.versionsRevision,
       audioRevision: state.audioRevision,
       settingsRevision: state.settingsRevision,
-      lyricsRevision: state.lyricsRevision
+      lyricsRevision: state.lyricsRevision,
+      lyricsContentRevision: state.lyricsContentRevision
     }
   }
 
-  private envelope(raw: Record<string, unknown>): Envelope {
+  private envelope(raw: Record<string, unknown>, context?: RemoteCoreRpcContext): Envelope {
     if (
       !only(raw, [
         'protocolVersion',
+        'targetId',
+        'zoneId',
         'requestId',
         'commandId',
         'epoch',
@@ -250,11 +313,21 @@ export class RemoteCoreBridge {
       !text(raw.name) ||
       (raw.kind !== 'query' && raw.kind !== 'command') ||
       !record(raw.payload) ||
-      (raw.protocolVersion !== undefined && raw.protocolVersion !== CORE_PROTOCOL_VERSION) ||
+      (raw.protocolVersion !== undefined && !uint(raw.protocolVersion)) ||
+      (raw.targetId !== undefined && !text(raw.targetId)) ||
+      (raw.zoneId !== undefined && !text(raw.zoneId)) ||
       (raw.commandId != null && !text(raw.commandId)) ||
       (raw.expectedRevision != null && !uint(raw.expectedRevision))
     )
       throw invalid()
+    // Clients from before negotiation send no version and speak version 1.
+    const version = (raw.protocolVersion as number | undefined) ?? 1
+    if (version < REMOTE_CORE_PROTOCOL_RANGE.min || version > REMOTE_CORE_PROTOCOL_RANGE.max)
+      throw error('UNSUPPORTED_PROTOCOL', messages.UNSUPPORTED_PROTOCOL)
+    if (raw.targetId !== undefined && raw.targetId !== context?.serverId)
+      throw error('WRONG_TARGET', messages.WRONG_TARGET)
+    if (raw.zoneId !== undefined && raw.zoneId !== REMOTE_CORE_LOCAL_ZONE)
+      throw error('UNKNOWN_ZONE', messages.UNKNOWN_ZONE)
     return raw as unknown as Envelope
   }
 
@@ -262,7 +335,7 @@ export class RemoteCoreBridge {
     const requestId = typeof raw.requestId === 'string' ? raw.requestId.slice(0, 128) : ''
     let entered = false
     try {
-      const env = this.envelope(raw)
+      const env = this.envelope(raw, context)
       const names: readonly string[] =
         env.kind === 'query' ? REMOTE_CORE_QUERIES : REMOTE_CORE_COMMANDS
       if (!names.includes(env.name)) throw error('FORBIDDEN', messages.FORBIDDEN)
@@ -378,7 +451,62 @@ export class RemoteCoreBridge {
       case 'library.info':
         if (!only(p, [])) throw invalid()
         if (!this.options.media) throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
-        return { libraryId: this.options.media.libraryId, streamFormats: ['flac', 'mp3'] }
+        return { libraryId: this.options.media.libraryId, streamFormats: [...REMOTE_STREAM_FORMATS] }
+      case 'lyrics.current': {
+        if (!only(p, ['trackId']) || (p.trackId !== undefined && !text(p.trackId))) throw invalid()
+        const state = this.ready(env.epoch)
+        const currentTrackId = state.track ? this.reference(state.track) : null
+        if (state.track && (p.trackId === undefined || p.trackId === currentTrackId)) {
+          const content = await this.options.request('query', 'lyrics.current', {}, epoch)
+          const projected = projectRemoteLyricsView(currentTrackId!, content)
+          if (projected.lines.length > 0 || !this.options.resolveTrackLyrics) return projected
+          const resolvedTrack = await this.resolveCurrentTrackRecord(state.track)
+          const fallback = await this.options.resolveTrackLyrics(resolvedTrack, {
+            allowOnlineFallback: true,
+            signal: this.options.signal
+          })
+          return projectRemoteLyricsView(currentTrackId!, fallback)
+        }
+        if (p.trackId !== undefined && this.options.media && this.options.resolveTrackLyrics) {
+          const ref = this.references.get(p.trackId)
+          if (ref && ref.provider === 'local') {
+            const resolvedTrack = await this.options.media.resolveTrack({
+              libraryId: this.options.media.libraryId,
+              sourceId: ref.id
+            })
+            const content = await this.options.resolveTrackLyrics(resolvedTrack, {
+              allowOnlineFallback: true,
+              signal: this.options.signal
+            })
+            return projectRemoteLyricsView(p.trackId, content)
+          }
+        }
+        return { trackId: p.trackId ?? '', source: 'none', synced: false, lines: [] }
+      }
+      case 'lyrics.fetchOnline': {
+        if (
+          !only(p, ['trackId', 'url']) ||
+          (p.trackId !== undefined && !text(p.trackId)) ||
+          (p.url !== undefined && typeof p.url !== 'string')
+        )
+          throw invalid()
+        if (p.url !== undefined) throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
+        if (!this.options.resolveTrackLyrics)
+          throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
+        const state = this.ready(env.epoch)
+        if (!state.track) throw error('NOT_FOUND', messages.NOT_FOUND)
+        const trackId = this.reference(state.track)
+        if (p.trackId !== undefined && p.trackId !== trackId)
+          throw error('NOT_FOUND', messages.NOT_FOUND)
+        const resolvedTrack = await this.resolveCurrentTrackRecord(state.track)
+        const resolved = await this.options.resolveTrackLyrics(resolvedTrack, {
+          allowOnlineFallback: true,
+          signal: this.options.signal
+        })
+        const projected = projectRemoteLyricsView(trackId, resolved)
+        if (projected.lines.length === 0) throw error('NOT_FOUND', messages.NOT_FOUND)
+        return projected
+      }
       case 'media.resolve':
         if (!only(p, ['libraryId', 'sourceId', 'sourceVersion']) || !text(p.libraryId) ||
           !text(p.sourceId) || (p.sourceVersion !== undefined && !text(p.sourceVersion, 256))) throw invalid()
@@ -386,6 +514,22 @@ export class RemoteCoreBridge {
         if (!this.options.media) throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
         return this.options.media.resolve({ libraryId: p.libraryId, sourceId: p.sourceId,
           sourceVersion: p.sourceVersion as string | undefined }, principal)
+      case 'media.lyrics': {
+        if (!only(p, ['libraryId', 'sourceId']) || !text(p.libraryId) || !text(p.sourceId))
+          throw invalid()
+        if (!principal) throw error('FORBIDDEN', messages.FORBIDDEN)
+        if (!this.options.media || !this.options.resolveTrackLyrics)
+          throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
+        const track = await this.options.media.resolveTrack({
+          libraryId: p.libraryId,
+          sourceId: p.sourceId
+        })
+        const content = await this.options.resolveTrackLyrics(track, {
+          allowOnlineFallback: true,
+          signal: this.options.signal
+        })
+        return projectRemoteLyricsView(p.sourceId, content)
+      }
       case 'core.getSnapshot':
       case 'state.snapshot':
         if (!only(p, [])) throw invalid()
@@ -534,6 +678,35 @@ export class RemoteCoreBridge {
 
   private sourceTrack(track: Omit<CoreTrackView, 'id' | 'queueEntryId' | 'subTrack'>) {
     return this.track({ ...track, id: '' }, undefined, false)
+  }
+
+  private async resolveCurrentTrackRecord(track: CoreTrackView): Promise<TrackData> {
+    if (this.options.media && (!track.source || track.source === 'local')) {
+      try {
+        return await this.options.media.resolveTrack({
+          libraryId: this.options.media.libraryId,
+          sourceId: track.id
+        })
+      } catch {
+        // Fall through to TrackView-projected metadata when the track is not in the local catalog.
+      }
+    }
+    return {
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      ...(track.artists ? { artists: track.artists } : {}),
+      album: track.album,
+      ...(track.albumId ? { albumId: track.albumId } : {}),
+      filePath: track.id,
+      fileName: track.title,
+      duration: track.duration,
+      size: track.size ?? 0,
+      cover: null,
+      lyrics: null,
+      source: track.source ?? 'local',
+      ...(track.ncmSongId != null ? { ncmSongId: track.ncmSongId } : {})
+    }
   }
 
   private async metadata(detail: EntityMetadataDetail) {

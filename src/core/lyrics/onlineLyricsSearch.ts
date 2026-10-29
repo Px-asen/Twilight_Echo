@@ -250,28 +250,34 @@ export async function searchOnlineLyrics(
   options.signal?.addEventListener('abort', onAbort, { once: true })
 
   try {
-    const params = new URLSearchParams({
-      track_name: query.title,
-      artist_name: query.artist
-    })
-    if (query.album) params.set('album_name', query.album)
-    if (query.durationSeconds != null) params.set('duration', String(query.durationSeconds))
+    const fetchHits = async (includeAlbum: boolean): Promise<LrclibHit[]> => {
+      const params = new URLSearchParams({
+        track_name: query.title,
+        artist_name: query.artist
+      })
+      if (includeAlbum && query.album) params.set('album_name', query.album)
+      if (query.durationSeconds != null) params.set('duration', String(query.durationSeconds))
 
-    const response = await fetchImpl(`${LRCLIB_BASE_URL}/search?${params.toString()}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal
-    })
-    if (!response.ok) {
-      throw new Error(`LRCLIB search failed with HTTP ${response.status}`)
+      const response = await fetchImpl(`${LRCLIB_BASE_URL}/search?${params.toString()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        throw new Error(`LRCLIB search failed with HTTP ${response.status}`)
+      }
+      const text = await response.text()
+      if (PortableBuffer.byteLength(text, 'utf-8') > MAX_ONLINE_LYRICS_BYTES) {
+        throw new Error('Online lyrics response exceeds size limit')
+      }
+      const parsed = parseJsonWithNestingLimit(text) as unknown
+      return Array.isArray(parsed) ? (parsed as LrclibHit[]) : []
     }
-    const text = await response.text()
-    if (PortableBuffer.byteLength(text, 'utf-8') > MAX_ONLINE_LYRICS_BYTES) {
-      throw new Error('Online lyrics response exceeds size limit')
+
+    let candidates = rankOnlineLyricsCandidates(query, await fetchHits(true)).slice(0, 12)
+    if (candidates.length === 0 && query.album) {
+      candidates = rankOnlineLyricsCandidates(query, await fetchHits(false)).slice(0, 12)
     }
-    const parsed = parseJsonWithNestingLimit(text) as unknown
-    const hits = Array.isArray(parsed) ? (parsed as LrclibHit[]) : []
-    const candidates = rankOnlineLyricsCandidates(query, hits).slice(0, 12)
     const result: OnlineLyricsSearchResult = {
       query,
       candidates,
