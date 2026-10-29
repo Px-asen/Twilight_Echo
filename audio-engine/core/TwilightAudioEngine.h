@@ -126,6 +126,8 @@ class TwilightAudioEngine {
 
   void setEventCallback(TAE_EventCallback callback, void* userData);
   void setStateEventsEnabled(bool enabled);
+  void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy);
+  void suspendUsbPcm(const std::string& reason);
   void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory);
 
   TAE_Result play(const std::string& source, double startTimeSeconds, bool initiallyPaused = false);

@@ -1028,6 +1028,8 @@ function projectPlayback(rt: Runtime, core: CoreSnapshot): Json | undefined {
   // Android engines also report the negotiated stream format and what the device offers.
   setOpt(view, 'actualSampleFormat', optStr(raw.actualSampleFormat))
   setOpt(view, 'requestedSampleRate', optPositiveInt(raw.requestedSampleRate))
+  view.usbPcmPreferenceAccepted = raw.usbPcmPreferenceAccepted === true
+  view.usbPcmFormatMatched = raw.usbPcmFormatMatched === true
   setOpt(view, 'requestedSampleFormat', optStr(raw.requestedSampleFormat))
   setOpt(view, 'hardwareSampleRate', optPositiveInt(raw.hardwareSampleRate))
   setOpt(view, 'hardwareBitDepth', optPositiveInt(raw.hardwareBitDepth))

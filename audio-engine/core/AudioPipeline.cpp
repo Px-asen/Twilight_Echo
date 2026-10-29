@@ -258,7 +258,7 @@ DspOutputStageRequest outputStageRequestFromGraphJson(const std::string& json) {
   DspOutputStageRequest request;
   if (!outputStage.empty()) {
     request.targetSampleRate = static_cast<int>(std::clamp(
-        json_utils::fieldNumber(outputStage, "targetSampleRate").value_or(0.0), 0.0, 384000.0));
+        json_utils::fieldNumber(outputStage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
     const std::string quality = json_utils::fieldString(outputStage, "resamplerQuality").value_or("native");
     if (quality == "high") {
       request.resamplerQuality = DspResamplerQuality::High;
@@ -960,6 +960,8 @@ struct AudioPipeline::DecodeStream {
     resamplerObservation.store(
         static_cast<uint32_t>(decoder->resamplerEngine()) |
         (static_cast<uint32_t>(decoder->effectiveResamplerQuality()) << 4) |
+        (static_cast<uint32_t>(decoder->effectiveResamplerPhase()) << 12) |
+        (decoder->effectiveResamplerPhase() != decoder->resamplerPhase() ? 0x200u : 0u) |
         (((actualResamplerQuality == DspResamplerQuality::SoxrHq ||
            actualResamplerQuality == DspResamplerQuality::SoxrVhq) &&
           decoder->effectiveResamplerQuality() == FFmpegDecoder::ResamplerQuality::Ultra) ? 0x100u : 0u),
@@ -2645,6 +2647,13 @@ TAE_Result AudioPipeline::playInternal(
           requestedDspConfig, outputConfig, requestedPlaybackVolume, requestedPlaybackRate,
           graphProcessingActive);
 
+  if (outputConfig.usbPcmPassthrough && (backendId != "oboe" || processingRequiresPcm ||
+      outputConfig.continuityFirst || outputConfig.sampleRateFamilySync ||
+      outputConfig.pcmToDsdMode != PcmToDsdMode::Off ||
+      requestedAutoMixMode_.load(std::memory_order_acquire) != TA_AM_OFF)) {
+    if (error) *error = "USB 原样 PCM 需要原速、单位增益、无处理的 Android PCM 输出";
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   crossfadeMixActive_ = false;
   crossfadeFramesProcessed_ = 0;
   crossfadeTotalFrames_ = 0;
@@ -3008,6 +3017,7 @@ TAE_Result AudioPipeline::playInternal(
         if (error && error->empty()) *error = "请求的音频输出后端不可用：" + routeBackendId;
         return false;
       }
+      output->setUsbPcmPolicy(usbPcmPolicy_);
       return output->setOutputConfig(outputConfig, error);
     };
 
@@ -3076,6 +3086,11 @@ TAE_Result AudioPipeline::playInternal(
       }
     }
 
+    if (outputConfig.usbPcmPassthrough && (active->stream.isDsd ||
+        !pcmFormatsSemanticallyMatch(active->stream.sourceFormat, requestedPcmFormat))) {
+      if (error) *error = "USB 原样 PCM 不允许 DSD 或采样率／声道／位深转换";
+      return TAE_RESULT_INVALID_ARGUMENT;
+    }
     if (!pcmToDsdPath) {
       if (!output->open(deviceId, requestedPcmFormat, error)) {
         return TAE_RESULT_BACKEND_UNAVAILABLE;
@@ -3090,10 +3105,15 @@ TAE_Result AudioPipeline::playInternal(
     const bool canUseTypedPassthrough =
         requestedAutoMixMode_.load(std::memory_order_acquire) == TA_AM_OFF &&
         !outputConfig.continuityFirst && !pcmToDsdPath && !active->stream.isDsd && !processingRequiresPcm &&
-        backendCanTypedPassthrough(backendId) && formatCanTypedPassthrough(active->stream.sourceFormat) &&
+        (backendCanTypedPassthrough(backendId) || (backendId == "oboe" && outputConfig.usbPcmPassthrough)) && formatCanTypedPassthrough(active->stream.sourceFormat) &&
         (pcmFormatsSemanticallyMatch(active->stream.sourceFormat, outputFormat) ||
           (backendId == "asio" &&
             pcmFormatsPreserveSource(active->stream.sourceFormat, outputFormat)));
+    if (outputConfig.usbPcmPassthrough && !canUseTypedPassthrough) {
+      if (error) *error = "USB 原样 PCM 无法建立无转换样本通路";
+      output->close();
+      return TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
     AudioFormat decodeFormat = pcmToDsdPath ? requestedPcmFormat : outputFormat;
     if (pcmToDsdPath) {
       decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
@@ -5001,6 +5021,10 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
     backendInfo.diagnostics.typedRawPath = outputInfo_.diagnostics.typedRawPath;
     backendInfo.diagnostics.processingBypassed = outputInfo_.diagnostics.processingBypassed;
   }
+  if (!stream_.isDsd) {
+    backendInfo.diagnostics.typedRawPath = typedPassthroughActive_;
+    backendInfo.diagnostics.processingBypassed = typedPassthroughActive_;
+  }
   // The compatibility route is decided by the pipeline; the backend cannot know
   // it. Copy unconditionally: PCM->DSD upconversion uses the route while its
   // source stream is PCM (stream_.isDsd == false).
@@ -5565,8 +5589,13 @@ std::string AudioPipeline::appliedDspGraphStatusJsonLocked() const {
       quality == FFmpegDecoder::ResamplerQuality::Ultra ? "ultra" :
       quality == FFmpegDecoder::ResamplerQuality::High ? "high" : "native";
   const bool known = engine != FFmpegDecoder::ResamplerEngine::Unknown;
+  const bool resampled = engine == FFmpegDecoder::ResamplerEngine::Swr || engine == FFmpegDecoder::ResamplerEngine::Soxr;
+  const char* phaseName = static_cast<FFmpegDecoder::ResamplerPhase>((observation >> 12) & 0xf) ==
+      FFmpegDecoder::ResamplerPhase::LinearSmooth ? "linear-smooth" : "linear";
   json.insert(*start + 1, std::string("\"effectiveResampler\":\"") + engineName +
       "\",\"effectiveResamplerQuality\":" + (known ? std::string("\"") + qualityName + "\"" : "null") +
+      ",\"effectiveResamplerPhase\":" + (resampled ? std::string("\"") + phaseName + "\"" : "null") +
+      ",\"effectiveResamplerPhaseFallback\":" + ((resampled && (observation & 0x200u)) ? "true" : "false") +
       ",\"effectiveResamplerFallback\":" + ((observation & 0x100u) ? "true" : "false") +
       ",\"resampled\":" + (!known ? "null" : engine == FFmpegDecoder::ResamplerEngine::None ? "false" : "true") + ",");
   return json;

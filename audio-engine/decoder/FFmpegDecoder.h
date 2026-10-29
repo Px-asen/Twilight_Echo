@@ -44,6 +44,9 @@ class FFmpegDecoder {
   // Observations of the last successful setOutputFormat, not the next request.
   ResamplerEngine resamplerEngine() const;
   ResamplerQuality effectiveResamplerQuality() const;
+  ResamplerPhase effectiveResamplerPhase() const;
+  // Saved request, retained for compatibility. Minimum variants are legacy
+  // aliases until a backend with actual minimum-phase control is integrated.
   ResamplerPhase resamplerPhase() const;
   size_t readFrames(float* output, size_t frameCount, std::string* error);
   size_t readFrames(PcmBlock& output, std::string* error);

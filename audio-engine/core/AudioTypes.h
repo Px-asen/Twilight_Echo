@@ -62,6 +62,7 @@ enum class PcmToDsdMode {
 };
 
 struct OutputConfig {
+  bool usbPcmPassthrough = false;
   bool continuityFirst = false;
   int continuitySampleRate = 48000;
   // Opt-in PCM request policy. Empty device rates mean undeclared capabilities,
@@ -261,6 +262,9 @@ struct OutputInfo {
 
   bool exclusive = false;
   bool outputReleased = false;
+  bool usbPcmPreferenceAccepted = false;
+  bool usbPcmFormatMatched = false;
+  bool usbPcmInvalid = false;
   std::string accessMode = "shared";
   bool supportsOutputPerfect = false;
   bool sourceExact = false;

@@ -1,4 +1,5 @@
 #include "OboeOutputBackend.h"
+#include "AndroidPcmCallback.h"
 
 #include <algorithm>
 #include <atomic>
@@ -92,6 +93,16 @@ int32_t parseAndroidDeviceId(const std::string& deviceId) {
 struct OboeOutputBackend::Impl {
   mutable std::mutex mutex;
   RenderCallback callback;
+  TypedRenderCallback typedCallback;
+  std::shared_ptr<UsbPcmPolicy> usbPolicy;
+  bool usbLease = false;
+  bool rawPcm = false;
+  int usbDeviceId = 0;
+  int requestedAAudioFormat = 2; // AAUDIO_FORMAT_PCM_FLOAT
+  void releaseUsbLease() {
+    if (usbLease && usbPolicy) usbPolicy->release();
+    usbLease = false;
+  }
   OutputEventCallback eventCallback;
   OutputConfig outputConfig;
   AudioFormat format;
@@ -128,30 +139,12 @@ struct OboeOutputBackend::Impl {
       int32_t numFrames) {
     (void)stream;
     auto* self = static_cast<Impl*>(userData);
-    float* outBuffer = static_cast<float*>(audioData);
-    if (!self || !outBuffer || numFrames <= 0) {
-      return AAUDIO_CALLBACK_RESULT_CONTINUE;
-    }
-
-    const int channels = std::max(1, self->activeChannels.load(std::memory_order_relaxed));
-    const size_t frameCount = static_cast<size_t>(numFrames);
-    const size_t totalSamples = frameCount * static_cast<size_t>(channels);
-
-    if (self->stopRequested.load(std::memory_order_acquire) ||
-        !self->running.load(std::memory_order_acquire)) {
-      std::fill_n(outBuffer, totalSamples, 0.0f);
-      return AAUDIO_CALLBACK_RESULT_STOP;
-    }
-
-    size_t rendered = 0;
-    if (self->callback) {
-      rendered = self->callback(outBuffer, frameCount);
-    }
-    if (rendered < frameCount) {
-      const size_t offset = rendered * static_cast<size_t>(channels);
-      std::fill(outBuffer + offset, outBuffer + totalSamples, 0.0f);
-    }
-    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    const bool running = !self->stopRequested.load(std::memory_order_acquire) &&
+                         self->running.load(std::memory_order_acquire);
+    renderAndroidPcm(audioData, static_cast<size_t>(numFrames), self->format,
+        running, self->rawPcm, self->typedCallback, self->callback);
+    return running ? AAUDIO_CALLBACK_RESULT_CONTINUE : AAUDIO_CALLBACK_RESULT_STOP;
   }
 
   static void onErrorCallback(
@@ -221,9 +214,17 @@ struct OboeOutputBackend::Impl {
     }
 
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
-    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setPerformanceMode(builder, rawPcm ? AAUDIO_PERFORMANCE_MODE_NONE : AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(builder, sharingMode);
-    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+    AAudioStreamBuilder_setFormat(builder, rawPcm ? requestedAAudioFormat : AAUDIO_FORMAT_PCM_FLOAT);
+    // Dynamic API 28 setter keeps the ordinary API 26 library loadable.
+    if (rawPcm) {
+      using SetUsage = void (*)(AAudioStreamBuilder*, int32_t);
+      static auto setUsage = reinterpret_cast<SetUsage>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setUsage"));
+      static auto setContent = reinterpret_cast<SetUsage>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setContentType"));
+      if (setUsage) setUsage(builder, 1); // USAGE_MEDIA
+      if (setContent) setContent(builder, 2); // CONTENT_TYPE_MUSIC, matches host preference
+    }
     AAudioStreamBuilder_setSampleRate(builder, sampleRate);
     AAudioStreamBuilder_setChannelCount(builder, channelCount);
     if (deviceId != AAUDIO_UNSPECIFIED) {
@@ -257,6 +258,9 @@ struct OboeOutputBackend::Impl {
 #if defined(__ANDROID__)
     closeAAudioStreamLocked();
 #endif
+    releaseUsbLease();
+    rawPcm = false;
+    usbDeviceId = 0;
     format = {};
     info = {};
     diagnostics = {};
@@ -345,13 +349,39 @@ bool OboeOutputBackend::open(
   const int preferredBufferFrames = impl_->outputConfig.preferredBufferSize > 0
                                         ? static_cast<int>(impl_->outputConfig.preferredBufferSize)
                                         : kDefaultOboeBufferFrames;
-  const bool wantExclusive = !impl_->outputConfig.continuityFirst &&
+  const bool wantExclusive = !impl_->outputConfig.usbPcmPassthrough && !impl_->outputConfig.continuityFirst &&
                              (impl_->exclusiveRequested.load(std::memory_order_acquire) ||
                               extractConfigExclusiveFlag(impl_->outputConfig) ||
                               deviceIdRequestsExclusive(impl_->currentDeviceId));
 
 #if defined(__ANDROID__)
-  const int32_t androidDeviceId = parseAndroidDeviceId(impl_->currentDeviceId);
+  int32_t androidDeviceId = parseAndroidDeviceId(impl_->currentDeviceId);
+  impl_->rawPcm = impl_->outputConfig.usbPcmPassthrough;
+  if (impl_->rawPcm) {
+    if (!impl_->usbPolicy || requestedChannels != requestedFormat.channelCount ||
+        requestedChannels > 2 || requestedFormat.dopEncoded) {
+      if (error) *error = "USB 原样 PCM 需要 Android 14+ 宿主策略与单／双声道 PCM";
+      return false;
+    }
+    switch (requestedFormat.sampleFormat) {
+      case AudioSampleFormat::Int16Interleaved: impl_->requestedAAudioFormat = AAUDIO_FORMAT_PCM_I16; break;
+      case AudioSampleFormat::Int24Interleaved: impl_->requestedAAudioFormat = AAUDIO_FORMAT_PCM_I24_PACKED; break;
+      case AudioSampleFormat::Int32Interleaved: impl_->requestedAAudioFormat = AAUDIO_FORMAT_PCM_I32; break;
+      case AudioSampleFormat::Float32Interleaved: impl_->requestedAAudioFormat = AAUDIO_FORMAT_PCM_FLOAT; break;
+      default:
+        if (error) *error = "USB 原样 PCM 不支持此样本容器";
+        return false;
+    }
+    androidDeviceId = impl_->usbPolicy->acquire(deviceId, requestedFormat, error);
+    if (androidDeviceId <= 0) return false;
+    impl_->usbLease = true;
+    impl_->usbDeviceId = androidDeviceId;
+  }
+  // Every failed open releases only this output's lease, including format mismatch.
+  struct OpenGuard {
+    Impl* self;
+    ~OpenGuard() { if (!self->opened.load()) { self->closeAAudioStreamLocked(); self->releaseUsbLease(); } }
+  } guard{impl_.get()};
   AAudioStream* stream = nullptr;
   std::string openError;
   bool exclusiveFallbackOccurred = false;
@@ -410,6 +440,12 @@ bool OboeOutputBackend::open(
   const int32_t actualBufferSizeFrames = AAudioStream_getBufferSizeInFrames(stream);
   const int32_t actualDeviceId = AAudioStream_getDeviceId(stream);
   const bool isExclusive = (actualSharingMode == AAUDIO_SHARING_MODE_EXCLUSIVE);
+  if (impl_->rawPcm && (actualSampleRate != requestedFormat.sampleRate ||
+      actualChannels != requestedFormat.channelCount || actualDeviceId != androidDeviceId ||
+      actualAAudioFormat != impl_->requestedAAudioFormat || isExclusive || !impl_->usbPolicy->valid())) {
+    if (error) *error = "USB 原样 PCM 实际路由或格式与系统偏好不匹配";
+    return false;
+  }
   if (wantExclusive && !isExclusive) {
     exclusiveFallbackOccurred = true;
   }
@@ -458,6 +494,8 @@ bool OboeOutputBackend::open(
   const bool sourceExact = isExclusive && !resampled;
 
   impl_->info = {};
+  impl_->info.usbPcmPreferenceAccepted = impl_->rawPcm;
+  impl_->info.usbPcmFormatMatched = impl_->rawPcm;
   impl_->info.exclusive = isExclusive;
   impl_->info.accessMode = isExclusive ? "exclusive" : "shared";
   impl_->info.supportsOutputPerfect = false;
@@ -527,6 +565,10 @@ bool OboeOutputBackend::open(
   return true;
 #else
   (void)wantExclusive;
+  if (impl_->outputConfig.usbPcmPassthrough) {
+    if (error) *error = "USB 原样 PCM 仅支持 Android 14+";
+    return false;
+  }
   impl_->format.sampleRate = requestedFormat.sampleRate;
   impl_->format.channelCount = requestedChannels;
   impl_->format.sampleFormat = AudioSampleFormat::Float32Interleaved;
@@ -597,6 +639,21 @@ bool OboeOutputBackend::setOutputConfig(const OutputConfig& config, std::string*
   return true;
 }
 
+void OboeOutputBackend::setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) {
+  impl_->usbPolicy = std::move(policy);
+}
+
+bool OboeOutputBackend::startTyped(TypedRenderCallback callback, RenderCallback fallback,
+    OutputEventCallback event, std::string* error) {
+  if (impl_->rawPcm && (!callback || !impl_->usbLease || !impl_->usbPolicy->valid())) {
+    if (error) *error = "USB 原样 PCM 样本回调或系统偏好已失效";
+    close();
+    return false;
+  }
+  impl_->typedCallback = std::move(callback);
+  return start(std::move(fallback), std::move(event), error);
+}
+
 void OboeOutputBackend::setExclusiveMode(bool exclusive) {
   impl_->exclusiveRequested.store(exclusive, std::memory_order_release);
 }
@@ -609,6 +666,10 @@ bool OboeOutputBackend::start(
     RenderCallback callback,
     OutputEventCallback eventCallback,
     std::string* error) {
+  if (impl_->rawPcm && !impl_->typedCallback) {
+    if (error) *error = "USB 原样 PCM 不能使用浮点回退回调";
+    return false;
+  }
   if (!impl_->opened.load(std::memory_order_acquire)) {
     if (error) *error = "Oboe output backend is not open";
     return false;
@@ -689,6 +750,7 @@ void OboeOutputBackend::close() {
 #if defined(__ANDROID__)
   impl_->closeAAudioStreamLocked();
 #endif
+  impl_->typedCallback = nullptr;
   impl_->callback = nullptr;
   impl_->eventCallback = nullptr;
   impl_->resetStateLocked();
@@ -729,6 +791,13 @@ OutputInfo OboeOutputBackend::outputInfo() const {
     const int32_t deviceId = AAudioStream_getDeviceId(impl_->aaudioStream);
     impl_->info.actualDeviceId = deviceId > 0 ? std::to_string(deviceId) : "";
     readHardwareFormat(impl_->aaudioStream, impl_->info);
+    if (impl_->rawPcm && (deviceId != impl_->usbDeviceId || !impl_->usbPolicy->valid())) {
+      // Clock thread sees this fact and pauses/releases; callback only sees the atomic brake.
+      impl_->stopRequested.store(true, std::memory_order_release);
+      impl_->info.usbPcmPreferenceAccepted = false;
+      impl_->info.usbPcmFormatMatched = false;
+      impl_->info.usbPcmInvalid = true;
+    }
     const int32_t xruns = AAudioStream_getXRunCount(impl_->aaudioStream);
     if (xruns > 0) {
       impl_->diagnostics.driverXrunCount = static_cast<uint64_t>(xruns);

@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -143,6 +144,15 @@ struct JniInputProvider {
   }
 };
 std::unordered_map<TAE_EngineHandle, std::shared_ptr<JniInputProvider>> g_inputs;
+struct JniUsbPolicy {
+  jobject provider = nullptr;
+  jmethodID acquire = nullptr, valid = nullptr, release = nullptr;
+  ~JniUsbPolicy() {
+    ScopedJniEnv scope(getJavaVm());
+    if (scope.get() && provider) scope.get()->DeleteGlobalRef(provider);
+  }
+};
+std::unordered_map<TAE_EngineHandle, std::shared_ptr<JniUsbPolicy>> g_usbPolicies;
 
 bool clearInputException(JNIEnv* env) {
   if (!env->ExceptionCheck()) return false;
@@ -346,7 +356,52 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeDes
   {
     std::lock_guard lock(g_contextsMutex);
     g_inputs.erase(engine);
+    g_usbPolicies.erase(engine);
   }
+}
+
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSetUsbPcmPolicy(
+    JNIEnv* env, jobject, jlong handle, jobject provider) {
+  auto engine = toEngineHandle(handle);
+  if (!engine || !provider) return TAE_RESULT_INVALID_ARGUMENT;
+  std::lock_guard lock(g_contextsMutex);
+  if (g_usbPolicies.count(engine)) return TAE_RESULT_INVALID_ARGUMENT;
+  auto context = std::make_shared<JniUsbPolicy>();
+  context->provider = env->NewGlobalRef(provider);
+  auto cls = env->GetObjectClass(provider);
+  context->acquire = env->GetMethodID(cls, "acquire", "(Ljava/lang/String;IILjava/lang/String;)Ljava/lang/String;");
+  context->valid = env->GetMethodID(cls, "valid", "()Z");
+  context->release = env->GetMethodID(cls, "release", "()V");
+  env->DeleteLocalRef(cls);
+  if (clearInputException(env) || !context->acquire || !context->valid || !context->release) return TAE_RESULT_INVALID_ARGUMENT;
+  const TAE_UsbPcmCallbacks callbacks{
+    [](const char* device, int rate, int channels, const char* format, char* error, size_t cap, void* ctx) -> int {
+      auto* p = static_cast<JniUsbPolicy*>(ctx);
+      ScopedJniEnv scope(getJavaVm()); auto* e = scope.get(); if (!e) return 0;
+      auto d = e->NewStringUTF(device); auto f = e->NewStringUTF(format);
+      auto result = static_cast<jstring>(e->CallObjectMethod(p->provider, p->acquire, d, rate, channels, f));
+      e->DeleteLocalRef(d); e->DeleteLocalRef(f);
+      if (clearInputException(e)) return 0;
+      const auto text = jstringToUtf8(e, result); if (result) e->DeleteLocalRef(result);
+      if (text.rfind("OK:", 0) == 0) return std::atoi(text.c_str() + 3);
+      if (cap > 0) { const auto n = std::min(cap - 1, text.size()); std::memcpy(error, text.data(), n); error[n] = 0; }
+      return 0;
+    },
+    [](void* ctx) -> int {
+      auto* p = static_cast<JniUsbPolicy*>(ctx); ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      if (!e) return 0;
+      auto valid = e->CallBooleanMethod(p->provider, p->valid);
+      return !clearInputException(e) && valid;
+    },
+    [](void* ctx) {
+      auto* p = static_cast<JniUsbPolicy*>(ctx); ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      if (e) { e->CallVoidMethod(p->provider, p->release); clearInputException(e); }
+    }
+  };
+  const auto result = TAE_SetUsbPcmPolicy(engine, &callbacks, context.get());
+  if (result == TAE_RESULT_OK) g_usbPolicies[engine] = std::move(context);
+  return result;
 }
 
 JNIEXPORT jint JNICALL

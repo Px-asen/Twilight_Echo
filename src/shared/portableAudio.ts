@@ -19,6 +19,7 @@ export interface PortableDspSettings {
   bufferFrames: number
   continuitySampleRate: number
   playbackRate: number
+  usbPcmPassthrough: boolean
   sampleRateFamilySync: boolean
   allowedSampleRates: number[]
 }
@@ -33,7 +34,7 @@ export function defaultPortableDspSettings(): PortableDspSettings {
       dither: 'off', headroomEnabled: false, headroomGainDb: -3, safetyClamp: true },
     crossfadeSeconds: 0, crossfadeCurve: 'equal-power', crossfadeContent: 'conservative',
     outputDeviceId: 'auto', exclusive: false, bufferFrames: 0, continuitySampleRate: 48000, playbackRate: 1,
-    sampleRateFamilySync: false, allowedSampleRates: []
+    usbPcmPassthrough: false, sampleRateFamilySync: false, allowedSampleRates: []
   }
 }
 
@@ -47,8 +48,8 @@ const finite = (n: unknown, min: number, max: number): n is number =>
 export function normalizePortableDspSettings(value: unknown): PortableDspSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid DSP settings')
   const v = { ...defaultPortableDspSettings(), ...value } as PortableDspSettings
-  if (typeof v.sampleRateFamilySync !== 'boolean' || !Array.isArray(v.allowedSampleRates) ||
-    v.allowedSampleRates.length > 32 || v.allowedSampleRates.some(rate => !Number.isInteger(rate) || !finite(rate, 8000, 384000)) ||
+  if (typeof v.usbPcmPassthrough !== 'boolean' || typeof v.sampleRateFamilySync !== 'boolean' || !Array.isArray(v.allowedSampleRates) ||
+    v.allowedSampleRates.length > 32 || v.allowedSampleRates.some(rate => !Number.isInteger(rate) || !finite(rate, 8000, 768000)) ||
     new Set(v.allowedSampleRates).size !== v.allowedSampleRates.length)
     throw new Error('Invalid PCM sample-rate settings')
   if (!Array.isArray(v.nodes) || v.nodes.length > 14 || v.nodes.some(n =>

@@ -4,6 +4,30 @@ const { PortError, createEmbeddedHarness, createFakePlatform, wireTrack } = requ
 
 const TRACKS = ['a', 'b', 'c'].map((id) => wireTrack(id))
 
+test('705.6 and 768 kHz fixed targets survive the embedded host and persisted reconstruction', async () => {
+  for (const rate of [705600, 768000]) {
+    const platform = createFakePlatform()
+    const h = createEmbeddedHarness({ platform })
+    await h.boot({ epoch: `high-${rate}` })
+    const initial = (await h.snapshot()).eqConfig.dsp
+    const dsp = { ...initial, allowedSampleRates: [705600, 768000],
+      outputStage: { ...initial.outputStage, targetSampleRate: rate } }
+    await h.value('audio.setEq', { bitPerfect: true, dsp })
+    assert.equal(platform.appliedDsp.dsp.outputStage.targetSampleRate, rate)
+    assert.deepEqual(platform.appliedDsp.dsp.allowedSampleRates, [705600, 768000])
+    const invalid = await h.request('audio.setEq', { dsp: { ...dsp, allowedSampleRates: [768001] } })
+    assert.equal(invalid.ok, false)
+    assert.deepEqual((await h.snapshot()).eqConfig.dsp.allowedSampleRates, [705600, 768000])
+    await h.shutdown()
+    const restored = createEmbeddedHarness({ platform })
+    await restored.boot({ epoch: `high-restored-${rate}` })
+    const actual = (await restored.snapshot()).eqConfig.dsp
+    assert.equal(actual.outputStage.targetSampleRate, rate)
+    assert.deepEqual(actual.allowedSampleRates, [705600, 768000])
+    await restored.shutdown()
+  }
+})
+
 test('PCM family and allowed-rate settings persist, migrate defaults, and reject incompatible requests', async () => {
   const platform = createFakePlatform()
   const first = createEmbeddedHarness({ platform })

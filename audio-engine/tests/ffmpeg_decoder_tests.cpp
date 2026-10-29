@@ -642,8 +642,8 @@ void assertPreciseSeekMatchesExternalPcm(const std::string& source) {
 void assertDecoderResamplesWithQualityTier(
     FFmpegDecoder::ResamplerQuality quality,
     const char* fixtureName) {
-  // The fixture has to outrun the widest filter we configure: Ultra uses filter_size 64,
-  // and swr cannot centre a 64-tap filter on an input shorter than its half-length, so a
+  // The fixture has to outrun the widest filter we configure: Ultra uses filter_size 128,
+  // and swr cannot centre that filter on an input shorter than its half-length, so a
   // 32-frame fixture legitimately decodes to nothing on that tier.
   constexpr size_t kInputFrames = 1024;
   const auto fixture =

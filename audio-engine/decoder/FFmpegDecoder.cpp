@@ -270,6 +270,7 @@ struct FFmpegDecoder::Impl {
   FFmpegDecoder::ResamplerQuality resamplerQuality = FFmpegDecoder::ResamplerQuality::Native;
   FFmpegDecoder::ResamplerQuality effectiveResamplerQuality = FFmpegDecoder::ResamplerQuality::Native;
   FFmpegDecoder::ResamplerPhase resamplerPhase = FFmpegDecoder::ResamplerPhase::Linear;
+  FFmpegDecoder::ResamplerPhase effectiveResamplerPhase = FFmpegDecoder::ResamplerPhase::Linear;
   FFmpegDecoder::ResamplerEngine resamplerEngine = FFmpegDecoder::ResamplerEngine::Unknown;
   // ICY StreamTitle snapshot (decode-thread writes; control/status may read).
   mutable std::mutex streamTitleMutex;
@@ -986,14 +987,14 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
                                impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
     switch (quality) {
       case ResamplerQuality::Ultra:
-        av_opt_set_int(impl_->swr, "filter_size", 64, 0);
+        av_opt_set_int(impl_->swr, "filter_size", 128, 0);
         av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.99, 0);
+        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.96, 0);
         break;
       case ResamplerQuality::High:
-        av_opt_set_int(impl_->swr, "filter_size", 32, 0);
+        av_opt_set_int(impl_->swr, "filter_size", 64, 0);
         av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.97, 0);
+        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.94, 0);
         break;
       case ResamplerQuality::Native:
       default:
@@ -1060,6 +1061,14 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   impl_->effectiveResamplerQuality = wantsSoxr && !initialized ? ResamplerQuality::Ultra : impl_->resamplerQuality;
   impl_->resamplerEngine = format.sampleRate == impl_->codecContext->sample_rate
       ? ResamplerEngine::None : initialized ? ResamplerEngine::Soxr : ResamplerEngine::Swr;
+  // phase_shift is the polyphase table resolution, not a phase response.
+  // SWR is linear phase; FFmpeg's SoX wrapper also uses the default linear
+  // response. Only the High/Ultra SWR tiers apply our smooth cutoff.
+  const bool smooth = impl_->resamplerPhase == ResamplerPhase::LinearSmooth ||
+                      impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
+  impl_->effectiveResamplerPhase = !initialized && smooth &&
+      impl_->effectiveResamplerQuality != ResamplerQuality::Native
+      ? ResamplerPhase::LinearSmooth : ResamplerPhase::Linear;
   // A brand new swr context has nothing buffered yet, so the drain has to be re-armed.
   impl_->resamplerFlushed = false;
   impl_->resetPending();
@@ -1240,6 +1249,10 @@ FFmpegDecoder::ResamplerQuality FFmpegDecoder::effectiveResamplerQuality() const
 
 FFmpegDecoder::ResamplerPhase FFmpegDecoder::resamplerPhase() const {
   return impl_->resamplerPhase;
+}
+
+FFmpegDecoder::ResamplerPhase FFmpegDecoder::effectiveResamplerPhase() const {
+  return impl_->effectiveResamplerPhase;
 }
 
 const AudioStreamInfo& FFmpegDecoder::streamInfo() const {

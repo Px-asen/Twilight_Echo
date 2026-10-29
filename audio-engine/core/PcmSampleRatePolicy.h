@@ -8,12 +8,15 @@
 
 namespace twilight::audio {
 
+inline constexpr int kMinPcmSampleRate = 8000;
+inline constexpr int kMaxPcmSampleRate = 768000;
+
 inline bool validPcmSampleRates(const std::vector<int>& rates) {
   auto unique = rates;
   std::sort(unique.begin(), unique.end());
   return rates.size() <= 32 && std::adjacent_find(unique.begin(), unique.end()) == unique.end() &&
       std::all_of(rates.begin(), rates.end(), [](int rate) {
-    return rate >= 8000 && rate <= 384000;
+    return rate >= kMinPcmSampleRate && rate <= kMaxPcmSampleRate;
   });
 }
 

@@ -1406,6 +1406,8 @@ TrackProfile buildTrackProfile(const std::string& source) {
     profile.stream.sourceFormat.sampleRate = 88200;
   } else if (source.find("pcm-48k") != std::string::npos) {
     profile.stream.sourceFormat.sampleRate = 48000;
+  } else if (source.find("pcm-float") != std::string::npos) {
+    profile.stream.sourceFormat = makePcmFormat(44100, 2, 32, AudioSampleFormat::Float32Interleaved);
   }
   profile.stream.decodedFormat = profile.stream.sourceFormat;
   profile.defaultOutput = profile.stream.decodedFormat;
@@ -1569,6 +1571,36 @@ void testResamplerStatusUsesTheCurrentDecodeStream() {
     assert(json.find("\"effectiveResamplerQuality\":\"ultra\"") != std::string::npos);
     assert(json.find("\"effectiveResamplerFallback\":true") != std::string::npos);
     pipeline.stop();
+  }
+}
+
+void testResamplerPhaseStatusSeparatesRequestFromActiveFilter() {
+  for (const int targetRate : {0, 96000}) {
+    for (const auto* phase : {"linear", "minimum", "linear-smooth", "minimum-smooth"}) {
+      g_backendRegistry.reset();
+      AudioPipeline pipeline;
+      std::string error;
+      const std::string stage = std::string("{\"resamplerQuality\":\"high\",\"resamplerPhase\":\"") + phase +
+          "\",\"targetSampleRate\":" + std::to_string(targetRate) + "}";
+      const std::string processing = "{\"dspEnabled\":true,\"outputStage\":" + stage + "}";
+      const std::string state = "{\"revision\":1,\"processing\":" + processing +
+          ",\"graph\":{\"version\":2,\"nodes\":[],\"outputStage\":" + stage + "}}";
+      assert(pipeline.applyDspState(1, state, &error));
+      assert(pipeline.play("phase-observation.flac", 0.0, "wasapi-exclusive", "auto", 1.0,
+          processing, &error) == TAE_RESULT_OK);
+      auto backend = waitForLatestStartedBackendState(); assert(backend);
+      renderBackendFrames(backend, 128);
+      const auto status = pipeline.dspGraphStatusJson();
+      const bool smooth = std::string(phase).find("smooth") != std::string::npos;
+      const std::string effective = targetRate ? (smooth ? "\"linear-smooth\"" : "\"linear\"") : "null";
+      assert(status.find("\"effectiveResamplerPhase\":" + effective) != std::string::npos);
+      const bool fallback = targetRate && std::string(phase).find("minimum") != std::string::npos;
+      assert(status.find(std::string("\"effectiveResamplerPhaseFallback\":") + (fallback ? "true" : "false")) != std::string::npos);
+      pipeline.stop();
+      const auto stopped = pipeline.dspGraphStatusJson();
+      assert(stopped.find("\"effectiveResamplerPhase\":null") != std::string::npos);
+      assert(stopped.find("\"effectiveResamplerPhaseFallback\":false") != std::string::npos);
+    }
   }
 }
 
@@ -4752,7 +4784,14 @@ void testPcmSampleRateSelection() {
   assert(!selectPcmSampleRate(44100, 96000, config, true));
   config.allowedSampleRates = {96000, 48000};
   assert(selectPcmSampleRate(44100, 48000, config, true) == 48000);
-  assert(!validPcmSampleRates({7999}) && !validPcmSampleRates({384001}));
+  assert(!validPcmSampleRates({7999}) && !validPcmSampleRates({768001}));
+  assert(validPcmSampleRates({8000, 384001, 705600, 768000}));
+  config.sampleRateFamilySync = true;
+  config.allowedSampleRates = {705600, 768000};
+  assert(selectPcmSampleRate(44100, 44100, config) == 705600);
+  assert(selectPcmSampleRate(48000, 48000, config) == 768000);
+  assert(selectPcmSampleRate(705600, 705600, config) == 705600);
+  assert(selectPcmSampleRate(768000, 768000, config) == 768000);
   assert(!validPcmSampleRates({48000, 48000}) && !validPcmSampleRates(std::vector<int>(33, 48000)));
   config.sampleRateFamilySync = config.continuityFirst = true;
   assert(!pcmSampleRateConstraintsCompatible(config));
@@ -4844,6 +4883,47 @@ void testPcmGraphAndAllowedSetCommitTogether() {
   assert(engine.applyDspState(100001, R"({"revision":100001,"processing":{},"graph":{"nodes":[{"id":"missing","type":"convolver","enabled":true,"params":{"impulseResponsePath":"Z:/twilight-definitely-missing/p2.wav"}}],"outputStage":{"targetSampleRate":48000}},"outputConfig":{"allowedSampleRates":[48000]}})") == TAE_RESULT_INVALID_ARGUMENT);
   assertLatestPlaybackContains(engine, "\"outputSampleRate\":96000");
   assert(waitForLatestStartedBackendState()->outputConfig.allowedSampleRates == std::vector<int>{96000});
+  assert(engine.seek(0.1) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+}
+
+void testHighPcmRequestsPreserveNegotiatedFormatAndPause() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Use a float PCM source: this shared fake otherwise classifies high-rate
+  // stereo Int24 requests as DoP and skips its PCM negotiation override.
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  g_negotiatedPcmSampleRate = 48000;
+  assert(engine.play("pcm-float.flac", 0.1) == TAE_RESULT_OK);
+  assert(engine.pause() == TAE_RESULT_OK);
+  for (const int rate : {705600, 768000}) {
+    const auto text = std::to_string(rate);
+    const auto state = "{\"revision\":" + text +
+        ",\"processing\":{},\"graph\":{\"nodes\":[],\"outputStage\":{\"targetSampleRate\":" + text +
+        "}},\"outputConfig\":{\"allowedSampleRates\":[" + text + "],\"deviceSampleRates\":[705600,768000]}}";
+    assert(engine.applyDspState(rate, state) == TAE_RESULT_OK);
+    auto backend = waitForLatestStartedBackendState();
+    if (backend) std::cerr << "high PCM requested=" << backend->requestedFormat.sampleRate
+        << " actual=" << backend->openedFormat.sampleRate << " depth=" << backend->requestedFormat.bitDepth
+        << " format=" << static_cast<int>(backend->requestedFormat.sampleFormat) << '\n';
+    assert(backend && backend->requestedFormat.sampleRate == rate && backend->openedFormat.sampleRate == 48000);
+    assertLatestPlaybackContains(engine, "\"requestedSampleRate\":" + text);
+    assertLatestPlaybackContains(engine, "\"actualSampleRate\":48000");
+    assertLatestPlaybackContains(engine, "\"decodedSampleRate\":48000");
+    assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+    assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+    assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - 0.1) < 0.001);
+    // Independent capability refresh must validate the saved target at full precision too.
+    assert(engine.setOutputConfig("{\"allowedSampleRates\":[" + text + "],\"deviceSampleRates\":[" + text + "]}") == TAE_RESULT_OK);
+  }
+  const auto count = g_backendRegistry.snapshots().size();
+  assert(engine.setOutputConfig(R"({"allowedSampleRates":[768001]})") == TAE_RESULT_INVALID_ARGUMENT);
+  assert(engine.setOutputConfig(R"({"allowedSampleRates":[768000],"deviceSampleRates":[384000]})") == TAE_RESULT_INVALID_ARGUMENT);
+  assert(g_backendRegistry.snapshots().size() == count);
+  assertLatestPlaybackContains(engine, "\"requestedSampleRate\":768000");
+  assert(engine.applyDspState(768001, R"({"revision":768001,"processing":{},"graph":{"nodes":[{"id":"missing","type":"convolver","enabled":true,"params":{"impulseResponsePath":"Z:/twilight-definitely-missing/p2.wav"}}],"outputStage":{"targetSampleRate":705600}},"outputConfig":{"allowedSampleRates":[705600]}})") == TAE_RESULT_INVALID_ARGUMENT);
+  assert(waitForLatestStartedBackendState()->outputConfig.allowedSampleRates == std::vector<int>{768000});
+  assertLatestPlaybackContains(engine, "\"requestedSampleRate\":768000");
   assert(engine.seek(0.1) == TAE_RESULT_OK);
   assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
 }
@@ -5468,6 +5548,12 @@ FFmpegDecoder::ResamplerPhase FFmpegDecoder::resamplerPhase() const {
   return impl_->phase;
 }
 
+FFmpegDecoder::ResamplerPhase FFmpegDecoder::effectiveResamplerPhase() const {
+  return effectiveResamplerQuality() != ResamplerQuality::Native &&
+      (impl_->phase == ResamplerPhase::LinearSmooth || impl_->phase == ResamplerPhase::MinimumSmooth)
+      ? ResamplerPhase::LinearSmooth : ResamplerPhase::Linear;
+}
+
 FFmpegDecoder::ResamplerEngine FFmpegDecoder::resamplerEngine() const {
   if (!impl_->opened) return ResamplerEngine::Unknown;
   return impl_->outputFormat.sampleRate == impl_->profile.stream.sourceFormat.sampleRate
@@ -5600,11 +5686,17 @@ void FFmpegDecoder::pollStreamMetadata() {}
   } while (false)
 
 int main() {
+  if (std::getenv("TAE_RUNTIME_RESAMPLER_ONLY")) {
+    RUN_RUNTIME_CASE(testResamplerStatusUsesTheCurrentDecodeStream());
+    RUN_RUNTIME_CASE(testResamplerPhaseStatusSeparatesRequestFromActiveFilter());
+    return 0;
+  }
   if (std::getenv("TAE_RUNTIME_PCM_RATE_ONLY")) {
     RUN_RUNTIME_CASE(testPcmSampleRateSelection());
     RUN_RUNTIME_CASE(testPcmRateCapabilityChangePreservesPauseAndNegotiatedFacts());
     RUN_RUNTIME_CASE(testPcmRatePreloadUsesRequestsRatherThanNegotiatedRate());
     RUN_RUNTIME_CASE(testPcmGraphAndAllowedSetCommitTogether());
+    RUN_RUNTIME_CASE(testHighPcmRequestsPreserveNegotiatedFormatAndPause());
     return 0;
   }
   if (std::getenv("TAE_RUNTIME_SEEK_END_ONLY")) {
@@ -5709,6 +5801,7 @@ int main() {
   RUN_RUNTIME_CASE(testLoopRangeClearsBeforePromotedDuplicateCanSeek(true, true));
   RUN_RUNTIME_CASE(testExternalStopClearsLoopRangeAndRetainsOccurrenceJson());
   RUN_RUNTIME_CASE(testResamplerStatusUsesTheCurrentDecodeStream());
+  RUN_RUNTIME_CASE(testResamplerPhaseStatusSeparatesRequestFromActiveFilter());
   RUN_RUNTIME_CASE(testPcm192kTypedPassthroughIsOutputPerfect());
   RUN_RUNTIME_CASE(testPcmTypedGaplessPreservesBytesWithoutReopen());
   RUN_RUNTIME_CASE(testPcmTypedGaplessRejectsIncompatiblePreloads());
@@ -5811,6 +5904,7 @@ int main() {
   RUN_RUNTIME_CASE(testPcmRateCapabilityChangePreservesPauseAndNegotiatedFacts());
   RUN_RUNTIME_CASE(testPcmRatePreloadUsesRequestsRatherThanNegotiatedRate());
   RUN_RUNTIME_CASE(testPcmGraphAndAllowedSetCommitTogether());
+  RUN_RUNTIME_CASE(testHighPcmRequestsPreserveNegotiatedFormatAndPause());
   RUN_RUNTIME_CASE(testOriginalPolicyRejectsMixedFormatAndPolicySwitchRetainsPause());
   RUN_RUNTIME_CASE(testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain());
   for (const bool paused : {false, true}) RUN_RUNTIME_CASE(testFailedSeekRestoresRenderState(paused));
