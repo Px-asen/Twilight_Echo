@@ -35,8 +35,8 @@ test('online home renders Core-resolved recent display identities and artwork wi
   await tick()
   assert.equal(f.history.state.value.loading, false)
   assert.equal(f.hydrations(), 1)
-  f.stats.value = [{ displayTrack: null, cover: null }, { displayTrack: { id: 'ncm:9', title: 'New', artist: '', album: '', duration: 10, size: 1, source: 'ncm' }, cover: null }]
-  assert.deepEqual(f.history.tracks.value.map((track: Track) => track.id), ['ncm:9'])
+  f.stats.value = [{ displayTrack: null, cover: null }, { displayTrack: { id: 'ncm:9', title: 'New', artist: '', album: '', duration: 10, size: 1, source: 'ncm' }, cover: 'twilight-media://image/recent-ncm-9' }]
+  assert.deepEqual(f.history.tracks.value.map((track: Track) => ({ id: track.id, cover: track.cover })), [{ id: 'ncm:9', cover: 'twilight-media://image/recent-ncm-9' }])
 })
 
 test('online history errors remain visible and a successful explicit retry replaces them', async () => {

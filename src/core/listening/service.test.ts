@@ -6,7 +6,7 @@ import { emptyCoreStateCounts } from '../../shared/coreState.ts'
 import type { CoreStatisticsApi } from '../../shared/coreStatistics.ts'
 import type { TrackData } from '../../shared/track.ts'
 import { CoreStatisticsRepository } from './repository.ts'
-import { CoreStatisticsService } from './service.ts'
+import { CoreStatisticsService, type CoreStatisticsOptions } from './service.ts'
 import { createLibraryListeningProjection } from './libraryProjection.ts'
 import { listeningSourceIdentity } from '../../shared/listeningSourceIdentity.ts'
 import { buildLastPlayedBySource } from './model.ts'
@@ -64,7 +64,10 @@ class Timers {
     this.now = end
   }
 }
-async function fixture(t: test.TestContext) {
+async function fixture(
+  t: test.TestContext,
+  extra: Partial<Pick<CoreStatisticsOptions, 'artwork' | 'recoverArtwork'>> = {}
+) {
   const db = new CoreStateDatabase(':memory:')
   db.begin('upgrade', { version: 1, counts: emptyCoreStateCounts() })
   db.commit('upgrade')
@@ -94,7 +97,8 @@ async function fixture(t: test.TestContext) {
     now: () => timers.now,
     timers,
     history,
-    changed: () => changes++
+    changed: () => changes++,
+    ...extra
   })
   await service.initialize()
   t.after(async () => {
@@ -337,4 +341,159 @@ test('overview and clear preview cover history beyond the 200-row ranking window
   assert.equal(preview.seconds, 2255)
   assert.throws(() => f.service.previewClear(null, overview.revision - 1), { code: 'STALE_REVISION' })
   assert.equal(overview.history.ready, true)
+})
+
+test('projectPage and overview project provider and stream artwork into session handles with bounded caching and zero origin leaks', async (t) => {
+  let artworkCalls = 0
+  const f = await fixture(t, {
+    artwork: async (track) => {
+      artworkCalls++
+      if (track.cover?.startsWith('cover://')) return { cover: track.cover }
+      if (/^https?:\/\//i.test(track.coverSource ?? track.cover ?? ''))
+        return { cover: 'twilight-media://image/granted-recent' }
+      return { cover: null }
+    }
+  })
+  f.observe(
+    {
+      ...provider,
+      id: 'ncm:777',
+      source: 'ncm',
+      title: 'Online Hit',
+      artist: 'Online Singer',
+      cover: 'twilight-media://image/ephemeral-input',
+      coverSource: 'https://p2.music.126.net/cover.jpg?token=secret'
+    },
+    'playing'
+  )
+  f.timers.advance(5_000)
+
+  const page1 = await f.service.projectPage({ sort: 'recent', limit: 10 })
+  assert.equal(page1.items.length, 1)
+  assert.equal(page1.items[0].cover, 'twilight-media://image/granted-recent')
+  assert.doesNotMatch(JSON.stringify(page1), /https:\/\/|126\.net|token=secret|ephemeral-input/)
+  assert.equal(artworkCalls, 1)
+
+  const overview1 = await f.service.overview()
+  assert.equal(overview1.artists[0]?.cover, 'twilight-media://image/granted-recent')
+  assert.doesNotMatch(JSON.stringify(overview1), /https:\/\/|126\.net|token=secret/)
+  assert.equal(artworkCalls, 1, 'overview reuses the projected cover cache for identical durable source')
+
+  // Subsequent 5-second playback ticks reuse the TTL cache without extra IPC calls.
+  f.timers.advance(5_000)
+  const page2 = await f.service.projectPage({ sort: 'recent', limit: 10 })
+  assert.equal(page2.items[0].cover, 'twilight-media://image/granted-recent')
+  assert.equal(page2.items[0].seconds, 10)
+  assert.equal(artworkCalls, 1)
+
+  const saved = await f.snapshot()
+  const persisted = saved.tracks['logic:online hit::online singer']
+  assert.equal(persisted.cover, null, 'ephemeral session handles are never persisted as durable cover')
+  assert.equal(persisted.coverSource, 'https://p2.music.126.net/cover.jpg?token=secret')
+
+  const fallback = f.service.artworkTracks(new Set(['ncm:777', 'missing:1']))
+  assert.equal(fallback.get('ncm:777')?.coverSource, 'https://p2.music.126.net/cover.jpg?token=secret')
+  assert.equal(fallback.has('missing:1'), false)
+})
+
+test('rememberArtwork enriches both pre-tick active playback and existing coverless history rows without altering counters', async (t) => {
+  const f = await fixture(t, {
+    artwork: async (track) =>
+      track.coverSource ? { cover: 'twilight-media://image/recovered-handle' } : { cover: null }
+  })
+  const trackA: TrackData = {
+    ...provider,
+    id: 'ncm:101',
+    source: 'ncm',
+    title: 'Pre Tick Song',
+    artist: 'Artist A',
+    cover: null,
+    coverSource: null
+  }
+  f.observe(trackA, 'playing')
+  // Presentation recovers artwork before the first 5-second tick fires.
+  f.service.rememberArtwork(trackA, {
+    cover: 'twilight-media://image/temp',
+    coverSource: 'https://p2.music.126.net/a.jpg'
+  })
+  f.timers.advance(5_000)
+
+  const trackB: TrackData = {
+    ...provider,
+    id: 'ncm:202',
+    source: 'ncm',
+    title: 'Post Tick Song',
+    artist: 'Artist B',
+    cover: null,
+    coverSource: null
+  }
+  f.observe(trackB, 'playing')
+  f.timers.advance(5_000)
+  f.observe(null, 'stopped')
+
+  const beforeRecovery = (await f.service.projectPage({ sort: 'recent' })).items
+  assert.equal(beforeRecovery.find((i) => i.title === 'Pre Tick Song')?.cover, 'twilight-media://image/recovered-handle')
+  assert.equal(beforeRecovery.find((i) => i.title === 'Post Tick Song')?.cover, null)
+
+  f.service.rememberArtwork(trackB, {
+    cover: null,
+    coverSource: 'https://p2.music.126.net/b.jpg'
+  })
+  const afterRecovery = (await f.service.projectPage({ sort: 'recent' })).items
+  const enrichedB = afterRecovery.find((i) => i.title === 'Post Tick Song')!
+  assert.equal(enrichedB.cover, 'twilight-media://image/recovered-handle')
+  assert.equal(enrichedB.plays, 1)
+  assert.equal(enrichedB.seconds, 5)
+})
+
+test('projectPage recovers and persists missing artwork in the background for legacy coverless provider entries', async (t) => {
+  let recoveries = 0
+  const f = await fixture(t, {
+    artwork: async (track) =>
+      track.coverSource ? { cover: 'twilight-media://image/backfilled' } : { cover: null },
+    recoverArtwork: {
+      canRecover: (track) => track.source === 'ncm',
+      recover: async (track) => {
+        recoveries++
+        if (track.id === 'ncm:legacy-1') {
+          return {
+            cover: 'https://p2.music.126.net/legacy-1.jpg',
+            coverSource: 'https://p2.music.126.net/legacy-1.jpg'
+          }
+        }
+        return null
+      }
+    }
+  })
+
+  f.observe(
+    {
+      ...provider,
+      id: 'ncm:legacy-1',
+      source: 'ncm',
+      title: 'Legacy Provider Track',
+      artist: 'Singer',
+      cover: null,
+      coverSource: null
+    },
+    'playing'
+  )
+  f.timers.advance(5_000)
+  f.observe(null, 'stopped')
+
+  const firstRead = await f.service.projectPage({ sort: 'recent' })
+  assert.equal(firstRead.items[0].cover, null)
+
+  await tick()
+  await tick()
+
+  const secondRead = await f.service.projectPage({ sort: 'recent' })
+  assert.equal(secondRead.items[0].cover, 'twilight-media://image/backfilled')
+  assert.equal(recoveries, 1, 'recovery runs once per coverless history entry')
+
+  const saved = await f.snapshot()
+  assert.equal(
+    saved.tracks['logic:legacy provider track::singer'].coverSource,
+    'https://p2.music.126.net/legacy-1.jpg'
+  )
 })

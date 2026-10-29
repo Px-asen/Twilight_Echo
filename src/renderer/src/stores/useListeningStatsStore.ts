@@ -17,10 +17,10 @@ function projection() {
     clear: (range, revision) => core.command('statistics.clear', { range, revision })
   })
 }
-export type ListeningDisplayStat = Omit<ListeningTrackStatWithId, 'track'> & { displayTrack: CoreStatisticsTrackView['track'] }
+export type ListeningDisplayStat = Omit<ListeningTrackStatWithId, 'track'> & { displayTrack: (NonNullable<CoreStatisticsTrackView['track']> & { cover: string | null }) | null }
 function display(stat: CoreStatisticsTrackView): ListeningDisplayStat {
   const { track, ...metadata } = stat
-  return { ...metadata, displayTrack: track }
+  return { ...metadata, displayTrack: track ? { ...track, cover: stat.cover } : null }
 }
 /** Compatibility shape contains only the loaded ranking windows, never an all-history dataset. */
 const listeningStats = computed<ListeningStats>(() => {

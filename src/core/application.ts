@@ -145,7 +145,7 @@ export interface CoreApplicationDependencies {
   scan: Omit<CoreScanService, 'maintain'>
   libraryBackground?: Pick<CoreLibraryBackground, 'activate' | 'snapshot' | 'shutdown'>
   metadata?: CoreMetadataService
-  statistics: Omit<CoreStatisticsService, 'exportData'>
+  statistics: Omit<CoreStatisticsService, 'exportData' | 'projectPage' | 'rememberArtwork' | 'artworkTracks'> & Partial<Pick<CoreStatisticsService, 'projectPage' | 'rememberArtwork' | 'artworkTracks'>>
   pluginExperiences?: CorePluginExperiences
   pluginMarketplace?: CorePluginMarketplace
   plugins?: TwilightPluginManager
@@ -273,6 +273,16 @@ export class CoreApplication {
         } catch {
           break
         }
+      }
+    }
+    if (found.size < needed.size && this.dependencies.statistics.artworkTracks) {
+      const remaining = new Set<string>()
+      for (const id of needed) {
+        if (!found.has(id)) remaining.add(id)
+      }
+      for (const candidate of this.dependencies.statistics.artworkTracks(remaining).values()) {
+        remember(candidate)
+        if (found.size === needed.size) break
       }
     }
     return found
@@ -1865,11 +1875,11 @@ export class CoreApplication {
       case 'statistics.summary':
         return this.dependencies.statistics.summary()
       case 'statistics.overview':
-        return this.dependencies.statistics.overview()
+        return this.dependencies.statistics.overview(signal)
       case 'statistics.previewClear':
         return this.dependencies.statistics.previewClear(request.payload.range, request.payload.revision)
       case 'statistics.tracks':
-        return this.dependencies.statistics.page(request.payload)
+        return this.dependencies.statistics.projectPage ? this.dependencies.statistics.projectPage(request.payload, signal) : this.dependencies.statistics.page(request.payload)
       case 'statistics.clear':
         return this.dependencies.statistics.clear(request.payload.range, request.payload.revision)
       case 'state.snapshot':

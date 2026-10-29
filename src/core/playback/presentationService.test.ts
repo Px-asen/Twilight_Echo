@@ -204,11 +204,15 @@ test('unsupported provider favorites stay unavailable rather than writing the lo
 
 test('provider tracks missing persisted artwork recover exact-identity cover via searchSongs and never borrow title-only matches', async (t) => {
   let searches = 0
+  const recoveredCalls: Array<{ id: string; coverSource: string | null }> = []
   const f = fixture(t, {
     artwork: async (track) =>
       track.coverSource || track.cover
         ? { cover: 'twilight-media://image/recovered', coverSource: null }
         : { cover: null, coverSource: null },
+    artworkRecovered: (track, artwork) => {
+      recoveredCalls.push({ id: track.id, coverSource: artwork.coverSource })
+    },
     supportedMethods: () => ['likeTrack', 'isTrackLiked', 'searchSongs'],
     callProvider: async (_providerId, method, args) => {
       if (method === 'isTrackLiked') return false
@@ -280,5 +284,9 @@ test('provider tracks missing persisted artwork recover exact-identity cover via
   await turn()
   assert.equal(f.service.snapshot().cover, 'twilight-media://image/recovered')
   assert.equal(searches, 2)
+  assert.deepEqual(recoveredCalls, [
+    { id: 'ncm:42', coverSource: 'https://p2.music.126.net/exact.jpg' },
+    { id: 'ncm:42', coverSource: 'https://p2.music.126.net/exact.jpg' }
+  ])
   assert.deepEqual(f.errors, [])
 })

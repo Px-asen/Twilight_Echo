@@ -22,6 +22,7 @@ import {
   LISTENING_STATS_FLUSH_DELAY_MS,
   LISTENING_STATS_RETRY_DELAY_MS,
   LISTENING_STATS_MAX_TRACKS,
+  applyRecoveredListeningArtwork,
   buildLastPlayedByTrackId,
   buildLastPlayedBySource,
   cloneTrack,
@@ -30,10 +31,30 @@ import {
   compareRecentTracks,
   compareTopTracks,
   dayKey,
+  pickCoverFields,
   recordListeningOutcome,
-  recordListeningSeconds
+  recordListeningSeconds,
+  selectTopArtists
 } from './model.ts'
-import { selectTopArtists } from './model.ts'
+
+const ARTWORK_CACHE_TTL_MS = 10 * 60 * 1000
+const ARTWORK_NEGATIVE_CACHE_TTL_MS = 30 * 1000
+const ARTWORK_CACHE_MAX_ENTRIES = 512
+const ARTWORK_RECOVERY_PAGE_BUDGET = 12
+const ARTWORK_RECOVERY_ATTEMPT_MAX = 2048
+
+const SYNTHETIC_ARTWORK_TRACK: TrackData = {
+  id: 'statistics:artwork',
+  title: '',
+  artist: '',
+  album: '',
+  filePath: '',
+  fileName: '',
+  duration: 0,
+  size: 0,
+  cover: null,
+  lyrics: null
+}
 
 interface Capture {
   generation: number
@@ -48,6 +69,14 @@ export interface CoreStatisticsOptions {
     clearTimeout(handle: unknown): void
   }
   history?: ReturnType<typeof createLibraryListeningProjection>
+  artwork?(track: TrackData, signal: AbortSignal): Promise<{ cover: string | null }>
+  recoverArtwork?: {
+    canRecover(track: TrackData): boolean
+    recover(
+      track: TrackData,
+      signal: AbortSignal
+    ): Promise<{ cover: string | null; coverSource: string | null } | null>
+  }
   changed(): void
 }
 
@@ -63,6 +92,14 @@ export class CoreStatisticsService {
   private savedReplacement = 0
   private readonly dirtyTracks = new Map<string, number>()
   private readonly dirtyDays = new Map<string, number>()
+  private readonly projectedCoverCache = new Map<
+    string,
+    { cover: string | null; expiresAt: number }
+  >()
+  private readonly inflightCoverProjections = new Map<string, Promise<string | null>>()
+  private readonly attemptedArtworkRecovery = new Set<string>()
+  private readonly shutdownController = new AbortController()
+  private recoveryWork: Promise<void> = Promise.resolve()
   private pending: Capture | null = null
   private work: Promise<void> | null = null
   private flushTimer: unknown = null
@@ -110,31 +147,58 @@ export class CoreStatisticsService {
       }
     }
   }
-  async overview(): Promise<CoreStatisticsOverview> {
+  async overview(signal?: AbortSignal): Promise<CoreStatisticsOverview> {
     await this.options.history?.ensure()
+    signal?.throwIfAborted()
+    const summary = this.summary()
+    const recorded = summarizeRecordedTracks(this.stats.tracks)
     const providerByArtist = new Map<string, string>()
     for (const stat of Object.values(this.stats.tracks)) {
       const provider = stat.sourceIds?.find((source) => source.source !== 'local')?.source
       if (provider && !providerByArtist.has(stat.artist)) providerByArtist.set(stat.artist, provider)
     }
-    return {
-      ...this.summary(),
-      recorded: summarizeRecordedTracks(this.stats.tracks),
-      artists: selectTopArtists(this.stats, 50).map((artist) => ({
-        ...artist, cover: cachedCover(artist.cover), coverSource: null,
+    const topArtists = selectTopArtists(this.stats, 50)
+    const artists = await Promise.all(
+      topArtists.map(async (artist) => ({
+        ...artist,
+        cover: await this.projectCover(
+          artist.cover,
+          artist.coverSource ?? null,
+          undefined,
+          signal
+        ),
+        coverSource: null,
         sourceIds: artist.sourceIds.slice(0, 200),
         providerId: providerByArtist.get(artist.name) ?? null
-      })),
-      history: { ...(this.options.history?.state.value ?? {
-        mode: null, ready: false, pending: false, revision: null, error: ''
-      }) }
+      }))
+    )
+    signal?.throwIfAborted()
+    return {
+      ...summary,
+      recorded,
+      artists,
+      history: {
+        ...(this.options.history?.state.value ?? {
+          mode: null,
+          ready: false,
+          pending: false,
+          revision: null,
+          error: ''
+        })
+      }
     }
   }
   previewClear(range: ListeningStatsClearRange, revision: number) {
-    if (revision !== this.revision) throw Object.assign(new Error('Listening history changed'), { code: 'STALE_REVISION' })
+    if (revision !== this.revision)
+      throw Object.assign(new Error('Listening history changed'), { code: 'STALE_REVISION' })
     return { ...previewListeningStatsClear(this.stats, range), revision }
   }
-  page(query: CoreStatisticsQuery): CoreStatisticsPage {
+  private selectPageEntries(query: CoreStatisticsQuery): {
+    revision: number
+    total: number
+    offset: number
+    slice: ListeningTrackStatWithId[]
+  } {
     if (query.revision !== undefined && query.revision !== this.revision)
       throw Object.assign(new Error('Listening history changed; restart the paged query'), {
         code: 'STALE_REVISION'
@@ -162,8 +226,17 @@ export class CoreStatisticsService {
       revision: this.revision,
       total: entries.length,
       offset,
-      items: entries.slice(offset, offset + limit).map((stat) => ({
-        cover: cachedCover(stat.cover),
+      slice: entries.slice(offset, offset + limit)
+    }
+  }
+  page(query: CoreStatisticsQuery): CoreStatisticsPage {
+    const { revision, total, offset, slice } = this.selectPageEntries(query)
+    return {
+      revision,
+      total,
+      offset,
+      items: slice.map((stat) => ({
+        cover: cachedCover(stat.cover ?? stat.track?.cover ?? null),
         sourceIds: (stat.sourceIds ?? []).slice(0, 200),
         id: stat.id,
         seconds: stat.seconds,
@@ -175,6 +248,195 @@ export class CoreStatisticsService {
         artist: stat.artist,
         track: stat.track ? projectCoreTrack(stat.track) : null
       }))
+    }
+  }
+  async projectPage(query: CoreStatisticsQuery, signal?: AbortSignal): Promise<CoreStatisticsPage> {
+    signal?.throwIfAborted()
+    const { revision, total, offset, slice } = this.selectPageEntries(query)
+    this.enqueueArtworkRecovery(slice)
+    const items = await Promise.all(
+      slice.map(async (stat) => ({
+        cover: await this.projectCover(
+          stat.cover ?? stat.track?.cover ?? null,
+          stat.coverSource ?? stat.track?.coverSource ?? null,
+          stat.track,
+          signal
+        ),
+        sourceIds: (stat.sourceIds ?? []).slice(0, 200),
+        id: stat.id,
+        seconds: stat.seconds,
+        plays: stat.plays,
+        skips: stat.skips,
+        completions: stat.completions,
+        lastPlayed: stat.lastPlayed,
+        title: stat.title,
+        artist: stat.artist,
+        track: stat.track ? projectCoreTrack(stat.track) : null
+      }))
+    )
+    signal?.throwIfAborted()
+    return {
+      revision,
+      total,
+      offset,
+      items
+    }
+  }
+  artworkTracks(ids: ReadonlySet<string>): Map<string, TrackData> {
+    const found = new Map<string, TrackData>()
+    if (ids.size === 0) return found
+    for (const stat of Object.values(this.stats.tracks)) {
+      const cover = stat.cover ?? stat.track?.cover ?? null
+      const coverSource = stat.coverSource ?? stat.track?.coverSource ?? null
+      const networkSource = stat.track?.networkSource
+      if (!cover && !coverSource && !networkSource) continue
+      const candidateIds: string[] = []
+      if (stat.track?.id && ids.has(stat.track.id) && !found.has(stat.track.id))
+        candidateIds.push(stat.track.id)
+      for (const source of stat.sourceIds ?? []) {
+        if (ids.has(source.trackId) && !found.has(source.trackId))
+          candidateIds.push(source.trackId)
+      }
+      for (const matchedId of candidateIds) {
+        found.set(matchedId, {
+          ...(stat.track ?? SYNTHETIC_ARTWORK_TRACK),
+          id: matchedId,
+          title: stat.track?.title ?? stat.title,
+          artist: stat.track?.artist ?? stat.artist,
+          cover,
+          coverSource,
+          ...(networkSource ? { networkSource } : {})
+        })
+        if (found.size === ids.size) return found
+      }
+    }
+    return found
+  }
+  rememberArtwork(
+    track: TrackData,
+    artwork: { cover: string | null; coverSource: string | null },
+    statKey?: string
+  ): void {
+    if (this.stopped || (!artwork.cover && !artwork.coverSource)) return
+    if (this.current?.track && this.current.track.id === track.id) {
+      const coverFields = pickCoverFields({
+        ...this.current.track,
+        cover: artwork.cover ?? this.current.track.cover ?? null,
+        coverSource: artwork.coverSource ?? this.current.track.coverSource ?? null
+      })
+      this.current = {
+        ...this.current,
+        track: cloneTrack({
+          ...this.current.track,
+          cover: coverFields.cover ?? this.current.track.cover ?? null,
+          coverSource: coverFields.coverSource ?? this.current.track.coverSource ?? null
+        })
+      }
+    }
+    if (!this.initialized) return
+    const key = applyRecoveredListeningArtwork(this.stats, track, artwork, statKey)
+    if (key) this.markArtwork(key)
+  }
+  private async projectCover(
+    rawCover: string | null | undefined,
+    rawCoverSource: string | null | undefined,
+    baseTrack?: TrackData,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    signal?.throwIfAborted()
+    const cover = rawCover?.trim() || null
+    const coverSource = rawCoverSource?.trim() || null
+    const networkSource = baseTrack?.networkSource
+    if (!cover && !coverSource && !networkSource) return null
+    if (!this.options.artwork) return cachedCover(cover)
+
+    const cacheKey = networkSource
+      ? `net:${networkSource.profileId}:${networkSource.entry.id}:${cover ?? ''}\0${coverSource ?? ''}`
+      : `art:${cover ?? ''}\0${coverSource ?? ''}`
+    const now = this.options.now()
+    const cached = this.projectedCoverCache.get(cacheKey)
+    if (cached && cached.expiresAt > now) {
+      this.projectedCoverCache.delete(cacheKey)
+      this.projectedCoverCache.set(cacheKey, cached)
+      return cached.cover
+    }
+
+    let pending = this.inflightCoverProjections.get(cacheKey)
+    if (!pending) {
+      const artwork = this.options.artwork
+      const syntheticTrack: TrackData = {
+        ...(baseTrack ?? SYNTHETIC_ARTWORK_TRACK),
+        cover,
+        coverSource,
+        ...(networkSource ? { networkSource } : {})
+      }
+      pending = artwork(syntheticTrack, this.shutdownController.signal)
+        .then((projected) => {
+          const safe = displaySafeCover(projected.cover)
+          const ttl = safe ? ARTWORK_CACHE_TTL_MS : ARTWORK_NEGATIVE_CACHE_TTL_MS
+          this.projectedCoverCache.delete(cacheKey)
+          this.projectedCoverCache.set(cacheKey, {
+            cover: safe,
+            expiresAt: this.options.now() + ttl
+          })
+          if (this.projectedCoverCache.size > ARTWORK_CACHE_MAX_ENTRIES) {
+            const oldest = this.projectedCoverCache.keys().next().value
+            if (oldest !== undefined) this.projectedCoverCache.delete(oldest)
+          }
+          return safe
+        })
+        .catch(() => cachedCover(cover))
+        .finally(() => {
+          this.inflightCoverProjections.delete(cacheKey)
+        })
+      this.inflightCoverProjections.set(cacheKey, pending)
+    }
+
+    const result = await pending
+    signal?.throwIfAborted()
+    return result
+  }
+  private enqueueArtworkRecovery(entries: readonly ListeningTrackStatWithId[]): void {
+    const recoverArtwork = this.options.recoverArtwork
+    if (!this.initialized || this.stopped || !recoverArtwork) return
+    let scheduled = 0
+    for (const stat of entries) {
+      if (scheduled >= ARTWORK_RECOVERY_PAGE_BUDGET) break
+      if (
+        stat.cover ||
+        stat.coverSource ||
+        stat.track?.cover ||
+        stat.track?.coverSource ||
+        stat.track?.networkSource
+      ) {
+        continue
+      }
+      if (this.attemptedArtworkRecovery.has(stat.id)) continue
+      const candidate = recoveryCandidateTrack(stat)
+      if (!candidate || !recoverArtwork.canRecover(candidate)) continue
+
+      this.attemptedArtworkRecovery.add(stat.id)
+      if (this.attemptedArtworkRecovery.size > ARTWORK_RECOVERY_ATTEMPT_MAX) {
+        const oldest = this.attemptedArtworkRecovery.values().next().value
+        if (oldest !== undefined) this.attemptedArtworkRecovery.delete(oldest)
+      }
+      scheduled++
+      const statId = stat.id
+      this.recoveryWork = this.recoveryWork
+        .catch(() => undefined)
+        .then(async () => {
+          if (this.stopped || this.shutdownController.signal.aborted) return
+          try {
+            const recovered = await recoverArtwork.recover(
+              candidate,
+              this.shutdownController.signal
+            )
+            if (this.stopped || this.shutdownController.signal.aborted || !recovered) return
+            this.rememberArtwork(candidate, recovered, statId)
+          } catch {
+            // Best-effort background recovery must never fail queries or crash Core.
+          }
+        })
     }
   }
   observe(
@@ -240,6 +502,13 @@ export class CoreStatisticsService {
     this.schedule(LISTENING_STATS_FLUSH_DELAY_MS)
     this.options.changed()
   }
+  private markArtwork(track: string): void {
+    const version = ++this.generation
+    this.dirtyTracks.set(track, version)
+    this.revision++
+    this.schedule(LISTENING_STATS_FLUSH_DELAY_MS)
+    this.options.changed()
+  }
   private compact(): void {
     const today = dayKey(this.options.now())
     if (
@@ -262,6 +531,8 @@ export class CoreStatisticsService {
         code: 'STALE_REVISION'
       })
     clearListeningStatsHistory(this.stats, range)
+    this.projectedCoverCache.clear()
+    this.attemptedArtworkRecovery.clear()
     this.replace = ++this.generation
     this.revision++
     const countedDay = dayKey(this.lastCountedAt)
@@ -363,13 +634,40 @@ export class CoreStatisticsService {
   }
   async shutdown(): Promise<void> {
     this.stopped = true
+    this.shutdownController.abort()
     this.clearTick()
     this.clearFlush()
+    await this.recoveryWork.catch(() => undefined)
+    await Promise.allSettled([...this.inflightCoverProjections.values()])
     await this.flush()
     await this.options.history?.drain()
     this.options.history?.dispose()
   }
 }
+
 function cachedCover(cover: string | null): string | null {
-  return cover?.startsWith('cover://') ? cover : null
+  return cover?.startsWith('cover://') ? cover.split(/[?#]/, 1)[0] : null
+}
+
+function displaySafeCover(cover: string | null | undefined): string | null {
+  const value = cover?.trim()
+  if (!value) return null
+  if (value.startsWith('cover://')) return value.split(/[?#]/, 1)[0]
+  if (value.startsWith('twilight-media://image/')) return value
+  return null
+}
+
+function recoveryCandidateTrack(stat: ListeningTrackStatWithId): TrackData | null {
+  if (stat.track) return stat.track
+  const nonLocal = stat.sourceIds?.find((item) => item.source && item.source !== 'local')
+  if (!nonLocal) return null
+  return {
+    ...SYNTHETIC_ARTWORK_TRACK,
+    id: nonLocal.trackId,
+    source: nonLocal.source,
+    title: stat.title,
+    artist: stat.artist,
+    filePath: nonLocal.trackId,
+    fileName: nonLocal.trackId
+  }
 }

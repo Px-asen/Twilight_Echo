@@ -225,6 +225,12 @@ export function createEmptyTrackStat(track: Track): ListeningTrackStat {
   }
 }
 
+function durableCoverHandle(raw: string | null | undefined): string {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  if (!value || /^(?:blob:|twilight-media:)/i.test(value)) return ''
+  return value
+}
+
 export function pickCoverFields(
   track: Track,
   previous?: ListeningTrackStat
@@ -239,14 +245,49 @@ export function pickCoverFields(
       ? previous.cover.trim()
       : '') ||
     ''
-  const nextCover =
-    (typeof track.cover === 'string' && track.cover.trim()) ||
-    (typeof previous?.cover === 'string' && previous.cover.trim()) ||
-    ''
+  const nextCover = durableCoverHandle(track.cover) || durableCoverHandle(previous?.cover)
   return {
     cover: nextCover || null,
     coverSource: nextSource || null
   }
+}
+
+export function applyRecoveredListeningArtwork(
+  stats: ListeningStats,
+  track: Track,
+  artwork: { cover: string | null; coverSource: string | null },
+  statKey?: string
+): string | null {
+  const key = statKey ?? getListeningStatKey(track)
+  if (!Object.hasOwn(stats.tracks, key)) return null
+  const previous = stats.tracks[key]
+  const enriched: Track = {
+    ...track,
+    cover: artwork.cover ?? track.cover ?? null,
+    coverSource: artwork.coverSource ?? track.coverSource ?? null
+  }
+  const coverFields = pickCoverFields(enriched, previous)
+  const nextSnapshot = previous.track
+    ? cloneTrack({
+        ...previous.track,
+        cover: coverFields.cover ?? previous.track.cover ?? null,
+        coverSource: coverFields.coverSource ?? previous.track.coverSource ?? null
+      })
+    : undefined
+  const statUnchanged =
+    coverFields.cover === previous.cover &&
+    (coverFields.coverSource ?? null) === (previous.coverSource ?? null)
+  const snapshotUnchanged =
+    !nextSnapshot ||
+    (nextSnapshot.cover === previous.track?.cover &&
+      (nextSnapshot.coverSource ?? null) === (previous.track?.coverSource ?? null))
+  if (statUnchanged && snapshotUnchanged) return null
+  setTrack(stats, key, {
+    ...previous,
+    ...coverFields,
+    ...(nextSnapshot ? { track: nextSnapshot } : {})
+  })
+  return key
 }
 
 export function upsertSourceId(
