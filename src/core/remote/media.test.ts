@@ -41,8 +41,13 @@ async function fixture(t: test.TestContext) {
     resolveCover: async () => null, signal: new AbortController().signal,
     failed: error => { throw error },
     resolveTrackLyrics: async resolved => ({
+      revision: 1,
+      contentRevision: 1,
       current: {
         trackId: resolved.id ?? 'source-1',
+        occurrenceId: resolved.queueEntryId ?? null
+      },
+      automatic: {
         original: '[00:01.00]Hello\n[00:04.50]World',
         originalSource: 'sidecar',
         translation: '[00:01.00]你好\n[00:04.50]世界',
@@ -59,12 +64,7 @@ async function fixture(t: test.TestContext) {
         romanizationSource: null
       },
       offsetSeconds: 0,
-      override: null,
-      policy: {
-        enableEmbeddedLyrics: true,
-        enableLocalLrcSidecar: true,
-        enableOnlineFallback: true
-      }
+      override: null
     }) })
   server.setCoreRpcHandler((raw, principal) => bridge.handle(raw, principal))
   const status = await server.start()
