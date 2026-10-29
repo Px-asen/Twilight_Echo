@@ -334,7 +334,17 @@ const headphoneBandResponsePaths = computed(() =>
 )
 
 async function loadAutoPreampPreference(): Promise<void> {
-  autoPreampEnabled.value = (await core.query('audio.dsp', {})).autoPreamp?.enabled ?? false
+  const dsp = await core.query('audio.dsp', {})
+  autoPreampEnabled.value = dsp.autoPreamp?.enabled ?? false
+  if (appSettings.value && dsp.headphoneCompensation) {
+    appSettings.value = {
+      ...appSettings.value,
+      headphoneCompensation: {
+        ...dsp.headphoneCompensation,
+        bands: cloneBands(dsp.headphoneCompensation.bands ?? [])
+      }
+    }
+  }
 }
 
 async function toggleAutoPreamp(): Promise<void> {
@@ -862,26 +872,36 @@ async function applyOpraProfile(profile: OpraProfile): Promise<void> {
   opraApplyingEqId.value = profile.eqId
   opraError.value = ''
   try {
+    finishParametricEdits()
+    await commitChain
     const fullProfile = (await core.query('opra.profile', { id: profile.eqId })) ?? profile
     if (!fullProfile.applicable) {
       opraError.value = `该 profile 包含暂不支持的滤波器：${fullProfile.unsupportedBandTypes.join(', ')}`
       return
     }
-    const savedSettings = await window.api.settings.update({
-      headphoneCompensation: {
-        enabled: true,
-        productId: fullProfile.productId,
-        productName: fullProfile.productName,
-        vendorName: fullProfile.vendorName,
-        eqId: fullProfile.eqId,
-        author: fullProfile.author,
-        details: fullProfile.details,
-        link: fullProfile.link,
-        preampDb: fullProfile.preampDb,
-        bands: cloneBands(fullProfile.bands)
+    const nextCompensation: HeadphoneCompensationSettings = {
+      enabled: true,
+      productId: fullProfile.productId,
+      productName: fullProfile.productName,
+      vendorName: fullProfile.vendorName,
+      eqId: fullProfile.eqId,
+      author: fullProfile.author,
+      details: fullProfile.details,
+      link: fullProfile.link,
+      preampDb: fullProfile.preampDb,
+      bands: cloneBands(fullProfile.bands)
+    }
+    const dsp = await core.query('audio.dsp', {})
+    await core.command('audio.dsp.edit', {
+      revision: dsp.revision,
+      edit: {
+        kind: 'headphoneCompensation',
+        settings: nextCompensation
       }
     })
-    appSettings.value = { ...appSettings.value, ...savedSettings }
+    if (appSettings.value) {
+      appSettings.value = { ...appSettings.value, headphoneCompensation: nextCompensation }
+    }
     await refreshEqualizerProjection()
   } catch (err) {
     opraError.value = err instanceof Error ? err.message : String(err)
@@ -895,14 +915,22 @@ async function disableOpraCompensation(): Promise<void> {
   opraApplyingEqId.value = '__disable__'
   opraError.value = ''
   try {
-    const savedSettings = await window.api.settings.update({
-      headphoneCompensation: {
-        ...headphoneCompensation.value,
-        enabled: false,
-        bands: cloneBands(headphoneCompensation.value.bands)
+    finishParametricEdits()
+    await commitChain
+    const nextCompensation: HeadphoneCompensationSettings = {
+      ...headphoneCompensation.value,
+      enabled: false,
+      bands: cloneBands(headphoneCompensation.value.bands)
+    }
+    const dsp = await core.query('audio.dsp', {})
+    await core.command('audio.dsp.edit', {
+      revision: dsp.revision,
+      edit: {
+        kind: 'headphoneCompensation',
+        settings: nextCompensation
       }
     })
-    appSettings.value = { ...appSettings.value, ...savedSettings }
+    appSettings.value = { ...appSettings.value, headphoneCompensation: nextCompensation }
     await refreshEqualizerProjection()
   } catch (err) {
     opraError.value = err instanceof Error ? err.message : String(err)
@@ -1016,9 +1044,7 @@ async function renameEqPreset(
       preset.id === presetId ? { ...preset, name } : preset
     )
     appSettings.value = await window.api.settings.update(
-      scope === 'builtin'
-        ? { audioEqBuiltInPresets: nextPresets }
-        : { audioEqPresets: nextPresets }
+      scope === 'builtin' ? { audioEqBuiltInPresets: nextPresets } : { audioEqPresets: nextPresets }
     )
     editingPresetKey.value = ''
     editingPresetName.value = ''
@@ -1054,9 +1080,7 @@ async function updateEqPreset(scope: 'builtin' | 'custom', presetId: string): Pr
         : preset
     )
     appSettings.value = await window.api.settings.update(
-      scope === 'builtin'
-        ? { audioEqBuiltInPresets: nextPresets }
-        : { audioEqPresets: nextPresets }
+      scope === 'builtin' ? { audioEqBuiltInPresets: nextPresets } : { audioEqPresets: nextPresets }
     )
     if (editingPresetKey.value === activeEditKey) {
       editingPresetKey.value = ''
@@ -1080,9 +1104,7 @@ async function deleteEqPreset(scope: 'builtin' | 'custom', presetId: string): Pr
   try {
     const nextPresets = cloneEqPresets(filtered)
     appSettings.value = await window.api.settings.update(
-      scope === 'builtin'
-        ? { audioEqBuiltInPresets: nextPresets }
-        : { audioEqPresets: nextPresets }
+      scope === 'builtin' ? { audioEqBuiltInPresets: nextPresets } : { audioEqPresets: nextPresets }
     )
     if (editingPresetKey.value === `${scope}:${presetId}`) {
       editingPresetKey.value = ''

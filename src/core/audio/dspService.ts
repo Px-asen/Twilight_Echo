@@ -32,7 +32,10 @@ import {
   normalizeAudioProcessingSettings,
   resolveProcessingMasterState
 } from './audioEngineHelpers.ts'
-import { buildEffectiveAudioProcessingSettings } from './audioProcessingEffective.ts'
+import {
+  buildEffectiveAudioProcessingSettings,
+  normalizeHeadphoneCompensationSettings
+} from './audioProcessingEffective.ts'
 import type { CoreAudioOutputService } from './outputService.ts'
 import type { CoreSettingsRepository } from '../persistence/settingsRepository.ts'
 import type { DspAssetLibrary } from './dspAssetLibrary.ts'
@@ -167,6 +170,7 @@ export class CoreDspService {
         revision: this.options.configuration.getRevision(),
         processing: this.options.settings.read().audioProcessing,
         autoPreamp: this.options.settings.read().audioEqAutoPreamp,
+        headphoneCompensation: this.options.settings.read().headphoneCompensation,
         scenes: this.options.engine.getDspSceneState(),
         convolver: this.options.engine.getConvolverInfo()
       })
@@ -285,12 +289,10 @@ export class CoreDspService {
   private async applyProcessing(
     engine: CoreDspConfiguration,
     processing: AudioProcessingSettings,
-    equalizer: boolean
+    equalizer: boolean,
+    compensation = this.options.settings.read().headphoneCompensation
   ): Promise<Partial<AppSettings>> {
-    const settings = this.options.settings.read()
-    await engine.setAudioProcessing(
-      buildEffectiveAudioProcessingSettings(processing, settings.headphoneCompensation)
-    )
+    await engine.setAudioProcessing(buildEffectiveAudioProcessingSettings(processing, compensation))
     let state = structuredClone(engine.getDspSceneState())
     const scene = state.scenes.find((scene) => scene.id === state.activeSceneId)
     if (equalizer && scene && scene.id !== 'default') {
@@ -307,7 +309,6 @@ export class CoreDspService {
         )
         scene.graph.nodes.splice(tail < 0 ? scene.graph.nodes.length : tail, 0, node)
       }
-      const compensation = settings.headphoneCompensation
       const stacked = compensation.enabled && compensation.bands.length > 0
       node.enabled = processing.dspEnabled && processing.eqEnabled
       node.params = {
@@ -362,6 +363,17 @@ export class CoreDspService {
               enabled: edit.enabled,
               manualDb: edit.enabled ? processing.eqPreamp : null
             }
+          }
+        }
+        if (edit.kind === 'headphoneCompensation') {
+          const compensation = normalizeHeadphoneCompensationSettings({
+            ...settings.headphoneCompensation,
+            ...edit.settings
+          })
+          const processing = this.editableProcessing(engine)
+          return {
+            ...(await this.applyProcessing(engine, processing, true, compensation)),
+            headphoneCompensation: compensation
           }
         }
         if (edit.kind === 'processing') {

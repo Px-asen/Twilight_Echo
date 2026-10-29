@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import { useEqualizerHistory } from '../composables/useEqualizerHistory.ts'
 import { computed, ref } from 'vue'
 import { createDspFactoryScene } from '../../../shared/dspGraph.ts'
+import { isCoreRequest } from '../../../shared/coreProtocol.ts'
 import { mergeEqualizerPatch } from '../utils/equalizerSettingsPatch.ts'
 import { builtInEqPresets } from '../utils/equalizerPageLogic.ts'
 
@@ -122,6 +123,7 @@ function createPersistenceHarness() {
     }
   }
   let persisted = structuredClone(initial)
+  let dspRevision = 3
   const appSettings = ref(structuredClone(initial))
   let refreshes = 0
   const profile = {
@@ -165,18 +167,63 @@ function createPersistenceHarness() {
     },
     core: {
       query: async (name: string, payload: unknown) => {
-        if (name === 'audio.dsp') return { autoPreamp: { enabled: false } }
+        if (name === 'audio.dsp')
+          return {
+            revision: dspRevision,
+            autoPreamp: { enabled: false },
+            headphoneCompensation: structuredClone(persisted.headphoneCompensation)
+          }
         assert.equal(name, 'opra.profile')
         assert.deepEqual(JSON.parse(JSON.stringify(payload)), { id: profile.eqId })
         return profile
+      },
+      command: async (name: string, payload: unknown) => {
+        const clonedPayload = structuredClone(payload) as {
+          revision: number
+          edit: { kind: string; settings: typeof initial.headphoneCompensation }
+        }
+        if (
+          !isCoreRequest({
+            kind: 'command',
+            name,
+            payload: clonedPayload,
+            requestId: 'opra',
+            epoch: 'test'
+          })
+        ) {
+          throw new Error('Unknown or malformed Core operation')
+        }
+        assert.equal(name, 'audio.dsp.edit')
+        assert.equal(clonedPayload.revision, dspRevision)
+        assert.equal(clonedPayload.edit.kind, 'headphoneCompensation')
+        persisted = {
+          ...persisted,
+          headphoneCompensation: {
+            ...persisted.headphoneCompensation,
+            ...clonedPayload.edit.settings
+          }
+        }
+        dspRevision++
       }
     },
     window: {
       api: {
         settings: {
           update: async (patch: Partial<typeof initial>) => {
-            // Model contextBridge's clone before any preload sanitization runs.
-            persisted = { ...persisted, ...structuredClone(patch) }
+            // Model contextBridge's clone and Core settings.edit validation.
+            const clonedPatch = structuredClone(patch)
+            if (
+              !isCoreRequest({
+                kind: 'command',
+                name: 'settings.edit',
+                payload: { revision: 0, patch: clonedPatch },
+                requestId: 'settings',
+                epoch: 'test'
+              })
+            ) {
+              throw new Error('Unknown or malformed Core operation')
+            }
+            persisted = { ...persisted, ...clonedPatch }
             return structuredClone(persisted)
           }
         }
@@ -243,7 +290,7 @@ test('disabling OPRA persists cloneable bands and reloads the Core projection', 
 
 test('failed OPRA persistence keeps compensation enabled and exposes the failure', async () => {
   const { context, actions, refreshes, persisted } = createPersistenceHarness()
-  context.window.api.settings.update = async () => {
+  context.core.command = async () => {
     throw new Error('permission denied')
   }
   await actions.disableOpraCompensation()
@@ -1236,7 +1283,11 @@ test('built-in and custom presets can be renamed, overwritten with current EQ, d
     saveEqPreset(): Promise<void>
     startRenameEqPreset(scope: 'builtin' | 'custom', preset: (typeof builtInEqPresets)[0]): void
     cancelRenameEqPreset(): void
-    renameEqPreset(scope: 'builtin' | 'custom', presetId: string, nextRawName?: string): Promise<void>
+    renameEqPreset(
+      scope: 'builtin' | 'custom',
+      presetId: string,
+      nextRawName?: string
+    ): Promise<void>
     updateEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void>
     deleteEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void>
     restoreBuiltInEqPresets(): Promise<void>
