@@ -3003,8 +3003,20 @@ html[data-window-transparent='on'] .title-bar.title-bar-glass {
 
 /* 3. Floating chrome (player bar, panels, drawers, plugin sidebar). */
 html[data-window-transparent='on']
-  :is(.player-bar, .playlist-panel, .volume-drawer, .more-drawer, .context-menu, .submenu) {
+  :is(
+    .player-bar:not(.player-bar-glass):not(.player-bar-compact-visualizer),
+    .playlist-panel:not(.panel-glass),
+    .volume-drawer:not(.drawer-glass),
+    .more-drawer:not(.drawer-glass),
+    .context-menu,
+    .submenu
+  ) {
   background-color: var(--te-tp-chrome) !important;
+  background-image: none !important;
+}
+
+html[data-window-transparent='on'] .player-bar.player-bar-compact-visualizer {
+  background-color: transparent !important;
   background-image: none !important;
 }
 

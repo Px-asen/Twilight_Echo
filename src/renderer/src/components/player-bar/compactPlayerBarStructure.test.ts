@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import { compileStyle, parse } from '@vue/compiler-sfc'
 
 import {
   DEFAULT_PLAYER_BAR_LAYOUT,
@@ -20,6 +21,10 @@ const playerBarCss = readFileSync(new URL('./PlayerBar.css', import.meta.url), '
 const compactVisualizer = readFileSync(
   new URL('./CompactPlayerBarVisualizer.vue', import.meta.url),
   'utf8'
+)
+const baseCss = readFileSync(new URL('../../assets/base.css', import.meta.url), 'utf8').replace(
+  /\/\*[\s\S]*?\*\//g,
+  ''
 )
 const app = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
 
@@ -111,6 +116,54 @@ test('the lyrics-page visualizer stage has no painted base colour', () => {
     playerBar,
     /<CompactPlayerBarVisualizer[\s\S]{0,500}:(?:cover|cover-source|track-identity)=/
   )
+
+  const glassVisualizer = compactVisualizer.match(
+    /\.player-bar-glass\s+\.compact-visualizer\s*\{[^}]*\}/
+  )
+  assert.ok(glassVisualizer, 'glass lyrics-page bar must supply playback-contrast visualizer ink')
+  assert.match(
+    glassVisualizer[0],
+    /--te-compact-visualizer-ink:\s*var\(--te-flat-bar-control,\s*var\(--te-shell-control-text\)\)/
+  )
+  assert.match(glassVisualizer[0], /background:\s*transparent/)
+
+  const compiledVisualizerStyle = compileStyle({
+    source: parse(compactVisualizer).descriptor.styles[0].content,
+    filename: 'CompactPlayerBarVisualizer.vue',
+    id: 'data-v-compact-viz',
+    scoped: true
+  })
+  assert.deepEqual(compiledVisualizerStyle.errors, [])
+  assert.match(
+    compiledVisualizerStyle.code,
+    /\.player-bar-glass\s+\.compact-visualizer\[data-v-compact-viz\]\s*\{/
+  )
+  assert.doesNotMatch(
+    compiledVisualizerStyle.code,
+    /\.player-bar-glass\[data-v-compact-viz\]/
+  )
+
+  const transparentWindowChrome = baseCss.match(
+    /html\[data-window-transparent='on'\]\s*:is\([\s\S]*?\.player-bar[^\n]*[\s\S]*?\)\s*\{[^}]*background-color:\s*var\(--te-tp-chrome\)\s*!important[^}]*\}/
+  )
+  assert.ok(
+    transparentWindowChrome,
+    'window transparency floating-chrome rule must stay guarded for lyrics-page glass surfaces'
+  )
+  assert.match(
+    transparentWindowChrome[0],
+    /\.player-bar:not\(\.player-bar-glass\):not\(\.player-bar-compact-visualizer\)/
+  )
+
+  const transparentVisualizerStage = baseCss.match(
+    /html\[data-window-transparent='on'\]\s+\.player-bar\.player-bar-compact-visualizer\s*\{[^}]*\}/
+  )
+  assert.ok(
+    transparentVisualizerStage,
+    'window transparency must explicitly keep the compact visualizer stage transparent'
+  )
+  assert.match(transparentVisualizerStage[0], /background-color:\s*transparent\s*!important/)
+  assert.match(transparentVisualizerStage[0], /background-image:\s*none\s*!important/)
 })
 
 test('compact queue drawer follows the control deck instead of the visualizer stage', () => {
