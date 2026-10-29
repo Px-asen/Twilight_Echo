@@ -11,6 +11,56 @@ async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'twilight-plugin-cli-'))
 }
 
+test('packs the sidebar widget example with its custom HTML, scripts and styles', async () => {
+  const root = await tempDir()
+  const target = path.join(root, 'sidebar-widget')
+  await fs.cp(path.resolve(__dirname, '../../../sdk/examples/sidebar-widget'), target, {
+    recursive: true
+  })
+  const result = await packCommand([target])
+  const unpacked = path.join(root, 'unpacked')
+  await extract(result.outputFile, { dir: unpacked })
+  const manifest = validatePluginManifest(
+    JSON.parse(await fs.readFile(path.join(unpacked, 'plugin.json'), 'utf8'))
+  )
+  assert.equal(manifest.main, undefined)
+  assert.equal(manifest.contributes.experiences[0].launch, 'sidebar')
+  assert.deepEqual(manifest.contributes.experiences[0].sidebar, { height: 128 })
+  for (const file of ['index.html', 'widget.js', 'widget.css'])
+    assert.equal(await exists(path.join(unpacked, 'ui', file)), true)
+})
+
+test('CLI and host agree on sidebar launch and sizing validation', () => {
+  const source = {
+    id: 'com.example.widget',
+    name: 'Widget',
+    version: '1.0.0',
+    description: 'Widget',
+    author: 'Example',
+    license: 'MIT',
+    type: ['ui'],
+    apiVersion: 4,
+    engines: { twilightEcho: '*' },
+    permissions: ['ui:inject']
+  }
+  const entry = { id: 'battery', name: 'Battery', entry: 'ui/index.html', bridgeVersion: 2 }
+  const validate = (patch) =>
+    validatePluginManifest({ ...source, contributes: { experiences: [{ ...entry, ...patch }] } })
+  for (const launch of [undefined, 'page', 'panel', 'sidebar'])
+    assert.doesNotThrow(() => validate({ launch }))
+  for (const sidebar of [undefined, {}, { height: 64 }, { height: 480 }])
+    assert.doesNotThrow(() => validate({ launch: 'sidebar', sidebar }))
+  for (const patch of [
+    { launch: 'flyout' },
+    { launch: 'page', sidebar: {} },
+    { launch: 'panel', sidebar: {} },
+    ...[null, [], 128, { height: '128' }, { height: 63 }, { height: 481 }, { height: 128.5 }].map(
+      (sidebar) => ({ launch: 'sidebar', sidebar })
+    )
+  ])
+    assert.throws(() => validate(patch))
+})
+
 test('packs an API v4 experience dist entry and assets without recursively including packages', async () => {
   const root = await tempDir()
   const target = path.join(root, 'experience')

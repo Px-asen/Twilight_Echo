@@ -30,6 +30,8 @@ test('playback background contrast and saved colors survive tone and bar changes
       await readFile(new URL('../LocalDashboard.css', import.meta.url), 'utf8'),
       await readFile(new URL('../streaming-page/ProviderMusicHome.css', import.meta.url), 'utf8'),
       parse(dashboardProgress).descriptor.styles[0].content,
+      parse(await readFile(new URL('./CompactPlayerBarVisualizer.vue', import.meta.url), 'utf8'))
+        .descriptor.styles[0].content,
       parse(await readFile(new URL('../TitleBar.vue', import.meta.url), 'utf8')).descriptor
         .styles[0].content,
       parse(await readFile(new URL('../PlayingMusic.vue', import.meta.url), 'utf8')).descriptor
@@ -271,6 +273,18 @@ window.runPlaybackBackgroundContrastTests=async()=>{
   for(const tone of ['pureWhite','dark']){
     await store.setPreviewTone(tone);await settle()
     expect(themeContrastRatio(color(page.querySelector('.track-title')),'#080e17')>10,tone+' default artwork title remains legible on the dark stage')
+    mount('compact',true)
+    bar.classList.add('player-bar-compact-visualizer')
+    const viz=document.createElement('div');viz.className='compact-visualizer is-active';viz.style.setProperty('--te-compact-band-count','4');viz.innerHTML='<span class="compact-visualizer__band" style="--te-compact-band-level:0.6"></span>'
+    for(const el of [viz,...viz.querySelectorAll('*')])el.setAttribute('data-v-test','')
+    bar.prepend(viz)
+    document.documentElement.dataset.windowTransparent='on'
+    await settle()
+    expect(colorRgba(getComputedStyle(bar).backgroundColor)[3]===0,tone+' transparent-window compact visualizer stage stays completely transparent: '+getComputedStyle(bar).backgroundColor)
+    expect(colorRgba(getComputedStyle(viz).backgroundColor)[3]===0,tone+' compact visualizer surface stays completely transparent: '+getComputedStyle(viz).backgroundColor)
+    const bandRgba=colorRgba(getComputedStyle(viz.querySelector('.compact-visualizer__band')).backgroundColor)
+    expect((bandRgba[0]+bandRgba[1]+bandRgba[2])/3>160,tone+' compact visualizer skyline band uses light playback ink over default dark stage: '+[...bandRgba].join(','))
+    delete document.documentElement.dataset.windowTransparent
     appearance.appBackground.global.customized=true
     syncThemeSettingsAppearance(appearance);await store.setPreviewTone(tone);await settle()
     for(const backgroundMode of ['blur','fluid','solid'])for(const mode of ['standard','mini','compact']){

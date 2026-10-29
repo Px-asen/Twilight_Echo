@@ -35,6 +35,7 @@ const skylineBands = computed(() =>
 
 <style scoped>
 .compact-visualizer {
+  --te-compact-visualizer-ink: var(--te-shell-control-text);
   position: absolute;
   inset: 0 0 auto;
   z-index: 0;
@@ -48,7 +49,7 @@ const skylineBands = computed(() =>
   gap: clamp(1px, 0.08vw, 2px);
   padding: 0 1px 3px;
   background: transparent;
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--te-shell-control-text) 9%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--te-compact-visualizer-ink) 9%, transparent);
 }
 
 .compact-visualizer__band {
@@ -58,11 +59,11 @@ const skylineBands = computed(() =>
   border-radius: 999px;
   background: color-mix(
     in srgb,
-    var(--te-shell-control-text) 68%,
+    var(--te-compact-visualizer-ink) 68%,
     var(--accent-color, var(--te-primary-500)) 32%
   );
   box-shadow:
-    0 0 2px color-mix(in srgb, var(--te-shell-control-text) 28%, transparent),
+    0 0 2px color-mix(in srgb, var(--te-compact-visualizer-ink) 28%, transparent),
     0 0 6px color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 18%, transparent);
   opacity: 0.68;
   transform: scaleY(var(--te-compact-band-level));
@@ -74,8 +75,12 @@ const skylineBands = computed(() =>
   opacity: 0.3;
 }
 
-html[data-theme='dark'] .compact-visualizer,
+html[data-theme='dark'] .compact-visualizer {
+  background: transparent;
+}
+
 .player-bar-glass .compact-visualizer {
+  --te-compact-visualizer-ink: var(--te-flat-bar-control, var(--te-shell-control-text));
   background: transparent;
 }
 

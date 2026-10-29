@@ -550,6 +550,16 @@ if(TAE_BUILD_TESTS)
   endif()
   add_test(NAME twilight_ffmpeg_decoder_unit COMMAND twilight_ffmpeg_decoder_tests)
 
+  if(FFMPEG_FOUND)
+    add_executable(twilight_resampler_response_tests
+      tests/resampler_response_tests.cpp decoder/FFmpegDecoder.cpp
+      core/DiagnosticLog.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_resampler_response_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_resampler_response_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_resampler_response_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_resampler_response_unit COMMAND twilight_resampler_response_tests)
+  endif()
+
   add_executable(twilight_dsd_dop_tests
     tests/dsd_dop_tests.cpp
     metadata/AudioMetadataService.cpp

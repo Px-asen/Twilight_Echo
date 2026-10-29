@@ -1,4 +1,4 @@
-# Full-window plugin experiences (API v4, bridge v2 preview)
+# Plugin experiences: pages, panels and sidebar widgets (API v4)
 
 This extension is additive. Existing API v1-v3 process and declarative-theme
 plugins continue to use their original lifecycle. An experience requires type
@@ -19,6 +19,13 @@ An experience entry may set `"launch": "panel"` to keep it out of sidebar
 navigation. Panel experiences are opened by the plugin's `titleBarButton`
 contribution and mounted by the host in a right-side flyout overlay instead of
 the main content area.
+
+Use `"launch": "sidebar"` to embed custom HTML below navigation and above the
+import/edit tools. Optional `"sidebar": { "height": 128 }` sets the content
+height (default 144 CSS px, integer 64–480, capped at 55vh). The host provides
+a collapsible title and opens the widget in a flyout in icon-only navigation.
+It is not a navigation page or a startup-interface choice. See the runnable
+[sidebar widget guide and sample](./plugin-sidebar-widgets.md).
 
 A declarative experience needs no `main` process. Entry files must exist inside
 the installed package. Assets are served from the entry directory through
@@ -150,8 +157,9 @@ evidence, not synchronized animation-clock or pixel-identical acceptance.
 
 ## Selecting the Startup Interface
 
-Settings > Appearance > 完整界面 lists enabled API v4 experience contributions, including
-Rhine Lab. It is separate from the CSS plugin-theme selector. The `startupExperience`
+Settings > Appearance > 完整界面 lists enabled API v4 page experiences (`launch`
+omitted or `"page"`), including Rhine Lab; panels and sidebar widgets stay out of
+this selector. It is separate from the CSS plugin-theme selector. The `startupExperience`
 setting stores only `pluginId` and `experienceId`; packaged URLs and versions are resolved
 from the enabled registry on each launch.
 

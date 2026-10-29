@@ -18,6 +18,7 @@ const props = defineProps<{
   busy: boolean
   isPlaying: boolean
   glass?: boolean
+  resolveCoreArtwork?: boolean
   readPage: (page: number) => Promise<CoreQueuePage | null>
   playEntry: (entryId: string, expected: QueueVersion) => Promise<void>
   editQueue: (
@@ -319,7 +320,13 @@ function drop(event: DragEvent, row: LibraryQueueRow): void {
                 ></span>
                 <span v-else class="playlist-index-num">{{ item.index + 1 }}</span>
               </span>
-              <CoverImg :cover="item.cover" :identity="item.id" class="playlist-cover" alt="" />
+              <CoverImg
+                :cover="item.cover"
+                :core-track-id="resolveCoreArtwork && !item.cover ? item.id || undefined : undefined"
+                :identity="item.id"
+                class="playlist-cover"
+                alt=""
+              />
               <span class="playlist-info"
                 ><span class="playlist-title">{{ item.title }}</span
                 ><span class="playlist-artist">{{ item.artist }}</span></span

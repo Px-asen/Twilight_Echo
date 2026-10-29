@@ -119,7 +119,11 @@ export interface RemoteControlStatus {
 
 export type CastProtocol = 'dlna' | 'chromecast'
 
-export interface RemotePairingRequest { id: string; deviceName: string; address: string; expiresAt: number }
+export interface RemotePairingRequest {
+  id: string; deviceName: string; address: string; expiresAt: number
+  /** Six digits the phone shows too; present for TLS pairing, where it proves both ends see the same certificate. */
+  verificationCode?: string
+}
 export interface RemoteTrustedDevice { id: string; name: string; createdAt: number }
 
 export interface DlnaDeviceInfo {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { effectScope, shallowRef } from 'vue'
-import { createCorePlayerQueue } from './corePlayerQueue.ts'
+import { coreQueueTrackInput, createCorePlayerQueue } from './corePlayerQueue.ts'
 import { coreSnapshot } from '../coreTestFixtures.ts'
 import type { CorePlayerClient } from './corePlayerTypes.ts'
 import type { CoreQueueTrackInput } from '../../../../shared/coreQueueSubmission.ts'
@@ -141,4 +141,58 @@ test('unknown insert outcomes are not replayed; cancellation fences the next pag
   )
   assert.equal(f.commands.length, 1)
   assert.equal(f.queue.queueCount.value, 2)
+})
+
+test('coreQueueTrackInput forwards authorized provider artwork handles and drops raw remote or file URLs', () => {
+  const granted = coreQueueTrackInput(
+    {
+      id: 'ncm:42',
+      title: 'Is this love?',
+      artist: 'twenty4-7',
+      album: 'Letter',
+      duration: 277,
+      source: 'ncm',
+      ncmSongId: 42,
+      filePath: '',
+      fileName: 'Is this love?',
+      size: 0,
+      cover: 'twilight-media://image/token_42',
+      lyrics: null
+    },
+    null
+  )
+  assert.deepEqual(granted, {
+    kind: 'provider',
+    track: {
+      id: 'ncm:42',
+      title: 'Is this love?',
+      artist: 'twenty4-7',
+      album: 'Letter',
+      duration: 277,
+      source: 'ncm',
+      ncmSongId: 42,
+      cover: 'twilight-media://image/token_42'
+    }
+  })
+
+  const rawRemote = coreQueueTrackInput(
+    {
+      id: 'ncm:43',
+      title: 'Raw URL',
+      artist: 'Artist',
+      album: 'Album',
+      duration: 180,
+      source: 'ncm',
+      filePath: '',
+      fileName: 'Raw URL',
+      size: 0,
+      cover: 'https://p2.music.126.net/raw.jpg',
+      lyrics: null
+    },
+    null
+  )
+  assert.equal(rawRemote.kind, 'provider')
+  if (rawRemote.kind === 'provider') {
+    assert.equal('cover' in rawRemote.track, false)
+  }
 })

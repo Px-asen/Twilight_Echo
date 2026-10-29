@@ -62,8 +62,14 @@ enum class PcmToDsdMode {
 };
 
 struct OutputConfig {
+  bool usbPcmPassthrough = false;
   bool continuityFirst = false;
   int continuitySampleRate = 48000;
+  // Opt-in PCM request policy. Empty device rates mean undeclared capabilities,
+  // not an unavailable device. Legacy auto/fixed requests keep their contract.
+  bool sampleRateFamilySync = false;
+  std::vector<int> allowedSampleRates;
+  std::vector<int> deviceSampleRates;
   uint32_t preferredBufferSize = 0;
   uint32_t asioOutputChannelStart = 0;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
@@ -80,6 +86,7 @@ struct OutputConfig {
   float upmixSurroundGain = 0.5f;      // -6dB
   float upmixSideGain = 0.3f;          // -10dB (仅 7.1)
   float upmixSurroundDelayMs = 0.0f;   // 环绕延迟
+  bool operator==(const OutputConfig&) const = default;
 };
 
 struct ReplayGainInfo {
@@ -255,6 +262,9 @@ struct OutputInfo {
 
   bool exclusive = false;
   bool outputReleased = false;
+  bool usbPcmPreferenceAccepted = false;
+  bool usbPcmFormatMatched = false;
+  bool usbPcmInvalid = false;
   std::string accessMode = "shared";
   bool supportsOutputPerfect = false;
   bool sourceExact = false;

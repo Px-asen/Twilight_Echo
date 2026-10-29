@@ -19,12 +19,13 @@ import type { CoreAutoMixWorkerRequest } from './coreAutoMix.ts'
 import type { CorePlayerPresentation } from './coreSystemPlayer.ts'
 import type { CorePlatformId } from './audioEngineTypes.ts'
 import { PERSONAL_MUSIC_ARTWORK_MAX_BYTES } from './personalMusicArtwork.ts'
+import { isAuthorizedProviderQueueCover } from './coreQueueSubmission.ts'
 /** Platform capabilities, not a generic main-process method invocation surface. */
 export interface CorePlatformOperations extends CoreModelPackPlatformOperations {
   'audio.confirmWindowsRestart': { input: Record<string, never>; output: boolean }
   'audio.restartWindowsServices': { input: Record<string, never>; output: void }
   'remote.confirmDevice': {
-    input: { deviceName: string; address: string }
+    input: { deviceName: string; address: string; verificationCode?: string }
     output: boolean
   }
   'themes.importArchive': { input: Record<string, never>; output: ThemeProfileV2 | null }
@@ -110,6 +111,10 @@ export interface CorePlatformOperations extends CoreModelPackPlatformOperations 
   'files.trashAudio': { input: { path: string }; output: void }
   'artwork.normalizeCachedCover': { input: { handle: string }; output: string }
   'artwork.remotePreview': { input: { cover: string | null }; output: string | null }
+  'artwork.resolveQueueCovers': {
+    input: { covers: string[] }
+    output: Record<string, { cover: string | null; coverSource: string | null }>
+  }
   'artwork.present': {
     input: { cover: string | null; coverSource: string | null; imageExpiresAt?: number; retainMetadata?: boolean }
     output: Pick<CorePlayerPresentation, 'cover' | 'coverSource'>
@@ -166,7 +171,9 @@ export function validCorePlatformPayload(request: CorePlatformRequest): boolean 
   switch (request.name) {
     case 'remote.confirmDevice': {
       const value = payload as CorePlatformOperations['remote.confirmDevice']['input']
-      return Object.keys(payload).length === 2 && typeof value.deviceName === 'string' &&
+      const keys = Object.keys(payload).length
+      return (keys === 2 || (keys === 3 && typeof value.verificationCode === 'string' && /^\d{6}$/.test(value.verificationCode))) &&
+        typeof value.deviceName === 'string' &&
         // eslint-disable-next-line no-control-regex -- Native approval prompts only accept printable device labels.
         value.deviceName.length > 0 && value.deviceName.length <= 80 && !/[\x00-\x1f\x7f]/.test(value.deviceName) &&
         typeof value.address === 'string' && value.address.length <= 64 && /^[a-fA-F0-9:.]*$/.test(value.address)
@@ -194,6 +201,15 @@ export function validCorePlatformPayload(request: CorePlatformRequest): boolean 
             field === null ||
             (typeof field === 'string' && field.length <= 2 * 1024 * 1024 && !field.includes('\0'))
         )
+      )
+    }
+    case 'artwork.resolveQueueCovers': {
+      const { covers } = payload as CorePlatformOperations['artwork.resolveQueueCovers']['input']
+      return (
+        Object.keys(payload).length === 1 &&
+        Array.isArray(covers) &&
+        covers.length <= 200 &&
+        covers.every(isAuthorizedProviderQueueCover)
       )
     }
     case 'themes.importArchive':

@@ -32,14 +32,33 @@ export async function executeLibraryArtwork(
   database: Pick<LibraryDatabaseApi, 'getTracksByIds'>,
   request: import('../../shared/coreLibrary.ts').CoreLibraryQueries['library.artwork']['input'],
   present: (track: TrackData, signal: AbortSignal) => Promise<{ cover: string | null }>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  fallbackTracks?: (
+    ids: readonly string[],
+    signal: AbortSignal
+  ) => Promise<ReadonlyMap<string, TrackData>> | ReadonlyMap<string, TrackData>
 ) {
   const page = await database.getTracksByIds(request.ids, request.revision)
+  const seen = new Set<string>()
   const items: Array<{ id: string; cover: string | null }> = []
   for (const record of page.tracks) {
     signal.throwIfAborted()
+    seen.add(record.id)
     const artwork = await present(libraryTrack(record), signal)
     items.push({ id: record.id, cover: artwork.cover })
+  }
+  if (fallbackTracks) {
+    const missing = [...new Set(request.ids.filter((id) => !seen.has(id)))]
+    if (missing.length) {
+      const resolved = await fallbackTracks(missing, signal)
+      for (const id of missing) {
+        const track = resolved.get(id)
+        if (!track) continue
+        signal.throwIfAborted()
+        const artwork = await present(track, signal)
+        items.push({ id, cover: artwork.cover })
+      }
+    }
   }
   return { revision: page.revision, items }
 }

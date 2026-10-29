@@ -132,6 +132,36 @@ test('Core authorizes only enabled experience package resources and registered t
   }
 })
 
+test('Core lists sidebar metadata through the same enabled-package boundary as full experiences', async () => {
+  const f = await fixture()
+  try {
+    f.plugin.contributes = {
+      experiences: [
+        {
+          id: 'battery',
+          name: 'Battery',
+          entry: 'ui/index.html',
+          bridgeVersion: 2,
+          launch: 'sidebar',
+          sidebar: { height: 128 }
+        }
+      ]
+    }
+    const service = f.create()
+    const [widget] = await service.list()
+    assert.equal(widget.launch, 'sidebar')
+    assert.deepEqual(widget.sidebar, { height: 128 })
+    assert.deepEqual(await service.resource(widget.url), {
+      path: join(f.plugin.paths.versionRoot, 'ui', 'index.html')
+    })
+    f.plugin.enabled = false
+    assert.deepEqual(await service.list(), [])
+    assert.equal(await service.resource(widget.url), null)
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('Core owns versioned documents and preferences across renderer-independent service reconstruction', async () => {
   const f = await fixture()
   try {

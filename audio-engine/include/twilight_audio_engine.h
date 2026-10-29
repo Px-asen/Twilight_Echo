@@ -63,6 +63,16 @@ typedef struct TAE_InputCallbacks {
 } TAE_InputCallbacks;
 TAE_API TAE_Result TAE_SetInputProvider(TAE_EngineHandle engine, const TAE_InputCallbacks* callbacks, void* user_data);
 
+/** Android host policy, installed once before playback. Callbacks run on non-RT threads;
+ * user_data must outlive the engine. acquire returns the exact positive Android device ID.
+ * Errors go to the supplied UTF-8 buffer. valid must not re-enter this engine. */
+typedef struct TAE_UsbPcmCallbacks {
+  int (*acquire)(const char* device, int rate, int channels, const char* format, char* error, size_t error_size, void* user_data);
+  int (*valid)(void* user_data);
+  void (*release)(void* user_data);
+} TAE_UsbPcmCallbacks;
+TAE_API TAE_Result TAE_SetUsbPcmPolicy(TAE_EngineHandle engine, const TAE_UsbPcmCallbacks* callbacks, void* user_data);
+
 TAE_API TAE_Result TAE_Play(TAE_EngineHandle engine, const char* source, double start_time_seconds);
 /** Prepare a source and its output in paused state, without briefly starting playback. */
 TAE_API TAE_Result TAE_Load(TAE_EngineHandle engine, const char* source, double start_time_seconds);
@@ -123,6 +133,9 @@ TAE_API TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, s
 
 TAE_API TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json);
 TAE_API TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json);
+/** DSP state may include an optional outputConfig object (same fields as
+ * TAE_SetOutputConfig). Send it with graph.outputStage when changing a fixed
+ * rate and its allowed set together; legacy processing/graph payloads remain valid. */
 TAE_API TAE_Result TAE_ApplyDspState(
     TAE_EngineHandle engine,
     uint64_t revision,

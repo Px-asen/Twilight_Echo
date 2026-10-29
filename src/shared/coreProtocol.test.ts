@@ -15,37 +15,75 @@ const request = (name: string, payload: unknown, kind = 'command') => ({
 })
 
 test('personal metadata operations stay library-write scoped and the full 2 MiB bitmap request crosses the public payload budget', () => {
-  const tiny = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4AWP4DwQACfsD/c8LaHIAAAAASUVORK5CYII=', 'base64')
+  const tiny = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4AWP4DwQACfsD/c8LaHIAAAAASUVORK5CYII=',
+    'base64'
+  )
   // A bounded PNG ancillary chunk makes a maximum-size structural fixture,
   // exercising the actual JSON envelope rather than a small validator sample.
   const extra = Buffer.alloc(2 * 1024 * 1024 - tiny.length)
-  extra.writeUInt32BE(extra.length - 12, 0); extra.write('tEXt', 4)
-  extra.fill(120, 8, extra.length - 4); extra.write('Comment\0', 8)
+  extra.writeUInt32BE(extra.length - 12, 0)
+  extra.write('tEXt', 4)
+  extra.fill(120, 8, extra.length - 4)
+  extra.write('Comment\0', 8)
   extra.writeUInt32BE(crc32(extra.subarray(4, -4)), extra.length - 4)
-  const png = 'data:image/png;base64,' + Buffer.concat([tiny.subarray(0, -12), extra, tiny.subarray(-12)]).toString('base64')
+  const png =
+    'data:image/png;base64,' +
+    Buffer.concat([tiny.subarray(0, -12), extra, tiny.subarray(-12)]).toString('base64')
   const payload = { entityId: 'artist', revision: 0, language: 'en', mode: 'value', dataUrl: png }
   assert.equal(isCoreRequest(request('metadata.entity.artworkOverride', payload)), true)
-  assert.equal(isCoreRequest(request('metadata.entity.artworkOverride', { ...payload, dataUrl: png + 'A' })), false)
-  assert.equal(isCoreRequest(request('metadata.entity.artworkOverride', { ...payload, filePath: 'D:/not-authorized.png' })), false)
-  assert.equal(isCoreRequest(request('metadata.entity.sourcePreference', { entityId: 'artist', revision: 0, language: 'en', provider: null })), true)
-  for (const name of ['metadata.entity.sourcePreference', 'metadata.entity.artworkOverride'] as const)
+  assert.equal(
+    isCoreRequest(request('metadata.entity.artworkOverride', { ...payload, dataUrl: png + 'A' })),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('metadata.entity.artworkOverride', { ...payload, filePath: 'D:/not-authorized.png' })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('metadata.entity.sourcePreference', {
+        entityId: 'artist',
+        revision: 0,
+        language: 'en',
+        provider: null
+      })
+    ),
+    true
+  )
+  for (const name of [
+    'metadata.entity.sourcePreference',
+    'metadata.entity.artworkOverride'
+  ] as const)
     assert.equal(coreOperation(name)?.permission, 'library:write')
 })
 
 test('Focus exposes bounded versioned queries and independent saved edits without private contexts or queue pages', () => {
-  const query = { version: 1, entity: 'recording', where: { all: [
-    { source: { provider: 'local', bitDepth: { gte: 24 } } },
-    { not: { rating: { target: 'self', mode: 'personal', gteStars: 4 } } }
-  ] } }
+  const query = {
+    version: 1,
+    entity: 'recording',
+    where: {
+      all: [
+        { source: { provider: 'local', bitDepth: { gte: 24 } } },
+        { not: { rating: { target: 'self', mode: 'personal', gteStars: 4 } } }
+      ]
+    }
+  }
   for (const [name, input] of Object.entries({
-    'focus.query': { query, limit: 200 }, 'focus.facets': { query, facet: 'provider', limit: 200 },
+    'focus.query': { query, limit: 200 },
+    'focus.facets': { query, facet: 'provider', limit: 200 },
     'focus.saved.list': { limit: 200, savedRevision: 0 }
   })) {
     assert.equal(isCoreRequest(request(name, input, 'query')), true)
     assert.equal(isCoreRequest(request(name, { ...input, limit: 201 }, 'query')), false)
     assert.equal(isCoreRequest(request(name, { ...input, platformContexts: {} }, 'query')), false)
     assert.equal(isCoreRequest(request(name, { ...input, profileId: 'other' }, 'query')), false)
-    assert.equal(coreOperation(name as Parameters<typeof coreOperation>[0])?.permission, 'library:read')
+    assert.equal(
+      coreOperation(name as Parameters<typeof coreOperation>[0])?.permission,
+      'library:read'
+    )
   }
   for (const [name, input] of Object.entries({
     'focus.saved.create': { name: 'Night', query, savedRevision: 0 },
@@ -55,22 +93,66 @@ test('Focus exposes bounded versioned queries and independent saved edits withou
   })) {
     assert.equal(isCoreRequest(request(name, input)), true)
     assert.equal(isCoreRequest(request(name, { ...input, tracks: [] })), false)
-    assert.equal(coreOperation(name as Parameters<typeof coreOperation>[0])?.permission, 'library:write')
+    assert.equal(
+      coreOperation(name as Parameters<typeof coreOperation>[0])?.permission,
+      'library:write'
+    )
   }
-  const token = { savedRevision: 0, catalogRevision: 0, contentRevision: 0, genresRevision: 0,
-    metadataRevision: 0, ratingsRevision: 0, preferencesRevision: 0, tagsRevision: 0, linkRevision: 0,
-    historyRevision: 0, queryKey: 'query', contextKey: 'context', asOf: 1, expiresAt: null }
+  const token = {
+    savedRevision: 0,
+    catalogRevision: 0,
+    contentRevision: 0,
+    genresRevision: 0,
+    metadataRevision: 0,
+    ratingsRevision: 0,
+    preferencesRevision: 0,
+    tagsRevision: 0,
+    linkRevision: 0,
+    historyRevision: 0,
+    queryKey: 'query',
+    contextKey: 'context',
+    asOf: 1,
+    expiresAt: null
+  }
   assert.equal(isCoreRequest(request('focus.play', { query, token })), true)
   assert.equal(coreOperation('focus.play')?.permission, 'playback:write')
-  assert.equal(isCoreRequest(request('focus.play.status', { requestId: 'one', epoch: 'current' }, 'query')), true)
-  assert.equal(isCoreRequest(request('focus.play.status', { requestId: 'one', epoch: 'current', owner: 'other' }, 'query')), false)
-  assert.equal(isCoreRequest(request('focus.play.status', { requestId: '', epoch: 'current' }, 'query')), false)
+  assert.equal(
+    isCoreRequest(request('focus.play.status', { requestId: 'one', epoch: 'current' }, 'query')),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('focus.play.status', { requestId: 'one', epoch: 'current', owner: 'other' }, 'query')
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('focus.play.status', { requestId: '', epoch: 'current' }, 'query')),
+    false
+  )
   assert.equal(coreOperation('focus.play.status')?.permission, 'playback:read')
-  assert.equal(isCoreRequest(request('focus.query', { query: { ...query, sql: 'SELECT 1' } }, 'query')), false)
-  assert.equal(isCoreRequest(request('focus.query', { query: { ...query, where: { all: Array.from({ length: 65 }, () => ({ text: 'song' })) } } }, 'query')), false)
+  assert.equal(
+    isCoreRequest(request('focus.query', { query: { ...query, sql: 'SELECT 1' } }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request(
+        'focus.query',
+        {
+          query: { ...query, where: { all: Array.from({ length: 65 }, () => ({ text: 'song' })) } }
+        },
+        'query'
+      )
+    ),
+    false
+  )
   let where: unknown = { text: 'song' }
   for (let i = 0; i < 8; i++) where = { not: where }
-  assert.equal(isCoreRequest(request('focus.query', { query: { ...query, where } }, 'query')), false)
+  assert.equal(
+    isCoreRequest(request('focus.query', { query: { ...query, where } }, 'query')),
+    false
+  )
   for (const name of ['focus.state', 'focus.playbackPage'])
     assert.equal(isCoreRequest(request(name, {}, 'query')), false)
 })
@@ -87,22 +169,44 @@ test('tags expose bounded reference queries and independent edits, not paths, pr
     assert.equal(isCoreRequest(request(name, input, 'query')), true)
     assert.equal(isCoreRequest(request(name, { ...input, limit: 101 }, 'query')), false)
     assert.equal(isCoreRequest(request(name, { ...input, profileId: 'someone' }, 'query')), false)
-    assert.equal(coreOperation(name as Parameters<typeof coreOperation>[0])?.permission, 'library:read')
+    assert.equal(
+      coreOperation(name as Parameters<typeof coreOperation>[0])?.permission,
+      'library:read'
+    )
   }
   const commands = {
     'tags.create': { name: '夜晚', tagsRevision: 1 },
     'tags.rename': { tagId: 'tag:one', name: '雨夜', nameRevision: 1 },
     'tags.delete': { tagId: 'tag:one', nameRevision: 1, membersRevision: 2 },
-    'tags.member.set': { tagId: 'tag:one', entityId: 'recording', present: true, membersRevision: 2 }
+    'tags.member.set': {
+      tagId: 'tag:one',
+      entityId: 'recording',
+      present: true,
+      membersRevision: 2
+    }
   }
   for (const [name, input] of Object.entries(commands)) {
     assert.equal(isCoreRequest(request(name, input)), true)
     assert.equal(isCoreRequest(request(name, { ...input, filePath: 'D:/private.flac' })), false)
-    assert.equal(coreOperation(name as Parameters<typeof coreOperation>[0])?.permission, 'library:write')
+    assert.equal(
+      coreOperation(name as Parameters<typeof coreOperation>[0])?.permission,
+      'library:write'
+    )
   }
-  assert.equal(isCoreRequest(request('tags.member.set', { tagId: 'tag:one', entityId: 'r', present: true })), false)
-  assert.equal(isCoreRequest(request('tags.play', { tagId: 'tag:one', token, sourceId: 'source' })), true)
-  assert.equal(isCoreRequest(request('tags.play', { tagId: 'tag:one', token: { ...token, path: 'D:/private' } })), false)
+  assert.equal(
+    isCoreRequest(request('tags.member.set', { tagId: 'tag:one', entityId: 'r', present: true })),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('tags.play', { tagId: 'tag:one', token, sourceId: 'source' })),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('tags.play', { tagId: 'tag:one', token: { ...token, path: 'D:/private' } })
+    ),
+    false
+  )
   assert.equal(isCoreRequest(request('tags.play', { tagId: 'tag:one', token, tracks: [] })), false)
   assert.equal(coreOperation('tags.play')?.permission, 'playback:write')
   for (const name of ['tags.state', 'tags.playbackPage', 'tags.sourceTracks'])
@@ -112,21 +216,68 @@ test('tags expose bounded reference queries and independent edits, not paths, pr
 test('preferences validate local states and server-owned targets without exposing migration or playback policy', () => {
   const token = { preferencesRevision: 0, linkRevision: 0, targetKey: 'opaque' }
   for (const state of ['none', 'favorite', 'ban'])
-    assert.equal(isCoreRequest(request('preferences.set', { entityId: 'song', token, state })), true)
+    assert.equal(
+      isCoreRequest(request('preferences.set', { entityId: 'song', token, state })),
+      true
+    )
   for (const state of [null, false, 'like', 1, undefined])
-    assert.equal(isCoreRequest(request('preferences.set', { entityId: 'song', token, state })), false)
-  for (const extra of [{ profileId: 'other' }, { filePath: 'D:/private' }, { targetId: 'identity' }])
-    assert.equal(isCoreRequest(request('preferences.set', { entityId: 'song', token, state: 'ban', ...extra })), false)
-  assert.equal(isCoreRequest(request('preferences.set', { entityId: 'song', token: { ...token, extra: 1 }, state: 'ban' })), false)
+    assert.equal(
+      isCoreRequest(request('preferences.set', { entityId: 'song', token, state })),
+      false
+    )
+  for (const extra of [
+    { profileId: 'other' },
+    { filePath: 'D:/private' },
+    { targetId: 'identity' }
+  ])
+    assert.equal(
+      isCoreRequest(
+        request('preferences.set', { entityId: 'song', token, state: 'ban', ...extra })
+      ),
+      false
+    )
+  assert.equal(
+    isCoreRequest(
+      request('preferences.set', { entityId: 'song', token: { ...token, extra: 1 }, state: 'ban' })
+    ),
+    false
+  )
   assert.equal(isCoreRequest(request('preferences.detail', { entityId: 'song' }, 'query')), true)
-  assert.equal(isCoreRequest(request('preferences.targets', { entityId: 'song', trackContext: { provider: 'local', id: 'song' }, limit: 100 }, 'query')), true)
-  assert.equal(isCoreRequest(request('preferences.targets', { entityId: 'song', limit: 101 }, 'query')), false)
-  assert.equal(isCoreRequest(request('preferences.history', { entityId: 'song', offset: 0, limit: 100 }, 'query')), true)
-  assert.equal(isCoreRequest(request('preferences.history', { entityId: 'song', limit: 101 }, 'query')), false)
-  for (const name of ['preferences.automaticEligibility', 'preferences.playlistsMigrate', 'preferences.playlistsSave'])
+  assert.equal(
+    isCoreRequest(
+      request(
+        'preferences.targets',
+        { entityId: 'song', trackContext: { provider: 'local', id: 'song' }, limit: 100 },
+        'query'
+      )
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('preferences.targets', { entityId: 'song', limit: 101 }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('preferences.history', { entityId: 'song', offset: 0, limit: 100 }, 'query')
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('preferences.history', { entityId: 'song', limit: 101 }, 'query')),
+    false
+  )
+  for (const name of [
+    'preferences.automaticEligibility',
+    'preferences.playlistsMigrate',
+    'preferences.playlistsSave'
+  ])
     assert.equal(isCoreRequest(request(name, { tracks: [] })), false)
   for (const name of ['preferences.detail', 'preferences.targets', 'preferences.history'])
-    assert.equal(coreOperation(name as Parameters<typeof coreOperation>[0])?.permission, 'library:read')
+    assert.equal(
+      coreOperation(name as Parameters<typeof coreOperation>[0])?.permission,
+      'library:read'
+    )
   assert.equal(coreOperation('preferences.set')?.permission, 'library:write')
   assert.equal(coreOperation('playback.favorite')?.permission, 'playback:write')
 })
@@ -134,21 +285,80 @@ test('preferences validate local states and server-owned targets without exposin
 test('ratings validate half-star steps, bounded history and server-owned default profile', () => {
   const token = { ratingsRevision: 0, linkRevision: 0, targetKey: 'opaque' }
   assert.equal(isCoreRequest(request('ratings.detail', { entityId: 'song' }, 'query')), true)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', offset: 20, limit: 100 }, 'query')), true)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', limit: 101 }, 'query')), false)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', trackContext: { provider: 'local', id: 'song' } }, 'query')), true)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', trackContext: { provider: 'local', id: 'song', filePath: 'D:/private' } }, 'query')), false)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', trackContext: { provider: 'Local', id: 'song' } }, 'query')), false)
-  assert.equal(isCoreRequest(request('ratings.targets', { entityId: 'manual', kind: 'release' }, 'query')), false)
-  assert.equal(isCoreRequest(request('ratings.history', { entityId: 'song', limit: 100 }, 'query')), true)
-  assert.equal(isCoreRequest(request('ratings.history', { entityId: 'song', limit: 101 }, 'query')), false)
+  assert.equal(
+    isCoreRequest(
+      request('ratings.targets', { entityId: 'manual', offset: 20, limit: 100 }, 'query')
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('ratings.targets', { entityId: 'manual', limit: 101 }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request(
+        'ratings.targets',
+        { entityId: 'manual', trackContext: { provider: 'local', id: 'song' } },
+        'query'
+      )
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request(
+        'ratings.targets',
+        {
+          entityId: 'manual',
+          trackContext: { provider: 'local', id: 'song', filePath: 'D:/private' }
+        },
+        'query'
+      )
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request(
+        'ratings.targets',
+        { entityId: 'manual', trackContext: { provider: 'Local', id: 'song' } },
+        'query'
+      )
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('ratings.targets', { entityId: 'manual', kind: 'release' }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('ratings.history', { entityId: 'song', limit: 100 }, 'query')),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('ratings.history', { entityId: 'song', limit: 101 }, 'query')),
+    false
+  )
   for (const steps of [1, 10, null])
     assert.equal(isCoreRequest(request('ratings.set', { entityId: 'song', token, steps })), true)
   for (const steps of [0, 11, 1.5, '8', undefined])
     assert.equal(isCoreRequest(request('ratings.set', { entityId: 'song', token, steps })), false)
-  for (const extra of [{ profileId: 'other' }, { filePath: 'D:/private' }, { targetId: 'identity' }])
-    assert.equal(isCoreRequest(request('ratings.set', { entityId: 'song', token, steps: 8, ...extra })), false)
-  assert.equal(isCoreRequest(request('ratings.set', { entityId: 'song', token: { ...token, x: 1 }, steps: 8 })), false)
+  for (const extra of [
+    { profileId: 'other' },
+    { filePath: 'D:/private' },
+    { targetId: 'identity' }
+  ])
+    assert.equal(
+      isCoreRequest(request('ratings.set', { entityId: 'song', token, steps: 8, ...extra })),
+      false
+    )
+  assert.equal(
+    isCoreRequest(
+      request('ratings.set', { entityId: 'song', token: { ...token, x: 1 }, steps: 8 })
+    ),
+    false
+  )
   assert.equal(coreOperation('ratings.detail')?.permission, 'library:read')
   assert.equal(coreOperation('ratings.targets')?.permission, 'library:read')
   assert.equal(coreOperation('ratings.history')?.permission, 'library:read')
@@ -156,20 +366,55 @@ test('ratings validate half-star steps, bounded history and server-owned default
 })
 
 test('unified catalog exposes bounded identity queries and explicit playback, not caller-owned source authority', () => {
-  assert.equal(isCoreRequest(request('catalog.query', { kind: 'recording', source: 'ncm', limit: 200 }, 'query')), true)
-  assert.equal(isCoreRequest(request('catalog.query', { kind: 'file', limit: 200 }, 'query')), false)
-  assert.equal(isCoreRequest(request('catalog.query', { kind: 'release', limit: 201 }, 'query')), false)
-  assert.equal(isCoreRequest(request('catalog.query', { kind: 'artist', search: 'x'.repeat(513) }, 'query')), false)
-  assert.equal(isCoreRequest(request('catalog.query', { kind: 'artist', sql: 'anything' }, 'query')), false)
-  assert.equal(isCoreRequest(request('catalog.detail', { id: 'entity', revision: 2 }, 'query')), true)
-  assert.equal(isCoreRequest(request('catalog.sources', { entityId: 'entity', offset: 200, revision: 2 }, 'query')), true)
+  assert.equal(
+    isCoreRequest(
+      request('catalog.query', { kind: 'recording', source: 'ncm', limit: 200 }, 'query')
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('catalog.query', { kind: 'file', limit: 200 }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('catalog.query', { kind: 'release', limit: 201 }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('catalog.query', { kind: 'artist', search: 'x'.repeat(513) }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('catalog.query', { kind: 'artist', sql: 'anything' }, 'query')),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('catalog.detail', { id: 'entity', revision: 2 }, 'query')),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('catalog.sources', { entityId: 'entity', offset: 200, revision: 2 }, 'query')
+    ),
+    true
+  )
   assert.equal(isCoreRequest(request('catalog.status', {}, 'query')), true)
   assert.equal(isCoreRequest(request('catalog.refresh', {})), true)
   assert.equal(isCoreRequest(request('catalog.cancel', {})), true)
   assert.equal(isCoreRequest(request('catalog.play', { sourceId: 'source', revision: 2 })), true)
   assert.equal(isCoreRequest(request('catalog.play', { sourceId: 'source' })), false)
-  assert.equal(isCoreRequest(request('catalog.play', { sourceId: 'source', revision: 2, filePath: 'C:/private' })), false)
-  assert.equal(isCoreRequest(request('catalog.play', { sourceId: 'source', revision: 2, streamUrl: 'https://private' })), false)
+  assert.equal(
+    isCoreRequest(
+      request('catalog.play', { sourceId: 'source', revision: 2, filePath: 'C:/private' })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('catalog.play', { sourceId: 'source', revision: 2, streamUrl: 'https://private' })
+    ),
+    false
+  )
   assert.equal(isCoreRequest(request('catalog.refresh', { tracks: [] })), false)
   assert.equal(coreOperation('catalog.query')?.permission, 'library:read')
   assert.equal(coreOperation('catalog.refresh')?.permission, 'library:write')
@@ -196,15 +441,38 @@ test('plugin marketplace and experience commands expose bounded actions, not arb
     assert.equal(isCoreRequest(request(name, { method: 'anything' }, 'query')), false)
   }
   assert.equal(isCoreRequest(request('plugins.index.refresh', {})), true)
-  assert.equal(isCoreRequest(request('plugins.index.install', { id: 'com.example.experience' })), true)
+  assert.equal(
+    isCoreRequest(request('plugins.index.install', { id: 'com.example.experience' })),
+    true
+  )
   assert.equal(isCoreRequest(request('plugins.index.install', { id: '../package' })), false)
-  assert.equal(isCoreRequest(request('plugins.index.install', { id: 'com.example.experience', path: '/tmp/package.tep' })), false)
+  assert.equal(
+    isCoreRequest(
+      request('plugins.index.install', { id: 'com.example.experience', path: '/tmp/package.tep' })
+    ),
+    false
+  )
   const task = { id: 'com.example.experience', operation: 'task', args: { scope: 'all' } }
   assert.equal(isCoreRequest(request('extensions.music', task)), true)
   assert.equal(isCoreRequest(request('extensions.music', { ...task, albums: [] })), false)
-  assert.equal(isCoreRequest(request('extensions.music', { ...task, operation: 'anyMethod' })), false)
-  assert.equal(isCoreRequest(request('extensions.resource', { url: 'plugin-ui://com.example.experience/1.0.0/ui/index.html' }, 'query')), true)
-  assert.equal(isCoreRequest(request('extensions.resource', { url: 'file:///private/music.flac' }, 'query')), false)
+  assert.equal(
+    isCoreRequest(request('extensions.music', { ...task, operation: 'anyMethod' })),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request(
+        'extensions.resource',
+        { url: 'plugin-ui://com.example.experience/1.0.0/ui/index.html' },
+        'query'
+      )
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('extensions.resource', { url: 'file:///private/music.flac' }, 'query')),
+    false
+  )
   assert.equal(coreOperation('extensions.resource')?.permission, 'plugins:resources')
   assert.equal(coreOperation('plugins.installSource')?.permission, 'plugins:resources')
 })
@@ -218,71 +486,191 @@ test('playback presentation and queue upload expose finite, revision-fenced iden
   assert.equal(isCoreRequest(request('playback.control', { type: 'pause' })), true)
   assert.equal(isCoreRequest(request('playback.control', { type: 'anyMethod' })), false)
   assert.equal(isCoreRequest(request('playback.control', { type: 'set-volume', value: 2 })), false)
-  const provider = { kind: 'provider', track: { id: 'ncm:7', source: 'ncm', title: 'Seven', artist: '', album: '', duration: 60 } }
+  const provider = {
+    kind: 'provider',
+    track: { id: 'ncm:7', source: 'ncm', title: 'Seven', artist: '', album: '', duration: 60 }
+  }
   assert.equal(isCoreRequest(request('queue.submit', { kind: 'begin', selectedIndex: 0 })), true)
   const page = { kind: 'append', id: 'upload', sequence: 1, items: [provider] }
   assert.equal(isCoreRequest(request('queue.submit', page)), true)
-  assert.equal(isCoreRequest(request('queue.submit', { ...page, items: Array(201).fill(provider) })), false)
-  assert.equal(isCoreRequest(request('queue.submit', { ...page, items: [{ ...provider, track: { ...provider.track, streamUrl: 'https://private' } }] })), false)
+  assert.equal(
+    isCoreRequest(request('queue.submit', { ...page, items: Array(201).fill(provider) })),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('queue.submit', {
+        ...page,
+        items: [{ ...provider, track: { ...provider.track, streamUrl: 'https://private' } }]
+      })
+    ),
+    false
+  )
+  for (const cover of [
+    null,
+    'twilight-media://image/token_abc-123',
+    'cover://cached_art.jpg',
+    'data:image/jpeg;base64,AA=='
+  ]) {
+    assert.equal(
+      isCoreRequest(
+        request('queue.submit', {
+          ...page,
+          items: [{ ...provider, track: { ...provider.track, cover } }]
+        })
+      ),
+      true
+    )
+  }
+  for (const invalidCover of [
+    'https://p2.music.126.net/raw.jpg',
+    'http://example.com/raw.jpg',
+    'file:///C:/Users/private.jpg',
+    'twilight-media://audio/token_abc-123'
+  ]) {
+    assert.equal(
+      isCoreRequest(
+        request('queue.submit', {
+          ...page,
+          items: [{ ...provider, track: { ...provider.track, cover: invalidCover } }]
+        })
+      ),
+      false
+    )
+  }
+  assert.equal(
+    isCoreRequest(
+      request('queue.submit', {
+        ...page,
+        items: [
+          {
+            ...provider,
+            track: { ...provider.track, coverSource: 'https://p2.music.126.net/raw.jpg' }
+          }
+        ]
+      })
+    ),
+    false
+  )
   const queue = { id: 'queue', revision: 3 }
-  assert.equal(isCoreRequest(request('queue.locate', { ...queue, occurrenceId: 'entry' }, 'query')), true)
-  assert.equal(isCoreRequest(request('queue.insert', { ...queue, items: [{ kind: 'occurrence', queueId: queue.id, revision: queue.revision, occurrenceId: 'entry' }] })), true)
+  assert.equal(
+    isCoreRequest(request('queue.locate', { ...queue, occurrenceId: 'entry' }, 'query')),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('queue.insert', {
+        ...queue,
+        items: [
+          { kind: 'occurrence', queueId: queue.id, revision: queue.revision, occurrenceId: 'entry' }
+        ]
+      })
+    ),
+    true
+  )
   const add = { id: 'playlist', revision: 2, queue, occurrenceIds: ['entry'] }
   assert.equal(isCoreRequest(request('playlists.addQueueEntries', add)), true)
-  assert.equal(isCoreRequest(request('playlists.addQueueEntries', { ...add, occurrenceIds: Array(201).fill('entry') })), false)
-  assert.equal(isCoreRequest(request('playlists.saveQueue', { name: 'Saved', revision: 2, queue })), true)
+  assert.equal(
+    isCoreRequest(
+      request('playlists.addQueueEntries', { ...add, occurrenceIds: Array(201).fill('entry') })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('playlists.saveQueue', { name: 'Saved', revision: 2, queue })),
+    true
+  )
 })
 
 test('recent library resolution accepts bounded CUE hints and rejects malformed or oversized identities', () => {
   const base = {
-    entries: [{
-      id: 'history:1',
-      sourceIds: ['ncm:1'],
-      snapshot: {
-        id: 'local:cue:2',
-        title: 'Track two',
-        artist: 'Artist',
-        source: 'local',
-        filePath: 'D:/Music/disc.flac',
-        duration: 30,
-        subTrack: '2',
-        cueRange: { startSeconds: 30, endSeconds: 60, pregapSeconds: 0 }
+    entries: [
+      {
+        id: 'history:1',
+        sourceIds: ['ncm:1'],
+        snapshot: {
+          id: 'local:cue:2',
+          title: 'Track two',
+          artist: 'Artist',
+          source: 'local',
+          filePath: 'D:/Music/disc.flac',
+          duration: 30,
+          subTrack: '2',
+          cueRange: { startSeconds: 30, endSeconds: 60, pregapSeconds: 0 }
+        }
       }
-    }],
+    ],
     revision: 4,
     versionsRevision: 9
   }
   assert.equal(isCoreRequest(request('library.recent.resolve', base, 'query')), true)
   assert.equal(coreOperation('library.recent.resolve')?.permission, 'library:read')
   assert.equal(
-    isCoreRequest(request('library.recent.resolve', {
-      ...base,
-      entries: [{ ...base.entries[0], snapshot: { ...base.entries[0].snapshot, cueRange: { startSeconds: 30, endSeconds: 30, pregapSeconds: 0 } } }]
-    }, 'query')),
+    isCoreRequest(
+      request(
+        'library.recent.resolve',
+        {
+          ...base,
+          entries: [
+            {
+              ...base.entries[0],
+              snapshot: {
+                ...base.entries[0].snapshot,
+                cueRange: { startSeconds: 30, endSeconds: 30, pregapSeconds: 0 }
+              }
+            }
+          ]
+        },
+        'query'
+      )
+    ),
     false
   )
   assert.equal(
-    isCoreRequest(request('library.recent.resolve', {
-      ...base,
-      entries: [{ ...base.entries[0], snapshot: { ...base.entries[0].snapshot, mediaUrl: 'https://example.test/audio' } }]
-    }, 'query')),
+    isCoreRequest(
+      request(
+        'library.recent.resolve',
+        {
+          ...base,
+          entries: [
+            {
+              ...base.entries[0],
+              snapshot: { ...base.entries[0].snapshot, mediaUrl: 'https://example.test/audio' }
+            }
+          ]
+        },
+        'query'
+      )
+    ),
     false
   )
   assert.equal(
-    isCoreRequest(request('library.recent.resolve', {
-      ...base,
-      entries: [{ ...base.entries[0], sourceIds: Array(201).fill('ncm:1') }]
-    }, 'query')),
+    isCoreRequest(
+      request(
+        'library.recent.resolve',
+        {
+          ...base,
+          entries: [{ ...base.entries[0], sourceIds: Array(201).fill('ncm:1') }]
+        },
+        'query'
+      )
+    ),
     false
   )
   assert.equal(
-    isCoreRequest(request('library.recent.resolve', {
-      ...base,
-      entries: Array.from({ length: 3 }, (_, index) => ({
-        id: `history:${index}`,
-        snapshot: { id: `local:${index}`, title: 't'.repeat(32768), artist: 'a' }
-      }))
-    }, 'query')),
+    isCoreRequest(
+      request(
+        'library.recent.resolve',
+        {
+          ...base,
+          entries: Array.from({ length: 3 }, (_, index) => ({
+            id: `history:${index}`,
+            snapshot: { id: `local:${index}`, title: 't'.repeat(32768), artist: 'a' }
+          }))
+        },
+        'query'
+      )
+    ),
     false
   )
 })
@@ -432,10 +820,31 @@ test('personal backup accepts a Core preview identity and restore choices, never
   assert.equal(isCoreRequest(request('backup.export', { domains: ['music', 'versions'] })), true)
   for (const domains of [[], ['music', 'music'], ['unknown']])
     assert.equal(isCoreRequest(request('backup.export', { domains })), false)
-  assert.equal(isCoreRequest(request('backup.repreview', { id: 'preview', options: { ...options, domains: ['music'] } })), true)
-  assert.equal(isCoreRequest(request('backup.repreview', { id: 'preview', options, data: {} })), false)
-  assert.equal(isCoreRequest(request('backup.stage', { id: 'preview', options: { ...options, domains: ['music', 'music'] } })), false)
-  for (const name of ['musicBackupExport', 'musicBackupRestore', 'musicBackupRevision', 'musicBackupPreview'])
+  assert.equal(
+    isCoreRequest(
+      request('backup.repreview', { id: 'preview', options: { ...options, domains: ['music'] } })
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(request('backup.repreview', { id: 'preview', options, data: {} })),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('backup.stage', {
+        id: 'preview',
+        options: { ...options, domains: ['music', 'music'] }
+      })
+    ),
+    false
+  )
+  for (const name of [
+    'musicBackupExport',
+    'musicBackupRestore',
+    'musicBackupRevision',
+    'musicBackupPreview'
+  ])
     assert.equal(isCoreRequest(request(name, {})), false)
 })
 
@@ -610,7 +1019,7 @@ test('settings commands are revision-fenced and cannot bypass native configurati
   assert.equal(platform({ audioProcessing: { convolverIrPath: 'arbitrary' } }), false)
 })
 
-test('automatic EQ preamp is a revision-fenced DSP command, not a generic preference write', () => {
+test('automatic EQ preamp and headphone compensation are revision-fenced DSP commands, not generic preference writes', () => {
   assert.equal(
     isCoreRequest(
       request('audio.dsp.edit', { revision: 3, edit: { kind: 'autoPreamp', enabled: true } })
@@ -622,6 +1031,45 @@ test('automatic EQ preamp is a revision-fenced DSP command, not a generic prefer
     { kind: 'autoPreamp', enabled: true, manualDb: 10 }
   ])
     assert.equal(isCoreRequest(request('audio.dsp.edit', { revision: 3, edit })), false)
+  assert.equal(
+    isCoreRequest(
+      request('audio.dsp.edit', {
+        revision: 3,
+        edit: {
+          kind: 'headphoneCompensation',
+          settings: { enabled: false, preampDb: -2, bands: [] }
+        }
+      })
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('audio.dsp.edit', {
+        revision: 3,
+        edit: { kind: 'headphoneCompensation', settings: null }
+      })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('audio.dsp.edit', {
+        revision: 3,
+        edit: { kind: 'headphoneCompensation', enabled: false }
+      })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(
+      request('settings.edit', {
+        revision: 3,
+        patch: { headphoneCompensation: { enabled: false } }
+      })
+    ),
+    false
+  )
 })
 
 test('sleep timers use Core deadlines and revisions, never client EOF/clock/fade ownership', () => {
@@ -1490,21 +1938,49 @@ test('personalized streams submit provider identities and revision fences, never
 })
 
 test('Core source edits, downloads and statistics use finite identities and version fences', () => {
-  const input = { kind: 'provider', track: {
-    id: 'ncm:7', source: 'ncm', title: 'Seven', artist: 'Singer', album: 'Album', duration: 60
-  } }
+  const input = {
+    kind: 'provider',
+    track: {
+      id: 'ncm:7',
+      source: 'ncm',
+      title: 'Seven',
+      artist: 'Singer',
+      album: 'Album',
+      duration: 60
+    }
+  }
   for (const name of ['imports.bind', 'imports.previewBind'])
-    assert.equal(isCoreRequest(request(name, { id: 'import', revision: 2, entryId: 'entry', input })), true)
-  assert.equal(isCoreRequest(request('imports.bind', {
-    id: 'import', revision: 2, entryId: 'entry', track: { filePath: 'D:/private.flac' }
-  })), false)
-  assert.equal(isCoreRequest(request('playlists.replaceSource', { revision: 3, oldTrackId: 'old', input })), true)
+    assert.equal(
+      isCoreRequest(request(name, { id: 'import', revision: 2, entryId: 'entry', input })),
+      true
+    )
+  assert.equal(
+    isCoreRequest(
+      request('imports.bind', {
+        id: 'import',
+        revision: 2,
+        entryId: 'entry',
+        track: { filePath: 'D:/private.flac' }
+      })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('playlists.replaceSource', { revision: 3, oldTrackId: 'old', input })),
+    true
+  )
   assert.equal(isCoreRequest(request('playlists.rematch', { revision: 3, input })), true)
   assert.equal(isCoreRequest(request('library.reveal', { id: 'track', version: 4 })), true)
-  assert.equal(isCoreRequest(request('library.reveal', { id: 'track', path: 'D:/private.flac' })), false)
+  assert.equal(
+    isCoreRequest(request('library.reveal', { id: 'track', path: 'D:/private.flac' })),
+    false
+  )
   assert.equal(isCoreRequest(request('downloads.indexed', { id: 'download' }, 'query')), true)
   assert.equal(isCoreRequest(request('downloads.reveal', { id: 'download' })), true)
-  assert.equal(isCoreRequest(request('statistics.previewClear', { range: null, revision: 5 }, 'query')), true)
+  assert.equal(
+    isCoreRequest(request('statistics.previewClear', { range: null, revision: 5 }, 'query')),
+    true
+  )
   assert.equal(isCoreRequest(request('statistics.previewClear', { range: null }, 'query')), false)
 })
 

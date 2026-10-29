@@ -1,4 +1,8 @@
-import type { AudioProcessingSettings, ConvolverInfo } from './audioEngineTypes.ts'
+import type {
+  AudioProcessingSettings,
+  ConvolverInfo,
+  HeadphoneCompensationSettings
+} from './audioEngineTypes.ts'
 import type { EqualizerAutoPreamp } from './equalizerPreferences.ts'
 import type { DspAuditionRequest, DspAuditionResult } from './dspAudition.ts'
 export interface CoreAuditionMeasure extends Omit<DspAuditionRequest, 'source'> {
@@ -24,6 +28,7 @@ export interface CoreDspState {
   revision: number
   processing: AudioProcessingSettings
   autoPreamp: EqualizerAutoPreamp | null
+  headphoneCompensation: HeadphoneCompensationSettings
   scenes: DspSceneState
   convolver: ConvolverInfo
 }
@@ -32,6 +37,7 @@ export interface CoreDspEdit {
   edit:
     | { kind: 'processing'; settings: Partial<AudioProcessingSettings> }
     | { kind: 'autoPreamp'; enabled: boolean }
+    | { kind: 'headphoneCompensation'; settings: Partial<HeadphoneCompensationSettings> }
     | { kind: 'scenes'; scenes: DspScene[]; pinnedSceneId: string | null }
     | { kind: 'apply'; id: string | null; confirmDsdPcmFallback?: boolean }
     | { kind: 'outputStage'; settings: Partial<DspOutputStageConfig> }
@@ -159,6 +165,7 @@ export function validCoreDspPayload(name: string, p: Record<string, unknown>): b
         case 'autoPreamp':
           return keys(e, ['kind', 'enabled']) && typeof e.enabled === 'boolean'
         case 'processing':
+        case 'headphoneCompensation':
         case 'outputStage':
         case 'stereoImage':
           return keys(e, ['kind', 'settings']) && record(e.settings)

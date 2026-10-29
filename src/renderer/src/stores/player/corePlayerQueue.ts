@@ -4,9 +4,10 @@ import { createCorePlayerResource } from './corePlayerResource.ts'
 import type { TrackData } from '../../../../shared/track.ts'
 import type { CoreTrackView } from '../../../../shared/coreViews.ts'
 import type { CoreQueueReference } from '../../../../shared/coreProtocol.ts'
-import type {
-  CoreQueueSubmitReply,
-  CoreQueueTrackInput
+import {
+  isAuthorizedProviderQueueCover,
+  type CoreQueueSubmitReply,
+  type CoreQueueTrackInput
 } from '../../../../shared/coreQueueSubmission.ts'
 import {
   LIBRARY_PAGE_SIZE,
@@ -56,7 +57,15 @@ export function coreQueueTrackInput(
   const source = track.source ?? 'local'
   if (source === 'radio') return { kind: 'stream', source: 'radio', id: track.id }
   if (source === 'podcast') return { kind: 'stream', source: 'podcast', id: track.id }
-  if (source !== 'local')
+  if (source !== 'local') {
+    const rawCover =
+      ('cover' in track && typeof track.cover === 'string' && track.cover
+        ? track.cover
+        : 'coverSmall' in track &&
+            typeof (track as { coverSmall?: unknown }).coverSmall === 'string'
+          ? (track as { coverSmall: string }).coverSmall
+          : null)?.trim() ?? null
+    const cover = isAuthorizedProviderQueueCover(rawCover) ? rawCover : undefined
     return {
       kind: 'provider',
       track: {
@@ -66,9 +75,11 @@ export function coreQueueTrackInput(
         album: track.album,
         duration: track.duration,
         source,
-        ...(track.ncmSongId === undefined ? {} : { ncmSongId: track.ncmSongId })
+        ...(track.ncmSongId === undefined ? {} : { ncmSongId: track.ncmSongId }),
+        ...(cover === undefined ? {} : { cover })
       }
     }
+  }
   return {
     kind: 'local',
     id: track.id,

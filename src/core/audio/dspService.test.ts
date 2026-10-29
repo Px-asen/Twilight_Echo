@@ -596,7 +596,16 @@ test('active scene EQ edits retain graph nodes, auto headroom and a single headp
     preampDb: -4,
     bands: [boosted[0]]
   }
-  f.settings.update({ headphoneCompensation: compensation })
+  await f.dsp.edit(
+    {
+      revision: f.output.getRevision(),
+      edit: { kind: 'headphoneCompensation', settings: compensation }
+    },
+    signal()
+  )
+  state = await f.dsp.state()
+  assert.equal(state.headphoneCompensation.enabled, true)
+  assert.equal(state.headphoneCompensation.preampDb, -4)
   const bands = [boosted[1]]
   await f.dsp.edit(
     {
@@ -612,6 +621,22 @@ test('active scene EQ edits retain graph nodes, auto headroom and a single headp
   const activeEq = active.graph.nodes.find((node) => node.type === 'equalizer')!
   assert.equal((activeEq.params.bands as unknown[]).length, 2)
   assert.equal(activeEq.params.preampDb, computeAutoPreampDb(bands) - 4)
+
+  await f.dsp.edit(
+    {
+      revision: f.output.getRevision(),
+      edit: { kind: 'headphoneCompensation', settings: { enabled: false } }
+    },
+    signal()
+  )
+  state = await f.dsp.state()
+  assert.equal(state.headphoneCompensation.enabled, false)
+  assert.equal(f.engine.getAudioProcessing().eqBands.length, 1)
+  const unstackedEq = state.scenes.scenes
+    .find((scene) => scene.id === 'custom')!
+    .graph.nodes.find((node) => node.type === 'equalizer')!
+  assert.equal((unstackedEq.params.bands as unknown[]).length, 1)
+  assert.equal(unstackedEq.params.preampDb, computeAutoPreampDb(bands))
 })
 
 test('settings restore uses the real DSP checkpoint and rejects unauthorized IR before any mutation', async (t) => {

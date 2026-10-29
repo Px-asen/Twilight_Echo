@@ -262,7 +262,10 @@ onBeforeUnmount(() => {
               {{ remoteStatus?.discovery === 'advertising' ? '手机可在同一局域网自动发现' : remoteStatus?.discoveryError || '局域网发现未启动' }}
             </span>
             <div v-for="request in remoteStatus?.pairingRequests ?? []" :key="request.id" class="remote-device-row">
-              <div><strong>{{ request.deviceName }}</strong><span>请求连接 · {{ request.address }}</span></div>
+              <div>
+                <strong>{{ request.deviceName }}</strong>
+                <span>请求连接 · {{ request.address }}<template v-if="request.verificationCode"> · 验证码 {{ request.verificationCode }}</template></span>
+              </div>
               <button type="button" class="soft-button" :disabled="remoteBusy" @click="decideRemotePairing(request.id, true)">允许连接</button>
               <button type="button" class="soft-button" :disabled="remoteBusy" @click="decideRemotePairing(request.id, false)">拒绝</button>
             </div>

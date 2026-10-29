@@ -509,7 +509,7 @@ export function applyEqConfigPatch(
   } else if (typeof patch.preset === 'string' && PORTABLE_EQ_PRESETS[nextPreset]) {
     nextBands = [...PORTABLE_EQ_PRESETS[nextPreset]!]
   }
-  return {
+  const next = {
     enabled: typeof patch.enabled === 'boolean' ? patch.enabled : current.enabled,
     preset: nextPreset,
     preampDb: typeof patch.preampDb === 'number' ? clampDb(patch.preampDb) : current.preampDb,
@@ -519,6 +519,11 @@ export function applyEqConfigPatch(
     dsp: patch.dsp ? normalizePortableDspSettings(patch.dsp) : structuredClone(current.dsp ?? defaultPortableDspSettings()),
     scenes: Array.isArray(patch.scenes) ? structuredClone(patch.scenes.slice(0, 32)) : structuredClone(current.scenes ?? [])
   }
+  if (next.dsp.sampleRateFamilySync && !next.bitPerfect) throw new Error('Family sync requires source-first playback')
+  if (next.bitPerfect && next.dsp.outputStage.targetSampleRate > 0 && next.dsp.allowedSampleRates.length > 0 &&
+    !next.dsp.allowedSampleRates.includes(next.dsp.outputStage.targetSampleRate))
+    throw new Error('Fixed sample rate is not in the allowed set')
+  return next
 }
 
 export function aggregateLibraryCollections(
@@ -1506,6 +1511,8 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   /** Latest native observation; natural-end checks read it, never a guess. */
   private info: PlaybackInfo | null = null
   private transportRevision = 0
+  /** Pause, resume and seek do not change the native queue's identity. */
+  private queueMutationRevision = 0
   private continuationIntent = 0
   private endEligible = false
   private unsubscribePort: PortableUnsubscribe | null = null
@@ -1697,14 +1704,15 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   }
 
   async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
-    const revision = ++this.transportRevision
+    this.transportRevision++
+    const revision = ++this.queueMutationRevision
     this.revokePlaybackEnd()
     const nextQueue = items.map((item) => structuredClone(item))
     const nextIndex =
       nextQueue.length === 0 ? 0 : Math.max(0, Math.min(nextQueue.length - 1, startIndex))
     this.currentQueueToken = ''
     await this.port.loadQueue(nextQueue, nextIndex)
-    if (revision !== this.transportRevision) return
+    if (revision !== this.queueMutationRevision) return
     this.queueItems = nextQueue
     this.currentQueueToken = this.nextQueueToken()
   }
@@ -1734,11 +1742,13 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
         (current.cueRange?.virtualPregapSeconds ?? 0)
     )
       return null
-    const revision = ++this.transportRevision
+    // Lookahead preserves the active decoder and must not cancel an in-flight Play.
+    // Only another queue mutation can supersede its confirmed queue assignment.
+    const revision = ++this.queueMutationRevision
     this.currentQueueToken = ''
     const superseded = () => new Error('Native queue handoff superseded; queue authority must be refreshed')
     const before = await this.port.getSnapshot()
-    if (revision !== this.transportRevision) throw superseded()
+    if (revision !== this.queueMutationRevision) throw superseded()
     this.info = before
     if (
       before.state === 'stopped' ||
@@ -1750,14 +1760,14 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
     }
     const nextQueue = rebind.items.map((item) => structuredClone(item))
     await this.port.loadQueue(nextQueue, startIndex)
-    if (revision !== this.transportRevision) throw superseded()
+    if (revision !== this.queueMutationRevision) throw superseded()
     if (playMode !== this.playMode) {
       await this.port.setPlayMode(playMode)
-      if (revision !== this.transportRevision) throw superseded()
+      if (revision !== this.queueMutationRevision) throw superseded()
       this.playMode = playMode
     }
     const after = await this.port.getSnapshot()
-    if (revision !== this.transportRevision) throw superseded()
+    if (revision !== this.queueMutationRevision) throw superseded()
     this.info = after
     if (after.source !== selected.source || after.queueIndex !== startIndex)
       throw new Error('Native queue handoff raced a track change; queue authority must be refreshed')
@@ -2626,16 +2636,18 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
       queueStore.upsertTracks(tracks)
       await playbackSession.fromPages(
         async (append) => {
-          await append(
-            tracks.map((track) => {
-              const record = toTrackRecord(track)
-              return {
-                id: record.id,
-                snapshot: record,
-                localSnapshot: record
-              }
-            })
-          )
+          for (let offset = 0; offset < tracks.length; offset += LIBRARY_PAGE_SIZE) {
+            await append(
+              tracks.slice(offset, offset + LIBRARY_PAGE_SIZE).map((track) => {
+                const record = toTrackRecord(track)
+                return {
+                  id: record.id,
+                  snapshot: record,
+                  localSnapshot: record
+                }
+              })
+            )
+          }
         },
         {
           selectedIndex: startIndex

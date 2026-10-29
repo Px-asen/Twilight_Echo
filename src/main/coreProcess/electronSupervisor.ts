@@ -58,7 +58,7 @@ import {
   maintainCoverCache,
   migrateBase64Cover
 } from '../library/coverCache.ts'
-import { createArtworkProjection } from './artworkProjection.ts'
+import { createArtworkProjection, createQueueCoverResolver } from './artworkProjection.ts'
 import { mediaCoverCache, metadataArtworkCache } from '../cache/mediaCoverCache.ts'
 import { clearProtocolAssetCache } from '../cache/protocolAssetCache.ts'
 import { createPlatformCacheMaintenance } from '../cache/platformCacheMaintenance.ts'
@@ -151,12 +151,15 @@ export function createElectronCoreSupervisor(
     },
     platform: {
       ...createAudioRecoveryCorePlatform(),
-      'remote.confirmDevice': async ({ deviceName, address }, signal) => {
+      'remote.confirmDevice': async ({ deviceName, address, verificationCode }, signal) => {
         signal.throwIfAborted()
+        const code = verificationCode
+          ? `验证码：${verificationCode.slice(0, 3)} ${verificationCode.slice(3)}\n请确认手机上显示的验证码与此一致；不一致时请拒绝。\n`
+          : ''
         const result = await dialog.showMessageBox({
           type: 'question', title: '连接 Twilight Echo',
           message: `允许“${deviceName}”连接这台电脑？`,
-          detail: `来源：${address}\n允许后可浏览曲库并控制电脑播放。仅允许你正在操作的设备。`,
+          detail: `${code}来源：${address}\n允许后可浏览曲库并控制电脑播放。仅允许你正在操作的设备。`,
           buttons: ['允许连接', '拒绝'], defaultId: 1, cancelId: 1, noLink: true, signal
         })
         signal.throwIfAborted()
@@ -285,6 +288,11 @@ export function createElectronCoreSupervisor(
       'paths.authorizeLibraryDirectory': ({ path }) => resolveAuthorizedLibraryDirectory(path),
       'artwork.normalizeCachedCover': ({ handle }) => normalizeCachedCoverHandle(handle),
       'artwork.remotePreview': ({ cover }, signal) => resolveRemoteArtwork(cover, signal),
+      'artwork.resolveQueueCovers': createQueueCoverResolver({
+        normalizeCachedCover: normalizeCachedCoverHandle,
+        migrateBase64Cover,
+        resolve: (handle) => remoteMediaGrants.resolve(handle, 'image')
+      }),
       'artwork.present': createArtworkProjection({
         retainMetadata: (source, signal) => metadataArtworkCache.retain(source, signal),
         normalizeCachedCover: normalizeCachedCoverHandle,

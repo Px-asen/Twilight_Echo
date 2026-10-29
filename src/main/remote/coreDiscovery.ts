@@ -6,8 +6,9 @@ export class CoreDiscoveryAdvertisement {
   private bonjour: Bonjour | null = null
   private service: Service | null = null
   private key = ''
-  async start(info: { serverId: string; name: string; port: number }): Promise<void> {
-    const key = `${info.serverId}:${info.port}`
+  async start(info: { serverId: string; name: string; port: number; pairingMode?: string }): Promise<void> {
+    const pair = info.pairingMode ?? 'approval-v1'
+    const key = `${info.serverId}:${info.port}:${pair}`
     if (this.key === key && this.service?.published) return
     await this.stop()
     try {
@@ -19,7 +20,7 @@ export class CoreDiscoveryAdvertisement {
           name: `Twilight ${info.serverId.slice(0, 8)}`,
           host: `twilight-${info.serverId}.local`, type: 'twilight-core', protocol: 'tcp', port: info.port,
           disableIPv6: true,
-          txt: { id: info.serverId, name: info.name.slice(0, 80), v: '1', bridge: '1', pair: 'approval-v1' }
+          txt: { id: info.serverId, name: info.name.slice(0, 80), v: '1', bridge: '1', pair }
         })
         this.service.once('up', () => { clearTimeout(timer); resolve() })
         this.service.once('error', failed)

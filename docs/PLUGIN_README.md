@@ -209,6 +209,8 @@ JS 插件实现两个函数：
 - `streamingHome`：流媒体首页入口
 - `titleBarButton`（v4）：标题栏图标按钮（外观按钮左侧）。无需 command；点击时宿主在屏幕右侧弹出面板（flyout）中挂载该插件的 `launch: "panel"` experience，适合助手类常驻入口
 
+要像设备电量卡片一样**直接在侧栏显示自定义内容**，使用 API v4 的 `contributes.experiences[].launch: "sidebar"`。它在隔离 iframe 中加载插件包内的 HTML/CSS/JS，不是 `sidebarPage` 命令页面。宿主提供可收起标题、尺寸管理、图标栏面板和外观同步。完整用法和可打包示例见 [侧栏小组件](./plugin-sidebar-widgets.md)。
+
 这几类都通过 **command 回到插件宿主进程**执行业务逻辑（`titleBarButton` 例外：宿主直接打开面板）。宿主只渲染它批准的 DTO，不向插件开放任意 DOM 权限。这是 Phase 3 受控 UI 注入的核心设计：渲染在 renderer，逻辑在 utilityProcess，中间是受限桥接。
 
 `twilight.ui` 还提供 `notify(notice)`，用于弹出宿主风格的提示（toast），同样需要 `ui:inject` 权限：
@@ -223,9 +225,9 @@ await context.twilight.ui.notify({
 
 提示内容是纯文本，宿主会做长度截断。该方法是 API v3 新增的可选能力，旧宿主可能没有；调用前请用 `typeof context.twilight.ui.notify === 'function'` 判断。
 
-UI contribution 通过 command 返回字符串或可序列化对象，宿主只在受控页面中按纯文本/结构化数据展示。任意插件 HTML、`srcdoc` iframe 和 DOM 注入都不是受支持的扩展路径。旧版 `renderMode: 'html'` 输入只为 API v1 兼容而保留，宿主会忽略它并按 command 模式处理。
+UI contribution 通过 command 返回字符串或可序列化对象，宿主只在受控页面中按纯文本/结构化数据展示。`srcdoc` 和宿主 DOM 注入不受支持；自定义 HTML 应使用 API v4 的包内 experience。旧版 `renderMode: 'html'` 输入只为 API v1 兼容而保留，宿主会忽略它并按 command 模式处理。
 
-不要试图在 UI 入口里直接操纵 DOM 或调 Electron renderer API。所有交互走 command 协议回宿主进程，再由宿主决定渲染什么。
+命令页面的交互走 command 协议；experience 只操作自己 iframe 内的 DOM，宿主能力走受限 MessagePort 桥，不能调用 Electron renderer API。
 
 ### 9.1 设置表单（settings-form）
 

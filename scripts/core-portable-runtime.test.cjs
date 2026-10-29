@@ -8,6 +8,105 @@ const ROOT = path.resolve(__dirname, '..')
 const BUNDLE_PATH = path.join(ROOT, 'dist', 'portable-core', 'music-core.js')
 const LOCK_PATH = path.join(ROOT, 'dist', 'portable-core', 'core-lock.json')
 
+for (const [operation, boundary] of [['pause', 'before'], ['play', 'load'], ['seek', 'after'], ['stop', 'load']]) {
+  test(`portable lookahead keeps queue authority across ${operation} during ${boundary}`, async () => {
+    const core = loadPortableCoreInIsolatedSandbox()
+    const ports = createFakePorts()
+    const host = core.createPortableMusicCoreHost({ audioEngine: ports.audioEngine, sessionStore: ports.sessionStore })
+    const engine = host.playback.options.engine
+    const current = { id: 'current', queueEntryId: 'row-current', source: '/current.flac', duration: 210 }
+    const next = { id: 'next', queueEntryId: 'row-next', source: '/next.flac', duration: 210 }
+    await engine.loadQueue([current], 0)
+    await engine.play(current.source, 0)
+    const token = engine.getQueueToken()
+    let resume
+    let reached
+    const blocked = new Promise(resolve => { resume = resolve })
+    const entered = new Promise(resolve => { reached = resolve })
+    const snapshot = ports.audioEngine.getSnapshot.bind(ports.audioEngine)
+    const load = ports.audioEngine.loadQueue.bind(ports.audioEngine)
+    let reads = 0
+    ports.audioEngine.getSnapshot = async () => {
+      const value = await snapshot()
+      reads++
+      if ((boundary === 'before' && reads === 1) || (boundary === 'after' && reads === 2)) {
+        reached()
+        await blocked
+      }
+      return value
+    }
+    ports.audioEngine.loadQueue = async (...args) => {
+      await load(...args)
+      if (boundary === 'load') { reached(); await blocked }
+    }
+    const binding = engine.rebindQueue({ expected: { queueToken: token, index: 0, id: current.id, source: current.source },
+      items: [current, next], startIndex: 0, playMode: 'sequential' })
+    await entered
+    if (operation === 'play') await engine.play(current.source, 0)
+    else if (operation === 'seek') await engine.seek(12)
+    else await engine[operation]()
+    resume()
+    const commit = await binding
+    assert.ok(commit?.queueToken, 'A same-selection transport control must not revoke the confirmed lookahead queue')
+    assert.notEqual(commit.queueToken, token)
+    assert.deepEqual(Array.from(engine.getQueueSnapshot(), item => item.id), ['current', 'next'])
+    const actual = await snapshot()
+    assert.equal(actual.state, operation === 'pause' ? 'paused' : operation === 'stop' ? 'stopped' : 'playing')
+    if (operation === 'seek') assert.equal(actual.position, 12)
+  })
+}
+
+test('a newer queue load supersedes an older lookahead without losing the new queue', async () => {
+  const core = loadPortableCoreInIsolatedSandbox()
+  const ports = createFakePorts()
+  const host = core.createPortableMusicCoreHost({ audioEngine: ports.audioEngine, sessionStore: ports.sessionStore })
+  const engine = host.playback.options.engine
+  const current = { id: 'current', queueEntryId: 'row-current', source: '/current.flac' }
+  const replacement = { id: 'replacement', queueEntryId: 'row-replacement', source: '/replacement.flac' }
+  await engine.loadQueue([current], 0)
+  await engine.play(current.source, 0)
+  const token = engine.getQueueToken()
+  let resume
+  let reached
+  const blocked = new Promise(resolve => { resume = resolve })
+  const entered = new Promise(resolve => { reached = resolve })
+  const snapshot = ports.audioEngine.getSnapshot.bind(ports.audioEngine)
+  ports.audioEngine.getSnapshot = async () => { const value = await snapshot(); reached(); await blocked; return value }
+  const binding = engine.rebindQueue({ expected: { queueToken: token, index: 0, id: current.id, source: current.source },
+    items: [current], startIndex: 0, playMode: 'sequential' })
+  const rejected = assert.rejects(binding, /handoff superseded/)
+  await entered
+  await engine.loadQueue([replacement], 0)
+  const newToken = engine.getQueueToken()
+  resume()
+  await rejected
+  assert.ok(newToken)
+  assert.equal(engine.getQueueToken(), newToken)
+  assert.equal(engine.getQueueSnapshot()[0].id, 'replacement')
+})
+
+test('a pause during a confirmed queue load preserves its queue authority', async () => {
+  const core = loadPortableCoreInIsolatedSandbox()
+  const ports = createFakePorts()
+  const host = core.createPortableMusicCoreHost({ audioEngine: ports.audioEngine, sessionStore: ports.sessionStore })
+  const engine = host.playback.options.engine
+  const current = { id: 'current', queueEntryId: 'row-current', source: '/current.flac' }
+  const load = ports.audioEngine.loadQueue.bind(ports.audioEngine)
+  let resume
+  let reached
+  const blocked = new Promise(resolve => { resume = resolve })
+  const entered = new Promise(resolve => { reached = resolve })
+  ports.audioEngine.loadQueue = async (...args) => { await load(...args); reached(); await blocked }
+  const loading = engine.loadQueue([current], 0)
+  await entered
+  await engine.pause()
+  resume()
+  await loading
+  assert.ok(engine.getQueueToken())
+  assert.equal(engine.getQueueSnapshot()[0].id, 'current')
+  assert.equal((await engine.getPlaybackInfo()).state, 'paused')
+})
+
 function loadPortableCoreInIsolatedSandbox() {
   assert.equal(
     fs.existsSync(BUNDLE_PATH),
@@ -243,6 +342,24 @@ function sendRequestAndWait(host, requestEnvelope) {
     host.dispatchRequestJson(JSON.stringify(requestEnvelope))
   })
 }
+
+test('portable playTracks batches a complete large library without truncating selection or order', async () => {
+  const core = loadPortableCoreInIsolatedSandbox()
+  const ports = createFakePorts()
+  const host = core.createPortableMusicCoreHost({ audioEngine: ports.audioEngine, sessionStore: ports.sessionStore })
+  await host.initialize()
+  const tracks = Array.from({ length: 1410 }, (_, i) => ({ id: `large-${i}`, filePath: `/large/${i}.flac`, title: `Song ${i}`, duration: 210 }))
+  await host.playTracks(tracks, 1007)
+  const snapshot = host.getSnapshot()
+  assert.equal(snapshot.queue.total, 1410)
+  assert.equal(snapshot.queue.index, 1007)
+  assert.equal(snapshot.track.id, 'large-1007')
+  const page = await sendRequestAndWait(host, { kind: 'query', name: 'queue.page', requestId: 'last-large-page', epoch: host.epoch,
+    payload: { id: snapshot.queue.id, revision: snapshot.queue.revision, offset: 1400, limit: 10 } })
+  assert.equal(page.ok, true, JSON.stringify(page.error))
+  assert.deepEqual(Array.from(page.value.items, item => item.track.id), tracks.slice(1400).map(track => track.id))
+  await host.shutdown()
+})
 
 test('core-lock.json metadata matches built portable bundle', () => {
   assert.equal(fs.existsSync(LOCK_PATH), true, 'core-lock.json must exist')

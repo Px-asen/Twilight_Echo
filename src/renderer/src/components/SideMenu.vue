@@ -15,6 +15,7 @@ import { useMusicStore } from '@renderer/stores/useMusicStore'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
 import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
 import type { NavigationPagePreferences } from '../../../shared/navigationPages'
+import type { InstalledExperience } from '../../../shared/pluginExperience.ts'
 import {
   BUILTIN_NAVIGATION_PAGES,
   isNavigationPageVisible,
@@ -29,6 +30,7 @@ import {
 const NavigationPagesDialog = defineAsyncComponent(
   () => import('@renderer/components/navigation/NavigationPagesDialog.vue')
 )
+const SidebarWidgets = defineAsyncComponent(() => import('./experience/SidebarWidgets.vue'))
 const props = withDefaults(
   defineProps<{
     open: boolean
@@ -37,8 +39,9 @@ const props = withDefaults(
     pages?: NavigationPageDefinition[]
     preview?: boolean
     previewPreferences?: NavigationPagePreferences
+    widgets?: InstalledExperience[]
   }>(),
-  { pages: () => BUILTIN_NAVIGATION_PAGES }
+  { pages: () => BUILTIN_NAVIGATION_PAGES, widgets: () => [] }
 )
 const persistent = ref(false)
 let observer: MutationObserver | undefined
@@ -265,6 +268,11 @@ function setPressOrigin(event: PointerEvent): void {
             >添加常用页面</span
           >
         </button>
+        <SidebarWidgets
+          v-if="!preview && (open || persistent) && widgets.length"
+          class="menu-widgets"
+          :experiences="widgets"
+        />
       </div>
     </nav>
     <div class="menu-bottom">
@@ -421,6 +429,12 @@ function setPressOrigin(event: PointerEvent): void {
 
 .menu-group {
   flex-shrink: 0;
+}
+
+.menu-widgets {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 12px;
 }
 
 .menu-group-toggle .item-label {

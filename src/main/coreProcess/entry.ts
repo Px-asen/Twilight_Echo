@@ -2,7 +2,7 @@ import '../../adapters-node/index.ts'
 import { CoreMusicExplorationService } from '../../core/library/explorationService.ts'
 import { networkInterfaces, hostname } from 'node:os'
 import { CoreDiscoveryAdvertisement } from '../remote/coreDiscovery.ts'
-import { createPersistentDevicePairing } from '../remote/deviceTrust.ts'
+import { createPersistentDevicePairing, loadRemoteTlsIdentity } from '../remote/deviceTrust.ts'
 import { persistentLibraryId } from '../remote/libraryIdentity.ts'
 import { RemoteMediaResolver } from '../../core/remote/media.ts'
 import { CoreCastService } from '../../core/cast/service.ts'
@@ -796,10 +796,18 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       catalog?.invalidate()
     }
   })
+  const presentTrackArtwork = async (track: TrackData, signal: AbortSignal) => {
+    let cover = track.cover ?? null
+    const coverSource = track.coverSource ?? null
+    if (!cover && !coverSource && track.networkSource) {
+      cover = await network
+        .cover(track.networkSource.profileId, track.networkSource.entry.id)
+        .catch(() => null)
+    }
+    return platform!.call('artwork.present', { cover, coverSource }, signal)
+  }
   const presentation = new CorePlayerPresentationService({
-    artwork: (track, signal) => platform!.call('artwork.present', {
-      cover: track.cover ?? null, coverSource: track.coverSource ?? null
-    }, signal),
+    artwork: presentTrackArtwork,
     playlists,
     supportedMethods: (id) => plugins?.listProviders().find((provider) => provider.id === id)?.supportedMethods ?? [],
     callProvider: (id, method, args, signal) => {
@@ -824,8 +832,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const sourceResources = new SourceResources()
   const mediaServer = new RemoteHttpServer({
       serverName: hostname(), devicePairing: createPersistentDevicePairing(config.root),
+      tls: loadRemoteTlsIdentity(config.root),
       discovery: new CoreDiscoveryAdvertisement(),
-      confirmDevice: ({ deviceName, address }, signal) => platform!.call('remote.confirmDevice', { deviceName, address }, signal),
+      confirmDevice: ({ deviceName, address, verificationCode }, signal) => platform!.call('remote.confirmDevice',
+        { deviceName, address, ...(verificationCode ? { verificationCode } : {}) }, signal),
       staticRoot: config.remoteStaticRoot ?? '',
       addresses: () =>
         Object.values(networkInterfaces()).flatMap((entries) =>
@@ -1686,7 +1696,21 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
               .map((provider) => provider.id)
           ),
         network: (request, signal) => network.playback(request, signal),
-        streams: () => streams.savedStreams()
+        streams: () => streams.savedStreams(),
+        resolveProviderCovers: async (covers, signal) => {
+          try {
+            return await platform!.call(
+              'artwork.resolveQueueCovers',
+              { covers: [...covers] },
+              signal
+            )
+          } catch (error) {
+            signal.throwIfAborted()
+            if (error instanceof Error && /artwork\.resolveQueueCovers/.test(error.message))
+              return {}
+            throw error
+          }
+        }
       })
   const schedule = (callback: () => void, delay: number) => {
     const timer = setTimeout(callback, delay)
@@ -1703,6 +1727,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       },
       authorizeFile: (path) => platform!.call('paths.authorizeAudioFile', { path }),
       grants: mediaServer.getMediaGrants() }),
+    resolveTrackLyrics: (track, options) => lyrics.resolveTrack(track, options),
     playlistRecords: (query, signal) => playlists.records(query, signal),
     castActive: () => cast.active(),
     resolveCover: (cover) => platform!.call('artwork.remotePreview', { cover }),
@@ -1772,7 +1797,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       ...config.diagnostics, engine: audio, settings: () => settings.read(),
       failed: (error) => console.error('[core.diagnostics]', error)
     }) : undefined,
-    artwork: (track, signal) => platform!.call('artwork.present', { cover: track.cover, coverSource: track.coverSource ?? null }, signal),
+    artwork: presentTrackArtwork,
     playlistSubmission: new CorePlaylistSubmission({ playlists, newId: randomUUID, schedule, resolve: createPlaylistInputResolver(resolveQueueInput, database) }),
     presentation,
     outputInfo: async () => (await audio!.getPlaybackInfo()).outputInfo,

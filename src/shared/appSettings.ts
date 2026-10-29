@@ -254,6 +254,8 @@ export interface AppSettings {
   dspScenes: DspScene[]
   dspPinnedSceneId: string | null
   headphoneCompensation: HeadphoneCompensationSettings
+  /** Customized built-in EQ presets, or null when using factory defaults. */
+  audioEqBuiltInPresets: AudioEqPreset[] | null
   audioEqPresets: AudioEqPreset[]
   /** Null until the one-time browser preference import has been applied. */
   audioEqAutoPreamp: import('./equalizerPreferences.ts').EqualizerAutoPreamp | null

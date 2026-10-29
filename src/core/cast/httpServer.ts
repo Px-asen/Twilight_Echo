@@ -1,6 +1,8 @@
 import {
   coreFs,
   coreHttp,
+  coreHttps,
+  coreNet,
   coreStream,
   type PortableHttpServer,
   type PortableIncomingMessage,
@@ -12,6 +14,7 @@ import { parseByteRange } from './byteRange.ts'
 import { RemoteAuthSession } from './auth.ts'
 import { RemoteDevicePairing } from './devicePairing.ts'
 import { MediaStreamGrantStore, guessAudioContentType } from './mediaTokens.ts'
+import { remotePairingCode, type RemoteTlsIdentity } from './tlsIdentity.ts'
 import {
   createEmptyRemotePlaybackSnapshot,
   isPrivateOrLocalIp,
@@ -29,6 +32,8 @@ import { mediaSourceVersion } from '../remote/media.ts'
 import { REMOTE_STREAM_RANGE_BYTES } from '../../shared/remoteMedia.ts'
 import {
   REMOTE_CORE_BRIDGE_VERSION,
+  REMOTE_CORE_LOCAL_ZONE,
+  REMOTE_CORE_PROTOCOL_RANGE,
   REMOTE_CORE_COMMANDS,
   REMOTE_CORE_QUERIES,
   type RemoteCoreRpcContext
@@ -56,7 +61,7 @@ export interface RemoteHttpServerOptions {
   devicePairing?: RemoteDevicePairing
   confirmDevice?(request: import('../../shared/remoteControl.ts').RemotePairingRequest, signal: AbortSignal): Promise<boolean>
   discovery?: {
-    start(info: { serverId: string; name: string; port: number }): Promise<void>
+    start(info: { serverId: string; name: string; port: number; pairingMode?: string }): Promise<void>
     stop(): Promise<void>
   }
   staticRoot: string
@@ -69,6 +74,11 @@ export interface RemoteHttpServerOptions {
   auth?: RemoteAuthSession
   mediaGrants?: MediaStreamGrantStore
   preferredPort?: number
+  /**
+   * Serves TLS on the same port as plain HTTP. Paired phones then reach the Core only over TLS:
+   * approval needs the verification-code exchange and device tokens are refused in plain text.
+   */
+  tls?: RemoteTlsIdentity
 }
 
 export class RemoteHttpServer {
@@ -200,9 +210,10 @@ export class RemoteHttpServer {
     this.lastError = null
 
     await new Promise<void>((resolve, reject) => {
-      const server = coreHttp.createServer((req, res) => {
+      const handler = (req: PortableIncomingMessage, res: PortableServerResponse) => {
         void this.handleRequest(req, res)
-      })
+      }
+      const server = this.options.tls ? dualProtocolServer(handler, this.options.tls) : coreHttp.createServer(handler)
       server.on('error', (error) => {
         this.lastError = error instanceof Error ? error.message : String(error)
         reject(error)
@@ -226,7 +237,8 @@ export class RemoteHttpServer {
     try {
       if (this.enabled && this.port && this.onCoreRpc) {
         await this.options.discovery.start({ serverId: this.devicePairing.serverId,
-          name: this.options.serverName ?? 'Twilight Echo', port: this.port })
+          name: this.options.serverName ?? 'Twilight Echo', port: this.port,
+          pairingMode: this.options.tls ? 'approval-v2' : 'approval-v1' })
         this.discovery = 'advertising'
       } else {
         await this.options.discovery.stop()
@@ -326,6 +338,19 @@ export class RemoteHttpServer {
     return this.getStatus()
   }
 
+  private confirmPairing(requestId: string): void {
+    const pending = this.devicePairing.pending().find(p => p.id === requestId)
+    if (!pending || !this.options.confirmDevice) return
+    const controller = new AbortController()
+    this.approvals.set(requestId, controller)
+    const timer = setTimeout(() => controller.abort(), 120_000)
+    void this.options.confirmDevice(pending, controller.signal).then(allow => {
+      if (!controller.signal.aborted) this.devicePairing.decide(requestId, allow)
+    }).catch(() => { this.devicePairing.decide(requestId, false) }).finally(() => {
+      clearTimeout(timer); this.approvals.delete(requestId)
+    })
+  }
+
   private cancelApprovals(): void {
     for (const controller of this.approvals.values()) controller.abort()
     this.approvals.clear()
@@ -347,7 +372,8 @@ export class RemoteHttpServer {
   private dropUnauthorizedClients(): void {
     for (const client of this.sseClients) {
       const bearer = this.sseAuthorization.get(client) ?? ''
-      if (!this.authorizedBearer(bearer)) {
+      // The transport was checked when the stream was admitted; this only drops revoked credentials.
+      if (!this.authorizedBearer(bearer, true)) {
         this.writeSse(client, 'event: auth\ndata: {"paired":false}\n\n')
         client.end()
         this.sseClients.delete(client)
@@ -471,11 +497,15 @@ export class RemoteHttpServer {
           paired: this.auth.isPaired(),
           serverId: this.devicePairing.serverId,
           serverName: this.options.serverName ?? 'Twilight Echo',
-          pairingMode: 'approval-v1',
+          pairingMode: this.options.tls ? 'approval-v2' : 'approval-v1',
+          tls: !!this.options.tls,
           app: 'Twilight Echo',
           coreBridge: this.onCoreRpc !== null,
-          protocolVersion: 1,
+          // `protocolVersion` stays for clients from before negotiation; newer ones read the range.
+          protocolVersion: REMOTE_CORE_PROTOCOL_RANGE.min,
+          protocolVersions: REMOTE_CORE_PROTOCOL_RANGE,
           coreBridgeVersion: REMOTE_CORE_BRIDGE_VERSION,
+          zones: [{ zoneId: REMOTE_CORE_LOCAL_ZONE, name: this.options.serverName ?? 'Twilight Echo' }],
           capabilities: this.onCoreRpc
             ? { queries: REMOTE_CORE_QUERIES.filter(name => name !== 'providers.session' || req.socket.encrypted === true),
                 commands: REMOTE_CORE_COMMANDS }
@@ -501,25 +531,38 @@ export class RemoteHttpServer {
         if (origin && this.resolveAllowedOrigin(origin, host) === null) {
           this.sendJson(res, 403, { error: 'origin_not_allowed' }); return
         }
+        if (this.options.tls && req.socket.encrypted !== true) {
+          this.sendJson(res, 403, { error: 'tls_required' }); return
+        }
         const body = await readJsonBody(req)
         try {
-          const ticket = this.devicePairing.request(body?.deviceName, remoteIp)
+          const commitment = this.options.tls ? body?.commitment : undefined
+          if (this.options.tls && (typeof commitment !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(commitment)))
+            throw new Error('invalid_commitment')
+          const ticket = this.devicePairing.request(body?.deviceName, remoteIp, commitment as string | undefined)
           this.sendJson(res, 202, ticket)
-          const pending = this.devicePairing.pending().find(p => p.id === ticket.requestId)!
-          if (this.options.confirmDevice) {
-            const controller = new AbortController()
-            this.approvals.set(ticket.requestId, controller)
-            const timer = setTimeout(() => controller.abort(), 120_000)
-            void this.options.confirmDevice(pending, controller.signal).then(allow => {
-              if (!controller.signal.aborted) this.devicePairing.decide(ticket.requestId, allow)
-            }).catch(() => { this.devicePairing.decide(ticket.requestId, false) }).finally(() => {
-              clearTimeout(timer); this.approvals.delete(ticket.requestId)
-            })
-          }
+          // With TLS the desktop asks only once the phone revealed its nonce and both screens can show the code.
+          if (!this.options.tls) this.confirmPairing(ticket.requestId)
         } catch (error) {
-          this.sendJson(res, error instanceof Error && error.message === 'invalid_device_name' ? 400 : 429,
+          this.sendJson(res, error instanceof Error && ['invalid_device_name', 'invalid_commitment'].includes(error.message) ? 400 : 429,
             { error: error instanceof Error ? error.message : 'pair_request_failed' })
         }
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/api/pair/reveal') {
+        const tls = this.options.tls
+        if (!tls || req.socket.encrypted !== true) {
+          this.sendJson(res, tls ? 403 : 404, { error: tls ? 'tls_required' : 'not_found' }); return
+        }
+        const body = await readJsonBody(req)
+        const revealed = typeof body?.requestId === 'string' && typeof body?.claimSecret === 'string' &&
+          typeof body?.nonce === 'string' && body.requestId.length <= 64 && body.claimSecret.length <= 128 &&
+          body.nonce.length <= 128 &&
+          this.devicePairing.reveal(body.requestId, body.claimSecret, body.nonce,
+            (serverNonce) => remotePairingCode(tls.fingerprint, body.nonce as string, serverNonce))
+        if (!revealed) { this.sendJson(res, 404, { error: 'pair_request_expired' }); return }
+        this.sendJson(res, 200, { state: 'pending' })
+        this.confirmPairing(body!.requestId as string)
         return
       }
       if (req.method === 'POST' && url.pathname === '/api/pair/claim') {
@@ -540,6 +583,20 @@ export class RemoteHttpServer {
           this.approvals.get(body!.requestId as string)?.abort()
         }
         this.sendJson(res, result ? 200 : 404, { cancelled: !!result })
+        return
+      }
+
+      // A phone that forgets this computer gives up its own credential; it can never revoke another device.
+      if (req.method === 'POST' && url.pathname === '/api/pair/forget') {
+        const header = Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization
+        const token = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header.trim())?.[1] : undefined
+        const principal = token ? this.devicePrincipal(token, req.socket.encrypted === true) : null
+        if (!principal) {
+          this.sendJson(res, 401, { error: 'unauthorized' })
+          return
+        }
+        this.revokeDevice(principal)
+        this.sendJson(res, 200, { forgotten: true })
         return
       }
 
@@ -584,7 +641,7 @@ export class RemoteHttpServer {
           return
         }
         const responseEnvelope = await this.onCoreRpc(body, this.mediaPrincipal(req) ?? undefined,
-          { encrypted: req.socket.encrypted === true })
+          { encrypted: req.socket.encrypted === true, serverId: this.devicePairing.serverId })
         // A credential read may await the provider/keyring. Revocation or disabling remote
         // control while it is pending must also prevent the completed response being sent.
         if (body.name === 'providers.session' && (!this.enabled || !this.authorize(req, url))) {
@@ -666,20 +723,26 @@ export class RemoteHttpServer {
   private authorize(req: PortableIncomingMessage, url: URL): boolean {
     const authHeader = req.headers.authorization
     const authorization = Array.isArray(authHeader) ? authHeader[0] : authHeader
-    if (this.authorizedBearer(authorization)) return true
+    if (this.authorizedBearer(authorization, req.socket.encrypted === true)) return true
     return this.auth.authorizeTokenQuery(url.searchParams.get('token'))
   }
 
-  private authorizedBearer(header: string | undefined): boolean {
+  /** Device tokens never travel in plain text once the server offers TLS; PIN sessions serve the browser remote. */
+  private devicePrincipal(token: string, encrypted: boolean): string | null {
+    return encrypted || !this.options.tls ? this.devicePairing.principal(token) : null
+  }
+
+  private authorizedBearer(header: string | undefined, encrypted: boolean): boolean {
     if (this.auth.authorizeBearer(header)) return true
     const token = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header.trim())?.[1] : undefined
-    return !!token && this.devicePairing.authorize(token)
+    return !!token && this.devicePrincipal(token, encrypted) !== null
   }
 
   private mediaPrincipal(req: PortableIncomingMessage): string | null {
     const header = Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization
     const token = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header.trim())?.[1] : undefined
-    return token ? this.devicePairing.principal(token) ?? (this.auth.authorizeBearer(header) ? 'pin-session' : null) : null
+    return token ? this.devicePrincipal(token, req.socket.encrypted === true) ??
+      (this.auth.authorizeBearer(header) ? 'pin-session' : null) : null
   }
 
   private attachSse(res: PortableServerResponse, bearer: string): void {
@@ -1053,3 +1116,28 @@ function reqOnClose(res: PortableServerResponse, cb: () => void): void {
 
 // Silence unused import warning for extname in case static root uses it later.
 void extname
+
+/**
+ * One port for both protocols: a TLS ClientHello starts with a handshake record (0x16), anything else
+ * is plain HTTP for the browser remote and cast receivers that cannot pin a self-signed certificate.
+ */
+function dualProtocolServer(
+  handler: (req: PortableIncomingMessage, res: PortableServerResponse) => void,
+  tls: RemoteTlsIdentity
+): PortableHttpServer {
+  const plain = coreHttp.createServer(handler)
+  const secure = coreHttps.createServer({ key: tls.key, cert: tls.cert }, handler)
+  const server = coreNet.createServer((socket) => {
+    socket.on('error', () => socket.destroy())
+    socket.once('data', (chunk: Uint8Array) => {
+      socket.pause()
+      socket.unshift(chunk)
+      ;(chunk[0] === 0x16 ? secure : plain).emit('connection', socket)
+      queueMicrotask(() => socket.resume())
+    })
+  })
+  const closeAllConnections = () => {
+    for (const inner of [plain, secure]) (inner as { closeAllConnections?: () => void }).closeAllConnections?.()
+  }
+  return Object.assign(server, { closeAllConnections }) as unknown as PortableHttpServer
+}

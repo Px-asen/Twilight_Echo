@@ -21,6 +21,8 @@ class OboeOutputBackend final : public IOutputBackend {
 
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override;
   bool setOutputConfig(const OutputConfig& config, std::string* error) override;
+  void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) override;
+  bool startTyped(TypedRenderCallback callback, RenderCallback fallback, OutputEventCallback event, std::string* error) override;
   void setExclusiveMode(bool exclusive);
   bool isExclusiveModeRequested() const;
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override;

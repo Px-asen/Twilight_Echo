@@ -62,6 +62,7 @@ export interface LibraryNativeQueueMaintainerOptions {
   onCommitError?: (error: unknown) => Promise<void>
   /** Only the short commit stage enters the shared transport lane. */
   commit: (operation: () => Promise<void>, isCurrent: () => boolean) => Promise<void>
+  /** Reports acknowledged native mutations, including those drained by stop(). */
   onMappingChanged: (mapping: number[]) => void
   onPlaybackAdvanced: (
     info: PlaybackInfo,
@@ -264,7 +265,7 @@ export class LibraryNativeQueueMaintainer {
               onSelected: () => {
                 selected = true
                 this.mapping = [endTarget.position]
-                if (current()) this.options.onMappingChanged(this.getMapping())
+                this.options.onMappingChanged(this.getMapping())
               }
             })
             if (!advanced && endTarget.track?.id !== prepared.track.id)
@@ -371,7 +372,10 @@ export class LibraryNativeQueueMaintainer {
           this.rejected = null
           this.mapping = mapping
           changed = true
-          if (current()) this.options.onMappingChanged(this.getMapping())
+          // Revocation cancels previews, not a native mutation already dispatched.
+          // stop() drains this commit before the session's next transport/load;
+          // publish its acknowledged mapping so a new maintainer inherits it.
+          this.options.onMappingChanged(this.getMapping())
         })().catch(async (error) => {
           // Unknown native outcomes must not be replayed by a later tick.
           if (current()) {

@@ -376,7 +376,8 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     const value = parseAnalysisJson(
       await this.request('automix', source, optionsJson, {
         priority: 90,
-        timeoutMs: 30_000,
+        // Native inference can take longer than the 30-second audio window on slower CPUs.
+        timeoutMs: 120_000,
         ...options
       }),
       'Twilight AutoMix'

@@ -157,6 +157,9 @@ export interface DspOutputStageStatus {
   resamplerEngine?: 'swr' | 'soxr' | 'unknown'
   effectiveResampler?: 'swr' | 'soxr' | 'none' | 'unknown'
   effectiveResamplerQuality?: DspResamplerQuality | null
+  /** Per-stream phase/rolloff; null when no conversion is active or observed. */
+  effectiveResamplerPhase?: DspResamplerPhase | null
+  effectiveResamplerPhaseFallback?: boolean
   effectiveResamplerFallback?: boolean
   /** null/absent means the native build has not supplied an observation. */
   resampled?: boolean | null

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/AudioTypes.h"
+#include "UsbPcmPolicy.h"
 
 #include <cstddef>
 #include <functional>
@@ -82,6 +83,7 @@ class IOutputBackend {
   virtual ~IOutputBackend() = default;
 
   virtual const char* id() const = 0;
+  virtual void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy>) {}
   virtual bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) = 0;
   virtual bool setOutputConfig(const OutputConfig& config, std::string* error) = 0;
   virtual bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) = 0;

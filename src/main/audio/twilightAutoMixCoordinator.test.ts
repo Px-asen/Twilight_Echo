@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,6 +15,8 @@ import { TWILIGHT_AUTOMIX_MODEL_VERSION } from '../../shared/twilightAutoMix.ts'
 import type { AutoMixFeatures } from '../../shared/twilightAutoMix.ts'
 import type { PlaybackInfo } from '../../shared/audioEngineTypes.ts'
 import { ProviderPlaybackIdentityRegistry } from './providerPlaybackIdentity.ts'
+import { AudioAnalysisServiceClient } from '../audioAnalysisServiceClient.ts'
+import type { AudioAnalysisWorkerRequest } from '../../shared/audioAnalysisContract.ts'
 
 function result(options: string): AutoMixFeatures {
   const o = JSON.parse(options)
@@ -135,6 +138,115 @@ test('boundaries prepare before middle windows; native owns the submitted plan a
     assert.deepEqual(submits, [19, 19])
     coordinator.destroy()
   }))
+test('two slow native windows reach preparation and submit within the live playback deadline', async (t) =>
+  fixture(async (root) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const c = context()
+    c.current = { ...c.current, duration: 256.5, cueRange: undefined }
+    c.info.duration = 256.5
+    let elapsedMs = 0,
+      kills = 0
+    let receive!: (request: AudioAnalysisWorkerRequest) => void
+    const nextRequest = () =>
+      new Promise<AudioAnalysisWorkerRequest>((resolve) => {
+        receive = resolve
+      })
+    const worker = Object.assign(new EventEmitter(), {
+      postMessage(request: AudioAnalysisWorkerRequest): void {
+        receive(request)
+      },
+      kill(): void {
+        kills++
+        worker.emit('exit', 0)
+      }
+    })
+    const analysis = new AudioAnalysisServiceClient({
+      serviceEntry: 'analysis.js',
+      launch: () => {
+        queueMicrotask(() =>
+          worker.emit('message', {
+            kind: 'ready',
+            protocolVersion: 1,
+            analyses: ['bpm', 'loudness', 'automix']
+          })
+        )
+        return worker
+      }
+    })
+    const respond = (request: AudioAnalysisWorkerRequest) =>
+      worker.emit('message', {
+        kind: 'response',
+        requestId: request.requestId,
+        ok: true,
+        value: result(request.optionsJson)
+      })
+    const prepared: Record<string, unknown>[] = [],
+      submits: number[] = []
+    let resolveReady!: () => void
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve
+    })
+    const coordinator = new TwilightAutoMixCoordinator({
+      context: () => c,
+      authorize: async (source) => source,
+      identify: async () => 'a'.repeat(64),
+      cache: new TwilightAutoMixWindowCache(join(root, 'cache.json')),
+      scopedCancellation: true,
+      analyze: (source, options, priority, signal) =>
+        analysis.analyzeAutoMix(source, options, {
+          priority: priority === 'boundary' ? 90 : -20,
+          signal
+        }),
+      cancelAnalysis: (source) => {
+        analysis.cancelBySource(source, 'automix')
+      },
+      cancel: async () => true,
+      prepare: async (request) => {
+        prepared.push(JSON.parse(request))
+        return true
+      },
+      status: async () => c.info,
+      submit: async (id) => {
+        submits.push(id)
+        return true
+      },
+      onState: (state) => {
+        if (state === 'ready') resolveReady()
+      },
+      now: () => elapsedMs
+    })
+    try {
+      const tailStarted = nextRequest()
+      coordinator.setMode('natural')
+      const tail = await tailStarted
+      elapsedMs += 48_000
+      c.info.position = 49
+      t.mock.timers.tick(48_000)
+      assert.equal(kills, 0)
+      const headStarted = nextRequest()
+      respond(tail)
+      const head = await headStarted
+      elapsedMs += 48_000
+      c.info.position = 97
+      t.mock.timers.tick(48_000)
+      assert.equal(kills, 0)
+      respond(head)
+      await ready
+      assert.equal(prepared.length, 1)
+      assert.deepEqual(submits, [19])
+      assert.equal(coordinator.reason, '')
+      assert.equal((prepared[0].currentFeatures as AutoMixFeatures).coverage.startSeconds, 226.5)
+      assert.equal((prepared[0].nextFeatures as AutoMixFeatures).coverage.startSeconds, 0)
+      assert.equal(
+        coordinator.diagnostics.find((entry) => entry.stage === 'analysis')?.elapsedMs,
+        96_000
+      )
+    } finally {
+      await coordinator.shutdown()
+      analysis.destroy()
+    }
+  }))
+
 test('seek during inference cancels and never prepares or submits stale features', async () =>
   fixture(async (root) => {
     let resolve: ((r: AutoMixFeatures) => void) | undefined,

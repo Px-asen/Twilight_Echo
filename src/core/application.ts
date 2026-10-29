@@ -15,6 +15,7 @@ import { getTrackSource } from '../shared/trackSourceIdentity.ts'
 import type { CoreRemoteService } from './remote/service.ts'
 import type { CorePlaylistSourceEdits } from './playlists/sourceEdits.ts'
 import type { CoreQueueTrackInput } from '../shared/coreQueueSubmission.ts'
+import type { TrackData } from '../shared/track.ts'
 import type { CoreAudioDiagnosticsService } from './audio/diagnosticsService.ts'
 import type { CoreAudioRecoveryService } from './audio/recoveryService.ts'
 import type { CorePlayerPresentationService } from './playback/presentationService.ts'
@@ -222,6 +223,59 @@ export class CoreApplication {
     dependencies.plugins?.on('changed', this.pluginsChanged)
     dependencies.plugins?.on('notice', this.pluginNotice)
     dependencies.plugins?.on('experience-event', this.pluginExperienceEvent)
+  }
+  private preserveTrustedArtwork(resolved: TrackData, trusted: TrackData): TrackData {
+    return {
+      ...resolved,
+      cover: resolved.cover ?? trusted.cover ?? null,
+      ...(resolved.coverSource || trusted.coverSource
+        ? { coverSource: resolved.coverSource ?? trusted.coverSource }
+        : {})
+    }
+  }
+  private async resolveFallbackArtworkTracks(
+    ids: readonly string[],
+    signal: AbortSignal
+  ): Promise<Map<string, TrackData>> {
+    const needed = new Set(ids)
+    const found = new Map<string, TrackData>()
+    const remember = (candidate: TrackData | null | undefined) => {
+      if (!candidate || !needed.has(candidate.id) || found.has(candidate.id)) return
+      if (!candidate.cover && !candidate.coverSource && !candidate.networkSource) return
+      found.set(candidate.id, candidate)
+    }
+    if (this.dependencies.playlists) {
+      for (const candidate of this.dependencies.playlists.librarySourceTracks()) {
+        remember(candidate)
+        if (found.size === needed.size) return found
+      }
+    }
+    const queue = this.dependencies.playback.snapshot().queue
+    if (queue && queue.total > 0 && found.size < needed.size) {
+      const maxWindow = Math.min(queue.total, 2000)
+      const startOffset =
+        queue.total <= 2000
+          ? 0
+          : Math.floor(Math.max(0, queue.index) / 200) * 200
+      for (let offset = startOffset; offset < startOffset + maxWindow; offset += 200) {
+        signal.throwIfAborted()
+        try {
+          const page = await this.dependencies.library.readLibraryQueue(
+            queue.id,
+            offset,
+            200,
+            { expectedRevision: queue.revision }
+          )
+          for (const item of page.items) {
+            if (item.track) remember(libraryQueueTrack(item.track, item.queueEntryId))
+          }
+          if (found.size === needed.size || queue.total > 2000) break
+        } catch {
+          break
+        }
+      }
+    }
+    return found
   }
   async initialize(): Promise<void> {
     this.migrationRequired = !(await this.dependencies.state.coreStateStatus()).complete
@@ -622,7 +676,7 @@ export class CoreApplication {
               } }], preparation)
               preparation.throwIfAborted()
               if (!tracks[0]) throw failure('FAILED', '来源不可用')
-              return tracks[0]
+              return this.preserveTrustedArtwork(tracks[0], track)
             }, { requestId: request.requestId, epoch: this.dependencies.epoch, owner: identity.id })
           }
         }
@@ -662,7 +716,7 @@ export class CoreApplication {
               } }], preparation)
               preparation.throwIfAborted()
               if (!tracks[0]) throw failure('FAILED', '来源不可用')
-              return tracks[0]
+              return this.preserveTrustedArtwork(tracks[0], track)
             })
           }
         }
@@ -718,7 +772,7 @@ export class CoreApplication {
           } }], preparation)
           preparation.throwIfAborted()
           if (!tracks[0]) throw failure('FAILED', '来源不可用')
-          return tracks[0]
+          return this.preserveTrustedArtwork(tracks[0], track)
         })
       }
       case 'genres.tree':
@@ -778,7 +832,7 @@ export class CoreApplication {
                 title: track.title, artist: track.artist, album: track.album, duration: track.duration
               } }], preparation)
               if (!tracks[0]) throw failure('FAILED', '来源不可用')
-              return { ...tracks[0], sourceSelection: 'explicit' }
+              return { ...this.preserveTrustedArtwork(tracks[0], track), sourceSelection: 'explicit' }
             }, 0, true, signal)
         }
         break
@@ -1920,7 +1974,13 @@ export class CoreApplication {
         return this.dependencies.diagnostics.report(request.payload.locale)
       case 'library.artwork':
         if (!this.dependencies.artwork) throw failure('NOT_READY', 'Artwork is unavailable')
-        return executeLibraryArtwork(this.dependencies.library, request.payload, this.dependencies.artwork, signal)
+        return executeLibraryArtwork(
+          this.dependencies.library,
+          request.payload,
+          this.dependencies.artwork,
+          signal,
+          (ids, currentSignal) => this.resolveFallbackArtworkTracks(ids, currentSignal)
+        )
       case 'library.collections': {
         const entities = this.dependencies.metadata?.entities
         const platformContexts = entities?.platformContexts() ?? {}

@@ -266,6 +266,7 @@ const fallbackSettings: AppSettings = {
     outputStageOverride: null
   },
   headphoneCompensation: fallbackHeadphoneCompensation,
+  audioEqBuiltInPresets: null,
   audioEqPresets: [],
   audioEqAutoPreamp: null,
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS_SETTINGS },

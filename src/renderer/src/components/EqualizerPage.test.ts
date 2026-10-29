@@ -13,7 +13,9 @@ import assert from 'node:assert/strict'
 import { useEqualizerHistory } from '../composables/useEqualizerHistory.ts'
 import { computed, ref } from 'vue'
 import { createDspFactoryScene } from '../../../shared/dspGraph.ts'
+import { isCoreRequest } from '../../../shared/coreProtocol.ts'
 import { mergeEqualizerPatch } from '../utils/equalizerSettingsPatch.ts'
+import { builtInEqPresets } from '../utils/equalizerPageLogic.ts'
 
 const page = readFileSync(new URL('./EqualizerPage.vue', import.meta.url), 'utf8')
 
@@ -121,6 +123,7 @@ function createPersistenceHarness() {
     }
   }
   let persisted = structuredClone(initial)
+  let dspRevision = 3
   const appSettings = ref(structuredClone(initial))
   let refreshes = 0
   const profile = {
@@ -164,18 +167,63 @@ function createPersistenceHarness() {
     },
     core: {
       query: async (name: string, payload: unknown) => {
-        if (name === 'audio.dsp') return { autoPreamp: { enabled: false } }
+        if (name === 'audio.dsp')
+          return {
+            revision: dspRevision,
+            autoPreamp: { enabled: false },
+            headphoneCompensation: structuredClone(persisted.headphoneCompensation)
+          }
         assert.equal(name, 'opra.profile')
         assert.deepEqual(JSON.parse(JSON.stringify(payload)), { id: profile.eqId })
         return profile
+      },
+      command: async (name: string, payload: unknown) => {
+        const clonedPayload = structuredClone(payload) as {
+          revision: number
+          edit: { kind: string; settings: typeof initial.headphoneCompensation }
+        }
+        if (
+          !isCoreRequest({
+            kind: 'command',
+            name,
+            payload: clonedPayload,
+            requestId: 'opra',
+            epoch: 'test'
+          })
+        ) {
+          throw new Error('Unknown or malformed Core operation')
+        }
+        assert.equal(name, 'audio.dsp.edit')
+        assert.equal(clonedPayload.revision, dspRevision)
+        assert.equal(clonedPayload.edit.kind, 'headphoneCompensation')
+        persisted = {
+          ...persisted,
+          headphoneCompensation: {
+            ...persisted.headphoneCompensation,
+            ...clonedPayload.edit.settings
+          }
+        }
+        dspRevision++
       }
     },
     window: {
       api: {
         settings: {
           update: async (patch: Partial<typeof initial>) => {
-            // Model contextBridge's clone before any preload sanitization runs.
-            persisted = { ...persisted, ...structuredClone(patch) }
+            // Model contextBridge's clone and Core settings.edit validation.
+            const clonedPatch = structuredClone(patch)
+            if (
+              !isCoreRequest({
+                kind: 'command',
+                name: 'settings.edit',
+                payload: { revision: 0, patch: clonedPatch },
+                requestId: 'settings',
+                epoch: 'test'
+              })
+            ) {
+              throw new Error('Unknown or malformed Core operation')
+            }
+            persisted = { ...persisted, ...clonedPatch }
             return structuredClone(persisted)
           }
         }
@@ -242,7 +290,7 @@ test('disabling OPRA persists cloneable bands and reloads the Core projection', 
 
 test('failed OPRA persistence keeps compensation enabled and exposes the failure', async () => {
   const { context, actions, refreshes, persisted } = createPersistenceHarness()
-  context.window.api.settings.update = async () => {
+  context.core.command = async () => {
     throw new Error('permission denied')
   }
   await actions.disableOpraCompensation()
@@ -1172,4 +1220,147 @@ test('loading parametric presets preserves zero and thirty-two bands', async () 
   })
   assert.equal(appSettings.value?.audioEqPresets[0].eqBands.length, 0)
   assert.equal(appSettings.value?.audioEqPresets[1].eqBands.length, 32)
+})
+
+test('built-in and custom presets can be renamed, overwritten with current EQ, deleted, and restored', async () => {
+  const initial = {
+    audioProcessing: {
+      ...defaultAudioProcessing,
+      eqMode: 'parametric' as 'graphic' | 'parametric',
+      eqPreamp: -3.5,
+      eqBands: cloneBands(defaultAudioProcessing.eqBands).map((band, index) =>
+        index === 0 ? { ...band, gain: 4.2 } : band
+      )
+    },
+    audioEqBuiltInPresets: null as typeof builtInEqPresets | null,
+    audioEqPresets: [] as typeof builtInEqPresets
+  }
+  let persisted = structuredClone(initial)
+  const readPersisted = () => persisted
+  const appSettings = ref(structuredClone(initial))
+  const editingPresetKey = ref('')
+  const editingPresetName = ref('')
+  const context = {
+    Error,
+    structuredClone,
+    appSettings,
+    builtInPresets: computed(() => appSettings.value.audioEqBuiltInPresets ?? builtInEqPresets),
+    userPresets: computed(() => appSettings.value.audioEqPresets),
+    audioProcessing: ref(structuredClone(initial.audioProcessing)),
+    presetName: ref('Studio Custom'),
+    presetError: ref(''),
+    editingPresetKey,
+    editingPresetName,
+    saving: ref(false),
+    presetMenuOpen: ref(false),
+    commitChain: Promise.resolve(),
+    finishParametricEdits() {},
+    cloneBands,
+    window: {
+      api: {
+        settings: {
+          update: async (patch: Partial<typeof initial>) => {
+            persisted = { ...persisted, ...structuredClone(patch) }
+            return structuredClone(persisted)
+          }
+        }
+      }
+    }
+  }
+  const actions = runInNewContext(
+    `${declarations(
+      'saveEqPreset',
+      'cloneEqPresets',
+      'startRenameEqPreset',
+      'cancelRenameEqPreset',
+      'renameEqPreset',
+      'updateEqPreset',
+      'deleteEqPreset',
+      'restoreBuiltInEqPresets'
+    )}\n({saveEqPreset,startRenameEqPreset,cancelRenameEqPreset,renameEqPreset,updateEqPreset,deleteEqPreset,restoreBuiltInEqPresets})`,
+    context
+  ) as {
+    saveEqPreset(): Promise<void>
+    startRenameEqPreset(scope: 'builtin' | 'custom', preset: (typeof builtInEqPresets)[0]): void
+    cancelRenameEqPreset(): void
+    renameEqPreset(
+      scope: 'builtin' | 'custom',
+      presetId: string,
+      nextRawName?: string
+    ): Promise<void>
+    updateEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void>
+    deleteEqPreset(scope: 'builtin' | 'custom', presetId: string): Promise<void>
+    restoreBuiltInEqPresets(): Promise<void>
+  }
+
+  // 1. Create two custom presets, rename one, overwrite one, and delete the other.
+  await actions.saveEqPreset()
+  context.presetName.value = 'Temporary Custom'
+  await actions.saveEqPreset()
+  assert.equal(readPersisted().audioEqPresets.length, 2)
+  const firstCustom = readPersisted().audioEqPresets[0]
+  const secondCustom = readPersisted().audioEqPresets[1]
+
+  actions.startRenameEqPreset('custom', firstCustom)
+  assert.equal(editingPresetKey.value, `custom:${firstCustom.id}`)
+  editingPresetName.value = '   '
+  await actions.renameEqPreset('custom', firstCustom.id)
+  assert.equal(context.presetError.value, '预设名称不能为空')
+  assert.equal(editingPresetKey.value, `custom:${firstCustom.id}`)
+
+  editingPresetName.value = 'Master Reference'
+  await actions.renameEqPreset('custom', firstCustom.id)
+  assert.equal(context.presetError.value, '')
+  assert.equal(editingPresetKey.value, '')
+  assert.equal(readPersisted().audioEqPresets[0].name, 'Master Reference')
+
+  context.audioProcessing.value.eqPreamp = -5
+  context.audioProcessing.value.eqBands[0].gain = -2.5
+  await actions.updateEqPreset('custom', firstCustom.id)
+  assert.equal(readPersisted().audioEqPresets[0].eqPreamp, -5)
+  assert.equal(readPersisted().audioEqPresets[0].eqBands[0].gain, -2.5)
+
+  await actions.deleteEqPreset('custom', secondCustom.id)
+  assert.deepEqual(
+    readPersisted().audioEqPresets.map((item) => item.name),
+    ['Master Reference']
+  )
+
+  // 2. Rename, overwrite, and delete built-in presets, then restore defaults.
+  assert.equal(readPersisted().audioEqBuiltInPresets, null)
+  actions.startRenameEqPreset('builtin', builtInEqPresets[0])
+  editingPresetName.value = 'Flat Studio'
+  await actions.renameEqPreset('builtin', 'flat')
+  assert.equal(readPersisted().audioEqBuiltInPresets?.length, builtInEqPresets.length)
+  assert.equal(readPersisted().audioEqBuiltInPresets?.[0]?.name, 'Flat Studio')
+
+  context.audioProcessing.value.eqMode = 'graphic'
+  context.audioProcessing.value.eqPreamp = -1.2
+  context.audioProcessing.value.eqBands[1].gain = 3.1
+  await actions.updateEqPreset('builtin', 'warm')
+  const updatedWarm = readPersisted().audioEqBuiltInPresets?.find((item) => item.id === 'warm')
+  assert.equal(updatedWarm?.eqMode, 'graphic')
+  assert.equal(updatedWarm?.eqPreamp, -1.2)
+  assert.equal(updatedWarm?.eqBands[1].gain, 3.1)
+
+  for (const preset of [...(readPersisted().audioEqBuiltInPresets ?? [])]) {
+    await actions.deleteEqPreset('builtin', preset.id)
+  }
+  assert.deepEqual(readPersisted().audioEqBuiltInPresets, [])
+  assert.equal(context.builtInPresets.value.length, 0)
+
+  // Persistence error leaves existing state untouched and exposes error message.
+  const validUpdate = context.window.api.settings.update
+  context.window.api.settings.update = async () => {
+    throw new Error('write denied')
+  }
+  await actions.deleteEqPreset('custom', firstCustom.id)
+  assert.equal(context.appSettings.value.audioEqPresets.length, 1)
+  assert.match(context.presetError.value, /write denied/)
+  context.window.api.settings.update = validUpdate
+
+  await actions.restoreBuiltInEqPresets()
+  assert.equal(readPersisted().audioEqBuiltInPresets, null)
+  assert.equal(context.builtInPresets.value.length, builtInEqPresets.length)
+  assert.equal(context.presetError.value, '')
 })

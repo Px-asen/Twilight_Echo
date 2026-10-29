@@ -1115,7 +1115,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'player',
     'filter',
     'blur(58px) saturate(1.22) brightness(0.52)',
-    'blur(58px) saturate(1.32) brightness(0.36)'
+    'blur(58px) saturate(1.32) brightness(1)'
   ),
   token(
     'playback.backdrop.scrim',

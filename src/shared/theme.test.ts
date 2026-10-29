@@ -54,6 +54,28 @@ test('the immutable built-in theme preserves the current light and dark root val
   )
 })
 
+test('cover backgrounds inherit the lighter dark default while preserving explicit theme filters', () => {
+  const profile = normalizeThemeProfile({
+    schemaVersion: 2,
+    id: 'user:cover-background',
+    name: 'Cover background',
+    baseThemeId: TWILIGHT_DEFAULT_THEME_ID,
+    overrides: { pureWhite: {}, dark: {} }
+  })
+  assert.ok(profile)
+  assert.equal(
+    resolveThemeProfileTokens(profile, 'dark')['playback.backdrop.filter'],
+    'blur(58px) saturate(1.32) brightness(1)'
+  )
+  assert.equal(
+    resolveThemeProfileTokens(profile, 'pureWhite')['playback.backdrop.filter'],
+    'blur(58px) saturate(1.22) brightness(0.52)'
+  )
+  const customFilter = 'blur(72px) saturate(0.5) brightness(0.26)'
+  profile.overrides.dark['playback.backdrop.filter'] = customFilter
+  assert.equal(resolveThemeProfileTokens(profile, 'dark')['playback.backdrop.filter'], customFilter)
+})
+
 test('theme profiles keep sparse known-token overrides and reject unsafe values', () => {
   const profile = normalizeThemeProfile({
     schemaVersion: 1,

@@ -123,6 +123,7 @@ class AudioPipeline {
   AudioPipeline(const AudioPipeline&) = delete;
   AudioPipeline& operator=(const AudioPipeline&) = delete;
 
+  void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) { usbPcmPolicy_ = std::move(policy); }
   void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) { std::atomic_store(&inputFactory_, std::move(factory)); }
 
   TAE_Result play(
@@ -311,6 +312,7 @@ class AudioPipeline {
   };
   static constexpr size_t kRetiredStreamSlots = 16;
 
+  std::shared_ptr<UsbPcmPolicy> usbPcmPolicy_;
   std::shared_ptr<const SeekableInputFactory> inputFactory_;
   static std::shared_ptr<DecodeStream> makeDecodeStream(std::shared_ptr<const SeekableInputFactory> factory);
   static DecodeStreamReaper& decodeStreamReaper();

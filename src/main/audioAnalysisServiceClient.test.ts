@@ -4,6 +4,7 @@ import test from 'node:test'
 import { AudioAnalysisServiceClient } from './audioAnalysisServiceClient.ts'
 import { AudioEngineServiceBinding } from './audioEngineServiceClient.ts'
 import { createAudioServiceCapabilities } from '../shared/audioServiceContract.ts'
+import { TWILIGHT_AUTOMIX_MODEL_VERSION, type AutoMixFeatures } from '../shared/twilightAutoMix.ts'
 import type { AudioAnalysisWorkerRequest } from '../shared/audioAnalysisContract.ts'
 import type { LoudnessInputGroup } from '../shared/libraryLoudness.ts'
 
@@ -37,6 +38,25 @@ const measurement = {
   integratedLufs: -18,
   truePeakDb: -1,
   analyzedAt: '2026-09-14T00:00:00Z'
+}
+
+const autoMixFeatures: AutoMixFeatures = {
+  ok: true,
+  algorithm: 'Twilight AutoMix',
+  modelVersion: TWILIGHT_AUTOMIX_MODEL_VERSION,
+  sourceIdentity: 'a'.repeat(64),
+  coverage: { startSeconds: 0, endSeconds: 30, durationSeconds: 60, complete: false },
+  bpm: 120,
+  tempoConfidence: 0.9,
+  rmsDb: -12,
+  peak: 0.2,
+  key: -1,
+  keyConfidence: 0,
+  beats: [],
+  downbeats: [],
+  voice: [],
+  frameDb: Array(1500).fill(-12),
+  framePeak: Array(1500).fill(0.2)
 }
 
 test('cancelling an album decoder waits for exit before releasing any member source', async () => {
@@ -278,6 +298,97 @@ test('native container metadata uses a cancellable analysis lease and retains co
     controller.abort()
     await cancelled
     assert.equal(worker.kills, 1)
+  } finally {
+    service.destroy()
+  }
+})
+
+for (const priority of [90, -20]) {
+  test(`AutoMix accepts 48-second native analysis at priority ${priority}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const worker = new Worker()
+    const service = new AudioAnalysisServiceClient({
+      serviceEntry: 'analysis.js',
+      taskTimeoutMs: 1000,
+      launch: () => worker
+    })
+    try {
+      const pending = service.analyzeAutoMix('slow.flac', '{}', { priority })
+      worker.ready()
+      t.mock.timers.tick(48_000)
+      worker.respond(0, autoMixFeatures)
+      assert.deepEqual(await pending, autoMixFeatures)
+      assert.equal(worker.kills, 0)
+      assert.equal(service.getStatus().active, 0)
+    } finally {
+      service.destroy()
+    }
+  })
+}
+
+for (const timeoutMs of [undefined, 15_000]) {
+  const deadline = timeoutMs ?? 120_000
+  test(`AutoMix enforces its ${deadline} ms deadline and recovers its worker`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const workers: Worker[] = []
+    const service = new AudioAnalysisServiceClient({
+      serviceEntry: 'analysis.js',
+      restartDelayMs: 250,
+      launch: () => {
+        const worker = new Worker()
+        workers.push(worker)
+        return worker
+      }
+    })
+    try {
+      const pending = service.analyzeAutoMix(
+        'hung.flac',
+        '{}',
+        timeoutMs === undefined ? {} : { timeoutMs }
+      )
+      const rejected = assert.rejects(pending, {
+        code: 'ERR_AUDIO_ANALYSIS_TIMEOUT',
+        message: `automix analysis timed out after ${deadline} ms: hung.flac`
+      })
+      workers[0].ready()
+      t.mock.timers.tick(deadline - 1)
+      assert.equal(workers[0].kills, 0)
+      t.mock.timers.tick(1)
+      await rejected
+      assert.equal(workers[0].kills, 1)
+      assert.equal(service.getStatus().active, 0)
+
+      t.mock.timers.tick(250)
+      assert.equal(workers.length, 2)
+      const recovered = service.analyzeAutoMix('recovered.flac')
+      workers[1].ready()
+      workers[1].respond(0, autoMixFeatures)
+      assert.deepEqual(await recovered, autoMixFeatures)
+      assert.equal(workers[1].kills, 0)
+    } finally {
+      service.destroy()
+    }
+  })
+}
+
+test('slow AutoMix analysis remains immediately cancellable after the old 30-second deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const worker = new Worker()
+  const service = new AudioAnalysisServiceClient({
+    serviceEntry: 'analysis.js',
+    launch: () => worker
+  })
+  try {
+    const abort = new AbortController()
+    const pending = service.analyzeAutoMix('slow.flac', '{}', { signal: abort.signal })
+    const rejected = assert.rejects(pending, { code: 'ERR_AUDIO_ANALYSIS_CANCELLED' })
+    worker.ready()
+    t.mock.timers.tick(48_000)
+    assert.equal(worker.kills, 0)
+    abort.abort()
+    await rejected
+    assert.equal(worker.kills, 1)
+    assert.equal(service.getStatus().active, 0)
   } finally {
     service.destroy()
   }

@@ -9,6 +9,7 @@
 #include "../output/OutputBackendFactory.h"
 #include "../utils/JsonUtils.h"
 #include "DiagnosticLog.h"
+#include "PcmSampleRatePolicy.h"
 
 #include <algorithm>
 #include <atomic>
@@ -433,6 +434,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"outputInfo\":{"
        << "\"exclusive\":" << (out.exclusive ? "true" : "false") << ","
        << "\"outputReleased\":" << (out.outputReleased ? "true" : "false") << ","
+       << "\"usbPcmPreferenceAccepted\":" << (out.usbPcmPreferenceAccepted ? "true" : "false") << ","
+       << "\"usbPcmFormatMatched\":" << (out.usbPcmFormatMatched ? "true" : "false") << ","
        << "\"accessMode\":\"" << json_utils::escape(out.accessMode) << "\","
        << "\"supportsOutputPerfect\":" << (out.supportsOutputPerfect ? "true" : "false") << ","
        << "\"sourceExact\":" << (out.sourceExact ? "true" : "false") << ","
@@ -681,6 +684,34 @@ float parseFloatField(const std::string& json, const std::string& key, float fal
 
 OutputConfig parseOutputConfigJson(const std::string& json) {
   OutputConfig config;
+  config.usbPcmPassthrough = json_utils::fieldBool(json, "usbPcmPassthrough").value_or(false);
+  config.sampleRateFamilySync = json_utils::fieldBool(json, "sampleRateFamilySync").value_or(false);
+  const auto parseRates = [&](const char* key) {
+    std::vector<int> rates;
+    const std::string array = json_utils::fieldArray(json, key);
+    if (array.empty()) return json_utils::topLevelFieldValueStart(json, key) ? std::vector<int>{-1} : rates;
+    std::istringstream input(array.substr(1, array.size() - 2));
+    input >> std::ws;
+    while (input.peek() != EOF) {
+      double rate = 0;
+      if (!(input >> rate) || !std::isfinite(rate) || rate < kMinPcmSampleRate || rate > kMaxPcmSampleRate || std::floor(rate) != rate) {
+        return std::vector<int>{-1};
+      }
+      rates.push_back(static_cast<int>(rate));
+      input >> std::ws;
+      if (input.peek() == EOF) break;
+      if (input.get() != ',') return std::vector<int>{-1};
+      input >> std::ws;
+      if (input.peek() == EOF) return std::vector<int>{-1};
+    }
+    return rates;
+  };
+  config.allowedSampleRates = parseRates("allowedSampleRates");
+  config.deviceSampleRates = parseRates("deviceSampleRates");
+  if (json_utils::topLevelFieldValueStart(json, "sampleRateFamilySync") &&
+      !json_utils::fieldBool(json, "sampleRateFamilySync").has_value()) config.allowedSampleRates = {-1};
+  std::sort(config.allowedSampleRates.begin(), config.allowedSampleRates.end());
+  std::sort(config.deviceSampleRates.begin(), config.deviceSampleRates.end());
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.asioOutputChannelStart = std::min<uint32_t>(255, parseUintField(json, "asioOutputChannelStart", 0));
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
@@ -789,6 +820,22 @@ void TwilightAudioEngine::setEventCallback(TAE_EventCallback callback, void* use
 
 void TwilightAudioEngine::setStateEventsEnabled(bool enabled) {
   stateEventsEnabled_.store(enabled, std::memory_order_relaxed);
+}
+
+void TwilightAudioEngine::setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) {
+  pipeline_->setUsbPcmPolicy(std::move(policy));
+}
+
+void TwilightAudioEngine::suspendUsbPcm(const std::string& reason) {
+  std::lock_guard transportLock(transportMutex_);
+  {
+    std::lock_guard lock(mutex_);
+    if (!outputConfig_.usbPcmPassthrough || pausedOutputReleased_ || info_.state == PlaybackState::Stopped) return;
+    if (pipeline_) info_.positionSeconds = pipeline_->status().positionSeconds;
+    info_.state = PlaybackState::Paused;
+  }
+  releasePausedOutput();
+  emitError(reason, TAE_RESULT_BACKEND_UNAVAILABLE, "usb-pcm");
 }
 
 void TwilightAudioEngine::setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) {
@@ -973,13 +1020,15 @@ TAE_Result TwilightAudioEngine::pause() {
 
 bool TwilightAudioEngine::shouldReleaseOutputLocked() const {
   const auto& backend = info_.outputInfo.actualBackend;
-  return outputConfig_.releaseExclusiveOnPause &&
+  return outputConfig_.usbPcmPassthrough || (outputConfig_.releaseExclusiveOnPause &&
          (info_.outputInfo.exclusive || backend == "wasapi-exclusive" ||
-          backend == "coreaudio-exclusive" || backend == "asio");
+          backend == "coreaudio-exclusive" || backend == "asio"));
 }
 
 void TwilightAudioEngine::markOutputReleasedLocked() {
   info_.outputInfo.outputReleased = true;
+  info_.outputInfo.usbPcmPreferenceAccepted = false;
+  info_.outputInfo.usbPcmFormatMatched = false;
   info_.outputInfo.exclusive = false;
   info_.outputInfo.outputPerfect = false;
   info_.outputInfo.pcmPassthrough = false;
@@ -1030,7 +1079,7 @@ TAE_Result TwilightAudioEngine::stop() {
   std::lock_guard lock(mutex_);
   info_.state = PlaybackState::Stopped;
   info_.positionSeconds = 0.0;
-  if (outputConfig_.releaseExclusiveOnPause || pausedOutputReleased_) markOutputReleasedLocked();
+  if (outputConfig_.usbPcmPassthrough || outputConfig_.releaseExclusiveOnPause || pausedOutputReleased_) markOutputReleasedLocked();
   pausedOutputReleased_ = false;
   publishStateLocked();
   return TAE_RESULT_OK;
@@ -1082,6 +1131,7 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   if (!std::isfinite(volume)) return TAE_RESULT_INVALID_ARGUMENT;
+  if (volume != 1.0) suspendUsbPcm("应用音量或焦点衰减改变，USB 原样 PCM 已暂停；关闭此模式后可使用软件音量");
   std::string rerouteReason;
   double reroutePosition = 0.0;
   PlaybackState rerouteState = PlaybackState::Stopped;
@@ -1111,6 +1161,7 @@ TAE_Result TwilightAudioEngine::setPlaybackRate(double rate) {
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   if (!std::isfinite(rate)) return TAE_RESULT_INVALID_ARGUMENT;
+  if (rate != 1.0) suspendUsbPcm("播放速度改变，USB 原样 PCM 已暂停");
   std::string rerouteReason;
   double reroutePosition = 0.0;
   PlaybackState rerouteState = PlaybackState::Stopped;
@@ -1717,19 +1768,64 @@ TAE_Result TwilightAudioEngine::applyDspState(
   const DspConfig nextConfig = DspChain::parseConfigJson(processingJson);
   DspConfig previousConfig;
   std::string previousGraphJson;
+  OutputConfig previousOutputConfig;
   {
     std::lock_guard lock(mutex_);
     previousConfig = dspConfig_;
     previousGraphJson = dspGraphJson_;
+    previousOutputConfig = outputConfig_;
   }
 
+  // Optional output policy travels with the graph so a valid fixed-rate/set
+  // change cannot be rejected against the preceding graph or preceding set.
+  const auto outputStart = json_utils::topLevelFieldValueStart(stateJson, "outputConfig");
+  const std::string outputJson = json_utils::fieldObject(stateJson, "outputConfig");
+  const OutputConfig nextOutputConfig = outputStart ? parseOutputConfigJson(outputJson) : previousOutputConfig;
+  const bool outputConfigChanged = nextOutputConfig != previousOutputConfig;
+  const std::string nextStage = json_utils::fieldObject(json_utils::fieldObject(stateJson, "graph"), "outputStage");
+  const int fixedRate = static_cast<int>(std::clamp(
+      json_utils::fieldNumber(nextStage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
+  if ((outputStart && outputJson.empty()) || !pcmSampleRateConstraintsCompatible(nextOutputConfig) ||
+      (nextOutputConfig.sampleRateFamilySync && fixedRate > 0) ||
+      (nextOutputConfig.continuityFirst && (nextOutputConfig.routingMode != ChannelRoutingMode::Auto ||
+       nextOutputConfig.pcmToDsdMode != PcmToDsdMode::Off)) ||
+      (!nextOutputConfig.continuityFirst && fixedRate > 0 &&
+       !selectPcmSampleRate(fixedRate, fixedRate, nextOutputConfig, true))) {
+    emitError("PCM 采样率与设备能力或允许集合不兼容", TAE_RESULT_INVALID_ARGUMENT, "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  const bool ratePolicyChanged = previousOutputConfig.usbPcmPassthrough != nextOutputConfig.usbPcmPassthrough || previousOutputConfig.continuityFirst != nextOutputConfig.continuityFirst ||
+      (nextOutputConfig.continuityFirst && previousOutputConfig.continuitySampleRate != nextOutputConfig.continuitySampleRate) ||
+      previousOutputConfig.sampleRateFamilySync != nextOutputConfig.sampleRateFamilySync ||
+      previousOutputConfig.allowedSampleRates != nextOutputConfig.allowedSampleRates ||
+      ((nextOutputConfig.sampleRateFamilySync || !nextOutputConfig.allowedSampleRates.empty()) &&
+       previousOutputConfig.deviceSampleRates != nextOutputConfig.deviceSampleRates);
   std::string error;
+  if (outputConfigChanged && pipeline_ && !pipeline_->setOutputConfig(nextOutputConfig, &error)) {
+    emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   if (!pipeline_ || !pipeline_->applyDspState(revision, stateJson, &error)) {
+    if (outputConfigChanged && pipeline_) pipeline_->setOutputConfig(previousOutputConfig, nullptr);
     emitError(
         error.empty() ? "DSP state application failed" : error,
         TAE_RESULT_INVALID_ARGUMENT,
         "dsp-state");
     return TAE_RESULT_INVALID_ARGUMENT;
+  }
+
+  if (previousOutputConfig.usbPcmPassthrough != nextOutputConfig.usbPcmPassthrough) {
+    bool active;
+    {
+      std::lock_guard lock(mutex_);
+      active = info_.state != PlaybackState::Stopped && !pausedOutputReleased_;
+      if (active) {
+        info_.positionSeconds = pipeline_->status().positionSeconds;
+        info_.state = PlaybackState::Paused;
+      }
+    }
+    // Changing this safety-sensitive mode is explicit preparation, never an automatic unmute.
+    if (active) releasePausedOutput();
   }
 
   auto outputStageChangedForPcmReroute = [](const std::string& prevState, const std::string& nextState) {
@@ -1741,9 +1837,9 @@ TAE_Result TwilightAudioEngine::applyDspState(
     const std::string prevStage = extractStage(prevState);
     const std::string nextStage = extractStage(nextState);
     const int prevRate = static_cast<int>(std::clamp(
-        json_utils::fieldNumber(prevStage, "targetSampleRate").value_or(0.0), 0.0, 768000.0));
+        json_utils::fieldNumber(prevStage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
     const int nextRate = static_cast<int>(std::clamp(
-        json_utils::fieldNumber(nextStage, "targetSampleRate").value_or(0.0), 0.0, 768000.0));
+        json_utils::fieldNumber(nextStage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
     if (prevRate != nextRate) return true;
     const std::string prevQuality = json_utils::fieldString(prevStage, "resamplerQuality").value_or("native");
     const std::string nextQuality = json_utils::fieldString(nextStage, "resamplerQuality").value_or("native");
@@ -1764,8 +1860,14 @@ TAE_Result TwilightAudioEngine::applyDspState(
     dspConfig_ = nextConfig;
     dspConfigJson_ = processingJson;
     dspGraphJson_ = stateJson;
+    if (outputStart) outputConfig_ = nextOutputConfig;
     applyPipelineStatusLocked(pipeline_->status());
     if (pipeline_ && info_.state != PlaybackState::Stopped && !pausedOutputReleased_) {
+      if (ratePolicyChanged) {
+        rerouteReason = "PCM output policy changed";
+        reroutePosition = info_.positionSeconds;
+        rerouteState = info_.state;
+      }
       if (info_.isDsd) {
         const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
         const bool wantsNative =
@@ -1810,9 +1912,10 @@ TAE_Result TwilightAudioEngine::applyDspState(
         const std::string root = graph.empty() ? stateJson : graph;
         const std::string stage = json_utils::fieldObject(root, "outputStage");
         return static_cast<int>(std::clamp(
-            json_utils::fieldNumber(stage, "targetSampleRate").value_or(0.0), 0.0, 768000.0));
+            json_utils::fieldNumber(stage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
       }();
-      const int desiredPcmRate = nextTargetRate > 0 ? nextTargetRate : info_.sourceSampleRate;
+      const int desiredPcmRate = selectPcmSampleRate(info_.sourceSampleRate,
+          nextTargetRate > 0 ? nextTargetRate : info_.sourceSampleRate, outputConfig_, nextTargetRate > 0).value_or(0);
       const bool exclusiveRateMismatch =
           (info_.outputBackend == "asio" || info_.outputBackend == "wasapi-exclusive" ||
            info_.outputBackend == "coreaudio-exclusive" || info_.outputInfo.exclusive) &&
@@ -1858,6 +1961,17 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
+  const int fixedRate = [&] {
+    std::lock_guard lock(mutex_);
+    const auto graph = json_utils::fieldObject(dspGraphJson_, "graph");
+    const auto stage = json_utils::fieldObject(graph.empty() ? dspGraphJson_ : graph, "outputStage");
+    return static_cast<int>(std::clamp(json_utils::fieldNumber(stage, "targetSampleRate").value_or(0.0), 0.0, static_cast<double>(kMaxPcmSampleRate)));
+  }();
+  if (!pcmSampleRateConstraintsCompatible(parsed) || (parsed.sampleRateFamilySync && fixedRate > 0) ||
+      (!parsed.continuityFirst && fixedRate > 0 && !selectPcmSampleRate(fixedRate, fixedRate, parsed, true))) {
+    emitError("PCM 采样率与设备能力或允许集合不兼容", TAE_RESULT_INVALID_ARGUMENT, "output-config");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   if (parsed.continuityFirst &&
       (parsed.routingMode != ChannelRoutingMode::Auto || parsed.pcmToDsdMode != PcmToDsdMode::Off)) {
     emitError("连续优先需要自动声道路由且关闭 PCM 转 DSD", TAE_RESULT_INVALID_ARGUMENT, "output-config");
@@ -1883,12 +1997,25 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
       return TAE_RESULT_OK;
     }
     const bool outputTopologyChanged =
+        outputConfig_.usbPcmPassthrough != parsed.usbPcmPassthrough ||
         outputConfig_.continuityFirst != parsed.continuityFirst ||
+        outputConfig_.sampleRateFamilySync != parsed.sampleRateFamilySync ||
+        outputConfig_.allowedSampleRates != parsed.allowedSampleRates ||
+        ((parsed.sampleRateFamilySync || !parsed.allowedSampleRates.empty()) && outputConfig_.deviceSampleRates != parsed.deviceSampleRates) ||
         (parsed.continuityFirst && outputConfig_.continuitySampleRate != parsed.continuitySampleRate) ||
         outputConfig_.routingMode != parsed.routingMode ||
         outputConfig_.pcmToDsdMode != parsed.pcmToDsdMode;
     routePending = (outputRoutePending_ || outputTopologyChanged) &&
                    pipeline_ && info_.state != PlaybackState::Stopped;
+  }
+  if (routePending && outputConfig_.usbPcmPassthrough != parsed.usbPcmPassthrough) {
+    {
+      std::lock_guard lock(mutex_);
+      info_.positionSeconds = pipeline_->status().positionSeconds;
+      info_.state = PlaybackState::Paused;
+    }
+    releasePausedOutput();
+    routePending = false;
   }
   if (routePending && pipeline_) pipeline_->stop();
   if (pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
@@ -2486,6 +2613,11 @@ void TwilightAudioEngine::clockLoop() {
       if(trackStarted)pipelineStatus=pipeline_->status();
       lastPipelineState=pipelineStatus.state;
     }
+    if (outputConfig_.usbPcmPassthrough && (deviceInvalidated || renderError ||
+        (hasPipelineStatus && pipelineStatus.outputInfo.usbPcmInvalid))) {
+      suspendUsbPcm("USB 原样 PCM 偏好、路由或播放流已失效；请检查连接后重试，或关闭此模式恢复普通输出");
+      continue;
+    }
     if (deviceInvalidated) {
       std::string source;
       double position = 0.0;
@@ -2957,6 +3089,10 @@ TAE_Result TwilightAudioEngine::restartCurrentPlaybackForReroute(
     if (pipeline_) pipeline_->setRerouteInProgress(true, reason);
   }
   if (source.empty()) return TAE_RESULT_OK;
+  if (outputConfig_.usbPcmPassthrough && pipeline_->needsPcmFallback(nullptr)) {
+    suspendUsbPcm("处理设置改变，USB 原样 PCM 已暂停；关闭此模式后可应用处理");
+    return TAE_RESULT_OK;
+  }
 
   const TAE_Result result = play(source, std::max(0.0, positionSeconds), previousState == PlaybackState::Paused);
   {
@@ -3135,6 +3271,23 @@ TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callb
 TAE_Result TAE_SetStateEventsEnabled(TAE_EngineHandle engine, int enabled) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   fromHandle(engine)->setStateEventsEnabled(enabled != 0);
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TAE_SetUsbPcmPolicy(TAE_EngineHandle engine, const TAE_UsbPcmCallbacks* callbacks, void* user_data) {
+  if (!engine || !callbacks || !callbacks->acquire || !callbacks->valid || !callbacks->release) return TAE_RESULT_INVALID_ARGUMENT;
+  const auto cb = *callbacks;
+  auto policy = std::make_shared<twilight::audio::UsbPcmPolicy>();
+  policy->acquire = [cb, user_data](const std::string& device, const twilight::audio::AudioFormat& format, std::string* error) {
+    char message[1024]{};
+    int id = cb.acquire(device.c_str(), format.sampleRate, format.channelCount,
+        twilight::audio::sampleFormatToString(format.sampleFormat).c_str(), message, sizeof(message), user_data);
+    if (id <= 0 && error) *error = message[0] ? message : "USB 原样 PCM 偏好未被接受";
+    return id;
+  };
+  policy->valid = [cb, user_data] { return cb.valid(user_data) != 0; };
+  policy->release = [cb, user_data] { cb.release(user_data); };
+  fromHandle(engine)->setUsbPcmPolicy(std::move(policy));
   return TAE_RESULT_OK;
 }
 

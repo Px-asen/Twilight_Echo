@@ -1,0 +1,84 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  --text: #d8dde7;
+  --muted: #9da8ba;
+  --accent: #ed82ab;
+  --border: #9da8ba33;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 0 10px 8px;
+  background: transparent;
+  color: var(--text);
+}
+ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 4px 0 10px;
+  list-style: none;
+}
+li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px 34px;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.857em;
+}
+.name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+progress {
+  width: 34px;
+  height: 4px;
+  appearance: none;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+progress::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 4px;
+}
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 4px;
+}
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.786em;
+}
+button {
+  min-height: 28px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover {
+  background: var(--border);
+  color: var(--text);
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

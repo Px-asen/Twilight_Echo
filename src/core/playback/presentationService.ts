@@ -15,7 +15,7 @@ export interface CorePlayerPresentationOptions {
   supportedMethods(providerId: string): readonly string[]
   callProvider(
     providerId: string,
-    method: 'likeTrack' | 'isTrackLiked',
+    method: 'likeTrack' | 'isTrackLiked' | 'searchSongs',
     args: unknown[],
     signal?: AbortSignal
   ): Promise<unknown>
@@ -58,6 +58,10 @@ export class CorePlayerPresentationService {
   private writes: Promise<unknown> = Promise.resolve()
   private writing = false
   private stopped = false
+  private readonly fallbackArtworkCache = new Map<
+    string,
+    { cover: string | null; coverSource: string | null }
+  >()
   private readonly options: CorePlayerPresentationOptions
   constructor(options: CorePlayerPresentationOptions) {
     this.options = options
@@ -116,8 +120,7 @@ export class CorePlayerPresentationService {
       provider?.providerId === 'bili' && methods.includes('isTrackLiked')
     this.changed()
     const active = () => !request.signal.aborted && this.current(expected)
-    const artwork = this.options
-      .artwork(track, request.signal)
+    const artwork = this.resolveTrackArtwork(track, provider, methods, request.signal)
       .then((value) => {
         if (!active()) return
         this.state.cover = value.cover
@@ -204,6 +207,76 @@ export class CorePlayerPresentationService {
       })
     this.writes = work
     return work
+  }
+  private async resolveTrackArtwork(
+    track: TrackData,
+    provider: { providerId: string; trackId: string | number | null } | null,
+    methods: readonly string[],
+    signal: AbortSignal
+  ): Promise<Pick<CorePlayerPresentation, 'cover' | 'coverSource'>> {
+    const direct = await this.options.artwork(track, signal)
+    if (direct.cover || direct.coverSource || !provider) return direct
+    if (['local', 'network', 'radio', 'podcast'].includes(provider.providerId)) return direct
+    const cacheKey = `${provider.providerId}:${track.id}`
+    let recovered = this.fallbackArtworkCache.get(cacheKey)
+    if (!recovered && methods.includes('searchSongs') && track.title?.trim()) {
+      const query = [track.title, track.artist].filter(Boolean).join(' ').trim()
+      try {
+        const result = await this.options.callProvider(
+          provider.providerId,
+          'searchSongs',
+          [query, 20, 0],
+          signal
+        )
+        signal.throwIfAborted()
+        const items = Array.isArray(result)
+          ? result
+          : result && typeof result === 'object' && Array.isArray((result as { items?: unknown[] }).items)
+            ? (result as { items: unknown[] }).items
+            : []
+        for (const entry of items) {
+          if (!entry || typeof entry !== 'object') continue
+          const candidate = entry as Partial<TrackData> & {
+            coverSmall?: string | null
+            coverSmallSource?: string | null
+          }
+          const sameId =
+            candidate.id === track.id ||
+            (provider.providerId === 'ncm' &&
+              provider.trackId != null &&
+              getNcmSongId(candidate as TrackData) === Number(provider.trackId))
+          const sameSource =
+            !candidate.source ||
+            candidate.source.trim().toLowerCase() === provider.providerId
+          if (!sameId || !sameSource) continue
+          const cover =
+            (typeof candidate.cover === 'string' && candidate.cover.trim()) ||
+            (typeof candidate.coverSmall === 'string' && candidate.coverSmall.trim()) ||
+            null
+          const coverSource =
+            (typeof candidate.coverSource === 'string' && candidate.coverSource.trim()) ||
+            (typeof candidate.coverSmallSource === 'string' && candidate.coverSmallSource.trim()) ||
+            null
+          if (cover || coverSource) {
+            recovered = { cover, coverSource }
+            this.fallbackArtworkCache.delete(cacheKey)
+            this.fallbackArtworkCache.set(cacheKey, recovered)
+            if (this.fallbackArtworkCache.size > 256) {
+              const oldest = this.fallbackArtworkCache.keys().next().value
+              if (oldest !== undefined) this.fallbackArtworkCache.delete(oldest)
+            }
+            break
+          }
+        }
+      } catch {
+        signal.throwIfAborted()
+      }
+    }
+    if (!recovered) return direct
+    return this.options.artwork(
+      { ...track, cover: recovered.cover, coverSource: recovered.coverSource ?? undefined },
+      signal
+    )
   }
   async shutdown(): Promise<void> {
     this.stopped = true

@@ -1223,29 +1223,22 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   will-change: opacity, transform;
 }
 
-/* Light theme: slightly brighter backdrop art so the stage does not crush blacks */
+/* Light themes retain their existing artwork treatment. */
 :global(html[data-theme='light'] .playing-music .backdrop-cover-wrap img),
 :global(html[data-theme='pureWhite'] .playing-music .backdrop-cover-wrap img) {
   filter: var(--te-playback-backdrop-filter, blur(58px) saturate(1.22) brightness(0.52));
 }
 
 :global(html[data-theme='dark'] .playing-music .backdrop-cover-wrap img) {
-  filter: var(--te-playback-backdrop-filter, blur(58px) saturate(1.32) brightness(0.36));
+  /* The scrim already controls contrast; do not crush the artwork a second time. */
+  filter: var(--te-playback-backdrop-filter, blur(58px) saturate(1.32) brightness(1));
 }
 
+/* Keep the artwork filter stable through the fade, including custom theme values.
+   Changing it for the overlap caused a brightness/blur snap when the fade ended. */
 .backdrop-cover-fade-enter-active,
 .backdrop-cover-fade-leave-active {
   transition: opacity 400ms var(--te-ease-out-strong);
-}
-
-/* Transition-time blur stays under the 20px budget (AUDIT §5): the heavy
-   58px+ pass cannot reuse its rasterized texture while two layers overlap.
-   The extra brightness drop keeps the stage as dark as the settled state. */
-.backdrop-cover-fade-enter-active :deep(img),
-.backdrop-cover-fade-leave-active :deep(img),
-.backdrop-cover-fade-enter-active .backdrop-cover,
-.backdrop-cover-fade-leave-active .backdrop-cover {
-  filter: blur(18px) saturate(1.28) brightness(0.34) !important;
 }
 
 .backdrop-cover-fade-enter-from {
@@ -1303,21 +1296,27 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   opacity: 0.8;
 }
 
-/* Dither the final dark composite, not the artwork before blur/dimming.
-   Neutral monochrome grain breaks up 8-bit bands without tinting the cover;
-   the small, cached tile stays static and never covers the foreground. */
-:global(html[data-theme='dark'] .playing-music.bg-blur .backdrop:has(.backdrop-cover-wrap)) {
-  isolation: isolate;
+/* Low-alpha radial overlays quantize into visible rings on dark cover art.
+   A flat wash keeps the cover's own lighting and roughly the same overall lift
+   without adding another gradient. Both theme tint colors remain effective. */
+:global(
+  html[data-theme='dark']
+    .playing-music.bg-blur
+    .backdrop:has(.backdrop-cover-wrap)
+    .backdrop-accent
+) {
+  background: color-mix(
+    in srgb,
+    var(--accent-color) 4%,
+    var(--te-playback-backdrop-highlight, rgba(255, 255, 255, 0.12)) 12.5%
+  );
 }
 
-:global(html[data-theme='dark'] .playing-music.bg-blur .backdrop:has(.backdrop-cover-wrap)::after) {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: url('../assets/images/playback-dither.svg') repeat;
-  opacity: 0.06;
-  mix-blend-mode: overlay;
+/* Dither the final composite independently in R/G/B. Fixed-amplitude sRGB noise
+   also breaks up chromatic steps in dark areas, where monochrome overlay fades
+   away. The deterministic filter stays behind the cover, lyrics and controls. */
+:global(html[data-theme='dark'] .playing-music.bg-blur .backdrop:has(.backdrop-cover-wrap)) {
+  filter: url('../assets/images/playback-dither.svg#dither');
 }
 
 .backdrop-fluid {

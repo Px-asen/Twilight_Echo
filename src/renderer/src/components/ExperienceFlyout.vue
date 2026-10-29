@@ -1,83 +1,40 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { usePluginFlyout } from '../stores/usePluginFlyout'
+import { computed, ref, watch } from 'vue'
+import { findFlyoutExperience, usePluginFlyout } from '../stores/usePluginFlyout'
 import { useExtensionRegistry } from '../extensions/registry.ts'
-import { createExperienceBridge } from '../extensions/experienceBridge'
+import EmbeddedExperience from './experience/EmbeddedExperience.vue'
+import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer'
 
 /**
  * Right-side flyout hosting a plugin panel experience. Deliberately does NOT
  * reuse ExperienceView: that component is built for the full-interface mode —
  * it teleports a fixed full-window surface and marks the app shell inert.
- * A flyout must keep the main interface live, so this mounts its own sandboxed
- * iframe and speaks the same bridge-v2 handshake directly.
+ * A flyout keeps the main interface live and shares its iframe lifecycle with
+ * inline sidebar widgets, not with the full-window ExperienceView.
  */
 const flyout = usePluginFlyout()
 const { experiences } = useExtensionRegistry({ listen: false })
 const target = computed(() => flyout.target.value)
-const experience = computed(
-  () =>
-    (experiences.value ?? []).find(
-      (entry) => entry.pluginId === target.value?.pluginId && entry.launch === 'panel'
-    ) ?? null
-)
-
-const frame = ref<HTMLIFrameElement>()
-const ready = ref(false)
-const error = ref('')
-let dispose: (() => void) | undefined
-let deadline: ReturnType<typeof setTimeout> | undefined
-
-function handshake(event: MessageEvent): void {
-  if (
-    event.source !== frame.value?.contentWindow ||
-    event.origin !== `plugin-ui://${experience.value?.pluginId}`
-  )
-    return
-  if (event.data?.type !== 'twilight-experience-ready') return
-  if ((event.data.bridgeVersion ?? 1) !== experience.value?.bridgeVersion) {
-    error.value = '界面桥接版本不匹配，请更新插件或宿主。'
-    return
-  }
-  const channel = new MessageChannel()
-  dispose?.()
-  dispose = createExperienceBridge(experience.value!, channel.port1, () => flyout.close(), () => {})
-  event.source?.postMessage(
-    { type: 'twilight-experience-connect', bridgeVersion: experience.value!.bridgeVersion },
-    { targetOrigin: event.origin, transfer: [channel.port2] }
-  )
-  ready.value = true
-  error.value = ''
-  clearTimeout(deadline)
-}
-
-function frameLoaded(): void {
-  clearTimeout(deadline)
-  if (ready.value) return
-  deadline = setTimeout(() => {
-    if (!ready.value) error.value = '面板未能连接，请关闭后重试。'
-  }, 20000)
-}
-
-// Closing or switching panels remounts the iframe; drop the stale session.
-watch([target, experience], () => {
-  clearTimeout(deadline)
-  dispose?.()
-  dispose = undefined
-  ready.value = false
-  error.value = ''
+const experience = computed(() => findFlyoutExperience(experiences.value ?? [], target.value))
+watch(experience, (next, previous) => {
+  if (!next && previous?.launch === 'sidebar') flyout.close()
 })
-
-onMounted(() => window.addEventListener('message', handshake))
-onBeforeUnmount(() => {
-  clearTimeout(deadline)
-  dispose?.()
-  window.removeEventListener('message', handshake)
-})
+const container = ref<HTMLElement | null>(null)
+const active = computed(() => !!target.value && !!experience.value)
+useEscapeToClose(active, () => flyout.close())
+useFocusTrap(container, active)
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="target && experience" class="experience-flyout" role="dialog" aria-label="插件面板">
+    <div
+      v-if="target && experience"
+      ref="container"
+      class="experience-flyout"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="target.title"
+    >
       <div class="experience-flyout-backdrop" @click="flyout.close()"></div>
       <section class="experience-flyout-panel">
         <header class="experience-flyout-header">
@@ -95,14 +52,11 @@ onBeforeUnmount(() => {
           </button>
         </header>
         <div class="experience-flyout-body">
-          <iframe
-            ref="frame"
-            :src="experience.url"
-            :title="target.title"
-            sandbox="allow-scripts allow-same-origin"
-            @load="frameLoaded"
-          ></iframe>
-          <div v-if="error" class="experience-flyout-error" role="alert">{{ error }}</div>
+          <EmbeddedExperience
+            :key="`${experience.pluginId}:${experience.id}:${experience.version}`"
+            :experience="experience"
+            @exit="flyout.close()"
+          />
         </div>
       </section>
     </div>
@@ -202,24 +156,6 @@ onBeforeUnmount(() => {
   min-height: 0;
   position: relative;
   display: flex;
-}
-
-.experience-flyout-body iframe {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-}
-
-.experience-flyout-error {
-  position: absolute;
-  inset: auto 16px 16px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: rgb(0 0 0 / 55%);
-  color: #f0b34c;
-  font-size: 12.5px;
-  font-family: var(--te-font-sans);
 }
 
 @media (prefers-reduced-motion: reduce) {

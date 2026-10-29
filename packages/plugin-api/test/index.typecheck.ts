@@ -10,9 +10,32 @@ import type {
   TwilightStructuredThemeV3,
   TwilightThemeContribution,
   TwilightUiContribution,
-  TwilightUiContributionKind
+  TwilightUiContributionKind,
+  PluginExperience,
+  PluginExperienceMessage
 } from '../src/index'
 import { TWILIGHT_PLUGIN_API_VERSION } from '../src/index'
+
+const sidebarExperience: PluginExperience = {
+  id: 'battery',
+  name: 'Battery',
+  entry: 'ui/index.html',
+  bridgeVersion: 2,
+  launch: 'sidebar',
+  sidebar: { height: 128 }
+}
+const appearanceMessage: PluginExperienceMessage = {
+  event: 'appearance',
+  value: {
+    theme: 'dark',
+    colors: { text: '#fff', muted: '#aaa', accent: '#f8a', surface: '#222', border: '#444' },
+    fontFamily: 'sans-serif',
+    fontSize: '14px',
+    reducedMotion: false
+  }
+}
+void sidebarExperience
+void appearanceMessage
 
 const localSidebarKind: TwilightUiContributionKind = 'localSidebarItem'
 const nativeMetadata: PlatformMetadataResult = {
