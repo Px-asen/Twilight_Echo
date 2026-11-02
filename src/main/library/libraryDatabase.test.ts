@@ -521,3 +521,16 @@ test('content-fenced queries freeze the displayed search version and reject stal
   for (const contentRevision of [-1, 1.5, '1', NaN])
     assert.throws(() => db.createLibraryQueue({ contentRevision } as never), /content revision/)
 })
+
+
+test('a 0-byte SQLite file left by an interrupted creation initializes cleanly on next launch', (t) => {
+  const { root } = fixture(t)
+  const dbPath = join(root, 'empty-after-bsod.sqlite')
+  writeFileSync(dbPath, '')
+  const db = new LibraryDatabase(dbPath)
+  try {
+    assert.equal(db.getMetadata().trackCount, 0)
+  } finally {
+    db.close()
+  }
+})

@@ -28,7 +28,13 @@ export function createPlaybackSessionStoreBundle(
     isData: (value): value is PlaybackSession | null =>
       value === null || isPlaybackSessionFile(value),
     isLegacy: isPlaybackSessionFile,
-    onRecovery: (result) => onRecovery?.('Playback session', sessionFile, result)
+    onRecovery: (result) => onRecovery?.('Playback session', sessionFile, result),
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt playback state reset after backup failure:',
+        error.filePath,
+        error.primaryError
+      )
   })
   const queueStore = new VersionedDataStore<unknown[]>({
     filePath: queueFile,
@@ -36,7 +42,13 @@ export function createPlaybackSessionStoreBundle(
     maxBytes: MAX_PLAYBACK_QUEUE_BYTES,
     isData: isPlaybackQueueSnapshot,
     isLegacy: isPlaybackQueueSnapshot,
-    onRecovery: (result) => onRecovery?.('Playback queue', queueFile, result)
+    onRecovery: (result) => onRecovery?.('Playback queue', queueFile, result),
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt playback state reset after backup failure:',
+        error.filePath,
+        error.primaryError
+      )
   })
   return {
     sessionFile,

@@ -151,3 +151,55 @@ test('saving over a corrupt primary preserves an existing valid backup', async (
   assert.deepEqual(JSON.parse(await readFile(backupPathFor(filePath), 'utf8')), first)
   assert.equal(await readFile(corruptPathFor(filePath), 'utf8'), '{broken before save')
 })
+
+test('BSOD-truncated 0-byte or corrupt auxiliary stores self-heal instead of bricking startup', async (t) => {
+  const { VersionedDataStore } = await import('../../core/persistence/versionedDataStore.ts')
+  const { persistentLibraryId } = await import('../remote/libraryIdentity.ts')
+  const { createPersistentDevicePairing, loadRemoteTlsIdentity } = await import(
+    '../remote/deviceTrust.ts'
+  )
+
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-bsod-heal-'))
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  // 1. VersionedDataStore with onCorrupt callback
+  const storePath = join(directory, 'auxiliary-store.json')
+  await writeFile(storePath, '\0\0\0\0', 'utf8')
+  let reportedError: InstanceType<typeof PersistentJsonFileError> | null = null
+  const store = new VersionedDataStore<TestData>({
+    filePath: storePath,
+    label: options.label,
+    maxBytes: options.maxBytes,
+    isData: options.validate,
+    isLegacy: options.validate,
+    onCorrupt: (err) => {
+      reportedError = err
+    }
+  })
+  assert.equal(await store.load(), null)
+  assert.ok(reportedError)
+  assert.equal(await readFile(corruptPathFor(storePath), 'utf8'), '\0\0\0\0')
+
+  // 2. persistentLibraryId with 0-byte file
+  const identityPath = join(directory, 'library-identity.json')
+  await writeFile(identityPath, '', 'utf8')
+  const regeneratedId = persistentLibraryId(directory)
+  assert.match(regeneratedId, /^lib-/)
+  assert.equal(await readFile(`${identityPath}.corrupt`, 'utf8'), '')
+
+  // 3. createPersistentDevicePairing & loadRemoteTlsIdentity with truncated JSON
+  const pairingPath = join(directory, 'remote-devices.json')
+  await writeFile(pairingPath, '{"devices": [', 'utf8')
+  const pairing = createPersistentDevicePairing(directory)
+  assert.deepEqual(pairing.devices(), [])
+  assert.equal(await readFile(`${pairingPath}.corrupt`, 'utf8'), '{"devices": [')
+
+  const tlsPath = join(directory, 'remote-tls.json')
+  await writeFile(tlsPath, '{corrupt-tls', 'utf8')
+  const tls = loadRemoteTlsIdentity(directory)
+  assert.equal(typeof tls.fingerprint, 'string')
+  assert.ok(tls.fingerprint.length > 0)
+  assert.equal(await readFile(`${tlsPath}.corrupt`, 'utf8'), '{corrupt-tls')
+})

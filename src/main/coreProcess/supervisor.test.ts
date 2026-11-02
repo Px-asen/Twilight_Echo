@@ -854,3 +854,26 @@ test('core:service-close silences audio and audio-test peers before terminating 
   await tick()
   assert.equal(outputTest.kills, 1)
 })
+
+test('getLastError captures the fatal failure reason and clears once Core recovers', async (t) => {
+  const { supervisor, children } = fixture(t)
+  assert.equal(supervisor.getLastError(), null)
+  const started = supervisor.start()
+  const first = children[0].child
+  first.boot()
+  await started
+  assert.equal(supervisor.getLastError(), null)
+
+  first.emit('message', {
+    kind: 'core:fatal',
+    epoch: first.epoch,
+    error: 'Corrupt SQLite B-tree page 4'
+  })
+  assert.equal(supervisor.getLastError(), 'Corrupt SQLite B-tree page 4')
+  await tick()
+  await tick()
+  const second = children[1].child
+  second.boot()
+  await tick()
+  assert.equal(supervisor.getLastError(), null)
+})

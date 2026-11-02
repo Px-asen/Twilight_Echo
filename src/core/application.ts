@@ -289,30 +289,46 @@ export class CoreApplication {
   }
   async initialize(): Promise<void> {
     this.migrationRequired = !(await this.dependencies.state.coreStateStatus()).complete
-    await this.dependencies.bookmarks?.initialize()
-    await this.dependencies.lyrics?.initialize()
-    await this.dependencies.workspace?.initialize()
-    await this.dependencies.streams?.initialize()
-    await this.dependencies.network?.initialize()
+    await Promise.all([
+      this.dependencies.bookmarks?.initialize(),
+      this.dependencies.lyrics?.initialize(),
+      this.dependencies.workspace?.initialize(),
+      this.dependencies.streams?.initialize(),
+      this.dependencies.network?.initialize()
+    ])
     await this.dependencies.dsp?.initialize()
     await this.dependencies.playback.initialize()
-    await this.dependencies.visualization?.initialize()
-    await this.dependencies.scan.initialize()
-    await this.dependencies.libraryMaintenance?.initialize()
+    await Promise.all([
+      this.dependencies.visualization?.initialize(),
+      this.dependencies.scan.initialize(),
+      this.dependencies.libraryMaintenance?.initialize()
+    ])
     this.initialized = true
     await this.checkReady()
   }
   private async checkReady(): Promise<void> {
     if (!this.initialized || this.migrationRequired || this.phase === 'ready') return
     return (this.readiness ??= (async () => {
-      await this.dependencies.personalBackup?.initialize()
-      await this.dependencies.statistics.initialize()
+      await Promise.all([
+        this.dependencies.personalBackup?.initialize(),
+        this.dependencies.statistics.initialize()
+      ])
       if (this.shuttingDown) return
-      await this.dependencies.recordingVersions?.initialize()
-      await this.dependencies.inbox?.initialize()
+      await Promise.all([
+        this.dependencies.recordingVersions?.initialize(),
+        this.dependencies.inbox?.initialize()
+      ])
       await this.dependencies.playlists?.initialize()
-      await this.dependencies.plugins?.initialize()
-      await this.dependencies.themes?.reconcile()
+      try {
+        await this.dependencies.plugins?.initialize()
+      } catch (error) {
+        console.error('[core.plugins] Initialization failed:', error)
+      }
+      try {
+        await this.dependencies.themes?.reconcile()
+      } catch (error) {
+        console.error('[core.themes] Reconcile failed:', error)
+      }
       await this.dependencies.settings?.initialize()
       await this.dependencies.dsp?.activate()
       this.dependencies.autoMix?.activate()
@@ -2158,25 +2174,27 @@ export class CoreApplication {
         controller.abort(new Error('Core shutting down'))
     try {
       await this.dependencies.audioRecovery?.shutdown()
-      await this.dependencies.audition?.shutdown()
-      await this.dependencies.visualization?.shutdown()
-      await this.dependencies.outputTest?.stop()
-      await this.dependencies.sleepTimer?.shutdown()
-      await this.dependencies.autoMix?.shutdown()
-      await this.dependencies.modelPack?.shutdown()
-      await this.dependencies.analysis?.shutdown()
-      await this.dependencies.libraryLoudness?.shutdown()
-      await this.dependencies.downloads?.shutdown()
-      await this.dependencies.cloudTransfers?.shutdown()
-      await this.dependencies.libraryRepair?.shutdown()
-      await this.dependencies.duplicates?.shutdown()
-      await this.dependencies.inbox?.shutdown()
-      await this.dependencies.libraryHealth?.shutdown()
-      await this.dependencies.personalBackup?.shutdown()
-      await this.dependencies.settingsBackup?.shutdown()
-      await this.dependencies.pluginExperiences?.shutdown()
-      await this.dependencies.themes?.shutdown()
-      await this.dependencies.libraryMaintenance?.shutdown()
+      await Promise.all([
+        this.dependencies.audition?.shutdown(),
+        this.dependencies.visualization?.shutdown(),
+        this.dependencies.outputTest?.stop(),
+        this.dependencies.sleepTimer?.shutdown(),
+        this.dependencies.autoMix?.shutdown(),
+        this.dependencies.modelPack?.shutdown(),
+        this.dependencies.analysis?.shutdown(),
+        this.dependencies.libraryLoudness?.shutdown(),
+        this.dependencies.downloads?.shutdown(),
+        this.dependencies.cloudTransfers?.shutdown(),
+        this.dependencies.libraryRepair?.shutdown(),
+        this.dependencies.duplicates?.shutdown(),
+        this.dependencies.inbox?.shutdown(),
+        this.dependencies.libraryHealth?.shutdown(),
+        this.dependencies.personalBackup?.shutdown(),
+        this.dependencies.settingsBackup?.shutdown(),
+        this.dependencies.pluginExperiences?.shutdown(),
+        this.dependencies.themes?.shutdown(),
+        this.dependencies.libraryMaintenance?.shutdown()
+      ])
       await Promise.all([
         this.dependencies.search?.shutdown(),
         Promise.allSettled([...this.work, ...(this.readiness ? [this.readiness] : [])]),

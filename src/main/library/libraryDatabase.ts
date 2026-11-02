@@ -225,7 +225,12 @@ export class LibraryDatabase {
 
   constructor(filePath: string) {
     this.filePath = filePath
-    const existing = filePath !== ':memory:' && existsSync(filePath)
+    const hadUncheckpointedWal =
+      filePath !== ':memory:' && existsSync(`${filePath}-wal`) && statSync(`${filePath}-wal`).size > 0
+    const existing =
+      filePath !== ':memory:' &&
+      existsSync(filePath) &&
+      (statSync(filePath).size > 0 || hadUncheckpointedWal)
     mkdirSync(dirname(filePath), { recursive: true })
     this.sql = new DatabaseSync(filePath)
     this.genres = new LibraryDatabaseGenres({ sql: this.sql, transaction: action => this.transaction(action),
@@ -350,7 +355,15 @@ export class LibraryDatabase {
             'Unrecognized or incomplete music library database; restore a verified backup before opening it'
           )
       }
-      const health = this.sql.prepare('PRAGMA quick_check').get() as Row
+      let health = this.sql.prepare('PRAGMA quick_check').get() as Row
+      if (health.quick_check !== 'ok') {
+        try {
+          this.sql.exec('REINDEX')
+        } catch {
+          // Reindex is a best-effort repair for secondary/FTS index corruption.
+        }
+        health = this.sql.prepare('PRAGMA quick_check').get() as Row
+      }
       if (health.quick_check !== 'ok')
         throw new Error(`Music library database integrity check failed: ${health.quick_check}`)
       this.sql.exec(

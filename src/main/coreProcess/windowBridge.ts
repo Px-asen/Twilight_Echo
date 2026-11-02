@@ -62,7 +62,9 @@ interface Options {
   supervisor: Pick<
     CoreSupervisor,
     'connect' | 'request' | 'disconnect' | 'getStatus' | 'on' | 'off'
-  >
+  > & {
+    getLastError?(): string | null
+  }
   ipc: Pick<IpcMain, 'handle' | 'removeHandler'>
   trustedUrl(url: string): boolean
   connectTimeoutMs?: number
@@ -198,8 +200,10 @@ export class CoreWindowBridge {
     return window.session
   }
   private connect(window: RegisteredWindow, frame: WebFrameMain): Promise<CoreBridgeConnected> {
-    if (['stopped', 'failed'].includes(this.options.supervisor.getStatus().phase))
-      throw error('NOT_READY', 'Core is not available')
+    if (['stopped', 'failed'].includes(this.options.supervisor.getStatus().phase)) {
+      const detail = this.options.supervisor.getLastError?.()
+      throw error('NOT_READY', detail ? `Core is not available (${detail})` : 'Core is not available')
+    }
     this.detach(window)
     const id = randomUUID()
     let resolve!: (value: CoreBridgeConnected) => void, reject!: (reason: Error) => void
@@ -266,8 +270,12 @@ export class CoreWindowBridge {
           connectionId: window.session!.id,
           ...status
         })
-      if (status.phase === 'failed' || status.phase === 'stopped')
-        window.session?.reject(error('NOT_READY', 'Core is not available'))
+      if (status.phase === 'failed' || status.phase === 'stopped') {
+        const detail = this.options.supervisor.getLastError?.()
+        window.session?.reject(
+          error('NOT_READY', detail ? `Core is not available (${detail})` : 'Core is not available')
+        )
+      }
     }
   }
   dispose(): void {

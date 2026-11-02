@@ -8,12 +8,21 @@ export function createPersistentDevicePairing(root: string): RemoteDevicePairing
   const path = join(root, 'remote-devices.json')
   let document: RemoteTrustDocument | undefined
   if (existsSync(path)) {
-    const value = JSON.parse(readFileSync(path, 'utf8')) as RemoteTrustDocument
-    if (!/^[a-f0-9-]{36}$/.test(value.serverId) || !Array.isArray(value.devices) || value.devices.length > 16 ||
-      value.devices.some(d => typeof d.id !== 'string' || typeof d.name !== 'string' ||
-        !Number.isSafeInteger(d.createdAt) || !/^[a-f0-9]{64}$/.test(d.tokenHash)))
-      throw new Error('Invalid remote device trust file')
-    document = value
+    try {
+      const value = JSON.parse(readFileSync(path, 'utf8')) as RemoteTrustDocument
+      if (!/^[a-f0-9-]{36}$/.test(value.serverId) || !Array.isArray(value.devices) || value.devices.length > 16 ||
+        value.devices.some(d => typeof d.id !== 'string' || typeof d.name !== 'string' ||
+          !Number.isSafeInteger(d.createdAt) || !/^[a-f0-9]{64}$/.test(d.tokenHash)))
+        throw new Error('Invalid remote device trust file')
+      document = value
+    } catch (error) {
+      try {
+        renameSync(path, `${path}.corrupt`)
+      } catch {
+        // Best-effort quarantine of corrupt device trust file.
+      }
+      console.warn('[remote.trust] Resetting corrupt remote-devices.json:', error)
+    }
   }
   const save = (value: RemoteTrustDocument) => {
     writeFileSync(`${path}.tmp`, JSON.stringify(value), { mode: 0o600 })
@@ -31,9 +40,18 @@ export function createPersistentDevicePairing(root: string): RemoteDevicePairing
 export function loadRemoteTlsIdentity(root: string): RemoteTlsIdentity {
   const path = join(root, 'remote-tls.json')
   if (existsSync(path)) {
-    const value = JSON.parse(readFileSync(path, 'utf8')) as { key?: unknown; cert?: unknown }
-    if (typeof value.key !== 'string' || typeof value.cert !== 'string') throw new Error('Invalid remote TLS identity file')
-    return { key: value.key, cert: value.cert, fingerprint: certificateFingerprint(value.cert) }
+    try {
+      const value = JSON.parse(readFileSync(path, 'utf8')) as { key?: unknown; cert?: unknown }
+      if (typeof value.key !== 'string' || typeof value.cert !== 'string') throw new Error('Invalid remote TLS identity file')
+      return { key: value.key, cert: value.cert, fingerprint: certificateFingerprint(value.cert) }
+    } catch (error) {
+      try {
+        renameSync(path, `${path}.corrupt`)
+      } catch {
+        // Best-effort quarantine of corrupt TLS identity file.
+      }
+      console.warn('[remote.tls] Regenerating corrupt remote-tls.json:', error)
+    }
   }
   const identity = createRemoteTlsIdentity()
   writeFileSync(`${path}.tmp`, JSON.stringify({ key: identity.key, cert: identity.cert }), { mode: 0o600 })
