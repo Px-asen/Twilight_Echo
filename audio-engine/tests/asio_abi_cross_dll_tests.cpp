@@ -44,6 +44,11 @@ int32_t onMessage(int32_t selector, int32_t, void*, double*) {
 }
 
 AsioTime* onBufferSwitchTimeInfo(AsioTime* time, int32_t bufferIndex, AsioBool processNow) {
+#if !defined(_WIN64)
+  if (!time || uint64_t(time->timeInfo.systemTime) != 0x123456789abcdef0ULL ||
+      uint64_t(time->timeInfo.samplePosition) != 0x23456789abcdef01ULL ||
+      time->timeInfo.sampleRate != callbackState.latestSampleRate || time->timeInfo.flags != 0x1234) return nullptr;
+#endif
   if (time && bufferIndex == 1 && processNow == kAsioTrue) ++callbackState.timeInfoSwitches;
   return time;
 }
@@ -98,6 +103,7 @@ int main() {
   }
 
   bool passed = true;
+  passed &= expect(driver->AddRef() == 2 && driver->Release() == 1, "IUnknown reference-count round trip failed");
   void* unknown = nullptr;
   passed &= expect(driver->QueryInterface(IID_IUnknown, &unknown) == S_OK && unknown != nullptr, "IUnknown round trip failed");
   if (unknown) static_cast<IUnknown*>(unknown)->Release();
@@ -172,7 +178,8 @@ int main() {
   AsioSamples samplePosition = 0;
   AsioTimeStamp systemTime = 0;
   passed &= expect(
-      driver->getSamplePosition(&samplePosition, &systemTime) == kAsioOk && samplePosition == 128 && systemTime == 256,
+      driver->getSamplePosition(&samplePosition, &systemTime) == kAsioOk &&
+          uint64_t(samplePosition) == 0x1234567800000080ULL && uint64_t(systemTime) == 0x2345678900000100ULL,
       "sample-position query differs");
 
   AsioChannelInfo channel{};

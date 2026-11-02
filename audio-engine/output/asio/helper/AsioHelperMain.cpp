@@ -34,7 +34,8 @@ bool parseArguments(int argc, wchar_t* argv[], Arguments* result) {
 int wmain(int argc, wchar_t* argv[]) {
   if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test") {
     std::cout << "{\"kind\":\"twilight-asio-helper\",\"protocolVersion\":"
-              << twilight::audio::asio_helper::kProtocolVersion << ",\"status\":\"ready\"}";
+              << twilight::audio::asio_helper::kProtocolVersion
+              << ",\"architecture\":\"" << (sizeof(void*) == 8 ? "x64" : "x86") << "\",\"status\":\"ready\"}";
     return 0;
   }
   Arguments arguments;

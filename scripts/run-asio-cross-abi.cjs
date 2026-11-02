@@ -116,4 +116,10 @@ const crossResult = spawnSync(
     windowsHide: true
   }
 )
-process.exit(crossResult.status ?? 1)
+if (crossResult.status !== 0) process.exit(crossResult.status ?? 1)
+// Release validation must exercise the production MinGW parent, not only the
+// standalone MSVC test host, against the MSVC x86 helper.
+process.exit(run(process.execPath, [join(root, 'scripts', 'run-asio-x86-bridge.cjs')], {
+  ...mingwPreflight.environment,
+  TAE_ASIO_X64_TEST_DIR: mingwLayout.buildDir
+}))

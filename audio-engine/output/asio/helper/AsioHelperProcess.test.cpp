@@ -1,5 +1,6 @@
 #include "../AsioHelperHost.h"
 #include "AsioHelperProcess.h"
+#include "../DeviceCapabilityCache.h"
 
 #include <Windows.h>
 
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -82,6 +84,7 @@ void testNormalRoundTrip(const std::wstring& helperPath) {
   Response response;
   assert(process.request(Command::EnumerateDevices, &response, 2s, &error));
   assert(response.deviceCount == 1);
+  assert(response.devices[0].capabilityVersion == 0x1122334455667788ULL);
   assert(twilight::audio::asio_helper::readText(response.devices[0].id) == "asio:fixture");
   assert(requestOpen(&process, &response, &error));
   assert(response.openFailureKind == static_cast<int32_t>(AsioOpenFailureKind::None));
@@ -548,10 +551,95 @@ void testPcmBytesReachDriverAcrossReopen(const std::wstring& helperPath) {
   }
 }
 
+void testCatalogIdentity() {
+  using namespace twilight::audio;
+  using namespace twilight::audio::asio_windows;
+  const AsioDriverEntry x64{"asio:{same}", "DAC", "{same}", AsioArchitecture::X64};
+  const AsioDriverEntry x86{"asio:x86:{same}", "DAC", "{same}", AsioArchitecture::X86};
+  const AsioDriverEntry other{"asio:x86:{other}", "DAC", "{other}", AsioArchitecture::X86};
+  assert(AsioDriverCatalog::resolveEntries({x86, x64}, "auto")->id == x64.id);
+  assert(AsioDriverCatalog::resolveEntries({x86}, "auto")->id == x86.id);
+  assert(AsioDriverCatalog::resolveEntries({x86, x64}, "asio:DAC")->id == x64.id);
+  assert(AsioDriverCatalog::resolveEntries({x86}, "asio:DAC")->id == x86.id);
+  assert(!AsioDriverCatalog::resolveEntries({x86, other}, "asio:DAC"));
+  assert(!AsioDriverCatalog::resolveEntries({x64}, x86.id));
+  assert(!AsioDriverCatalog::resolveEntries({x86}, x64.id));
+  assert(AsioDriverCatalog::resolveEntries({x86, x64}, x86.id)->architecture == AsioArchitecture::X86);
+  AsioDeviceInfo info;
+  info.id = x64.id;
+  info.nativeDsdCapable = true;
+  DeviceCapabilityCache::instance().put(info);
+  info.id = x86.id;
+  info.nativeDsdCapable = false;
+  DeviceCapabilityCache::instance().put(info);
+  assert(DeviceCapabilityCache::instance().get(x64.id)->nativeDsdCapable);
+  assert(!DeviceCapabilityCache::instance().get(x86.id)->nativeDsdCapable);
+}
+
+void testHandshakeMismatch(const std::wstring& helperPath) {
+  setMode(L"normal");
+  DWORD binaryType = 0;
+  assert(GetBinaryTypeW(helperPath.c_str(), &binaryType));
+  const auto wrongArchitecture = binaryType == SCS_64BIT_BINARY
+      ? twilight::audio::AsioArchitecture::X86 : twilight::audio::AsioArchitecture::X64;
+  AsioHelperProcess wrongBitness(helperPath, wrongArchitecture);
+  std::string error;
+  assert(!wrongBitness.launch(&error));
+  if (!error.starts_with("asio_helper_protocol_error")) std::cerr << "Architecture handshake: " << error << '\n';
+  assert(error.starts_with("asio_helper_protocol_error"));
+  assert(!wrongBitness.alive());
+  setMode(L"protocol-mismatch");
+  AsioHelperProcess wrongVersion(helperPath);
+  assert(!wrongVersion.launch(&error));
+  if (!error.starts_with("asio_helper_protocol_error")) std::cerr << "Version handshake: " << error << '\n';
+  assert(error.starts_with("asio_helper_protocol_error"));
+  assert(!wrongVersion.alive());
+}
+
+void testArchitectureRouting(const std::wstring& x64Path, const std::wstring& x86Path) {
+  using namespace twilight::audio;
+  using namespace twilight::audio::asio_windows;
+  setMode(L"routing");
+  const auto catalog = [] { return std::vector<AsioDriverEntry>{
+      {"asio:{fixture}", "Twilight ASIO fixture", "{fixture}", AsioArchitecture::X64},
+      {"asio:x86:{fixture}", "Twilight ASIO fixture", "{fixture}", AsioArchitecture::X86}}; };
+  AsioHelperHost host(x64Path, x86Path, catalog);
+  assert(host.enumerateDevices().size() == 2);
+  assert(host.diagnostics().helperArchitecture.empty());  // Enumeration never starts a helper.
+  for (const auto* architecture : {"x86", "x64", "x86"}) {
+    const auto id = std::string(architecture) == "x86" ? "asio:x86:{fixture}" : "asio:{fixture}";
+    std::string error;
+    AsioDeviceInfo probed;
+    assert(host.probeDevice(id, &probed, &error));
+    assert(probed.id == id && probed.driverArchitecture == architecture);
+    auto config = openConfig();
+    config.deviceId = id;
+    AsioOpenResult result;
+    assert(host.open(config, &result, &error));
+    assert(host.diagnostics().helperArchitecture == architecture);
+    host.close();
+    assert(host.lastCloseError().empty());
+  }
+  AsioHelperHost missing(x64Path, L"missing-asio-x86-fixture.exe", catalog);
+  assert(missing.enumerateDevices().size() == 2);
+  auto config = openConfig();
+  config.deviceId = "asio:x86:{fixture}";
+  std::string error;
+  AsioOpenResult result;
+  assert(!missing.open(config, &result, &error));
+  assert(error.starts_with("asio_helper_launch_failed"));
+  config.deviceId = "asio:{fixture}";
+  assert(missing.open(config, &result, &error));
+  missing.close();
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
-  assert(argc == 3);
+  assert(argc == 3 || argc == 4);
+  testCatalogIdentity();
+  testHandshakeMismatch(argv[1]);
+  if (argc == 4) testArchitectureRouting(argv[3], argv[1]);
   testProtocolReasonCodes();
   testNormalRoundTrip(argv[1]);
   testNativeDsdQueuePreservesOrderWithoutParentWakeups(argv[1]);

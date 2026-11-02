@@ -2,7 +2,7 @@
 
 #include "DeviceCapabilityCache.h"
 
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
 #include "windows/AsioControlThread.h"
 #include "windows/AsioDriverCatalog.h"
 #include "windows/AsioDriverSession.h"
@@ -20,12 +20,13 @@ bool asioEnabled() {
   return !value || std::string_view(value) != "1";
 }
 
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
 AsioDeviceInfo deviceInfoFor(const asio_windows::AsioDriverEntry& entry) {
   AsioDeviceInfo device;
   device.id = entry.id;
   device.name = entry.displayName;
   device.driverName = entry.displayName;
+  device.driverArchitecture = asioArchitectureName(entry.architecture);
   return device;
 }
 #endif
@@ -33,7 +34,7 @@ AsioDeviceInfo deviceInfoFor(const asio_windows::AsioDriverEntry& entry) {
 }  // namespace
 
 struct RealAsioHost::Impl {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   std::shared_ptr<asio_windows::AsioControlThread> controlThread;
   std::unique_ptr<asio_windows::AsioDriverSession> session;
 #endif
@@ -47,7 +48,7 @@ RealAsioHost::~RealAsioHost() {
 }
 
 std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (!asioEnabled()) return {};
   std::vector<AsioDeviceInfo> devices;
   for (const auto& entry : asio_windows::AsioDriverCatalog::enumerate()) {
@@ -71,7 +72,7 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
 }
 
 bool RealAsioHost::probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (!info) {
     if (error) *error = "ASIO capability probe requires an output record";
     return false;
@@ -109,7 +110,7 @@ bool RealAsioHost::probeDevice(const std::string& deviceId, AsioDeviceInfo* info
 #else
   (void)deviceId;
   (void)info;
-  if (error) *error = "ASIO is available only in a Windows x64 build";
+  if (error) *error = "ASIO is available only in a Windows x86/x64 helper build";
   return false;
 #endif
 }
@@ -117,19 +118,21 @@ bool RealAsioHost::probeDevice(const std::string& deviceId, AsioDeviceInfo* info
 AsioHostDiagnostics RealAsioHost::diagnostics() const {
   AsioHostDiagnostics result;
   result.processArchitecture = sizeof(void*) == 8 ? "x64" : "x86";
+  result.helperArchitecture = result.processArchitecture;
   result.environmentDisabled = !asioEnabled();
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   result.buildEnabled = true;
   const auto catalog = asio_windows::AsioDriverCatalog::diagnostics();
   result.registeredDriverCount32 = catalog.registeredDriverCount32;
   result.registeredDriverCount64 = catalog.registeredDriverCount64;
   result.loadableDriverCount64 = catalog.loadableDriverCount64;
+  result.loadableDriverCount32 = catalog.loadableDriverCount32;
 #endif
   return result;
 }
 
 bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   close();
   if (!impl_->lastCloseError.empty()) {
     if (error) *error = impl_->lastCloseError;
@@ -155,7 +158,7 @@ bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, st
   }
   return false;
 #else
-  if (error) *error = "ASIO is available only in a Windows x64 build";
+  if (error) *error = "ASIO is available only in a Windows x86/x64 helper build";
   return false;
 #endif
 }
@@ -164,39 +167,39 @@ bool RealAsioHost::createBuffers(
     AsioBufferSwitchCallback bufferSwitch,
     AsioEventCallback eventCallback,
     std::string* error) {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (!impl_->session) {
     if (error) *error = "ASIO session is not open";
     return false;
   }
   return impl_->session->createBuffers(std::move(bufferSwitch), std::move(eventCallback), error);
 #else
-  if (error) *error = "ASIO is available only in a Windows x64 build";
+  if (error) *error = "ASIO is available only in a Windows x86/x64 helper build";
   return false;
 #endif
 }
 
 bool RealAsioHost::start(std::string* error) {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (!impl_->session) {
     if (error) *error = "ASIO session is not open";
     return false;
   }
   return impl_->session->start(error);
 #else
-  if (error) *error = "ASIO is available only in a Windows x64 build";
+  if (error) *error = "ASIO is available only in a Windows x86/x64 helper build";
   return false;
 #endif
 }
 
 void RealAsioHost::stop() {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (impl_->session) impl_->session->stop();
 #endif
 }
 
 void RealAsioHost::close() {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (impl_->session) {
     impl_->lastCloseError.clear();
     impl_->session->close();
@@ -213,7 +216,7 @@ std::string RealAsioHost::lastCloseError() const {
 }
 
 void* RealAsioHost::outputBuffer(long channel, long bufferIndex) {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->outputBuffer(channel, bufferIndex) : nullptr;
 #else
   return nullptr;
@@ -225,7 +228,7 @@ AudioSampleFormat RealAsioHost::outputSampleFormat(long channel) const {
 }
 
 AsioChannelFormat RealAsioHost::outputChannelFormat(long channel) const {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->outputChannelFormat(channel) : AsioChannelFormat{};
 #else
   return {};
@@ -233,7 +236,7 @@ AsioChannelFormat RealAsioHost::outputChannelFormat(long channel) const {
 }
 
 bool RealAsioHost::outputReady() {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session && impl_->session->outputReady();
 #else
   return false;
@@ -241,7 +244,7 @@ bool RealAsioHost::outputReady() {
 }
 
 long RealAsioHost::activeBufferSize() const {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->activeBufferSize() : 0;
 #else
   return 0;
@@ -253,7 +256,7 @@ std::unique_ptr<IAsioHost> createRealAsioHost() {
 }
 
 int RealAsioHost::activeSampleRate() const {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->activeSampleRate() : 0;
 #else
   return 0;
@@ -261,7 +264,7 @@ int RealAsioHost::activeSampleRate() const {
 }
 
 long RealAsioHost::activeLatencyFrames() const {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->activeLatencyFrames() : -1;
 #else
   return -1;
@@ -269,7 +272,7 @@ long RealAsioHost::activeLatencyFrames() const {
 }
 
 std::string RealAsioHost::startupSummary() const {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   return impl_->session ? impl_->session->startupSummary() : std::string{};
 #else
   return {};

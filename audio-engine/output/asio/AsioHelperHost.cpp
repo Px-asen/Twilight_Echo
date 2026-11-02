@@ -3,6 +3,9 @@
 #include "AsioRenderUtils.h"
 #include "AsioRealtimeThread.h"
 #include "DeviceCapabilityCache.h"
+#include "windows/AsioDriverCatalog.h"
+#include <cstdlib>
+#include <string_view>
 
 #include <Windows.h>
 
@@ -21,26 +24,79 @@ constexpr auto kCloseControlDeadline = std::chrono::seconds(3);
 }  // namespace
 
 AsioHelperHost::AsioHelperHost()
-    : AsioHelperHost(asio_helper::locateAsioHelperExecutable(nullptr)) {}
+    : AsioHelperHost(asio_helper::locateAsioHelperExecutable(AsioArchitecture::X64, nullptr),
+        asio_helper::locateAsioHelperExecutable(AsioArchitecture::X86, nullptr),
+        asio_windows::AsioDriverCatalog::enumerateAll) {}
 
-AsioHelperHost::AsioHelperHost(std::wstring helperPath) : process_(std::move(helperPath)) {}
+AsioHelperHost::AsioHelperHost(std::wstring helperPath)
+    : process_(std::make_unique<asio_helper::AsioHelperProcess>(std::move(helperPath))) {}
+
+AsioHelperHost::AsioHelperHost(std::wstring x64Path, std::wstring x86Path, CatalogProvider catalog)
+    : process_(std::make_unique<asio_helper::AsioHelperProcess>(x64Path, AsioArchitecture::X64)),
+      catalog_(std::move(catalog)), x64Path_(std::move(x64Path)), x86Path_(std::move(x86Path)) {}
+
+bool AsioHelperHost::selectDevice(const std::string& deviceId, std::string* resolvedId, std::string* error) {
+  *resolvedId = deviceId;
+  if (!catalog_) return true;  // Preserve single-path fixture injection.
+  const char* disabled = std::getenv("TWILIGHT_DISABLE_ASIO");
+  if (disabled && std::string_view(disabled) == "1") {
+    if (error) *error = "ASIO backend is disabled by TWILIGHT_DISABLE_ASIO=1";
+    return false;
+  }
+  const auto entry = asio_windows::AsioDriverCatalog::resolveEntries(catalog_(), deviceId);
+  if (!entry) {
+    if (error) *error = "ASIO device was not found or legacy device name is ambiguous: " + deviceId;
+    return false;
+  }
+  *resolvedId = entry->id;
+  if (architecture_ == entry->architecture) return true;
+  if (started_.load(std::memory_order_acquire)) {
+    if (error) *error = "Stop the active ASIO stream before probing another driver architecture";
+    return false;
+  }
+  close();  // Drains the render worker before replacing its process/mapping.
+  if (!lastCloseError().empty() && process_->failureReason() != asio_helper::FailureReason::LaunchFailed) {
+    if (error) *error = lastCloseError();
+    return false;
+  }
+  process_->shutdown();
+  architecture_ = entry->architecture;
+  process_ = std::make_unique<asio_helper::AsioHelperProcess>(
+      architecture_ == AsioArchitecture::X86 ? x86Path_ : x64Path_, architecture_);
+  { std::lock_guard lock(stateMutex_); closeError_.clear(); }
+  return true;
+}
 
 AsioHelperHost::~AsioHelperHost() {
   close();
   stopWorker();
-  process_.shutdown();
+  process_->shutdown();
 }
 
 bool AsioHelperHost::ensureProcess(std::string* error) const {
-  if (process_.alive() && process_.shared()) return true;
-  if (process_.failureReason() != asio_helper::FailureReason::None) {
-    if (error) *error = process_.lastFailure();
+  if (process_->alive() && process_->shared()) return true;
+  if (process_->failureReason() != asio_helper::FailureReason::None) {
+    if (error) *error = process_->lastFailure();
     return false;
   }
-  return process_.launch(error);
+  return process_->launch(error);
 }
 
 std::vector<AsioDeviceInfo> AsioHelperHost::enumerateDevices() {
+  if (catalog_) {
+    const char* disabled = std::getenv("TWILIGHT_DISABLE_ASIO");
+    if (disabled && std::string_view(disabled) == "1") return {};
+    std::vector<AsioDeviceInfo> devices;
+    for (const auto& entry : catalog_()) {
+      AsioDeviceInfo device = DeviceCapabilityCache::instance().get(entry.id).value_or(AsioDeviceInfo{});
+      device.id = entry.id;
+      device.name = entry.displayName;
+      device.driverName = entry.displayName;
+      device.driverArchitecture = asioArchitectureName(entry.architecture);
+      devices.push_back(std::move(device));
+    }
+    return devices;
+  }
   std::string error;
   if (!ensureProcess(&error)) {
     std::lock_guard lock(stateMutex_);
@@ -48,7 +104,7 @@ std::vector<AsioDeviceInfo> AsioHelperHost::enumerateDevices() {
     return {};
   }
   auto response = std::make_unique<asio_helper::Response>();
-  if (!process_.request(
+  if (!process_->request(
           asio_helper::Command::EnumerateDevices,
           response.get(),
           kSlowControlDeadline,
@@ -77,6 +133,20 @@ std::vector<AsioDeviceInfo> AsioHelperHost::enumerateDevices() {
 }
 
 AsioHostDiagnostics AsioHelperHost::diagnostics() const {
+  if (catalog_) {
+    AsioHostDiagnostics result;
+    result.processArchitecture = asioArchitectureName(nativeAsioArchitecture());
+    result.helperArchitecture = process_->alive() ? asioArchitectureName(architecture_) : "";
+    result.buildEnabled = true;
+    const char* disabled = std::getenv("TWILIGHT_DISABLE_ASIO");
+    result.environmentDisabled = disabled && std::string_view(disabled) == "1";
+    const auto catalog = asio_windows::AsioDriverCatalog::diagnostics();
+    result.registeredDriverCount32 = catalog.registeredDriverCount32;
+    result.registeredDriverCount64 = catalog.registeredDriverCount64;
+    result.loadableDriverCount32 = catalog.loadableDriverCount32;
+    result.loadableDriverCount64 = catalog.loadableDriverCount64;
+    return result;
+  }
   std::string error;
   if (!ensureProcess(&error)) {
     std::lock_guard lock(stateMutex_);
@@ -87,7 +157,7 @@ AsioHostDiagnostics AsioHelperHost::diagnostics() const {
     return result;
   }
   auto response = std::make_unique<asio_helper::Response>();
-  if (!process_.request(
+  if (!process_->request(
           asio_helper::Command::GetDiagnostics,
           response.get(),
           kSlowControlDeadline,
@@ -110,23 +180,24 @@ bool AsioHelperHost::probeDevice(
     if (error) *error = "ASIO capability probe requires an output record";
     return false;
   }
-  if (!ensureProcess(error)) {
+  std::string resolvedId;
+  if (!selectDevice(deviceId, &resolvedId, error) || !ensureProcess(error)) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = error ? *error : process_.lastFailure();
+    closeError_ = error ? *error : process_->lastFailure();
     return false;
   }
   auto response = std::make_unique<asio_helper::Response>();
-  const bool ok = process_.request(
+  const bool ok = process_->request(
       asio_helper::Command::ProbeDevice,
       [&](asio_helper::Request& request) {
-        asio_helper::copyText(request.deviceId, sizeof(request.deviceId), deviceId);
+        asio_helper::copyText(request.deviceId, sizeof(request.deviceId), resolvedId);
       },
       response.get(),
       kSlowControlDeadline,
       error);
   if (!ok) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = error ? *error : process_.lastFailure();
+    closeError_ = error ? *error : process_->lastFailure();
     return false;
   }
   *info = asio_helper::decodeDevice(response->device);
@@ -146,12 +217,13 @@ bool AsioHelperHost::open(
     closeError_.clear();
   }
   helperFailureDispatched_.store(false, std::memory_order_release);
-  if (!ensureProcess(error)) return false;
+  std::string resolvedId;
+  if (!selectDevice(config.deviceId, &resolvedId, error) || !ensureProcess(error)) return false;
   auto response = std::make_unique<asio_helper::Response>();
-  const bool ok = process_.request(
+  const bool ok = process_->request(
       asio_helper::Command::Open,
       [&](asio_helper::Request& request) {
-        asio_helper::copyText(request.deviceId, sizeof(request.deviceId), config.deviceId);
+        asio_helper::copyText(request.deviceId, sizeof(request.deviceId), resolvedId);
         request.format = asio_helper::encodeAudioFormat(config.format);
         request.bufferSizeFrames = static_cast<int32_t>(config.bufferSizeFrames);
         request.outputChannelStart = config.outputChannelStart;
@@ -180,11 +252,11 @@ bool AsioHelperHost::open(
   if (!ok) {
     {
       std::lock_guard lock(stateMutex_);
-      closeError_ = error ? *error : process_.lastFailure();
+      closeError_ = error ? *error : process_->lastFailure();
     }
     if (response->failureReason ==
         static_cast<int32_t>(asio_helper::FailureReason::FormatRestoreFailed)) {
-      process_.abort(
+      process_->abort(
           asio_helper::FailureReason::FormatRestoreFailed,
           asio_helper::readText(response->message));
     }
@@ -201,13 +273,13 @@ bool AsioHelperHost::createBuffers(
     std::string* error) {
   if (!ensureProcess(error)) return false;
   auto response = std::make_unique<asio_helper::Response>();
-  if (!process_.request(
+  if (!process_->request(
           asio_helper::Command::CreateBuffers,
           response.get(),
           kSlowControlDeadline,
           error)) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = error ? *error : process_.lastFailure();
+    closeError_ = error ? *error : process_->lastFailure();
     return false;
   }
   if (response->channelCount == 0 || response->channelCount > asio_helper::kMaxChannels ||
@@ -216,7 +288,7 @@ bool AsioHelperHost::createBuffers(
     if (error) *error = asio_helper::failureMessage(
         asio_helper::FailureReason::ProtocolError,
         "ASIO helper returned invalid buffer geometry");
-    process_.abort(asio_helper::FailureReason::ProtocolError, "invalid buffer geometry");
+    process_->abort(asio_helper::FailureReason::ProtocolError, "invalid buffer geometry");
     return false;
   }
   {
@@ -236,7 +308,7 @@ bool AsioHelperHost::createBuffers(
       if (!asio_helper::validSampleFormat(record.logicalFormat) || record.littleEndian > 1 ||
           record.validBitsAreMostSignificant > 1 || !asio::isSupportedChannelFormat(format)) {
         if (error) *error = "ASIO helper returned an invalid channel format";
-        process_.abort(asio_helper::FailureReason::ProtocolError, "invalid channel format");
+        process_->abort(asio_helper::FailureReason::ProtocolError, "invalid channel format");
         return false;
       }
       channelFormats_.push_back(format);
@@ -249,10 +321,10 @@ bool AsioHelperHost::createBuffers(
 }
 
 bool AsioHelperHost::start(std::string* error) {
-  auto* shared = process_.shared();
+  auto* shared = process_->shared();
   if (shared && shared->renderQueueCapacity > 0) {
     renderAhead_.store(true, std::memory_order_release);
-    process_.wakeCallbacks();
+    process_->wakeCallbacks();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
     const uint32_t target = std::min<uint32_t>(8, shared->renderQueueCapacity);
     while (std::chrono::steady_clock::now() < deadline &&
@@ -261,13 +333,13 @@ bool AsioHelperHost::start(std::string* error) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
-  if (!process_.request(
+  if (!process_->request(
           asio_helper::Command::Start,
           nullptr,
           kSlowControlDeadline,
           error)) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = error ? *error : process_.lastFailure();
+    closeError_ = error ? *error : process_->lastFailure();
     renderAhead_.store(false, std::memory_order_release);
     return false;
   }
@@ -278,25 +350,25 @@ bool AsioHelperHost::start(std::string* error) {
 void AsioHelperHost::stop() {
   renderAhead_.store(false, std::memory_order_release);
   started_.store(false, std::memory_order_release);
-  if (!process_.alive()) return;
+  if (!process_->alive()) return;
   std::string ignored;
-  if (!process_.request(
+  if (!process_->request(
       asio_helper::Command::Stop,
       nullptr,
       kCloseControlDeadline,
       &ignored)) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = ignored.empty() ? process_.lastFailure() : ignored;
+    closeError_ = ignored.empty() ? process_->lastFailure() : ignored;
   }
 }
 
 void AsioHelperHost::close() {
   renderAhead_.store(false, std::memory_order_release);
   started_.store(false, std::memory_order_release);
-  if (process_.alive()) {
+  if (process_->alive()) {
     auto response = std::make_unique<asio_helper::Response>();
     std::string error;
-    if (!process_.request(
+    if (!process_->request(
             asio_helper::Command::Close,
             response.get(),
             kCloseControlDeadline,
@@ -307,7 +379,7 @@ void AsioHelperHost::close() {
       }
       if (response->failureReason ==
           static_cast<int32_t>(asio_helper::FailureReason::FormatRestoreFailed)) {
-        process_.abort(
+        process_->abort(
             asio_helper::FailureReason::FormatRestoreFailed,
             asio_helper::readText(response->message));
       }
@@ -318,16 +390,16 @@ void AsioHelperHost::close() {
             asio_helper::FailureReason::FormatRestoreFailed,
             "ASIO helper did not restore the retained PCM format");
       }
-      process_.abort(
+      process_->abort(
           asio_helper::FailureReason::FormatRestoreFailed,
           "ASIO helper did not restore the retained PCM format");
     } else {
       std::lock_guard lock(stateMutex_);
       closeError_.clear();
     }
-  } else if (!process_.lastFailure().empty()) {
+  } else if (!process_->lastFailure().empty()) {
     std::lock_guard lock(stateMutex_);
-    closeError_ = process_.lastFailure();
+    closeError_ = process_->lastFailure();
   }
   stopWorker();
   renderChannelCount_.store(0, std::memory_order_release);
@@ -339,7 +411,7 @@ void AsioHelperHost::close() {
 }
 
 void* AsioHelperHost::outputBuffer(long channel, long bufferIndex) {
-  return asio_helper::channelBuffer(process_.shared(), channel, bufferIndex);
+  return asio_helper::channelBuffer(process_->shared(), channel, bufferIndex);
 }
 
 AudioSampleFormat AsioHelperHost::outputSampleFormat(long channel) const {
@@ -353,7 +425,7 @@ AsioChannelFormat AsioHelperHost::outputChannelFormat(long channel) const {
 }
 
 bool AsioHelperHost::outputReady() {
-  return process_.alive();
+  return process_->alive();
 }
 
 long AsioHelperHost::activeBufferSize() const {
@@ -377,17 +449,17 @@ std::string AsioHelperHost::startupSummary() const {
 }
 
 size_t AsioHelperHost::activeRenderFrameCapacity() const {
-  const auto* shared = process_.shared();
+  const auto* shared = process_->shared();
   return shared ? static_cast<size_t>(std::max<LONG>(0, asio_helper::readAtomic(&shared->activeRenderFrameCapacity))) : 0;
 }
 
 bool AsioHelperHost::dsdBufferUnitConfirmed() const {
-  const auto* shared = process_.shared();
+  const auto* shared = process_->shared();
   return shared && asio_helper::readAtomic(&shared->dsdBufferUnitConfirmed) != 0;
 }
 
 AsioRenderHealth AsioHelperHost::renderHealth() const {
-  const auto* shared = process_.shared();
+  const auto* shared = process_->shared();
   if (!shared) return {};
   return {
       static_cast<uint32_t>(asio_helper::readAtomic(&shared->callbackHeartbeat)),
@@ -396,7 +468,7 @@ AsioRenderHealth AsioHelperHost::renderHealth() const {
 }
 
 void AsioHelperHost::commitOutputBuffer(long bufferIndex, size_t frameCount) {
-  auto* shared = process_.shared();
+  auto* shared = process_->shared();
   if (!shared || bufferIndex < 0 || bufferIndex > 1) return;
   asio_helper::RenderBuffer& buffer = shared->buffers[bufferIndex];
   const uint32_t boundedFrames = static_cast<uint32_t>(
@@ -448,7 +520,7 @@ void AsioHelperHost::startWorker() {
 
 void AsioHelperHost::stopWorker() {
   workerRunning_.store(false, std::memory_order_release);
-  process_.wakeCallbacks();
+  process_->wakeCallbacks();
   if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id()) worker_.join();
 }
 
@@ -468,14 +540,14 @@ void AsioHelperHost::workerLoop() {
   bool wasStarted = false;
   auto lastCallback = std::chrono::steady_clock::now();
   while (workerRunning_.load(std::memory_order_acquire)) {
-    auto* shared = process_.shared();
-    if (!shared || !process_.alive()) {
+    auto* shared = process_->shared();
+    if (!shared || !process_->alive()) {
       if (started_.load(std::memory_order_acquire)) {
         dispatchHelperFailure(
-            process_.failureReason() == asio_helper::FailureReason::None
+            process_->failureReason() == asio_helper::FailureReason::None
                 ? asio_helper::FailureReason::ProcessExited
-                : process_.failureReason(),
-            process_.lastFailure());
+                : process_->failureReason(),
+            process_->lastFailure());
       }
       break;
     }
@@ -551,11 +623,11 @@ void AsioHelperHost::workerLoop() {
     } else if (isStarted &&
                std::chrono::steady_clock::now() - lastCallback > callbackDeadline()) {
       const std::string detail = "ASIO helper callback heartbeat stopped";
-      process_.abort(asio_helper::FailureReason::CallbackStalled, detail);
+      process_->abort(asio_helper::FailureReason::CallbackStalled, detail);
       dispatchHelperFailure(asio_helper::FailureReason::CallbackStalled, detail);
       break;
     }
-    process_.waitForCallbacks(100);
+    process_->waitForCallbacks(100);
   }
   workerRunning_.store(false, std::memory_order_release);
 }

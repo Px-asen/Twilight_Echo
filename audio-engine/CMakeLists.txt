@@ -244,30 +244,8 @@ if(TAE_ASIO_AVAILABLE)
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_ASIO=1)
   target_link_libraries(twilight_audio_engine PRIVATE user32 advapi32 ole32)
 
-  add_executable(twilight_asio_helper
-    output/asio/helper/AsioHelperMain.cpp
-    output/asio/helper/AsioHelperServer.cpp
-    output/asio/AsioFormatSupport.cpp
-    output/asio/DeviceCapabilityCache.cpp
-    output/asio/RealAsioHost.cpp
-    output/asio/windows/AsioCallbackRouter.cpp
-    output/asio/windows/AsioControlThread.cpp
-    output/asio/windows/AsioDriverCatalog.cpp
-    output/asio/windows/AsioDriverSession.cpp
-    core/AudioTypes.cpp
-  )
-  target_include_directories(twilight_asio_helper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  target_compile_definitions(
-    twilight_asio_helper
-    PRIVATE
-      TAE_ENABLE_ASIO=1
-      TAE_ASIO_HELPER_PROCESS=1
-  )
-  target_link_libraries(twilight_asio_helper PRIVATE ole32 uuid advapi32 user32)
-  if(MINGW)
-    target_link_options(twilight_asio_helper PRIVATE -municode)
-  endif()
-  set_target_properties(twilight_asio_helper PROPERTIES OUTPUT_NAME "twilight-asio-helper")
+  include(output/asio/helper/AsioHelperTargets.cmake)
+  tae_add_asio_helper(twilight_asio_helper)
 endif()
 
 if(TAE_COREAUDIO_AVAILABLE)
@@ -784,6 +762,7 @@ if(TAE_BUILD_TESTS)
 
     add_executable(twilight_asio_helper_process_tests
       output/asio/helper/AsioHelperProcess.test.cpp
+      output/asio/windows/AsioDriverCatalog.cpp
       output/asio/AsioHelperHost.cpp
       output/asio/DeviceCapabilityCache.cpp
       output/asio/helper/AsioHelperProcess.cpp
@@ -794,7 +773,7 @@ if(TAE_BUILD_TESTS)
       PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     )
     target_compile_definitions(twilight_asio_helper_process_tests PRIVATE TAE_ENABLE_ASIO=1)
-    target_link_libraries(twilight_asio_helper_process_tests PRIVATE user32)
+    target_link_libraries(twilight_asio_helper_process_tests PRIVATE user32 advapi32 ole32)
     add_dependencies(
       twilight_asio_helper_process_tests
       twilight_asio_helper_fixture
@@ -819,6 +798,7 @@ if(TAE_BUILD_TESTS)
   endif()
 
   if(TAE_ASIO_AVAILABLE)
+    add_executable(twilight_asio_helper_layout output/asio/helper/AsioHelperLayout.cpp)
     add_executable(twilight_asio_abi_checks output/asio/abi/AsioAbiChecks.cpp)
     target_include_directories(twilight_asio_abi_checks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(twilight_asio_abi_checks PRIVATE ole32 uuid)

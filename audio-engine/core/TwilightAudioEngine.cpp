@@ -1,4 +1,5 @@
 #include "TwilightAudioEngine.h"
+#include "../output/asio/helper/AsioHelperVersion.h"
 
 #include "../analysis/BpmAnalyzer.h"
 #include "../analysis/LoudnessAnalyzer.h"
@@ -123,6 +124,8 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"asioRegisteredDriverCount32\":" << diagnostics.asioRegisteredDriverCount32 << ","
        << "\"asioRegisteredDriverCount64\":" << diagnostics.asioRegisteredDriverCount64 << ","
        << "\"asioLoadableDriverCount64\":" << diagnostics.asioLoadableDriverCount64 << ","
+       << "\"asioLoadableDriverCount32\":" << diagnostics.asioLoadableDriverCount32 << ","
+       << "\"asioHelperArchitecture\":\"" << json_utils::escape(diagnostics.asioHelperArchitecture) << "\","
        << "\"dsdRouteOverrideActive\":" << (diagnostics.dsdRouteOverrideActive ? "true" : "false") << ","
        << "\"dsdRouteBackend\":\"" << json_utils::escape(diagnostics.dsdRouteBackend) << "\","
        << "\"dsdRouteDevice\":\"" << json_utils::escape(diagnostics.dsdRouteDevice) << "\","
@@ -2364,6 +2367,12 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "true"
 #else
        << "false"
+#endif
+       << ",\"asioHelperProtocolVersion\":"
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+       << asio_helper::kProtocolVersion
+#else
+       << 0
 #endif
        << ",\"coreaudio\":"
 #if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)

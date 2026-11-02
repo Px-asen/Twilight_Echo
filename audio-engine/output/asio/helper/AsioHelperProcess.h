@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AsioHelperProtocol.h"
+#include "../AsioArchitecture.h"
 
 #include <Windows.h>
 
@@ -14,7 +15,8 @@ namespace twilight::audio::asio_helper {
 
 class AsioHelperProcess final {
  public:
-  explicit AsioHelperProcess(std::wstring executablePath);
+  explicit AsioHelperProcess(std::wstring executablePath,
+      std::optional<AsioArchitecture> expectedArchitecture = std::nullopt);
   ~AsioHelperProcess();
 
   AsioHelperProcess(const AsioHelperProcess&) = delete;
@@ -49,6 +51,7 @@ class AsioHelperProcess final {
   void publishFailure(FailureReason reason, const std::string& detail);
 
   std::wstring executablePath_;
+  std::optional<AsioArchitecture> expectedArchitecture_;
   HANDLE mapping_ = nullptr;
   HANDLE requestEvent_ = nullptr;
   HANDLE responseEvent_ = nullptr;
@@ -64,5 +67,6 @@ class AsioHelperProcess final {
 };
 
 std::wstring locateAsioHelperExecutable(std::string* error);
+std::wstring locateAsioHelperExecutable(AsioArchitecture architecture, std::string* error);
 
 }  // namespace twilight::audio::asio_helper

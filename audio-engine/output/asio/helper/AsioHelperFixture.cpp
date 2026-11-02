@@ -36,7 +36,8 @@ class FixtureHost final : public IAsioHost {
 
   AsioHostDiagnostics diagnostics() const override {
     AsioHostDiagnostics result;
-    result.processArchitecture = "x64";
+    result.processArchitecture = sizeof(void*) == 8 ? "x64" : "x86";
+    result.helperArchitecture = result.processArchitecture;
     result.buildEnabled = true;
     result.registeredDriverCount64 = 1;
     result.loadableDriverCount64 = 1;
@@ -44,7 +45,7 @@ class FixtureHost final : public IAsioHost {
   }
 
   bool probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) override {
-    if (deviceId != "asio:fixture" || !info) {
+    if (deviceId != deviceInfo().id || !info) {
       if (error) *error = "fixture device was not found";
       return false;
     }
@@ -64,7 +65,7 @@ class FixtureHost final : public IAsioHost {
       if (error) *error = "fixture rejected the device";
       return false;
     }
-    if (config.deviceId != "asio:fixture" || config.format.channelCount != 2 ||
+    if (config.deviceId != deviceInfo().id || config.format.channelCount != 2 ||
         config.format.sampleRate <= 0) {
       if (result) result->failureKind = AsioOpenFailureKind::Format;
       if (error) *error = "fixture rejected the open format";
@@ -245,9 +246,12 @@ class FixtureHost final : public IAsioHost {
  private:
   static constexpr long kFrames = 64;
 
-  static AsioDeviceInfo deviceInfo() {
+  AsioDeviceInfo deviceInfo() const {
     AsioDeviceInfo info;
-    info.id = "asio:fixture";
+    info.id = mode_ == "routing"
+        ? (sizeof(void*) == 8 ? "asio:{fixture}" : "asio:x86:{fixture}") : "asio:fixture";
+    info.driverArchitecture = sizeof(void*) == 8 ? "x64" : "x86";
+    info.capabilityVersion = 0x1122334455667788ULL;
     info.name = "Twilight ASIO fixture";
     info.driverName = info.name;
     info.driverVersion = 1;
@@ -312,6 +316,15 @@ int wmain(int argc, wchar_t* argv[]) {
   Arguments arguments;
   if (!parseArguments(argc, argv, &arguments)) return 64;
   const std::string mode = fixtureMode();
+  if (mode == "protocol-mismatch") {
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, arguments.mapping.c_str());
+    if (!mapping) return 2;
+    auto* header = static_cast<SharedMemory*>(MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedMemory)));
+    if (!header) { CloseHandle(mapping); return 2; }
+    header->version = kProtocolVersion - 1;
+    UnmapViewOfFile(header);
+    CloseHandle(mapping);
+  }
   AsioHelperServerOptions options;
   options.beforeCommand = [mode](Command command) {
     if (command == Command::GetDiagnostics) {

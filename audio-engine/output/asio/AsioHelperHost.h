@@ -2,6 +2,7 @@
 
 #include "IAsioHost.h"
 #include "helper/AsioHelperProcess.h"
+#include "windows/AsioDriverCatalog.h"
 
 #include <array>
 #include <atomic>
@@ -16,7 +17,9 @@ namespace twilight::audio {
 
 class AsioHelperHost final : public IAsioHost {
  public:
+  using CatalogProvider = std::function<std::vector<asio_windows::AsioDriverEntry>()>;
   AsioHelperHost();
+  AsioHelperHost(std::wstring x64Path, std::wstring x86Path, CatalogProvider catalog);
   explicit AsioHelperHost(std::wstring helperPath);
   ~AsioHelperHost() override;
 
@@ -47,6 +50,7 @@ class AsioHelperHost final : public IAsioHost {
   std::string lastCloseError() const override;
 
  private:
+  bool selectDevice(const std::string& deviceId, std::string* resolvedId, std::string* error);
   bool ensureProcess(std::string* error) const;
   void startWorker();
   void stopWorker();
@@ -54,7 +58,11 @@ class AsioHelperHost final : public IAsioHost {
   void dispatchHelperFailure(asio_helper::FailureReason reason, const std::string& detail);
   std::chrono::milliseconds callbackDeadline() const;
 
-  mutable asio_helper::AsioHelperProcess process_;
+  mutable std::unique_ptr<asio_helper::AsioHelperProcess> process_;
+  CatalogProvider catalog_;
+  std::wstring x64Path_;
+  std::wstring x86Path_;
+  AsioArchitecture architecture_ = AsioArchitecture::X64;
   mutable std::mutex stateMutex_;
   AsioBufferSwitchCallback bufferSwitch_;
   AsioEventCallback eventCallback_;

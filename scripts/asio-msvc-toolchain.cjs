@@ -46,10 +46,12 @@ function cmakeCachePath(value) {
 }
 
 function prepareAsioMsvcNinjaToolchain({
+  arch = 'x64',
   env = process.env,
   exists = existsSync,
   readDirectories = readdirSync
 } = {}) {
+  if (!['x64', 'x86'].includes(arch)) return { ok: false, message: `Unsupported ASIO helper architecture: ${arch}` }
   const validation = validateAsioMsvcToolchain({ env, exists, readDirectories })
   if (!validation.ok) return validation
 
@@ -85,12 +87,12 @@ function prepareAsioMsvcNinjaToolchain({
     'Ninja',
     'ninja.exe'
   )
-  const compilerBin = toolsetRoot ? join(toolsetRoot, 'bin', 'Hostx64', 'x64') : ''
+  const compilerBin = toolsetRoot ? join(toolsetRoot, 'bin', 'Hostx64', arch) : ''
   const required = [
-    ['MSVC x64 compiler', compilerBin && join(compilerBin, 'cl.exe')],
-    ['MSVC x64 linker', compilerBin && join(compilerBin, 'link.exe')],
+    [`MSVC ${arch} compiler`, compilerBin && join(compilerBin, 'cl.exe')],
+    [`MSVC ${arch} linker`, compilerBin && join(compilerBin, 'link.exe')],
     ['MSVC standard library headers', toolsetRoot && join(toolsetRoot, 'include', 'cstddef')],
-    ['MSVC x64 runtime libraries', toolsetRoot && join(toolsetRoot, 'lib', 'x64', 'msvcrt.lib')],
+    [`MSVC ${arch} runtime libraries`, toolsetRoot && join(toolsetRoot, 'lib', arch, 'msvcrt.lib')],
     ['Visual Studio CMake', cmakePath],
     ['Visual Studio Ninja', ninjaPath],
     ['Windows SDK resource compiler', sdkBin && join(sdkBin, 'rc.exe')],
@@ -100,8 +102,8 @@ function prepareAsioMsvcNinjaToolchain({
       sdkVersion && join(windowsSdkRoot, 'Include', sdkVersion, 'um', 'Windows.h')
     ],
     [
-      'Windows SDK x64 libraries',
-      sdkVersion && join(windowsSdkRoot, 'Lib', sdkVersion, 'um', 'x64', 'kernel32.lib')
+      `Windows SDK ${arch} libraries`,
+      sdkVersion && join(windowsSdkRoot, 'Lib', sdkVersion, 'um', arch, 'kernel32.lib')
     ]
   ]
   const missing = required.filter(([, path]) => !path || !exists(path))
@@ -124,12 +126,12 @@ function prepareAsioMsvcNinjaToolchain({
     join(windowsSdkRoot, 'Include', sdkVersion, 'cppwinrt')
   ].filter((path) => exists(path))
   const libraryDirectories = [
-    join(toolsetRoot, 'lib', 'x64'),
-    join(windowsSdkRoot, 'Lib', sdkVersion, 'ucrt', 'x64'),
-    join(windowsSdkRoot, 'Lib', sdkVersion, 'um', 'x64')
+    join(toolsetRoot, 'lib', arch),
+    join(windowsSdkRoot, 'Lib', sdkVersion, 'ucrt', arch),
+    join(windowsSdkRoot, 'Lib', sdkVersion, 'um', arch)
   ].filter((path) => exists(path))
   const libraryPathDirectories = [
-    join(toolsetRoot, 'lib', 'x64'),
+    join(toolsetRoot, 'lib', arch),
     join(windowsSdkRoot, 'UnionMetadata', sdkVersion),
     join(windowsSdkRoot, 'References', sdkVersion)
   ].filter((path) => exists(path))

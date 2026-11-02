@@ -2,7 +2,7 @@
 
 Status: personal open-source policy; runtime enabled, hardware evidence remains opt-in
 
-Twilight Echo ships an independent Windows x64 compatibility implementation. The project does not
+Twilight Echo uses an independent Windows x64 engine with x64 and x86 ASIO helpers. The project does not
 bundle, include, or compile an ASIO SDK. Installed ASIO drivers are enumerated by default; users can
 set `TWILIGHT_DISABLE_ASIO=1` to disable enumeration and activation for troubleshooting or rollback.
 

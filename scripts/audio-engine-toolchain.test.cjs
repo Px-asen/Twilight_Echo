@@ -49,6 +49,7 @@ const STAGING_SCRIPT_FILES = Object.freeze([
   'staged-audio-runtime-observation.cjs',
   'verify-release-capability-consistency.cjs',
   'verify-release-artifacts.cjs',
+  'verify-asio-helper-artifacts.cjs',
   'pe-imports.cjs'
 ])
 
@@ -1422,3 +1423,19 @@ function listRepositoryFiles(directory) {
     return [entryPath]
   })
 }
+
+
+test('ASIO Win32 helper selects x86 compiler and libraries without changing the x64 default', () => {
+  const result = prepareAsioMsvcNinjaToolchain({
+    arch: 'x86',
+    env: { TAE_ASIO_MSVC_INSTALL_ROOT: fixturePath('vs'), VCToolsVersion: '14.44',
+      WindowsSdkDir: fixturePath('sdk'), WindowsSDKVersion: '10.0', PATH: '' },
+    exists: () => true,
+    readDirectories: () => [{ name: '14.44', isDirectory: () => true }]
+  })
+  assert.equal(result.ok, true)
+  assert.ok(cmakeCachePath(result.environment.CXX).endsWith('/Hostx64/x86/cl.exe'))
+  assert.ok(cmakeCachePath(result.environment.LIB).includes('/lib/x86'))
+  assert.ok(!cmakeCachePath(result.environment.LIB).includes('/lib/x64'))
+  assert.equal(prepareAsioMsvcNinjaToolchain({ arch: 'arm64' }).ok, false)
+})

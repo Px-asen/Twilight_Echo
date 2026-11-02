@@ -2,9 +2,26 @@
 
 Status: experimental contract frozen for hardware validation; not approved for release enablement
 
-Scope: internal Windows x64 compatibility contract.
+Scope: internal Windows x64 engine with independent x64 and MSVC x86 driver boundaries.
 
 Contract revision: `4`.
+
+The driver contract revision is separate from shared-memory protocol revision `6`.
+The x64 golden contract is retained. The x86 extension (2026-11-02) has its own manifest,
+`audio-engine/output/asio/abi/asio-abi-manifest-x86.json`, and these independent requirements:
+
+- Windows IUnknown methods use COM `__stdcall`; subsequent ASIO C++ virtual slots use MSVC
+  `__thiscall`. All four C callback functions use `__cdecl`.
+- Pointer-bearing buffer descriptors and callback tables are 16 bytes each on x86 (24/32 on x64).
+- With 4-byte driver-record packing, sample/time counters consist of high then low 32-bit words.
+  Time-info contains speed, system time, sample position, sample rate, flags and reserved bytes
+  at offsets 0, 8, 16, 24, 32 and 36; time-info/time-code/time sizes are 48/84/148 bytes.
+- The 512-byte I/O-format selector block and virtual slot order are unchanged. Driver bitness
+  does not change PCM bit depth or Native DSD packing/negotiation/restoration.
+
+The test DLL uses `tests/asio-abi-fixture/X86DriverContract.h`, separately declared without including
+the host ABI. `pnpm run test:asio-x86-bridge` checks the x86 golden layout, all virtual slots and
+callbacks (including counters beyond 32 bits), then x64-to-x86 shared-memory transport and failures.
 
 Revision 1 defines a two-buffer output path, a single active session, little-endian PCM formats
 (Int16, packed Int24, Int24-in-Int32, Int32, and Float32), callback routing, and the

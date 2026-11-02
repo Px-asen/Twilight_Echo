@@ -9,7 +9,8 @@ const NATIVE_RUNTIME_FILES = Object.freeze([
   'twilight_smtc_node.node',
   'twilight-asio-helper.exe',
   'twilight-vst3-host.exe',
-  'twilight-vst3-scanner.exe'
+  'twilight-vst3-scanner.exe',
+  'twilight-asio-helper-x86.exe'
 ])
 
 // The core playback runtime and isolated VST3 helper pair are required in a

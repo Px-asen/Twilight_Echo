@@ -150,6 +150,8 @@ test('native binary verification keeps capability fixtures flexible but release 
     assert.throws(() => listReleaseNativeBinaries(dir), /twilight_smtc_node\.node/)
     fs.writeFileSync(path.join(dir, 'twilight_smtc_node.node'), createMinimalPe())
     assert.equal(listNativeBinaries(dir).length, REQUIRED_NATIVE_BINARIES.length + 3)
+    assert.throws(() => listReleaseNativeBinaries(dir), /twilight-asio-helper-x86\.exe/)
+    fs.writeFileSync(path.join(dir, 'twilight-asio-helper-x86.exe'), createMinimalPe({ machine: 0x14c }))
     assert.deepEqual(
       listReleaseNativeBinaries(dir)
         .map((filePath) => path.basename(filePath))

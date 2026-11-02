@@ -505,6 +505,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   diagnostics_.asioRegisteredDriverCount32 = hostDiagnostics.registeredDriverCount32;
   diagnostics_.asioRegisteredDriverCount64 = hostDiagnostics.registeredDriverCount64;
   diagnostics_.asioLoadableDriverCount64 = hostDiagnostics.loadableDriverCount64;
+  diagnostics_.asioLoadableDriverCount32 = hostDiagnostics.loadableDriverCount32;
+  diagnostics_.asioHelperArchitecture = hostDiagnostics.helperArchitecture;
 
   const auto devices = host_->enumerateDevices();
   if (devices.empty()) {
@@ -517,7 +519,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     } else if (!isHelperError(hostError) &&
         hostDiagnostics.registeredDriverCount32 > 0 &&
         hostDiagnostics.registeredDriverCount64 == 0) {
-      reason = "仅检测到 32 位 ASIO 驱动；Twilight Echo x64 需要安装对应的 64 位 ASIO 驱动";
+      reason = "检测到 32 位 ASIO 注册项，但未找到可用驱动；请检查驱动注册与 x86 helper 安装";
     } else if (!isHelperError(hostError) &&
         hostDiagnostics.registeredDriverCount64 > 0 &&
         hostDiagnostics.loadableDriverCount64 == 0) {
@@ -536,10 +538,28 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     return false;
   }
 
-  const auto deviceIt = std::find_if(devices.begin(), devices.end(), [&](const AsioDeviceInfo& device) {
-    return deviceId.empty() || deviceId == "auto" || device.id == deviceId || device.name == deviceId ||
-           device.driverName == deviceId || ("asio:" + device.driverName) == deviceId;
-  });
+  auto deviceIt = devices.end();
+  if (deviceId.empty() || deviceId == "auto") {
+    deviceIt = std::find_if(devices.begin(), devices.end(), [](const auto& device) {
+      return device.driverArchitecture != "x86";
+    });
+    if (deviceIt == devices.end()) deviceIt = devices.begin();
+  } else {
+    deviceIt = std::find_if(devices.begin(), devices.end(), [&](const auto& device) { return device.id == deviceId; });
+    if (deviceIt == devices.end() && !deviceId.starts_with("asio:x86:") && !deviceId.starts_with("asio:{")) {
+      const auto name = deviceId.starts_with("asio:") ? deviceId.substr(5) : deviceId;
+      for (const bool x86 : {false, true}) {
+        bool ambiguous = false;
+        for (auto it = devices.begin(); it != devices.end(); ++it) {
+          if ((it->driverArchitecture == "x86") != x86 || (it->name != name && it->driverName != name)) continue;
+          if (deviceIt != devices.end()) { ambiguous = true; break; }
+          deviceIt = it;
+        }
+        if (ambiguous) { deviceIt = devices.end(); break; }
+        if (deviceIt != devices.end()) break;
+      }
+    }
+  }
   if (deviceIt == devices.end()) {
     if (error) *error = "无法找到请求的 ASIO 设备：" + deviceId;
     diagnostics_.lastError = error ? *error : "无法找到请求的 ASIO 设备";
@@ -559,7 +579,11 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   // hardcoded guess set.
   AsioDeviceInfo device = *deviceIt;
   std::string capabilityError;
-  if (!ensureDeviceCapabilities(&device, &capabilityError)) {
+  const bool capabilitiesReady = ensureDeviceCapabilities(&device, &capabilityError);
+  const auto selectedDiagnostics = host_->diagnostics();
+  diagnostics_.processArchitecture = selectedDiagnostics.processArchitecture;
+  diagnostics_.asioHelperArchitecture = selectedDiagnostics.helperArchitecture;
+  if (!capabilitiesReady) {
     if (error) *error = capabilityError;
     diagnostics_.lastError = capabilityError;
     outputInfo_.deviceName = device.name.empty() ? device.driverName : device.name;
@@ -663,6 +687,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   }
 
   diagnostics_.nativeDsdNegotiation = result.nativeDsdNegotiation;
+  diagnostics_.asioHelperArchitecture = host_->diagnostics().helperArchitecture;
+  diagnostics_.processArchitecture = host_->diagnostics().processArchitecture;
 
   outputFormat_ = result.actualFormat;
   if (outputFormat_.sampleRate <= 0) outputFormat_.sampleRate = selected.sampleRate;

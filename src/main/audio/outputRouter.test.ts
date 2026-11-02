@@ -9,7 +9,7 @@ import type {
   OutputConfig
 } from './audioEngineTypes.ts'
 
-function createHarness(config: AudioEngineConfig) {
+function createHarness(config: AudioEngineConfig, devices?: AudioDeviceOption[]) {
   let info = createDefaultPlaybackInfo('wasapi', 'auto', config.exclusiveMode, {
     preferredBufferSize: 0,
     routingMode: 'auto'
@@ -44,7 +44,9 @@ function createHarness(config: AudioEngineConfig) {
       JSON.stringify({ revision: dspRevision, nodes: [], compileState: 'ready' }),
     GetLastError: () => ''
   } as unknown as NativeAudioBinding
-  const manager = new AudioEngineManager(config, { nativeBinding: native })
+  const manager = new AudioEngineManager(config, {
+    nativeBinding: native, deviceOptionsProvider: devices ? () => devices : undefined
+  })
   const effective = () =>
     manager.getEffectiveOutputConfig() as OutputConfig & { releaseExclusiveOnPause: boolean }
   return {
@@ -266,4 +268,27 @@ test('failed synchronous resume reaches the caller', async () => {
   const manager = new AudioEngineManager({ exclusiveMode: true }, { nativeBinding: native })
   await assert.rejects(manager.togglePause(), /exclusive device busy/)
   assert.equal(pauses, 1)
+})
+
+
+test('dual-architecture ASIO keeps distinct identities, labels and legacy x64 preference', async () => {
+  const x64: AudioDeviceOption = { id: 'asio:{DAC}', name: 'DAC', label: 'DAC (ASIO x64)',
+    backend: 'asio', driverArchitecture: 'x64', isDefault: false }
+  const x86: AudioDeviceOption = { ...x64, id: 'asio:x86:{DAC}', label: 'DAC (ASIO x86)', driverArchitecture: 'x86' }
+  for (const [id, devices, expected] of [
+    ['auto', [x86, x64], x64.id], ['asio:DAC', [x86, x64], x64.id],
+    ['asio:DAC', [x86], x86.id], [x86.id, [x64, x86], x86.id],
+    [x86.id, [x64], x86.id]
+  ] as Array<[string, AudioDeviceOption[], string]>) {
+    const { manager } = createHarness(
+      { exclusiveMode: false, audioOutput: 'asio', audioDevice: id }, devices
+    )
+    const state = await manager.getAudioOutputState()
+    assert.equal(state.device, expected)
+    for (const device of devices) {
+      const exposed = state.deviceOptions.find(candidate => candidate.id === device.id)
+      assert.equal(exposed?.driverArchitecture, device.driverArchitecture)
+      assert.equal(exposed?.label, device.label)
+    }
+  }
 })

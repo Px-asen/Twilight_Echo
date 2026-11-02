@@ -62,6 +62,7 @@ extraResources:
       - twilight_audio_node.node
       - twilight_smtc_node.node
       - twilight-asio-helper.exe
+      - twilight-asio-helper-x86.exe
       - twilight-vst3-host.exe
       - twilight-vst3-scanner.exe
       - audio-capabilities.json

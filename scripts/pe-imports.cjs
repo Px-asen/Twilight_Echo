@@ -58,7 +58,11 @@ function parsePeLayout(buffer, filePath) {
       rawOffset: buffer.readUInt32LE(offset + 20)
     })
   }
-  return { dataDirectoryOffset, sections }
+  return { dataDirectoryOffset, sections, machine: buffer.readUInt16LE(coffOffset) }
+}
+
+function readPeMachine(filePath) {
+  return parsePeLayout(fs.readFileSync(filePath), filePath).machine
 }
 
 function rvaToOffset(sections, rva) {
@@ -129,7 +133,7 @@ function classifyImports(names, options = {}) {
       bundled.push(name)
       continue
     }
-    if (systemRoot && !exists(path.join(systemRoot, 'System32', name))) {
+    if (systemRoot && !exists(path.join(systemRoot, options.systemDirectory || 'System32', name))) {
       bundled.push(name)
       continue
     }
@@ -185,5 +189,6 @@ module.exports = {
   collectImportClosure,
   isApiSetImport,
   matchesBundledConvention,
-  readPeImports
+  readPeImports,
+  readPeMachine
 }

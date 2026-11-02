@@ -1,7 +1,7 @@
 #pragma once
 
-#if !defined(_WIN32) || !defined(_WIN64)
-#error "Twilight Echo ASIO ABI is supported only on Windows x64"
+#if !defined(_WIN32) || (!defined(_M_IX86) && !defined(_M_X64) && !defined(__x86_64__))
+#error "Twilight Echo ASIO ABI requires Windows x86 (MSVC) or x64"
 #endif
 
 #include <Unknwn.h>
@@ -13,8 +13,22 @@ namespace twilight::audio::asio_abi {
 using AsioBool = int32_t;
 using AsioError = int32_t;
 using AsioSampleRate = double;
+#if defined(_WIN64)
 using AsioSamples = int64_t;
 using AsioTimeStamp = int64_t;
+#define TAE_ASIO_METHOD
+#else
+// The 32-bit driver boundary stores the high word first, not a native int64_t.
+struct AsioInt64 {
+  uint32_t high;
+  uint32_t low;
+  constexpr AsioInt64(uint64_t value = 0) : high(static_cast<uint32_t>(value >> 32)), low(static_cast<uint32_t>(value)) {}
+  constexpr operator uint64_t() const { return (uint64_t{high} << 32) | low; }
+};
+using AsioSamples = AsioInt64;
+using AsioTimeStamp = AsioInt64;
+#define TAE_ASIO_METHOD __thiscall
+#endif
 using AsioSampleType = int32_t;
 using AsioIoFormatType = int32_t;
 
@@ -76,6 +90,10 @@ inline constexpr int32_t kFutureSetIoFormat = 0x23111961;
 inline constexpr int32_t kFutureGetIoFormat = 0x23111983;
 inline constexpr int32_t kFutureCanDoIoFormat = 0x23112004;
 
+#if !defined(_WIN64)
+#pragma pack(push, 4)
+#endif
+
 struct AsioBufferInfo {
   AsioBool isInput;
   int32_t channelNum;
@@ -106,8 +124,14 @@ struct AsioIoFormat {
 
 struct AsioTimeInfo {
   double speed;
+#if defined(_WIN64)
   AsioSamples samplePosition;
   AsioTimeStamp systemTime;
+#else
+  AsioTimeStamp systemTime;
+  AsioSamples samplePosition;
+  AsioSampleRate sampleRate;
+#endif
   uint32_t flags;
   char reserved[12];
 };
@@ -125,10 +149,10 @@ struct AsioTime {
   AsioTimeCode timeCode;
 };
 
-using AsioBufferSwitch = void (*)(int32_t bufferIndex, AsioBool processNow);
-using AsioSampleRateDidChange = void (*)(AsioSampleRate sampleRate);
-using AsioMessage = int32_t (*)(int32_t selector, int32_t value, void* message, double* option);
-using AsioBufferSwitchTimeInfo = AsioTime* (*)(AsioTime* parameters, int32_t bufferIndex, AsioBool processNow);
+using AsioBufferSwitch = void (__cdecl *)(int32_t bufferIndex, AsioBool processNow);
+using AsioSampleRateDidChange = void (__cdecl *)(AsioSampleRate sampleRate);
+using AsioMessage = int32_t (__cdecl *)(int32_t selector, int32_t value, void* message, double* option);
+using AsioBufferSwitchTimeInfo = AsioTime* (__cdecl *)(AsioTime* parameters, int32_t bufferIndex, AsioBool processNow);
 
 struct AsioCallbacks {
   AsioBufferSwitch bufferSwitch;
@@ -137,37 +161,43 @@ struct AsioCallbacks {
   AsioBufferSwitchTimeInfo bufferSwitchTimeInfo;
 };
 
+#if !defined(_WIN64)
+#pragma pack(pop)
+#endif
+
 class AsioDriver : public IUnknown {
  public:
-  virtual AsioBool init(void* systemReference) = 0;
-  virtual void getDriverName(char* name) = 0;
-  virtual int32_t getDriverVersion() = 0;
-  virtual void getErrorMessage(char* message) = 0;
-  virtual AsioError start() = 0;
-  virtual AsioError stop() = 0;
-  virtual AsioError getChannels(int32_t* inputChannels, int32_t* outputChannels) = 0;
-  virtual AsioError getLatencies(int32_t* inputLatency, int32_t* outputLatency) = 0;
-  virtual AsioError getBufferSize(
+  virtual AsioBool TAE_ASIO_METHOD init(void* systemReference) = 0;
+  virtual void TAE_ASIO_METHOD getDriverName(char* name) = 0;
+  virtual int32_t TAE_ASIO_METHOD getDriverVersion() = 0;
+  virtual void TAE_ASIO_METHOD getErrorMessage(char* message) = 0;
+  virtual AsioError TAE_ASIO_METHOD start() = 0;
+  virtual AsioError TAE_ASIO_METHOD stop() = 0;
+  virtual AsioError TAE_ASIO_METHOD getChannels(int32_t* inputChannels, int32_t* outputChannels) = 0;
+  virtual AsioError TAE_ASIO_METHOD getLatencies(int32_t* inputLatency, int32_t* outputLatency) = 0;
+  virtual AsioError TAE_ASIO_METHOD getBufferSize(
       int32_t* minimum,
       int32_t* maximum,
       int32_t* preferred,
       int32_t* granularity) = 0;
-  virtual AsioError canSampleRate(AsioSampleRate sampleRate) = 0;
-  virtual AsioError getSampleRate(AsioSampleRate* sampleRate) = 0;
-  virtual AsioError setSampleRate(AsioSampleRate sampleRate) = 0;
-  virtual AsioError getClockSources(AsioClockSource* clocks, int32_t* count) = 0;
-  virtual AsioError setClockSource(int32_t reference) = 0;
-  virtual AsioError getSamplePosition(AsioSamples* samplePosition, AsioTimeStamp* systemTime) = 0;
-  virtual AsioError getChannelInfo(AsioChannelInfo* channelInfo) = 0;
-  virtual AsioError createBuffers(
+  virtual AsioError TAE_ASIO_METHOD canSampleRate(AsioSampleRate sampleRate) = 0;
+  virtual AsioError TAE_ASIO_METHOD getSampleRate(AsioSampleRate* sampleRate) = 0;
+  virtual AsioError TAE_ASIO_METHOD setSampleRate(AsioSampleRate sampleRate) = 0;
+  virtual AsioError TAE_ASIO_METHOD getClockSources(AsioClockSource* clocks, int32_t* count) = 0;
+  virtual AsioError TAE_ASIO_METHOD setClockSource(int32_t reference) = 0;
+  virtual AsioError TAE_ASIO_METHOD getSamplePosition(AsioSamples* samplePosition, AsioTimeStamp* systemTime) = 0;
+  virtual AsioError TAE_ASIO_METHOD getChannelInfo(AsioChannelInfo* channelInfo) = 0;
+  virtual AsioError TAE_ASIO_METHOD createBuffers(
       AsioBufferInfo* bufferInfos,
       int32_t count,
       int32_t bufferSize,
       AsioCallbacks* callbacks) = 0;
-  virtual AsioError disposeBuffers() = 0;
-  virtual AsioError controlPanel() = 0;
-  virtual AsioError future(int32_t selector, void* option) = 0;
-  virtual AsioError outputReady() = 0;
+  virtual AsioError TAE_ASIO_METHOD disposeBuffers() = 0;
+  virtual AsioError TAE_ASIO_METHOD controlPanel() = 0;
+  virtual AsioError TAE_ASIO_METHOD future(int32_t selector, void* option) = 0;
+  virtual AsioError TAE_ASIO_METHOD outputReady() = 0;
 };
+
+#undef TAE_ASIO_METHOD
 
 }  // namespace twilight::audio::asio_abi

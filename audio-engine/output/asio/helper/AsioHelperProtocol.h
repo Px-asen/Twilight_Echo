@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../IAsioHost.h"
+#include "AsioHelperVersion.h"
 
 #include <Windows.h>
 
@@ -16,7 +17,6 @@
 namespace twilight::audio::asio_helper {
 
 constexpr uint32_t kProtocolMagic = 0x48414554u;
-constexpr uint32_t kProtocolVersion = 5;
 constexpr uint32_t kMaxDevices = 64;
 constexpr uint32_t kMaxChannels = 32;
 constexpr uint32_t kMaxFrames = 32768;
@@ -65,6 +65,9 @@ enum class FailureReason : int32_t {
   CommandFailed = 8
 };
 
+// The IPC ABI is independent of the driver ABI. Both MSVC x86 and MinGW x64
+// use this 8-byte packing, with cache-line alignment retained for render data.
+#pragma pack(push, 8)
 struct AudioFormatRecord {
   int32_t sampleRate = 0;
   int32_t channelCount = 0;
@@ -87,6 +90,7 @@ struct DeviceRecord {
   char id[kMaxIdentityBytes]{};
   char name[kMaxIdentityBytes]{};
   char driverName[kMaxIdentityBytes]{};
+  char driverArchitecture[8]{};
   int32_t driverVersion = 0;
   int32_t outputChannels = 0;
   int32_t supportedSampleRates[kMaxRates]{};
@@ -120,9 +124,11 @@ struct DeviceRecord {
 
 struct DiagnosticsRecord {
   char processArchitecture[32]{};
+  char helperArchitecture[8]{};
   int32_t registeredDriverCount32 = 0;
   int32_t registeredDriverCount64 = 0;
   int32_t loadableDriverCount64 = 0;
+  int32_t loadableDriverCount32 = 0;
   uint8_t buildEnabled = 0;
   uint8_t environmentDisabled = 0;
   uint8_t reserved[2]{};
@@ -194,7 +200,7 @@ struct alignas(64) SharedMemory {
   uint32_t magic = kProtocolMagic;
   uint32_t version = kProtocolVersion;
   uint32_t structureBytes = 0;
-  uint32_t reserved = 0;
+  uint32_t helperArchitecture = 0;
   volatile int32_t helperState = static_cast<int32_t>(HelperState::Initializing);
   volatile int32_t helperHeartbeat = 0;
   volatile int32_t requestSequence = 0;
@@ -217,6 +223,9 @@ struct alignas(64) SharedMemory {
   ChannelFormatRecord activeChannelFormats[kMaxChannels]{};
   CallbackRecord callbacks[kCallbackRingSize]{};
   HostEventRecord hostEvents[kHostEventRingSize]{};
+  // MSVC honors the member's alignas(64) through pack(8); MinGW caps it at 8.
+  // Make that padding part of the wire contract instead of compiler behavior.
+  uint8_t bufferAlignmentPadding[56]{};
   RenderBuffer buffers[2]{};
   // DSD callbacks can be shorter than the Windows event wake-up quantum.
   // A bounded SPSC queue lets the producer render several blocks per wake-up.
@@ -229,6 +238,9 @@ struct alignas(64) SharedMemory {
   RenderQueueBlock renderQueueBlocks[kRenderQueueSlots]{};
   uint8_t renderQueueData[kBufferBytes * 2]{};
 };
+#pragma pack(pop)
+
+#include "AsioHelperLayoutChecks.inc"
 
 inline LONG readAtomic(const volatile int32_t* value) noexcept {
   return InterlockedCompareExchange(
@@ -362,6 +374,7 @@ inline DeviceRecord encodeDevice(const AsioDeviceInfo& device) {
   copyText(record.id, sizeof(record.id), device.id);
   copyText(record.name, sizeof(record.name), device.name);
   copyText(record.driverName, sizeof(record.driverName), device.driverName);
+  copyText(record.driverArchitecture, sizeof(record.driverArchitecture), device.driverArchitecture);
   record.driverVersion = static_cast<int32_t>(device.driverVersion);
   record.outputChannels = device.outputChannels;
   record.supportedSampleRateCount =
@@ -417,6 +430,7 @@ inline AsioDeviceInfo decodeDevice(const DeviceRecord& record) {
   device.id = readText(record.id);
   device.name = readText(record.name);
   device.driverName = readText(record.driverName);
+  device.driverArchitecture = readText(record.driverArchitecture);
   device.driverVersion = record.driverVersion;
   device.outputChannels = record.outputChannels;
   device.supportedSampleRates =
@@ -452,22 +466,26 @@ inline AsioDeviceInfo decodeDevice(const DeviceRecord& record) {
 inline DiagnosticsRecord encodeDiagnostics(const AsioHostDiagnostics& diagnostics) {
   DiagnosticsRecord record;
   copyText(record.processArchitecture, sizeof(record.processArchitecture), diagnostics.processArchitecture);
+  copyText(record.helperArchitecture, sizeof(record.helperArchitecture), diagnostics.helperArchitecture);
   record.buildEnabled = diagnostics.buildEnabled ? 1 : 0;
   record.environmentDisabled = diagnostics.environmentDisabled ? 1 : 0;
   record.registeredDriverCount32 = diagnostics.registeredDriverCount32;
   record.registeredDriverCount64 = diagnostics.registeredDriverCount64;
   record.loadableDriverCount64 = diagnostics.loadableDriverCount64;
+  record.loadableDriverCount32 = diagnostics.loadableDriverCount32;
   return record;
 }
 
 inline AsioHostDiagnostics decodeDiagnostics(const DiagnosticsRecord& record) {
   AsioHostDiagnostics diagnostics;
   diagnostics.processArchitecture = readText(record.processArchitecture);
+  diagnostics.helperArchitecture = readText(record.helperArchitecture);
   diagnostics.buildEnabled = record.buildEnabled != 0;
   diagnostics.environmentDisabled = record.environmentDisabled != 0;
   diagnostics.registeredDriverCount32 = record.registeredDriverCount32;
   diagnostics.registeredDriverCount64 = record.registeredDriverCount64;
   diagnostics.loadableDriverCount64 = record.loadableDriverCount64;
+  diagnostics.loadableDriverCount32 = record.loadableDriverCount32;
   return diagnostics;
 }
 

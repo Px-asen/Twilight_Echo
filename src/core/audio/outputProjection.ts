@@ -20,7 +20,7 @@ const diagnostics = [
   'driverXrunCount', 'dsdIdleFrameCount', 'dsdShortReadCount', 'dsdTransport', 'dsdSourceBitOrder', 'dsdSourcePacking', 'requestedWireFormat',
   'wireLittleEndian', 'dopRuntimeEvidence', 'quirkRegistryState', 'quirkFingerprint', 'quirkApplied', 'dsdMuteState', 'dsdMuteTransition',
   'dsdMutePreRollFrames', 'dsdMutePostRollFrames', 'dsdMuteTimeoutFrames', 'dsdMuteFallback', 'firstBufferSummary', 'processArchitecture',
-  'asioBuildEnabled', 'asioEnvironmentDisabled', 'asioRegisteredDriverCount32', 'asioRegisteredDriverCount64', 'asioLoadableDriverCount64',
+  'asioBuildEnabled', 'asioEnvironmentDisabled', 'asioRegisteredDriverCount32', 'asioRegisteredDriverCount64', 'asioLoadableDriverCount64', 'asioLoadableDriverCount32', 'asioHelperArchitecture',
   'dsdRouteOverrideActive', 'dsdRouteBackend', 'dsdRouteDevice', 'dsdRouteFallbackReason', 'lastError'
 ] as const satisfies readonly (keyof OutputDiagnostics)[]
 

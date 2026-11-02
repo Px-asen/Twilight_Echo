@@ -251,6 +251,8 @@ struct OutputInfo {
     int asioRegisteredDriverCount32 = 0;
     int asioRegisteredDriverCount64 = 0;
     int asioLoadableDriverCount64 = 0;
+    int asioLoadableDriverCount32 = 0;
+    std::string asioHelperArchitecture;
     // DSD compatibility route: whether the stream actually left over the
     // override backend/device, and which one. Empty when the main route carried it.
     bool dsdRouteOverrideActive = false;
