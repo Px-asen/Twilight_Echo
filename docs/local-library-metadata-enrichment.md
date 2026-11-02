@@ -79,6 +79,14 @@ manual edits and display-permission changes. Display consumers use the content r
 available and the original revision with older Core versions. Neither opening a page nor
 polling progress creates new work.
 
+Confirmed identities take the next bounded scheduling page ahead of unidentified inputs.
+Ready automatic detail jobs at the same priority keep FIFO across artists and albums, so newer album work cannot
+continually overtake a queued portrait. Explicit requests and fourth-turn aging retain their
+existing priority. Artist cards display completed reads during unrelated content commits;
+content revisions still invalidate their remount cache. Session, permission and collection
+changes reject old reads. Core rechecks the source's identity and personal-edit revision after
+materializing a portrait, so a late bitmap cannot restore a detached identity or hidden image.
+
 ### Existing Libraries Recover Their Original Identification Tags
 
 Upgrading does not require removing or reimporting songs. The startup scan upgrades old
@@ -177,14 +185,26 @@ The hero, biography and editors share one state owner in
 `catalog.query.artistName` is an optional exact, trimmed artist-title filter, applied before
 counting and pagination. Without it, existing collection-reference semantics are unchanged.
 It excludes collaborators without splitting literal artist names such as `AC/DC`.
-Multiple sources share automatic data only when all confirm the same identity. Homonyms,
-unconfirmed groups and composite collection names require an explicit source choice.
+Multiple exact-name sources choose a confirmed display profile: manual confirmation ranks
+above automatic proof and legacy confirmation, then agreement and source coverage break ties.
+This choice neither confirms nor merges the other sources. Composite collection names retain
+an explicit source choice.
 Personal biographies, images and hidden states stay with that source; they never become
-the shared person's automatic metadata. Portraits never fall back to album covers.
+the shared person's automatic metadata. Artist-list cards without a usable portrait show
+one of that artist's song covers instead. Personal images take precedence; an explicit image
+hide suppresses this fallback. Song covers have no portrait attribution and are not saved as
+identity artwork. The detail hero retains its person-photo presentation.
 Text and images retain attribution, usage permissions and expiry.
 Shared reads opt into `metadata.entity.detail.includeAutomaticArtwork` so a representative
 source's personal image/hide does not suppress the person's permitted automatic portrait.
 Other detail callers keep their existing override-only artwork reads.
+
+Unstructured display credits and single copied ARTIST tags split `/`, `／` and spaced
+` & ` / ` ＆ ` into individual artists. For example, `打打だいず & Ashrount` contributes
+its songs to both artist cards, details and playback queries. Explicit multi-member credits,
+provider-identified names, `AC/DC` and compact punctuation such as `R&B` remain intact.
+Existing libraries apply this rule through bounded v3 catalog credit maintenance on startup;
+original file tags, joined-name links and source-owned personal metadata remain available.
 
 When a collection needs an explicit source, select its saved profile and choose
 **将此资料用于艺术家封面**. The artist card and detail page remember that display choice

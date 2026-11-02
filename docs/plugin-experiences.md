@@ -122,8 +122,8 @@ Rhine 0.2.1 is a local preview based on Rhine-Music-Demo V0.5.0 (a889801f).
 Its bridge v2 workspace renders its own library, queue, playlists, audio/EQ,
 DSP presets/nodes, providers/cloud, downloads, plugins and settings pages.
 Radio, podcasts, network sources, listening statistics, diagnostics and basic
-theme-workshop controls use the explicit adapters in `experienceServices.ts`.
-The workshop must be enabled through its normal plugin lifecycle. Image/layer
+theme project controls use the explicit adapters in `experienceServices.ts`.
+Theme editing is host-owned and does not require a tool plugin. Image/layer
 editing and the full advanced device/native-plugin workflows are not all
 reimplemented in this workspace. `ExperienceConsole.vue` remains the bridge v1
 compatibility panel; it is not the Rhine v2 workspace.

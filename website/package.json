@@ -1,0 +1,21 @@
+{
+  "name": "twilight-echo-website",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "assets": "node scripts/prepare-assets.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter-tight": "5.3.0",
+    "gsap": "3.15.0"
+  },
+  "devDependencies": {
+    "sharp": "0.35.5",
+    "typescript": "~5.9.3",
+    "vite": "8.3.5"
+  }
+}
