@@ -1313,3 +1313,83 @@ test('saving a Core preview preserves occurrence IDs and manual results, with on
   assert.equal(result.entries[0].manualBinding!.id, 'ncm:99')
   assert.equal(result.entries[0].revision, targetEntry.revision + 1)
 })
+
+test('the read-only recent view pages every recorded source, filters in SQL and never edits saved playlists', async (t) => {
+  let revision = 7
+  const remote = {
+    ...song(900),
+    id: 'ncm:900',
+    source: 'ncm',
+    filePath: 'ncm:900',
+    title: 'Remote song'
+  }
+  let recent: Playlist = {
+    id: 'core:recent',
+    name: '最近播放',
+    createdAt: '',
+    trackIds: [...Array.from({ length: 405 }, (_, i) => song(i).id), remote.id, 'deleted'],
+    trackSnapshots: { [remote.id]: remote, deleted: { ...song(999), id: 'deleted' } }
+  }
+  const f = await fixture(t, {
+    recentHistory: { getRevision: () => revision, recentPlaylist: () => recent }
+  })
+  await f.service.initialize()
+  const before = f.service.getRevision()
+  const query = { id: 'core:recent', revision, versionsRevision: 0, preserveSources: true }
+  const first = await f.service.view({ ...query, limit: 200 })
+  const last = await f.service.view({ ...query, offset: 400, limit: 200 })
+  assert.equal(first.page.total, 406)
+  assert.equal(first.page.tracks.length, 200)
+  assert.deepEqual(
+    last.page.tracks.map((track) => track.id),
+    ['track:400', 'track:401', 'track:402', 'track:403', 'track:404', remote.id]
+  )
+  const filtered = await f.service.view({ ...query, query: { filters: { provider: 'ncm' } } })
+  assert.deepEqual(
+    filtered.page.tracks.map((track) => track.id),
+    [remote.id]
+  )
+  const local = await f.service.view({ ...query, query: { filters: { provider: 'local' } } })
+  assert.equal(local.page.total, 405)
+  const none = await f.service.view({ ...query, search: 'no match' })
+  assert.equal(none.page.total, 0)
+  f.db.syncListeningHistory({ kind: 'begin', id: 'recent-history', mode: 'replace' })
+  f.db.syncListeningHistory({
+    kind: 'append',
+    id: 'recent-history',
+    sequence: 1,
+    entries: recent.trackIds.map((id, index) => ({ id, lastPlayed: index + 1 }))
+  })
+  const history = f.db.syncListeningHistory({ kind: 'commit', id: 'recent-history', sequence: 2 })
+  const orderedQuery = {
+    sort: 'lastPlayed' as const,
+    direction: 'desc' as const,
+    historyRevision: history.revision
+  }
+  const ordered = await f.service.view({ ...query, query: orderedQuery })
+  assert.equal(ordered.page.tracks[0].id, remote.id)
+  const allQueue = f.db.createLibraryQueue(
+    { ...orderedQuery, playlistView: ordered.viewId },
+    remote.id
+  )
+  assert.equal(allQueue.total, 406)
+  assert.equal(f.db.readLibraryQueue(allQueue.id).items[0].track?.source, 'ncm')
+  assert.equal(f.db.readLibraryQueue(allQueue.id, 400).items.length, 6)
+  const remoteQueue = f.db.createLibraryQueue({
+    ...orderedQuery,
+    playlistView: ordered.viewId,
+    filters: { provider: 'ncm' }
+  })
+  assert.equal(remoteQueue.total, 1)
+  assert.equal(f.db.readLibraryQueue(remoteQueue.id).items[0].track?.id, remote.id)
+  revision++
+  recent = { ...recent, trackIds: [] }
+  await assert.rejects(f.service.view(query), /播放记录已变化/)
+  const empty = await f.service.view({ ...query, revision })
+  assert.equal(empty.page.total, 0)
+  assert.equal(f.service.getRevision(), before)
+  assert.equal(
+    f.service.catalog().items.some((item) => item.id === 'core:recent'),
+    false
+  )
+})

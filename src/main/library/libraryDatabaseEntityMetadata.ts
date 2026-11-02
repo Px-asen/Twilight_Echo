@@ -765,7 +765,7 @@ export class LibraryDatabaseEntityMetadata {
                 WHEN EXISTS(SELECT 1 FROM metadata_demands d JOIN metadata_identification_schedule s ON s.demand_id=d.batch_id WHERE d.job_id=j.id AND s.origin='new') THEN 0 ELSE 1 END,
               CASE WHEN json_extract(payload,'$.type')='enrich' THEN 0
                 WHEN json_extract(payload,'$.provider')='platform.ncm' THEN 1 ELSE 2 END,
-              CASE WHEN EXISTS(SELECT 1 FROM metadata_demands d WHERE d.job_id=j.id AND NOT EXISTS(SELECT 1 FROM metadata_identification_schedule a WHERE a.demand_id=d.batch_id)) THEN 0
+              CASE WHEN json_extract(payload,'$.type')='enrich' OR EXISTS(SELECT 1 FROM metadata_demands d WHERE d.job_id=j.id AND NOT EXISTS(SELECT 1 FROM metadata_identification_schedule a WHERE a.demand_id=d.batch_id)) THEN 0
                 ELSE CASE coalesce(json_extract(payload,'$.entityKind'),(SELECT kind FROM catalog_entities e WHERE e.id=j.entity_id)) WHEN 'album_project' THEN 0 WHEN 'release' THEN 1 ELSE 2 END END,
               next_attempt,rowid LIMIT 1`
           )

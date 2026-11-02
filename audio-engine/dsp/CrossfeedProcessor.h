@@ -2,6 +2,7 @@
 
 #include "IAudioProcessor.h"
 
+#include <array>
 #include <vector>
 
 namespace twilight::audio {
@@ -19,7 +20,8 @@ class CrossfeedProcessor final : public IAudioProcessor {
   double strength() const;
 
  private:
-  void rebuildDelay();
+  void rebuildFilters();
+  template <typename Sample> void processSamples(Sample* samples, size_t frameCount);
 
   DspConfig config_;
   AudioFormat format_;
@@ -29,6 +31,10 @@ class CrossfeedProcessor final : public IAudioProcessor {
   double lowpassLeft_ = 0.0;
   double lowpassRight_ = 0.0;
   double alpha_ = 0.0;
+  double lowA0_ = 0.0, lowB1_ = 0.0;
+  double highA0_ = 0.0, highA1_ = 0.0, highB1_ = 0.0;
+  double namedGain_ = 1.0;
+  std::array<double, 2> namedInput_{}, namedLow_{}, namedHigh_{};
   bool active_ = false;
 };
 

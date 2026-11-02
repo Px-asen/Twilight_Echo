@@ -6,8 +6,11 @@ const { join } = require('node:path')
 const vm = require('node:vm')
 const ts = require('typescript')
 
-test('workshop handlers enforce sender and enablement and preserve applied versions', async () => {
+test('built-in custom theme handlers enforce sender and preserve applied versions without a tool plugin', async () => {
   const { WorkshopRepository } = await import('../themes/workshopRepository.ts')
+  const themeContract = await import('../../shared/theme.ts')
+  const appearanceContract = await import('../../shared/appAppearance.ts')
+  const snapshotModule = await import('../themes/customThemeSnapshot.ts')
   const shared = await import('../../shared/themeWorkshop.ts')
   const templates = await import('../../shared/themeWorkshopTemplates.ts')
   const diagnostics = await import('../../shared/themeWorkshopDiagnostics.ts')
@@ -45,6 +48,7 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
       },
       ipcMain: { handle: (name, handler) => handlers.set(name, handler) }
     },
+    '../app/coreApplication.ts': { getCoreApplication: () => null },
     '../core/runtime.ts': { runtime },
     '../security/electronSecurity.ts': {
       assertTrustedIpcSender: (event) => {
@@ -53,6 +57,9 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
     },
     '../security/ipcValidation.ts': { stringifyJsonForIpcStorage: JSON.stringify },
     '../security/jsonSafety.ts': {},
+    '../themes/customThemeSnapshot.ts': snapshotModule,
+    '../../shared/theme.ts': themeContract,
+    '../../shared/appAppearance.ts': appearanceContract,
     '../themes/workshopRepository.ts': { WorkshopRepository },
     '../themes/themeArchive.ts': {},
     '../../shared/themeWorkshopTemplates.ts': templates,
@@ -71,7 +78,7 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
   try {
     exports.setupThemeWorkshopIpc()
     await assert.rejects(handlers.get('themeWorkshop:list')({ trusted: false }), /untrusted/)
-    await assert.rejects(invoke('list'), /启用/)
+    assert.equal((await invoke('list')).length, 0)
     enabled = true
     const project = await invoke('create', 'minimal')
     const list = await invoke('list')
@@ -93,12 +100,22 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
     const applied = await invoke('apply', saved.id)
     assert.equal(installed.main, undefined)
     assert.equal(installed.apiVersion, 3)
+    assert.equal(installed.engines.twilightEcho, '>=1.2.0')
     assert.equal(
       installed.contributes.themes[0].structured.variants.dark.tokens['color.primary.500'],
       '#123456'
     )
     assert.match(installedCss, /--te-primary-500:#123456/)
     assert.equal(applied.project.lastApplied.version, project.version)
+    const appearance = appearanceContract.cloneAppearance({ playerBar: { mode: 'mini' } })
+    const resumed = await invoke('createFromAppearance', {
+      selection: { kind: 'plugin', pluginId: installed.id, themeId: 'custom' },
+      appearance
+    })
+    assert.equal(resumed.id, saved.id)
+    assert.equal(resumed.base.structured.appearance.playerBar.mode, 'mini')
+    assert.equal(resumed.tokens.dark['color.primary.500'], '#123456')
+    assert.equal((await invoke('list')).length, 1)
     await assert.rejects(invoke('apply', saved.id, saved.revision), /其他窗口/)
     const invalid = await invoke('create', 'minimal')
     const editable = await invoke('save', {
@@ -113,16 +130,19 @@ test('workshop handlers enforce sender and enablement and preserve applied versi
     assert.equal(dialogs, 1)
     await assert.rejects(invoke('exportProject', editable.id, 'project', 0), /其他窗口/)
     await invoke('remove', editable.id, editable.revision)
-    await invoke('save', { ...applied.project, name: '修改后' })
+    await invoke('save', { ...resumed, name: '修改后' })
     assert.equal((await invoke('restoreApplied', saved.id)).name, project.name)
     enabled = false
-    await assert.rejects(invoke('save', project), /启用/)
+    assert.ok((await invoke('list')).length > 0)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test('source snapshots export real plugin archives and editable projects without source files', async () => {
+  const themeContract = await import('../../shared/theme.ts')
+  const appearanceContract = await import('../../shared/appAppearance.ts')
+  const snapshotModule = await import('../themes/customThemeSnapshot.ts')
   const shared = await import('../../shared/themeWorkshop.ts')
   const templates = await import('../../shared/themeWorkshopTemplates.ts')
   const diagnostics = await import('../../shared/themeWorkshopDiagnostics.ts')
@@ -229,6 +249,7 @@ test('source snapshots export real plugin archives and editable projects without
     vm.runInNewContext(source, {
       exports,
       Buffer,
+      URL,
       setTimeout,
       clearTimeout,
       require: (id) => (id.startsWith('node:') ? require(id) : (dependencies[id] ?? {}))
@@ -237,14 +258,19 @@ test('source snapshots export real plugin archives and editable projects without
   }
   const archive = load(join(__dirname, '../themes/themeArchive.ts'), {
     electron,
+    '../../shared/theme.ts': themeContract,
     'extract-zip': extract
   })
   const module = load(join(__dirname, 'themeWorkshop.ts'), {
     electron,
+    '../app/coreApplication.ts': { getCoreApplication: () => null },
     '../core/runtime.ts': { runtime },
     '../security/electronSecurity.ts': { assertTrustedIpcSender() {} },
     '../security/ipcValidation.ts': { stringifyJsonForIpcStorage: JSON.stringify },
     '../security/jsonSafety.ts': jsonSafety,
+    '../themes/customThemeSnapshot.ts': snapshotModule,
+    '../../shared/theme.ts': themeContract,
+    '../../shared/appAppearance.ts': appearanceContract,
     '../themes/workshopRepository.ts': { WorkshopRepository },
     '../themes/themeArchive.ts': archive,
     '../../shared/themeWorkshopTemplates.ts': templates,
@@ -255,6 +281,30 @@ test('source snapshots export real plugin archives and editable projects without
   const invoke = (name, ...args) => handlers.get('themeWorkshop:' + name)({}, ...args)
   try {
     module.setupThemeWorkshopIpc()
+    const profile = themeContract.getBuiltInThemePreset(themeContract.TWILIGHT_DEFAULT_THEME_ID)
+    const appearance = appearanceContract.cloneAppearance({})
+    appearance.surfaceMaterial = 'liquidGlass'
+    appearance.appearanceLayers.scopes['player-bar'].dark.body = {
+      enabled: true,
+      color: '#123456',
+      opacity: 78
+    }
+    const input = { selection: { kind: 'builtin', id: profile.id }, profile, appearance }
+    const before = await invoke('list')
+    savePath = join(directory, 'direct-snapshot')
+    assert.equal(await invoke('exportAppearance', input), savePath + '.tep')
+    const directRoot = join(directory, 'direct-extracted')
+    await extract(savePath + '.tep', { dir: directRoot })
+    const direct = JSON.parse(readFileSync(join(directRoot, 'plugin.json'), 'utf8'))
+    assert.equal(direct.engines.twilightEcho, '>=1.4.0-0')
+    const directTheme = direct.contributes.themes[0]
+    assert.equal(directTheme.structured.appearance.surfaceMaterial, 'liquidGlass')
+    assert.equal(
+      directTheme.structured.appearanceLayers.scopes['player-bar'].dark.body.color,
+      '#123456'
+    )
+    assert.deepEqual(await invoke('list'), before)
+    savePath = join(directory, 'theme.tep')
     const project = await invoke('create', '', {
       pluginId: manifest.id,
       themeId: theme.id,
@@ -269,6 +319,7 @@ test('source snapshots export real plugin archives and editable projects without
     const extracted = join(directory, 'extracted')
     await extract(savePath, { dir: extracted })
     const exported = JSON.parse(readFileSync(join(extracted, 'plugin.json'), 'utf8'))
+    assert.equal(exported.engines.twilightEcho, '>=1.2.0')
     const normalized = normalizeThemeContribution({
       pluginApiVersion: exported.apiVersion,
       pluginTypes: exported.type,

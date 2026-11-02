@@ -2,6 +2,7 @@
 
 #include "SacdIsoDemuxerUtils.h"
 #include "SacdIsoProbe.h"
+#include "SeekableInputStream.h"
 #include "ScarletbookToc.h"
 #include "../core/DsdRate.h"
 #include "../core/Utf8Path.h"
@@ -23,12 +24,6 @@ struct IsoEntry {
   uint32_t extent = 0;
   uint32_t size = 0;
   bool directory = false;
-};
-
-struct ParsedSource {
-  std::string path;
-  std::string area;
-  int track = -1;
 };
 
 std::string toLower(std::string value) {
@@ -78,36 +73,6 @@ bool readExactAt(std::istream& file, uint64_t offset, uint8_t* data, size_t size
   if (!file) return false;
   file.read(reinterpret_cast<char*>(data), static_cast<std::streamsize>(size));
   return static_cast<size_t>(file.gcount()) == size;
-}
-
-ParsedSource parseSource(const std::string& source) {
-  ParsedSource parsed;
-  parsed.path = source;
-  const size_t qm = parsed.path.find('?');
-  if (qm == std::string::npos) return parsed;
-
-  const std::string query = parsed.path.substr(qm + 1);
-  parsed.path.resize(qm);
-  size_t start = 0;
-  while (start <= query.size()) {
-    const size_t amp = query.find('&', start);
-    const std::string pair = query.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
-    const size_t eq = pair.find('=');
-    const std::string key = toLower(eq == std::string::npos ? pair : pair.substr(0, eq));
-    const std::string value = eq == std::string::npos ? "" : pair.substr(eq + 1);
-    if (key == "track") {
-      try {
-        parsed.track = std::stoi(value);
-      } catch (...) {
-        parsed.track = -1;
-      }
-    } else if (key == "area") {
-      parsed.area = toLower(value);
-    }
-    if (amp == std::string::npos) break;
-    start = amp + 1;
-  }
-  return parsed;
 }
 
 void collectDirectory(
@@ -406,12 +371,14 @@ double dstDurationSecondsForDecodedFrames(const SacdIsoTrackInfo& track, size_t 
 }  // namespace
 
 struct SacdIsoDemuxer::Impl {
-  ParsedSource source;
-  SharedInputFile file;
+  SacdSource source;
+  SeekableInputStream file;
+  std::shared_ptr<const SeekableInputFactory> inputFactory;
   std::vector<SacdIsoTrackInfo> tracks;
   int currentTrackIndex = -1;
   uint64_t readOffset = 0;
   bool eof = true;
+  std::string readError;
   AudioStreamInfo streamInfo;
   // DST decode state (only used when the selected track isDst and a DSD-
   // preserving provider is registered).
@@ -462,6 +429,7 @@ struct SacdIsoDemuxer::Impl {
           !file.read(reinterpret_cast<char*>(sbSectorBuffer.data()),
                      static_cast<std::streamsize>(kIsoSectorSize)) ||
           static_cast<size_t>(file.gcount()) != kIsoSectorSize) {
+        readError = "Unable to read complete SACD audio sector";
         return false;
       }
       if (!sacd::parseScarletbookAudioSector(sbSectorBuffer.data(), kIsoSectorSize, &sbPackets)) {
@@ -503,6 +471,7 @@ struct SacdIsoDemuxer::Impl {
     while (true) {
       if (sbPacketIndex >= sbPackets.size()) {
         if (!sbLoadNextSector(track)) {
+          if (!readError.empty()) return false;
           if (sbFrameOpen && !sbFrameBuffer.empty()) {
             frame->swap(sbFrameBuffer);
             sbFrameBuffer.clear();
@@ -558,11 +527,26 @@ void SacdIsoDemuxer::setDstDecoderProvider(SacdDstDecoderProvider* provider) {
   impl_->dstProvider = provider;
 }
 
-bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
-  close();
-  impl_->source = parseSource(path);
+void SacdIsoDemuxer::setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) {
+  impl_->inputFactory = std::move(factory);
+}
 
-  SacdIsoEntryProbe probe = probeSacdIsoEntry(impl_->source.path);
+bool SacdIsoDemuxer::cancelInput() { return impl_->file.cancelInput(); }
+
+bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
+  return open(path, {}, error);
+}
+
+bool SacdIsoDemuxer::open(const std::string& path, std::shared_ptr<SeekableInput> input, std::string* error) {
+  close();
+  impl_->source = parseSacdSource(path);
+  if (input) impl_->file.open(std::move(input));
+  else if (!impl_->file.open(impl_->source.path, impl_->inputFactory)) {
+    if (error) *error = "Failed to open ISO file for reading";
+    return false;
+  }
+
+  SacdIsoEntryProbe probe = probeSacdIsoEntry(path, impl_->file);
   if (!probe.isSacdIso()) {
     if (error) *error = "Not a SACD ISO file";
     return false;
@@ -572,11 +556,7 @@ bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
     return false;
   }
 
-  impl_->file.open(utf8Path(impl_->source.path), std::ios::binary);
-  if (!impl_->file) {
-    if (error) *error = "Failed to open ISO file for reading";
-    return false;
-  }
+  impl_->file.clear();
 
   // Real Scarletbook discs first: Master TOC at LSN 510 + area TOCs. Falls
   // back to the legacy TWTE* fixture format / filename heuristics when the
@@ -632,6 +612,7 @@ bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
   }
 
   impl_->eof = true;
+  impl_->readError.clear();
   return true;
 }
 
@@ -642,6 +623,7 @@ void SacdIsoDemuxer::close() {
   impl_->currentTrackIndex = -1;
   impl_->readOffset = 0;
   impl_->eof = true;
+  impl_->readError.clear();
   impl_->streamInfo = {};
   impl_->decodedDsdBuffer.clear();
   impl_->decodedSize = 0;
@@ -710,8 +692,9 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   impl_->currentTrackIndex = selected;
   impl_->readOffset = 0;
   impl_->eof = false;
+  impl_->readError.clear();
   impl_->streamInfo = {};
-  impl_->streamInfo.source = impl_->source.path + "?area=" + track.area + "&track=" + std::to_string(track.trackNumber);
+  impl_->streamInfo.source = sacdTrackSource(impl_->source.path, track.area, track.trackNumber);
   impl_->streamInfo.codec = track.isDst ? "dst" : "dsd";
   impl_->streamInfo.durationSeconds = track.durationSeconds;
   impl_->streamInfo.sourceLossless = true;
@@ -754,46 +737,46 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   return true;
 }
 
-size_t SacdIsoDemuxer::readBytes(uint8_t* output, size_t maxBytes) {
-  if (!output || maxBytes == 0 || impl_->currentTrackIndex < 0 || impl_->eof || !impl_->file.is_open()) return 0;
-  const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
-
-  // Real Scarletbook tracks read multiplexed audio sectors: audio packets are
-  // demultiplexed and (for DST areas) assembled into access units for the
-  // DSD-preserving provider.
-  if (impl_->sbActive) {
-    return readScarletbookBytes(track, output, maxBytes);
-  }
-
-  // DST-compressed tracks: decode frame-by-frame through the DSD-preserving
-  // provider. Each DST frame is an independent access unit that decodes to
-  // frameBytesPerChannel*channels raw DSD bytes. readBytes drains the decoded
-  // buffer before decoding the next frame.
-  if (impl_->dstActive) {
-    return readDstBytes(track, output, maxBytes);
-  }
-
-  const uint64_t remaining = track.dataSize > impl_->readOffset ? track.dataSize - impl_->readOffset : 0;
-  const size_t toRead = static_cast<size_t>(std::min<uint64_t>(remaining, maxBytes));
-  if (toRead == 0) {
-    impl_->eof = true;
+size_t SacdIsoDemuxer::readBytes(uint8_t* output, size_t maxBytes, std::string* error) {
+  if (impl_->file.failed()) impl_->readError = "SACD source read failed or was cancelled";
+  if (!impl_->readError.empty()) {
+    if (error) *error = impl_->readError;
     return 0;
   }
-  impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset + impl_->readOffset), std::ios::beg);
-  impl_->file.read(reinterpret_cast<char*>(output), static_cast<std::streamsize>(toRead));
-  const size_t read = static_cast<size_t>(std::max<std::streamsize>(0, impl_->file.gcount()));
-  impl_->readOffset += read;
-  impl_->eof = read == 0 || impl_->readOffset >= track.dataSize;
+  size_t read = 0;
+  if (output && maxBytes > 0 && impl_->currentTrackIndex >= 0 && !impl_->eof && impl_->file.is_open()) {
+    const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
+    if (impl_->sbActive) {
+      read = readScarletbookBytes(track, output, maxBytes);
+    } else if (impl_->dstActive) {
+      read = readDstBytes(track, output, maxBytes);
+    } else {
+      const uint64_t remaining = track.dataSize > impl_->readOffset ? track.dataSize - impl_->readOffset : 0;
+      const size_t toRead = static_cast<size_t>(std::min<uint64_t>(remaining, maxBytes));
+      if (toRead > 0) {
+        impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset + impl_->readOffset), std::ios::beg);
+        impl_->file.read(reinterpret_cast<char*>(output), static_cast<std::streamsize>(toRead));
+        read = static_cast<size_t>(std::max<std::streamsize>(0, impl_->file.gcount()));
+        impl_->readOffset += read;
+        if (read < toRead) impl_->readError = "SACD source ended before the declared audio data";
+      }
+      impl_->eof = read == 0 || impl_->readOffset >= track.dataSize;
+    }
+  }
+  if (impl_->file.failed()) impl_->readError = "SACD source read failed or was cancelled";
+  if (error && !impl_->readError.empty()) *error = impl_->readError;
   return read;
 }
 
 size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes) {
   if (impl_->dstProvider == nullptr) {
+    impl_->readError = "DST decoder is unavailable";
     impl_->eof = true;
     return 0;
   }
   const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
   if (frameBytesPerChannel == 0 || track.channelCount <= 0) {
+    impl_->readError = "Invalid DST frame geometry";
     impl_->eof = true;
     return 0;
   }
@@ -829,11 +812,13 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
     size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, compressedFrameWindow));
     if (!track.dstFrameSizes.empty()) {
       if (impl_->dstFrameIndex >= track.dstFrameSizes.size()) {
+        impl_->readError = "SACD DST frame table ended before the audio data";
         impl_->eof = true;
         break;
       }
       readSize = track.dstFrameSizes[static_cast<size_t>(impl_->dstFrameIndex)];
       if (readSize == 0 || readSize > remaining) {
+        impl_->readError = "Invalid SACD DST frame size";
         impl_->eof = true;
         break;
       }
@@ -848,11 +833,13 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
         !impl_->file.read(
             reinterpret_cast<char*>(impl_->compressedFrameBuffer.data()),
             static_cast<std::streamsize>(readSize))) {
+      impl_->readError = "Unable to read complete SACD DST frame";
       impl_->eof = true;
       break;
     }
     const size_t frameRead = static_cast<size_t>(std::max<std::streamsize>(0, impl_->file.gcount()));
     if (frameRead == 0) {
+      impl_->readError = "Unable to read SACD DST frame";
       impl_->eof = true;
       break;
     }
@@ -867,6 +854,7 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
     impl_->dstCompressedOffset += frameRead;
     ++impl_->dstFrameIndex;
     if (decoded == 0) {
+      impl_->readError = dstError.empty() ? "DST frame decode failed" : dstError;
       // Decode failure: stop honestly rather than emit garbage DSD.
       impl_->decodedDsdBuffer.clear();
       impl_->decodedSize = 0;
@@ -911,12 +899,14 @@ size_t SacdIsoDemuxer::readScarletbookBytes(const SacdIsoTrackInfo& track, uint8
   // DST area: assemble access units from the multiplexed packets and decode
   // them through the DSD-preserving provider.
   if (impl_->dstProvider == nullptr) {
+    impl_->readError = "DST decoder is unavailable";
     impl_->eof = true;
     return 0;
   }
   const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
   const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
   if (decodedFrameBytes == 0) {
+    impl_->readError = "Invalid DST frame geometry";
     impl_->eof = true;
     return 0;
   }
@@ -940,6 +930,7 @@ size_t SacdIsoDemuxer::readScarletbookBytes(const SacdIsoTrackInfo& track, uint8
     const size_t decoded = impl_->dstProvider->decodeFrame(
         frame.data(), frame.size(), impl_->decodedDsdBuffer.data(), decodedFrameBytes, &dstError);
     if (decoded == 0) {
+      impl_->readError = dstError.empty() ? "DST frame decode failed" : dstError;
       // Decode failure: stop honestly rather than emit garbage DSD.
       impl_->decodedDsdBuffer.clear();
       impl_->decodedSize = 0;
@@ -961,11 +952,12 @@ size_t SacdIsoDemuxer::readFrames(PcmBlock& output, std::string* error) {
     if (error) *error = "Invalid SACD ISO output format";
     return 0;
   }
-  const size_t read = readBytes(output.data, output.byteSize);
+  const size_t read = readBytes(output.data, output.byteSize, error);
   return read / audioFormatBytesPerFrame(output.format);
 }
 
 bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
+  impl_->readError.clear();
   if (impl_->currentTrackIndex < 0) {
     if (error) *error = "No SACD ISO track selected";
     return false;
@@ -1042,7 +1034,7 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
 }
 
 bool SacdIsoDemuxer::eof() const {
-  return impl_->eof;
+  return impl_->eof && impl_->readError.empty() && !impl_->file.failed();
 }
 
 const AudioStreamInfo& SacdIsoDemuxer::streamInfo() const {

@@ -4,12 +4,16 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <numeric>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using namespace twilight::audio;
@@ -57,6 +61,31 @@ std::vector<double> decimateCic3(const std::vector<double>& bits, size_t R) {
     sum += current[n] - delay[n % R];
     delay[n % R] = current[n];
     if (n % R == R - 1) output.push_back(sum / static_cast<double>(R));
+  }
+  return output;
+}
+
+// Streaming moving-average cascade followed by pick-every-R. Three stages
+// match decimateCic3 exactly; eight reject the seventh-order shaper's stronger
+// ultrasonic noise before decimation. Both shapers use that same probe filter.
+std::vector<double> decimatePackedCic(const std::vector<uint8_t>& bytes, size_t ratio, size_t stages) {
+  std::vector<double> delay(stages * ratio, 0.0), sums(stages, 0.0), output;
+  output.reserve(bytes.size() * 8 / ratio);
+  size_t position = 0;
+  for (uint8_t byte : bytes) {
+    for (int bit = 7; bit >= 0; --bit) {
+      double value = (byte >> bit) & 1 ? 1.0 : -1.0;
+      for (size_t stage = 0; stage < stages; ++stage) {
+        double& old = delay[stage * ratio + position];
+        sums[stage] += value - old;
+        old = value;
+        value = sums[stage] / static_cast<double>(ratio);
+      }
+      if (++position == ratio) {
+        output.push_back(value);
+        position = 0;
+      }
+    }
   }
   return output;
 }
@@ -172,6 +201,7 @@ void testSineRecoveryAt44100ToDsd64() {
 
   const auto bits = bitsFromMsbBytes(dsdBytes);
   const auto decimated = decimateCic3(bits, 64);
+  assert(decimated == decimatePackedCic(dsdBytes, 64, 3));
   const SineFit fit = fitSine(decimated, 44100.0, 1000.0, 512);
 
   // 0.5 FS input lands at 0.25 after the fixed -6 dB modulator headroom.
@@ -184,6 +214,40 @@ void testSineRecoveryAt44100ToDsd64() {
     failTest("PCM to DSD sine recovery SNR below 60 dB");
   }
   std::fprintf(stderr, "sine recovery: amplitude %.4f, SNR %.2f dB\n", fit.amplitude, fit.snrDb);
+}
+
+void testSeventhOrderNormalInputDoesNotResetTheLoop() {
+  for (int rate : {44100, 48000}) for (int target : {64, 128, 256, 512}) {
+    PcmToDsdModulator modulator;
+    std::string error;
+    if (!modulator.configure({rate, 1, target, DsdBitOrder::MsbFirst, 7}, &error)) failTest(error.c_str());
+    for (float dc : {-1.0f, 1.0f}) {
+      modulator.reset();
+      runMono(modulator, std::vector<float>(4096, dc), 256);
+      if (modulator.instabilityResetCount() != 0) failTest("Seventh-order modulator reset on full-scale PCM DC");
+    }
+    modulator.reset();
+    std::vector<float> noise(4096);
+    uint32_t seed = 1;
+    for (auto& sample : noise) {
+      seed = seed * 1664525U + 1013904223U;
+      sample = static_cast<float>(static_cast<double>(seed) / 2147483648.0 - 1.0);
+    }
+    runMono(modulator, noise, 256);
+    if (modulator.instabilityResetCount() != 0) failTest("Seventh-order modulator reset on bounded PCM noise");
+    modulator.reset();
+    std::vector<float> tone(8192);
+    for (size_t n = 0; n < tone.size(); ++n)
+      tone[n] = static_cast<float>(0.5 * std::sin(kTwoPi * 1000.0 * n / rate));
+    const auto encoded = runMono(modulator, tone, 257);
+    if (modulator.instabilityResetCount() != 0) failTest("Seventh-order modulator reset on normal PCM tone");
+    const auto decoded = decimatePackedCic(encoded, modulator.upsampleRatio(), 8);
+    const auto fit = fitSine(decoded, rate, 1000.0, 512);
+    if (fit.amplitude < 0.20 || fit.amplitude > 0.30 || fit.snrDb < 60.0)
+      failTest("Seventh-order PCM to DSD sine recovery failed");
+    std::fprintf(stderr, "seventh-order rate=%d target=%d amplitude=%.6f SNR=%.2f dB resets=0\n",
+        rate, target, fit.amplitude, fit.snrDb);
+  }
 }
 
 void testSilenceBitDensityIsBalanced() {
@@ -373,33 +437,72 @@ void testProcessRejectsBadArguments() {
   assert(modulator.process(input.data(), 0, channelOutputs, output.size()) == 0);
 }
 
+template <typename SampleT>
+size_t processSamples(PcmToDsdModulator& modulator, const SampleT* input, size_t frames,
+    uint8_t* const* outputs, size_t capacity) {
+  if constexpr (std::is_same_v<SampleT, double>)
+    return modulator.processDouble(input, frames, outputs, capacity);
+  else
+    return modulator.process(input, frames, outputs, capacity);
+}
+
+template <typename SampleT>
 void testIndependentChannelsAndGeneratedPacking() {
-  for (int rate : {44100, 48000, 192000}) for (int target : {64, 128, 256})
-  for (int channels : {1, 2, 3, 8}) for (auto order : {DsdBitOrder::MsbFirst, DsdBitOrder::LsbFirst}) {
-    PcmToDsdModulator multi;
-    PcmToDsdModulatorConfig config{rate, channels, target, order};
+  size_t configurations = 0;
+  // x8/x16/x32/x64 interpolation and residual holds through x8, including
+  // paired channels followed by an odd scalar tail. Mono is the scalar oracle.
+  for (int rate : {44100, 48000, 192000, 352800}) for (int target : {64, 128, 256, 512})
+  for (int channels : {1, 2, 3, 8}) for (auto order : {DsdBitOrder::MsbFirst, DsdBitOrder::LsbFirst})
+  for (int loopOrder : {5, 7}) {
+    PcmToDsdModulator multi, contiguous;
+    PcmToDsdModulatorConfig config{rate, channels, target, order, loopOrder};
     std::string error;
     if (!multi.configure(config, &error)) failTest(error.c_str());
+    if (!contiguous.configure(config, &error)) failTest(error.c_str());
     std::vector<PcmToDsdModulator> mono(channels);
     config.channelCount = 1;
     for (auto& modulator : mono) if (!modulator.configure(config, &error)) failTest(error.c_str());
+
+    constexpr size_t totalFrames = 17 + 3 + 64 + 1;
+    std::vector<SampleT> input(totalFrames * channels);
+    for (size_t f = 0; f < totalFrames; ++f) for (int c = 0; c < channels; ++c) {
+      input[f * channels + c] = static_cast<SampleT>(.4 * std::sin(f * .17 + c));
+      // Only one channel receives non-finite/clipped inputs; its neighbors
+      // must still match their own mono stream.
+      if (c == 1) switch (f) {
+        case 17: input[f * channels + c] = std::numeric_limits<SampleT>::quiet_NaN(); break;
+        case 18: input[f * channels + c] = std::numeric_limits<SampleT>::infinity(); break;
+        case 19: input[f * channels + c] = -std::numeric_limits<SampleT>::infinity(); break;
+        case 20: input[f * channels + c] = std::numeric_limits<SampleT>::max(); break;
+        case 21: input[f * channels + c] = std::numeric_limits<SampleT>::lowest(); break;
+      }
+    }
+    const size_t contiguousBytes = multi.outputBytesPerChannel(totalFrames);
+    std::vector<uint8_t> whole(contiguousBytes * channels);
+    std::vector<uint8_t*> wholePlanes(channels);
+    for (int c = 0; c < channels; ++c) wholePlanes[c] = whole.data() + contiguousBytes * c;
+    assert(processSamples(contiguous, input.data(), totalFrames, wholePlanes.data(), contiguousBytes) == contiguousBytes);
+
     const size_t stride = multi.outputBytesPerChannel(256);
     std::vector<uint8_t> padded(stride * channels, 0xee);
     std::vector<uint8_t*> planes(channels);
     for (int c = 0; c < channels; ++c) planes[c] = padded.data() + stride * c;
     size_t position = 0;
     for (size_t frames : {size_t(17), size_t(3), size_t(64), size_t(1)}) {
-      std::vector<float> input(frames * channels);
-      for (size_t f = 0; f < frames; ++f) for (int c = 0; c < channels; ++c)
-        input[f * channels + c] = static_cast<float>(.4 * std::sin((position + f) * .17 + c));
-      const size_t written = multi.process(input.data(), frames, planes.data(), stride);
+      std::fill(padded.begin(), padded.end(), 0xee);
+      const SampleT* block = input.data() + position * channels;
+      const size_t written = processSamples(multi, block, frames, planes.data(), stride);
+      assert(written == multi.outputBytesPerChannel(frames));
       for (int c = 0; c < channels; ++c) {
-        std::vector<float> single(frames);
-        for (size_t f = 0; f < frames; ++f) single[f] = input[f * channels + c];
+        std::vector<SampleT> single(frames);
+        for (size_t f = 0; f < frames; ++f) single[f] = block[f * channels + c];
         std::vector<uint8_t> expected(written);
         uint8_t* pointer = expected.data();
-        assert(mono[c].process(single.data(), frames, &pointer, written) == written);
+        assert(processSamples(mono[c], single.data(), frames, &pointer, written) == written);
         if (!std::equal(expected.begin(), expected.end(), planes[c])) failTest("Paired quantizer changed channel bits");
+        if (!std::equal(expected.begin(), expected.end(), wholePlanes[c] + multi.outputBytesPerChannel(position)))
+          failTest("Fragmented modulation changed channel bits");
+        assert(std::all_of(planes[c] + written, planes[c] + stride, [](uint8_t byte) { return byte == 0xee; }));
       }
       for (auto format : {AudioSampleFormat::DsdInt8Msb1, AudioSampleFormat::DsdInt8Lsb1,
                           AudioSampleFormat::DsdInt8Ner8, AudioSampleFormat::Int24Interleaved,
@@ -426,23 +529,136 @@ void testIndependentChannelsAndGeneratedPacking() {
     }
     // The SIMD and scalar guards both recover independently for odd layouts.
     multi.injectInstabilityForTest();
-    std::vector<float> silence(channels);
-    multi.process(silence.data(), 1, planes.data(), stride);
+    std::vector<SampleT> silence(channels);
+    const size_t written = processSamples(multi, silence.data(), 1, planes.data(), stride);
+    uint64_t expectedResets = 0;
+    for (int c = 0; c < channels; ++c) {
+      mono[c].injectInstabilityForTest();
+      std::vector<uint8_t> expected(written);
+      uint8_t* pointer = expected.data();
+      assert(processSamples(mono[c], silence.data(), 1, &pointer, written) == written);
+      if (!std::equal(expected.begin(), expected.end(), planes[c])) failTest("Paired guard changed recovery bits");
+      expectedResets += mono[c].instabilityResetCount();
+    }
     assert(multi.instabilityResetCount() >= static_cast<uint64_t>(channels));
+    assert(multi.instabilityResetCount() == expectedResets);
     multi.reset();
     assert(multi.instabilityResetCount() == 0);
+    ++configurations;
+  }
+  std::fprintf(stderr, "independent %s channels/packing: %zu configurations passed\n",
+      std::is_same_v<SampleT, double> ? "float64" : "float32", configurations);
+}
+
+// Opt-in compute probe, not a timing gate. The same executable cross-compiles
+// for Android; no output device, JNI, decoder or USB transfer is opened here.
+void probePcmToDsd() {
+  using Clock = std::chrono::steady_clock;
+#if defined(__aarch64__)
+  constexpr const char* architecture = "arm64";
+#elif defined(__arm__)
+  constexpr const char* architecture = "arm32";
+#elif defined(__x86_64__) || defined(_M_X64)
+  constexpr const char* architecture = "x86_64";
+#else
+  constexpr const char* architecture = "other";
+#endif
+  constexpr size_t frames = 256;
+  constexpr int channels = 2;
+  for (int rate : {44100, 48000}) for (int target : {64, 128, 256, 512}) for (int order : {5, 7}) {
+    PcmToDsdModulator modulator;
+    PcmToDsdModulatorConfig config{rate, channels, target, DsdBitOrder::MsbFirst, order};
+    std::string error;
+    if (!modulator.configure(config, &error)) failTest(error.c_str());
+    const size_t bytes = modulator.outputBytesPerChannel(frames);
+    std::vector<uint8_t> planar(bytes * channels), packed(bytes * channels * 2);
+    uint8_t* planes[channels] = {planar.data(), planar.data() + bytes};
+    std::vector<float> input(frames * channels);
+    for (size_t n = 0; n < frames; ++n) {
+      input[n * channels] = static_cast<float>(0.5 * std::sin(kTwoPi * 1000.0 * n / rate));
+      input[n * channels + 1] = static_cast<float>(0.3 * std::sin(kTwoPi * 3000.0 * n / rate));
+    }
+    for (bool dop : {false, true}) {
+      modulator.reset();
+      const auto format = dop ? AudioSampleFormat::Int24In32Interleaved : AudioSampleFormat::DsdInt8Msb1;
+      const size_t outputFrames = dop ? bytes / 2 : bytes;
+      const size_t outputBytes = outputFrames * channels * (dop ? 4 : 1);
+      const size_t blocks = (static_cast<size_t>(rate) + frames * 4 - 1) / (frames * 4);
+      std::vector<double> milliseconds;
+      milliseconds.reserve(blocks);
+      size_t marker = 0;
+      unsigned outputSum = 0;
+      const auto renderBlock = [&] {
+        if (modulator.process(input.data(), frames, planes, bytes) != bytes)
+          failTest("Probe modulation wrote an unexpected byte count");
+        if (render::packGeneratedDsd(planes, bytes, channels, DsdBitOrder::MsbFirst, format,
+            packed.data(), outputBytes, outputFrames, marker) != outputFrames)
+          failTest("Probe packing wrote an unexpected frame count");
+        marker += outputFrames;
+      };
+      for (int warm = 0; warm < 4; ++warm) renderBlock();
+      modulator.reset();
+      marker = 0;
+      for (size_t block = 0; block < blocks; ++block) {
+        const auto start = Clock::now();
+        renderBlock();
+        const auto end = Clock::now();
+        milliseconds.push_back(std::chrono::duration<double, std::milli>(end - start).count());
+        outputSum += packed[(block * 131) % outputBytes];
+      }
+      const double totalMs = std::accumulate(milliseconds.begin(), milliseconds.end(), 0.0);
+      std::sort(milliseconds.begin(), milliseconds.end());
+      const double deadlineMs = frames * 1000.0 / rate;
+      const size_t p95 = (blocks * 95 + 99) / 100 - 1;
+      std::printf("{\"kind\":\"compute\",\"architecture\":\"%s\",\"inputSampleRate\":%d,"
+          "\"channels\":%d,\"targetDsdRate\":%d,\"dsdBitClockHz\":%d,\"order\":%d,"
+          "\"transport\":\"%s\",\"blockFrames\":%zu,\"blocks\":%zu,\"audioSeconds\":%.9g,"
+          "\"meanBlockMs\":%.9g,\"p95BlockMs\":%.9g,\"maxBlockMs\":%.9g,"
+          "\"deadlineMs\":%.9g,\"computeRealTimeRatio\":%.9g,\"instabilityResets\":%llu,\"outputSum\":%u}\n",
+          architecture, rate, channels, target, modulator.dsdSampleRate(), order, dop ? "dop24in32" : "native-byte",
+          frames, blocks, static_cast<double>(blocks * frames) / rate, totalMs / blocks,
+          milliseconds[p95], milliseconds.back(), deadlineMs, totalMs / (blocks * deadlineMs),
+          static_cast<unsigned long long>(modulator.instabilityResetCount()), outputSum);
+    }
+    config.channelCount = 1;
+    if (!modulator.configure(config, &error)) failTest(error.c_str());
+    constexpr size_t qualityFrames = 8192;
+    for (double frequency : {1000.0, 10000.0, 20000.0}) {
+      std::vector<float> tone(qualityFrames);
+      for (size_t n = 0; n < tone.size(); ++n)
+        tone[n] = static_cast<float>(0.5 * std::sin(kTwoPi * frequency * n / rate));
+      modulator.reset();
+      const auto encoded = runMono(modulator, tone, frames);
+      const auto decoded = decimatePackedCic(encoded, modulator.upsampleRatio(), 8);
+      const auto fit = fitSine(decoded, rate, frequency, 512);
+      const double ratio = modulator.upsampleRatio();
+      const double angle = kTwoPi * 0.5 * frequency / rate;
+      const double reference = 0.25 * std::pow(std::sin(angle) / (ratio * std::sin(angle / ratio)), 8);
+      std::printf("{\"kind\":\"cic8-recovery\",\"architecture\":\"%s\",\"inputSampleRate\":%d,"
+          "\"targetDsdRate\":%d,\"order\":%d,\"toneHz\":%.0f,\"inputPeak\":0.5,\"headroomScale\":0.5,"
+          "\"frames\":%zu,\"skipEachEnd\":512,\"amplitude\":%.9g,\"cicCorrectedGainDb\":%.9g,"
+          "\"residualSnrDb\":%.9g,\"instabilityResets\":%llu}\n", architecture, rate, target, order,
+          frequency, qualityFrames, fit.amplitude, 20.0 * std::log10(fit.amplitude / reference), fit.snrDb,
+          static_cast<unsigned long long>(modulator.instabilityResetCount()));
+    }
   }
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--probe") == 0) {
+    probePcmToDsd();
+    return 0;
+  }
   testRateFamilyMapping();
   testProcessRejectsBadArguments();
-  testIndependentChannelsAndGeneratedPacking();
+  testIndependentChannelsAndGeneratedPacking<float>();
+  testIndependentChannelsAndGeneratedPacking<double>();
   testSilenceBitDensityIsBalanced();
   testBitOrderMatchesEngineConvention();
   testInstabilityGuardRecovers();
   testSineRecoveryAt44100ToDsd64();
+  testSeventhOrderNormalInputDoesNotResetTheLoop();
   return 0;
 }

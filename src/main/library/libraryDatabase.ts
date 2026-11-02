@@ -198,6 +198,8 @@ export function getLibraryDatabasePath(libraryFilePath: string): string {
   return join(dirname(libraryFilePath), 'music-library.sqlite')
 }
 
+const TRANSIENT_INDEX_IDLE_TTL_MS = 90_000
+
 /** Synchronous SQL is confined to the database utility process. */
 export class LibraryDatabase {
   readonly sql: DatabaseSync
@@ -205,6 +207,7 @@ export class LibraryDatabase {
   private readonly totals = new Map<string, { total: number; totalDuration: number }>()
   private albumAliases: Map<string, string[]> | null = null
   private symSpellIndex: SymSpellIndex | null = null
+  private transientIndexIdleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly collections = new LibraryDatabaseCollections()
   private readonly statements = new Map<string, ReturnType<DatabaseSync['prepare']>>()
   readonly filePath: string
@@ -355,19 +358,21 @@ export class LibraryDatabase {
             'Unrecognized or incomplete music library database; restore a verified backup before opening it'
           )
       }
-      let health = this.sql.prepare('PRAGMA quick_check').get() as Row
-      if (health.quick_check !== 'ok') {
-        try {
-          this.sql.exec('REINDEX')
-        } catch {
-          // Reindex is a best-effort repair for secondary/FTS index corruption.
+      if (existing && (hadUncheckpointedWal || version < 30)) {
+        let health = this.sql.prepare('PRAGMA quick_check').get() as Row
+        if (health.quick_check !== 'ok') {
+          try {
+            this.sql.exec('REINDEX')
+          } catch {
+            // Reindex is a best-effort repair for secondary/FTS index corruption.
+          }
+          health = this.sql.prepare('PRAGMA quick_check').get() as Row
         }
-        health = this.sql.prepare('PRAGMA quick_check').get() as Row
+        if (health.quick_check !== 'ok')
+          throw new Error(`Music library database integrity check failed: ${health.quick_check}`)
       }
-      if (health.quick_check !== 'ok')
-        throw new Error(`Music library database integrity check failed: ${health.quick_check}`)
       this.sql.exec(
-        'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-32768;'
+        'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-16384; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-8192;'
       )
       this.sql.function(
         'library_has_genre',
@@ -635,8 +640,9 @@ export class LibraryDatabase {
           WHERE json_extract(payload,'$.usage.expiresAt') IS NOT NULL;`)
       // Re-project saved file credits in bounded catalog maintenance, not a re-scan
       // or a synchronous whole-library payload migration during database open.
-      this.sql.exec(`INSERT OR IGNORE INTO catalog_state VALUES('file_artist_cursor_v1','0');
-        INSERT OR IGNORE INTO catalog_state SELECT 'file_artist_horizon_v1',CAST(coalesce(max(seq),0) AS TEXT) FROM tracks;`)
+      // v3 also expands spaced ampersands in display credits and single ARTIST tags.
+      this.sql.exec(`INSERT OR IGNORE INTO catalog_state VALUES('file_artist_cursor_v3','0');
+        INSERT OR IGNORE INTO catalog_state SELECT 'file_artist_horizon_v3',CAST(coalesce(max(seq),0) AS TEXT) FROM tracks;`)
       // A previous owner's unacknowledged construction is never playable.
       // Recovery only marks it; bounded background maintenance releases rows.
       this.queues.recoverBuilds()
@@ -647,7 +653,29 @@ export class LibraryDatabase {
   }
 
   close(): void {
+    this.clearTransientIndexes()
     if (this.sql.isOpen) this.sql.close()
+  }
+
+  private scheduleTransientIndexRelease(): void {
+    if (this.transientIndexIdleTimer) clearTimeout(this.transientIndexIdleTimer)
+    this.transientIndexIdleTimer = setTimeout(() => {
+      this.transientIndexIdleTimer = null
+      this.symSpellIndex = null
+      this.albumAliases = null
+      this.collections.clearTransientCaches()
+    }, TRANSIENT_INDEX_IDLE_TTL_MS)
+    this.transientIndexIdleTimer.unref?.()
+  }
+
+  private clearTransientIndexes(): void {
+    if (this.transientIndexIdleTimer) {
+      clearTimeout(this.transientIndexIdleTimer)
+      this.transientIndexIdleTimer = null
+    }
+    this.symSpellIndex = null
+    this.albumAliases = null
+    this.collections.clearTransientCaches()
   }
   identificationSchedule(...args: Parameters<import('../../shared/musicIdentificationSchedule.ts').IdentificationScheduleDatabaseApi['identificationSchedule']>) {
     return new LibraryDatabaseIdentificationSchedule(this.sql, this.entityMetadata, action => this.transaction(action)).advance(...args)
@@ -1450,6 +1478,7 @@ export class LibraryDatabase {
   }
   /** Only compact grouping keys are retained; album members remain in SQL. */
   private getAlbumAliases(): Map<string, string[]> {
+    this.scheduleTransientIndexRelease()
     if (this.albumAliases) return this.albumAliases
     const rows = this.statement(
       `SELECT album_key,album,min(seq) AS first_seq,
@@ -1480,6 +1509,7 @@ export class LibraryDatabase {
     return aliases
   }
   private getSymSpellIndex(): SymSpellIndex {
+    this.scheduleTransientIndexRelease()
     if (this.symSpellIndex) return this.symSpellIndex
     const symSpell = new SymSpellIndex()
     for (const row of this.statement('SELECT title,artist,album FROM tracks ORDER BY seq').iterate()) {
@@ -2046,7 +2076,10 @@ export class LibraryDatabase {
       query.historyRevision !== undefined &&
       query.historyRevision !== this.history.revision
     )
-      throw new Error('Listening history changed; refresh its order before retrying')
+      throw Object.assign(
+        new Error('Listening history changed; refresh its order before retrying'),
+        { code: 'STALE_HISTORY_REVISION' }
+      )
   }
   readLibraryQueue(
     id: string,

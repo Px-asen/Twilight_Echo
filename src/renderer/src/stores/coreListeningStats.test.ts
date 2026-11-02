@@ -93,3 +93,72 @@ test('epoch changes cancel old reads without cancelling Core work or publishing 
   projection.dispose()
   assert.equal(requests[1].signal.aborted, true)
 })
+
+test('history refresh failures invalidate the old ready fence and explicit retry restores it', async () => {
+  let fail = false, revision = 1
+  const projection = createCoreListeningStats({
+    state: shallowRef<CoreSnapshot | null>(stateAt()),
+    overview: async () => {
+      if (fail) throw new Error('history unavailable')
+      const value = summary()
+      value.history.revision = revision
+      return value
+    },
+    page: async () => ({ revision: 3, total: 0, offset: 0, items: [] }),
+    clear: async () => { throw new Error('unexpected write') }
+  })
+  await projection.ensure()
+  assert.equal(projection.history.value.ready, true)
+  fail = true
+  const refreshing = projection.refresh()
+  assert.equal(projection.history.value.pending, true)
+  await assert.rejects(refreshing, /history unavailable/)
+  assert.equal(projection.history.value.pending, false)
+  assert.equal(projection.history.value.ready, false)
+  assert.equal(projection.history.value.error, 'history unavailable')
+  assert.equal(projection.overview.value?.history.revision, 1, 'old presentation remains available')
+  fail = false
+  revision = 2
+  await projection.refresh()
+  assert.equal(projection.history.value.ready, true)
+  assert.equal(projection.history.value.revision, 2)
+  assert.equal(projection.history.value.error, '')
+  projection.dispose()
+})
+
+test('stale history reads refresh once per fence without replaying writes or looping on an unchanged revision', async () => {
+  let reads = 0, revision = 1
+  const state = shallowRef<CoreSnapshot | null>(stateAt())
+  const projection = createCoreListeningStats({
+    state,
+    overview: async () => {
+      reads++
+      const value = summary()
+      value.history.revision = revision
+      return value
+    },
+    page: async () => ({ revision: 3, total: 0, offset: 0, items: [] }),
+    clear: async () => { throw new Error('unexpected write') }
+  })
+  const stale = Object.assign(new Error('history changed'), { code: 'STALE_HISTORY_REVISION' })
+  await projection.ensure()
+  assert.equal(projection.recoverHistory(1, new Error('database unavailable')), false)
+  assert.equal(reads, 1)
+  revision = 2
+  assert.equal(projection.recoverHistory(1, stale), true)
+  assert.equal(projection.recoverHistory(1, stale), false, 'concurrent reads share recovery')
+  await projection.ensure()
+  assert.equal(projection.history.value.revision, 2)
+  assert.equal(reads, 2)
+  assert.equal(projection.recoverHistory(1, stale), false, 'an old failure cannot restart recovery')
+  assert.equal(projection.recoverHistory(2, stale), true)
+  await projection.ensure()
+  assert.equal(projection.recoverHistory(2, stale), false, 'an unchanged fence must stop retrying')
+  assert.equal(projection.recoverHistory(1, stale), false, 'a late older failure cannot restart recovery')
+  assert.equal(reads, 3)
+  state.value = stateAt('second')
+  await projection.ensure()
+  assert.equal(projection.recoverHistory(2, stale), true, 'a new Core epoch has its own fence')
+  await projection.ensure()
+  projection.dispose()
+})

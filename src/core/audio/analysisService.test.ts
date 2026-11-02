@@ -9,6 +9,7 @@ import { LibraryDatabase } from '../../main/library/libraryDatabase.ts'
 import { libraryTrack } from '../playback/libraryTrack.ts'
 import type { LoudnessAnalysisManager } from './loudnessAnalysisManager.ts'
 import type { BpmAnalysisResult } from '../../shared/audioEngineTypes.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../../shared/libraryLoudness.ts'
 
 const result: BpmAnalysisResult = {
   bpm: 123,
@@ -82,7 +83,7 @@ async function fixture(
         available: true,
         source: 'analyzed',
         analyzedAt: result.analyzedAt,
-        algorithmVersion: 2
+        algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION
       })
     },
     engine: {

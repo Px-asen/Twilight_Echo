@@ -11,18 +11,25 @@ import {
 
 /** The OS may assign a valid loopback port (such as 6000) blocked by Fetch. */
 export function createNcmLoopbackTransport(
-  dispatcher: Dispatcher = new Agent({
-    connections: 8,
-    keepAliveTimeout: 60_000,
-    keepAliveMaxTimeout: 120_000
-  })
+  dispatcher?: Dispatcher
 ): Required<Pick<NcmApiServiceOptions, 'fetch' | 'closeTransport'>> {
+  let activeDispatcher: Dispatcher | null = dispatcher ?? null
+  const getDispatcher = (): Dispatcher => {
+    if (!activeDispatcher) {
+      activeDispatcher = new Agent({
+        connections: 8,
+        keepAliveTimeout: 30_000,
+        keepAliveMaxTimeout: 60_000
+      })
+    }
+    return activeDispatcher
+  }
   return {
     fetch: async (url, init) => {
       const response = await request(url, {
         signal: init.signal,
         headers: init.headers,
-        dispatcher,
+        dispatcher: getDispatcher(),
         maxRedirections: 20
       })
       const headers = new Headers()
@@ -33,7 +40,11 @@ export function createNcmLoopbackTransport(
       }
       return { status: response.statusCode, headers, text: () => response.body.text() }
     },
-    closeTransport: () => dispatcher.close()
+    closeTransport: async () => {
+      const current = activeDispatcher
+      activeDispatcher = null
+      if (current) await current.close()
+    }
   }
 }
 

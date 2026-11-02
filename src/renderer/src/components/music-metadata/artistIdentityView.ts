@@ -6,6 +6,7 @@ import type {
 } from '../../../../shared/entityMetadata.ts'
 import type { MusicIdentityDetail } from '../../../../shared/musicIdentification.ts'
 import type { ArtistProfileChoice } from './artistProfileChoice.ts'
+import { selectArtistProfile } from './artistProfileSelection.ts'
 
 /** Retain recently resolved card metadata across virtual-grid unmounts. */
 export function createArtistIdentityCache(now = Date.now) {
@@ -70,6 +71,8 @@ export function createArtistIdentityView(api: {
   choice?(name: string): ArtistProfileChoice | null
   cache?: ReturnType<typeof createArtistIdentityCache>
   cacheScope?(): string
+  /** Authorization/membership scope; defaults to the cache scope for existing callers. */
+  readScope?(): string
 }) {
   const detail = shallowRef<EntityMetadataDetail | null>(null)
   let context: { name: string; language: EntityMetadataLanguage } | null = null
@@ -78,6 +81,11 @@ export function createArtistIdentityView(api: {
     disposed = false
   const cacheKey = (value: NonNullable<typeof context>) =>
     JSON.stringify([api.cacheScope?.(), value.name, value.language, api.choice?.(value.name)])
+  const readKey = (value: NonNullable<typeof context>) =>
+    JSON.stringify([
+      api.readScope ? api.readScope() : api.cacheScope?.(),
+      value.name, value.language, api.choice?.(value.name)
+    ])
   async function refresh(): Promise<void> {
     if (!context || disposed) return
     if (request) {
@@ -86,108 +94,51 @@ export function createArtistIdentityView(api: {
     }
     const current = new AbortController(),
       expected = context,
-      key = cacheKey(expected)
+      key = cacheKey(expected),
+      scope = readKey(expected)
     request = current
     const publish = (result: EntityMetadataDetail | null) => {
-      if (disposed || request !== current || key !== cacheKey(expected)) return
+      if (disposed || request !== current || scope !== readKey(expected)) return
       detail.value = result
-      api.cache?.set(key, result)
+      // An unrelated content commit must not starve the initial portrait, but
+      // only a read completed within its cache revision can be reused on remount.
+      if (key === cacheKey(expected)) api.cache?.set(key, result)
     }
     try {
-      let page = await api.catalog(
-        {
-          kind: 'artist',
-          source: 'local',
-          artistName: expected.name,
-          limit: 200,
-          context: { type: 'collection', collection: 'artists', id: expected.name }
-        },
-        current.signal
-      )
-      const total = page.total,
-        firstId = page.items[0]?.id,
-        revision = page.revision
-      const choice = api.choice?.(expected.name)
-      if (choice) {
-        let chosen = false,
-          offset = 0
-        while (page.items.length) {
-          if (page.items.some((item) => item.id === choice.entityId)) {
-            chosen = true
-            break
-          }
-          offset += page.items.length
-          if (offset >= total) break
-          page = await api.catalog(
-            {
-              kind: 'artist',
-              source: 'local',
-              artistName: expected.name,
-              limit: 200,
-              offset,
-              revision,
-              context: { type: 'collection', collection: 'artists', id: expected.name }
-            },
-            current.signal
-          )
-          if (page.total !== total || page.revision !== revision) break
-        }
-        const selected = chosen
-          ? await api.detail(choice.entityId, expected.language, current.signal, false)
-          : null
-        const result =
-          selected?.targetId === choice.targetId &&
-          (choice.targetId === null || selected?.link?.state === 'confirmed')
-            ? selected
-            : null
-        publish(result)
-        return
+      const query: CatalogQuery = {
+        kind: 'artist',
+        source: 'local',
+        artistName: expected.name,
+        limit: 200,
+        context: { type: 'collection', collection: 'artists', id: expected.name }
       }
-      let targetId: string | null = null,
-        count = 0,
-        consistent = total > 0
-      // Local performers are source-scoped. Multiple songs can share a card
-      // only after every member confirms the same target; never pick a homonym.
-      if (total > 1 && api.identity) {
-        while (consistent && page.items.length) {
-          for (const entity of page.items) {
-            const identity = await api.identity(entity.id, current.signal)
-            if (
-              identity.link?.state !== 'confirmed' ||
-              !identity.link.targetId ||
-              (targetId && identity.link.targetId !== targetId)
-            ) {
-              consistent = false
-              break
-            }
-            targetId = identity.link.targetId
-            count++
-          }
-          if (!consistent || count >= total) break
-          page = await api.catalog(
-            {
-              kind: 'artist',
-              source: 'local',
-              artistName: expected.name,
-              limit: 200,
-              offset: count,
-              revision,
-              context: { type: 'collection', collection: 'artists', id: expected.name }
-            },
-            current.signal
-          )
-          if (page.total !== total || page.revision !== revision) consistent = false
-        }
-        consistent &&= count === total
-      } else consistent &&= total === 1 && page.items.length === 1
-      let result =
-        consistent && firstId
-          ? await api.detail(firstId, expected.language, current.signal, total > 1)
-          : null
-      if (result && targetId && result.targetId !== targetId) result = null
+      const page = await api.catalog(query, current.signal)
+      current.signal.throwIfAborted()
+      const choice = api.choice?.(expected.name)
+      const { selected, shared, targetId } = await selectArtistProfile(
+        api,
+        query,
+        page,
+        current.signal,
+        choice?.entityId
+      )
+      current.signal.throwIfAborted()
+      let result = selected
+        ? await api.detail(selected.id, expected.language, current.signal, shared)
+        : null
+      if (
+        (choice &&
+          (result?.targetId !== choice.targetId ||
+            (choice.targetId && result?.link?.state !== 'confirmed'))) ||
+        (shared &&
+          (targetId
+            ? result?.link?.state !== 'confirmed' || result.targetId !== targetId
+            : result?.link?.state === 'confirmed'))
+      )
+        result = null
       // A personal choice belongs to its selected source entity, not all other
       // same-target sources in this collection.
-      if (result && total > 1) result = { ...result, artworkOverride: null, manualArtwork: null }
+      if (result && shared) result = { ...result, artworkOverride: null, manualArtwork: null }
       publish(result)
     } catch {
       if (!disposed && request === current) detail.value = null
@@ -230,8 +181,9 @@ export function createArtistIdentityView(api: {
 /** Never replace file tags or collection keys with a normalized display name. */
 export function artistIdentityPresentation(
   detail: EntityMetadataDetail | null,
-  fallback: { name: string; cover?: string | null },
-  now: number
+  fallback: { name: string; cover?: string | null; coverSource?: string | null },
+  now: number,
+  failedCovers?: ReadonlySet<string>
 ) {
   const valid = detail?.link?.state === 'confirmed'
   const name = valid
@@ -252,17 +204,25 @@ export function artistIdentityPresentation(
           a.usage.display &&
           a.usage.cache &&
           a.usage.crossSource &&
+          !failedCovers?.has(a.handle) &&
           (a.usage.expiresAt === undefined || a.usage.expiresAt > now)
       )
     : null
+  const fallbackKey = fallback.cover || fallback.coverSource
+  const useTrackCover =
+    !detail?.artworkOverride && !image && !!fallbackKey &&
+    !failedCovers?.has(fallbackKey)
+  const manual = detail?.manualArtwork?.dataUrl
+  const personalCover = manual && !failedCovers?.has(manual) ? manual : null
   const cover = detail?.artworkOverride
     ? detail.artworkOverride.mode === 'clear'
       ? null
-      : (detail.manualArtwork?.dataUrl ?? null)
-    : (image?.handle ?? null)
+      : personalCover
+    : image?.handle ?? (useTrackCover ? fallback.cover ?? null : null)
   return {
     name: name || fallback.name,
     cover,
+    coverSource: useTrackCover ? fallback.coverSource ?? null : null,
     attribution: !detail?.artworkOverride && image ? image.attribution : null
   }
 }

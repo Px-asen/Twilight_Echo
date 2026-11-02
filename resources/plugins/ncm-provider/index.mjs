@@ -91,6 +91,7 @@ export async function activate(context) {
     searchPlaylists,
     searchArtists,
     fetchPlaylistTracks,
+    fetchPlaylistTracksPage,
     readPlaylistImportPage,
     checkLogin,
     getProfile,
@@ -1369,26 +1370,58 @@ async function fetchPlaylistTracks(playlistId, force = false) {
   return tracks
 }
 
-// Import has a stronger completeness contract than the legacy playable list.
-// Read the authoritative occurrence IDs, never dedupe them or swallow failures.
-async function readPlaylistImportPage(playlistId, offset = 0, limit = 100) {
+// Both readers retain the returned occurrence IDs, including unavailable songs and repeats.
+// Browsing can show a restricted ID list; importing must still require a complete one.
+async function readPlaylistPageData(playlistId, offset, limit, requireComplete) {
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid playlist import page')
   const detail = await requestOptionalAuthRead(`/playlist/detail?id=${encodeURIComponent(String(playlistId))}`, { attempts: 3, label: 'playlist import detail' })
   const playlist = detail?.playlist
-  if (!playlist || !Array.isArray(playlist.trackIds) || (Number.isFinite(playlist.trackCount) && playlist.trackCount !== playlist.trackIds.length)) throw new Error('歌单权限不足或返回了不完整的条目，请登录后重试，或使用文件导入')
+  if (!playlist || !Array.isArray(playlist.trackIds) || (requireComplete && Number.isFinite(playlist.trackCount) && playlist.trackCount !== playlist.trackIds.length)) throw new Error('歌单权限不足或返回了不完整的条目，请登录后重试，或使用文件导入')
   if (playlist.trackIds.length > 20000) throw new Error('歌单超过 20,000 条上限')
   const refs = playlist.trackIds.slice(offset, offset + limit)
   const ids = refs.map(ref => Number(ref?.id ?? ref)).filter(id => Number.isSafeInteger(id) && id > 0)
   const details = ids.length ? await requestOptionalAuthRead(`/song/detail?ids=${ids.join(',')}`, { attempts: 3, label: 'playlist import songs' }) : { songs: [] }
   if (!Array.isArray(details.songs)) throw new Error('歌曲详情读取中断，请重试')
-  const byId = new Map(details.songs.map(song => [String(song.id), song]))
-  const songs = refs.map(ref => {
-    const song = byId.get(String(ref?.id))
-    const refId=ref?.id ?? ref
-    const rawCover = song?.al?.picUrl || song?.album?.picUrl || null
-    return song ? { title: song.name, artist: (song.ar || song.artists || []).map(a => a.name).join(' / '), album: song.al?.name || song.album?.name, duration: (song.dt || song.duration || 0)/1000, platform: 'ncm', platformId: String(refId), cover: normalizeRemoteAssetUrl(rawCover), coverSource: rawCover, coverSmall: normalizeNcmCoverSize(rawCover, 140), coverSmallSource: rawCover, unavailableReason: song.noCopyrightRcmd ? '原平台版权受限' : undefined } : { platform: 'ncm', platformId: refId ? String(refId) : undefined, unavailableReason: '原平台已下架或无权访问，缺少元数据' }
+  const songMap = items => new Map((items || []).filter(song => song?.id != null).map(song => [String(song.id), song]))
+  const byId = songMap(details.songs)
+  const playlistSongs = songMap(playlist.tracks)
+  const privileges = songMap(details.privileges)
+  const entries = refs.map(ref => {
+    const id = ref?.id ?? ref
+    const key = String(id)
+    const song = byId.get(key) || playlistSongs.get(key)
+    const unavailableReason = !song ? '原平台已下架或无权访问，缺少元数据'
+      : song.noCopyrightRcmd || Number(privileges.get(key)?.st) < 0 ? '原平台版权受限'
+        : !byId.has(key) ? '原平台已下架或无权访问' : undefined
+    return { id, song, unavailableReason }
   })
-  return { name: playlist.name, songs, total: playlist.trackIds.length, nextOffset: offset + refs.length, hasMore: offset + refs.length < playlist.trackIds.length }
+  const total = playlist.trackIds.length
+  return { playlist, entries, total,
+    reportedTotal: Number.isFinite(playlist.trackCount) ? playlist.trackCount : total,
+    nextOffset: offset + refs.length, hasMore: offset + refs.length < total }
+}
+
+/** total counts returned IDs for paging; reportedTotal retains the upstream playlist count. */
+async function fetchPlaylistTracksPage(playlistId, offset = 0, limit = 100) {
+  const page = await readPlaylistPageData(playlistId, offset, limit, false)
+  return { name: page.playlist.name,
+    tracks: page.entries.map(({ id, song, unavailableReason }) => ({
+      ...normalizeTrack(song || { id }), unavailableReason
+    })), total: page.total, reportedTotal: page.reportedTotal, offset, limit,
+    nextOffset: page.nextOffset, hasMore: page.hasMore }
+}
+
+async function readPlaylistImportPage(playlistId, offset = 0, limit = 100) {
+  const page = await readPlaylistPageData(playlistId, offset, limit, true)
+  const songs = page.entries.map(({ id, song, unavailableReason }) => {
+    if (!song) return { platform: 'ncm', platformId: id ? String(id) : undefined, unavailableReason }
+    const rawCover = song.al?.picUrl || song.album?.picUrl || null
+    return { title: song.name, artist: normalizeTrackArtists(song).map(artist => artist.name).join(' / '),
+      album: song.al?.name || song.album?.name, duration: (song.dt || song.duration || 0) / 1000,
+      platform: 'ncm', platformId: String(id), cover: normalizeRemoteAssetUrl(rawCover), coverSource: rawCover,
+      coverSmall: normalizeNcmCoverSize(rawCover, 140), coverSmallSource: rawCover, unavailableReason }
+  })
+  return { name: page.playlist.name, songs, total: page.total, nextOffset: page.nextOffset, hasMore: page.hasMore }
 }
 
 async function fetchLikedTracks(force = false) {

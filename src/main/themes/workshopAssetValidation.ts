@@ -25,5 +25,22 @@ export function diagnoseWorkshopAssetEncoding(
         location: { kind: 'asset', id: asset.id }
       })
   }
+  const images = new Set<string>()
+  function collect(value: unknown): void {
+    if (typeof value === 'string' && value.startsWith('data:image/')) images.add(value)
+    else if (Array.isArray(value)) value.forEach(collect)
+    else if (value && typeof value === 'object') Object.values(value).forEach(collect)
+  }
+  collect(project.base.structured)
+  for (const image of images) {
+    if (!decodeImage(image))
+      diagnostics.push({
+        id: `appearance.decode:${diagnostics.length}`,
+        code: 'asset.decode',
+        severity: 'error',
+        message: '主题背景、皮肤或图标图片无法解码，请重新导入',
+        location: { kind: 'asset' }
+      })
+  }
   return diagnostics
 }

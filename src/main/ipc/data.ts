@@ -1,5 +1,4 @@
 import { ipcMain } from 'electron'
-import { IPC } from '../../shared/ipcChannels.ts'
 import { registerPersonalBackupIpc } from './personalBackupIpc.ts'
 import { sleepTimerService } from '../sleepTimer.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
@@ -18,7 +17,7 @@ import { registerSleepTimerIpc } from './sleepTimerIpc.ts'
 import { registerAfterglowModeIpc } from './afterglowModeIpc.ts'
 import { runtime } from '../core/runtime'
 import { registerExternalPlaylistIpc } from './externalPlaylistIpc.ts'
-import { registerCoreAudioDiagnosticsIpc } from './coreAudioDiagnosticsIpc.ts'
+export { setupCoreShellIpc } from './coreShellIpc.ts'
 
 export function setupDataIpc(): void {
   registerExternalPlaylistIpc(ipcMain)
@@ -35,23 +34,5 @@ export function setupDataIpc(): void {
   registerLyricsIpc(ipcMain)
   registerPersistenceIpc(ipcMain)
   registerSleepTimerIpc(ipcMain, sleepTimerService, assertTrustedIpcSender)
-  registerAfterglowModeIpc(ipcMain)
-}
-
-/** Window/OS capabilities only; music commands use the finite Core bridge. */
-export function setupCoreShellIpc(): void {
-  ipcMain.handle(IPC.audioEngine.isHtmlAudioFallbackAllowed, (event) => {
-    assertTrustedIpcSender(event, 'audio capability IPC')
-    return false
-  })
-  registerCoreAudioDiagnosticsIpc(ipcMain)
-  registerWindowIpc(ipcMain)
-  registerShellIpc(ipcMain)
-  registerDiscordIpc(ipcMain)
-  registerAppIpc(ipcMain)
-  registerFontsIpc(ipcMain)
-  registerSettingsIpc(ipcMain)
-  registerFilesystemIpc(ipcMain)
-  registerCoverIpc(ipcMain)
   registerAfterglowModeIpc(ipcMain)
 }

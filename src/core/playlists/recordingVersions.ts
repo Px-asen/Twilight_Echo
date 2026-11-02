@@ -62,6 +62,9 @@ export class CoreRecordingVersions {
   snapshot(): MusicVersionsDocument {
     return structuredClone(this.document)
   }
+  readonlySnapshot(): Readonly<MusicVersionsDocument> {
+    return this.document
+  }
   private fence(revision: number): void {
     if (revision !== this.revision)
       throw Object.assign(new Error('版本记录已变化，请重新预览'), { code: 'STALE_REVISION' })

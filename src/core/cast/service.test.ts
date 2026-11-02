@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, readFile, readdir, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreCastService } from './service.ts'
@@ -9,6 +9,8 @@ import { SourceResources } from '../playback/sourceResources.ts'
 import type { CastDevice, CastLoadRequest, CastSample } from './castBackend.ts'
 import { assertCastUpstream } from './policy.ts'
 import type { TrackData } from '../../shared/track.ts'
+import type { CastPcmSegments } from './pcmSegments.ts'
+import { createCastPcmSegments } from '../../adapters-node/castPcmSegments.ts'
 
 const track: TrackData = {
   id: 'local:one',
@@ -44,7 +46,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, segments?: CastPcmSegments) {
   const directory = await mkdtemp(join(tmpdir(), 'core-cast-'))
   const file = join(directory, 'one.mp3')
   await writeFile(file, '0123456789')
@@ -69,6 +71,7 @@ async function fixture(t: test.TestContext) {
       assert.equal(path, file)
       return file
     },
+    segments,
     backend: {
       discover: async () => [device],
       load: async (_device, request) => {
@@ -109,7 +112,7 @@ async function fixture(t: test.TestContext) {
     await rm(directory, { recursive: true, force: true })
   })
   return {
-    file,
+    file, directory,
     media,
     resources,
     service,
@@ -227,7 +230,7 @@ test('unknown Cast LOAD is not replayed; explicit Stop releases its retained sou
   assert.equal(f.loads.length, 1)
 })
 
-test('Cast preserves native-only subtrack boundaries and upstream authorization', async (t) => {
+test('Cast rejects unavailable segment preparation and native-only subtracks before dispatch, preserving upstream authorization', async (t) => {
   const f = await fixture(t)
   await f.service.discover()
   await f.service.select(device.id, 0)
@@ -239,7 +242,7 @@ test('Cast preserves native-only subtrack boundaries and upstream authorization'
       f.resources.use(() =>
         f.service.load(f.file, { ...track, ...extra }, 0, true, new AbortController().signal)
       ),
-      /does not support/
+      /does not support|unavailable/
     )
   }
   assert.equal(f.loads.length, 0)
@@ -253,6 +256,166 @@ test('Cast preserves native-only subtrack boundaries and upstream authorization'
     assert.throws(() => assertCastUpstream(url), /not authorized/)
   }
   assert.doesNotThrow(() => assertCastUpstream('https://example.com/audio.mp3?token=secret'))
+})
+
+test('Cast CUE serves only the completed WAV with relative time, Range and Stop-ACK lifetime', async (t) => {
+  const requests: unknown[] = []
+  let output = ''
+  const f = await fixture(t, {
+    prepare: async (source, range, signal) => {
+      const segments = createCastPcmSegments({
+        root: join(f.directory, 'cast-media'),
+        render: async (input, request, abort) => {
+          assert.equal(input, source)
+          assert.equal(abort, signal)
+          requests.push(request)
+          output = request.outputPath
+          await writeFile(output, 'RIFF-only-selected-segment')
+        }
+      })
+      return segments.prepare(source, range, signal)
+    }
+  })
+  await f.service.discover()
+  await f.service.select(device.id, 0)
+  const cue = { ...track, cueRange: {
+    startSeconds: 20, endSeconds: 40, pregapSeconds: 2,
+    virtualPregapSeconds: 2, sourcePregapSeconds: 1
+  } }
+  f.setSample({ state: 'paused', position: 12.75, duration: 22 })
+  const sample = await f.resources.use(() =>
+    f.service.load(f.file, cue, 12.75, false, new AbortController().signal))
+  assert.equal(sample.position, 12.75)
+  assert.equal(sample.duration, 22)
+  assert.deepEqual(requests, [{ outputPath: output, startSeconds: 20,
+    endSeconds: 40, virtualPregapSeconds: 2 }])
+  assert.equal(f.loads[0].positionSeconds, 12.75)
+  assert.equal(f.loads[0].autoplay, false)
+  assert.equal(f.loads[0].contentType, 'audio/wav')
+  assert.deepEqual(f.resources.protectedSources(), [f.file, output])
+  assert.doesNotMatch(f.loads[0].mediaUrl, /audio.wav|one.mp3|cast-media/)
+  const response = await fetch(f.loads[0].mediaUrl, { headers: { range: 'bytes=5-8' } })
+  assert.equal(response.status, 206)
+  assert.equal(response.headers.get('content-type'), 'audio/wav')
+  assert.equal(await response.text(), 'only')
+  const ack = deferred()
+  f.stopGate(ack.promise)
+  const stopped = f.service.stop()
+  await tick()
+  assert.equal(await readFile(output, 'utf8'), 'RIFF-only-selected-segment')
+  ack.resolve()
+  await stopped
+  await assert.rejects(access(output), { code: 'ENOENT' })
+  assert.equal((await fetch(f.loads[0].mediaUrl)).status, 404)
+  assert.deepEqual(f.resources.protectedSources(), [])
+  assert.deepEqual(await readdir(join(f.directory, 'cast-media')), [])
+})
+
+test('cancelled CUE preparation joins the writer, removes partial output and never issues a whole-file URL', async (t) => {
+  let started!: () => void, retire!: () => void
+  const writing = new Promise<void>(resolve => { started = resolve })
+  const exited = new Promise<void>(resolve => { retire = resolve })
+  let output = '', root = ''
+  const f = await fixture(t, {
+    prepare: (source, range, signal) => createCastPcmSegments({
+      root: root = join(f.directory, 'cancelled'),
+      render: async (_source, request, abort) => {
+        output = request.outputPath
+        await writeFile(output, 'partial')
+        started()
+        await exited
+        abort.throwIfAborted()
+      }
+    }).prepare(source, range, signal)
+  })
+  await f.service.discover()
+  await f.service.select(device.id, 0)
+  const abort = new AbortController()
+  const work = f.resources.use(() => f.service.load(f.file, { ...track,
+    cueRange: { startSeconds: 20, endSeconds: 40, pregapSeconds: 0 }
+  }, 0, true, abort.signal))
+  const rejected = assert.rejects(work, /superseded/)
+  await writing
+  abort.abort(new Error('superseded'))
+  assert.equal(await readFile(output, 'utf8'), 'partial')
+  assert.equal(f.loads.length, 0)
+  retire()
+  await rejected
+  assert.deepEqual(await readdir(root), [])
+  assert.equal(f.loads.length, 0)
+  assert.equal(f.media.getStatus().running, false)
+})
+
+test('unknown CUE LOAD retains its generated file until an explicit acknowledged Stop', async (t) => {
+  let released = false
+  const f = await fixture(t, {
+    prepare: async () => ({ path: join(f.directory, 'segment.wav'),
+      release: async () => { released = true } })
+  })
+  await f.service.discover()
+  await f.service.select(device.id, 0)
+  f.failLoad()
+  await assert.rejects(f.resources.use(() => f.service.load(f.file, { ...track,
+    cueRange: { startSeconds: 20, endSeconds: 40, pregapSeconds: 0 }
+  }, 0, true, new AbortController().signal)), /reply lost/)
+  assert.equal(released, false)
+  assert.equal(f.loads.length, 1)
+  assert.equal(f.resources.protectedSources().length, 2)
+  await f.service.stop()
+  assert.equal(released, true)
+  assert.deepEqual(f.resources.protectedSources(), [])
+})
+
+test('remote CUE stages source bytes without native redirects and releases failed staging', async (t) => {
+  const f = await fixture(t)
+  const root = join(f.directory, 'remote')
+  let renderCalls = 0, inputPath = ''
+  let refused = false
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (refused) throw new TypeError('redirect refused')
+    assert.equal(url, 'https://example.com/disc.flac?token=private')
+    assert.equal(options.redirect, 'error')
+    return new Response(new Uint8Array([1, 2, 3, 4]))
+  })
+  const segments = createCastPcmSegments({ root,
+    render: async (source, request) => {
+      renderCalls++
+      inputPath = source
+      assert.deepEqual(await readFile(source), Buffer.from([1, 2, 3, 4]))
+      assert.doesNotMatch(source, /https|token/)
+      await writeFile(request.outputPath, 'segment')
+    }
+  })
+  const range = { startSeconds: 20, endSeconds: 40, pregapSeconds: 0 }
+  const prepared = await segments.prepare('https://example.com/disc.flac?token=private', range,
+    new AbortController().signal)
+  await assert.rejects(access(inputPath), { code: 'ENOENT' })
+  assert.equal(await readFile(prepared.path, 'utf8'), 'segment')
+  await prepared.release()
+  refused = true
+  await assert.rejects(segments.prepare('https://example.com/disc.flac', range,
+    new AbortController().signal), /redirect refused/)
+  assert.equal(renderCalls, 1)
+  assert.deepEqual(await readdir(root), [])
+})
+
+test('first CUE preparation clears abandoned Core media but subsequent prepares keep live files', async (t) => {
+  const f = await fixture(t)
+  const root = join(f.directory, 'recover')
+  await mkdir(join(root, 'segment-abandoned'), { recursive: true })
+  await writeFile(join(root, 'segment-abandoned', 'audio.wav'), 'abandoned')
+  await writeFile(join(root, 'keep.txt'), 'unrelated')
+  const segments = createCastPcmSegments({ root,
+    render: async (_source, request) => { await writeFile(request.outputPath, 'prepared') }
+  })
+  const range = { startSeconds: 0, endSeconds: 20, pregapSeconds: 0 }
+  const first = await segments.prepare(f.file, range, new AbortController().signal)
+  await assert.rejects(access(join(root, 'segment-abandoned')), { code: 'ENOENT' })
+  assert.equal(await readFile(join(root, 'keep.txt'), 'utf8'), 'unrelated')
+  const second = await segments.prepare(f.file, range, new AbortController().signal)
+  assert.equal(await readFile(first.path, 'utf8'), 'prepared')
+  await first.release(); await second.release()
+  assert.deepEqual(await readdir(root), ['keep.txt'])
 })
 
 test('HTTP requests waiting on maintenance recheck revoked tokens before opening a file', async (t) => {

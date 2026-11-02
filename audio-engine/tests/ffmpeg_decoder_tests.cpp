@@ -1,5 +1,6 @@
 #include "../decoder/FFmpegDecoder.h"
 #include "../decoder/FFmpegDecoderUtils.h"
+#include "../decoder/WavPackSource.h"
 #include "../core/SharedInputFile.h"
 #include "../dsp/DspTypes.h"
 #include "AudioFixtureLibrary.h"
@@ -8,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -419,24 +421,74 @@ void assertFlacSeekDoesNotHideMissingSamples() {
 
 void assertDecoderReportsWavPackDsdBeforePcmConversion() {
   const auto fixture = writeWavPackDsdFixture("twilight-decoder-dsd128.wv");
-  FFmpegDecoder decoder;
-  std::string error;
-  assert(decoder.open(fixture.string(), &error));
-  const auto stream = decoder.streamInfo();
-  assert(stream.isDsd);
-  assert(stream.dsdMode == DsdMode::Pcm);
-  assert(stream.dsdRate == 128);
-  assert(stream.sourceLossless);
-  assert(stream.sourceFormat.sampleRate == 5644800);
-  assert(stream.sourceFormat.bitDepth == 1);
-  assert(stream.sourceFormat.channelCount == 2);
-  assert(stream.decodedFormat.sampleRate == 705600);
-  assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
-  assert(std::abs(stream.durationSeconds - 1024.0 / 705600) < 1e-9);
-  std::vector<float> samples(64 * 2);
-  assert(decoder.readFrames(samples.data(), 64, &error) == 64);
-  assert(error.empty());
-  for (const float sample : samples) assert(std::isfinite(sample));
+  std::ifstream file(fixture.path(), std::ios::binary);
+  const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
+  std::vector<float> reference;
+  for (int layout = 0; layout < 3; ++layout) {
+    FFmpegDecoder decoder;
+    std::vector<uint8_t> hosted = bytes;
+    if (layout == 2) {
+      // A preceding ID3 tag must not turn DSD into apparent high-rate PCM.
+      const std::array<uint8_t, 12> tag = {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 2, 0, 0};
+      hosted.insert(hosted.begin(), tag.begin(), tag.end());
+    }
+    if (layout) decoder.setInputFactory(std::make_shared<const SeekableInputFactory>(
+        [hosted](const std::string&) { return std::make_shared<MemoryAudioInput>(hosted); }));
+    std::string error;
+    assert(decoder.open(layout ? "content://documents/opaque-audio" : fixture.string(), &error));
+    const auto stream = decoder.streamInfo();
+    assert(stream.isDsd);
+    assert(stream.dsdMode == DsdMode::Pcm);
+    assert(stream.dsdRate == 128);
+    assert(stream.sourceLossless);
+    assert(stream.sourceFormat.sampleRate == 5644800);
+    assert(stream.sourceFormat.bitDepth == 1);
+    assert(stream.sourceFormat.channelCount == 2);
+    assert(stream.decodedFormat.sampleRate == 705600);
+    assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
+    assert(std::abs(stream.durationSeconds - 1024.0 / 705600) < 1e-9);
+    std::vector<float> samples(64 * 2), decoded;
+    while (const auto count = decoder.readFrames(samples.data(), 64, &error)) {
+      decoded.insert(decoded.end(), samples.begin(), samples.begin() + count * 2);
+    }
+    assert(error.empty());
+    assert(decoder.eof() && decoded.size() == 1024 * 2);
+    for (const float sample : decoded) assert(std::isfinite(sample));
+    if (!layout) reference = decoded;
+    else assert(decoded == reference);
+  }
+}
+
+void assertWavPackPcmSpecsAndHostDecode() {
+  for (const auto& [bits, floating] : {std::pair{16, false}, {20, false}, {24, false}, {32, false}, {32, true}}) {
+    const auto fixture = writeWavPackPcmFixture("twilight-decoder-pcm.wv", bits, floating, 192000);
+    std::ifstream file(fixture.path(), std::ios::binary);
+    auto input = std::make_shared<MemoryAudioInput>(std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), {}));
+    const auto header = readWavPackSource("content://documents/opaque-pcm", input);
+    assert(header && !header->isDsd && header->bitDepth == bits && header->totalSamples == 128);
+    FFmpegDecoder decoder;
+    decoder.setInputFactory(std::make_shared<const SeekableInputFactory>([input](const std::string&) { return input; }));
+    std::string error;
+    assert(decoder.open("content://documents/opaque-pcm", &error));
+    const auto stream = decoder.streamInfo();
+    assert(!stream.isDsd && stream.dsdRate == 0);
+    assert(stream.sourceFormat.bitDepth == bits && stream.sourceFormat.sampleRate == 192000);
+    assert(std::abs(stream.durationSeconds - 128.0 / 192000) < 1e-9);
+    auto output = decoder.outputFormat();
+    output.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    output.bitDepth = 32;
+    assert(decoder.setOutputFormat(output, &error));
+    std::vector<float> samples(128 * 2);
+    assert(decoder.readFrames(samples.data(), 128, &error) == 128);
+    assert(error.empty());
+    for (const auto sample : samples) assert(std::isfinite(sample));
+    // Upper counts and padding are independent of FFmpeg's 32-bit duration.
+    input->bytes[11] = 1;
+    input->bytes[12] = 6;
+    input->bytes[13] = input->bytes[14] = input->bytes[15] = 0;
+    const auto extended = readWavPackSource("content://documents/opaque-pcm", input);
+    assert(extended && extended->totalSamples == (1LL << 32) + 5);
+  }
 }
 #endif
 
@@ -449,7 +501,11 @@ void assertSharedFilePreservesReadAndSeekAfterDeletion() {
       pathFromUtf8Bytes("twilight-shared-\xe4\xb8\xad\xe6\x96\x87.bin");
   std::vector<char> bytes(70000);
   for (size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<char>(i % 127);
-  { std::ofstream file(path, std::ios::binary); file.write(bytes.data(), bytes.size()); }
+  {
+    std::ofstream file(path, std::ios::binary);
+    file.write(bytes.data(), bytes.size());
+    if (!file.good()) throw std::system_error(errno, std::generic_category(), "Cannot write fixture " + path.string());
+  }
   SharedInputFile file;
   auto missing = path;
   missing += ".missing";
@@ -713,12 +769,16 @@ void assertDecoderSoxrTiersProbeAndFallBackGracefully() {
       FFmpegDecoder::ResamplerQuality::SoxrVhq, "twilight-decoder-soxr-vhq.wav");
   assert(soxrRuntimeAvailability() == afterHq);
 
-  // Once soxr is known-unavailable, the decoder must skip re-probing and go
-  // straight to the Ultra swr fallback; the classic tiers stay untouched.
+  // A failed FFmpeg-wrapper probe cannot disable the separately linked direct
+  // library. Without it, retain the established cached Ultra SWR fallback.
   soxrRuntimeStateStorage().store(2);
   assertDecoderResamplesWithQualityTier(
       FFmpegDecoder::ResamplerQuality::SoxrVhq, "twilight-decoder-soxr-fallback.wav");
+#if defined(TAE_HAS_SOXR)
+  assert(soxrRuntimeAvailability() == SoxrRuntimeState::Available);
+#else
   assert(soxrRuntimeAvailability() == SoxrRuntimeState::Unavailable);
+#endif
 
   assertDecoderResamplesWithQualityTier(
       FFmpegDecoder::ResamplerQuality::Ultra, "twilight-decoder-swr-ultra.wav");
@@ -754,8 +814,13 @@ void assertDecoderOpensExternalFixturesWhenProvided() {
 
 }  // namespace
 
-int main(int argc,char** argv) {
+int main(int argc,char** argv) try {
 #if defined(TAE_HAS_FFMPEG)
+  if (argc == 2 && std::string(argv[1]) == "--resampler-probe") {
+    assertDecoderSoxrTiersProbeAndFallBackGracefully();
+    std::cout << "PASS resampler tiers and cached wrapper availability\n";
+    return 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--flac-tail-probe") {
     assertFlacTailHandling(false, false, true);
     assertFlacTailHandling(true, false, true);
@@ -803,6 +868,7 @@ int main(int argc,char** argv) {
   assertDecoderCancellationCanBeResetBeforeSeek();
   assertDecoderReportsDsdFallbackWhenSupported();
   assertDecoderReportsWavPackDsdBeforePcmConversion();
+  assertWavPackPcmSpecsAndHostDecode();
   assertDecoderSoxrTiersProbeAndFallBackGracefully();
   assertPreciseSeekMatchesContinuousPcm();
   assertDecoderOpensUtf8Path();
@@ -811,4 +877,7 @@ int main(int argc,char** argv) {
   assertDecoderOpensExternalFixturesWhenProvided();
 #endif
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }

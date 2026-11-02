@@ -911,6 +911,7 @@ test('compiled artwork uses the existing image loader, shows actual scope and at
     '../assets/images/default-track-cover-light.webp': { default: 'default-track-cover.webp' },
     '../assets/default-track-cover.css': {},
     '../stores/library/coreArtwork.ts': {
+      coreArtworkEpoch: () => '',
       coreArtworkKey: () => '',
       readCoreArtwork: async () => null
     },

@@ -1,13 +1,17 @@
 #include "AudioMetadataService.h"
+#include "../decoder/SeekableInputStream.h"
+#include "../tests/AudioFixtureLibrary.h"
 
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 using namespace twilight::audio;
@@ -142,6 +146,7 @@ std::filesystem::path writeSacdMetadataIsoFixture(const std::string& name) {
 
   std::ofstream out(path, std::ios::binary);
   out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+  if (!out.good()) throw std::system_error(errno, std::generic_category(), "Cannot write fixture " + path.string());
   return path;
 }
 
@@ -198,23 +203,59 @@ void assertDsfMetadataWhenSupported(const std::string& name, uint32_t sampleRate
   assert(json.find("\"codec\":\"dsd") != std::string::npos);
   assert(json.find("\"container\":\"") != std::string::npos);
   assert(json.find("\"isDsd\":true") != std::string::npos);
-  assert(json.find("\"dsdMode\":\"unsupported\"") != std::string::npos);
+  assert(json.find("\"dsdMode\":\"pcm\"") != std::string::npos);
+  assert(json.find("\"outputModes\":[\"native\",\"dop\",\"pcm\"]") != std::string::npos);
   assert(json.find("\"sampleRate\":" + std::to_string(sampleRate)) != std::string::npos);
   assert(json.find("\"dsdRate\":" + std::to_string(dsdRate)) != std::string::npos);
   assert(json.find("\"channelCount\":2") != std::string::npos);
   assert(json.find("\"bitDepth\":1") != std::string::npos);
 }
+
+void assertWavPackMetadata() {
+  const auto check = [](const test::TempAudioFixture& fixture, bool dsd, int bits, int rate) {
+    SeekableInputStream stream;
+    assert(stream.open(fixture.string()));
+    const auto factory = std::make_shared<const SeekableInputFactory>(
+        [input = stream.input()](const std::string&) { return input; });
+    for (const bool hosted : {false, true}) {
+      const auto json = hosted ? readMetadataJson("content://documents/opaque-metadata", factory) : readMetadataJson(fixture.string());
+      assert(json.find("\"error\":\"\"") != std::string::npos);
+      assert(json.find("\"codec\":\"wavpack\"") != std::string::npos);
+      assert(json.find(std::string("\"isDsd\":") + (dsd ? "true" : "false")) != std::string::npos);
+      assert(json.find("\"bitDepth\":" + std::to_string(bits) + ",") != std::string::npos);
+      assert(json.find("\"sampleRate\":" + std::to_string(rate) + ",") != std::string::npos);
+      assert(json.find("\"channelCount\":2") != std::string::npos);
+      if (dsd) {
+        assert(json.find("\"dsdRate\":128") != std::string::npos);
+        assert(json.find("\"outputModes\":[\"pcm\"]") != std::string::npos);
+      } else {
+        assert(json.find("\"title\":\"Moonrise\"") != std::string::npos);
+        assert(json.find("\"artist\":\"Twilight\"") != std::string::npos);
+        assert(json.find("\"album\":\"Night\"") != std::string::npos);
+        assert(json.find("\"trackNumber\":\"3/9\"") != std::string::npos);
+        assert(json.find("\"discNumber\":\"2/2\"") != std::string::npos);
+      }
+    }
+  };
+  const auto dsd = test::writeWavPackDsdFixture("twilight-metadata-dsd128.wv");
+  check(dsd, true, 1, 5644800);
+  for (const auto& [bits, floating] : {std::pair{16, false}, {20, false}, {24, false}, {32, false}, {32, true}}) {
+    const auto fixture = test::writeWavPackPcmFixture("twilight-metadata-pcm.wv", bits, floating, 192000);
+    check(fixture, false, bits, 192000);
+  }
+}
 #endif
 
 }  // namespace
 
-int main() {
+int main() try {
   const std::string empty = readMetadataJson("");
   assert(empty.find("\"error\":\"音频地址为空\"") != std::string::npos);
 
   const auto sacdIsoPath = writeSacdMetadataIsoFixture("twilight-metadata-sacd.iso");
   const std::string sacdIso = readMetadataJson(sacdIsoPath.string());
   std::filesystem::remove(sacdIsoPath);
+  if (sacdIso.find("\"container\":\"SACD ISO\"") == std::string::npos) std::cerr << sacdIso << '\n';
   assert(sacdIso.find("\"container\":\"SACD ISO\"") != std::string::npos);
   assert(sacdIso.find("\"isDsd\":true") != std::string::npos);
   assert(sacdIso.find("\"isoTracks\":[") != std::string::npos);
@@ -222,10 +263,15 @@ int main() {
   assert(sacdIso.find("\"codec\":\"dsd\"") != std::string::npos);
   assert(sacdIso.find("\"codec\":\"dst\"") != std::string::npos);
   assert(sacdIso.find("\"playable\":true") != std::string::npos);
+#if defined(TAE_HAS_FFMPEG)
   assert(sacdIso.find("\"outputModes\":[\"native\",\"dop\",\"pcm\"]") != std::string::npos);
-  assert(sacdIso.find("\"playable\":false") != std::string::npos);
-  assert(sacdIso.find("\"reasonCode\":\"dst_dsd_provider_unavailable\"") != std::string::npos);
-  assert(sacdIso.find("DSD-preserving provider") != std::string::npos);
+#else
+  assert(sacdIso.find("\"outputModes\":[\"native\",\"dop\"]") != std::string::npos);
+  assert(sacdIso.find("\"dsdMode\":\"unsupported\"") != std::string::npos);
+#endif
+  // Metadata uses the same built-in DSD-preserving provider as playback.
+  assert(sacdIso.find("\"playable\":false") == std::string::npos);
+  assert(sacdIso.find("\"reasonCode\":\"dst_dsd_provider_unavailable\"") == std::string::npos);
 
   const std::string missing = readMetadataJson("missing-file.flac");
   assert(missing.find("\"source\":\"missing-file.flac\"") != std::string::npos);
@@ -238,6 +284,10 @@ int main() {
   assertDsfMetadataWhenSupported("twilight-metadata-dsd64.dsf", 2822400, 64);
   assertDsfMetadataWhenSupported("twilight-metadata-dsd128.dsf", 5644800, 128);
   assertDsfMetadataWhenSupported("twilight-metadata-dsd256.dsf", 11289600, 256);
+  assertWavPackMetadata();
 #endif
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }

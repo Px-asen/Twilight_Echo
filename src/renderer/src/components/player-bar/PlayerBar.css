@@ -1830,6 +1830,14 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   pointer-events: none;
 }
 
+/* The flat progress rails explicitly opt into `pointer-events: auto`, which
+   otherwise overrides `.player-bar`'s `none` and can catch the pointer mid-slide
+   to re-trigger `pointerenter` when the compact visualizer stage is turned off. */
+.player-bar-shell[data-te-playbar-hidden='true'] .player-bar > .compact-progress-rail,
+.player-bar-shell[data-te-playbar-hidden='true'] .player-bar .mini-progress-rail {
+  pointer-events: none;
+}
+
 /* Fully hidden ("完全隐藏") is the third visibility step and a different thing
    from auto-hide: there is no reveal gesture, so the bar must also leave the tab
    order and the accessibility tree — `opacity: 0` alone still lets Tab land on

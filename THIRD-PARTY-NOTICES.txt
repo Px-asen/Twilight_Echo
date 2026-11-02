@@ -86,6 +86,16 @@ included alongside the public model assets in the packaged native resources.
 PyTorch, TensorFlow, ONNX and ONNX Runtime are development export/oracle tools;
 the Twilight AutoMix production runtime does not include those frameworks.
 
+BS2B 3.1.0 crossfeed
+MIT License. Copyright (c) 2005 Boris Mikhaylov.
+Source: https://bs2b.sourceforge.net/
+Upstream source: https://deb.debian.org/debian/pool/main/libb/libbs2b/libbs2b_3.1.0+dfsg.orig.tar.gz
+The native crossfeed adapts the low-pass/high-boost coefficients and recurrence.
+It adds the existing dry/wet strength and DSP headroom, and calculates at the
+actual engine sample rate through 768 kHz. The Meier choice is the official
+BS2B JMEIER profile. Original sources and COPYING are retained under
+audio-engine/third_party/bs2b; no separate runtime library is required.
+
 MIT License (applies to the MIT components named above)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

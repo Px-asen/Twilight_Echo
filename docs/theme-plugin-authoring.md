@@ -4,9 +4,7 @@ Theme plugins are declarative packages. A pure theme plugin has no `main` entry,
 and contributes one or more themes through `plugin.json`. Plugin API v3 adds a host-owned shell grid
 that can rearrange the application layout while keeping every API v1 and v2 theme valid.
 
-## Contract Files
-
-## Theme workshop editor metadata
+## Custom theme editor metadata
 
 Theme contributions may include `editor: { schemaVersion: 1, controls: [...] }`.
 Each control declares `id`, `label`, `group`, `type`, one of `variable` / `token` / host `slot`, and `defaults`
@@ -20,11 +18,16 @@ value; relinking uses the explicitly selected side for both modes.
 Defaults describe the existing stylesheet; they are not applied until the user
 changes a control. This preserves the original theme when creating a project.
 
-The built-in theme workshop is disabled by default. It snapshots enabled theme
-plugins into independent projects and exports `.teworkshop` editable documents
-or declarative `.tep` packages. Source files are never rewritten. Local image
-references are embedded in the snapshot; external URLs and stylesheet imports
-currently require author-side consolidation before snapshotting.
+Open **Custom Theme** from Settings / Appearance. The same workspace offers everyday
+appearance adjustments, theme properties, and advanced authoring tools without a tool
+plugin. Export the current unsaved draft directly as a declarative `.TEP` package,
+or transfer it to the advanced tools without losing edits. Exporting does not apply
+the theme or save everyday settings.
+
+Enabled theme plugins can be snapshotted into independent editable projects; source
+files are never rewritten. `.teworkshop` documents retain editing data and resources.
+Local image references are embedded in the snapshot; external URLs and stylesheet
+imports require author-side consolidation before snapshotting.
 
 The `.tep` writer uses the `plugin-theme` archive format, restricted to `plugin.json`,
 `theme.css`, and `ATTRIBUTION.json`; legacy theme archive validation remains unchanged.
@@ -33,15 +36,14 @@ contribution, and reimports the editable document after its source becomes unava
 Set `TWILIGHT_WORKSHOP_SOURCE` to an external theme plugin directory when running
 `pnpm run test:theme-workshop` to exercise that theme without copying it into this repository.
 
-The settings Appearance section places **Theme Plugin Workshop** immediately below
-**Theme Creative Studio**. Its sidebar shortcut is hidden. The button becomes available
-when the bundled tool plugin is enabled; disabling still flushes the current draft.
-
 Projects can contain an asset library (PNG/JPEG/WebP and WOFF2), per-tone surface layers,
 non-destructive crop, four-edge fade, opacity, blur, gradient, mask, ordering and display
 conditions. The host renders decorative layers behind content with pointer events disabled.
 Library density uses the existing mode contract so virtualized rows keep their measured height.
-Structured layout and modes are preserved through compilation and export. Applied versions
+Structured layout, modes, both tones, appearance, skins, icons and tone schedules are
+preserved through compilation and export. Bound images and WOFF2 fonts travel with the
+package. A local font name preserves only the font stack; import a licensed font file
+for consistent rendering on another device. Applied versions
 are saved separately and can be restored without changing the installed source theme.
 Image references and license notices are captured with the project; asset source/attribution
 fields are included in exported attribution metadata.
@@ -55,10 +57,12 @@ use the candidate's structured layout and modes; cancelling leaves the stored ba
 
 Editor metadata does not grant script execution or arbitrary component access.
 
+## Contract files
+
 - `packages/plugin-api/src/index.ts`: authoritative TypeScript declarations.
 - `packages/plugin-api/theme-contract.json`: machine-readable token, mode, and visibility catalog.
 - `src/shared/theme.ts`: host registry and normalization behavior.
-- `packages/create-twilight-plugin/templates/theme`: complete API v2 scaffold.
+- `packages/create-twilight-plugin/templates/theme`: complete API v3 scaffold.
 
 The JSON catalog is generated with `pnpm run generate:plugin-theme-contract`. `test:themes` fails if
 the committed catalog no longer matches the host registry.

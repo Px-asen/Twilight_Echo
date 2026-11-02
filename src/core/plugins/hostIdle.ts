@@ -18,7 +18,7 @@ export interface PluginHostIdleTrackerOptions {
   clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void
 }
 
-export const DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS = 5 * 60 * 1000
+export const DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS = 60 * 1000
 
 /** A loopback playback URL depends on a service in the live plugin host. */
 export function isPluginHostedPlaybackUrl(value: unknown): boolean {

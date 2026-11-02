@@ -106,7 +106,9 @@ export class CoreRemoteService {
       {
         id: this.clientId,
         role: 'remote',
-        permissions: ['playback:read', 'playback:write', 'library:read']
+        // RemoteCoreBridge independently bounds DSP edits and projects reads;
+        // clients never receive this internal identity or general settings RPC.
+        permissions: ['playback:read', 'playback:write', 'library:read', 'settings:read', 'settings:write']
       },
       (message) => this.receive(message)
     )

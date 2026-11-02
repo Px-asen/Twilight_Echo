@@ -194,6 +194,7 @@ export interface TwilightPluginManagerOptions {
    * local playback proxy URLs stay resident. 0 disables hibernation.
    */
   hostIdleTimeoutMs?: number
+  isPlaybackProxyActive?: (pluginId: string, proxySources: ReadonlySet<string>) => boolean
 }
 
 /**
@@ -220,6 +221,7 @@ interface RunningPlugin {
   ui: TwilightUiContribution[]
   themes: TwilightThemeContribution[]
   hasPlaybackProxy: boolean
+  proxySources?: Set<string>
 }
 
 interface InstallFromPathOptions {
@@ -307,6 +309,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly appSettingsApi: TwilightPluginManagerOptions['appSettingsApi']
   private readonly hostCaptureApi: TwilightPluginManagerOptions['hostCaptureApi']
   private readonly dynamicIsland: TwilightPluginManagerOptions['dynamicIsland']
+  private readonly isPlaybackProxyActive: TwilightPluginManagerOptions['isPlaybackProxyActive']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly hibernated = new Map<string, HibernatedPlugin>()
   private readonly wakeOperations = new Map<string, Promise<RunningPlugin>>()
@@ -350,6 +353,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.appSettingsApi = options.appSettingsApi
     this.hostCaptureApi = options.hostCaptureApi
     this.dynamicIsland = options.dynamicIsland
+    this.isPlaybackProxyActive = options.isPlaybackProxyActive
     const idleTimeoutMs = options.hostIdleTimeoutMs ?? DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS
     this.hostIdle =
       idleTimeoutMs > 0
@@ -1076,7 +1080,16 @@ export class TwilightPluginManager extends EventEmitter {
     // Local media URLs remain usable by the player after the provider RPC ends,
     // including paused playback and prepared queue entries. Hibernation closes
     // the server and invalidates those URLs, so retain it for this host's lifetime.
-    if (running.hasPlaybackProxy) return false
+    if (running.hasPlaybackProxy) {
+      if (
+        !this.isPlaybackProxyActive ||
+        this.isPlaybackProxyActive(id, running.proxySources ?? new Set())
+      ) {
+        return false
+      }
+      running.hasPlaybackProxy = false
+      running.proxySources?.clear()
+    }
     if (running.descriptor.type.length !== 1 || running.descriptor.type[0] !== 'provider') {
       return false
     }
@@ -1322,7 +1335,8 @@ export class TwilightPluginManager extends EventEmitter {
       providers: [],
       ui: [],
       themes: this.normalizeDeclarativeThemeContributions(descriptor),
-      hasPlaybackProxy: false
+      hasPlaybackProxy: false,
+      proxySources: new Set()
     }
     this.running.set(descriptor.id, running)
     child.on('message', (message: PluginHostResponse) => {
@@ -2221,7 +2235,19 @@ export class TwilightPluginManager extends EventEmitter {
       }
       if (metadata.method === 'getPlaybackUrl' && isPluginHostedPlaybackUrl(playbackSource)) {
         const running = this.running.get(pluginId)
-        if (running) running.hasPlaybackProxy = true
+        if (running) {
+          running.hasPlaybackProxy = true
+          if (typeof playbackSource === 'string') running.proxySources?.add(playbackSource)
+          const resolvedUrl =
+            typeof value === 'string'
+              ? value
+              : value &&
+                  typeof value === 'object' &&
+                  typeof (value as { streamUrl?: unknown }).streamUrl === 'string'
+                ? (value as { streamUrl: string }).streamUrl
+                : null
+          if (resolvedUrl) running.proxySources?.add(resolvedUrl)
+        }
       }
       this.recordProviderCallSuccess(
         completion.metadata.providerId,

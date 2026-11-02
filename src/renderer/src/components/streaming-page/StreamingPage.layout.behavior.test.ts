@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url)
 const workspace = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 test(
-  'streaming details clear the title bar and the liked page locates its current song below back-to-top',
+  'streaming details clear the title bar, people use an aligned spacious grid, and liked songs remain locatable',
   { timeout: 90_000 },
   async () => {
     const directory = await mkdtemp(join(tmpdir(), 'twilight-streaming-layout-'))
@@ -89,11 +89,12 @@ test(
       delete env.ELECTRON_RUN_AS_NODE
       const result = await promisify(execFile)(
         require('electron'),
-        [join(directory, 'runner.cjs'), directory],
+        ['--no-sandbox', join(directory, 'runner.cjs'), directory],
         { windowsHide: true, timeout: 80_000, env, maxBuffer: 1024 * 1024 }
       )
       assert.match(result.stdout, /STREAMING_LAYOUT_OK/)
       assert.match(result.stdout, /STREAMING_LOCATE_OK/)
+      assert.match(result.stdout, /STREAMING_PEOPLE_OK/)
     } finally {
       assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep))
       await rm(directory, { recursive: true, force: true })
@@ -113,6 +114,15 @@ defineExpose({
     pushDetail(view)
     detailTracks.value = tracks
   },
+  showFixturePeople(users: NcmUserSummary[], listType: 'follows' | 'followers' = 'follows', loading = false, error = '') {
+    resetDetail({ animate: false })
+    beginDetailTransition()
+    pushDetail({ type: 'user_list', listType, users, title: listType === 'follows' ? '关注' : '粉丝' })
+    detailUsers.value = users
+    detailLoading.value = loading
+    detailError.value = error
+  },
+  backFixtureDetail() { goBack() },
   resetFixtureDetail() { resetDetail({ animate: false }) }
 })
 `
@@ -158,6 +168,9 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const expect=(ok,label)=>{if(!ok)throw new Error(label)};
 const canvas=document.createElement('canvas');canvas.width=canvas.height=256;const paint=canvas.getContext('2d');paint.fillStyle='#718f9c';paint.fillRect(0,0,256,256);const cover=canvas.toDataURL();
 const tracks=Array.from({length:100},(_,i)=>({id:'fixture-'+i,title:'歌曲 '+i,artist:'测试歌手',album:'测试专辑',duration:180,source:'ncm',ncmSongId:i+1,cover}));
+const names=['Porter Robinson','C418','Ludicin','ReeK','Ophidian','n-buna','ヨルシカ','重音テト','Betwixt & Between','MIMI','25時、ナイトコードで。','花譜','Sad Keyboard Guy','void (Mournfinale)'];
+const portraits=['#c85f92','#527e8a','#bd8c58','#65628a'].map(color=>{paint.fillStyle=color;paint.fillRect(0,0,256,256);paint.fillStyle='#e9dbca';paint.beginPath();paint.ellipse(128,91,41,48,0,0,Math.PI*2);paint.fill();paint.fillStyle='#e1c4ae';paint.beginPath();paint.ellipse(128,248,85,92,0,0,Math.PI*2);paint.fill();return canvas.toDataURL()});
+const people=Array.from({length:80},(_,i)=>({id:i+1,name:names[i%names.length],picUrl:i%3===1?null:portraits[i%portraits.length],musicSize:0,userType:0}));
 const mount=async()=>{app?.unmount();app=createApp({render:()=>h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');await pause(250)};
 window.checkStreamingLayout=async(kind,tone,search=false,caption=40,custom=false)=>{
  document.documentElement.dataset.theme=tone;
@@ -181,6 +194,52 @@ window.checkStreamingLayout=async(kind,tone,search=false,caption=40,custom=false
  expect(document.documentElement.scrollWidth<=innerWidth,'horizontal overflow');
  expect(errors.length===0,errors.join(';'));
  return {kind,tone,search,caption,top,bottom};
+};
+window.checkStreamingPeople=async(tone)=>{
+ document.documentElement.dataset.theme=tone;
+ delete document.documentElement.dataset.teShellLayout;
+ document.documentElement.style.setProperty('--te-titlebar-inset','40px');
+ Object.assign(document.querySelector('#app').style,{position:'static',top:'0',height:'100vh'});
+ tab.value='library';await mount();
+ const show=async(users=people,listType='follows',loading=false,error='')=>{page.value.showFixturePeople(users,listType,loading,error);await nextTick();await pause(450)};
+ await show();
+ const title=document.querySelector('.stage-title'),count=document.querySelector('.stage-people-count'),grid=document.querySelector('.stage-people-grid');
+ const cards=Array.from(grid.querySelectorAll('button.stage-person-card'));
+ const rect=element=>element.getBoundingClientRect();
+ const columns=getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+ expect(title.textContent==='关注'&&count.textContent==='共 80 人','people header must retain the title and loaded count');
+ expect(document.querySelector('.stage-people-header').textContent.replaceAll(/\\s/g,'')==='关注共80人','people header contains extra decoration');
+ expect(!document.querySelector('.stage-cover-frame')&&!document.querySelector('.stage-kicker'),'people retained the oversized cover or social kicker');
+ expect(Math.abs(rect(title).left-rect(grid).left)<1&&Math.abs(rect(count).left-rect(grid).left)<1,'title, count and grid must share a left edge');
+ expect(rect(title).top>=rect(document.querySelector('#caption')).bottom+12,'people header overlaps title bar');
+ expect(rect(count).top>=rect(title).bottom&&rect(grid).top>=rect(count).bottom+20,'people header spacing is cramped');
+ expect(cards.length===80,'people grid dropped loaded users');
+ expect(innerWidth<1000?columns===2:columns<=6,'people grid still packs too many people in a row: '+columns);
+ const avatar=cards[0].querySelector('.stage-person-avatar'),avatarSize=rect(avatar).width;
+ expect(Math.abs(avatarSize-(innerWidth<=640?88:104))<0.5,'people avatar size is incorrect: '+JSON.stringify({avatarSize,width:innerWidth,computed:getComputedStyle(avatar).width,variable:getComputedStyle(grid).getPropertyValue('--stage-person-avatar-size')}));
+ expect(rect(cards[0]).height>=(innerWidth<=640?184:212),'people cards did not grow');
+ const firstRow=cards.slice(0,columns);
+ for(const card of firstRow){const face=card.querySelector('.stage-person-avatar');expect(Math.abs(rect(face).left+rect(face).width/2-(rect(card).left+rect(card).width/2))<1,'avatar is not centered');expect(Math.abs(rect(card.querySelector('.stage-person-name')).top-rect(firstRow[0].querySelector('.stage-person-name')).top)<1,'names are not aligned');}
+ expect(document.documentElement.scrollWidth<=innerWidth&&grid.scrollWidth<=grid.clientWidth,'people grid overflows horizontally');
+ const loaded={columns,avatarSize,cardHeight:rect(cards[0]).height,gridTop:rect(grid).top};
+ await show([], 'follows',true);
+ const skeleton=document.querySelector('.skeleton-grid'),skeletonCard=skeleton.querySelector('.skeleton-card');
+ expect(getComputedStyle(skeleton).gridTemplateColumns.split(' ').length===columns,'skeleton uses a different column count');
+ expect(Math.abs(rect(skeleton.querySelector('.sk-avatar')).width-avatarSize)<0.5,'skeleton avatar differs from loaded avatar');
+ expect(Math.abs(rect(skeletonCard).height-loaded.cardHeight)<1&&Math.abs(rect(skeleton).top-loaded.gridTop)<1,'skeleton shifts the grid geometry');
+ await show([], 'followers');
+ expect(document.querySelector('.stage-title').textContent==='粉丝'&&document.querySelector('.stage-people-count').textContent==='共 0 人','followers empty header is inconsistent');
+ expect(document.querySelector('.stage-empty'),'people empty state disappeared');
+ await show([], 'follows',false,'加载关注列表失败');
+ expect(document.querySelector('.stage-empty').textContent.includes('加载关注列表失败')&&document.querySelector('.stage-mini-btn'),'people error state lost its retry action');
+ await show();
+ document.querySelector('button.stage-person-card').click();await nextTick();await pause(450);
+ expect(document.querySelector('.social-stage').dataset.kind==='user_playlists','person click did not open the user');
+ expect(document.querySelector('.stage-title').textContent===people[0].name+' 的歌单','person click opened the wrong user');
+ page.value.backFixtureDetail();await nextTick();await pause(450);
+ expect(document.querySelectorAll('button.stage-person-card').length===80&&document.querySelector('.stage-title').textContent==='关注','back navigation did not restore the people grid');
+ expect(errors.length===0,errors.join(';'));
+ return {tone,width:innerWidth,...loaded};
 };
 window.checkStreamingLocate=async()=>{
  await window.checkStreamingLayout('liked','dark');
@@ -261,13 +320,20 @@ const {app,BrowserWindow}=require('electron');const path=require('node:path');co
 const directory=process.argv.at(-1);app.setPath('userData',path.join(directory,'profile'));
 app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{backgroundThrottling:false,offscreen:true}});
 try{await win.loadFile(path.join(directory,'index.html'));
+if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.mkdirSync(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,{recursive:true});
+for(const width of [1480,520,360])for(const tone of ['pureWhite','dark']){
+ win.setContentSize(width,900);console.log(JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingPeople('+JSON.stringify(tone)+')')));
+ if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,tone+'-'+width+'-people.png'),(await win.webContents.capturePage()).toPNG())}
+}
+console.log('STREAMING_PEOPLE_OK');
 for(const width of [1280,520])for(const tone of ['pureWhite','dark'])for(const kind of ['liked','playlist','album','artist']){
  win.setContentSize(width,900);const result=await win.webContents.executeJavaScript('window.checkStreamingLayout('+JSON.stringify(kind)+','+JSON.stringify(tone)+')');console.log(JSON.stringify(result));
  if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.mkdirSync(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,{recursive:true});fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,tone+'-'+width+'-'+kind+'.png'),(await win.webContents.capturePage()).toPNG())}
 }
 win.setContentSize(1280,900);await win.webContents.executeJavaScript("window.checkStreamingLayout('playlist','pureWhite',true,56)");await win.webContents.executeJavaScript("window.checkStreamingLayout('liked','pureWhite',false,56)");
 await win.webContents.executeJavaScript("window.checkStreamingLayout('playlist','pureWhite',false,56,true)");
+win.setContentSize(1280,900);
 console.log(await win.webContents.executeJavaScript('window.checkStreamingLocate()'));
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'liked-floating-locator.png'),(await win.webContents.capturePage()).toPNG())}
-console.log('STREAMING_LAYOUT_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}});
+console.log('STREAMING_LAYOUT_OK');app.exit(0)}catch(error){if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'failure.png'),(await win.webContents.capturePage()).toPNG());console.error(error.stack);app.exit(1)}});
 `

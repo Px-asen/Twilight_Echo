@@ -17,6 +17,7 @@ import { normalizeAppearanceLayers } from './appearanceLayers.ts'
 import { ensureThemeTextContrast, themeContrastRatio } from './theme.ts'
 import { MIN_READING_FADE } from './materials.ts'
 import { backgroundDisplayUrl } from './backgroundDisplay.ts'
+import { isThemeImageSource } from './themeImageSource.ts'
 
 export type AppearanceDraft = Pick<
   AppSettings,
@@ -70,7 +71,7 @@ export function normalizeBackgroundImagePalette(
 ): AppBackgroundImagePalette | undefined {
   const value = object(raw)
   if (
-    !/^background:\/\/[a-zA-Z0-9._-]+$/.test(image) ||
+    !isThemeImageSource(image) ||
     value.image !== image ||
     typeof value.average !== 'string' ||
     !/^#[a-f\d]{6}$/i.test(value.average) ||
@@ -128,7 +129,8 @@ export function normalizeAppBackgroundSettings(
     const effects = object(source.effects)
     const followsTheme = source.kind === 'theme' || source.kind === 'none'
     const image =
-      typeof source.image === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(source.image)
+      typeof source.image === 'string' &&
+      (/^background:\/\/[a-zA-Z0-9._-]+$/.test(source.image) || isThemeImageSource(source.image))
         ? source.image
         : ''
     const imagePalette = normalizeBackgroundImagePalette(source.imagePalette, image)
@@ -179,7 +181,11 @@ export function backgroundEffect(
 }
 
 export function hasBackgroundImage(background: AppBackgroundColorPair): boolean {
-  return background.kind === 'image' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(background.image)
+  return (
+    background.kind === 'image' &&
+    (/^background:\/\/[a-zA-Z0-9._-]+$/.test(background.image) ||
+      isThemeImageSource(background.image))
+  )
 }
 
 /** Image tuning stays saved while a solid color or the theme is being shown. */

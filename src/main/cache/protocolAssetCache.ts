@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises'
 
-const DEFAULT_MAX_CACHE_BYTES = 16 * 1024 * 1024
-const DEFAULT_MAX_CACHE_ENTRIES = 512
+const DEFAULT_MAX_CACHE_BYTES = 4 * 1024 * 1024
+const DEFAULT_MAX_CACHE_ENTRIES = 192
 type ProtocolAssetBytes = NonSharedBuffer
 export type { ProtocolAssetBytes }
 

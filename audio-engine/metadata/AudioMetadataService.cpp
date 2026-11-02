@@ -13,8 +13,10 @@
 
 #include "../core/DsdRate.h"
 #include "../decoder/FFmpegDsdRate.h"
+#include "../decoder/WavPackSource.h"
 #include "../decoder/SacdIsoDemuxer.h"
 #include "../decoder/SacdIsoProbe.h"
+#include "../decoder/SeekableInputStream.h"
 
 #if defined(TAE_HAS_FFMPEG)
 extern "C" {
@@ -267,26 +269,46 @@ std::string metadataToJson(const AudioMetadata& metadata, const std::string& err
 
 }  // namespace
 
-std::string readMetadataJson(const std::string& source) {
+std::string readMetadataJson(const std::string& source, std::shared_ptr<const SeekableInputFactory> inputFactory) {
   AudioMetadata metadata;
   metadata.source = source;
   if (source.empty()) return metadataToJson(metadata, "音频地址为空");
-  if (sourceLooksSacdIso(source)) {
+  const auto inputSource = parseSacdSource(source).path;
+  auto input = inputFactory ? (*inputFactory)(inputSource) : nullptr;
+  SeekableInputStream probeInput;
+  bool sacd = false;
+  if (sacdIsoExtensionOf(inputSource) == "iso" || source.rfind("content://", 0) == 0) {
+    if (input) probeInput.open(input);
+    else probeInput.open(inputSource);
+    std::array<char, 4> magic{};
+    probeInput.read(magic.data(), magic.size());
+    sacd = probeInput.is_open() && std::memcmp(magic.data(), "DSD ", 4) != 0 &&
+        std::memcmp(magic.data(), "FRM8", 4) != 0 && probeSacdIsoEntry(source, probeInput).isSacdIso();
+  }
+  if (sacd) {
     metadata.container = "SACD ISO";
     metadata.isDsd = true;
-    metadata.dsdMode = dsdModeToString(DsdMode::Pcm);
+#if defined(TAE_HAS_FFMPEG)
+    const bool pcmAvailable = avcodec_find_decoder(AV_CODEC_ID_DSD_MSBF) != nullptr;
+#else
+    const bool pcmAvailable = false;
+#endif
+    metadata.dsdMode = dsdModeToString(pcmAvailable ? DsdMode::Pcm : DsdMode::Unsupported);
     
     SacdIsoDemuxer demuxer;
+    auto dstProvider = createDefaultSacdDstDecoderProvider();
+    demuxer.setDstDecoderProvider(dstProvider.get());
     std::string error;
-    if (!demuxer.open(source, &error)) {
+    if (!demuxer.open(source, probeInput.input(), &error)) {
       return metadataToJson(metadata, error.empty() ? "Unable to read SACD ISO metadata" : error);
     }
     
     for (const auto& track : demuxer.tracks()) {
       AudioMetadata trackMeta;
-      trackMeta.source = source + "?area=" + track.area + "&track=" + std::to_string(track.trackNumber);
+      trackMeta.source = sacdTrackSource(source, track.area, track.trackNumber);
       trackMeta.title = track.title.empty() ? "Track " + std::to_string(track.trackNumber) : track.title;
       trackMeta.artist = track.artist;
+      trackMeta.album = track.albumTitle;
       if (track.year > 0 && track.year <= 9999) trackMeta.year = std::to_string(track.year);
       trackMeta.trackNumber = std::to_string(track.trackNumber);
       trackMeta.durationSeconds = track.durationSeconds;
@@ -294,13 +316,16 @@ std::string readMetadataJson(const std::string& source) {
       trackMeta.sampleRate = track.sampleRate;
       trackMeta.bitDepth = 1;
       trackMeta.isDsd = true;
-      trackMeta.dsdMode = dsdModeToString(DsdMode::Pcm);
+      trackMeta.dsdMode = metadata.dsdMode;
       trackMeta.dsdRate = inferDsdRate(track.sampleRate);
       trackMeta.container = "SACD ISO";
       trackMeta.codec = track.isDst ? "dst" : "dsd";
       trackMeta.playable = track.playable;
       trackMeta.reasonCode = track.playable ? "" : track.reasonCode;
-      if (track.playable) trackMeta.outputModes = {"native", "dop", "pcm"};
+      if (track.playable) {
+        trackMeta.outputModes = {"native", "dop"};
+        if (pcmAvailable) trackMeta.outputModes.push_back("pcm");
+      }
       trackMeta.comment = track.playable ? "" : (track.reason.empty() ? "SACD ISO DST track unsupported" : track.reason);
       metadata.isoTracks.push_back(trackMeta);
     }
@@ -310,7 +335,7 @@ std::string readMetadataJson(const std::string& source) {
 
 #if defined(TAE_HAS_FFMPEG)
   FormatContextHandle handle;
-  if (!handle.fileInput.open(source, &handle.context) ||
+  if (!handle.fileInput.open(source, &handle.context, input) ||
       avformat_open_input(&handle.context, source.c_str(), nullptr, nullptr) < 0 || !handle.context) {
     return metadataToJson(metadata, "无法打开音频文件");
   }
@@ -337,9 +362,13 @@ std::string readMetadataJson(const std::string& source) {
     if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && metadata.sampleRate == 0) {
       const AVCodecDescriptor* descriptor = avcodec_descriptor_get(stream->codecpar->codec_id);
       metadata.codec = descriptor && descriptor->name ? descriptor->name : "";
+      const auto wavPack = stream->codecpar->codec_id == AV_CODEC_ID_WAVPACK &&
+          (input || source.find("://") == std::string::npos)
+          ? readWavPackSource(source, input) : std::optional<WavPackSource>{};
+      const bool wavPackDsd = wavPack && wavPack->isDsd;
       // Raw-DSD demuxers report the post-decimation PCM rate; publish the DSD bit rate
       // so it matches every other DSD source. See FFmpegDsdRate.h.
-      metadata.sampleRate =
+      metadata.sampleRate = wavPackDsd ? stream->codecpar->sample_rate * ffmpeg::kDsdBitsPerByte :
           ffmpeg::dsdSampleRateFromCodecRate(stream->codecpar->codec_id, stream->codecpar->sample_rate);
       metadata.channelCount = stream->codecpar->ch_layout.nb_channels;
       char layout[128] = {};
@@ -349,15 +378,30 @@ std::string readMetadataJson(const std::string& source) {
       metadata.bitDepth = stream->codecpar->bits_per_raw_sample > 0
                               ? stream->codecpar->bits_per_raw_sample
                               : stream->codecpar->bits_per_coded_sample;
+      if (wavPack) {
+        metadata.bitDepth = wavPack->bitDepth;
+        if (wavPack->totalSamples > 0 && stream->codecpar->sample_rate > 0) {
+          metadata.durationSeconds = static_cast<double>(wavPack->totalSamples) / stream->codecpar->sample_rate;
+        }
+      }
       if (stream->codecpar->bit_rate > 0) metadata.bitrate = stream->codecpar->bit_rate;
       const bool dopCarrier = looksDop(metadata.codec, metadata.container, sourceExtension);
-      metadata.isDsd = codecLooksDsd(metadata.codec) || containerLooksDsd(metadata.container, sourceExtension);
+      metadata.isDsd = wavPackDsd || codecLooksDsd(metadata.codec) || containerLooksDsd(metadata.container, sourceExtension);
       // DSD is 1 bit per sample by definition. FFmpeg reports bits_per_coded_sample = 8
       // for raw DSD, which describes the byte packing, not the audio bit depth, so the
       // old `<= 0` guard never fired and DSD files were published as 8-bit.
       if (metadata.isDsd) metadata.bitDepth = 1;
       metadata.dsdRate = metadata.isDsd ? inferDsdRate(metadata.sampleRate, dopCarrier) : 0;
-      metadata.dsdMode = metadata.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm);
+      if (metadata.isDsd) {
+        metadata.playable = avcodec_find_decoder(stream->codecpar->codec_id) != nullptr;
+        metadata.dsdMode = dsdModeToString(metadata.playable ? DsdMode::Pcm : DsdMode::Unsupported);
+        if (!metadata.playable) metadata.reasonCode = "decoder_unavailable";
+        if (wavPackDsd && metadata.playable) metadata.outputModes = {"pcm"};
+        if (ffmpeg::isRawDsdCodec(stream->codecpar->codec_id) || stream->codecpar->codec_id == AV_CODEC_ID_DST) {
+          metadata.outputModes = {"native", "dop"};
+          if (metadata.playable) metadata.outputModes.push_back("pcm");
+        }
+      }
     }
     if ((stream->disposition & AV_DISPOSITION_ATTACHED_PIC) != 0 && stream->attached_pic.data &&
         stream->attached_pic.size > 0 && metadata.coverDataBase64.empty()) {

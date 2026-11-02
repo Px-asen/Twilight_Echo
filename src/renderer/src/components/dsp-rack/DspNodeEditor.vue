@@ -256,9 +256,9 @@ function selectVst3State(assetId: string): void {
               "
             >
               <option value="custom">Custom</option>
-              <option value="bauer">Bauer</option>
+              <option value="bauer">Bauer (BS2B)</option>
               <option value="bs2b">BS2B</option>
-              <option value="meier">Meier</option>
+              <option value="meier">Meier (BS2B preset)</option>
             </select></label
           >
           <label

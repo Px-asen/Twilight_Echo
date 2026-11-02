@@ -211,7 +211,8 @@ function createDynamicIslandWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false
+      allowRunningInsecureContent: false,
+      spellcheck: false
     }
   })
   runtime.dynamicIslandWindow = win

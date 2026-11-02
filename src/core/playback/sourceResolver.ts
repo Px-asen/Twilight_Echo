@@ -50,10 +50,12 @@ export async function prepareNativeSource(
   const iso = local
     ? /^(.*\.iso)(\?area=(?:stereo|multichannel)&track=[1-9]\d{0,8})$/i.exec(source)
     : null
+  const uriTrack = /^(content:\/\/.*)(#twilight-sacd=(?:stereo|multichannel):[1-9]\d*)$/.exec(source)
+  const selected = uriTrack ?? iso
   try {
-    if (!iso) return await prepare(source)
-    const path = await prepare(iso[1])
-    return path === null ? null : `${path}${iso[2]}`
+    if (!selected) return await prepare(source)
+    const path = await prepare(selected[1])
+    return path === null ? null : `${path}${selected[2]}`
   } catch (cause) {
     if (cause instanceof SourceAuthorizationError) throw cause
     throw new SourceAuthorizationError(

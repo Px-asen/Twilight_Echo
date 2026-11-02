@@ -24,6 +24,7 @@ import type {
   PreviousButtonAction,
   SacdProgramMode,
   StartupHomePage,
+  HomePageMode,
   TrackActivationMode,
   StreamingAudioCachePolicy,
   UiDensity
@@ -157,6 +158,12 @@ export const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: stri
   { value: 'exhigh', label: '极高' },
   { value: 'lossless', label: '无损' },
   { value: 'hires', label: 'Hi-Res' }
+]
+
+export const homePageModeOptions: { value: HomePageMode; label: string; icon: string }[] = [
+  { value: 'auto', label: '自动', icon: 'pi pi-sparkles' },
+  { value: 'local', label: '本地音乐为主', icon: 'pi pi-folder-open' },
+  { value: 'streaming', label: '流媒体为主', icon: 'pi pi-cloud' }
 ]
 
 export const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
@@ -518,10 +525,10 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     terms: '通用 常规 语言 启动 窗口 操作 单击 双击 播放 列表 操作 习惯 激活 歌曲列表播放方式'
   },
   {
-    id: 'startup-home',
+    id: 'home-page-mode',
     section: 'general',
-    title: '启动后进入',
-    terms: '通用 常规 语言 启动 窗口 操作 startup 主页 首页 启动 进入 本地 流媒体 启动后进入'
+    title: '首页内容模式',
+    terms: '通用 常规 语言 启动 窗口 操作 主页 首页 内容 模式 本地 流媒体 在线 自动 首页内容模式'
   },
   {
     id: 'launch-at-login',
@@ -922,8 +929,8 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   {
     id: 'theme-studio',
     section: 'appearance',
-    title: '主题创意工坊',
-    terms: '外观 主题 界面 主题 工作室 theme 编辑器 自定义 皮肤 主题创意工坊与主题插件工坊'
+    title: '自定义主题',
+    terms: '外观 主题 theme 编辑器 自定义 皮肤 TEP 导出 素材 图层 蒙版 CSS 参数'
   },
   {
     id: 'color-mode',
@@ -1462,12 +1469,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     terms: '外观 主题 界面 频谱 底栏 性能 动态 可视化',
     disclosureId: 'player-bar'
   },
-  {
-    id: 'theme-workshop',
-    section: 'appearance',
-    title: '主题插件工坊',
-    terms: '外观 主题 界面 主题 插件 编辑 导出 工坊'
-  },
+
   {
     id: 'dsd-compatible-route',
     section: 'playback',
@@ -1638,7 +1640,7 @@ const groupedTargets: { path: readonly string[]; ids: readonly string[] }[] = [
   { path: ['dsd-routing'], ids: ['pcm-to-dsd'] },
   {
     path: ['theme-customization'],
-    ids: ['theme-studio', 'theme-workshop', 'accent-light', 'accent-dark']
+    ids: ['theme-studio', 'accent-light', 'accent-dark']
   },
   {
     path: ['window-transparency-details'],

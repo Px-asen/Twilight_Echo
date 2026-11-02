@@ -5,7 +5,6 @@ import ServerLoginForm from '@renderer/components/login/ServerLoginForm.vue'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBackHandler } from '../app/useBackStack'
-import AnimatedInput from './AnimatedInput.vue'
 import { useNcmStore } from '../stores/useNcmStore'
 import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
 import type { MediaProviderProfile } from '../providers/mediaProvider'
@@ -38,8 +37,6 @@ type PageState =
   | 'login_success'
   | 'error'
 
-type LoginMethod = 'qr' | 'captcha' | 'password'
-
 interface AccountState {
   available: boolean
   loggedIn: boolean
@@ -68,23 +65,12 @@ const qrKey = ref('')
 const lastKeyGenTime = ref(0)
 const authUrl = ref('') // OAuth device flow URL (for showBrowserButton providers)
 const accountStates = ref<Record<string, AccountState>>({})
-const loginMethod = ref<LoginMethod>('qr')
-const passwordKind = ref<'phone' | 'email'>('phone')
-const accountPhone = ref('')
-const accountCountryCode = ref('86')
-const accountCaptcha = ref('')
-const accountEmail = ref('')
-const accountPassword = ref('')
-const accountLoginBusy = ref(false)
-const captchaBusy = ref(false)
-const accountLoginMessage = ref('')
-const loginBlockedUntil = ref(0)
-const loginBlockedReason = ref('')
+const serverLoginBusy = ref(false)
+const serverLoginMessage = ref('')
 const confirmLogout = ref(false)
 const uidCopied = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let uidCopiedTimer: ReturnType<typeof setTimeout> | null = null
 let accountsInitialized = false
 let disposed = false
@@ -164,7 +150,6 @@ const activeUi = computed(() => activeProvider.value?.ui)
 const supportsServerLogin = computed(
   () => activeProvider.value?.supportedMethods?.includes('loginWithServer') === true
 )
-const supportsAccountLogin = computed(() => activeProviderId.value === 'ncm')
 const isOAuthProvider = computed(() => Boolean(activeUi.value?.showBrowserButton))
 
 /** 顶层视图：由页面状态机折叠而来，驱动舞台切换动画 */
@@ -183,15 +168,6 @@ const view = computed<'loading' | 'connect' | 'login' | 'profile' | 'success' | 
     default:
       return 'login'
   }
-})
-
-const loginCooldownRemaining = ref(0)
-const isLoginCoolingDown = computed(() => loginCooldownRemaining.value > 0)
-const loginCooldownText = computed(() => {
-  if (!isLoginCoolingDown.value) return ''
-  const minutes = Math.floor(loginCooldownRemaining.value / 60)
-  const seconds = loginCooldownRemaining.value % 60
-  return minutes > 0 ? `${minutes}分${String(seconds).padStart(2, '0')}秒` : `${seconds}秒`
 })
 
 const qrStatusText = computed(() => {
@@ -289,7 +265,7 @@ function openAccount(providerId: string): void {
   qrKey.value = ''
   authUrl.value = ''
   errorMsg.value = ''
-  clearAccountLoginFeedback()
+  serverLoginMessage.value = ''
   activeProviderId.value = providerId
   confirmLogout.value = false
   if (
@@ -315,7 +291,6 @@ function openAccount(providerId: string): void {
     pageState.value = 'qr_ready'
     return
   }
-  loginMethod.value = 'qr'
   void startQrLogin()
 }
 
@@ -324,63 +299,6 @@ function openFallbackAccount(): void {
   const fallback =
     (props.forceProfile ? available.find((card) => card.loggedIn) : undefined) ?? available[0]
   if (fallback) openAccount(fallback.id)
-}
-
-function clearAccountLoginFeedback(): void {
-  accountLoginMessage.value = ''
-}
-
-function setLoginMethod(method: LoginMethod): void {
-  if (loginMethod.value === method) return
-  loginRevision += 1
-  stopPolling()
-  lastKeyGenTime.value = 0
-  loginMethod.value = method
-  accountLoginBusy.value = false
-  captchaBusy.value = false
-  clearAccountLoginFeedback()
-  if (method === 'qr') {
-    if (qrKey.value && (pageState.value === 'qr_ready' || pageState.value === 'qr_scanned')) {
-      if (activeProviderId.value) startPolling(activeProviderId.value, qrKey.value)
-      return
-    }
-    handleRefresh()
-    return
-  }
-  stopPolling()
-}
-
-function refreshCooldownRemaining(): void {
-  loginCooldownRemaining.value = Math.max(
-    0,
-    Math.ceil((loginBlockedUntil.value - Date.now()) / 1000)
-  )
-  if (loginCooldownRemaining.value === 0) {
-    loginBlockedReason.value = ''
-    if (cooldownTimer) {
-      clearInterval(cooldownTimer)
-      cooldownTimer = null
-    }
-  }
-}
-
-function startLoginCooldown(seconds: number, reason: string): void {
-  loginBlockedUntil.value = Date.now() + seconds * 1000
-  loginBlockedReason.value = reason
-  refreshCooldownRemaining()
-  if (!cooldownTimer) {
-    cooldownTimer = setInterval(refreshCooldownRemaining, 1000)
-  }
-}
-
-function applyLoginCooldownFromMessage(message: string): void {
-  if (/安全风险|设备环境异常|操作已拦截|24 小时|24小时/i.test(message)) {
-    startLoginCooldown(24 * 60 * 60, '网易云已拦截当前网络或设备环境')
-    return
-  }
-  if (/503|高频|风控/i.test(message)) {
-    startLoginCooldown(180, '网易云登录接口触发高频或风控限制')
-  }
 }
 
 async function checkQrScan(
@@ -454,7 +372,6 @@ function startPolling(providerId: string, key: string): void {
       result.code === 460
     ) {
       errorMsg.value = getQrErrorMessage(result)
-      applyLoginCooldownFromMessage(errorMsg.value)
       pageState.value = 'error'
       stopPolling()
       return
@@ -483,7 +400,7 @@ const qrVisibilityPolling = createVisibilityPollingController({
   isHidden: () => document.hidden,
   stop: stopPolling,
   resume: () => {
-    if (qrKey.value && activeProviderId.value && pollTimer === null && loginMethod.value === 'qr')
+    if (qrKey.value && activeProviderId.value && pollTimer === null)
       startPolling(activeProviderId.value, qrKey.value)
   }
 })
@@ -591,95 +508,16 @@ function normalizeLoginError(error: unknown): string {
   return message || '登录失败，请检查账号信息后重试'
 }
 
-async function handleSendCaptcha(): Promise<void> {
-  const providerId = activeProviderId.value
-  if (!providerId || captchaBusy.value) return
-  refreshCooldownRemaining()
-  if (isLoginCoolingDown.value) {
-    accountLoginMessage.value = `${loginBlockedReason.value || '登录请求正在冷却'}，请 ${loginCooldownText.value} 后再试`
-    return
-  }
-  clearAccountLoginFeedback()
-  const phone = accountPhone.value.trim()
-  if (!phone) {
-    accountLoginMessage.value = '请先输入手机号'
-    return
-  }
-  const revision = loginRevision
-  captchaBusy.value = true
-  try {
-    const result = await providerStore.callProvider<{ code: number; message?: string }>(
-      providerId,
-      'sendCaptcha',
-      [phone, accountCountryCode.value.trim() || '86']
-    )
-    if (revision !== loginRevision || activeProviderId.value !== providerId) return
-    accountLoginMessage.value =
-      result.code === 200 ? '验证码已发送' : result.message || '验证码发送失败'
-    if (result.code !== 200) applyLoginCooldownFromMessage(accountLoginMessage.value)
-  } catch (error) {
-    if (revision !== loginRevision || activeProviderId.value !== providerId) return
-    accountLoginMessage.value = normalizeLoginError(error)
-    applyLoginCooldownFromMessage(accountLoginMessage.value)
-  } finally {
-    if (revision === loginRevision) captchaBusy.value = false
-  }
-}
-
-async function handleAccountLogin(): Promise<void> {
-  if (!activeProviderId.value || accountLoginBusy.value) return
-  refreshCooldownRemaining()
-  if (isLoginCoolingDown.value) {
-    accountLoginMessage.value = `${loginBlockedReason.value || '登录请求正在冷却'}，请 ${loginCooldownText.value} 后再试`
-    return
-  }
-  stopPolling()
-  clearAccountLoginFeedback()
-  captchaBusy.value = false
-  accountLoginBusy.value = true
-  const revision = ++loginRevision
-  try {
-    const providerId = activeProviderId.value
-    if (loginMethod.value === 'captcha') {
-      await providerStore.callProvider(providerId, 'loginByPhoneCaptcha', [
-        accountPhone.value.trim(),
-        accountCaptcha.value.trim(),
-        accountCountryCode.value.trim() || '86'
-      ])
-    } else if (passwordKind.value === 'phone') {
-      await providerStore.callProvider(providerId, 'loginByPhonePassword', [
-        accountPhone.value.trim(),
-        accountPassword.value,
-        accountCountryCode.value.trim() || '86'
-      ])
-    } else {
-      await providerStore.callProvider(providerId, 'loginByEmailPassword', [
-        accountEmail.value.trim(),
-        accountPassword.value
-      ])
-    }
-    if (revision !== loginRevision || activeProviderId.value !== providerId) return
-    pageState.value = 'login_success'
-    await syncSuccessfulLogin(providerId, true)
-  } catch (error) {
-    if (revision !== loginRevision) return
-    accountLoginMessage.value = normalizeLoginError(error)
-    applyLoginCooldownFromMessage(accountLoginMessage.value)
-  } finally {
-    if (revision === loginRevision) accountLoginBusy.value = false
-  }
-}
-
 async function handleServerLogin(
   serverUrl: string,
   username: string,
   password: string
 ): Promise<void> {
   const providerId = activeProviderId.value
-  if (!providerId || accountLoginBusy.value) return
+  if (!providerId || serverLoginBusy.value) return
   const revision = ++loginRevision
-  accountLoginBusy.value = true
-  accountLoginMessage.value = ''
+  serverLoginBusy.value = true
+  serverLoginMessage.value = ''
   try {
     const result = await providerStore.callProvider<{ loggedIn: boolean }>(
       providerId,
@@ -691,9 +529,9 @@ async function handleServerLogin(
     pageState.value = 'login_success'
     await syncSuccessfulLogin(providerId, true)
   } catch (error) {
-    if (revision === loginRevision) accountLoginMessage.value = normalizeLoginError(error)
+    if (revision === loginRevision) serverLoginMessage.value = normalizeLoginError(error)
   } finally {
-    if (revision === loginRevision) accountLoginBusy.value = false
+    if (revision === loginRevision) serverLoginBusy.value = false
   }
 }
 
@@ -736,9 +574,8 @@ function backToAccounts(): void {
   authUrl.value = ''
   errorMsg.value = ''
   confirmLogout.value = false
-  accountLoginBusy.value = false
-  captchaBusy.value = false
-  clearAccountLoginFeedback()
+  serverLoginBusy.value = false
+  serverLoginMessage.value = ''
 }
 
 // 账号详情/扫码登录是登录页内部的一层：标题栏返回键先退到平台列表，再退出
@@ -804,7 +641,6 @@ onUnmounted(() => {
   loginRevision += 1
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   stopPolling()
-  if (cooldownTimer) clearInterval(cooldownTimer)
   if (uidCopiedTimer) clearTimeout(uidCopiedTimer)
 })
 </script>
@@ -926,57 +762,19 @@ onUnmounted(() => {
               </h2>
             </header>
 
-            <div
-              v-if="supportsAccountLogin"
-              class="method-tabs"
-              role="tablist"
-              aria-label="登录方式"
-            >
-              <button
-                type="button"
-                role="tab"
-                class="method-tab"
-                :aria-selected="loginMethod === 'qr'"
-                :class="{ active: loginMethod === 'qr' }"
-                @click="setLoginMethod('qr')"
-              >
-                扫码登录
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="method-tab"
-                :aria-selected="loginMethod === 'captcha'"
-                :class="{ active: loginMethod === 'captcha' }"
-                @click="setLoginMethod('captcha')"
-              >
-                短信登录
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="method-tab"
-                :aria-selected="loginMethod === 'password'"
-                :class="{ active: loginMethod === 'password' }"
-                @click="setLoginMethod('password')"
-              >
-                密码登录
-              </button>
-            </div>
-
             <!-- 扫码 / OAuth -->
             <div
-              :key="supportsServerLogin ? 'server' : loginMethod"
+              :key="supportsServerLogin ? 'server' : 'qr'"
               class="login-method-content te-content-arrival"
             >
               <ServerLoginForm
                 v-if="supportsServerLogin"
                 :key="activeProviderId || ''"
-                :busy="accountLoginBusy"
-                :error="accountLoginMessage"
+                :busy="serverLoginBusy"
+                :error="serverLoginMessage"
                 @submit="handleServerLogin"
               />
-              <div v-else-if="loginMethod === 'qr'" class="qr-stage">
+              <div v-else class="qr-stage">
                 <template v-if="isOAuthProvider">
                   <div class="oauth-panel">
                     <div class="lp-spinner"></div>
@@ -1051,129 +849,6 @@ onUnmounted(() => {
                   </button>
                 </div>
               </div>
-
-              <!-- 短信 / 密码表单 -->
-              <form v-else class="account-form" @submit.prevent="handleAccountLogin">
-                <div
-                  v-if="loginMethod === 'password'"
-                  class="kind-switch"
-                  role="radiogroup"
-                  aria-label="账号类型"
-                >
-                  <button
-                    type="button"
-                    class="kind-chip"
-                    :class="{ active: passwordKind === 'phone' }"
-                    @click="((passwordKind = 'phone'), clearAccountLoginFeedback())"
-                  >
-                    手机号
-                  </button>
-                  <button
-                    type="button"
-                    class="kind-chip"
-                    :class="{ active: passwordKind === 'email' }"
-                    @click="((passwordKind = 'email'), clearAccountLoginFeedback())"
-                  >
-                    邮箱
-                  </button>
-                </div>
-
-                <template v-if="loginMethod === 'captcha' || passwordKind === 'phone'">
-                  <label class="field-label" for="lp-phone">手机号</label>
-                  <div class="field-row phone">
-                    <AnimatedInput
-                      id="lp-country"
-                      v-model="accountCountryCode"
-                      class="field-input country"
-                      autocomplete="tel-country-code"
-                      inputmode="numeric"
-                      placeholder="86"
-                      aria-label="国家区号"
-                    />
-                    <AnimatedInput
-                      id="lp-phone"
-                      v-model="accountPhone"
-                      class="field-input"
-                      autocomplete="tel"
-                      inputmode="tel"
-                      placeholder="输入手机号"
-                    />
-                  </div>
-                </template>
-
-                <template v-if="loginMethod === 'password' && passwordKind === 'email'">
-                  <label class="field-label" for="lp-email">网易邮箱</label>
-                  <AnimatedInput
-                    id="lp-email"
-                    v-model="accountEmail"
-                    class="field-input"
-                    autocomplete="email"
-                    type="email"
-                    placeholder="name@163.com"
-                  />
-                </template>
-
-                <template v-if="loginMethod === 'captcha'">
-                  <label class="field-label" for="lp-captcha">短信验证码</label>
-                  <div class="field-row captcha">
-                    <AnimatedInput
-                      id="lp-captcha"
-                      v-model="accountCaptcha"
-                      class="field-input"
-                      autocomplete="one-time-code"
-                      inputmode="numeric"
-                      placeholder="6 位验证码"
-                    />
-                    <button
-                      type="button"
-                      class="btn-captcha"
-                      :disabled="captchaBusy || isLoginCoolingDown"
-                      @click="handleSendCaptcha"
-                    >
-                      {{
-                        captchaBusy
-                          ? '发送中…'
-                          : isLoginCoolingDown
-                            ? loginCooldownText
-                            : '获取验证码'
-                      }}
-                    </button>
-                  </div>
-                </template>
-
-                <template v-if="loginMethod === 'password'">
-                  <label class="field-label" for="lp-password">密码</label>
-                  <input
-                    id="lp-password"
-                    v-model="accountPassword"
-                    class="field-input"
-                    autocomplete="current-password"
-                    type="password"
-                    placeholder="输入密码"
-                  />
-                </template>
-
-                <button
-                  class="btn-primary form-submit"
-                  type="submit"
-                  :disabled="accountLoginBusy || isLoginCoolingDown"
-                >
-                  <span v-if="accountLoginBusy" class="btn-spinner"></span>
-                  {{
-                    accountLoginBusy
-                      ? '登录中…'
-                      : isLoginCoolingDown
-                        ? `等待 ${loginCooldownText}`
-                        : '登 录'
-                  }}
-                </button>
-                <p v-if="isLoginCoolingDown" class="form-message">
-                  {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
-                </p>
-                <p v-else-if="accountLoginMessage" class="form-message">
-                  {{ accountLoginMessage }}
-                </p>
-              </form>
             </div>
           </section>
 
@@ -1698,40 +1373,6 @@ onUnmounted(() => {
     color var(--te-motion-hover);
 }
 
-/* ─── 登录方式 tabs ────────────────────────── */
-
-.method-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--lp-inset);
-  width: min(360px, 100%);
-  margin: 0 auto;
-}
-
-.method-tab {
-  height: 36px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--lp-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background var(--te-motion-hover) var(--te-ease-soft),
-    color var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover) var(--te-ease-soft);
-}
-
-.method-tab.active {
-  background: var(--lp-surface);
-  color: var(--te-primary-500);
-  box-shadow: var(--lp-shadow-soft);
-}
-
 /* ─── 扫码区 ──────────────────────────────── */
 
 .qr-stage {
@@ -1923,137 +1564,6 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-/* ─── 表单 ────────────────────────────────── */
-
-.account-form {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  width: min(340px, 100%);
-  margin: 0 auto;
-}
-
-.kind-switch {
-  display: inline-flex;
-  justify-content: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.kind-chip {
-  height: 30px;
-  padding: 0 16px;
-  border: 1px solid var(--lp-line);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--lp-muted);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    color var(--te-motion-hover) var(--te-ease-soft),
-    border-color var(--te-motion-hover) var(--te-ease-soft),
-    background var(--te-motion-hover) var(--te-ease-soft);
-}
-
-.kind-chip.active {
-  color: var(--te-primary-500);
-  border-color: color-mix(in srgb, var(--te-primary-500) 46%, transparent);
-  background: var(--lp-tint);
-}
-
-.field-label {
-  margin-top: 7px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 600;
-  color: var(--lp-muted);
-}
-
-.field-row {
-  display: grid;
-  gap: 10px;
-}
-
-.field-row.phone {
-  grid-template-columns: 64px minmax(0, 1fr);
-}
-
-.field-row.captcha {
-  grid-template-columns: minmax(0, 1fr) 112px;
-}
-
-.field-input {
-  min-width: 0;
-  height: 46px;
-  padding: 0 15px;
-  border: 1px solid var(--lp-line);
-  border-radius: 13px;
-  background: var(--lp-inset);
-  color: var(--lp-text);
-  font-size: calc(var(--te-font-size-body, 14px) * 14 / 14);
-  outline: none;
-  transition:
-    border-color var(--te-motion-hover) var(--te-ease-soft),
-    background var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover) var(--te-ease-soft);
-}
-
-.field-input::placeholder {
-  color: var(--lp-muted);
-}
-
-.field-input {
-  --ai-placeholder: var(--lp-muted);
-  min-width: 0;
-}
-
-.field-input:focus,
-.field-input:focus-within {
-  border-color: var(--te-primary-500);
-  background: var(--lp-surface);
-  box-shadow: 0 0 0 3px var(--lp-tint);
-}
-
-.field-input.country {
-  text-align: center;
-  --ai-justify: center;
-}
-
-.btn-captcha {
-  height: 46px;
-  border: none;
-  border-radius: 13px;
-  background: var(--lp-tint);
-  color: var(--te-primary-500);
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--te-motion-hover) var(--te-ease-soft);
-}
-
-.btn-captcha:hover:not(:disabled) {
-  background: var(--lp-tint-strong);
-}
-
-.btn-captcha:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.form-submit {
-  margin-top: 14px;
-  width: 100%;
-}
-
-.form-message {
-  margin: 2px 0 0;
-  min-height: 18px;
-  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
-  line-height: 1.6;
-  text-align: center;
-  color: var(--lp-muted);
-}
-
 /* ─── 按钮 ────────────────────────────────── */
 
 .btn-primary {
@@ -2154,16 +1664,6 @@ onUnmounted(() => {
   100% {
     transform: scale(1);
   }
-}
-
-.btn-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid color-mix(in srgb, white 40%, transparent);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
 }
 
 .lp-spinner {

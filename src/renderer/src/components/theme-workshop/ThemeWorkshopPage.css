@@ -396,6 +396,10 @@
   gap: 6px;
   margin-bottom: 12px;
 }
+.workshop-properties .appearance-layer-settings label {
+  flex-direction: row;
+  margin-bottom: 0;
+}
 .workshop-properties--single-color
   :is(.studio-appearance-heading, .workshop-control-heading)
   > strong,

@@ -61,6 +61,7 @@ import type {
   PreviousButtonAction,
   ProxyMode,
   StartupHomePage,
+  HomePageMode,
   TrackActivationMode,
   StreamingAudioCachePolicy,
   UiDensity
@@ -142,9 +143,11 @@ const BASE_SETTINGS: AppSettings = {
   closeToTray: false,
   taskbarThumbarButtonsEnabled: true,
   afterglowAutoEntry: 'off',
+  unloadHiddenMainWindow: true,
   onboardingCompleted: false,
   developerMode: false,
   startupHomePage: 'local',
+  homePageMode: 'auto',
   startupExperience: null,
   navigationPages: normalizeNavigationPagePreferences(undefined),
   trackActivationMode: 'singleClick',
@@ -232,7 +235,8 @@ const BASE_SETTINGS: AppSettings = {
   surfaceMaterial: 'standard',
   liquidGlass: DEFAULT_LIQUID_GLASS,
   playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
-  nowPlayingBackground: 'blur',
+  nowPlayingBackground: 'fluid',
+  nowPlayingFluid: { speed: 1, audioReactive: true },
   playbackResumeMode: 'off',
   previousButtonAction: 'restart',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
@@ -391,6 +395,10 @@ export function normalizeStartupHomePage(value: unknown): StartupHomePage {
   return value === 'streaming' ? 'streaming' : 'local'
 }
 
+export function normalizeHomePageMode(value: unknown): HomePageMode {
+  return value === 'local' || value === 'streaming' ? value : 'auto'
+}
+
 export function normalizeTrackActivationMode(value: unknown): TrackActivationMode {
   return value === 'doubleClick' ? 'doubleClick' : 'singleClick'
 }
@@ -490,8 +498,14 @@ export function normalizeUiDensity(value: unknown): UiDensity {
   return value === 'compact' || value === 'comfortable' ? value : 'standard'
 }
 
+import {
+  DEFAULT_NOW_PLAYING_FLUID_SETTINGS,
+  normalizeNowPlayingFluidSettings
+} from '../../shared/appSettings.ts'
+export { DEFAULT_NOW_PLAYING_FLUID_SETTINGS, normalizeNowPlayingFluidSettings }
+
 export function normalizeNowPlayingBackground(value: unknown): NowPlayingBackground {
-  return value === 'fluid' || value === 'solid' ? value : 'blur'
+  return value === 'blur' || value === 'solid' ? value : 'fluid'
 }
 
 export function normalizeHexColor(value: unknown, fallback: string): string {
@@ -711,9 +725,11 @@ export function normalizeAppSettings(
     closeToTray,
     taskbarThumbarButtonsEnabled: settings.taskbarThumbarButtonsEnabled !== false,
     afterglowAutoEntry: normalizeAfterglowAutoEntry(settings.afterglowAutoEntry),
+    unloadHiddenMainWindow: settings.unloadHiddenMainWindow !== false,
     onboardingCompleted: settings.onboardingCompleted === true,
     developerMode: settings.developerMode === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
+    homePageMode: normalizeHomePageMode(settings.homePageMode),
     startupExperience: normalizeStartupExperience(settings.startupExperience),
     navigationPages: normalizeNavigationPagePreferences(settings.navigationPages),
     trackActivationMode: normalizeTrackActivationMode(settings.trackActivationMode),
@@ -762,6 +778,7 @@ export function normalizeAppSettings(
     liquidGlass: normalizeLiquidGlass(settings.liquidGlass),
     playerBar: normalizePlayerBarSettings(settings.playerBar),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
+    nowPlayingFluid: normalizeNowPlayingFluidSettings(settings.nowPlayingFluid),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     previousButtonAction: normalizePreviousButtonAction(settings.previousButtonAction),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),

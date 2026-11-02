@@ -4,6 +4,10 @@
 #include <cstring>
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
+#define TAE_PCM_TO_DSD_PAIR 1
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#define TAE_PCM_TO_DSD_PAIR 1
 #endif
 
 namespace twilight::audio {
@@ -82,11 +86,13 @@ void interpolate(const double* taps, double* history, int& position,
 constexpr double kFeedback[5] = {
     0.000665376009929, 0.0102388145120, 0.0740739567827, 0.316662811154, 0.807717848861};
 
-// 7th-order CLANS-style CIFB feedback coefficients (Closed-Loop Analysis of
-// Noise Shapers, low-Hinf audiophile NTF) for deeper in-band noise floor
-// suppression at DSD128/DSD256/DSD512.
+// 7th-order Butterworth NTF, Hinf = 1.4, using the same CIFB recurrence.
+// Bilinear analog cutoff 0.14984406454507659; all digital poles have radius
+// <= 0.96737459697340011. The lower Hinf retains stability at the existing
+// +/-0.5 input headroom. Reproduce with scripts/design-dsd-modulator.py.
 constexpr double kFeedback7[7] = {
-    0.000014285, 0.00028541, 0.0029812, 0.019842, 0.088415, 0.31250, 0.78540};
+    0.0000012115707450389856, 0.000040576601554475428, 0.00066024539149200966,
+    0.0067583417865072683, 0.047031915544869143, 0.22314780953680485, 0.67204927378510748};
 
 // Integrator magnitude guard. Normal operation at +/-0.5 FS input keeps the
 // largest state below ~2; anything past this bound means the loop has gone
@@ -142,6 +148,57 @@ void quantizePair(const double* left, const double* right, int samples, int hold
   for (int i = 0; i < 5; ++i) {
     double values[2]; _mm_storeu_pd(values, s[i]);
     leftState[i] = values[0]; rightState[i] = values[1];
+  }
+}
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+// AArch64 has two FP64 lanes; ARM32 keeps the scalar double path. Vector
+// arithmetic uses the same expressions and FP-contraction policy as the scalar
+// recurrence, including its fused input multiply-add in Android builds.
+// Keep this loop separate so NDK Clang retains its coefficients in registers
+// instead of rematerializing them for every bit in the large interpolation loop.
+[[gnu::noinline]] void quantizePair(const double* left, const double* right, int samples, int hold,
+    double* leftState, double* rightState, uint8_t* leftOutput, uint8_t* rightOutput,
+    bool msb, uint64_t& resets) {
+  float64x2_t s[5], k[5];
+  for (int i = 0; i < 5; ++i) {
+    s[i] = vcombine_f64(vld1_f64(leftState + i), vld1_f64(rightState + i));
+    k[i] = vdupq_n_f64(kFeedback[i]);
+  }
+  const float64x2_t zero = vdupq_n_f64(0.0), one = vdupq_n_f64(1.0);
+  const float64x2_t negativeOne = vdupq_n_f64(-1.0), limit = vdupq_n_f64(kStateGuardLimit);
+  const float64x2_t headroom = vdupq_n_f64(PcmToDsdModulator::kInputHeadroomScale);
+  size_t written = 0;
+  uint8_t l = 0, r = 0;
+  int bits = 0;
+  for (int i = 0; i < samples; ++i) {
+    const float64x2_t u = vmaxq_f64(vnegq_f64(headroom),
+        vminq_f64(headroom, vcombine_f64(vld1_f64(left + i), vld1_f64(right + i))));
+    for (int h = 0; h < hold; ++h) {
+      const uint64x2_t positive = vcgeq_f64(s[4], zero);
+      const float64x2_t feedback = vbslq_f64(positive, one, negativeOne);
+      for (int j = 4; j > 0; --j)
+        s[j] = s[j] + s[j - 1] - k[j] * feedback;
+      s[0] = s[0] + k[0] * u - k[0] * feedback;
+      uint64x2_t valid = vcleq_f64(vabsq_f64(s[0]), limit);
+      for (int j = 1; j < 5; ++j)
+        valid = vandq_u64(valid, vcleq_f64(vabsq_f64(s[j]), limit));
+      const uint64_t validLeft = vgetq_lane_u64(valid, 0), validRight = vgetq_lane_u64(valid, 1);
+      if ((validLeft & validRight) == 0) {
+        for (auto& state : s) state = vbslq_f64(valid, state, zero);
+        resets += (validLeft ? 0 : 1) + (validRight ? 0 : 1);
+      }
+      const int shift = msb ? 7 - bits : bits;
+      l |= static_cast<uint8_t>((vgetq_lane_u64(positive, 0) & 1) << shift);
+      r |= static_cast<uint8_t>((vgetq_lane_u64(positive, 1) & 1) << shift);
+      if (++bits == 8) {
+        leftOutput[written] = l; rightOutput[written++] = r;
+        bits = 0; l = 0; r = 0;
+      }
+    }
+  }
+  for (int i = 0; i < 5; ++i) {
+    leftState[i] = vgetq_lane_f64(s[i], 0);
+    rightState[i] = vgetq_lane_f64(s[i], 1);
   }
 }
 #endif
@@ -279,7 +336,7 @@ size_t modulateFramesImpl(
     for (size_t channel = 0; channel < channelCount; ++channel) {
       auto& state = channels[channel];
       int lanes = 1;
-#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#if defined(TAE_PCM_TO_DSD_PAIR)
       if (modulatorOrder == 5 && channel + 1 < channelCount) lanes = 2;
 #endif
       for (int lane = 0; lane < lanes; ++lane) {
@@ -319,7 +376,7 @@ size_t modulateFramesImpl(
           std::memcpy(bufferA[lane], current, static_cast<size_t>(sampleCount) * sizeof(double));
       }
       const int sampleCount = 1 << halfbandStageCount;
-#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#if defined(TAE_PCM_TO_DSD_PAIR)
       if (lanes == 2) {
         quantizePair(bufferA[0], bufferA[1], sampleCount, holdFactor,
             state.integrators.data(), channels[channel + 1].integrators.data(),

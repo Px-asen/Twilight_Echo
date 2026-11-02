@@ -78,6 +78,9 @@ class PluginRegistry final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext& context) override;
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override;
 

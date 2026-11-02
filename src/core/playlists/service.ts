@@ -44,6 +44,7 @@ import {
 } from '../../shared/playlistLifecycle.ts'
 import { projectCoreError } from '../projections.ts'
 import type { MusicPreferenceState } from '../../shared/musicPreferences.ts'
+import { CORE_RECENT_PLAYLIST_ID } from '../../shared/corePlaylists.ts'
 
 export interface CorePlaylistServiceOptions {
   runtime: PlaylistRuntime
@@ -52,6 +53,7 @@ export interface CorePlaylistServiceOptions {
     'lookupTracksByPaths' | 'getTracksByIds' | 'getMetadata' | 'queryTracks' | 'syncPlaylistView'
   > & Partial<Pick<LibraryDatabaseApi, 'queryCollections'>>
   versions: CorePlaylistViewOptions['versions']
+  recentHistory?: { getRevision(): number; recentPlaylist(): Playlist }
   /** Only JSON-library mode supplies the complete legacy library snapshot. */
   loadJsonLibrary?: () => Promise<{ revision: number; tracks: TrackData[] }>
   preferencesTrackStates?(tracks: TrackData[]): Promise<Array<MusicPreferenceState | null>>
@@ -90,6 +92,11 @@ export class CorePlaylistService {
     this.views = new CorePlaylistViews({
       ...options,
       playlist: (id, revision) => {
+        if (id === CORE_RECENT_PLAYLIST_ID && options.recentHistory) {
+          if (revision !== options.recentHistory.getRevision())
+            throw Object.assign(new Error('播放记录已变化，请重新读取'), { code: 'STALE_REVISION' })
+          return options.recentHistory.recentPlaylist()
+        }
         this.fence(revision)
         const playlist = this.committed.find((p) => p.id === id)
         if (!playlist) throw new Error('歌单已不存在')
@@ -107,10 +114,11 @@ export class CorePlaylistService {
               !isVersionedDataEnvelope(saved, (value): value is Playlist[] => Array.isArray(value))
             )
               throw new Error('Playlist repository did not acknowledge its durable revision')
-            this.committed = structuredClone(saved.data)
+            const shared = this.controller.clonePlaylistSnapshot(saved.data)
+            this.committed = shared
             this.revision = saved.revision
             options.changed()
-            return saved
+            return { ...saved, data: shared }
           }
         }
       },
@@ -404,7 +412,8 @@ export class CorePlaylistService {
     return this.enqueue(async () => {
       await this.controller.loadPlaylists()
       await this.flush()
-      this.committed = this.controller.clonePlaylistSnapshot()
+      const auth = this.controller.getAuthoritativeSnapshot()
+      this.committed = auth.length > 0 ? auth : this.controller.clonePlaylistSnapshot()
       this.revision = this.controller.getRevision()
     })
   }
@@ -415,7 +424,8 @@ export class CorePlaylistService {
     return this.enqueue(async () => {
       await this.flush()
       await this.controller.loadPlaylists()
-      this.committed = this.controller.clonePlaylistSnapshot()
+      const auth = this.controller.getAuthoritativeSnapshot()
+      this.committed = auth.length > 0 ? auth : this.controller.clonePlaylistSnapshot()
       this.revision = this.controller.getRevision()
       this.options.changed()
     })

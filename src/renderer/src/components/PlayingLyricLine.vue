@@ -318,6 +318,7 @@ function voiceMotionRole(voice: LyricVoiceLayer): 'lead' | 'background' | 'harmo
 <style scoped>
 .lyric-row-content {
   display: flex;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   flex-direction: column;
@@ -333,10 +334,12 @@ function voiceMotionRole(voice: LyricVoiceLayer): 'lead' | 'background' | 'harmo
  * makes a left-aligned line spill into the previous column on both sides. */
 .lyric-row-content--align-left {
   transform-origin: left center;
+  padding-right: 2%;
 }
 
 .lyric-row-content--align-right {
   transform-origin: right center;
+  padding-left: 2%;
 }
 
 .lyric-row-content--align-center {
@@ -408,21 +411,12 @@ function voiceMotionRole(voice: LyricVoiceLayer): 'lead' | 'background' | 'harmo
 }
 
 .lyric-voice {
-  width: min(100%, 32rem);
-  unicode-bidi: plaintext;
-}
-
-.lyric-duet-grid:not(.lyric-duet-grid--split) .lyric-voice {
   width: 100%;
+  unicode-bidi: plaintext;
 }
 
 .lyric-lane--end .lyric-voice {
   align-items: flex-end;
-}
-
-.lyric-voice--background,
-.lyric-voice--harmony {
-  width: min(82%, 26rem);
 }
 
 .lyric-voice--supporting {

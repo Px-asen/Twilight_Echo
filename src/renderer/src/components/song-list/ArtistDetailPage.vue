@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import type { LibraryQuery } from '../../../../shared/libraryDatabase.ts'
 import type { EntityMetadataLanguage } from '../../../../shared/entityMetadata.ts'
 import { validMusicBrainzArtistId } from '../../../../shared/entityMetadata.ts'
@@ -13,7 +13,6 @@ import PlaybackIcon from '../icons/PlaybackIcon.vue'
 import MetadataAttribution from '../music-metadata/MetadataAttribution.vue'
 import ArtistImageCredit from '../music-metadata/ArtistImageCredit.vue'
 import AlbumCard from './AlbumCard.vue'
-import ArtistReferenceChoices from './ArtistReferenceChoices.vue'
 import {
   artistProfileChoice,
   artistProfileChoices,
@@ -29,6 +28,7 @@ const MusicExplorationPanel = defineAsyncComponent(
   () => import('../music-exploration/MusicExplorationPanel.vue')
 )
 const ArtistMetadataManager = defineAsyncComponent(() => import('./ArtistMetadataManager.vue'))
+const ArtistIdentityPage = defineAsyncComponent(() => import('./ArtistIdentityPage.vue'))
 const props = defineProps<{
   name: string
   section: ArtistSection
@@ -75,18 +75,6 @@ function rememberProfile(clear = false) {
   } catch (error) {
     choiceError.value = error instanceof Error ? error.message : String(error)
   }
-}
-const needsReference = computed(
-  () =>
-    !state.value.loading && !state.value.error && !!state.value.page?.total && !state.value.selected
-)
-const referenceChoices = ref<HTMLDivElement | null>(null)
-async function chooseReference() {
-  emit('update:section', 'overview')
-  await nextTick()
-  const button = referenceChoices.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')
-  button?.focus()
-  button?.scrollIntoView({ block: 'nearest' })
 }
 const albums = createLibraryCollectionPages(
   { queryCollections: (kind, query) => core.query('library.collections', { kind, query }) },
@@ -156,7 +144,8 @@ watch(
   [
     () => core.state.value?.catalogRevision,
     () => core.state.value?.libraryRevision,
-    () => core.state.value?.entityMetadataContentRevision ?? core.state.value?.entityMetadataRevision,
+    () =>
+      core.state.value?.entityMetadataContentRevision ?? core.state.value?.entityMetadataRevision,
     () => core.state.value?.settingsRevision
   ],
   (value, previous) => {
@@ -188,12 +177,9 @@ watch(
   },
   { immediate: true }
 )
-watch(
-  [() => state.value.selected?.id, () => state.value.shared],
-  () => {
-    expanded.value = false
-  }
-)
+watch([() => state.value.selected?.id, () => state.value.shared], () => {
+  expanded.value = false
+})
 const presentation = computed(() =>
   artistDetailPresentation(
     state.value.detail,
@@ -207,7 +193,8 @@ const tabs: Array<{ key: ArtistSection; label: string }> = [
   { key: 'overview', label: '概览' },
   { key: 'albums', label: '专辑' },
   { key: 'songs', label: '歌曲' },
-  { key: 'participation', label: '参与作品' }
+  { key: 'participation', label: '参与作品' },
+  { key: 'identity', label: '人物身份' }
 ]
 const scope = computed(() =>
   JSON.stringify(['artist-page', props.name, language.value, core.state.value?.epoch])
@@ -287,34 +274,6 @@ onBeforeUnmount(() => {
           ><span aria-hidden="true">/</span
           ><span>{{ stats === null ? '—' : stats.total }} 首歌曲</span>
         </p>
-        <p
-          v-if="state.selected && !state.shared && (state.page?.total ?? 0) > 1"
-          class="artist-scope-note"
-        >
-          人物资料：{{ state.selected.title }} ·
-          {{ state.samples[state.selected.id] || '所选库内条目' }}
-        </p>
-        <div v-if="state.exact && state.selected && !state.shared" class="artist-profile-choice">
-          <button
-            v-if="savedChoice?.entityId !== state.selected.id"
-            type="button"
-            class="artist-text-button"
-            :disabled="state.loading || !state.detail"
-            @click="rememberProfile()"
-          >
-            将此资料用于艺术家封面
-          </button>
-          <span v-else>已用于艺术家封面</span>
-          <button
-            v-if="savedChoice"
-            type="button"
-            class="artist-text-button"
-            @click="rememberProfile(true)"
-          >
-            恢复自动选择
-          </button>
-        </div>
-        <p v-if="choiceError" class="artist-inline-status" role="alert">{{ choiceError }}</p>
         <div class="artist-hero-actions" aria-label="艺术家播放控制">
           <button
             type="button"
@@ -355,20 +314,10 @@ onBeforeUnmount(() => {
               ? '正在读取人物资料…'
               : state.error
                 ? '人物资料读取失败'
-                : needsReference
-                  ? '请选择人物资料条目'
-                  : presentation.hiddenImage
-                    ? '已隐藏人物照片'
-                    : '暂无人物照片'
+                : presentation.hiddenImage
+                  ? '已隐藏人物照片'
+                  : '暂无人物照片'
           }}</span>
-          <button
-            v-if="needsReference"
-            type="button"
-            class="artist-text-button"
-            @click="chooseReference"
-          >
-            选择人物资料 <i class="ph ph-arrow-down" aria-hidden="true"></i>
-          </button>
         </div>
         <ArtistImageCredit
           v-if="presentation.attribution"
@@ -416,7 +365,7 @@ onBeforeUnmount(() => {
     >
       <summary>管理资料 <i class="ph ph-sliders-horizontal" aria-hidden="true"></i></summary>
       <p class="artist-scope-note">
-        未识别时，先选下方库内条目，在“身份与候选复核”中核对候选，再更新资料。
+        未识别时，可在“人物身份”中核对当前条目，再更新资料。
         资料源没有收录的人物可手动设置图片和介绍；无公开照片的乐团保留人物占位。
       </p>
       <ArtistMetadataManager
@@ -427,20 +376,8 @@ onBeforeUnmount(() => {
         :scope="scope"
         :available="!state.loading && !state.error"
         :refresh="view.refresh"
-      >
-        <ArtistReferenceChoices
-          v-if="(state.page && state.page.total > 1) || (state.page && !state.exact)"
-          :page="state.page!"
-          :samples="state.samples"
-          :identities="state.identities"
-          :selected="state.selected?.id ?? null"
-          :shared="state.shared"
-          :exact="state.exact"
-          :loading="state.loading"
-          @select="view.select"
-          @page="view.page"
-        />
-      </ArtistMetadataManager>
+        @edit="state.selected && view.select(state.selected)"
+      />
     </details>
     <p v-if="state.error" class="artist-inline-status" role="alert">
       人物资料读取失败：{{ state.error }}
@@ -475,10 +412,8 @@ onBeforeUnmount(() => {
                     : state.detail?.link?.state === 'confirmed'
                       ? '暂无可用的艺术家简介。'
                       : state.selected
-                        ? '尚未确认人物身份，可在管理资料中核对或填写介绍。'
-                        : state.page?.total
-                          ? '选择人物资料条目，查看简介与照片。'
-                          : '暂无已保存的人物资料，可在管理资料中查看可用操作。'
+                        ? '尚未确认人物身份，可在人物身份中核对，或在管理资料中填写介绍。'
+                        : '暂无已保存的人物资料，可在管理资料中查看可用操作。'
               }}
             </p>
             <button
@@ -498,7 +433,14 @@ onBeforeUnmount(() => {
               /><span v-else>{{
                 presentation.introduction.origin === 'manual' ? '手工介绍' : '历史导入资料'
               }}</span
-              ><span> · {{ presentation.introduction.language === 'und' ? '原文' : presentation.introduction.language }}</span>
+              ><span>
+                ·
+                {{
+                  presentation.introduction.language === 'und'
+                    ? '原文'
+                    : presentation.introduction.language
+                }}</span
+              >
             </div>
           </section>
           <aside class="artist-library-aside" aria-label="人物与音乐库信息">
@@ -522,19 +464,6 @@ onBeforeUnmount(() => {
               :attribution="presentation.country.attribution"
             />
           </aside>
-        </div>
-        <div v-if="state.page?.total && !state.selected" ref="referenceChoices">
-          <ArtistReferenceChoices
-            :page="state.page"
-            :samples="state.samples"
-            :identities="state.identities"
-            :selected="null"
-            :shared="false"
-            :exact="state.exact"
-            :loading="state.loading"
-            @select="view.select"
-            @page="view.page"
-          />
         </div>
       </div>
       <section
@@ -610,6 +539,48 @@ onBeforeUnmount(() => {
       </section>
     </div>
     <section
+      v-if="section === 'identity'"
+      id="artist-panel-identity"
+      role="tabpanel"
+      aria-labelledby="artist-tab-identity"
+    >
+      <ArtistIdentityPage
+        :page="state.page"
+        :samples="state.samples"
+        :identities="state.identities"
+        :selected="state.selected?.id ?? null"
+        :shared="state.shared"
+        :exact="state.exact"
+        :loading="state.loading"
+        :scope="scope"
+        @select="view.select"
+        @page="view.page"
+        @changed="view.refresh()"
+      >
+        <div v-if="state.exact && state.selected" class="artist-profile-choice">
+          <button
+            v-if="savedChoice?.entityId !== state.selected.id || state.shared"
+            type="button"
+            class="artist-text-button"
+            :disabled="state.loading || !state.detail"
+            @click="rememberProfile()"
+          >
+            用于艺术家资料
+          </button>
+          <span v-else>已用于艺术家资料</span>
+          <button
+            v-if="savedChoice"
+            type="button"
+            class="artist-text-button"
+            @click="rememberProfile(true)"
+          >
+            恢复自动选择
+          </button>
+        </div>
+        <p v-if="choiceError" class="artist-inline-status" role="alert">{{ choiceError }}</p>
+      </ArtistIdentityPage>
+    </section>
+    <section
       v-if="section === 'participation'"
       id="artist-panel-participation"
       class="artist-participation"
@@ -629,22 +600,9 @@ onBeforeUnmount(() => {
       <template v-else
         ><h3>参与作品</h3>
         <p class="artist-empty-copy">
-          {{
-            state.loading ? '正在读取人物身份…' : '选择并确认人物身份后，可浏览已有的参与作品资料。'
-          }}
+          {{ state.loading ? '正在读取人物身份…' : '确认人物身份后，可浏览已有的参与作品资料。' }}
         </p>
-        <ArtistReferenceChoices
-          v-if="state.page?.total && !state.selected"
-          :page="state.page"
-          :samples="state.samples"
-          :identities="state.identities"
-          :selected="null"
-          :shared="false"
-          :exact="state.exact"
-          :loading="state.loading"
-          @select="view.select"
-          @page="view.page"
-      /></template>
+      </template>
     </section>
   </section>
 </template>

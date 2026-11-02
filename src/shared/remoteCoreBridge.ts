@@ -9,7 +9,7 @@ export const REMOTE_CORE_BRIDGE_VERSION = 1
 export const REMOTE_CORE_PROTOCOL_RANGE = { min: 1, max: 1 } as const
 
 /**
- * The zone a desktop serves today: its own audio output. Requests may name it; any other zone is
+ * The single Core session served today, routed to a local DAC or an authorized Bridge. Any other zone is
  * refused, so a future server hosting several zones can route by `zoneId` without a protocol break.
  */
 export const REMOTE_CORE_LOCAL_ZONE = 'local'
@@ -57,6 +57,8 @@ export const REMOTE_CORE_QUERIES = [
   'media.resolve',
   'media.lyrics',
   'providers.session'
+  , 'zones.state', 'audio.dsp', 'audio.dsp.status', 'audio.signalPath'
+  , 'zones.list', 'zones.dsp', 'zones.signalPath'
 ] as const
 
 export const REMOTE_CORE_COMMANDS = [
@@ -71,4 +73,6 @@ export const REMOTE_CORE_COMMANDS = [
   'playback.selectQueueIndex',
   'playback.replaceQueue',
   'catalog.play'
+  , 'zones.select', 'audio.dsp.edit'
+  , 'zones.transport', 'zones.dsp.edit'
 ] as const

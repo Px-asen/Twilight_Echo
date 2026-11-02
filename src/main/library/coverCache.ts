@@ -24,6 +24,8 @@ export const prepareBackgroundForDisplay = createBackgroundDisplayCache((bytes) 
 // for background use, eliminating expensive CSS filter: blur() at runtime.
 export const COVER_THUMBNAIL_WIDTH = 500
 export const COVER_JPEG_QUALITY = 85
+export const COVER_SMALL_THUMBNAIL_WIDTH = 128
+export const COVER_SMALL_JPEG_QUALITY = 80
 export const COVER_BLUR_WIDTH = 32
 export const COVER_CACHE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
 
@@ -121,6 +123,40 @@ export async function readCoverCacheFileBytes(
   )
 }
 
+export async function readCoverCacheThumbnailBytes(
+  fileName: string,
+  size: 'sm' | 'md' = 'md'
+): Promise<ProtocolAssetBytes | null> {
+  if (size !== 'sm') return readCoverCacheFileBytes(fileName)
+  const ext = extname(fileName).toLowerCase()
+  if (ext === '.gif') return readCoverCacheFileBytes(fileName)
+  const stem = ext ? fileName.slice(0, -ext.length) : fileName
+  const smallName = `${stem}_sm.jpg`
+  const cachedSmall = await readCoverCacheFileBytes(smallName)
+  if (cachedSmall) return cachedSmall
+  const original = await readCoverCacheFileBytes(fileName)
+  if (!original) return null
+  if (coverMaintenance) return original
+  const resized = resizeCoverImageBytes(
+    original,
+    getCoverCacheContentType(fileName),
+    COVER_SMALL_THUMBNAIL_WIDTH,
+    COVER_SMALL_JPEG_QUALITY
+  )
+  if (!resized) return original
+  try {
+    const targetPath = join(ensureCoverCacheDir(), smallName)
+    if (!existsSync(targetPath)) writeFileSync(targetPath, resized.bytes)
+    const cached = await readCoverCacheFileBytes(smallName)
+    if (cached) return cached
+  } catch {
+    // Serve resized bytes even if persisting the small thumbnail fails.
+  }
+  const copy = new Uint8Array(resized.bytes.byteLength)
+  copy.set(resized.bytes)
+  return Buffer.from(copy.buffer)
+}
+
 export function isCoverCacheFileName(fileName: string): boolean {
   return COVER_CACHE_EXTENSIONS.has(extname(fileName).toLowerCase())
 }
@@ -138,8 +174,7 @@ export function getCoverCacheContentType(fileName: string): string {
   }
 }
 
-/** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle.
- *  Also generates a tiny pre-blurred version for background use. */
+/** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle. */
 export function cacheCoverFromBuffer(data: Buffer): string | null {
   if (coverMaintenance) return null
   try {
@@ -158,13 +193,6 @@ export function cacheCoverFromBuffer(data: Buffer): string | null {
     if (!existsSync(fullPath)) {
       writeFileSync(fullPath, jpegBuf)
     }
-    // Generate pre-blurred tiny version for background (eliminates CSS blur at runtime)
-    const blurFileName = `${hash}_blur.jpg`
-    const blurPath = join(cacheDir, blurFileName)
-    if (!existsSync(blurPath)) {
-      const blurred = resized.resize({ width: COVER_BLUR_WIDTH, quality: 'good' })
-      writeFileSync(blurPath, blurred.toJPEG(60))
-    }
     return `cover://${fileName}`
   } catch {
     return null
@@ -178,7 +206,9 @@ export function cacheCoverFromBuffer(data: Buffer): string | null {
  */
 export function resizeCoverImageBytes(
   bytes: Uint8Array,
-  mime: string
+  mime: string,
+  maxWidth = COVER_THUMBNAIL_WIDTH,
+  quality = COVER_JPEG_QUALITY
 ): { bytes: Buffer; mime: string } | null {
   if (!/^image\/(?:jpe?g|png|webp)$/i.test(mime.split(';', 1)[0].trim())) return null
   try {
@@ -186,9 +216,9 @@ export function resizeCoverImageBytes(
       Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     )
     if (img.isEmpty()) return null
-    if (img.getSize().width <= COVER_THUMBNAIL_WIDTH) return null
-    const resized = img.resize({ width: COVER_THUMBNAIL_WIDTH, quality: 'good' })
-    return { bytes: resized.toJPEG(COVER_JPEG_QUALITY), mime: 'image/jpeg' }
+    if (img.getSize().width <= maxWidth) return null
+    const resized = img.resize({ width: maxWidth, quality: 'good' })
+    return { bytes: resized.toJPEG(quality), mime: 'image/jpeg' }
   } catch {
     return null
   }

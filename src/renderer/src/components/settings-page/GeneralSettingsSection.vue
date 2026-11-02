@@ -2,7 +2,7 @@
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { APP_LOCALES, normalizeLanguagePreference } from '../../../../shared/i18n/locale.ts'
 import { useLocale } from '../../app/useLocale.ts'
-import type { StartupHomePage, TrackActivationMode } from '../../types/settings'
+import type { HomePageMode, TrackActivationMode } from '../../types/settings'
 import type { BooleanSettingKey } from './types.ts'
 const { settings, updateSettings: persistSettings } = useSettingsStore()
 const { t } = useLocale()
@@ -14,10 +14,10 @@ function setLanguage(event: Event): void {
 const emit = defineEmits<{ reopenOnboarding: [] }>()
 defineProps<{
   trackActivationModeOptions: readonly { value: TrackActivationMode; label: string; icon: string }[]
-  startupHomePageOptions: readonly { value: StartupHomePage; label: string; icon: string }[]
+  homePageModeOptions: readonly { value: HomePageMode; label: string; icon: string }[]
   toggleSetting: (key: BooleanSettingKey) => void
   setTrackActivationMode: (mode: TrackActivationMode) => void
-  setStartupHomePage: (page: StartupHomePage) => void
+  setHomePageMode: (mode: HomePageMode) => void
   setCloseBehavior: (event: Event) => void
 }>()
 </script>
@@ -54,18 +54,18 @@ defineProps<{
     <div class="section-block">
       <h3>启动与窗口</h3>
       <div class="setting-list">
-        <div data-setting-id="startup-home" id="setting-startup-home" class="setting-item">
+        <div data-setting-id="home-page-mode" id="setting-home-page-mode" class="setting-item">
           <div class="setting-copy">
-            <strong>启动后进入</strong>
-            <span>未保存上次页面时使用此主页；重新打开应用会自动回到关闭前的页面。</span>
+            <strong>首页内容模式</strong>
+            <span>选择首页展示本地音乐为主还是流媒体为主的内容；自动模式下无本地音乐时显示流媒体首页。</span>
           </div>
           <div class="segmented-control">
             <button
-              v-for="option in startupHomePageOptions"
+              v-for="option in homePageModeOptions"
               :key="option.value"
               type="button"
-              :class="{ active: settings.startupHomePage === option.value }"
-              @click="setStartupHomePage(option.value)"
+              :class="{ active: settings.homePageMode === option.value }"
+              @click="setHomePageMode(option.value)"
             >
               <i :class="option.icon"></i>
               {{ option.label }}

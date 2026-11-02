@@ -384,8 +384,7 @@ export class CorePlaybackSession {
     this.assertReference(command.queue)
     if (this.controller.reference()?.entryId !== command.queue.occurrenceId)
       throw Object.assign(new Error('Cast occurrence changed'), { code: 'STALE_REVISION' })
-    if (this.currentTrack?.subTrack || this.currentTrack?.cueRange)
-      throw new Error('Cast does not support native subtracks or CUE segments')
+    if (this.currentTrack) cast.assertTrack(this.currentTrack)
     const intent = this.beginPreparation()
     let position = 0
     try {
@@ -395,8 +394,7 @@ export class CorePlaybackSession {
         this.assertReference(command.queue)
         if (!this.currentTrack || this.currentTrack.queueEntryId !== command.queue.occurrenceId)
           throw Object.assign(new Error('Cast occurrence changed'), { code: 'STALE_REVISION' })
-        if (this.currentTrack.subTrack || this.currentTrack.cueRange)
-          throw new Error('Cast does not support native subtracks or CUE segments')
+        cast.assertTrack(this.currentTrack)
         cast.assertDevice(command.deviceId, command.revision)
         if (cast.state().phase === 'ready') this.acceptCast(await cast.read())
         position = this.info?.position ?? 0
@@ -1290,7 +1288,7 @@ export class CorePlaybackSession {
     selectedId: string | undefined,
     play = true,
     signal?: AbortSignal,
-    options: { position?: number; randomStart?: boolean; playMode?: PlayMode } = {}
+    options: { position?: number; randomStart?: boolean; playMode?: PlayMode; prepareOnly?: boolean } = {}
   ): Promise<void> {
     const intent = this.beginPreparation(play)
     // Prepare on a separate candidate; do not orphan the current cursor during slow queries.
@@ -1303,6 +1301,29 @@ export class CorePlaybackSession {
       this.guard(intent, signal)
       if (!window) throw new Error('No playable queue entries')
       const previous = this.controller
+      // Additional disconnected Zones may prepare a SQL queue without decoding
+      // or opening a DAC. Existing fromQuery callers keep native-load semantics.
+      if (options.prepareOnly) {
+        if (play) throw new Error('Prepared queue cannot start playback')
+        await this.transport(async () => {
+          this.guard(intent, signal)
+          await this.options.cast?.stop()
+          await this.options.engine.pause()
+          const info = await this.options.engine.getPlaybackInfo()
+          if (info.state === 'playing') throw new Error('Native Pause was not acknowledged')
+          await this.observeDepartingTrack(candidate.track(window))
+          await this.clearAbLoop()
+          this.guard(intent, signal)
+          this.controller = candidate; this.clearHeart(); this.mode = nextMode
+          adopted = true; previous.dispose()
+          await this.updateTrack(candidate.track(window))
+          this.restored = true; this.uncertain = false; this.error = null
+          this.info = { ...info, state: 'paused', position: options.position ?? 0, duration: this.currentTrack?.duration ?? 0 }
+          this.publish()
+        })
+        await this.flush()
+        return
+      }
       await this.load(window, intent, play, options.position ?? 0, signal, {
         adopt: () => {
           if (adopted) return
@@ -1838,15 +1859,30 @@ export class CorePlaybackSession {
       this.finishPreparation(intent)
     }
   }
+  /** A library rescan changes content/access paths, not queue order or native playback. */
+  invalidateLibrary(revision: number): void {
+    this.controller.invalidateLibrary(revision)
+    this.heartBase?.invalidateLibrary(revision)
+  }
   private async playIntent(intent: number, position?: number, signal?: AbortSignal): Promise<void> {
     const reference = this.controller.reference()
     if (!reference || !this.currentTrack) throw new Error('No track selected')
-    const base = this.controller.window.value
+    let base = this.controller.window.value
     if (!base) throw new Error('No playback window')
+    if (!this.detachedHeartTrack && base.libraryRevision < this.controller.contentRevision.value) {
+      base = await this.controller.playbackWindow(this.currentTrack, this.mode)
+      this.guard(intent, signal)
+      if (!base) throw new Error('Selected queue occurrence is not playable')
+    }
+    // Maintenance may already have refreshed the logical window while keeping
+    // the open decoder on its original grant. Reopen only on explicit Play.
+    const selected = this.controller.track(base)
+    const sourceChanged = !this.detachedHeartTrack &&
+      (selected?.filePath !== this.currentTrack.filePath || selected?.subTrack !== this.currentTrack.subTrack)
     const window = this.detachedHeartTrack ? this.detachedWindow(base) : base
     const start = position ?? this.info?.position ?? 0
     if (this.options.cast?.active()) {
-      if (this.restored || this.uncertain || this.options.cast.state().phase !== 'ready')
+      if (this.restored || this.uncertain || sourceChanged || this.options.cast.state().phase !== 'ready')
         return this.load(window, intent, true, start, signal)
       await this.transport(async () => {
         this.guard(intent, signal)
@@ -1863,7 +1899,7 @@ export class CorePlaybackSession {
       this.publish()
       return
     }
-    if (this.restored || this.uncertain || !this.options.engine.getQueueToken())
+    if (this.restored || this.uncertain || sourceChanged || !this.options.engine.getQueueToken())
       return this.load(window, intent, true, start, signal)
     try {
       await this.transport(async () => {
@@ -2299,7 +2335,15 @@ export class CorePlaybackSession {
     edit: LibraryQueueEdit,
     nextMode = this.mode
   ): Promise<void> {
-    this.assertReference({ id, revision })
+    // Empty queues still own their revision and undo history, without a selected occurrence.
+    const assertQueue = () => {
+      const queue = this.controller.active.value ? this.controller.snapshot.value : null
+      if (!queue || queue.id !== id || queue.revision !== revision)
+        throw Object.assign(new Error('Playback queue changed; refresh its revision'), {
+          code: 'STALE_REVISION'
+        })
+    }
+    assertQueue()
     if (edit.kind !== 'mode') {
       this.personalized?.stop()
       if (this.mode === 'heart') {
@@ -2312,7 +2356,7 @@ export class CorePlaybackSession {
       await this.commit(async () => {
         this.guard(intent)
         const native = await this.nativeSelection()
-        this.assertReference({ id, revision })
+        assertQueue()
         if (native) await this.fenceNative(native)
         this.guard(intent)
         const previous = this.currentTrack
@@ -2333,6 +2377,10 @@ export class CorePlaybackSession {
             // chooses a paused row, never implicitly starts its audio.
             await this.options.cast?.stop()
             await this.options.engine.stop()
+            if (!selected) {
+              await this.options.engine.loadQueue([], 0)
+              this.mapping = []
+            }
             this.info = {
               ...(this.options.cast?.active()
                 ? this.info!

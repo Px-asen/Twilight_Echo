@@ -19,7 +19,6 @@ type TwilightPluginIndexEntry = Awaited<ReturnType<typeof corePlugins.listIndex>
 type TwilightPluginIndexStatus = Awaited<ReturnType<typeof corePlugins.getIndexStatus>>
 
 const activeTab = ref('installed')
-const emit = defineEmits<{ openThemeWorkshop: [] }>()
 const { settings, updateSettings } = useSettingsStore()
 // 开发者模式是持久化设置：这里的开关与「设置 → 常规 → 开发者选项」是同一个值。
 const devMode = computed(() => settings.value.developerMode === true)
@@ -142,9 +141,7 @@ async function refreshIndex(force = false) {
   const generation = ++indexRequestGeneration
   trustEvaluationTimeMs.value = Date.now()
   try {
-    const entries = force
-      ? await corePlugins.refreshIndex()
-      : await corePlugins.listIndex()
+    const entries = force ? await corePlugins.refreshIndex() : await corePlugins.listIndex()
     const status = await corePlugins.getIndexStatus()
     if (generation !== indexRequestGeneration) return
     indexEntries.value = entries
@@ -602,12 +599,6 @@ onUnmounted(() => {
                   }}</span>
                 </div>
                 <div class="plugin-actions">
-                  <button
-                    v-if="plugin.id === 'com.twilightecho.tool.theme-workshop' && plugin.enabled"
-                    @click="emit('openThemeWorkshop')"
-                  >
-                    打开工坊
-                  </button>
                   <button
                     v-if="!plugin.builtIn"
                     class="icon-btn"

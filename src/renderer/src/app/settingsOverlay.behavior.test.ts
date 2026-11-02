@@ -57,7 +57,7 @@ const closeAppearancePage=()=>navigation.closeAppearancePage(),openAppearancePag
 ${lifecycle}
 ${surfaceContext}
 const noop=()=>{}
-const openEqualizerPage=noop,openDspRackPage=noop,openThemeStudioPage=noop,openThemeWorkshop=noop,handleReopenOnboarding=noop,onSelectPluginPage=noop
+const openEqualizerPage=noop,openDspRackPage=noop,handleReopenOnboarding=noop
 const SettingsPage=defineComponent({render:()=>h('section',{class:'settings-preview-page','data-settings-layout':'categories'},[
  h('div',{class:'page-marker settings-marker'}),
  h('div',{class:'setting-copy'},h('strong',{id:'wallpaper-label'},'外观设置')),

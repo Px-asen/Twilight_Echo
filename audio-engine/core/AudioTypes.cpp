@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <sstream>
 #include <string>
 
 namespace twilight::audio {
@@ -46,7 +47,8 @@ bool routingPreservesSemantics(ChannelRoutingMode mode, int sourceChannels, int 
 
 std::string formatSummary(const AudioFormat& format) {
   return sampleFormatToString(format.sampleFormat) + " " + std::to_string(effectivePcmBitDepth(format)) + "bit " +
-         std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch";
+         std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch" +
+         (format.channelMask != 0 ? " " + channelMaskToString(format.channelMask) : "");
 }
 
 std::string processingReason(const PerfectEvaluation& evaluation) {
@@ -353,12 +355,23 @@ int effectivePcmBitDepth(const AudioFormat& format) {
   return bitDepthFromSampleFormat(format.sampleFormat);
 }
 
+bool pcmChannelLayoutsCompatible(const AudioFormat& left, const AudioFormat& right) {
+  return left.channelCount > 0 && left.channelCount == right.channelCount &&
+         (left.channelMask == 0 || right.channelMask == 0 || left.channelMask == right.channelMask);
+}
+
+std::string channelMaskToString(uint64_t mask) {
+  std::ostringstream text;
+  text << "0x" << std::hex << mask;
+  return text.str();
+}
+
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
   if (isDsdSampleFormat(left.sampleFormat) || isDsdSampleFormat(right.sampleFormat)) return false;
   const int leftBitDepth = effectivePcmBitDepth(left);
   const int rightBitDepth = effectivePcmBitDepth(right);
   return left.sampleRate > 0 && right.sampleRate > 0 && left.sampleRate == right.sampleRate &&
-         left.channelCount > 0 && right.channelCount > 0 && left.channelCount == right.channelCount &&
+         pcmChannelLayoutsCompatible(left, right) &&
          leftBitDepth > 0 && rightBitDepth > 0 && leftBitDepth == rightBitDepth &&
          left.sampleFormat == right.sampleFormat;
 }
@@ -371,8 +384,8 @@ bool sampleFormatsSameIntegerPayload(AudioSampleFormat left, AudioSampleFormat r
 bool pcmFormatsSemanticallyMatch(const AudioFormat& left, const AudioFormat& right) {
   if (pcmFormatsExactMatch(left, right)) return true;
   if (!sampleFormatsSameIntegerPayload(left.sampleFormat, right.sampleFormat)) return false;
-  return left.sampleRate > 0 && left.sampleRate == right.sampleRate && left.channelCount > 0 &&
-         left.channelCount == right.channelCount &&
+  return left.sampleRate > 0 && left.sampleRate == right.sampleRate &&
+         pcmChannelLayoutsCompatible(left, right) &&
          effectivePcmBitDepth(left) == effectivePcmBitDepth(right);
 }
 
@@ -391,7 +404,7 @@ bool pcmFormatsPreserveSource(const AudioFormat& source, const AudioFormat& outp
 
   return integerSource &&
          source.sampleRate > 0 && source.sampleRate == output.sampleRate &&
-         source.channelCount > 0 && source.channelCount == output.channelCount;
+         pcmChannelLayoutsCompatible(source, output);
 }
 
 bool isDsdSampleFormat(AudioSampleFormat format) {

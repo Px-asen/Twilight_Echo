@@ -36,7 +36,7 @@ function fixture(getStatus: () => Promise<AfterglowModeStatus>) {
       onMounted: (callback: () => void) => mounts.push(callback),
       onBeforeUnmount: (callback: () => void) => unmounts.push(callback),
       useSettingsStore: () => ({
-        settings: ref({ afterglowAutoEntry: 'off' }),
+        settings: ref({ afterglowAutoEntry: 'off', unloadHiddenMainWindow: true }),
         updateSettings() {}
       }),
       window: { api: { app: { afterglow: { getStatus } } } },

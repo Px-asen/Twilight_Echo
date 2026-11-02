@@ -1,6 +1,7 @@
 #include "../decoder/DopPacker.h"
 #include "../decoder/DopPackerUtils.h"
 #include "../decoder/DsdReader.h"
+#include "../decoder/FFmpegDecoder.h"
 #include "../decoder/SacdIsoDemuxer.h"
 #include "../decoder/SacdIsoDemuxerUtils.h"
 #include "../decoder/SacdIsoProbe.h"
@@ -8,14 +9,19 @@
 #include "../core/AudioPipelineDsdUtils.h"
 
 #include <cassert>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <array>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <numeric>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -271,27 +277,46 @@ std::filesystem::path writeMalformedDsfFixture(
   return path;
 }
 
-std::filesystem::path writeDffFixtureAt(const std::filesystem::path& path) {
-  const uint64_t propPayload = 4 + (12 + 4) + (12 + 2);
-  const uint64_t dsdPayload = 16;
-  const uint64_t formSize = 4 + (12 + propPayload) + (12 + dsdPayload);
+std::filesystem::path writeDffFixtureAt(const std::filesystem::path& path, int sampleRate = 5644800,
+                                      const std::vector<uint8_t>& data = {}, const std::string& id3 = {}) {
+  const uint64_t propPayload = 4 + (12 + 4) + (12 + 10) + (12 + 6) +
+      (id3.empty() ? 0 : 12 + id3.size() + (id3.size() & 1));
+  const uint64_t dsdPayload = data.empty() ? 16 : data.size();
+  const uint64_t formSize = 4 + (12 + 4) + (12 + propPayload) + (12 + dsdPayload);
 
   std::ofstream out(path, std::ios::binary);
   out.write("FRM8", 4);
   writeBe64(out, formSize);
   out.write("DSD ", 4);
+  out.write("FVER", 4);
+  writeBe64(out, 4);
+  writeBe32(out, 0x01050000);
   out.write("PROP", 4);
   writeBe64(out, propPayload);
   out.write("SND ", 4);
   out.write("FS  ", 4);
   writeBe64(out, 4);
-  writeBe32(out, 5644800);
+  writeBe32(out, sampleRate);
   out.write("CHNL", 4);
-  writeBe64(out, 2);
+  writeBe64(out, 10);
   writeBe16(out, 2);
+  out.write("SLFTSRGT", 8);
+  out.write("CMPR", 4);
+  writeBe64(out, 6);
+  out.write("DSD ", 4);
+  out.put('\0');
+  out.put('\0');
+  if (!id3.empty()) {
+    out.write("ID3 ", 4);
+    writeBe64(out, id3.size());
+    out.write(id3.data(), id3.size());
+    if (id3.size() & 1) out.put('\0');
+  }
   out.write("DSD ", 4);
   writeBe64(out, dsdPayload);
-  for (int i = 0; i < 16; ++i) out.put(static_cast<char>(0x80 + i));
+  if (data.empty()) {
+    for (int i = 0; i < 16; ++i) out.put(static_cast<char>(0x80 + i));
+  } else out.write(reinterpret_cast<const char*>(data.data()), data.size());
   return path;
 }
 
@@ -465,7 +490,8 @@ void writeScarletbookAudioSector(
 // SACD directory (probe requirements), Master TOC at LSN 510 ("SACDMTOC"),
 // master text at 511 ("SACDText"), a 2CH area TOC at 520 and an MC area TOC
 // at 530 with SACDTTxt / SACDTRL1 / SACDTRL2 sectors, and audio sectors.
-std::filesystem::path writeScarletbookIsoFixture(const std::string& name, bool dstStereoArea, int year = 2020) {
+std::filesystem::path writeScarletbookIsoFixture(const std::string& name, bool dstStereoArea, int year = 2020,
+                                              size_t pcmSectorBytes = 32) {
   const auto path = std::filesystem::temp_directory_path() / name;
   constexpr uint32_t kRootSector = 20;
   constexpr uint32_t kSacdSector = 21;
@@ -629,10 +655,10 @@ std::filesystem::path writeScarletbookIsoFixture(const std::string& name, bool d
     writeScarletbookAudioSector(image, kTrack2Lsn, true, true, sequencePayload(0x61, 24));
     writeScarletbookAudioSector(image, kTrack2Lsn + 1, true, true, sequencePayload(0x71, 24));
   } else {
-    writeScarletbookAudioSector(image, kTrack1Lsn, false, true, sequencePayload(0x80, 32));
-    writeScarletbookAudioSector(image, kTrack1Lsn + 1, false, true, sequencePayload(0x90, 32));
-    writeScarletbookAudioSector(image, kTrack2Lsn, false, true, sequencePayload(0xa0, 32));
-    writeScarletbookAudioSector(image, kTrack2Lsn + 1, false, true, sequencePayload(0xb0, 32));
+    writeScarletbookAudioSector(image, kTrack1Lsn, false, true, sequencePayload(0x80, pcmSectorBytes));
+    writeScarletbookAudioSector(image, kTrack1Lsn + 1, false, true, sequencePayload(0x90, pcmSectorBytes));
+    writeScarletbookAudioSector(image, kTrack2Lsn, false, true, sequencePayload(0xa0, pcmSectorBytes));
+    writeScarletbookAudioSector(image, kTrack2Lsn + 1, false, true, sequencePayload(0xb0, pcmSectorBytes));
   }
   writeScarletbookAudioSector(image, kMcTrackLsn, false, true, sequencePayload(0x20, 30));
   writeScarletbookAudioSector(image, kMcTrackLsn + 1, false, true, sequencePayload(0x30, 30));
@@ -1320,13 +1346,13 @@ std::filesystem::path writeUncompressedDstDffFixture(const std::string& name, in
   const size_t frameSize = 1 + kDecodedFrameBytes;
   const size_t frameChunkSize = frameSize + (frameSize & 1);
   const uint64_t dstPayload = (12 + 6) + static_cast<uint64_t>(frameCount) * (12 + frameChunkSize);
-  const uint64_t propPayload = 4 + (12 + 4) + (12 + 2) + (12 + 6);
+  const uint64_t propPayload = 4 + (12 + 4) + (12 + 10) + (12 + 6);
   const uint64_t formSize = 4 + (12 + 4) + (12 + propPayload) + (12 + dstPayload);
 
   std::ofstream out(path, std::ios::binary);
   out.write("FRM8", 4);
   writeBe64(out, formSize);
-  out.write("DST ", 4);
+  out.write("DSD ", 4);
   out.write("FVER", 4);
   writeBe64(out, 4);
   writeBe32(out, 0x01050000);
@@ -1337,8 +1363,9 @@ std::filesystem::path writeUncompressedDstDffFixture(const std::string& name, in
   writeBe64(out, 4);
   writeBe32(out, 2822400);
   out.write("CHNL", 4);
-  writeBe64(out, 2);
+  writeBe64(out, 10);
   writeBe16(out, 2);
+  out.write("SLFTSRGT", 8);
   out.write("CMPR", 4);
   writeBe64(out, 6);
   out.write("DST ", 4);
@@ -1837,9 +1864,499 @@ void testScarletbookMalformedTocFallsBackGracefully() {
   }
 }
 
+struct HostDsdInput final : SeekableInput {
+  std::shared_ptr<const std::vector<uint8_t>> bytes;
+  std::atomic<bool> cancelled{false}, failReads{false};
+  explicit HostDsdInput(std::shared_ptr<const std::vector<uint8_t>> data) : bytes(std::move(data)) {}
+  int64_t size() override { return cancelled ? -1 : static_cast<int64_t>(bytes->size()); }
+  int readAt(int64_t position, uint8_t* output, int count) override {
+    if (cancelled || failReads) return -1;
+    if (static_cast<uint64_t>(position) >= bytes->size()) return 0;
+    const auto read = std::min<size_t>({static_cast<size_t>(count), bytes->size() - position, 113});
+    std::memcpy(output, bytes->data() + position, read);
+    return static_cast<int>(read);
+  }
+  void cancel() override { cancelled = true; }
+};
+
+std::shared_ptr<const std::vector<uint8_t>> readFixtureBytes(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  return std::make_shared<const std::vector<uint8_t>>(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+std::filesystem::path writeRealDstSacdFixture(const std::string& name) {
+  const auto path = writeScarletbookIsoFixture(name, true);
+  auto source = readFixtureBytes(path);
+  std::vector<uint8_t> image(source->begin(), source->end());
+  image.resize(580 * 2048);
+  auto* area = image.data() + 520 * 2048;
+  writeBe32To(area + 76, 565);
+  auto* positions = image.data() + 522 * 2048;
+  writeBe32To(positions + 8, 540);
+  writeBe32To(positions + 12, 560);
+  writeBe32To(positions + 1028, 15);
+  writeBe32To(positions + 1032, 5);
+  auto* times = image.data() + 523 * 2048;
+  times[1028] = times[1029] = 0;
+  times[1030] = 3; // Three genuine uncompressed DST access units, 1/75 s each.
+  for (int frame = 0; frame < 4; ++frame) {
+    std::vector<uint8_t> accessUnit(1 + 2 * 4704);
+    for (size_t index = 1; index < accessUnit.size(); ++index)
+      accessUnit[index] = static_cast<uint8_t>(frame * 3 + index - 1);
+    const uint32_t firstSector = frame < 3 ? 540 + frame * 5 : 560;
+    for (size_t offset = 0, sector = 0; offset < accessUnit.size(); offset += 2000, ++sector) {
+      const auto end = std::min(offset + 2000, accessUnit.size());
+      writeScarletbookAudioSector(image, firstSector + sector, true, sector == 0,
+          std::vector<uint8_t>(accessUnit.begin() + offset, accessUnit.begin() + end));
+    }
+  }
+  std::ofstream out(path, std::ios::binary);
+  out.write(reinterpret_cast<const char*>(image.data()), image.size());
+  return path;
+}
+
+void testSacdSourceSelectorsPreserveOrdinaryNames() {
+  for (const auto& source : {"/music/song?mix.dsf", "/music/song#twilight-sacd=stereo:1.dff",
+                            "content://docs/disc?area=provider&track=token#keep"}) {
+    const auto parsed = parseSacdSource(source);
+    assert(parsed.path == source && parsed.track == -1 && parsed.area.empty());
+  }
+  const auto legacy = parseSacdSource("/music/Disc.ISO?AREA=STEREO&TRACK=2");
+  assert(legacy.path == "/music/Disc.ISO" && legacy.area == "stereo" && legacy.track == 2);
+}
+
+void testMsbDsfMatchesLsbDopPayload() {
+  const auto path = writeDsfFixture("twilight-msb.dsf");
+  auto original = readFixtureBytes(path);
+  auto bytes = std::make_shared<std::vector<uint8_t>>(*original);
+  writeLe32To(bytes->data() + 60, 8);
+  for (size_t index = 92; index < bytes->size(); ++index) {
+    auto value = (*bytes)[index];
+    value = static_cast<uint8_t>((value >> 4) | (value << 4));
+    value = static_cast<uint8_t>(((value & 0xcc) >> 2) | ((value & 0x33) << 2));
+    (*bytes)[index] = static_cast<uint8_t>(((value & 0xaa) >> 1) | ((value & 0x55) << 1));
+  }
+  DsdReader msb, lsb;
+  std::string error;
+  assert(msb.open("content://msb", std::make_shared<HostDsdInput>(bytes), &error));
+  assert(lsb.open(path.string(), &error));
+  assert(msb.streamInfo().bitOrder == DsdBitOrder::MsbFirst);
+  DopPacker msbPacker, lsbPacker;
+  DopPackerConfig config;
+  config.channelCount = 2;
+  config.dsdRate = 64;
+  config.sourceSampleRate = 2822400;
+  config.bitOrder = DsdBitOrder::MsbFirst;
+  config.packing = DsdPacking::DsfPlanarBlocks;
+  assert(msbPacker.configure(config, &error));
+  config.bitOrder = DsdBitOrder::LsbFirst;
+  assert(lsbPacker.configure(config, &error));
+  std::array<uint8_t, 16> msbBytes{}, lsbBytes{};
+  assert(msb.readBytes(msbBytes.data(), msbBytes.size()) == msbBytes.size());
+  assert(lsb.readBytes(lsbBytes.data(), lsbBytes.size()) == lsbBytes.size());
+  std::vector<uint8_t> actual, expected;
+  const auto frames = msbPacker.pack(msbBytes.data(), msbBytes.size(), &actual);
+  assert(frames > 0 && frames == lsbPacker.pack(lsbBytes.data(), lsbBytes.size(), &expected));
+  assert(actual == expected);
+  std::filesystem::remove(path);
+}
+
+void testHostMetadataUsesOneGrantAndLogicalSources() {
+  std::vector<std::filesystem::path> paths{writeScarletbookIsoFixture("twilight-host-meta.iso", false)};
+#if defined(TAE_HAS_FFMPEG)
+  paths.push_back(writeDsfFixture("twilight-host-meta.dsf"));
+  paths.push_back(writeDffFixture("twilight-host-meta.dff"));
+#endif
+  for (const auto& path : paths) {
+    const auto bytes = readFixtureBytes(path);
+    const std::string uri = "content://documents/opaque-meta?provider=query#original";
+    int opens = 0;
+    auto factory = std::make_shared<const SeekableInputFactory>([&](const std::string& source) {
+      assert(source == uri);
+      ++opens;
+      return std::make_shared<HostDsdInput>(bytes);
+    });
+    const auto json = readMetadataJson(uri, factory);
+    assert(opens == 1);
+    assert(json.find("\"error\":\"\"") != std::string::npos);
+    assert(json.find("\"isDsd\":true") != std::string::npos);
+    assert(json.find("\"bitDepth\":1") != std::string::npos);
+    if (path.extension() == ".iso") {
+      for (const auto& area : {"stereo", "multichannel"})
+        assert(json.find(sacdTrackSource(uri, area, 1)) != std::string::npos);
+      assert(json.find("Twilight Album") != std::string::npos);
+      assert(json.find("Song One") != std::string::npos);
+    }
+    std::filesystem::remove(path);
+  }
+}
+
+void testDstDecodeFailureIsNotCleanEof() {
+  for (const auto& path : {writeDstDffFixture("twilight-dst-error.dff"),
+                          writeScarletbookIsoFixture("twilight-dst-error.iso", true)}) {
+    auto provider = createDefaultSacdDstDecoderProvider();
+    DsdReader reader;
+    reader.setDstDecoderProvider(provider.get());
+    const auto source = path.extension() == ".iso" ? sacdTrackSource(path.string(), "stereo", 1) : path.string();
+    std::string error;
+    assert(reader.open(source, &error));
+    std::array<uint8_t, 128> output{};
+    assert(reader.readBytes(output.data(), output.size(), &error) == 0 && !error.empty() && !reader.eof());
+    const auto originalError = error;
+    error.clear();
+    assert(reader.readBytes(output.data(), output.size(), &error) == 0 && error == originalError);
+    reader.close();
+    std::filesystem::remove(path);
+  }
+}
+
+void testHostDsdInputsPreservePayloadSeekAndOwnership() {
+  for (const auto& path : {writeDsfFixture("twilight-host.dsf"), writeDffFixture("twilight-host.dff"),
+                          writeUncompressedDstDffFixture("twilight-host-dst.dff", 3)}) {
+    const auto bytes = readFixtureBytes(path);
+    const std::string uri = "content://documents/opaque-42?provider=query#original";
+    std::vector<std::shared_ptr<HostDsdInput>> opened;
+    auto factory = std::make_shared<const SeekableInputFactory>([&](const std::string& source) {
+      assert(source == uri);
+      auto input = std::make_shared<HostDsdInput>(bytes);
+      opened.push_back(input);
+      return input;
+    });
+    auto hostDst = createDefaultSacdDstDecoderProvider(), localDst = createDefaultSacdDstDecoderProvider();
+    DsdReader host, local, second;
+    host.setInputFactory(factory);
+    second.setInputFactory(factory);
+    host.setDstDecoderProvider(hostDst.get());
+    local.setDstDecoderProvider(localDst.get());
+    auto secondDst = createDefaultSacdDstDecoderProvider();
+    second.setDstDecoderProvider(secondDst.get());
+    std::string error;
+    assert(host.open(uri, &error) && local.open(path.string(), &error) && second.open(uri, &error));
+    assert(opened.size() == 2);
+    assert(host.streamInfo().source == uri);
+    assert(host.streamInfo().container == local.streamInfo().container);
+    assert(host.streamInfo().dsdSampleRate == local.streamInfo().dsdSampleRate);
+    std::array<uint8_t, 16> actual{}, expected{};
+    while (true) {
+      const auto count = host.readBytes(actual.data(), actual.size(), &error);
+      assert(error.empty());
+      assert(count == local.readBytes(expected.data(), expected.size()));
+      assert(std::equal(actual.begin(), actual.begin() + count, expected.begin()));
+      if (!count) break;
+    }
+    assert(host.eof());
+    const auto position = host.streamInfo().durationSeconds / 2;
+    assert(host.seek(position, &error) && local.seek(position, &error));
+    assert(host.readBytes(actual.data(), actual.size()) == local.readBytes(expected.data(), expected.size()));
+    assert(actual == expected);
+    assert(host.cancelInput() && opened[0]->cancelled && !opened[1]->cancelled);
+    assert(second.readBytes(expected.data(), expected.size(), &error) == expected.size());
+    assert(host.open(uri, &error) && opened.size() == 3);
+    opened.back()->failReads = true;
+    assert(host.seek(0, &error));
+    assert(host.readBytes(actual.data(), actual.size(), &error) == 0 && !error.empty());
+    host.close(); local.close(); second.close();
+    std::filesystem::remove(path);
+  }
+}
+
+void testHostSacdVirtualTracksAndRawScarletbook() {
+  for (const auto& path : {writeSacdIsoFixture("twilight-host-sacd.iso"),
+                          writeScarletbookIsoFixture("twilight-host-scarletbook.iso", false)}) {
+    auto bytes = readFixtureBytes(path);
+    const std::string uri = "content://documents/opaque-disc?grant=preserved#original";
+    int opens = 0;
+    auto factory = std::make_shared<const SeekableInputFactory>([&](const std::string& source) {
+      assert(source == uri);
+      ++opens;
+      return std::make_shared<HostDsdInput>(bytes);
+    });
+    for (const auto& area : {"stereo", "multichannel"}) {
+      const auto source = sacdTrackSource(uri, area, 1);
+      assert(parseSacdSource(source).path == uri);
+      SacdIsoDemuxer demuxer;
+      demuxer.setInputFactory(factory);
+      std::string error;
+      assert(demuxer.open(source, &error));
+      assert(demuxer.streamInfo().source == source);
+      assert(demuxer.streamInfo().sourceFormat.channelCount == (std::string(area) == "stereo" ? 2 : 6));
+      DsdReader host, local;
+      host.setInputFactory(factory);
+      assert(host.open(source, &error));
+      assert(local.open(sacdTrackSource(path.string(), area, 1), &error));
+      std::array<uint8_t, 24> actual{}, expected{};
+      assert(host.readBytes(actual.data(), actual.size()) == local.readBytes(expected.data(), expected.size()));
+      assert(actual == expected);
+      assert(host.seek(0, &error) && local.seek(0, &error));
+      assert(host.readBytes(actual.data(), actual.size()) == local.readBytes(expected.data(), expected.size()));
+      assert(actual == expected);
+    }
+    assert(opens == 4);  // One host grant per demuxer/reader, not one per probe.
+    if (path.filename().string().find("scarletbook") != std::string::npos) {
+      auto raw = std::make_shared<std::vector<uint8_t>>(*bytes);
+      std::fill_n(raw->data() + 16 * 2048, 2048, 0);
+      SeekableInputStream input;
+      input.open(std::make_shared<HostDsdInput>(raw));
+      const auto probe = probeSacdIsoEntry(uri, input);
+      assert(probe.isSacdIso() && probe.hasSacdMarkers);
+      SacdIsoDemuxer demuxer;
+      std::string error;
+      assert(demuxer.open(uri, input.input(), &error));
+      assert(demuxer.tracks().size() == 3);
+    }
+    std::filesystem::remove(path);
+  }
+}
+
+void testHostDsdCancellationUnblocksHeaderRead() {
+  struct BlockingInput final : SeekableInput {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false, cancelled = false;
+    int64_t size() override { return 100000; }
+    int readAt(int64_t, uint8_t*, int) override {
+      std::unique_lock lock(mutex);
+      entered = true;
+      changed.notify_all();
+      changed.wait(lock, [&] { return cancelled; });
+      return -1;
+    }
+    void cancel() override { std::lock_guard lock(mutex); cancelled = true; changed.notify_all(); }
+  };
+  auto input = std::make_shared<BlockingInput>();
+  DsdReader reader;
+  reader.setInputFactory(std::make_shared<const SeekableInputFactory>([&](const std::string&) { return input; }));
+  auto open = std::async(std::launch::async, [&] { std::string error; return reader.open("content://blocked", &error); });
+  {
+    std::unique_lock lock(input->mutex);
+    assert(input->changed.wait_for(lock, std::chrono::seconds(2), [&] { return input->entered; }));
+  }
+  assert(reader.cancelInput());
+  assert(open.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  assert(!open.get());
+}
+
+#if defined(TAE_HAS_FFMPEG)
+void testDirectDsdPcmExactSeekMatchesContinuousDecode() {
+  constexpr size_t frames = 180;
+  std::vector<uint8_t> rawDsd(frames * 2 * 4704);
+  for (size_t index = 0; index < rawDsd.size(); ++index)
+    rawDsd[index] = static_cast<uint8_t>((index / 9408) * 3 + index % 9408);
+  const std::vector<std::filesystem::path> paths{
+      writeDffFixtureAt(std::filesystem::temp_directory_path() / "twilight-exact-raw.dff", 2822400, rawDsd),
+      writeUncompressedDstDffFixture("twilight-exact-dst.dff", frames),
+      writeRealDstSacdFixture("twilight-exact-dst.iso"),
+      writeScarletbookIsoFixture("twilight-exact-raw.iso", false, 2020, 2000)};
+  for (const auto& path : paths) {
+    const auto bytes = readFixtureBytes(path);
+    const bool iso = path.extension() == ".iso";
+    const std::string uri = "content://documents/exact?grant=query#original";
+    const auto source = iso ? sacdTrackSource(uri, "stereo", 1) : uri;
+    const auto localSource = iso ? sacdTrackSource(path.string(), "stereo", 1) : path.string();
+    for (const int rate : {352800, 48000, 44100}) {
+      for (const auto phase : {FFmpegDecoder::ResamplerPhase::Linear, FFmpegDecoder::ResamplerPhase::Minimum}) {
+#if !defined(TAE_HAS_SOXR)
+        if (phase == FFmpegDecoder::ResamplerPhase::Minimum) continue;
+#endif
+        FFmpegDecoder continuous, seeked;
+        seeked.setInputFactory(std::make_shared<const SeekableInputFactory>([&](const std::string& name) {
+          assert(name == uri);
+          return std::make_shared<HostDsdInput>(bytes);
+        }));
+        std::string error;
+        assert(continuous.open(localSource, &error) && seeked.open(source, &error));
+        auto format = continuous.outputFormat();
+        format.sampleRate = rate;
+        for (auto* decoder : {&continuous, &seeked}) {
+          decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::Ultra);
+          decoder->setResamplerPhase(phase);
+          assert(decoder->setOutputFormat(format, &error));
+        }
+        std::vector<float> reference, block(4096 * 2);
+        while (const auto count = continuous.readFrames(block.data(), 4096, &error))
+          reference.insert(reference.end(), block.begin(), block.begin() + count * 2);
+        assert(error.empty() && continuous.eof());
+        const auto count = reference.size() / 2;
+        assert(count > 128);
+        std::vector<uint64_t> positions{0, 1, 127, count - 123};
+        if (!iso) positions.push_back(rate * 2 + 37); // Exercises bounded, nonzero DFF preroll.
+        float maxError = 0;
+        for (const auto first : positions) {
+          if (!seeked.seekOutputFrame(first, &error)) {
+            std::cerr << "DSD exact seek failed " << path.filename() << " rate=" << rate
+                      << " frame=" << first << " error=" << error << '\n';
+            failTest("DSD exact seek failed");
+          }
+          const auto got = seeked.readFrames(block.data(), 257, &error);
+          assert(error.empty() && got == std::min<size_t>(257, count - first));
+          for (size_t index = 0; index < got * 2; ++index) {
+            const float difference = std::abs(block[index] - reference[first * 2 + index]);
+            maxError = std::max(maxError, difference);
+            if (difference > 1e-5f) {
+              std::cerr << "DSD exact seek mismatch " << path.filename() << " rate=" << rate
+                        << " frame=" << first << " sample=" << index << " error=" << difference << '\n';
+              failTest("DSD exact seek differs from continuous PCM");
+            }
+          }
+        }
+        std::cout << "DSD exact seek " << path.filename() << " rate=" << rate << " phase="
+                  << static_cast<int>(phase) << " positions=" << positions.size() << " maxError=" << maxError << '\n';
+      }
+    }
+    std::filesystem::remove(path);
+  }
+}
+
+void testDirectDffRetainsMetadataAndReplayGain() {
+  std::string frames;
+  const auto frame = [&](const std::string& name, const std::string& payload) {
+    frames += name;
+    for (const auto shift : {24, 16, 8, 0}) frames += static_cast<char>(payload.size() >> shift);
+    frames.append(2, '\0');
+    frames += payload;
+  };
+  frame("TIT2", std::string(1, '\0') + "DSD tag continuity");
+  frame("TXXX", std::string(1, '\0') + "REPLAYGAIN_TRACK_GAIN" + '\0' + "-6.5 dB");
+  frame("TXXX", std::string(1, '\0') + "REPLAYGAIN_ALBUM_GAIN" + '\0' + "-4.25 dB");
+  std::string id3 = std::string("ID3\3\0\0", 6);
+  for (const auto shift : {21, 14, 7, 0}) id3 += static_cast<char>((frames.size() >> shift) & 0x7f);
+  id3 += frames;
+  const auto path = writeDffFixtureAt(std::filesystem::temp_directory_path() / "twilight-dff-tags.dff",
+      2822400, std::vector<uint8_t>(16384, 0x96), id3);
+  const auto bytes = readFixtureBytes(path);
+  for (const bool host : {false, true}) {
+    FFmpegDecoder decoder;
+    int opens = 0;
+    auto factory = std::make_shared<const SeekableInputFactory>([&](const std::string&) {
+      ++opens;
+      return std::make_shared<HostDsdInput>(bytes);
+    });
+    if (host) decoder.setInputFactory(factory);
+    std::string error;
+    assert(decoder.open(host ? "content://documents/tagged" : path.string(), &error));
+    const auto& info = decoder.streamInfo();
+    assert(info.replayGain.trackGainDb == -6.5 && info.replayGain.albumGainDb == -4.25);
+    assert(decoder.streamTitle() == "DSD tag continuity");
+    assert(info.streamTitle == decoder.streamTitle() && info.bitrate > 0);
+    assert(opens == (host ? 1 : 0));
+    const auto metadata = readMetadataJson(host ? "content://documents/tagged" : path.string(), host ? factory : nullptr);
+    assert(metadata.find("\"title\":\"DSD tag continuity\"") != std::string::npos);
+    assert(metadata.find("\"replayGainTrackGain\":-6.5") != std::string::npos);
+  }
+  std::filesystem::remove(path);
+}
+
+void testSacdDstPcmMatchesDffAndReadFailuresAreNotEof() {
+  const auto iso = writeRealDstSacdFixture("twilight-host-real-dst.iso");
+  const auto dff = writeUncompressedDstDffFixture("twilight-host-real-dst.dff", 3);
+  std::vector<uint8_t> rawDsd(3 * 2 * 4704);
+  for (size_t index = 0; index < rawDsd.size(); ++index)
+    rawDsd[index] = static_cast<uint8_t>((index / 9408) * 3 + index % 9408);
+  const auto raw = writeDffFixtureAt(std::filesystem::temp_directory_path() / "twilight-host-real-raw.dff", 2822400, rawDsd);
+  const auto bytes = readFixtureBytes(iso);
+  const auto input = std::make_shared<HostDsdInput>(bytes);
+  FFmpegDecoder sacd, reference, dstDff;
+  sacd.setInputFactory(std::make_shared<const SeekableInputFactory>([&](const std::string&) { return input; }));
+  std::string error;
+  const auto source = sacdTrackSource("content://real-dst", "stereo", 1);
+  assert(sacd.open(source, &error) && reference.open(raw.string(), &error) && dstDff.open(dff.string(), &error));
+  std::array<float, 1024> actual{}, expected{}, dffActual{};
+  size_t total = 0;
+  while (true) {
+    const auto count = sacd.readFrames(actual.data(), 512, &error);
+    if (!error.empty()) { std::cerr << "SACD DST PCM: " << error << '\n'; failTest("SACD DST PCM decode failed"); }
+    assert(count == reference.readFrames(expected.data(), 512, &error));
+    assert(count == dstDff.readFrames(dffActual.data(), 512, &error));
+    assert(std::equal(actual.begin(), actual.begin() + count * 2, expected.begin()));
+    assert(std::equal(actual.begin(), actual.begin() + count * 2, dffActual.begin()));
+    total += count;
+    if (!count) break;
+  }
+  assert(total == 3 * 4704 && sacd.eof());
+  assert(sacd.seek(0, &error));
+  assert(reference.seek(0, &error));
+  assert(sacd.readFrames(actual.data(), 512, &error) == reference.readFrames(expected.data(), 512, &error));
+  assert(actual == expected);
+  for (const bool cancel : {false, true}) {
+    assert(sacd.open(source, &error));
+    if (cancel) sacd.cancelInput(); else input->failReads = true;
+    // Reposition discards any header-probe read-ahead before the failing read.
+    assert(sacd.seek(0, &error));
+    error.clear();
+    assert(sacd.readFrames(actual.data(), 512, &error) == 0 && !error.empty() && !sacd.eof());
+    input->failReads = false;
+  }
+  sacd.close(); reference.close(); dstDff.close();
+  std::filesystem::remove(iso); std::filesystem::remove(dff); std::filesystem::remove(raw);
+}
+
+void testHostDsdPcmDecodeAndSacdSeek() {
+  for (const auto& path : {writeDsfFixture("twilight-host-pcm.dsf"), writeDffFixture("twilight-host-pcm.dff"),
+                          writeUncompressedDstDffFixture("twilight-host-pcm-dst.dff", 3),
+                          writeSacdIsoFixture("twilight-host-pcm.iso"),
+                          writeScarletbookIsoFixture("twilight-host-pcm-sb.iso", false)}) {
+    const auto bytes = readFixtureBytes(path);
+    const std::string uri = "content://documents/opaque-audio?query=untouched";
+    const bool iso = path.extension() == ".iso";
+    const auto source = iso ? sacdTrackSource(uri, "stereo", 1) : uri;
+    const auto localSource = iso ? sacdTrackSource(path.string(), "stereo", 1) : path.string();
+    std::shared_ptr<HostDsdInput> input;
+    auto factory = std::make_shared<const SeekableInputFactory>([&](const std::string& name) {
+      assert(name == uri);
+      input = std::make_shared<HostDsdInput>(bytes);
+      return input;
+    });
+    FFmpegDecoder host, local;
+    host.setInputFactory(factory);
+    std::string error;
+    if (!host.open(source, &error) || !local.open(localSource, &error)) {
+      std::cerr << path.string() << ": " << error << '\n';
+      failTest("Host DSD PCM decode did not open");
+    }
+    assert(host.streamInfo().isDsd && host.streamInfo().sourceFormat.bitDepth == 1);
+    assert(host.streamInfo().sourceFormat.sampleRate == local.streamInfo().sourceFormat.sampleRate);
+    assert(host.outputFormat().sampleRate * 8 == host.streamInfo().sourceFormat.sampleRate);
+    std::array<float, 1024> actual{}, expected{};
+    size_t total = 0;
+    while (true) {
+      const auto count = host.readFrames(actual.data(), 512, &error);
+      assert(error.empty());
+      assert(count == local.readFrames(expected.data(), 512, &error));
+      assert(std::equal(actual.begin(), actual.begin() + count * 2, expected.begin()));
+      total += count;
+      if (!count) break;
+    }
+    assert(total > 0 && host.eof());
+    if (iso) {
+      FFmpegDecoder fresh;
+      assert(fresh.open(localSource, &error));
+      assert(host.seek(0, &error));
+      assert(host.readFrames(actual.data(), 512, &error) == fresh.readFrames(expected.data(), 512, &error));
+      assert(actual == expected);
+    }
+    assert(host.cancelInput() && input->cancelled);
+    host.close(); local.close();
+    std::filesystem::remove(path);
+  }
+}
+#endif
+
 }  // namespace
 
 int main() {
+  testSacdSourceSelectorsPreserveOrdinaryNames();
+  testMsbDsfMatchesLsbDopPayload();
+  testHostMetadataUsesOneGrantAndLogicalSources();
+  testDstDecodeFailureIsNotCleanEof();
+  testHostDsdInputsPreservePayloadSeekAndOwnership();
+  testHostSacdVirtualTracksAndRawScarletbook();
+  testHostDsdCancellationUnblocksHeaderRead();
+#if defined(TAE_HAS_FFMPEG)
+  testDirectDsdPcmExactSeekMatchesContinuousDecode();
+  testDirectDffRetainsMetadataAndReplayGain();
+  testSacdDstPcmMatchesDffAndReadFailuresAreNotEof();
+  testHostDsdPcmDecodeAndSacdSeek();
+#endif
   testSacdIsoByteScratchResizePreservesSameSizedScratch();
   testSacdDstDecodePathDoesNotPreclearDecodedFrameBuffer();
   testDsfReader();

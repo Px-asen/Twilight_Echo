@@ -2,7 +2,7 @@
 
 #include "../core/AudioTypes.h"
 #include "SacdIsoDemuxer.h"
-#include "../core/SharedInputFile.h"
+#include "SeekableInputStream.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +30,7 @@ struct DsdStreamInfo {
   int channelCount = 0;
   int dsdSampleRate = 0;
   int dsdRate = 0;
+  bool dstCompressed = false;
   DsdBitOrder bitOrder = DsdBitOrder::LsbFirst;
   DsdPacking packing = DsdPacking::DsfPlanarBlocks;
   double durationSeconds = 0.0;
@@ -51,10 +52,15 @@ class DsdReader {
   DsdReader& operator=(const DsdReader&) = delete;
 
   bool open(const std::string& source, std::string* error);
+  bool open(const std::string& source, std::shared_ptr<SeekableInput> input, std::string* error);
+  void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory);
+  bool cancelInput();
   void close();
   bool seek(double seconds, std::string* error);
-  size_t readBytes(uint8_t* output, size_t maxBytes);
+  size_t readBytes(uint8_t* output, size_t maxBytes, std::string* error = nullptr);
   bool eof() const;
+  // Decoded byte-frame cursor for DSF/DFF, including DST frame-aligned seeks.
+  uint64_t byteFramePosition() const;
 
   const DsdStreamInfo& streamInfo() const;
 
@@ -74,12 +80,14 @@ class DsdReader {
   bool openSacdIso(const std::string& source, std::string* error);
   size_t readDstBytes(uint8_t* output, size_t maxBytes);
 
-  SharedInputFile file_;
+  SeekableInputStream file_;
+  std::shared_ptr<const SeekableInputFactory> inputFactory_;
   SacdIsoDemuxer sacd_;
   SacdDstDecoderProvider* dstProvider_ = nullptr;
   DsdStreamInfo info_;
   uint64_t readOffset_ = 0;
   bool eof_ = false;
+  std::string readError_;
   bool sacdActive_ = false;
   // DST-compressed DFF state: the DST sound chunk is a sequence of DSTF
   // sub-chunks, each an independently decodable access unit. Frames are

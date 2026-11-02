@@ -92,6 +92,18 @@ int main() {
   assert(clone.loadImpulseResponse(path.string(), &error));
   const auto independent = render(clone, std::vector<float>(1024, 0), {17, 127});
   for (float value : independent) assert(std::abs(value) < .000001);
+  // The Float32-only node's double bridge must not convert eight channels
+  // when this prepared convolver has only one interleaved channel.
+  constexpr size_t doubleFrames = 1024;
+  constexpr double sentinel = 0.123456789012345;
+  std::vector<double> doubleData(doubleFrames * 8 + 8, sentinel);
+  std::vector<float> floatReference(doubleFrames, 0);
+  floatReference[0] = .5f;
+  for (size_t i = 0; i < doubleFrames; ++i) doubleData[i] = floatReference[i];
+  clone.reset(); clone.process(floatReference.data(), doubleFrames);
+  clone.reset(); clone.processDouble(doubleData.data(), doubleFrames);
+  for (size_t i = 0; i < doubleFrames; ++i) assert(std::abs(doubleData[i] - floatReference[i]) < .00002);
+  for (size_t i = doubleFrames; i < doubleData.size(); ++i) assert(doubleData[i] == sentinel);
   impulse[0] = .8f;
   writeImpulse(path, impulse);
   std::filesystem::last_write_time(path, std::filesystem::last_write_time(path) + std::chrono::seconds(1));

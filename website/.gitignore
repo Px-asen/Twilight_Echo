@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.vite/
+.preview.log
+.preview-error.log
+artifacts/

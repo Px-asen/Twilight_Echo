@@ -42,6 +42,7 @@ class OboeOutputBackend final : public IOutputBackend {
   std::string deviceName() const override;
 
  private:
+  bool startInternal(TypedRenderCallback typed, RenderCallback callback, OutputEventCallback event, std::string* error);
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

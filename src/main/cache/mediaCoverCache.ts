@@ -18,6 +18,7 @@ export const metadataArtworkCache = createMetadataArtworkCache(
 export const mediaCoverCache = {
   generation: transient.generation,
   write: transient.write,
+  resize: resizeCoverImageBytes,
   read: async (source: string) =>
     (await metadataArtworkCache.read(source)) ?? transient.read(source),
   maintain: <T>(action: () => Promise<T>) =>

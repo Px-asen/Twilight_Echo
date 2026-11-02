@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { describeResampler } from '../../../../shared/resamplerStatus.ts'
 import AudioDeviceProfilesPanel from '@renderer/components/settings-page/AudioDeviceProfilesPanel.vue'
+import BridgeOutputPanel from '../settings-page/BridgeOutputPanel.vue'
 import {
   DSD_OUTPUT_MODE_OPTIONS,
   DSD_RATE_POLICY_OPTIONS,
@@ -889,6 +890,7 @@ const deckAccentVars = computed(() => {
 
           <!-- 输出 -->
           <section v-else-if="activeSection === 'output'" key="output" class="deck-stack">
+            <BridgeOutputPanel />
             <AudioDeviceProfilesPanel compact />
             <section class="deck-card">
               <div class="deck-card-label">

@@ -48,8 +48,9 @@ export function getMostListenedTracks(limit = 100) { return projection().windows
 export function getTopArtists(limit = 50) { return projection().overview.value?.artists.slice(0, limit) ?? [] }
 export async function waitForListeningStatsReady(): Promise<void> { await projection().ensure() }
 export const libraryListeningProjection = {
-  state: computed(() => projection().overview.value?.history ?? { mode: null, ready: false, pending: true, revision: null, error: projection().error.value }),
+  state: computed(() => projection().history.value),
   ensure: waitForListeningStatsReady,
-  retry: () => projection().refresh()
+  retry: () => projection().refresh(),
+  recover: (revision: number | undefined, error: unknown) => projection().recoverHistory(revision, error)
 }
 if (import.meta.hot) import.meta.hot.dispose(() => { singleton?.dispose(); singleton = null })

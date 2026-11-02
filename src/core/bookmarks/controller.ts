@@ -12,6 +12,7 @@ import {
 } from '../../shared/playbackBookmarks.ts'
 import { isPersistentDataRevisionConflict } from '../../shared/versionedPersistence.ts'
 import type { TrackData as Track } from '../../shared/track.ts'
+import { safBookmarkTrackKey } from '../../shared/safTrackIdentity.ts'
 
 export type BookmarkTrack = Pick<
   Track,
@@ -50,6 +51,8 @@ export function createPlaybackBookmarks(runtime: PlaybackBookmarksOptions) {
   ): string {
     const source = track.source ?? 'local'
     if (source !== 'local' || !track.filePath) return `${source}:${track.id}`
+    const documentKey = safBookmarkTrackKey(track.id, track.filePath)
+    if (documentKey) return documentKey
     const base = `local:${track.filePath}`
     if (track.subTrack) return `${base}#${track.subTrack}`
     if (track.cueRange) return `${base}#cue:${track.cueRange.startSeconds}`

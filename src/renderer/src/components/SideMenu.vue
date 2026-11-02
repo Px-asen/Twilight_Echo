@@ -13,7 +13,7 @@ import ImportDialog from '@renderer/components/ImportDialog.vue'
 import ThemeIcon from '@renderer/components/ThemeIcon.vue'
 import { useMusicStore } from '@renderer/stores/useMusicStore'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
-import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
+import { appearanceChromePreview, themeAppearance } from '../composables/appearanceEditorState.ts'
 import type { NavigationPagePreferences } from '../../../shared/navigationPages'
 import type { InstalledExperience } from '../../../shared/pluginExperience.ts'
 import {
@@ -66,6 +66,7 @@ const navigationPreferences = computed(
   () =>
     props.previewPreferences ??
     appearanceChromePreview.value?.navigationPages ??
+    themeAppearance.value?.navigationPages ??
     settingsStore.settings.value.navigationPages
 )
 const ordered = computed(() => orderNavigationPages(props.pages, navigationPreferences.value))

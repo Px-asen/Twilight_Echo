@@ -1,5 +1,6 @@
 import { installCorePluginFixture } from '@renderer/extensions/corePlugins.fixture.ts'
 import { createApp, h, ref, nextTick } from 'vue'
+import { createPinia } from 'pinia'
 import AppearancePage from '@renderer/components/AppearancePage.vue'
 import PlayerBarSettings from '@renderer/components/settings-page/PlayerBarSettings.vue'
 import PageDock from '@renderer/components/PageDock.vue'
@@ -7,7 +8,15 @@ import { providePageDock } from '@renderer/app/pageDock.ts'
 import { SETTINGS_SEARCH_INDEX } from '@renderer/components/settings-page/types.ts'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore.ts'
 import { bootstrapThemeRuntime, useThemeStore } from '@renderer/stores/useThemeStore.ts'
-import { createDefaultThemeLibraryDocument } from '@shared/theme.ts'
+import { createDefaultThemeLibraryDocument, getBuiltInThemePreset } from '@shared/theme.ts'
+import { customThemeSnapshot } from '@main/themes/customThemeSnapshot.ts'
+import {
+  copyWorkshopDraft,
+  workshopProjectSummary,
+  compileWorkshopTheme
+} from '@shared/themeWorkshop.ts'
+import { diagnoseWorkshopProject } from '@shared/themeWorkshopDiagnostics.ts'
+import { fixtureThemes } from '@renderer/extensions/registry.ts'
 import '@renderer/assets/main.css'
 import '@renderer/assets/icon-fonts.ts'
 import '@renderer/components/settings-page/SettingsPage.css'
@@ -30,6 +39,14 @@ let failSave = false,
   failThemeSave = false,
   failImport = false,
   allowLeave = false
+const advancedProjects = new Map(),
+  directExports = [],
+  pluginExports = [],
+  transfers = []
+const png =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+let advancedSaveFailed = false
+const currentProject = () => [...advancedProjects.values()][0]
 const writes = [],
   themeWrites = [],
   errors = []
@@ -52,6 +69,75 @@ const acceptLibrary = () => {
 }
 window.api = {
   diagnostics: { record: () => {} },
+  themeWorkshop: {
+    list: async () => [...advancedProjects.values()].map(workshopProjectSummary),
+    sources: async () => [],
+    get: async (id) => copyWorkshopDraft(advancedProjects.get(id)),
+    createFromAppearance: async (input) => {
+      // Match the Electron serialization boundary, including rejection of Vue proxies.
+      const value = structuredClone(input)
+      transfers.push(value)
+      const existing = currentProject()
+      const next =
+        value.selection.kind === 'plugin' && existing
+          ? {
+              ...copyWorkshopDraft(existing),
+              base: {
+                ...existing.base,
+                structured: {
+                  ...existing.base.structured,
+                  appearance: value.appearance,
+                  appearanceLayers: value.appearance.appearanceLayers
+                }
+              }
+            }
+          : await customThemeSnapshot(
+              crypto.randomUUID(),
+              value,
+              value.profile ?? getBuiltInThemePreset(value.selection.id),
+              undefined,
+              async () => png
+            )
+      next.revision++
+      advancedProjects.set(next.id, next)
+      return copyWorkshopDraft(next)
+    },
+    exportAppearance: async (input) => {
+      directExports.push(structuredClone(input))
+      return 'D:\\themes\\custom.tep'
+    },
+    save: async (project) => {
+      if (advancedSaveFailed) throw Error('高级草稿保存失败示例')
+      const next = {
+        ...copyWorkshopDraft(project),
+        revision: project.revision + 1,
+        updatedAt: new Date().toISOString()
+      }
+      advancedProjects.set(next.id, next)
+      return copyWorkshopDraft(next)
+    },
+    preflight: async (id) => diagnoseWorkshopProject(advancedProjects.get(id)),
+    exportProject: async (id, format) => {
+      pluginExports.push({ project: copyWorkshopDraft(advancedProjects.get(id)), format })
+      return 'D:\\themes\\advanced.' + (format === 'tep' ? 'tep' : 'teworkshop')
+    },
+    importAsset: async () => null,
+    apply: async (id) => {
+      const project = advancedProjects.get(id),
+        compiled = compileWorkshopTheme(project)
+      const pluginId = 'com.twilightecho.theme.user-' + project.id
+      fixtureThemes.value = [
+        {
+          pluginId,
+          id: 'custom',
+          name: project.name,
+          structured: compiled.structured,
+          variables: compiled.variables
+        }
+      ]
+      return { pluginId, themeId: 'custom', project: copyWorkshopDraft(project) }
+    }
+  },
   settings: {
     get: async () => snapshot(),
     onChanged: () => () => {},
@@ -120,7 +206,7 @@ let app = createApp({
       h(AppearancePage, { navigationTarget: target.value })
     ]
   }
-})
+}).use(createPinia())
 app.config.errorHandler = (error) => errors.push(String(error?.stack ?? error))
 void boot.then(() => app.mount('#app'))
 const tick = async () => {
@@ -584,6 +670,196 @@ window.inspectCapabilityPanel = async (panel, tone, font) => {
       previewDocument.documentElement.dataset.teLocalTextTone === 'theme',
     'visual evidence retained a previous image or the wrong preview tone'
   )
+}
+const rootOptions = async () => {
+  const options = document.querySelector('.appearance-theme-tools')
+  if (!options.open) options.querySelector('summary').click()
+  await tick()
+  return options
+}
+const advancedTool = async (label, selector) => {
+  const options = await rootOptions()
+  const advanced = options.querySelector('.appearance-advanced-tools')
+  if (!advanced.open) advanced.querySelector('summary').click()
+  await click(label)
+  await until(
+    () => visible(document.querySelector(selector)),
+    'advanced tool did not open: ' + label
+  )
+  await until(
+    () => !document.querySelector('[aria-label="导出 .TEP"]').disabled,
+    'advanced editor did not become ready'
+  )
+}
+const inputValue = async (control, value) => {
+  control.value = value
+  control.dispatchEvent(new Event('input', { bubbles: true }))
+  await tick()
+}
+window.runAdvancedCapabilities = async () => {
+  document.documentElement.style.setProperty('--te-font-size-body', '14px')
+  document.querySelector('.appearance-page').style.setProperty('--te-font-size-body', '14px')
+  await themes.setPreviewTone('dark')
+  await showSetting('player-bar-mode')
+  await click('紧凑')
+  const before = writes.length
+  await click('导出 .TEP')
+  expect(
+    directExports.at(-1).appearance.playerBar.mode === 'compact',
+    'direct export lost the unapplied real daily draft'
+  )
+  expect(writes.length === before, 'direct export saved daily settings')
+  allowLeave = false
+  await advancedTool('自定义 CSS', '[aria-label="高级 CSS"]')
+  expect(
+    transfers.length === 1 && transfers[0].appearance.playerBar.mode === 'compact',
+    'advanced handoff lost daily edits'
+  )
+  expect(
+    document.querySelectorAll('iframe').length === 1,
+    'advanced tools mounted a second preview'
+  )
+  await inputValue(document.querySelector('[aria-label="高级 CSS"]'), '.card{border-width:3px}')
+  advancedSaveFailed = true
+  await click('保存项目')
+  expect(
+    document.body.textContent.includes('高级草稿保存失败'),
+    'advanced save error hidden by root'
+  )
+  advancedSaveFailed = false
+  await click('保存项目')
+  expect(currentProject().css.includes('border-width:3px'), 'retry lost advanced CSS')
+  await advancedTool('图层与蒙版', '.workshop-workspace[popover] button')
+  expect(button('＋ 渐变'), 'layers menu was replaced by a part watcher')
+  await click('＋ 渐变')
+  await click('保存项目')
+  expect(
+    Object.values(currentProject().layers.dark).flat().length === 1,
+    'advanced layers were not saved'
+  )
+  await advancedTool('参数设计', '.workshop-workspace[popover]')
+  expect(button('＋ 新增参数'), 'parameter designer unavailable in root')
+  await advancedTool('素材与字体文件', '.workshop-workspace[popover]')
+  expect(button('＋ WOFF2 字体'), 'font and image tools unavailable in root')
+  const options = await rootOptions()
+  await choose(options.querySelector('[aria-label="主题制作分类"]'), 'layout')
+  await until(
+    () =>
+      [...document.querySelectorAll('.workshop-properties label')].some(
+        (el) => visible(el) && el.textContent.startsWith('窗口布局')
+      ),
+    'layout tool did not survive group synchronization'
+  )
+  await advancedTool('部件背景皮肤', '.appearance-layer-settings')
+  expect(
+    currentProject().base.structured.appearance.playerBar.mode === 'compact',
+    'advanced tools dropped transferred appearance'
+  )
+  await click('导出 .TEP')
+  expect(
+    pluginExports.at(-1)?.format === 'tep',
+    'root did not use advanced TEP preflight/export path'
+  )
+  const exported = pluginExports.at(-1).project
+  expect(
+    exported.css.includes('border-width:3px') &&
+      Object.values(exported.layers.dark).flat().length === 1,
+    'TEP export lost advanced content'
+  )
+  expect(advancedProjects.size === 1, 'switching advanced tools duplicated the project')
+
+  // Apply the real structured appearance, then edit it again through daily controls.
+  await click('应用主题')
+  await until(
+    () => !document.querySelector('[aria-label="返回常用调整"]').disabled,
+    'applied project did not settle'
+  )
+  await click('常用调整')
+  await showSetting('player-bar-mode')
+  expect(
+    button('紧凑', drawer()).classList.contains('active'),
+    'applied plugin appearance did not become the daily baseline'
+  )
+  await click('迷你')
+  const settingsWrites = writes.length
+  await click('应用外观')
+  expect(writes.length === settingsWrites, 'plugin daily edits leaked into global settings')
+  expect(
+    currentProject().base.structured.appearance.playerBar.mode === 'mini',
+    'plugin daily apply failed'
+  )
+  expect(
+    currentProject().css.includes('border-width:3px') &&
+      Object.values(currentProject().layers.dark).flat().length === 1 &&
+      advancedProjects.size === 1,
+    'daily editing replaced the existing advanced project'
+  )
+  await advancedTool('自定义 CSS', '[aria-label="高级 CSS"]')
+  expect(!errors.length, errors.join('\n'))
+}
+window.inspectAdvancedPanel = async (panel, tone, font) => {
+  await themes.setPreviewTone(tone)
+  const toneButton = document.querySelector('[data-dock-action="preview-tone"]')
+  if ((toneButton.getAttribute('aria-pressed') === 'true') !== (tone === 'dark')) {
+    toneButton.click()
+    await tick()
+  }
+  document.documentElement.style.setProperty('--te-font-size-body', font + 'px')
+  document.querySelector('.appearance-page').style.setProperty('--te-font-size-body', font + 'px')
+  if (panel === 'layout') {
+    const options = await rootOptions()
+    await choose(options.querySelector('[aria-label="主题制作分类"]'), 'layout')
+  } else {
+    const [label, selector] = {
+      css: ['自定义 CSS', '[aria-label="高级 CSS"]'],
+      layers: ['图层与蒙版', '.workshop-workspace[popover]'],
+      parameters: ['参数设计', '.workshop-workspace[popover]'],
+      skin: ['部件背景皮肤', '.appearance-layer-settings']
+    }[panel]
+    await advancedTool(label, selector)
+  }
+  await tick()
+  const popup = document.querySelector('.workshop-workspace[popover]'),
+    rect = popup.getBoundingClientRect()
+  expect(popup.matches(':popover-open'), 'advanced popup closed itself: ' + panel)
+  expect(
+    rect.left >= 0 &&
+      rect.right <= innerWidth + 1 &&
+      rect.top >= 0 &&
+      rect.bottom <= innerHeight + 1,
+    'advanced popup outside viewport: ' + panel
+  )
+  expect(
+    popup.scrollWidth <= popup.clientWidth + 1,
+    'advanced popup overflows horizontally: ' + panel
+  )
+  expect(
+    Math.abs(parseFloat(getComputedStyle(popup).fontSize) - (font * 15) / 14) < 0.1,
+    'advanced tool suppressed larger text'
+  )
+  const exportButton = document.querySelector('[aria-label="导出 .TEP"]'),
+    exportRect = exportButton.getBoundingClientRect()
+  expect(
+    exportRect.left >= 0 && exportRect.right <= innerWidth && !exportButton.disabled,
+    'TEP export unreachable at narrow width'
+  )
+  const footer = document.querySelector('.appearance-creation-actions')
+  expect(footer.scrollWidth <= footer.clientWidth + 1, 'advanced actions overflow horizontally')
+  for (const control of footer.querySelectorAll(':scope > div button')) {
+    const bounds = control.getBoundingClientRect()
+    expect(
+      bounds.left >= 0 &&
+        bounds.right <= innerWidth + 1 &&
+        bounds.top >= 0 &&
+        bounds.bottom <= innerHeight + 1,
+      'advanced action outside viewport: ' + control.textContent.trim()
+    )
+  }
+  expect(!errors.length, errors.join('\n'))
+}
+window.closeAdvancedPanel = async () => {
+  document.querySelector('.workshop-workspace[popover] [data-workshop-context-close]').click()
+  await tick()
 }
 window.runLegacyPlayerSettings = async () => {
   app.unmount()

@@ -79,6 +79,69 @@ resources/audio-engine/libmcfgthread-2.dll
 
 `windows-mingw-static` 的 static 只针对 vcpkg triplet，libstdc++ / libgcc / mcfgthread 仍是动态链接，所以那三个运行时 DLL 必须和 `.node` 放在同一目录，否则任何没有装同款工具链的机器都会 dlopen 失败（表现为「未加载 twilight_audio_node.node」）。`stage:audio-engine` 会解析产物的 import table 自动补齐它们，来源优先取构建目录 `CMakeCache.txt` 里记录的编译器所在目录（必须与产物同源：PATH 上另一套 MinGW 的 libstdc++ 会导致 `The specified procedure could not be found`），其次是 `W64DEVKIT_ROOT`；也可用 `--runtime-dir` 或 `TAE_MINGW_RUNTIME_DIR` 指定。缺任何一个都会直接失败而不是暂存出一份不完整的运行时。
 
+## 重采样相位与独立 SoX 库
+
+`TAE_ENABLE_SOXR=ON` 默认构建 `third_party/soxr/` 中锁定的 libsoxr 0.1.3，输出独立 `libtwilight-soxr.dll`／`.so`／`.dylib`。最小相位或显式 `soxrHq`／`soxrVhq` 请求只在速率不同时使用直接 API；普通线性 Native／High／Ultra 继续使用 SWR，同率 typed PCM 不经过 SoX。SWR 在源速率转换声道／表示，实际速率转换只执行一次。
+
+最小相位使用 `phase_response=0`，SoX 线性为 50；Native 固定滚降，高档 HQ、极高档 VHQ，平滑 `passband_end=0.85`。SoX 与 SWR 的带宽不同。相位测试使用同一 SoX recipe 比较幅频与保护区前能量，1 kHz 先拟合相位再计算残差；`twilight_resampler_response_tests` 同时覆盖分块、短尾、准确 Seek、整数单／双声道及配置失败保留原滤波器。`twilight_ffmpeg_decoder_tests --resampler-probe` 验证直接库不受旧 FFmpeg wrapper 不可用缓存影响。
+
+AutoMix 准备、素材导出和续接同时继承各流的质量、相位与滚降；模型分析仍使用原固定参数。`decodeAutoMixFrames` 的新增末尾相位参数默认为线性，旧调用不变。`twilight_audio_performance_gate --verify-automix-minimum-phase` 验证最小相位自然／DJ、普通／CUE 的逐样本续接和活动观察；未继承相位的旧实现会在续接比较失败。
+
+`TAE_ENABLE_SOXR=OFF` 保留既有 FFmpeg SoX 探测／SWR Ultra 回退和最小相位别名，活动状态如实报告实际线性响应。该选项不改变普通调用的入口或同率语义。
+
+SoX 以 LGPL-2.1-or-later 独立动态链接，包含 PFFFT／FFT4G 的适用许可。桌面暂存复制依赖和 `licenses/soxr-0.1.3/` 中的完整修改后库源码、许可和 CMake 包装；打包过滤器包括它们。Android 同样打包独立库与许可，调试验收包附对应源码。具体测量、Android 构建参数和硬件余项见相邻 Android 仓库 `RESAMPLER_VALIDATION.md`。
+
+## 真峰值与限制器延迟
+
+仪表和限制器共用 `dsp/TruePeakDetector.h` 的 49 抽头 Hann 窗 sinc：低于 96 kHz 进行 4 倍重建，其他速率 2 倍，192 kHz 以上也保留采样间峰值。系数固定，历史逐声道预分配；计量不修改音频。限制器用单调最大队列保持衰减，覆盖音频延迟和 FIR 尾部后再释放，声道仍共用增益。
+
+`lookaheadMs` 保留请求语义；实际延迟取请求帧数与 FIR 最低支持长度的较大值：低于 96 kHz 最少 11 帧，其他速率最少 23 帧。默认 1 ms 不变。`DynamicsProcessor::latencyFrames()` 和 DSP 图节点／总延迟均报告实际值；例如 48 kHz 请求 0.1 ms，实际为 11 帧。全程未触发衰减时，PCM 仅增加这段精确延迟。
+
+`twilight_true_peak_tests` 用内存正弦的解析振幅和原版 libebur128 对照，覆盖分块、8 声道、脉冲、宽带、双音突变、释放和逐样本延迟。`twilight_true_peak_realtime_unit` 对两个活动处理器执行十分钟等效音频，并在 MinGW 跟踪 C／C++ 分配；均不打开音频设备。Android 的构建／数值记录见相邻仓库 `POWERAMP_HIFI_COMPARISON.md` 第 35 节。
+
+## 动力学响应与分频合成
+
+三／四段压缩在后续 LR4 分频时给先前频带补齐全通相位，单位压缩合成保持平坦幅频；两段路径不变，全部频带禁用仍精确旁路。动态 EQ 用输入与输出修正历史实现当前系数的差分方程，避免变系数状态保留旧权重，并保持零增益峰值滤波的精确单位响应。全频门限／压缩原有启动、声道链接和时间参数含义不变。
+
+`twilight_dynamics_response_tests`／CTest `twilight_dynamics_response_unit` 含 214 项数值检查：44.1／48／96 kHz 的硬拐点与 makeup、解析 DC 攻击／释放、独立复数 LR4 幅相、动态 EQ 增益与 long-double 时域参考，以及分块／reset／8 声道与旁路。时间参数是每级一阶 `1/e` 常数，不是端到端稳定时间；多段单位增益仍有全通相位，不承诺逐样本相等。接口含义见 `docs/audio-engine-api.md`，Android 交付与完整数值序列见相邻路线图第 38 节。
+
+## 声场／校准响应与 double 桥边界
+
+`twilight_spatial_response_tests`／`twilight_spatial_response_unit` 对现有立体声矩阵、逐声道增益／延迟／静音、声道矩阵、LR4 低频管理、固定补偿搁架和交叉馈送模型执行 1086 项独立数值检查。包含 480 组立体声控制组合、0–250 ms 延迟、44.1／48／96 kHz 幅相、脉冲、分块与 reset；不打开音频设备。命名交叉馈送现对照原版 libbs2b，custom 保留原解析参考；当前含义见 `docs/audio-engine-api.md`。
+
+Float32-only 节点现在显式用准备格式的声道数调用 `processFloatBridge`，修正旧默认 double 桥固定转换 8 声道、改写较小缓冲区尾部的问题。`processDouble` 调用签名和 C／JNI／插件 ABI 不变；内部派生实现不再继承无格式默认桥。原生 double 节点保留，Float32 桥仍为原精度与临时分配，未改变实际播放的 Float32 路径。`twilight_double_bridge_tests` 的 144 项检查、DSP 图和卷积回归见相邻 Android 路线图第 40 节；第 39 节保留完整声场数列。
+
+## native 声道布局与低频管理
+
+`AudioFormat.channelMask` 保存 native speaker 位与交错顺序，贯通 FFmpeg／环形缓冲／DSP／预加载。低频管理按真实 primary LFE 位定位，无 LFE 时完整旁路；未知布局的旧调用继续原索引约定。Android API 32+ 动态请求／查询 AAudio 的共用 speaker 位，旧 API 不增加前置条件；CUE PCM 导出保留 WAVE speaker mask。
+
+`twilight_channel_layout_tests`／`twilight_channel_layout_unit` 的 150 项内存检查覆盖 15 种布局，受控生产管线入口 `twilight_audio_performance_gate --verify-channel-layout`／CTest `twilight_audio_channel_layout` 覆盖 11 个场景。无 LFE 的中置／主声道保持、实际 LFE、同声道数异布局、预加载晋升和输出事实均经检查；没有打开音频设备。接口、未知布局边界和证据见 `docs/audio-engine-api.md` 及相邻 Android 路线图第 41 节。
+
+实时／离线 LUFS 共用 native 角色映射，排除 primary LFE／LFE2，分别计入 7.1 的侧方与后方声道，保留旧 count-only 调用。BS.1770-5 权重、BL／BR 的名义布局约定及未知位置边界见 API 文档。离线结果和自动／库内响度缓存身份同步为算法 **3**，旧缓存需要重新测量。
+
+`twilight_android_loudness_unit` 的 322 项检查与 `twilight_loudness_layout_unit` 的 17 个实际 FFmpeg／C ABI 场景通过；后者覆盖单文件、CUE、混合布局专辑及原超过 8 声道输入。源码构建的 Android 同源 libebur128 与相同 PCM 的离线结果最大差 0.046 LU，包含直方图精度影响。证据和四 ABI 包见相邻路线图第 42 节。
+
+## BS2B 交叉馈送
+
+`bauer`／`bs2b` 现在使用 BS2B 3.1.0 官方默认的低通＋高频补偿（700 Hz、4.5 dB），两种旧值保留为同一模型的别名；`meier` 是 BS2B 官方 JMEIER 预设（650 Hz、9.5 dB）。命名模式的 strength 为干湿比例，1 为完整预设；custom 保持原延迟／低通算法。双精度系数按实际速率计算到 768 kHz，保留 ±4 DSP 余量，不加入独立 ±1 限制器。
+
+`twilight_crossfeed_response_tests`／CTest `twilight_crossfeed_response_unit` 的 1320 项检查对照未改的原版 C 实现（8–384 kHz）和独立 long-double 传递函数（到 768 kHz），覆盖 Float32／double、双侧脉冲／幅相、互易、分块、状态切换、custom 兼容与回调／reset 零分配。原版代码仅进入主机测试，生产适配不新增运行时库；MIT 来源与通知位于 `third_party/bs2b/`。接口和 Android 交付见 API 文档与相邻路线图第 43 节。
+
+## 后台生成 CUE 投送文件
+
+`TAE_RenderPcmSegment` 将绝对音源起终点映射到准确 PCM 帧，生成零起点的独立 WAV，显式虚拟 PREGAP 放在文件开头。它只使用 `FFmpegDecoder`，不初始化播放引擎或设备，不执行音量、DSP 图或播放选率。整数 16／24／32 位与 Float32 保留解码 PCM 表示；多声道和非整字有效位深使用 WAVEFORMATEXTENSIBLE，Float32 包含 fact chunk。
+
+调用方提供新输出路径，并在失败或取消后删除半成品。源提前结束、文件写入错误或超过 RIFF 32 位长度会失败，不补齐未知音频、不回退整轨。共享 Core 在 analysis worker 中调用此接口，等待完成后才发媒体 token；取消等待 worker 退出，Stop ACK 后释放生成文件。HTTP(S) 来源由 Core 禁止重定向地暂存后再解码。
+
+```powershell
+cmake --build <build-dir> --target twilight_pcm_segment_tests twilight_audio_node
+ctest --test-dir <build-dir> -R '^twilight_pcm_segment_unit$' --output-on-failure
+$env:TWILIGHT_SEGMENT_NATIVE_BINDING='<staged-runtime>/twilight_audio_node.node'
+pnpm run test:cast-segment-native
+```
+
+原生目标用内存 WAV／FLAC 检查逐字节分段、静音、重读和失败边界；后一个入口使用真实 worker／addon 与静默 loopback DLNA 接收端，检查鉴权 URL、Range、小数秒控制及回收，不打开音频输出设备。
+
 ## 接口语义
 
 `outputInfo` 是播放状态的 canonical 字段。顶层 `PlaybackInfo.actualBackend`、`actualSampleRate`、`latencyMs`、`sourceExact`、`outputPerfect`、`perfectReason`、`isDsd`、`dsdMode`、`dsdRate` 等字段只做镜像。
@@ -88,6 +151,8 @@ resources/audio-engine/libmcfgthread-2.dll
 WASAPI Exclusive / ASIO 已具备 typed PCM passthrough 分支：当无 DSP、音量为 1.0、routing 不改变语义，且源 PCM 格式与后端实际输出格式完全一致时，FFmpeg decode、AudioBuffer 和后端 typed render 会按 Int16/Int24/Int32/Float32 直通，允许 `pcmPassthrough=true` / `outputPerfect=true`。如果源格式和设备实际格式不一致，或处理链需要 Float32，则继续报告 `integer_passthrough_unavailable` 或 `pcm_converted`，避免误报 bit-perfect。
 
 `TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、可选 `visualizerBars`、`sampleRate`、`active`、`tapStatus`、`reason`。`spectrumPoints` 支持 8-4096；播放页全屏可视化默认以 4096 个频谱点请求 140 根 log-Hz 频谱柱。`visualizerBarCount` 支持 0-256，0 保留完整频谱接口；大于 0 时原生直接聚合柱条，省略 `spectrum`、`spectrogram` 和 `oscilloscope`，旧版原生绑定由 main 聚合兼容。可视化采样器仍使用 8192 FFT，对齐 WebAudio `AnalyserNode` 参考页的 4096-bin 频谱。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（0-4096，默认 1024；0 表示不返回该 payload）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；播放中 native tap 不可用时 main 可返回显式 `synthetic-fallback` 诊断 fallback；旧的 `TAE_GetSpectrumData` 保留兼容。
+
+原生 JSON 可用 `visualizerBarMode:"peak"` 在每个对数频带内取原生 FFT bin 的最大显示电平；默认仍为 `"interpolated"`，保留桌面原有结果。Android 直接 JNI 的 48 段监测选择新模式，桌面 Core 尚未开放该选项。频谱仍来自各 PCM 声道的算术平均，等幅反相会相消，不是声道能量和；新模式不做时间峰值保持。`twilight_audio_monitor_tests` 校验独立 DFT、频带归属和既有累计 L/R 相关性；`--profile` 离线模拟 10 Hz 轮询。完整参数与标度见 `docs/audio-engine-api.md`，Android 软件证据见相邻路线图第 36 节。
 
 同一队列的手动选曲可使用 `TAE_SelectQueueIndex` / Node-API `SelectQueueIndex` 更新游标，再调用原有 Play 接口。Electron 的 `selectQueueItem` 还会校验主进程签发的队列版本、索引、逻辑 ID 和重新授权的规范路径；队列内容、CUE 范围、响度数据变更或服务重启后须重新加载队列。
 

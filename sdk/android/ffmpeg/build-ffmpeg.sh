@@ -56,9 +56,9 @@ for abi in "${abis[@]}"; do
       --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
       --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
       --enable-protocol=file,pipe \
-      --enable-demuxer=flac,mp3,wav,mov,ogg,aac,aiff,ape,wv \
+      --enable-demuxer=flac,mp3,wav,mov,ogg,aac,aiff,ape,wv,dsf,iff \
       --enable-parser=flac,mpegaudio,aac,opus,vorbis \
-      --enable-decoder=flac,mp1float,mp2float,mp3float,aac,alac,ape,opus,vorbis,wavpack,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le,pcm_s16be,pcm_s24be,pcm_s32be,pcm_f32be,pcm_f64be,pcm_u8 \
+      --enable-decoder=flac,mp1float,mp2float,mp3float,aac,alac,ape,opus,vorbis,wavpack,dsd_lsbf,dsd_msbf,dsd_lsbf_planar,dsd_msbf_planar,dst,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le,pcm_s16be,pcm_s24be,pcm_s32be,pcm_f32be,pcm_f64be,pcm_u8 \
       --extra-ldflags='-Wl,-z,max-page-size=16384' \
       --extra-cflags='-O2' --enable-small
     make -j"${JOBS:-2}"

@@ -17,7 +17,10 @@ type QueuedDiagnostic = { event: DiagnosticEvent; line: string; bytes: number }
 
 export class DiagnosticWriterClient {
   readonly directory: string
-  private worker: Worker
+  private worker: Worker | null = null
+  private localStore: DiagnosticStore | null = null
+  private localChain: Promise<void> = Promise.resolve()
+  private localPruneTimer: NodeJS.Timeout | null = null
   private ready = false
   private queue: QueuedDiagnostic[] = []
   private queuedBytes = 0
@@ -32,49 +35,88 @@ export class DiagnosticWriterClient {
     string,
     { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
   >()
-  private timer: NodeJS.Timeout
+  private timer: NodeJS.Timeout | null = null
   private closing = false
-  constructor(directory: string, workerEntry: string | URL) {
+  constructor(directory: string, workerEntry?: string | URL | null) {
     this.directory = directory
-    this.worker = new Worker(workerEntry, { workerData: { directory } })
-    this.worker.on('message', (message) => {
-      if (message.kind === 'ready') {
-        this.ready = true
-        this.error = message.error ? sanitizeDiagnosticText(message.error) : null
-        this.pump()
-        return
-      }
-      if (message.id && this.inFlight && this.inFlight.id === message.id) {
-        const batch = this.inFlight
-        this.inFlight = null
-        this.queuedBytes -= batch.bytes
-        if (message.kind === 'failure') {
-          this.dropped += batch.items.length
-          this.pendingDropped += batch.items.length
-          for (const item of batch.items) this.remember(item.event)
-        } else {
-          this.lastWriteAt = message.lastWriteAt
-          this.error = null
+    if (workerEntry) {
+      this.worker = new Worker(workerEntry, {
+        workerData: { directory },
+        resourceLimits: {
+          maxOldGenerationSizeMb: 24,
+          maxYoungGenerationSizeMb: 4
         }
+      })
+      this.worker.on('message', (message) => {
+        if (message.kind === 'ready') {
+          this.ready = true
+          this.error = message.error ? sanitizeDiagnosticText(message.error) : null
+          this.pump()
+          return
+        }
+        if (message.id && this.inFlight && this.inFlight.id === message.id) {
+          const batch = this.inFlight
+          this.inFlight = null
+          this.queuedBytes -= batch.bytes
+          if (message.kind === 'failure') {
+            this.dropped += batch.items.length
+            this.pendingDropped += batch.items.length
+            for (const item of batch.items) this.remember(item.event)
+          } else {
+            this.lastWriteAt = message.lastWriteAt
+            this.error = null
+          }
+        }
+        if (message.kind === 'failure') this.error = sanitizeDiagnosticText(message.error)
+        const request = this.requests.get(message.id)
+        if (request) {
+          clearTimeout(request.timer)
+          this.requests.delete(message.id)
+          if (message.kind === 'failure')
+            request.reject(new Error(this.error ?? 'Diagnostic writer failed'))
+          else request.resolve(message.value)
+        }
+        if (!this.error) this.pump()
+      })
+      this.worker.on('error', (error) => this.failed(error))
+      this.worker.on('exit', (code) => {
+        if (!this.closing) this.failed(new Error(`Diagnostic writer exited (${code})`))
+      })
+      this.worker.unref()
+      return
+    }
+    const store = new DiagnosticStore({ directory })
+    this.localStore = store
+    this.localChain = store.initialize().then(
+      () => {
+        this.ready = true
+        this.error = null
+        this.pump()
+      },
+      (error) => {
+        this.ready = true
+        this.error = sanitizeDiagnosticText(String(error))
+        this.pump()
       }
-      if (message.kind === 'failure') this.error = sanitizeDiagnosticText(message.error)
-      const request = this.requests.get(message.id)
-      if (request) {
-        clearTimeout(request.timer)
-        this.requests.delete(message.id)
-        if (message.kind === 'failure')
-          request.reject(new Error(this.error ?? 'Diagnostic writer failed'))
-        else request.resolve(message.value)
-      }
-      if (!this.error) this.pump()
-    })
-    this.worker.on('error', (error) => this.failed(error))
-    this.worker.on('exit', (code) => {
-      if (!this.closing) this.failed(new Error(`Diagnostic writer exited (${code})`))
-    })
-    this.timer = setInterval(() => this.pump(), 250)
+    )
+    this.localPruneTimer = setInterval(() => {
+      if (this.closing) return
+      this.localChain = this.localChain
+        .catch(() => undefined)
+        .then(() => store.prune())
+        .catch((error) => {
+          this.error = sanitizeDiagnosticText(String(error))
+        })
+    }, 60_000)
+    this.localPruneTimer.unref()
+  }
+  private schedulePump(): void {
+    if (this.closing || this.timer || !this.queue.length) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.pump()
+    }, 250)
     this.timer.unref()
-    this.worker.unref()
   }
   record(event: DiagnosticEvent): void {
     const line = `${JSON.stringify(event)}\n`
@@ -104,6 +146,7 @@ export class DiagnosticWriterClient {
     this.queuedBytes += bytes
     if (!this.ready || this.error) this.remember(event)
     if (priority) queueMicrotask(() => this.pump())
+    else this.schedulePump()
   }
   private remember(event: DiagnosticEvent): void {
     const bytes = Buffer.byteLength(JSON.stringify(event))
@@ -129,6 +172,10 @@ export class DiagnosticWriterClient {
     this.requests.clear()
   }
   private pump(): void {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
     if (!this.ready || this.inFlight || !this.queue.length) return
     const items: typeof this.queue = []
     let bytes = 0
@@ -139,10 +186,43 @@ export class DiagnosticWriterClient {
     }
     const id = randomUUID()
     this.inFlight = { id, bytes, items }
-    try {
-      this.worker.postMessage({ kind: 'write', id, lines: items.map((item) => item.line) })
-    } catch (error) {
-      this.failed(error as Error)
+    if (this.localStore) {
+      const store = this.localStore
+      const lines = items.map((item) => item.line)
+      const hadError = this.error !== null
+      this.localChain = this.localChain
+        .catch(() => undefined)
+        .then(async () => {
+          if (hadError) await store.initialize()
+          await store.append(lines)
+          const batch = this.inFlight
+          this.inFlight = null
+          if (batch) this.queuedBytes -= batch.bytes
+          this.lastWriteAt = store.lastWriteAt
+          this.error = null
+          if (this.queue.length) this.schedulePump()
+        })
+        .catch((error) => {
+          const batch = this.inFlight
+          this.inFlight = null
+          if (batch) {
+            this.queuedBytes -= batch.bytes
+            this.dropped += batch.items.length
+            this.pendingDropped += batch.items.length
+            for (const item of batch.items) this.remember(item.event)
+          }
+          const formatted =
+            error instanceof Error
+              ? `${(error as NodeJS.ErrnoException).code ?? 'WRITE_FAILED'}: ${error.message}`
+              : String(error)
+          this.error = sanitizeDiagnosticText(formatted)
+        })
+    } else if (this.worker) {
+      try {
+        this.worker.postMessage({ kind: 'write', id, lines: items.map((item) => item.line) })
+      } catch (error) {
+        this.failed(error as Error)
+      }
     }
     if (this.pendingDropped) {
       const count = this.pendingDropped
@@ -156,6 +236,29 @@ export class DiagnosticWriterClient {
     timeoutMs = 2000
   ): Promise<any> {
     if (!this.ready) return Promise.reject(new Error(this.error ?? 'Diagnostic writer is starting'))
+    if (this.localStore) {
+      const store = this.localStore
+      const run = this.localChain
+        .catch(() => undefined)
+        .then(async () => {
+          if (kind === 'status') return { ...(await store.status()), error: this.error }
+          if (kind === 'snapshot') return await store.snapshot(payload.destination as string)
+          if (kind === 'clear') {
+            await store.clearHistory()
+            return await store.status()
+          }
+          if (kind === 'flush') {
+            await store.flush()
+            return undefined
+          }
+          throw new Error('Unknown diagnostic writer request')
+        })
+      this.localChain = run.then(
+        () => undefined,
+        () => undefined
+      )
+      return run
+    }
     const id = randomUUID()
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -163,7 +266,7 @@ export class DiagnosticWriterClient {
         reject(new Error(`Diagnostic ${kind} timed out`))
       }, timeoutMs)
       this.requests.set(id, { resolve, reject, timer })
-      this.worker.postMessage({ kind, id, ...payload })
+      this.worker!.postMessage({ kind, id, ...payload })
     })
   }
   async flush(timeoutMs = 2000): Promise<void> {
@@ -257,7 +360,14 @@ export class DiagnosticWriterClient {
     } catch {
       /* Status/fallback retain the failure. */
     }
-    clearInterval(this.timer)
-    await this.worker.terminate()
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    if (this.localPruneTimer) {
+      clearInterval(this.localPruneTimer)
+      this.localPruneTimer = null
+    }
+    if (this.worker) await this.worker.terminate()
   }
 }

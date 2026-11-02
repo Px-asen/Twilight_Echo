@@ -238,11 +238,32 @@ function fixture(t: test.TestContext, enabled = false) {
   }
 }
 
+test('authorized DSP control is encrypted, bounded, path-free and cannot enable a Bridge host', async t => {
+  const f = fixture(t, true)
+  f.query(async request => {
+    if (request.name === 'audio.dsp') return { revision: 6, processing: { eqPreamp: -6, convolverIrPath: 'private-path' },
+      scenes: { scenes: [{ id: 'room', name: 'Room', enabled: true, graph: { path: 'private-path' } }], activeSceneId: 'room', pinnedSceneId: 'room' } }
+    if (request.name === 'zones.state') return { revision: 2, selectedOutputId: 'bridge', outputs: [{ id: 'bridge', name: 'USB DAC' }] }
+    return {}
+  })
+  const secure = { encrypted: true, serverId: 'desktop-a' }
+  assert.equal(code(await f.service.handleCoreRpc(rpc('audio.dsp'))), 'FORBIDDEN')
+  const state = await f.service.handleCoreRpc(rpc('audio.dsp'), 'phone', secure)
+  assert.equal(state.ok, true); assert.doesNotMatch(JSON.stringify(state), /private-path/)
+  const edit = command('audio.dsp.edit', { revision: 6, edit: { kind: 'processing', settings: { eqPreamp: -9 } } })
+  assert.equal((await f.service.handleCoreRpc(edit, 'phone', secure)).ok, true)
+  assert.equal(f.requests.at(-1)?.name, 'audio.dsp.edit')
+  const injected = command('audio.dsp.edit', { revision: 6, edit: { kind: 'processing', settings: { convolverIrPath: 'injected' } } })
+  assert.equal(code(await f.service.handleCoreRpc(injected, 'phone', secure)), 'INVALID_REQUEST')
+  assert.equal(code(await f.service.handleCoreRpc(command('bridge.host', { revision: 0, enabled: true, sampleRate: 48000 }), 'phone', secure)), 'FORBIDDEN')
+  assert.equal((await f.service.handleCoreRpc(command('zones.select', { revision: 2, outputId: 'bridge' }), 'phone', secure)).ok, true)
+})
+
 test('LAN stays disabled by default and remote toggles share the Cast media server', async (t) => {
   const f = fixture(t)
   await turn()
   assert.deepEqual(f.starts, ['stop'])
-  assert.deepEqual(f.identities[0].permissions, ['playback:read', 'playback:write', 'library:read'])
+  assert.deepEqual(f.identities[0].permissions, ['playback:read', 'playback:write', 'library:read', 'settings:read', 'settings:write'])
   assert.equal((await f.service.setEnabled(true)).enabled, true)
   f.cast(true)
   assert.equal((await f.service.setEnabled(false)).mediaOnly, true)

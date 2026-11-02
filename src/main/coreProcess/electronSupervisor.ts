@@ -11,8 +11,6 @@ import {
 } from '../themes/coreThemePlatform.ts'
 import { BrowserWindow, dialog, shell } from 'electron'
 import { writeFile } from 'node:fs/promises'
-import { prepareThemeWorkshopDisable } from '../ipc/themeWorkshop.ts'
-import { THEME_WORKSHOP_ID } from '../../shared/themeWorkshop.ts'
 import { resolveRemoteArtwork } from './remoteArtwork.ts'
 import type { ThemeLibrarySnapshot } from '../../shared/theme.ts'
 import {
@@ -157,10 +155,15 @@ export function createElectronCoreSupervisor(
           ? `验证码：${verificationCode.slice(0, 3)} ${verificationCode.slice(3)}\n请确认手机上显示的验证码与此一致；不一致时请拒绝。\n`
           : ''
         const result = await dialog.showMessageBox({
-          type: 'question', title: '连接 Twilight Echo',
+          type: 'question',
+          title: '连接 Twilight Echo',
           message: `允许“${deviceName}”连接这台电脑？`,
           detail: `${code}来源：${address}\n允许后可浏览曲库并控制电脑播放。仅允许你正在操作的设备。`,
-          buttons: ['允许连接', '拒绝'], defaultId: 1, cancelId: 1, noLink: true, signal
+          buttons: ['允许连接', '拒绝'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+          signal
         })
         signal.throwIfAborted()
         return result.response === 0
@@ -262,7 +265,8 @@ export function createElectronCoreSupervisor(
       'overlay.configure': async ({ pluginId, config }) => configureDynamicIsland(pluginId, config),
       'overlay.isOwner': async ({ pluginId }) => isDynamicIslandOwner(pluginId),
       'host.captureScreenshot': async () => {
-        const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+        const window =
+          BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
         if (!window) return null
         const image = await window.webContents.capturePage()
         if (image.isEmpty()) return null
@@ -311,13 +315,13 @@ export function createElectronCoreSupervisor(
         validateScope(scope)
         return unprotectJsonValue(value, scope)
       },
-      'plugins.prepareDisable': async ({ id }) => {
-        if (id === THEME_WORKSHOP_ID) await prepareThemeWorkshopDisable()
-      },
+      'plugins.prepareDisable': async () => undefined,
       'plugins.exportExperience': async ({ name, content }) => {
         const owner = BrowserWindow.getFocusedWindow()
         const options = { title: '导出莱茵音乐资料', defaultPath: name }
-        const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
+        const result = owner
+          ? await dialog.showSaveDialog(owner, options)
+          : await dialog.showSaveDialog(options)
         if (result.canceled || !result.filePath) return { saved: false }
         await writeFile(result.filePath, content, 'utf8')
         return { saved: true }
@@ -346,10 +350,12 @@ export function createElectronCoreSupervisor(
       plugin: join(__dirname, 'pluginHost.js')
     },
     fork: (entry, args, serviceName) => {
+      const maxOldSpaceMb = serviceName === 'twilight-core' ? 256 : 128
       const child = utilityProcess.fork(entry, args, {
         serviceName,
         stdio: 'pipe',
-        ...(['twilight-audio', 'twilight-audio-test'].includes(serviceName)
+        execArgv: [`--max-old-space-size=${maxOldSpaceMb}`],
+        ...(['twilight-audio', 'twilight-audio-test', 'twilight-zone-audio'].includes(serviceName)
           ? { env: audioServiceEnv() }
           : {}),
         ...(serviceName === 'twilight-plugin' && configuration.plugins?.proxy

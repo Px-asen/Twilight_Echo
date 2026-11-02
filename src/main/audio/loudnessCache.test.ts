@@ -108,6 +108,31 @@ test('loudness cache reports size and can be cleared', async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
+test('native-layout algorithm 3 does not reuse the count-only algorithm 2 cache identity', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-layout-cache-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const cachePath = join(dir, 'loudness-analysis-cache.json')
+  const identity = { filePath: 'D:/Music/7.1.flac', size: 123, mtimeMs: 456 }
+  const oldIdentity = { ...identity, algorithmVersion: 2 }
+  const oldMeasurement: LoudnessAnalysisResult = {
+    integratedLufs: -14.2,
+    truePeakDb: -1.1,
+    source: 'analyzed',
+    available: true,
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: 2
+  }
+  const cache = new LoudnessAnalysisCache(cachePath)
+  await cache.set(oldIdentity, oldMeasurement)
+  assert.deepEqual(await cache.get(oldIdentity), oldMeasurement)
+  assert.equal(LOUDNESS_ANALYSIS_ALGORITHM_VERSION, 3)
+  const reopened = new LoudnessAnalysisCache(cachePath)
+  assert.equal(await reopened.get(identity), null)
+  const measured = { ...oldMeasurement, algorithmVersion: 3, integratedLufs: -12.7 }
+  await reopened.set(identity, measured)
+  assert.deepEqual(await new LoudnessAnalysisCache(cachePath).get(identity), measured)
+})
+
 test('loudness cache conditional rollback deletes only the exact committed analysis', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-cache-rollback-'))
   const cache = new LoudnessAnalysisCache(join(dir, 'loudness-analysis-cache.json'))

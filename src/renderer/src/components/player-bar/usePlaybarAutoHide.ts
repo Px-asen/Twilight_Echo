@@ -35,6 +35,12 @@ export interface PlaybarAutoHideOptions {
   keepOpen: Ref<boolean>
   /** The bar element, for hover and focus containment checks. */
   barRef: Ref<HTMLElement | null>
+  /** Current track identity; only actual identity changes trigger feedback reveal. */
+  trackId?: () => string | null | undefined
+  /** Current play state; only actual play/pause transitions trigger feedback reveal. */
+  isPlaying?: Ref<boolean>
+  /** Suppresses track / play-state feedback reveal (e.g. lyrics-page compact bar). */
+  suppressFeedbackReveal?: Ref<boolean>
 }
 
 export interface PlaybarAutoHide {
@@ -168,6 +174,19 @@ export function usePlaybarAutoHide(options: PlaybarAutoHideOptions): PlaybarAuto
     if (!options.autoHide.value) return
     reveal()
     scheduleHide()
+  }
+
+  // Watch primitive sources individually rather than returning a fresh tuple from
+  // a single getter: `currentTrack` is re-projected on every Core playback tick,
+  // and a fresh array reference would fire on every tick and perpetually reset the
+  // hide timer whenever feedback reveal is enabled.
+  if (options.trackId || options.isPlaying) {
+    watch(
+      [() => options.trackId?.() ?? undefined, () => options.isPlaying?.value ?? false],
+      () => {
+        if (!options.suppressFeedbackReveal?.value) flashReveal()
+      }
+    )
   }
 
   function onBarPointerEnter(): void {

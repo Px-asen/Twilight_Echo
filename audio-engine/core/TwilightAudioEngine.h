@@ -48,10 +48,13 @@ struct PlaybackInfo {
   int bitrate = 0;
   int sourceSampleRate = 0;
   int sourceChannels = 0;
+  uint64_t sourceChannelMask = 0;
   int sourceBitDepth = 0;
   int decodedSampleRate = 0;
   int decodedBitDepth = 0;
   int decodedChannels = 0;
+  uint64_t decodedChannelMask = 0;
+  uint64_t outputChannelMask = 0;
   std::string decodedSampleFormat;
   std::string outputBackend = "wasapi";
   std::string outputDevice = "auto";
@@ -127,11 +130,17 @@ class TwilightAudioEngine {
   void setEventCallback(TAE_EventCallback callback, void* userData);
   void setStateEventsEnabled(bool enabled);
   void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy);
+  void setUsbDirectHost(std::shared_ptr<UsbDirectHost> host);
   void suspendUsbPcm(const std::string& reason);
   void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory);
+  std::shared_ptr<const SeekableInputFactory> inputFactory() const { return pipeline_->inputFactory(); }
 
-  TAE_Result play(const std::string& source, double startTimeSeconds, bool initiallyPaused = false);
+  TAE_Result play(const std::string& source, double startTimeSeconds, bool initiallyPaused = false,
+      const std::string& errorContext = "play");
   TAE_Result pause();
+  TAE_Result pullBridgePcm(float* data, size_t frames, TAE_BridgePcmInfo* info) {
+    return pipeline_->pullBridgePcm(data, frames, info);
+  }
   TAE_Result setPaused(bool paused);
   TAE_Result stop();
   TAE_Result seek(double positionSeconds);
@@ -228,6 +237,7 @@ class TwilightAudioEngine {
   bool shouldReleaseOutputLocked() const;
   void markOutputReleasedLocked();
   void releasePausedOutput();
+  void suspendUsbDirect(const std::string& reason, bool reportError = true);
   TAE_Result resumeReleasedOutput();
   TAE_Result playQueueItem(const QueueItem& item, double startTimeSeconds);
   bool shouldReroutePipelineLocked(std::string* reason, double* position, PlaybackState* state) const;

@@ -9,7 +9,8 @@ import { createPersistentDevicePairing, loadRemoteTlsIdentity } from '../../main
 import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
 import { X509Certificate, createHash, createPrivateKey, randomBytes } from 'node:crypto'
-import { certificateFingerprint, createRemoteTlsIdentity, remotePairingCode } from './tlsIdentity.ts'
+import { certificateFingerprint, remotePairingCode } from './tlsIdentity.ts'
+import { createRemoteTlsIdentity } from '../../adapters-node/remoteTlsIdentity.ts'
 import type { RemotePairingRequest } from '../../shared/remoteControl.ts'
 
 test('only a desktop approval plus the private claim secret yields a device credential', () => {

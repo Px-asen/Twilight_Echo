@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import test from 'node:test'
 import { LibraryLoudnessCache, loudnessDigest } from './libraryLoudnessCache.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../../shared/libraryLoudness.ts'
 
 test('loudness sidecars atomically retain complete groups, invalidate old algorithms and clear backups', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'loudness-cache-'))
@@ -15,7 +16,7 @@ test('loudness sidecars atomically retain complete groups, invalidate old algori
   const track = {
     source: 'analyzed' as const,
     available: true,
-    algorithmVersion: 2,
+    algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION,
     integratedLufs: -20,
     truePeakDb: -6,
     analyzedAt: '2026-09-14T00:00:00Z'
@@ -32,7 +33,7 @@ test('loudness sidecars atomically retain complete groups, invalidate old algori
   await writeFile(path, '{broken')
   assert.deepEqual(cache.get(id, fingerprint), measurement)
   const old = JSON.parse(await readFile(path, 'utf8'))
-  old.measurement.tracks[0].algorithmVersion = 1
+  old.measurement.tracks[0].algorithmVersion = 2
   await writeFile(path, JSON.stringify(old))
   assert.equal(cache.get(id, fingerprint), null)
   cache.clear([id])

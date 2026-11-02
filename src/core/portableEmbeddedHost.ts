@@ -42,7 +42,9 @@ import type { Playlist } from '../shared/playlists.ts'
 import type { TrackData } from '../shared/track.ts'
 import { LIBRARY_PAGE_SIZE } from '../shared/libraryDatabase.ts'
 import { normalizeCueRange, type CueRange } from '../shared/cue.ts'
+import { isAutoMixAnalysisResult, type AutoMixMode, type AutoMixSelection } from '../shared/twilightAutoMix.ts'
 import { pickOnlineLyricsText, rankOnlineLyricsCandidates } from './lyrics/onlineLyricsSearch.ts'
+import { migrateSafTrackIds, portableTrackRecords } from './portableTrackIdentity.ts'
 
 ensurePortableRuntimeGlobals()
 
@@ -427,7 +429,7 @@ function migrateLegacyPayload(legacy: Json): Json {
       const at = new Date(num(bookmark.createdAtMs, Date.now())).toISOString()
       return {
         id: str(bookmark.id) || `legacy-bookmark-${trackId}-${int(bookmark.positionSec, 0)}`,
-        trackKey: `local:${record?.filePath || trackId}${record?.cueRange ? `#cue:${record.cueRange.startSeconds}` : ''}`,
+        trackKey: `local:${record?.filePath || trackId}${record?.subTrack ? `#${record.subTrack}` : record?.cueRange ? `#cue:${record.cueRange.startSeconds}` : ''}`,
         trackId,
         ...(record?.title ? { title: record.title } : {}),
         ...(record?.artist ? { artist: record.artist } : {}),
@@ -486,10 +488,14 @@ function createSessionStore(rt: Runtime): PortableSessionStorePort {
       }
       if (isLegacyPayload(parsed)) {
         log('info', 'Migrating legacy Android Core session payload')
-        return { revision, payloadJson: JSON.stringify(migrateLegacyPayload(parsed)) }
+        parsed = migrateLegacyPayload(parsed)
       }
-      migrateCueSources(parsed)
-      return { revision, payloadJson: JSON.stringify(parsed) }
+      // Both legacy Android payloads and portable envelopes enter the Core only
+      // after all durable references have been migrated together.
+      const envelope = parsed as Json
+      migrateCueSources(envelope)
+      migrateSafTrackIds(envelope)
+      return { revision, payloadJson: JSON.stringify(envelope) }
     },
     async save(payloadJson, expectedRevision) {
       const result = await callPort<Json>(rt, 'sessionStore', 'save', {
@@ -588,7 +594,30 @@ function toPlaybackInfo(rt: Runtime, raw: Json): PlaybackInfo {
   info.perfectReasonCode = str(raw.perfectReasonCode)
   info.crossfadeActive = bool(raw.crossfadeActive)
   info.crossfadeSeconds = Math.max(0, num(raw.crossfadeSeconds, 0))
-  info.upcomingTrack = null
+  info.crossfadeMixActive = bool(raw.crossfadeMixActive)
+  info.actualOutputFormat = str(raw.actualSampleFormat)
+  info.outputInfo.actualDeviceId = str(raw.actualDeviceId)
+  info.isDsd = bool(raw.isDsd)
+  info.dsdMode = str(raw.dsdMode) || 'pcm'
+  info.dsdRate = Math.max(0, int(raw.dsdRate, 0))
+  info.actualDsdRate = Math.max(0, int(raw.actualDsdRate, 0))
+  info.dsdRatePolicy = ['exact', 'downrate'].includes(str(raw.dsdRatePolicy))
+    ? str(raw.dsdRatePolicy) as PlaybackInfo['dsdRatePolicy'] : 'pcm-fallback'
+  info.dsdConversion = ['downrate', 'pcm-fallback'].includes(str(raw.dsdConversion))
+    ? str(raw.dsdConversion) as PlaybackInfo['dsdConversion'] : 'exact'
+  info.dsdConversionReason = str(raw.dsdConversionReason)
+  info.autoMixMode = ['natural', 'dj'].includes(str(raw.autoMixMode)) ? str(raw.autoMixMode) as AutoMixMode : 'off'
+  const phase = str(raw.autoMixState)
+  info.autoMixState = ['off', 'preparing', 'ready', 'mixing', 'completed', 'degraded'].includes(phase)
+    ? phase as PlaybackInfo['autoMixState'] : 'off'
+  info.autoMixReason = str(raw.autoMixReason)
+  info.autoMixStrategy = str(raw.autoMixStrategy) as PlaybackInfo['autoMixStrategy']
+  info.autoMixPlanId = Math.max(0, int(raw.autoMixPlanId, 0))
+  info.autoMixDurationSeconds = Math.max(0, num(raw.autoMixDurationSeconds, 0))
+  info.autoMixDecodeMs = Math.max(0, int(raw.autoMixDecodeMs, 0))
+  info.autoMixPrepareMs = Math.max(0, int(raw.autoMixPrepareMs, 0))
+  const upcoming = itemsForGeneration(rt, raw.queueGeneration)[int(raw.upcomingQueueIndex, -1)]
+  info.upcomingTrack = upcoming ?? null
   if (state === 'error') {
     info.diagnostics.lastError = str(raw.errorMessage) || str(raw.message) || 'Audio engine error'
   }
@@ -596,7 +625,42 @@ function toPlaybackInfo(rt: Runtime, raw: Json): PlaybackInfo {
 }
 
 function createAudioEngine(rt: Runtime): PortableAudioEnginePort {
+  let analysisSequence = 0
+  const analysis = async (method: string, args: Json, signal?: AbortSignal): Promise<unknown> => {
+    signal?.throwIfAborted()
+    const requestId = `automix-${rt.generation}-${++analysisSequence}`
+    const pending = callPort(rt, 'audioAnalysis', method, { ...args, requestId })
+    const cancel = () => { void callPort(rt, 'audioAnalysisControl', 'cancel', { requestId }).catch(() => {}) }
+    signal?.addEventListener('abort', cancel, { once: true })
+    try {
+      const result = await pending
+      signal?.throwIfAborted()
+      return result
+    } finally { signal?.removeEventListener('abort', cancel) }
+  }
   return {
+    autoMix: {
+      async setMode(mode) { return (await callPort(rt, 'audioEngine', 'setAutoMixMode', { mode })) === true },
+      async identify(source, signal) {
+        const result = await analysis('identify', { source }, signal)
+        if (!isObject(result) || result.ok !== true || typeof result.sourceIdentity !== 'string' || !/^[a-f0-9]{64}$/.test(result.sourceIdentity))
+          throw new Error(isObject(result) ? str(result.reason) || 'actual_source_identity_unavailable' : 'actual_source_identity_unavailable')
+        return result.sourceIdentity
+      },
+      async analyze(source, options, _priority, signal) {
+        const result = await analysis('analyze', { source, optionsJson: options }, signal)
+        if (!isAutoMixAnalysisResult(result)) throw new Error('invalid_analysis_result')
+        return result
+      },
+      async select(requestJson) { return await callPort(rt, 'audioEngine', 'selectAutoMix', { requestJson }) as AutoMixSelection },
+      async prepare(requestJson) { return (await callPort(rt, 'audioEngine', 'prepareAutoMix', { requestJson })) === true },
+      async submit(planId) { return (await callPort(rt, 'audioEngine', 'submitAutoMix', { planId })) === true },
+      async cancel() { return (await callPort(rt, 'audioEngine', 'cancelAutoMix')) === true },
+      cache: {
+        async read() { return await callPort(rt, 'audioAnalysis', 'readCache') as string | null },
+        async write(text) { await callPort(rt, 'audioAnalysis', 'writeCache', { text }) }
+      }
+    },
     async loadQueue(items, startIndex = 0) {
       const generation = ++rt.queueGeneration
       rt.queueGenerations.push({ generation, items: items.map((item) => ({ ...item })) })
@@ -699,7 +763,7 @@ function wireTrack(rt: Runtime, view: Json): Json {
   }
   setOpt(track, 'queueEntryId', optStr(view.queueEntryId))
   setOpt(track, 'albumId', optStr(merged.albumId))
-  setOpt(track, 'source', optStr(record.filePath) ?? optStr(record.streamUrl))
+  setOpt(track, 'source', optStr(record.subTrack) ?? optStr(record.filePath) ?? optStr(record.streamUrl))
   if (merged.ncmSongId !== undefined && merged.ncmSongId !== null && merged.ncmSongId !== '') {
     track.ncmSongId = String(merged.ncmSongId)
   }
@@ -753,15 +817,7 @@ function migrateCueSources(envelope: Json): void {
     record.cueRange = legacy.range
     bookmarkKeys.set(`local:${previous}`, `local:${legacy.source}#cue:${legacy.range.startSeconds}`)
   }
-  if (Array.isArray(envelope.tracks)) envelope.tracks.forEach(migrateTrack)
-  if (isObject(envelope.session)) {
-    migrateTrack(envelope.session.track)
-    if (Array.isArray(envelope.session.queue)) envelope.session.queue.forEach(migrateTrack)
-  }
-  if (Array.isArray(envelope.queues)) for (const queue of envelope.queues) {
-    if (isObject(queue) && Array.isArray(queue.rows))
-      for (const row of queue.rows) if (isObject(row)) migrateTrack(row.snapshot)
-  }
+  portableTrackRecords(envelope).forEach(migrateTrack)
   if (isObject(envelope.bookmarks) && Array.isArray(envelope.bookmarks.bookmarks)) {
     for (const bookmark of envelope.bookmarks.bookmarks) {
       if (isObject(bookmark)) {
@@ -778,6 +834,7 @@ function trackFromWire(raw: unknown): TrackData | null {
   if (!id) return null
   const legacy = legacyCueSource(optStr(raw.source))
   const source = legacy.source
+  const sacd = source ? /^(.*)#twilight-sacd=(stereo|multichannel):([1-9]\d*)$/.exec(source) : null
   const cueRange = raw.cueRange === undefined ? legacy.range : normalizeCueRange(raw.cueRange)
   if (raw.cueRange !== undefined && !cueRange)
     throw wireFailure('INVALID_REQUEST', `CUE range is invalid: ${id}`, false)
@@ -789,7 +846,7 @@ function trackFromWire(raw: unknown): TrackData | null {
     title: optStr(raw.title) ?? fileName,
     artist: str(raw.artist),
     album: str(raw.album),
-    filePath: source ?? id,
+    filePath: sacd?.[1] ?? source ?? id,
     fileName,
     duration: Math.max(0, num(raw.duration, 0)),
     size: Math.max(0, int(raw.size, 0)),
@@ -806,7 +863,8 @@ function trackFromWire(raw: unknown): TrackData | null {
     'releaseDate',
     'genre',
     'albumArtist',
-    'isrc'
+    'isrc',
+    'unavailableReason'
   ] as const) {
     setOpt(track, key, optStr(raw[key]))
   }
@@ -817,6 +875,7 @@ function trackFromWire(raw: unknown): TrackData | null {
   setOpt(track, 'bpm', optPositiveNum(raw.bpm))
   setOpt(track, 'addedAt', optNonNegativeInt(raw.addedAt))
   setOpt(track, 'cueRange', cueRange)
+  if (sacd) track.subTrack = source
   return track as unknown as TrackData
 }
 
@@ -994,8 +1053,14 @@ function projectPlayback(rt: Runtime, core: CoreSnapshot): Json | undefined {
       0,
       num(raw.crossfadeEffectiveSeconds ?? p.crossfadeEffectiveSeconds, 0)
     ),
-    autoMixMode: 'off',
-    autoMixState: 'idle',
+    autoMixMode: rt.host.settings.state().settings.autoMixMode,
+    autoMixState: p.autoMixState ?? raw.autoMixState ?? 'off',
+    autoMixReason: str(p.autoMixReason ?? raw.autoMixReason),
+    autoMixStrategy: str(p.autoMixStrategy ?? raw.autoMixStrategy),
+    autoMixPlanId: Math.max(0, int(p.autoMixPlanId ?? raw.autoMixPlanId, 0)),
+    autoMixDurationSeconds: Math.max(0, num(p.autoMixDurationSeconds ?? raw.autoMixDurationSeconds, 0)),
+    autoMixDecodeMs: Math.max(0, int(p.autoMixDecodeMs ?? raw.autoMixDecodeMs, 0)),
+    autoMixPrepareMs: Math.max(0, int(p.autoMixPrepareMs ?? raw.autoMixPrepareMs, 0)),
     clipCount: 0
   }
   setOpt(view, 'streamTitle', optStr(p.streamTitle))
@@ -1020,7 +1085,7 @@ function projectPlayback(rt: Runtime, core: CoreSnapshot): Json | undefined {
   const backend = optStr(raw.outputBackend) ?? optStr(p.outputBackend)
   if (backend) {
     const routeType = optStr(rt.route?.routeType)
-    view.outputBackend = routeType && routeType !== 'speaker' ? `${backend}:${routeType}` : backend
+    view.outputBackend = backend !== 'usb-direct' && routeType && routeType !== 'speaker' ? `${backend}:${routeType}` : backend
   }
   setOpt(view, 'actualSampleRate', actualSampleRate)
   setOpt(view, 'actualBitDepth', actualBitDepth)
@@ -1035,8 +1100,14 @@ function projectPlayback(rt: Runtime, core: CoreSnapshot): Json | undefined {
   setOpt(view, 'hardwareBitDepth', optPositiveInt(raw.hardwareBitDepth))
   setOpt(view, 'hardwareChannels', optPositiveInt(raw.hardwareChannels))
   setOpt(view, 'hardwareSampleFormat', optStr(raw.hardwareSampleFormat))
-  setOpt(view, 'dsdMode', optStr(p.dsdMode))
-  setOpt(view, 'dsdRate', optPositiveInt(p.dsdRate))
+  setOpt(view, 'dsdMode', optStr(raw.dsdMode))
+  setOpt(view, 'dsdRate', optPositiveInt(raw.dsdRate))
+  setOpt(view, 'actualDsdRate', optPositiveInt(raw.actualDsdRate))
+  setOpt(view, 'dsdRatePolicy', optStr(raw.dsdRatePolicy))
+  setOpt(view, 'dsdConversion', optStr(raw.dsdConversion))
+  setOpt(view, 'dsdConversionReason', optStr(raw.dsdConversionReason))
+  setOpt(view, 'transportSampleRate', optPositiveInt(raw.transportSampleRate))
+  setOpt(view, 'semanticSampleRate', optPositiveInt(raw.semanticSampleRate))
   setOpt(view, 'crossfadeCurve', optStr(p.crossfadeCurve))
   setOpt(view, 'crossfadeBlockedReason', optStr(p.crossfadeBlockedReason))
   const upcoming = p.upcomingTrack as Json | null

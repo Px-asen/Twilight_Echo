@@ -22,7 +22,13 @@ export interface RemoteMediaRequestHandlerOptions {
   imageCache?: {
     generation?: () => number
     read: (source: string) => Promise<Response | null>
-    write: (source: string, type: string, bytes: Uint8Array, generation?: number) => Promise<void>
+    write: (
+      source: string,
+      type: string,
+      bytes: Uint8Array,
+      generation?: number
+    ) => Promise<{ bytes: Uint8Array; contentType: string } | void | null>
+    resize?: (bytes: Uint8Array, mime: string) => { bytes: Uint8Array; mime: string } | null
   }
   grants?: RemoteMediaGrantService
   fetch: (source: string, init: RequestInit) => Promise<Response>
@@ -246,18 +252,26 @@ export function createRemoteMediaRequestHandler(
         try {
           const bytes = new Uint8Array(await response.arrayBuffer())
           request.signal.throwIfAborted()
-          await options.imageCache.write(
+          const stored = await options.imageCache.write(
             grant.source,
             upstream.headers.get('content-type') ?? '',
             bytes,
             cacheGeneration
           )
+          const outBytes = stored && stored.bytes.byteLength > 0 ? stored.bytes : bytes
+          const headers = new Headers(response.headers)
+          if (stored?.contentType) {
+            headers.set('Content-Type', stored.contentType)
+          }
+          if (outBytes !== bytes) {
+            headers.delete('Content-Length')
+          }
           record('response.ready', {
             status: response.status,
             fromCache: false,
-            bytes: bytes.byteLength
+            bytes: outBytes.byteLength
           })
-          return new Response(bytes, { status: response.status, headers: response.headers })
+          return new Response(outBytes as BodyInit, { status: response.status, headers })
         } catch (error) {
           request.signal.throwIfAborted()
           return fail(502, 'body-or-cache-write', 'Remote image response failed', error)
@@ -267,6 +281,42 @@ export function createRemoteMediaRequestHandler(
         record('cache.write.skipped', {
           reason: options.imageCache ? 'response-policy' : 'unconfigured'
         })
+      if (
+        options.imageCache?.resize &&
+        grant.kind === 'image' &&
+        request.method === 'GET' &&
+        !range &&
+        upstream.status === 200
+      ) {
+        try {
+          const bytes = new Uint8Array(await response.arrayBuffer())
+          request.signal.throwIfAborted()
+          let outBytes: Uint8Array = bytes
+          const headers = new Headers(response.headers)
+          try {
+            const resized = options.imageCache.resize(
+              bytes,
+              upstream.headers.get('content-type') ?? ''
+            )
+            if (resized && resized.bytes.byteLength > 0) {
+              outBytes = resized.bytes
+              headers.set('Content-Type', resized.mime.split(';', 1)[0].trim() || resized.mime)
+              headers.delete('Content-Length')
+            }
+          } catch {
+            // Keep original bytes when downscaling fails.
+          }
+          record('response.ready', {
+            status: response.status,
+            fromCache: false,
+            bytes: outBytes.byteLength
+          })
+          return new Response(outBytes as BodyInit, { status: response.status, headers })
+        } catch (error) {
+          request.signal.throwIfAborted()
+          return fail(502, 'body-or-cache-write', 'Remote image response failed', error)
+        }
+      }
       record('response.ready', { status: response.status, fromCache: false })
       return response
     })

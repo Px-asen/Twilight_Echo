@@ -87,14 +87,14 @@ primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时�
 
 ## 3. API 版本与兼容性承诺
 
-主题 contribution 可选声明独立版本化的 `editor.schemaVersion: 1`，用于主题插件工坊
+主题 contribution 可选声明独立版本化的 `editor.schemaVersion: 1`，用于自定义主题的高级工具
 展示参数分组、图片槽位和变量控件；不改变 `structured` 的版本语义。控制项字段见
 `@twilight-echo/plugin-api` 的 `TwilightThemeEditorDescriptor`。无效项和重复 ID 被忽略。
 `selector` 仅用于生成 CSS 变量覆盖，不提供 DOM 或脚本权限。
 
-内置工具插件 `com.twilightecho.tool.theme-workshop` 默认关闭。其专用宿主页面仅按
-固定插件 ID 与页面 ID 路由，普通 `sidebarPage` 仍使用受控命令页面。
-工坊文件接口要求插件启用；导出的纯主题插件不依赖工坊启用状态。
+主题编辑与文件接口是宿主内建能力，无需启用工具插件。旧
+`com.twilightecho.tool.theme-workshop` 导航会话重定向到自定义主题；普通 `sidebarPage`
+仍使用受控命令页面。导出的纯主题插件可独立安装与使用。
 
 - 插件 API 独立于应用版本，使用 `apiVersion` 主版本号（1, 2, …）。
 - **主版本内只加不改不删**；废弃 API 须先标记 deprecated 并保留至少一个主版本。
@@ -152,7 +152,7 @@ API v4 宿主为带后台逻辑的插件（AI 助手、批量整理工具等）�
   返回含 bpm、响度增益与格式的完整曲目 payload）、`patchTracks(patches)`（`library:write`；
   乐观锁 `expectedVersion`，可写字段白名单：title/artist/album/genre/releaseDate/lyrics/bpm 等）、
   `getCover(trackId)`（封面 data URL）、`listPlaylists / createPlaylist / addTracksToPlaylist /
-  removeTracksFromPlaylist`（`library:write`）。
+removeTracksFromPlaylist`（`library:write`）。
 - `twilight.player` 扩展：`playTracks(ids, startIndex)` / `setVolume(0..1)` / `seek(s)` /
   `setPlayMode(mode)`（`player:control`）。
 - `twilight.appSettings.get() / update(patch)`（`app:settings`；与设置页同一写入通道）。
@@ -180,16 +180,16 @@ bridge 会在失败后保留该 key，payload 改变或上一次调用成功后�
 
 ### 4.4 扩展点清单（首批）
 
-| 扩展点          | 类型     | 能力                                                     |
-| --------------- | -------- | -------------------------------------------------------- |
-| `MediaProvider` | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现）  |
-| 事件总线        | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停        |
-| 侧边栏页面      | ui       | 插件提供自定义页面渲染入口                               |
-| 侧栏小组件（v4） | ui      | `contributes.experiences[].launch: "sidebar"`，包内 HTML 独立嵌入侧栏 |
-| PlayerBar 按钮  | ui       | 附加操作按钮                                             |
-| 设置页配置区    | ui       | 插件自有设置界面                                         |
-| 主题            | theme    | CSS 变量、样式表与宿主托管布局；**仅声明式，不执行脚本** |
-| DSP 节点        | dsp      | 挂入引擎 DSP 链（见第 5 节）                             |
+| 扩展点           | 类型     | 能力                                                                  |
+| ---------------- | -------- | --------------------------------------------------------------------- |
+| `MediaProvider`  | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现）               |
+| 事件总线         | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停                     |
+| 侧边栏页面       | ui       | 插件提供自定义页面渲染入口                                            |
+| 侧栏小组件（v4） | ui       | `contributes.experiences[].launch: "sidebar"`，包内 HTML 独立嵌入侧栏 |
+| PlayerBar 按钮   | ui       | 附加操作按钮                                                          |
+| 设置页配置区     | ui       | 插件自有设置界面                                                      |
+| 主题             | theme    | CSS 变量、样式表与宿主托管布局；**仅声明式，不执行脚本**              |
+| DSP 节点         | dsp      | 挂入引擎 DSP 链（见第 5 节）                                          |
 
 Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playerBarButton`
 和 `settingsPanel` 均通过 command 回到插件宿主进程执行业务逻辑，不向插件开放
@@ -222,6 +222,10 @@ Studio 兼容提示返回。API v1 不接受 schemaVersion 2，不能通过回�
 任意 CSS/DOM。`navigation` 仅支持 `toggle`、`persistent`、`hidden`。API v1/v2 不接受
 schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesheet`。布局只重排现有宿主
 组件，不开放 Vue 组件注入、任意 DOM、Electron、Node、播放、DSP 或队列访问。
+
+schemaVersion 3 还可携带 `appearance`、`appearanceLayers`、`toneSchedule` 和 `iconAssets`。
+宿主规范化这些字段后分别应用外观、皮肤、深浅色计划和图标；图片、字体及图标资源通过
+随包素材引用或内嵌数据保存。缺省字段沿用现有宿主设置，旧版结构化主题的含义不变。
 
 ### 4.5 多音源数据模型
 
@@ -407,10 +411,10 @@ schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesh
 - 远程索引和 `.tep` 获取必须使用 `redirect: 'manual'`，最多跟随 5 跳；每一跳都重新校验 URL、协议、凭据和 HTTPS 不得降级为 HTTP。`Content-Length` 在读取 body 前预检，未知长度响应按 chunk 累计上限并在超限时 abort。`.tep` 必须逐块写入与插件安装目标同卷的 user-data staging 目录，同时增量计算 SHA-256；任何下载、写入、校验或重定向失败都清理部分临时文件。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。
 
-### 主题插件工坊入口与编辑项目
+### 自定义主题高级工具与编辑项目
 
-内置工具 `com.twilightecho.tool.theme-workshop` 默认关闭。启用后从设置 → 外观 → 主题创意工坊下方的「主题插件工坊」打开；侧边栏隐藏该内置贡献入口，插件详情仍可打开。停用时先保存草稿再关闭页面和试用。
+从设置 → 外观 →「自定义主题」进入统一画布，在主题选项中打开高级工具。常用调整或主题属性的当前草稿可以直接导出 `.TEP`，也可转入高级工具继续编辑；转移保留未应用修改，导出不应用主题或改写日常设置。
 
-编辑描述 schemaVersion 1 的绑定三选一：`variable`、`token` 或宿主已登记的 `slot`；开关可声明 `checkedValue` / `uncheckedValue`，参数可声明 `description`。编译与导出保留 structured 布局、模式、深浅色参数。项目包含素材及许可、分页面图层和上次应用版本；导出的声明式主题不依赖工坊启用状态。主题源码和素材仍保留在外部插件仓库。
+编辑描述 schemaVersion 1 的绑定三选一：`variable`、`token` 或宿主已登记的 `slot`；开关可声明 `checkedValue` / `uncheckedValue`，参数可声明 `description`。编译与导出保留 structured 布局、模式、深浅色参数、完整外观、图层与图标。项目包含素材及许可和上次应用版本，支持试用、自动保存、恢复及 `.teworkshop` 项目备份。本地背景、皮肤、主题图片和绑定字体随包导出；仅填写本机字体名时保留字体栈，跨设备保持一致需导入有授权的字体文件。主题源码和素材仍可在外部插件仓库维护。
 
 服务器型音源可声明 `loginWithServer(serverUrl, username, password, context?)`，返回 `{ loggedIn, profile }`，并声明 `login` 能力。宿主根据已注册方法展示服务器地址、用户名和密码表单，经现有 provider 调用桥传递，不新增 IPC 通道；同一插件未实现该方法时继续使用原登录流程。Jellyfin 和 Navidrome provider 均位于独立插件仓库。Jellyfin 使用官方 AuthenticateByName、Items、Playlists 和 Audio universal 接口，只持久化服务端会话令牌；Navidrome 使用 Subsonic token/salt 认证，需要将密码存入宿主加密的插件设置。

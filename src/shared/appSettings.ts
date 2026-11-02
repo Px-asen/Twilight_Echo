@@ -35,10 +35,39 @@ export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type PreviousButtonAction = 'restart' | 'previous'
 export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
+export type HomePageMode = 'auto' | 'local' | 'streaming'
 export type TrackActivationMode = 'singleClick' | 'doubleClick'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type ProxyMode = 'auto' | 'custom' | 'off'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
+
+export interface NowPlayingFluidSettings {
+  /** Relative flow speed multiplier in [0.25, 2.5]; 1.0 matches Apple Music cadence. */
+  speed: number
+  /** Subtle low-frequency bass surge while playing. */
+  audioReactive: boolean
+}
+
+export const DEFAULT_NOW_PLAYING_FLUID_SETTINGS: Readonly<NowPlayingFluidSettings> = Object.freeze({
+  speed: 1,
+  audioReactive: true
+})
+
+export function normalizeNowPlayingFluidSettings(value: unknown): NowPlayingFluidSettings {
+  const record =
+    value && typeof value === 'object' ? (value as Partial<NowPlayingFluidSettings>) : {}
+  const rawSpeed = Number(record.speed)
+  const clampedSpeed = Number.isFinite(rawSpeed)
+    ? Math.min(2.5, Math.max(0.25, Math.round(rawSpeed * 100) / 100))
+    : DEFAULT_NOW_PLAYING_FLUID_SETTINGS.speed
+  return {
+    speed: clampedSpeed,
+    audioReactive:
+      typeof record.audioReactive === 'boolean'
+        ? record.audioReactive
+        : DEFAULT_NOW_PLAYING_FLUID_SETTINGS.audioReactive
+  }
+}
 export type StreamingAudioCachePolicy = 'off' | 'provider'
 export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
 export type AppBackgroundKind = 'theme' | 'color' | 'image'
@@ -182,11 +211,17 @@ export interface AppSettings {
    * main window is minimized and/or hidden to the tray.
    */
   afterglowAutoEntry: import('./afterglowMode.ts').AfterglowAutoEntry
+  /**
+   * Automatically destroy the hidden main BrowserWindow after 30s in tray or
+   * mini-player mode while keeping Core, mini-player, and desktop lyrics alive.
+   */
+  unloadHiddenMainWindow: boolean
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   /** Unlocks developer-only affordances, e.g. installing an unpacked plugin directory. */
   developerMode: boolean
   startupHomePage: StartupHomePage
+  homePageMode: HomePageMode
   startupExperience: StartupExperience | null
   navigationPages: NavigationPagePreferences
   trackActivationMode: TrackActivationMode
@@ -232,6 +267,7 @@ export interface AppSettings {
   /** Standard vs mini playbar shape, plus now-playing auto-hide. */
   playerBar: PlayerBarSettings
   nowPlayingBackground: NowPlayingBackground
+  nowPlayingFluid: NowPlayingFluidSettings
   playbackResumeMode: PlaybackResumeMode
   /** restart: previous button replays the current track first; previous: always jump to the previous track. */
   previousButtonAction: PreviousButtonAction

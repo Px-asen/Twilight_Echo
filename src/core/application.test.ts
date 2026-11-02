@@ -122,6 +122,7 @@ function fixture(
     startLiked: async () => {},
     refillHeart: async () => 0,
     edit: async () => {},
+    invalidateLibrary: () => {},
     refresh: async () => {},
     flush: async () => {
       calls.push('flush')
@@ -1980,4 +1981,17 @@ test('Core exploration dispatch keeps exact local navigation and manual performa
   exploration.observe(beforeDelete)
   assert.equal(f.application.snapshot().catalogRevision, event.snapshot.catalogRevision, 'late replies do not roll back the observed revision')
   assert.equal(db.queryTracks({ limit: 10 }).total, 1)
+})
+
+test('recent history views require statistics permission as well as ordinary library access', async (t) => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('library-only', ['library:read'])
+  const reply = await f.request('library-only', 'playlists.view', {
+    id: 'core:recent',
+    revision: 0,
+    versionsRevision: 0
+  })
+  assert.equal(reply.ok, false)
+  if (!reply.ok) assert.equal(reply.error.code, 'FORBIDDEN')
 })

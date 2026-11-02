@@ -35,8 +35,7 @@ import {
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { resolveConfiguredDownloadRoot } from '../security/localPaths.ts'
 import { reconcileThemeAfterPluginChange } from './themes.ts'
-import { setupThemeWorkshopIpc, prepareThemeWorkshopDisable } from './themeWorkshop.ts'
-import { THEME_WORKSHOP_ID } from '../../shared/themeWorkshop.ts'
+import { setupThemeWorkshopIpc } from './themeWorkshop.ts'
 import {
   configureDynamicIsland,
   hideDynamicIsland,
@@ -83,7 +82,7 @@ export function setupPluginIpc(): void {
       rawOptions && typeof rawOptions === 'object' ? (rawOptions as { theme?: unknown }) : {}
     showTrayPlayerWindow({ theme: normalizeExperienceWindowTheme(options.theme) })
   })
-  const bundledPluginIds = ['com.twilightecho.provider.ncm', THEME_WORKSHOP_ID]
+  const bundledPluginIds = ['com.twilightecho.provider.ncm']
   setupThemeWorkshopIpc()
   runtime.pluginManager = new TwilightPluginManager({
     appVersion: app.getVersion(),
@@ -102,11 +101,6 @@ export function setupPluginIpc(): void {
         id: bundledPluginIds[0],
         sourcePath: bundledPluginPath('ncm-provider'),
         defaultEnabled: true
-      },
-      {
-        id: THEME_WORKSHOP_ID,
-        sourcePath: bundledPluginPath('theme-workshop'),
-        defaultEnabled: false
       }
     ],
     ncm: {
@@ -311,7 +305,6 @@ export function setupPluginIpc(): void {
   ipcMain.handle('plugins:disable', async (_event, id: string) => {
     assertTrustedIpcSender(_event, 'plugin IPC')
     await runtime.pluginManagerReady
-    if (normalizePluginId(id) === THEME_WORKSHOP_ID) await prepareThemeWorkshopDisable()
     return await runtime.pluginManager!.disable(normalizePluginId(id))
   })
   ipcMain.handle(

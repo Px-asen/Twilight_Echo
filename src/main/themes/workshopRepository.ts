@@ -8,7 +8,7 @@ import {
 } from '../../shared/themeWorkshop.ts'
 import { loadJsonFileWithBackup, writeJsonValueAtomic } from '../persistence/jsonFile.ts'
 
-const options = { label: '主题工坊项目', maxBytes: 64 * 1024 * 1024, validate: isWorkshopProject }
+const options = { label: '自定义主题项目', maxBytes: 64 * 1024 * 1024, validate: isWorkshopProject }
 
 export class WorkshopRepository {
   constructor(privateRoot: string) {
@@ -85,7 +85,7 @@ export class WorkshopRepository {
   }
 
   save(project: WorkshopProject): WorkshopProject {
-    if (!isWorkshopProject(project)) throw new Error('无效工坊项目')
+    if (!isWorkshopProject(project)) throw new Error('无效主题项目')
     const previous = this.get(project.id)
     if (previous && previous.revision !== project.revision)
       throw new Error('项目已在其他窗口修改，请重新打开')

@@ -354,6 +354,31 @@ export function clonePlaylist<T>(value: T): T {
 }
 
 /**
+ * Shallow-clones mutable playlist containers and membership arrays while
+ * structurally sharing immutable TrackData snapshots and imported entries.
+ */
+export function sharePlaylistSnapshot(source: readonly Playlist[]): Playlist[] {
+  return source.map((playlist) => ({
+    ...playlist,
+    trackIds: playlist.trackIds.slice(),
+    ...(playlist.trackSnapshots ? { trackSnapshots: { ...playlist.trackSnapshots } } : {}),
+    ...(playlist.imported
+      ? {
+          imported: {
+            ...playlist.imported,
+            source: { ...playlist.imported.source },
+            entries: playlist.imported.entries.slice()
+          }
+        }
+      : {}),
+    ...(playlist.hiddenSources ? { hiddenSources: playlist.hiddenSources.slice() } : {}),
+    ...(playlist.variantPreferences
+      ? { variantPreferences: { ...playlist.variantPreferences } }
+      : {})
+  }))
+}
+
+/**
  * Structural equality with JSON semantics: undefined-valued properties compare
  * equal to absent properties, so snapshots cloned in memory match their
  * JSON-persisted counterparts without building comparison strings.

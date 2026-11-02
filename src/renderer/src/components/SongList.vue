@@ -116,6 +116,7 @@ import { createLibraryCollectionPages } from '../stores/library/libraryCollectio
 import { createLibraryCollectionWindow } from '../stores/library/libraryCollectionWindow.ts'
 import { musicVersionRevision } from '../stores/musicVersions.ts'
 import { libraryTrackQuery, libraryDetailScope } from '../utils/libraryTrackQuery.ts'
+import { CORE_RECENT_PLAYLIST_ID } from '../../../shared/corePlaylists.ts'
 import { libraryTrack } from '../utils/libraryQueuePlayback.ts'
 import {
   findExactProviderTrackCover,
@@ -128,6 +129,7 @@ const props = defineProps<{
   hasPlayer: boolean
   transitionName: 'page-down' | 'page-up'
   previewTracks?: Track[]
+  recentProviderId?: string
   returnFromDetail?: () => void
 }>()
 
@@ -213,6 +215,25 @@ const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSea
 // ─── Recent playback source selector ──────────────────────────────────────
 const recentSource = ref('all')
 const recentSourceMenuOpen = ref(false)
+const recentSourceError = ref('')
+async function loadRecentSources(): Promise<void> {
+  recentSourceError.value = ''
+  try {
+    await providerStore.syncProviders()
+  } catch (error) {
+    recentSourceError.value = `无法读取音源：${error instanceof Error ? error.message : String(error)}`
+  }
+}
+onMounted(() => {
+  if (props.category === 'recent' && !props.previewTracks) void loadRecentSources()
+})
+watch(
+  () => props.recentProviderId,
+  (providerId) => {
+    recentSource.value = providerId || 'all'
+  },
+  { immediate: true }
+)
 
 const recentSourceOptions = computed(() => {
   const options = [
@@ -233,7 +254,7 @@ const recentSourceOptions = computed(() => {
 })
 
 const activeRecentSourceLabel = computed(
-  () => recentSourceOptions.value.find((o) => o.id === recentSource.value)?.label ?? '本地音乐'
+  () => recentSourceOptions.value.find((o) => o.id === recentSource.value)?.label ?? recentSource.value
 )
 
 function selectRecentSource(sourceId: string): void {
@@ -533,10 +554,20 @@ const viewTitle = computed(() => {
   return '我的音乐'
 })
 
+const hasInlineGridStatus = computed(
+  () =>
+    props.category === 'folders' || props.category === 'artists' || props.category === 'albums'
+)
 const gridStatsText = computed(() => {
+  if (
+    hasInlineGridStatus.value &&
+    databaseGridEnabled.value &&
+    databaseCollectionState.value.total === null
+  )
+    return databaseGridPending.value ? '正在读取总数' : ''
   const count =
     props.category === 'genres' ? genreMosaicItems.value.length : collectionResultCount.value
-  if (count === 0) return ''
+  if (count === 0 && !hasInlineGridStatus.value) return ''
   const unit =
     props.category === 'artists'
       ? '位艺术家'
@@ -549,7 +580,8 @@ const gridStatsText = computed(() => {
             : props.category === 'folders'
               ? '个文件夹'
               : '个条目'
-  return `共 ${count} ${unit}`
+  const pending = hasInlineGridStatus.value && databaseGridPending.value ? ' · 正在读取…' : ''
+  return `共 ${count} ${unit}${pending}`
 })
 
 const totalDurationText = computed(() => {
@@ -736,17 +768,23 @@ watch(
     localPlaylists,
     () => (props.previewTracks ? 0 : musicVersionRevision.value),
     currentPlaylistName,
+    () => (props.category === 'recent' ? core.state.value?.statisticsRevision : null),
     () => props.previewTracks
   ],
   () => {
     void databasePlaylistView.setPlaylist(
-      !props.previewTracks && libraryStorage.mode.value === 'sqlite' ? currentPlaylist.value : null
+      !props.previewTracks && libraryStorage.mode.value === 'sqlite'
+        ? props.category === 'recent'
+          ? { id: CORE_RECENT_PLAYLIST_ID }
+          : currentPlaylist.value
+        : null,
+      { preserveSources: props.category === 'recent' }
     )
   },
   { immediate: true, flush: 'sync' }
 )
 const databaseDetailScope = computed(() => {
-  if (isPlaylistDetail.value) return {}
+  if (isPlaylistDetail.value || props.category === 'recent') return {}
   const scope = libraryDetailScope(props.category, props.filter)
   if (scope?.folder)
     scope.recursive =
@@ -777,18 +815,28 @@ const databaseHistoryRevision = computed(() =>
 watch(
   databaseHistoryRequested,
   (needed) => {
-    if (needed) void libraryListeningProjection.ensure()
+    if (needed) void libraryListeningProjection.ensure().catch(() => {})
   },
   { immediate: true }
 )
 const databaseQuery = computed(() =>
   databaseTableEnabled.value &&
   databaseHistoryReady.value &&
-  (!isPlaylistDetail.value || databasePlaylistState.value.id !== null)
+  (!(isPlaylistDetail.value || props.category === 'recent') || databasePlaylistState.value.id !== null)
     ? {
         ...libraryTrackQuery(libraryViewState.value, debouncedSearchQuery.value),
         ...databaseDetailScope.value,
-        ...(isPlaylistDetail.value ? { playlistView: databasePlaylistState.value.id! } : {}),
+        ...(isPlaylistDetail.value || props.category === 'recent'
+          ? { playlistView: databasePlaylistState.value.id! }
+          : {}),
+        ...(props.category === 'recent' && recentSource.value !== 'all'
+          ? {
+              filters: {
+                ...libraryTrackQuery(libraryViewState.value, '').filters,
+                provider: recentSource.value
+              }
+            }
+          : {}),
         genreSeparators: settingsStore.settings.value.genreSeparators,
         ...(databaseHistoryRequested.value
           ? { historyRevision: databaseHistoryRevision.value }
@@ -802,6 +850,8 @@ const databasePages = createLibraryTrackWindow({
       const page = await libraryApi.queryTracks(query)
       return { ...page, tracks: page.tracks.map((record) => ({ ...libraryTrack(record) })) }
     } catch (error) {
+      if (query?.sort === 'lastPlayed')
+        libraryListeningProjection.recover(query.historyRevision, error)
       if (query?.playlistView) databasePlaylistView.recover(query.playlistView, error)
       throw error
     }
@@ -814,17 +864,22 @@ const databaseReadPending = computed(
     (databaseTableCandidate.value &&
       (libraryStorage.mode.value === null ||
         (databaseTableEnabled.value && databasePageState.value.loading))) ||
-    (databaseTableEnabled.value && isPlaylistDetail.value && databasePlaylistState.value.pending) ||
-    (databaseHistoryRequested.value &&
-      !historyProjectionState.value.ready &&
-      historyProjectionState.value.pending)
+    (databaseTableEnabled.value &&
+      (isPlaylistDetail.value || props.category === 'recent') &&
+      databasePlaylistState.value.pending) ||
+    (databaseHistoryRequested.value && historyProjectionState.value.pending)
 )
 const databaseReadError = computed(() =>
   databaseTableCandidate.value
     ? libraryStorage.error.value ||
-      (isPlaylistDetail.value ? databasePlaylistState.value.error : '') ||
+      (isPlaylistDetail.value || props.category === 'recent'
+        ? databasePlaylistState.value.error
+        : '') ||
       (databaseHistoryRequested.value ? historyProjectionState.value.error : '') ||
-      (databaseTableEnabled.value ? databasePageState.value.error : '')
+      (databaseTableEnabled.value &&
+      !(databaseHistoryRequested.value && historyProjectionState.value.pending)
+        ? databasePageState.value.error
+        : '')
     : ''
 )
 watch(
@@ -856,13 +911,34 @@ onBeforeUnmount(() => {
   databaseAlbumPages.dispose()
   databaseGenrePages.dispose()
 })
-function retryDatabaseRead(): void {
-  if (libraryStorage.mode.value === null) void libraryStorage.load()
-  else if (databaseHistoryRequested.value && !historyProjectionState.value.ready)
-    void libraryListeningProjection.retry()
-  else if (isPlaylistDetail.value && databasePlaylistState.value.error)
-    void databasePlaylistView.retry()
-  else databasePages.retry()
+async function retryDatabaseRead(): Promise<void> {
+  if (libraryStorage.mode.value === null) {
+    await libraryStorage.load()
+    return
+  }
+  if (databaseHistoryRequested.value) {
+    try {
+      await libraryListeningProjection.retry()
+    } catch {
+      return
+    }
+    if (!historyProjectionState.value.ready) return
+  }
+  if ((isPlaylistDetail.value || props.category === 'recent') && databasePlaylistState.value.error)
+    await databasePlaylistView.retry()
+  databasePages.retry()
+}
+async function refreshDatabaseTracks(): Promise<void> {
+  if (databaseHistoryRequested.value) {
+    try {
+      await libraryListeningProjection.retry()
+    } catch {
+      return
+    }
+    if (!historyProjectionState.value.ready) return
+  }
+  if (props.category === 'recent') await databasePlaylistView.retry()
+  databasePages.invalidate()
 }
 const libraryRepairStatusText = computed(() => {
   if (props.previewTracks || props.category !== 'allSongs' || props.filter) return ''
@@ -3077,7 +3153,7 @@ useLocatePlayingTrack({
   containerRef,
   tbodyRef,
   displayTracks,
-  // Application playlists and device history can retain online snapshots.
+  // Application playlists and recent history can retain online snapshots.
   libraryTracks: tableTracks,
   currentTrack,
   enabled: computed(
@@ -3086,6 +3162,7 @@ useLocatePlayingTrack({
       !isSwitching.value &&
       (!databaseTableEnabled.value ||
         isPlaylistDetail.value ||
+        props.category === 'recent' ||
         (!!currentTrack.value && getLogicalTrackSource(currentTrack.value) === 'local'))
   ),
   rowHeight,
@@ -3233,6 +3310,8 @@ watch(
       'has-player': props.hasPlayer,
       'is-switching': isSwitching,
       'playlist-library': category === 'playlists' && showGrid,
+      'folder-library': category === 'folders' && showGrid,
+      'collection-library': isCollectionGrid,
       'album-detail': isAlbumDetail,
       'genre-library': category === 'genres' && showGrid
     }"
@@ -3270,9 +3349,13 @@ watch(
             <div class="title-group">
               <div class="title-line">
                 <h2 class="song-list-title">{{ viewTitle }}</h2>
-                <span v-if="gridStatsText && category !== 'genres'" class="view-stats">{{
-                  gridStatsText
-                }}</span>
+                <span
+                  v-if="gridStatsText && category !== 'genres'"
+                  class="view-stats"
+                  role="status"
+                  aria-live="polite"
+                >{{ gridStatsText }}</span
+                >
               </div>
               <label v-if="category === 'genres'" class="genre-sort-control">
                 <span class="genre-sort-prefix">排序</span>
@@ -3363,6 +3446,17 @@ watch(
                   <span>流派层级与整理</span>
                 </button>
               </div>
+              <button
+                v-if="hasInlineGridStatus && databaseGridEnabled"
+                type="button"
+                class="song-list-refresh"
+                :aria-label="`刷新${viewTitle}`"
+                :title="`刷新${viewTitle}`"
+                :disabled="databaseGridPending"
+                @click="databaseCollections.invalidate()"
+              >
+                <i class="pi pi-refresh" aria-hidden="true"></i>
+              </button>
               <div class="search-box" :class="{ focused: searchInputFocused }">
                 <ThemeIcon class="search-icon" icon-slot="library.search" />
                 <input
@@ -3444,7 +3538,7 @@ watch(
             <GenreWorkspacePanel />
           </div>
           <div
-            v-if="databaseGridEnabled && category !== 'genres'"
+            v-if="databaseGridEnabled && category !== 'genres' && !hasInlineGridStatus"
             class="database-page-controls"
             aria-label="分类读取状态"
           >
@@ -3687,16 +3781,19 @@ watch(
                       <ArtistMetadataIdentity
                         :name="item.name"
                         :cover="item.cover"
+                        :cover-source="item.coverSource"
                         :enabled="!props.previewTracks"
                         v-slot="artist"
                       >
                         <CoverImg
-                          v-if="artist.cover"
+                          v-if="artist.cover || artist.coverSource"
                           :cover="artist.cover"
+                          :cover-source="artist.coverSource"
                           class="artist-cover"
                           :alt="artist.name"
                           loading="lazy"
                           fallback=""
+                          @error="artist.onError"
                         >
                           <template #placeholder>
                             <div class="artist-cover-placeholder">
@@ -3943,7 +4040,17 @@ watch(
               >
                 专辑版本管理
               </button>
-              <button v-if="isAlbumDetail && databaseTableEnabled" type="button" class="album-tracks-refresh" aria-label="刷新歌曲" title="刷新歌曲" :disabled="databaseReadPending" @click="databasePages.invalidate()"><i class="pi pi-refresh" aria-hidden="true"></i></button>
+              <button
+                v-if="databaseTableEnabled"
+                type="button"
+                class="song-list-refresh"
+                aria-label="刷新歌曲"
+                title="刷新歌曲"
+                :disabled="databaseReadPending"
+                @click="refreshDatabaseTracks"
+              >
+                <i class="pi pi-refresh" aria-hidden="true"></i>
+              </button>
               <div
                 v-if="category === 'allSongs'"
                 class="library-tools-dropdown"
@@ -4343,6 +4450,10 @@ watch(
               scope="library-focus"
             />
           </div>
+          <p v-if="category === 'recent' && recentSourceError" class="repair-status" role="alert">
+            {{ recentSourceError }}
+            <button type="button" class="selection-btn" @click="loadRecentSources">重试</button>
+          </p>
           <EntityMetadataPanel
             v-if="metadataTarget && !isArtistDetail && !isAlbumDetail"
             :target="metadataTarget"
@@ -4363,45 +4474,14 @@ watch(
               重试
             </button>
           </p>
-          <nav
-            v-if="databaseTableEnabled && !isAlbumDetail"
-            class="database-page-controls database-track-window-status"
-            aria-label="曲库浏览"
+          <p
+            v-if="databaseReadError && databasePageState.total !== null"
+            class="repair-status"
+            role="alert"
           >
-            <span>
-              {{
-                databasePageState.total === null
-                  ? '正在读取总数'
-                  : `共 ${databasePageState.total} 首`
-              }}
-              <template v-if="tableTrackCount > 0">
-                · {{ visibleRange.start + 1 }}–{{ visibleRange.end }}
-              </template>
-            </span>
-            <div class="database-page-actions">
-              <span v-if="databaseReadPending" role="status" aria-live="polite">正在读取…</span>
-              <button
-                v-if="databaseReadError"
-                type="button"
-                class="selection-btn"
-                @click="retryDatabaseRead"
-              >
-                重试
-              </button>
-              <button
-                type="button"
-                class="selection-btn ghost"
-                :disabled="databaseReadPending"
-                @click="databasePages.invalidate()"
-              >
-                刷新
-              </button>
-            </div>
-            <span v-if="databaseReadError && databasePageState.total !== null" role="alert">{{
-              databaseReadError
-            }}</span>
-          </nav>
-          <p v-if="isAlbumDetail && databaseReadError && databasePageState.total !== null" class="repair-status" role="alert">{{ databaseReadError }} <button type="button" class="selection-btn" @click="retryDatabaseRead">重试</button></p>
+            {{ databaseReadError }}
+            <button type="button" class="selection-btn" @click="retryDatabaseRead">重试</button>
+          </p>
           <div
             v-if="showUnifiedSearchStatus"
             class="unified-search-status"
@@ -4467,7 +4547,7 @@ watch(
                 searchQuery.trim() || activeLibraryFilterCount > 0
                   ? '请更改搜索内容或清除筛选条件。'
                   : category === 'recent'
-                    ? '播放歌曲后，本机记录会显示在这里。'
+                    ? '播放歌曲后，记录会显示在这里。'
                     : isPlaylistDetail
                       ? '从歌曲列表或播放队列中添加歌曲到这个歌单。'
                       : '打开左侧菜单，点击「导入歌曲」添加本地音乐。'
@@ -4665,6 +4745,7 @@ watch(
                           :cover-source="displayTrackCoverSource(track)"
                           :identity="track.id"
                           :core-track-id="previewTracks ? undefined : track.id"
+                          size="sm"
                           class="cover-img"
                           alt="cover"
                         />

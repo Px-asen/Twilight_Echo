@@ -1,5 +1,7 @@
 import type { VersionedDataEnvelope } from './versionedPersistence.ts'
 import { normalizeAppearanceLayers, type AppearanceLayersSettings } from './appearanceLayers.ts'
+import { cloneAppearance, type AppearanceDraft } from './appAppearance.ts'
+import { isThemeImageSource } from './themeImageSource.ts'
 import {
   normalizeThemeShellLayout,
   THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
@@ -522,6 +524,9 @@ export interface StructuredPluginThemeV3 extends Omit<StructuredPluginThemeV2, '
   schemaVersion: 3
   layout?: ThemeShellLayout
   appearanceLayers?: AppearanceLayersSettings
+  appearance?: AppearanceDraft
+  toneSchedule?: ThemeToneSchedule
+  iconAssets?: Partial<Record<ThemeIconSlot, string>>
 }
 
 export type StructuredPluginTheme =
@@ -1067,12 +1072,32 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
     schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.appearanceLayers)
       ? normalizeAppearanceLayers(value.appearanceLayers)
       : undefined
+  const appearance =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.appearance)
+      ? cloneAppearance(value.appearance as unknown as AppearanceDraft)
+      : undefined
+  const toneSchedule =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.toneSchedule)
+      ? normalizeThemeToneSchedule(value.toneSchedule)
+      : undefined
+  const iconAssets =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.iconAssets)
+      ? Object.fromEntries(
+          Object.entries(value.iconAssets).filter(
+            ([slot, url]) =>
+              THEME_ICON_SLOTS.includes(slot as ThemeIconSlot) && isThemeImageSource(url)
+          )
+        )
+      : undefined
   if (
     Object.keys(variants).length === 0 &&
     !windowDefaults &&
     !hasDeclaredModes &&
     (!hasDeclaredLayout || !layout) &&
-    !appearanceLayers
+    !appearanceLayers &&
+    !appearance &&
+    !toneSchedule &&
+    !Object.keys(iconAssets ?? {}).length
   ) {
     return undefined
   }
@@ -1097,6 +1122,9 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
     ...(modes && Object.keys(modes).length > 0 ? { modes } : {}),
     ...(layout ? { layout } : {}),
     ...(appearanceLayers ? { appearanceLayers } : {}),
+    ...(appearance ? { appearance } : {}),
+    ...(toneSchedule ? { toneSchedule } : {}),
+    ...(iconAssets && Object.keys(iconAssets).length ? { iconAssets } : {}),
     ...(windowDefaults ? { windowDefaults } : {})
   }
 }

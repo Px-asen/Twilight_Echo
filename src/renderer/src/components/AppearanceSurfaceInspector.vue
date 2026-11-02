@@ -19,9 +19,36 @@ import {
   type ComponentMaterialMode
 } from '../../../shared/appearanceLayers'
 import type { NavigationPageDefinition } from '../app/navigationPages'
+import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS } from '../../../shared/appSettings.ts'
 import { useSettingsStore } from '../stores/useSettingsStore'
 
 const { settings, updateSettings } = useSettingsStore()
+const fluidSpeed = computed(
+  () => settings.value.nowPlayingFluid?.speed ?? DEFAULT_NOW_PLAYING_FLUID_SETTINGS.speed
+)
+const fluidAudioReactive = computed(
+  () =>
+    settings.value.nowPlayingFluid?.audioReactive ??
+    DEFAULT_NOW_PLAYING_FLUID_SETTINGS.audioReactive
+)
+function updateFluidSpeed(value: number): void {
+  if (props.busy || !Number.isFinite(value)) return
+  void updateSettings({
+    nowPlayingFluid: {
+      speed: value,
+      audioReactive: fluidAudioReactive.value
+    }
+  }).catch(() => undefined)
+}
+function updateFluidReactive(enabled: boolean): void {
+  if (props.busy) return
+  void updateSettings({
+    nowPlayingFluid: {
+      speed: fluidSpeed.value,
+      audioReactive: enabled
+    }
+  }).catch(() => undefined)
+}
 function updatePlayerLayoutField(
   key:
     | 'coverSize'
@@ -120,7 +147,7 @@ const playerBackgroundMode = computed<'blur' | 'fluid' | 'solid' | 'image'>(() =
   const pageBg = props.draft.appBackground.pages.player
   if (!pageBg.inherit && pageBg.kind === 'image') return 'image'
   if (!pageBg.inherit && pageBg.kind === 'color' && pageBg.customized) return 'solid'
-  return props.nowPlayingBackground ?? 'blur'
+  return props.nowPlayingBackground ?? 'fluid'
 })
 const effect = computed(() => backgroundEffect(background.value, props.tone))
 const palette = computed(() => resolveBackgroundPalette(background.value, props.tone))
@@ -501,12 +528,49 @@ watch(
                 :value="playerBackgroundMode"
                 @change="setPlayerBackgroundMode(($event.target as HTMLSelectElement).value)"
               >
-                <option value="blur">模糊封面</option>
                 <option value="fluid">流体光影</option>
+                <option value="blur">模糊封面</option>
                 <option value="solid">纯色底色</option>
                 <option value="image">自选图片</option>
               </select></label
             >
+            <template v-if="playerBackgroundMode === 'fluid'">
+              <div class="appearance-inline-slider">
+                <span>速度</span>
+                <input
+                  type="range"
+                  aria-label="流光速度"
+                  min="0.25"
+                  max="2.5"
+                  step="0.05"
+                  :value="fluidSpeed"
+                  @input="updateFluidSpeed(Number(($event.target as HTMLInputElement).value))"
+                />
+                <EditableRangeValue
+                  :value="fluidSpeed"
+                  :min="0.25"
+                  :max="2.5"
+                  :step="0.05"
+                  suffix="×"
+                  aria-label="流光速度数值"
+                  :disabled="busy"
+                  @change="updateFluidSpeed($event)"
+                />
+              </div>
+              <label class="appearance-material-field"
+                ><span>低频律动</span
+                ><select
+                  aria-label="低频节拍律动"
+                  :value="fluidAudioReactive ? 'on' : 'off'"
+                  @change="
+                    updateFluidReactive(($event.target as HTMLSelectElement).value === 'on')
+                  "
+                >
+                  <option value="on">开启</option>
+                  <option value="off">关闭</option>
+                </select></label
+              >
+            </template>
             <label
               v-if="playerBackgroundMode === 'solid' || hasImage"
               class="appearance-material-field"

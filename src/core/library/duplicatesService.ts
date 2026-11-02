@@ -29,7 +29,10 @@ interface Options {
   yieldControl(): Promise<void>
   newId(): string
   changed(): void
+  resultIdleTtlMs?: number
 }
+
+const DEFAULT_DUPLICATES_IDLE_TTL_MS = 2 * 60_000
 
 /** One read-only inspection, owned by Core rather than the initiating window.
  * Evidence stays private; clients read bounded groups and group members. */
@@ -37,11 +40,30 @@ export class CoreDuplicatesService {
   private readonly options: Options
   private status: CoreDuplicatesStatus | null = null
   private result: DuplicateDetectionResult | null = null
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
   private work: Promise<void> | null = null
   private controller: AbortController | null = null
   private stopped = false
   constructor(options: Options) {
     this.options = options
+  }
+  private clearIdleTimer(): void {
+    if (this.idleTimer !== null) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
+  }
+  private scheduleIdleRelease(): void {
+    this.clearIdleTimer()
+    const ttl = this.options.resultIdleTtlMs ?? DEFAULT_DUPLICATES_IDLE_TTL_MS
+    if (ttl <= 0 || this.stopped || !this.result) return
+    const timer = setTimeout(() => {
+      this.idleTimer = null
+      if (this.work || !this.result) return
+      this.result = null
+    }, ttl)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    this.idleTimer = timer
   }
   snapshot(): CoreDuplicatesStatus | null {
     return this.status ? { ...this.status } : null
@@ -50,6 +72,7 @@ export class CoreDuplicatesService {
     if (this.stopped) throw new Error('Duplicate inspection is shutting down')
     if (this.work) return this.snapshot()!
     const controller = (this.controller = new AbortController())
+    this.clearIdleTimer()
     this.result = null
     this.status = {
       id: this.options.newId(),
@@ -112,6 +135,7 @@ export class CoreDuplicatesService {
     this.status!.state = 'completed'
     this.status!.groups = result.groups.length
     this.status!.unavailable = result.contentHashUnavailableIds.length
+    this.scheduleIdleRelease()
   }
   async cancel(id: string): Promise<CoreDuplicatesStatus> {
     this.assertId(id)
@@ -171,10 +195,13 @@ export class CoreDuplicatesService {
   private completed(id: string): DuplicateDetectionResult {
     this.assertId(id)
     if (!this.result) throw new Error('Duplicate inspection is not complete')
+    this.scheduleIdleRelease()
     return this.result
   }
   async shutdown(): Promise<void> {
     this.stopped = true
+    this.clearIdleTimer()
+    this.result = null
     this.controller?.abort(new Error('Core shutting down'))
     await this.work
   }

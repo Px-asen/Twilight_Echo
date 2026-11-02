@@ -1,8 +1,7 @@
 #pragma once
 
 #if defined(TAE_HAS_FFMPEG)
-#include "../core/SharedInputFile.h"
-#include "../core/Utf8Path.h"
+#include "SeekableInputStream.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -16,7 +15,8 @@ extern "C" {
 namespace twilight::audio {
 
 // FFmpeg's Windows file protocol does not share delete access. Supply custom
-// seekable IO for local files; network/protocol sources retain FFmpeg's own IO.
+// seekable IO for local files and host-granted bytes. Other protocol sources
+// retain FFmpeg's own IO.
 // The owning format context must be closed before this object is destroyed.
 class FFmpegFileInput {
  public:
@@ -25,15 +25,21 @@ class FFmpegFileInput {
   FFmpegFileInput& operator=(const FFmpegFileInput&) = delete;
   ~FFmpegFileInput() { close(); }
 
-  bool open(const std::string& source, AVFormatContext** formatContext) {
+  bool open(const std::string& source, AVFormatContext** formatContext, std::shared_ptr<SeekableInput> input = {}) {
+    close();
+    if (input) file_.open(std::move(input));
+    else {
 #if defined(_WIN32)
     const auto colon = source.find(':');
     const bool drivePath = colon == 1 &&
         ((source[0] >= 'A' && source[0] <= 'Z') || (source[0] >= 'a' && source[0] <= 'z'));
     if (colon != std::string::npos && !drivePath) return true;
-    close();
-    file_.open(utf8Path(source), std::ios::binary);
-    if (!file_) return false;
+      if (!file_.open(source)) return false;
+#else
+      (void)source;
+      return true;
+#endif
+    }
     auto* buffer = static_cast<unsigned char*>(av_malloc(32768));
     if (!buffer) { close(); return false; }
     io_ = avio_alloc_context(buffer, 32768, 0, this, read, nullptr, seek);
@@ -42,31 +48,24 @@ class FFmpegFileInput {
     if (!*formatContext) { close(); return false; }
     (*formatContext)->pb = io_;
     (*formatContext)->flags |= AVFMT_FLAG_CUSTOM_IO;
-#else
-    (void)source;
-    (void)formatContext;
-#endif
     return true;
   }
 
   void close() {
-#if defined(_WIN32)
     if (io_) {
       av_freep(&io_->buffer);
       avio_context_free(&io_);
     }
     file_.close();
-#endif
   }
 
  private:
-#if defined(_WIN32)
   static int read(void* opaque, uint8_t* bytes, int count) {
     auto& file = static_cast<FFmpegFileInput*>(opaque)->file_;
     file.read(reinterpret_cast<char*>(bytes), count);
     const auto readCount = file.gcount();
     if (readCount > 0) return static_cast<int>(readCount);
-    return file.eof() ? AVERROR_EOF : AVERROR(EIO);
+    return file.failed() ? AVERROR(EIO) : AVERROR_EOF;
   }
 
   static int64_t seek(void* opaque, int64_t offset, int whence) {
@@ -89,9 +88,8 @@ class FFmpegFileInput {
     return file && position >= 0 ? static_cast<int64_t>(position) : AVERROR(EIO);
   }
 
-  SharedInputFile file_;
+  SeekableInputStream file_;
   AVIOContext* io_ = nullptr;
-#endif
 };
 
 }  // namespace twilight::audio

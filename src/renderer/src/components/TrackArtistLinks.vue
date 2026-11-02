@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Track, TrackArtistRef } from '../types/music'
+import { libraryArtistCredits } from '../../../shared/libraryCollections.ts'
 
-const props = defineProps<{ track: Pick<Track, 'artist' | 'artists'> }>()
+const props = defineProps<{ track: Pick<Track, 'artist' | 'artists' | 'identityTags'> }>()
 const emit = defineEmits<{ openArtist: [artist: TrackArtistRef] }>()
 
-const artists = computed<TrackArtistRef[]>(() => {
-  if (props.track.artists?.length) return props.track.artists
-  return props.track.artist
-    .split(/\s+\/\s+/)
-    .map((name) => ({ name: name.trim() }))
-    .filter((artist) => artist.name)
-})
+const artists = computed<TrackArtistRef[]>(() => libraryArtistCredits(props.track))
 </script>
 
 <template>

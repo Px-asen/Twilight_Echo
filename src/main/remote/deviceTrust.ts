@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { RemoteDevicePairing, type RemoteTrustDocument } from '../../core/cast/devicePairing.ts'
-import { certificateFingerprint, createRemoteTlsIdentity, type RemoteTlsIdentity } from '../../core/cast/tlsIdentity.ts'
+import { certificateFingerprint, type RemoteTlsIdentity } from '../../core/cast/tlsIdentity.ts'
+import { createRemoteTlsIdentity } from '../../adapters-node/remoteTlsIdentity.ts'
 
 /** Stored in the application profile. Only token verifiers are written, never bearer tokens. */
 export function createPersistentDevicePairing(root: string): RemoteDevicePairing {

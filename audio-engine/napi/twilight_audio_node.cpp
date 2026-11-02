@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -20,6 +21,7 @@
 namespace {
 
 TAE_EngineHandle g_engine = nullptr;
+TAE_BridgeReceiverHandle g_bridgeReceiver = nullptr;
 std::mutex g_eventMutex;
 std::string g_lastError;
 
@@ -959,6 +961,24 @@ napi_value GetVisualizationData(napi_env env, napi_callback_info info) {
   return json;
 }
 
+napi_value RenderPcmSegment(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value argv[5];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc != 5) {
+    napi_throw_type_error(env, nullptr, "PCM segment requires source, output and source bounds");
+    return makeUndefined(env);
+  }
+  const std::string source = getStringArg(env, argv[0]);
+  const std::string output = getStringArg(env, argv[1]);
+  std::array<char, 2048> error{};
+  const auto result = TAE_RenderPcmSegment(source.c_str(), output.c_str(),
+      getNumberArg(env, argv[2], -1), getNumberArg(env, argv[3], -1),
+      getNumberArg(env, argv[4], -1), error.data(), error.size());
+  if (result != TAE_RESULT_OK) napi_throw_error(env, nullptr, error.data());
+  return makeUndefined(env);
+}
+
 napi_value AnalyzeBpm(napi_env env, napi_callback_info info) {
   ensureEngine();
   clearLastError();
@@ -1030,7 +1050,73 @@ napi_value AnalyzeLoudness(napi_env env, napi_callback_info info) {
   return json;
 }
 
+napi_value PullBridgePcm(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  size_t argc = 1; napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double requested = argc ? getNumberArg(env, argv[0], 0) : 0;
+  if (requested < 1 || requested > 2048 || std::floor(requested) != requested) {
+    napi_throw_range_error(env, nullptr, "Bridge pull requires 1–2048 frames"); return makeUndefined(env);
+  }
+  std::array<float, 4096> pcm{};
+  TAE_BridgePcmInfo facts{};
+  const auto result = TAE_PullBridgePcm(g_engine, pcm.data(), static_cast<size_t>(requested), &facts);
+  if (result != TAE_RESULT_OK) return throwOnError(env, result);
+  napi_value object, value;
+  napi_create_object(env, &object);
+  const auto number = [&](const char* key, double v) {
+    napi_create_double(env, v, &value); napi_set_named_property(env, object, key, value);
+  };
+  number("generation", static_cast<double>(facts.generation));
+  number("sampleRate", facts.sample_rate); number("channels", facts.channels); number("frames", facts.frames);
+  napi_get_boolean(env, facts.playing != 0, &value); napi_set_named_property(env, object, "playing", value);
+  napi_create_buffer_copy(env, facts.frames * facts.channels * sizeof(float), pcm.data(), nullptr, &value);
+  napi_set_named_property(env, object, "pcm", value);
+  return object;
+}
+napi_value CloseBridgeReceiver(napi_env env, napi_callback_info) {
+  TAE_CloseBridgeReceiver(g_bridgeReceiver); g_bridgeReceiver = nullptr;
+  return makeUndefined(env);
+}
+napi_value OpenBridgeReceiver(napi_env env, napi_callback_info info) {
+  size_t argc = 4; napi_value argv[4];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc != 4) { napi_throw_type_error(env, nullptr, "Bridge requires backend, DAC, rate and channels"); return makeUndefined(env); }
+  TAE_CloseBridgeReceiver(g_bridgeReceiver); g_bridgeReceiver = nullptr;
+  const auto backend = getStringArg(env, argv[0]), device = getStringArg(env, argv[1]);
+  std::array<char, 2048> error{};
+  const auto result = TAE_OpenBridgeReceiver(backend.c_str(), device.c_str(),
+      static_cast<int>(getNumberArg(env, argv[2], 0)), static_cast<int>(getNumberArg(env, argv[3], 0)),
+      &g_bridgeReceiver, error.data(), error.size());
+  if (result != TAE_RESULT_OK) napi_throw_error(env, nullptr, error.data());
+  return makeUndefined(env);
+}
+napi_value WriteBridgePcm(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  bool isBuffer = false;
+  if (argc) napi_is_buffer(env, argv[0], &isBuffer);
+  void* data = nullptr; size_t bytes = 0;
+  if (isBuffer) napi_get_buffer_info(env, argv[0], &data, &bytes);
+  if (!data || !bytes || bytes % 8 || bytes > 2048 * 8) {
+    napi_throw_range_error(env, nullptr, "Invalid stereo Float32 PCM block"); return makeUndefined(env);
+  }
+  std::array<float, 4096> aligned{};
+  std::memcpy(aligned.data(), data, bytes);
+  return throwOnError(env, TAE_WriteBridgePcm(g_bridgeReceiver, aligned.data(), bytes / 8));
+}
+napi_value StartBridgeReceiver(napi_env env, napi_callback_info) {
+  return throwOnError(env, TAE_StartBridgeReceiver(g_bridgeReceiver));
+}
+napi_value GetBridgeReceiverInfo(napi_env env, napi_callback_info) {
+  std::array<char, 16384> json{}; size_t required = 0;
+  const auto result = TAE_GetBridgeReceiverInfo(g_bridgeReceiver, json.data(), json.size(), &required);
+  if (result != TAE_RESULT_OK || required > json.size()) return throwOnError(env, TAE_RESULT_INTERNAL_ERROR);
+  napi_value value; napi_create_string_utf8(env, json.data(), NAPI_AUTO_LENGTH, &value); return value;
+}
+
 void cleanup(void*) {
+  TAE_CloseBridgeReceiver(g_bridgeReceiver); g_bridgeReceiver = nullptr;
   if (g_engine) {
     TAE_DestroyEngine(g_engine);
     g_engine = nullptr;
@@ -1046,6 +1132,12 @@ void define(napi_env env, napi_value exports, const char* name, napi_callback ca
 napi_value Init(napi_env env, napi_value exports) {
   napi_add_env_cleanup_hook(env, cleanup, nullptr);
   define(env, exports, "Play", Play);
+  define(env, exports, "PullBridgePcm", PullBridgePcm);
+  define(env, exports, "OpenBridgeReceiver", OpenBridgeReceiver);
+  define(env, exports, "CloseBridgeReceiver", CloseBridgeReceiver);
+  define(env, exports, "WriteBridgePcm", WriteBridgePcm);
+  define(env, exports, "StartBridgeReceiver", StartBridgeReceiver);
+  define(env, exports, "GetBridgeReceiverInfo", GetBridgeReceiverInfo);
   define(env, exports, "Pause", Pause);
   define(env, exports, "Stop", Stop);
   define(env, exports, "Seek", Seek);
@@ -1093,6 +1185,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "GetVisualizationData", GetVisualizationData);
   define(env, exports, "SetVisualizationDemand", SetVisualizationDemand);
   define(env, exports, "AnalyzeBpm", AnalyzeBpm);
+  define(env, exports, "RenderPcmSegment", RenderPcmSegment);
   define(env, exports, "AnalyzeAutoMix", AnalyzeAutoMix);
   define(env, exports, "SetAutoMixMode", SetAutoMixMode);
   define(env, exports, "SelectAutoMix", SelectAutoMix);

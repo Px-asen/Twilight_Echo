@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useCoreConnection } from '../../stores/coreConnection.ts'
 import { useSettingsStore } from '../../stores/useSettingsStore.ts'
 import {
@@ -10,7 +10,12 @@ import {
 import type { EntityMetadataLanguage } from '../../../../shared/entityMetadata.ts'
 import { artistProfileChoice, artistProfileChoices } from './artistProfileChoice.ts'
 
-const props = defineProps<{ name: string; cover?: string | null; enabled: boolean }>()
+const props = defineProps<{
+  name: string
+  cover?: string | null
+  coverSource?: string | null
+  enabled: boolean
+}>()
 const core = useCoreConnection(),
   settings = useSettingsStore()
 const language = computed<EntityMetadataLanguage>(
@@ -24,6 +29,14 @@ const view = createArtistIdentityView({
       core.state.value?.phase,
       core.state.value?.settingsRevision,
       core.state.value?.entityMetadataContentRevision ?? core.state.value?.entityMetadataRevision,
+      core.state.value?.catalogRevision,
+      core.state.value?.libraryRevision
+    ]),
+  readScope: () =>
+    JSON.stringify([
+      core.state.value?.epoch,
+      core.state.value?.phase,
+      core.state.value?.settingsRevision,
       core.state.value?.catalogRevision,
       core.state.value?.libraryRevision
     ]),
@@ -87,16 +100,28 @@ watch(
   },
   { immediate: true }
 )
-const presentation = computed(() =>
-  props.enabled
-    ? artistIdentityPresentation(view.detail.value, props, now.value)
-    : { name: props.name, cover: props.cover ?? null, attribution: null }
+const failedCovers = shallowRef<ReadonlySet<string>>(new Set())
+watch(
+  [() => props.name, () => props.cover, () => props.coverSource, () => core.state.value?.epoch],
+  () => { failedCovers.value = new Set() }
 )
+const presentation = computed(() =>
+  artistIdentityPresentation(
+    props.enabled ? view.detail.value : null,
+    props,
+    now.value,
+    failedCovers.value
+  )
+)
+function onImageError() {
+  const key = presentation.value.cover || presentation.value.coverSource
+  if (key) failedCovers.value = new Set([...failedCovers.value, key])
+}
 onBeforeUnmount(() => {
   clearTimeout(timer)
   view.dispose()
 })
 </script>
 <template>
-  <slot v-bind="presentation" />
+  <slot v-bind="presentation" :on-error="onImageError" />
 </template>

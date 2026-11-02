@@ -83,6 +83,9 @@ void ta_am_c_butterfly(float *, float *, float *, float *, const float *,
 void ta_am_c_binary(float *, const float *, const float *, size_t, unsigned);
 void ta_am_c_affine(float *, const float *, float, float, size_t);
 void ta_am_c_unary(float *, const float *, size_t, unsigned);
+/* In-place exp for normalized softmax scores in [-infinity, 0]; tails below
+ * -87 become zero, NaN propagates. Relative error on [-87, 0] is < 1e-6. */
+void ta_am_c_exp_negative(float *, size_t);
 void ta_am_c_complex(float *, const float *, const float *, size_t, unsigned);
 void ta_am_c_phase(ta_am_phase_state *);
 void ta_am_c_window(float *, const float *, const float *, size_t, size_t,

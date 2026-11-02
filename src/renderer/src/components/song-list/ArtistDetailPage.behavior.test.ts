@@ -132,14 +132,16 @@ let attribution={provider:'wikipedia',externalId:'Artist',url:'https://zh.wikipe
 let usage={display:true,cache:true,crossSource:true,export:true}
 let biographyLanguage='zh-Hans',artworkAttribution=null,artworkReference=null
 const mbid='a223958d-5c56-4b2c-a30a-87e357bc121b'
-let revision=1,override=null,artworkOverride=null,broken=false,missing=false,denied=false,homonym=false,delay=0,fail=false,jobs=[]
+let revision=1,override=null,artworkOverride=null,broken=false,missing=false,denied=false,homonym=false,confirmedC=false,delay=0,fail=false,jobs=[]
 let biography='周末乐队以细腻的人声与层次丰富的器乐，记录城市生活中短暂而明亮的瞬间。最初的创作来自几位朋友在周末的排练，随后逐渐发展出融合独立摇滚、民谣与环境音乐的声音。\\n\\n'+('从清晨的街道到深夜的灯火，他们的作品始终围绕记忆、远行与人与人之间的联系展开。吉他的纹理和缓慢铺开的节奏，让每一次聆听都能发现新的细节。'.repeat(5))
 const entity=(id='source-a')=>({id,kind:'artist',title:artist.value,artist:'',identity:'source',sourceCount:1})
-const detail=id=>({entityId:id,targetId:'person',name:artist.value,revision,
- link:{state:'confirmed',revision:1,mbid},override,artworkOverride,manualArtwork:null,sourceOptions:['wikipedia'],sourcePreference:{provider:null,available:true},
- introduction:override?.mode==='clear'?null:override?.mode==='value'?{value:override.value,language:'zh-Hans',origin:'manual',attribution:null}:{value:biography,language:biographyLanguage,origin:'external',attribution},
- facts:denied?[]:[{field:'introduction',value:biography,language:biographyLanguage,attribution,usage}],
+const identity=id=>({entityId:id,kind:'artist',references:id==='source-c'&&!confirmedC?[]:[{provider:'musicbrainz',kind:'artist',idType:'mbid',value:id==='source-b'?'b223958d-5c56-4b2c-a30a-87e357bc121b':mbid}],link:id==='source-c'&&!confirmedC?null:{id:'link-'+id,entityId:id,kind:'artist',state:'confirmed',targetId:id==='source-b'?'another':'person',revision:1,confirmation:id==='source-a'?{mode:'automatic',rule:'artist_recordings'}:id==='source-c'?{mode:'manual'}:{mode:'legacy'}}})
+const detail=id=>({entityId:id,targetId:identity(id).link?.targetId??null,name:artist.value,revision,
+ link:identity(id).link?{state:'confirmed',revision:1,mbid:identity(id).references[0].value}:null,override,artworkOverride,manualArtwork:null,sourceOptions:['wikipedia'],sourcePreference:{provider:null,available:true},
+ introduction:override?.mode==='clear'?null:override?.mode==='value'?{value:override.value,language:'zh-Hans',origin:'manual',attribution:null}:{value:id==='source-b'?'另一位同名人物的简介。':biography,language:biographyLanguage,origin:'external',attribution},
+ facts:denied?[]:[{field:'introduction',value:id==='source-b'?'另一位同名人物的简介。':biography,language:biographyLanguage,attribution,usage}],
  artwork:missing||denied?[]:[{scope:'artist',handle:broken?'data:image/png;base64,invalid':portrait,attribution:artworkAttribution??{...attribution,provider:'commons',attribution:'测试人物插画 · 界面夹具'},usage,targetRef:artworkReference??{provider:'musicbrainz',kind:'artist',idType:'mbid',value:mbid}}]})
+const candidate=()=>({id:'candidate-c',entityId:'source-c',kind:'artist',provider:'musicbrainz',name:artist.value,summary:'核对当前曲目对应的人物',references:[{provider:'musicbrainz',kind:'artist',idType:'mbid',value:mbid}],evidence:{origin:'search',matches:['name'],missing:[],conflicts:[],incomplete:false,provenance:'测试曲目'},matcherVersion:'1',inputVersion:'1',linkRevision:0,revision:1,state:confirmedC?'confirmed':'candidate',suppressed:false,createdAt:1,updatedAt:1})
 const token={revision:1,libraryRevision:1,catalogRevision:1,entityMetadataRevision:1,expiresAt:null}
 const explorationArtist={id:'person',kind:'artist',title:'周末乐队',artist:'',inLibrary:true,sourceCount:850}
 const work={id:'work',kind:'work',title:'风中的回声',artist:'周末乐队',inLibrary:true,sourceCount:2}
@@ -169,11 +171,13 @@ window.artistCore={state,attach:async()=>{},subscribe:()=>()=>{},query:async(nam
   let items=q.query.albumId?albums.filter(a=>a.id===q.query.albumId):albums
   return {revision:1,offset:q.query.offset??0,total:items.length,items:items.slice(q.query.offset??0,(q.query.offset??0)+(q.query.limit??200))}
  }
- if(name==='catalog.query'){if(fail)throw Error('fixture read failed');return {revision,offset:q.offset??0,total:homonym?2:1,items:homonym?[entity(),entity('source-b')]:[entity()]}}
- if(name==='catalog.sources')return {revision,offset:0,total:1,items:[{track:{id:'track',title:q.entityId==='source-b'?'同名人物的另一首歌':'晨光',album:'晨光与远方'}}]}
+ if(name==='catalog.query'){if(fail)throw Error('fixture read failed');const items=homonym?[entity('source-c'),entity('source-b'),entity()]:[entity()];return {revision,offset:q.offset??0,total:items.length,items:items.slice(q.offset??0,(q.offset??0)+(q.limit??200))}}
+ if(name==='catalog.sources')return {revision,offset:0,total:1,items:[{track:{id:'track',title:q.entityId==='source-b'?'同名人物的另一首歌':q.entityId==='source-c'?'待核对的曲目':'晨光',album:'晨光与远方'}}]}
  if(name==='metadata.entity.detail')return {...detail(q.entityId),name:nameAtRead}
- if(name==='identification.detail')return {entityId:q.entityId,kind:'artist',references:[{provider:'musicbrainz',kind:'artist',idType:'mbid',value:mbid}],link:{id:'link',state:'confirmed',targetId:q.entityId==='source-b'?'another':'person',revision:1}}
- if(name==='identification.candidates'||name==='identification.history')return {revision:1,offset:0,total:0,items:[]}
+ if(name==='identification.detail')return identity(q.entityId)
+ if(name==='identification.candidates'){const items=q.entityId==='source-c'&&q.state===(confirmedC?'confirmed':'candidate')?[candidate()]:[];return {revision:1,offset:0,total:items.length,items}}
+ if(name==='identification.preview')return {candidate:candidate(),current:identity('source-c'),proposedTargetId:'person',action:'link',stale:false,conflicts:[],canConfirm:true}
+ if(name==='identification.history')return {revision:1,offset:0,total:0,items:[]}
  if(name==='metadata.entity.policy')return {enabled:false,identity:!denied,introduction:!denied,reason:denied?'permission_denied':null,sources:[{provider:'musicbrainz',identification:[],enrichment:[{provider:'musicbrainz-details',kind:'artist',reason:denied?'permission_denied':null},{provider:'public-artwork',kind:'artist',reason:denied?'permission_denied':null}]}]}
  if(name==='metadata.entity.jobs')return {items:jobs,total:jobs.length}
  if(name==='preferences.detail')return {entityId:q.entityId,revision:1,scope:'source',value:null,impact:{},token}
@@ -186,6 +190,7 @@ window.artistCore={state,attach:async()=>{},subscribe:()=>()=>{},query:async(nam
  throw Error('Unexpected query '+name)
 },command:async(name,q)=>{
  writes.push({name,q})
+ if(name==='identification.decide'){expect(q.candidateId==='candidate-c'&&q.decision==='confirm','wrong identity decision');confirmedC=true;return identity('source-c')}
  if(name==='metadata.entity.override'){override=q.mode==='reset'?null:q;bump();return detail(q.entityId)}
  if(name==='metadata.entity.artworkOverride'){artworkOverride=q.mode==='reset'?null:q;bump();return detail(q.entityId)}
  if(name==='metadata.entity.enrich'){const j={id:q.provider,provider:q.provider,type:'enrich',state:'queued',generation:1,updatedAt:1};jobs=[...jobs.filter(x=>x.id!==j.id),j];return j}
@@ -244,31 +249,54 @@ window.artistTest=async()=>{
  document.querySelector('.entity-link').click();await wait(()=>button('返回上一层'),'participation drilldown missing');await click('返回上一层')
  document.querySelector('#artist-tab-overview').click();await window.artistReady()
  denied=true;state.value={...state.value,settingsRevision:2};await wait(()=>!document.querySelector('.artist-biography-text')&&!document.querySelector('.artist-portrait img'),'revoked permission remained visible')
- denied=false;homonym=true;bump();await wait(()=>document.querySelector('.artist-reference-choices')&&!document.querySelector('.artist-biography-text'),'homonym selected automatically')
- expect(document.querySelector('.artist-portrait-placeholder')?.textContent.includes('请选择人物资料条目'),'unresolved selection mislabeled as missing portrait')
+ denied=false;homonym=true;bump();await window.artistReady()
+ expect(!document.querySelector('.artist-identity-entries')&&!document.body.textContent.includes('选择资料条目'),'overview still requires source selection')
+ expect(document.querySelector('.artist-biography-text').textContent.includes('周末乐队'),'automatic profile did not use confirmed evidence')
+ expect(document.querySelector('.artist-portrait img')?.naturalWidth>0,'automatic confirmed portrait missing')
  document.querySelector('#artist-tab-songs').click();await nextTick()
- await click('选择人物资料');await wait(()=>document.activeElement?.closest('.artist-reference-choices'),'reference action did not focus a real choice')
- document.querySelector('.artist-reference-choices button[aria-pressed]').click();await window.artistReady()
- await click('将此资料用于艺术家封面');await wait(()=>button('恢复自动选择'),'profile choice was not saved')
+ document.querySelector('#artist-tab-identity').click()
+ await wait(()=>document.querySelectorAll('.artist-identity-entries li').length===3&&document.querySelector('.identity-current'),'identity page not ready')
+ expect(document.querySelector('.artist-identity-entries [aria-pressed="true"]').textContent.includes('晨光'),'confidence ranking selected the first unconfirmed member')
+ const writesBeforeChoice=writes.length
+ document.querySelectorAll('.artist-identity-entries button')[1].click()
+ await wait(()=>document.querySelector('.current-source')?.textContent.includes('同名人物的另一首歌')&&document.querySelector('.identity-current'),'homonym selection not applied')
+ expect(writes.length===writesBeforeChoice,'selecting a source confirmed identities without review')
+ document.querySelector('#artist-tab-overview').click()
+ await wait(()=>document.querySelector('.artist-biography-text')?.textContent.includes('另一位同名人物'),'selected homonym biography not displayed')
+ document.querySelector('#artist-tab-identity').click()
+ await wait(()=>document.querySelectorAll('.artist-identity-entries button').length===3,'identity entries missing on return')
+ document.querySelectorAll('.artist-identity-entries button')[2].click()
+ await wait(()=>document.querySelector('.current-source')?.textContent.includes('晨光')&&button('用于艺术家资料')&&!button('用于艺术家资料').disabled,'confirmed source not ready')
+ await click('用于艺术家资料');await wait(()=>button('恢复自动选择'),'profile choice was not saved')
  expect(JSON.parse(localStorage.getItem('twilight-echo:artist-profile-choices:v1'))[0][1].entityId==='source-a','source choice not persisted')
  document.querySelector('[aria-label="返回艺术家列表"]').click()
  await wait(()=>document.querySelector('.artist-card img')?.naturalWidth>0,'saved artist portrait did not replace track cover on card')
  expect(document.querySelector('.artist-card img').src===portrait,'artist card is using album artwork')
  document.querySelector('.artist-card').click();await window.artistReady()
+ document.querySelector('#artist-tab-identity').click();await wait(()=>document.querySelector('.artist-identity-page'),'identity page not restored')
  expect(button('恢复自动选择'),'return to artist lost saved profile')
- homonym=false;await click('恢复自动选择');await window.artistReady()
+ await click('恢复自动选择')
+ await wait(()=>document.querySelector('.artist-identity-entries [aria-pressed="true"] em')?.textContent==='自动采用','automatic profile was not restored')
+ document.querySelectorAll('.artist-identity-entries button')[0].click()
+ await wait(()=>document.querySelector('.identity-current')?.textContent.includes('尚未确认')&&button('复核此候选'),'unresolved source cannot be reviewed')
+ await click('复核此候选');await click('确认关联')
+ await wait(()=>document.querySelector('.identity-current')?.textContent.includes('已确认')&&document.querySelector('.artist-identity-entries [aria-pressed="true"]')?.textContent.includes('身份已确认'),'manual identity confirmation did not refresh the page')
+ expect(writes.filter(w=>w.name==='identification.decide').length===1,'confirmation was missing or replayed')
+ homonym=false;document.querySelector('#artist-tab-overview').click();bump();await window.artistReady()
  homonym=false;fail=true;bump();await wait(()=>document.querySelector('.artist-inline-status')?.textContent.includes('读取失败'),'read failure not shown');fail=false
  await click('重试');await window.artistReady()
  expect(errors.length===0,errors.join(';'))
  return {queries:reads.length,writes:writes.length,plays:plays.length}
 }
 window.artistBackgroundTest=async()=>{
- // Reproduce the recording: unresolved same-name sources and a missing portrait.
- homonym=true;missing=true;denied=false;fail=false;delay=0;override=null;bump()
- await wait(()=>document.querySelector('.artist-reference-choices button')&&!document.querySelector('.artist-biography-text')&&!document.querySelector('.artist-portrait-placeholder')?.textContent.includes('正在读取'),'unresolved artist not ready')
- const choice=document.querySelector('.artist-overview .artist-reference-choices button')
+ // Mixed identities no longer block the profile; its separate identity page stays usable.
+ homonym=true;confirmedC=false;missing=true;denied=false;fail=false;delay=0;override=null;bump()
+ await window.artistReady()
+ document.querySelector('#artist-tab-identity').click()
+ await wait(()=>document.querySelector('.artist-identity-entries [aria-pressed="true"]'),'automatic identity page not ready')
+ const choice=document.querySelector('.artist-identity-entries [aria-pressed="true"]')
  choice.focus()
- const photo=document.querySelector('.artist-portrait'),references=document.querySelector('.artist-overview .artist-reference-choices')
+ const photo=document.querySelector('.artist-portrait'),references=document.querySelector('.artist-identity-entries')
  const photoText=photo.textContent,choicesText=references.textContent,photoHeight=photo.getBoundingClientRect().height
  const catalogReads=()=>reads.filter(r=>r.name==='catalog.query').length
  const before=catalogReads()
@@ -285,7 +313,7 @@ window.artistBackgroundTest=async()=>{
  expect(photo.getBoundingClientRect().height===photoHeight,'background read shifted portrait frame')
  await pause(650);delay=0
  expect(photo.textContent===photoText&&document.activeElement===choice,'background read replaced focused choices')
- homonym=false;missing=false;bump();await window.artistReady()
+ homonym=false;missing=false;document.querySelector('#artist-tab-overview').click();bump();await window.artistReady()
  await click('展开全文')
  const bio=document.querySelector('.artist-biography-text')
  delay=80;bump();await nextTick();await pause(650);delay=0
@@ -358,6 +386,22 @@ window.artistAlbumsEvidence=async()=>{
  expect(document.body.scrollWidth<=innerWidth,'album grid horizontal overflow')
  return true
 }
+window.artistIdentityEvidence=async(tone,section)=>{
+ document.documentElement.dataset.theme=tone
+ homonym=true;confirmedC=false;missing=false;broken=false;denied=false;fail=false;override=null;artworkOverride=null
+ artist.value='周末乐队';category.value='artists';filter.value='artist:'+artist.value;bump();await nextTick()
+ document.querySelector('#artist-tab-overview').click();await window.artistReady();await pause(150)
+ expect(!document.querySelector('.artist-identity-entries'),'identity picker leaked into overview')
+ if(section==='identity'){
+  document.querySelector('#artist-tab-identity').click()
+  await wait(()=>document.querySelector('.identity-current')&&document.querySelectorAll('.artist-identity-entries li').length===3,'identity evidence not ready')
+ }
+ const scroll=document.querySelector('.song-list')
+ scroll.scrollTop=section==='identity'?document.querySelector('.artist-navigation-row').offsetTop:0
+ await pause(100)
+ expect(document.body.scrollWidth<=innerWidth,'identity page overflow')
+ return true
+}
 window.artistSourceEvidence=async(sample,tone)=>{
  portrait=sample.portrait;biography=sample.biography;attribution=sample.attribution
  biographyLanguage=sample.language??'und';artworkAttribution=sample.artworkAttribution??sample.attribution
@@ -388,6 +432,14 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.join(directory,'index.html'))
   console.log('ARTIST_PAGE_OK',JSON.stringify(await win.webContents.executeJavaScript('window.artistTest()')))
   console.log('ARTIST_BACKGROUND_OK',JSON.stringify(await win.webContents.executeJavaScript('window.artistBackgroundTest()')))
+  if(process.env.TWILIGHT_ARTIST_EVIDENCE_DIR){
+   fs.mkdirSync(process.env.TWILIGHT_ARTIST_EVIDENCE_DIR,{recursive:true})
+   for(const tone of ['pureWhite','dark'])for(const width of [1280,520])for(const section of ['overview','identity']){
+    win.setContentSize(width,1000)
+    await win.webContents.executeJavaScript('window.artistIdentityEvidence('+JSON.stringify(tone)+','+JSON.stringify(section)+')')
+    fs.writeFileSync(path.join(process.env.TWILIGHT_ARTIST_EVIDENCE_DIR,'auto-'+section+'-'+tone+'-'+width+'.png'),(await win.webContents.capturePage()).toPNG())
+   }
+  }
   for(const tone of ['pureWhite','dark'])for(const width of [1280,900,520])for(const variant of ['normal','logo','long','missing','broken']){
    win.setContentSize(width,1000);await win.webContents.executeJavaScript('window.artistCase('+JSON.stringify(tone)+','+JSON.stringify(variant)+')')
    if(process.env.TWILIGHT_ARTIST_EVIDENCE_DIR){

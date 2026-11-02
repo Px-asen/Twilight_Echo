@@ -103,39 +103,55 @@ void DsdReader::setDstDecoderProvider(SacdDstDecoderProvider* provider) {
   sacd_.setDstDecoderProvider(provider);
 }
 
+void DsdReader::setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) {
+  inputFactory_ = std::move(factory);
+}
+
+bool DsdReader::cancelInput() {
+  const bool fileCancelled = file_.cancelInput();
+  const bool sacdCancelled = sacd_.cancelInput();
+  return fileCancelled || sacdCancelled;
+}
+
 bool DsdReader::open(const std::string& source, std::string* error) {
+  return open(source, {}, error);
+}
+
+bool DsdReader::open(const std::string& source, std::shared_ptr<SeekableInput> input, std::string* error) {
   close();
   info_.source = source;
   if (source.empty()) {
     if (error) *error = "DSD source is empty";
     return false;
   }
-  const SacdIsoEntryProbe sacdIso = probeSacdIsoEntry(source);
-  if (sacdIso.isSacdIso()) {
-    return openSacdIso(source, error);
-  }
-
-  file_.open(utf8Path(source), std::ios::binary);
-  if (!file_) {
+  if (input) file_.open(std::move(input));
+  else if (!file_.open(parseSacdSource(source).path, inputFactory_)) {
     if (error) *error = "Unable to open DSD source";
     return false;
   }
-
-  const std::string ext = extensionOf(source);
-  const bool ok = ext == "dsf" ? openDsf(error) : (ext == "dff" ? openDff(error) : false);
+  // SAF document IDs are opaque: identify the bytes, not the URI's suffix.
+  std::array<char, 4> magic{};
+  readExact(file_, magic.data(), magic.size());
+  skipTo(file_, 0);
+  bool ok = false;
+  if (idEquals(magic.data(), "DSD ")) ok = openDsf(error);
+  else if (idEquals(magic.data(), "FRM8")) ok = openDff(error);
+  else if (probeSacdIsoEntry(source, file_).isSacdIso()) ok = openSacdIso(source, error);
+  else if (error) *error = "Unsupported DSD container";
   if (!ok) {
     close();
     return false;
   }
-  seek(0.0, nullptr);
-  return true;
+  return seek(0.0, error);
 }
 
-void DsdReader::close() {  if (file_.is_open()) file_.close();
+void DsdReader::close() {
+  file_.close();
   sacd_.close();
   info_ = {};
   readOffset_ = 0;
   eof_ = false;
+  readError_.clear();
   sacdActive_ = false;
   dstActive_ = false;
   dstFrameRate_ = 0;
@@ -148,6 +164,7 @@ void DsdReader::close() {  if (file_.is_open()) file_.close();
 }
 
 bool DsdReader::seek(double seconds, std::string* error) {
+  readError_.clear();
   if (sacdActive_) {
     const bool ok = sacd_.seek(seconds, error);
     eof_ = sacd_.eof();
@@ -196,14 +213,26 @@ bool DsdReader::seek(double seconds, std::string* error) {
   return true;
 }
 
-size_t DsdReader::readBytes(uint8_t* output, size_t maxBytes) {
+size_t DsdReader::readBytes(uint8_t* output, size_t maxBytes, std::string* error) {
   if (sacdActive_) {
-    const size_t read = sacd_.readBytes(output, maxBytes);
+    const size_t read = sacd_.readBytes(output, maxBytes, error);
     eof_ = sacd_.eof();
     return read;
   }
+  if (file_.failed()) {
+    readError_ = "DSD source read failed or was cancelled";
+  }
+  if (!readError_.empty()) {
+    if (error) *error = readError_;
+    return 0;
+  }
   if (!output || maxBytes == 0 || !file_.is_open() || eof_) return 0;
-  if (dstActive_) return readDstBytes(output, maxBytes);
+  if (dstActive_) {
+    const auto read = readDstBytes(output, maxBytes);
+    if (file_.failed()) readError_ = "DSD source read failed or was cancelled";
+    if (error && !readError_.empty()) *error = readError_;
+    return read;
+  }
   const uint64_t remaining = info_.dataSize > readOffset_ ? info_.dataSize - readOffset_ : 0;
   const size_t toRead = static_cast<size_t>(std::min<uint64_t>(remaining, maxBytes));
   if (toRead == 0) {
@@ -213,12 +242,19 @@ size_t DsdReader::readBytes(uint8_t* output, size_t maxBytes) {
   file_.read(reinterpret_cast<char*>(output), static_cast<std::streamsize>(toRead));
   const size_t read = static_cast<size_t>(std::max<std::streamsize>(0, file_.gcount()));
   readOffset_ += read;
+  if (file_.failed()) readError_ = "DSD source read failed or was cancelled";
+  else if (read < toRead) readError_ = "DSD source ended before the declared audio data";
+  if (error && !readError_.empty()) *error = readError_;
   eof_ = read == 0 || readOffset_ >= info_.dataSize;
   return read;
 }
 
 bool DsdReader::eof() const {
-  return eof_;
+  return sacdActive_ ? sacd_.eof() : eof_ && readError_.empty() && !file_.failed();
+}
+
+uint64_t DsdReader::byteFramePosition() const {
+  return info_.channelCount > 0 ? readOffset_ / static_cast<uint64_t>(info_.channelCount) : 0;
 }
 
 const DsdStreamInfo& DsdReader::streamInfo() const {
@@ -254,13 +290,18 @@ bool DsdReader::openDsf(std::string* error) {
       }
       const uint32_t channelCount = readLe32(fmt.data() + 12);
       const uint32_t sampleRate = readLe32(fmt.data() + 16);
+      const uint32_t bitOrder = readLe32(fmt.data() + 20);
       const uint64_t sampleCount = readLe64(fmt.data() + 24);
       const uint32_t blockSize = readLe32(fmt.data() + 32);
       info_.container = "DSF";
       info_.channelCount = static_cast<int>(channelCount);
       info_.dsdSampleRate = static_cast<int>(sampleRate);
       info_.dsdRate = dsdRateFromSampleRate(info_.dsdSampleRate);
-      info_.bitOrder = DsdBitOrder::LsbFirst;
+      if (bitOrder != 1 && bitOrder != 8) {
+        if (error) *error = "Unsupported DSF bit order";
+        return false;
+      }
+      info_.bitOrder = bitOrder == 1 ? DsdBitOrder::LsbFirst : DsdBitOrder::MsbFirst;
       info_.packing = DsdPacking::DsfPlanarBlocks;
       info_.blockSizePerChannel = blockSize;
       info_.durationSeconds = sampleRate > 0 ? static_cast<double>(sampleCount) / static_cast<double>(sampleRate) : 0.0;
@@ -367,6 +408,7 @@ bool DsdReader::openDff(std::string* error) {
   }
 
   const bool dstCompressed = dstActive_ || cmprDst;
+  info_.dstCompressed = dstCompressed;
   info_.container = "DFF";
   info_.dsdRate = dsdRateFromSampleRate(info_.dsdSampleRate);
   info_.bitOrder = DsdBitOrder::MsbFirst;
@@ -413,12 +455,14 @@ bool DsdReader::openDff(std::string* error) {
 
 size_t DsdReader::readDstBytes(uint8_t* output, size_t maxBytes) {
   if (dstProvider_ == nullptr) {
+    readError_ = "DST decoder is unavailable";
     eof_ = true;
     return 0;
   }
   const size_t frameBytesPerChannel = dstProvider_->frameBytesPerChannel(info_.dsdSampleRate);
   const size_t channels = static_cast<size_t>(std::max(1, info_.channelCount));
   if (frameBytesPerChannel == 0) {
+    readError_ = "Invalid DST frame geometry";
     eof_ = true;
     return 0;
   }
@@ -442,12 +486,14 @@ size_t DsdReader::readDstBytes(uint8_t* output, size_t maxBytes) {
     }
     const DstFrameEntry& frame = dstFrames_[dstFrameIndex_];
     if (frame.size == 0 || frame.size > (64ULL << 20)) {
+      readError_ = "Invalid DFF DST frame size";
       eof_ = true;
       break;
     }
     compressedFrameBuffer_.resize(static_cast<size_t>(frame.size));
     skipTo(file_, frame.offset);
     if (!readExact(file_, compressedFrameBuffer_.data(), compressedFrameBuffer_.size())) {
+      readError_ = "Unable to read complete DFF DST frame";
       eof_ = true;
       break;
     }
@@ -462,6 +508,7 @@ size_t DsdReader::readDstBytes(uint8_t* output, size_t maxBytes) {
         decodedDsdBuffer_.size(),
         &decodeError);
     if (written != decodedFrameBytes) {
+      readError_ = decodeError.empty() ? "DST decoder did not produce a complete DSD frame" : decodeError;
       eof_ = true;
       break;
     }
@@ -474,32 +521,10 @@ size_t DsdReader::readDstBytes(uint8_t* output, size_t maxBytes) {
 }
 
 bool DsdReader::openSacdIso(const std::string& source, std::string* error) {
-  if (!sacd_.open(source, error)) return false;
-  int trackNumber = 1;
-  std::string area;
-  const size_t qm = source.find('?');
-  if (qm != std::string::npos) {
-    const std::string query = source.substr(qm + 1);
-    size_t start = 0;
-    while (start <= query.size()) {
-      const size_t amp = query.find('&', start);
-      const std::string pair = query.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
-      const size_t eq = pair.find('=');
-      const std::string key = eq == std::string::npos ? pair : pair.substr(0, eq);
-      const std::string value = eq == std::string::npos ? "" : pair.substr(eq + 1);
-      if (key == "track") {
-        try {
-          trackNumber = std::stoi(value);
-        } catch (...) {
-          trackNumber = 1;
-        }
-      } else if (key == "area") {
-        area = value;
-      }
-      if (amp == std::string::npos) break;
-      start = amp + 1;
-    }
-  }
+  if (!sacd_.open(source, file_.input(), error)) return false;
+  const auto selectedSource = parseSacdSource(source);
+  const int trackNumber = selectedSource.track > 0 ? selectedSource.track : 1;
+  const auto& area = selectedSource.area;
   if (!sacd_.selectTrack(area, trackNumber, error)) {
     sacd_.close();
     return false;

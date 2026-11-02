@@ -471,7 +471,7 @@ export class CoreDspService {
             : {}
           return { dspScenes: state.scenes, dspPinnedSceneId: state.pinnedSceneId, ...compensated }
         })
-        return imported
+        return { ...imported, state: structuredClone(this.options.engine.getDspSceneState()) }
       }
       if (request.kind === 'correctionProfile')
         return importCorrectionProfileFile(path, this.options.assets)

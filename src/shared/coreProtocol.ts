@@ -1,4 +1,7 @@
 import type { CoreCastStart, CoreCastState, CoreCastDevice } from './coreCast.ts'
+import type { BridgePeer, CoreZoneState } from './audioBridge.ts'
+import type { ZonesView, ZoneTransport } from './coreZones.ts'
+import type { CoreSignalPath } from './remoteDsp.ts'
 import type { CoreAbLoopCommand, CoreAbLoopState } from './coreAbLoop.ts'
 import type { CoreLibraryQueries } from './coreLibrary.ts'
 import type { CoreAudioDiagnosticsQuery, AudioDiagnosticReport } from './coreAudioDiagnostics.ts'
@@ -185,7 +188,7 @@ import type { MusicIdentityDetail, IdentificationCandidatesQuery, Identification
 
 export const CORE_PROTOCOL_VERSION = 1
 export type CoreEpoch = string
-export type CoreServiceKind = 'audio' | 'audio-test' | 'database' | 'scan' | 'analysis' | 'plugin'
+export type CoreServiceKind = 'audio' | 'audio-test' | 'zone-audio' | 'database' | 'scan' | 'analysis' | 'plugin'
 export type CorePhase = 'starting' | 'ready' | 'recovering' | 'failed' | 'stopped'
 export type CoreClientRole = 'desktop' | 'mini-player' | 'system' | 'remote' | 'plugin'
 
@@ -358,6 +361,15 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
   'sleep.cancel': { revision: number }
   'settings.edit': CoreSettingsEdit
   'cast.discover': Record<string, never>
+  'bridge.host': { revision: number; enabled: boolean; sampleRate: number }
+  'bridge.connect': { revision: number; peer: BridgePeer }
+  'zones.select': { revision: number; outputId: 'local' | 'bridge' }
+  'zones.create': { revision: number; name: string }
+  'zones.remove': { revision: number; zoneId: string }
+  'zones.connect': { revision: number; zoneId: string; peer: BridgePeer }
+  'zones.transport': { revision: number; zoneId: string; action: ZoneTransport }
+  'zones.queueFromQuery': { revision: number; zoneId: string; query: LibraryQuery; selectedId?: string }
+  'zones.dsp.edit': { zoneId: string; revision: number; edit: CoreDspEdit['edit'] }
   'cast.start': CoreCastStart
   'cast.end': { revision: number }
   'audio.outputTest.play': { revision: number; exclusive: boolean }
@@ -574,6 +586,12 @@ export interface CoreQueries
   'sleep.state': { input: Record<string, never>; output: CoreSleepTimerState }
   'settings.state': { input: Record<string, never>; output: CoreSettingsState }
   'cast.state': { input: Record<string, never>; output: CoreCastState }
+  'zones.state': { input: Record<string, never>; output: CoreZoneState }
+  'zones.list': { input: Record<string, never>; output: ZonesView }
+  'zones.dsp': { input: { zoneId: string }; output: CoreDspState }
+  'zones.signalPath': { input: { zoneId: string }; output: CoreSignalPath }
+  'audio.signalPath': { input: Record<string, never>; output: CoreSignalPath }
+  'bridge.invitation': { input: Record<string, never>; output: { invitation: string | null } }
   'cast.devices': {
     input: { offset: number; limit: number }
     output: { offset: number; total: number; items: CoreCastDevice[] }
@@ -855,6 +873,21 @@ const OPERATIONS: Record<
   'sleep.cancel': { kind: 'command', permission: 'playback:write' },
   'settings.edit': { kind: 'command', permission: 'settings:write' },
   'cast.state': { kind: 'query', permission: 'playback:read' },
+  'zones.state': { kind: 'query', permission: 'playback:read' },
+  'zones.list': { kind: 'query', permission: 'playback:read' },
+  'zones.dsp': { kind: 'query', permission: 'settings:read' },
+  'zones.signalPath': { kind: 'query', permission: 'playback:read' },
+  'zones.create': { kind: 'command', permission: 'settings:write' },
+  'zones.remove': { kind: 'command', permission: 'settings:write' },
+  'zones.connect': { kind: 'command', permission: 'settings:write' },
+  'zones.transport': { kind: 'command', permission: 'playback:write' },
+  'zones.queueFromQuery': { kind: 'command', permission: 'playback:write' },
+  'zones.dsp.edit': { kind: 'command', permission: 'settings:write' },
+  'audio.signalPath': { kind: 'query', permission: 'playback:read' },
+  'bridge.invitation': { kind: 'query', permission: 'settings:read' },
+  'bridge.host': { kind: 'command', permission: 'settings:write' },
+  'bridge.connect': { kind: 'command', permission: 'settings:write' },
+  'zones.select': { kind: 'command', permission: 'playback:write' },
   'remote.status': { kind: 'query', permission: 'settings:read' },
   'remote.setEnabled': { kind: 'command', permission: 'settings:write' },
   'remote.rotatePin': { kind: 'command', permission: 'settings:write' },

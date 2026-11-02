@@ -54,18 +54,24 @@ API v4 插件可通过 `contributes.experiences[].launch: "sidebar"` 在导航�
 - 自定义背景图片和显式页面背景覆盖优先于主题背景；主题素材校验仅向 IPC 发送普通素材记录，避免 Vue Proxy 无法克隆。
 - 歌曲信息对话框的关闭按钮、Escape 和原生取消事件统一通知父组件卸载，并在卸载时释放原生模态状态。
 
-### 主题插件工坊（开发中）
+### 自定义主题与 .TEP 导出
 
-内置 `theme-workshop` 工具插件复用 bundled 插件生命周期，入口按需加载独立工坊页面。
-`themeWorkshop` preload 域调用 `src/main/ipc/themeWorkshop.ts`；项目保存在用户数据目录的
-`theme-workshop/projects`，采用原子 JSON 写入、备份恢复与 revision 冲突检查。
-项目保存基础 CSS、结构化主题、内嵌素材和个人参数。`.teworkshop` 保留编辑数据，
+设置 → 外观 →「自定义主题」统一承载常用调整、主题属性与历史，以及图层、蒙版、素材、
+字体、参数、CSS、布局和诊断等高级工具，不再分发独立工坊工具插件。当前未应用的草稿可直接
+导出 `.TEP`，导出不会应用主题或写入日常设置；本地背景、皮肤和绑定素材会随包保存。
+
+高级工具复用 `themeWorkshop` preload 域与 `src/main/ipc/themeWorkshop.ts`。项目仍保存在
+用户数据目录的 `theme-workshop/projects`，采用原子 JSON 写入、备份恢复与 revision 冲突检查。
+项目保存基础 CSS、结构化主题、内嵌素材、个人参数和上次应用版本；`.teworkshop` 保留编辑数据，
 `.tep` 经现有主题包 ZIP 写入器导出，应用操作经过插件管理器的安装和启用流程。
-定向验证入口为 `pnpm run test:theme-workshop`。
+旧 `.tetheme` 和 `.teworkshop` 导入、旧导航会话继续兼容。
 
-当前预览使用沙箱 iframe 与宿主组件 Teleport，样式隔离，首页与列表传入固定示例曲目；
-部分组件仍共享宿主状态。停用经编辑器保存响应后才进入插件生命周期操作。
-全部页面预览、多图层编辑、预览状态完全隔离和实际应用的视觉回归仍需完成后才能正式验收。
+常用调整与高级工具共用隔离预览画布。定向验证入口为 `pnpm run test:appearance-workspace`
+和 `pnpm run test:theme-workshop`；真实整合与窄窗大字号检查位于
+`AppearanceCapabilities.behavior.test.ts`。编辑与导出规则见 [外观编辑器引擎](./appearance-editor-engine.md)。
+
+共享编译与校验位于 `themeWorkshopCompiler.ts` 和 `themeWorkshopValidation.ts`。
+装饰图层由宿主管理、不拦截交互，预览与安装后的主题复用同一份编译 CSS。
 
 Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.2.4`，许可证为 Apache-2.0。
 
@@ -488,10 +494,6 @@ renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层�
 本地与流媒体歌单总览均支持长按歌单卡片拖动排序，松手后保存本机显示顺序；搜索后只调整可见歌单的相对位置。歌单内歌曲未接入此次长按排序，保留原有曲目排序与播放行为。长按交互提供落点提示、边缘滚动、Esc 取消和防误点击；键盘使用 Alt + ↑ / ↓ 调整。歌曲列表的歌名、歌手与专辑链接按文字内容收缩，长文本仍在列宽内省略，空白区域不触发详情跳转。
 
 本地页面通过 Vue `Transition mode="out-in"` 切换，`SongList` 必须保留单一元素根节点。歌曲信息弹窗置于列表根容器内部，仍经 Teleport 显示；不得与根容器并列，否则离开歌曲列表后切换可能停在空白占位。`LocalViewTransition.test.ts` 使用实际模板的根节点结构验证首页、列表、其他本地页及模式切换，并覆盖弹窗开启状态。
-
-### Theme workshop completion
-
-The built-in theme workshop opens from Settings / Appearance below the theme studio, not from the sidebar. Shared project compilation and validation live in `themeWorkshopCompiler.ts` and `themeWorkshopValidation.ts`. The preload domain exposes project summaries, individual reads, assets, applied-version restore and packaging. Decorative layers are host-owned, non-interactive elements; preview and installed themes share the same compiled CSS. Run `test:theme-workshop` for IPC, persistence, compilation and SFC checks.
 
 网易云播放在会话首次解析及地址缓存到期后，先通过当前账号解析在线地址，再复用匹配完整来源 URL 的磁盘缓存。旧版仅按歌曲 ID 保存的缓存不参与直接播放；试听响应不写入播放缓存，重新登录清空会话缓存，避免开通会员后继续播放旧试听文件。
 

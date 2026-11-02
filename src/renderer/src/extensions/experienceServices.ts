@@ -1,5 +1,5 @@
-import { useRadioStore } from '../stores/useRadioStore'
 import { corePlugins } from './corePlugins.ts'
+import { useRadioStore } from '../stores/useRadioStore'
 import { usePodcastStore } from '../stores/usePodcastStore'
 import {
   getRecentTracks,
@@ -33,10 +33,7 @@ export function createExperienceServices(permissions: string[]) {
     assertExperienceMethod(method, permissions)
     switch (method) {
       case 'themes.list': {
-        const { WORKSHOP_TEMPLATES, THEME_WORKSHOP_ID } =
-          await import('../../../shared/themeWorkshop.ts')
-        const plugin = (await corePlugins.list()).find((p) => p.id === THEME_WORKSHOP_ID)
-        if (!plugin?.enabled) return { enabled: false, projects: [], templates: WORKSHOP_TEMPLATES }
+        const { WORKSHOP_TEMPLATES } = await import('../../../shared/themeWorkshop.ts')
         return {
           enabled: true,
           projects: await window.api.themeWorkshop.list(),
@@ -171,7 +168,8 @@ export function createExperienceServices(permissions: string[]) {
         return null
       }
       case 'network.profiles':
-        return (await core.query('network.profiles', { revision: networkRevision(), limit: 200 })).items
+        return (await core.query('network.profiles', { revision: networkRevision(), limit: 200 }))
+          .items
       case 'network.create': {
         const input = args.profile as NetworkSourceProfileInput
         if (!input || typeof input !== 'object' || Array.isArray(input))

@@ -73,7 +73,8 @@ export async function openNcmOfficialLogin(signal?: AbortSignal): Promise<string
         session: ses,
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: true
+        sandbox: true,
+        spellcheck: false
       }
     })
 

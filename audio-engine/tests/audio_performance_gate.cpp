@@ -8,6 +8,7 @@
 #include "../decoder/FFmpegDecoder.h"
 #include "../utils/JsonUtils.h"
 #include "AudioFixtureLibrary.h"
+#include "ChannelLayoutFixture.h"
 
 #include <algorithm>
 #include <atomic>
@@ -111,6 +112,7 @@ class ControlledPumpBackend final : public IOutputBackend {
       state_->format.sampleRate = 48000;
       state_->format.bitDepth = 32;
       state_->format.channelCount = 2;
+      state_->format.channelMask = 3;
       state_->format.sampleFormat = AudioSampleFormat::Float32Interleaved;
     }
     state_->info = {};
@@ -560,7 +562,8 @@ void verifyAutoMixQueueContinuation(
   std::cout << "PASS AutoMix queue automatically starts the third track after the mixed-in track ends\n";
 }
 
-void verifyAutoMixTransport(const std::filesystem::path& root) {
+void verifyAutoMixTransport(const std::filesystem::path& root,
+                           DspResamplerPhase phase = DspResamplerPhase::Linear) {
   const auto a = writePcmWav(root / "automix-a.wav", 24.125, false, 421, 48000);
   const auto b = writePcmWav(root / "automix-b.wav", 24.125, false, 523, 44100);
   const auto cueA =
@@ -604,7 +607,9 @@ void verifyAutoMixTransport(const std::filesystem::path& root) {
       const std::string dspJson =
           std::string("{\"gapless\":true,\"crossfadeSeconds\":2,\"fftEnabled\":"
                       "false,\"resamplerQuality\":\"") +
-          (quality == DspResamplerQuality::Ultra ? "ultra" : "native") + "\"}";
+          (quality == DspResamplerQuality::Ultra ? "ultra" : "native") +
+          "\",\"resamplerPhase\":\"" +
+          (phase == DspResamplerPhase::MinimumSmooth ? "minimum-smooth" : "linear") + "\"}";
       resetBackend();
       AudioPipeline pipeline;
       std::string error;
@@ -733,11 +738,17 @@ void verifyAutoMixTransport(const std::filesystem::path& root) {
           format.channelCount = kChannels;
           std::vector<float> reference;
           assert(decodeAutoMixFrames(next, format, frame, kCallbackFrames,
-                                     &reference, &error, nullptr, quality));
+                                     &reference, &error, nullptr, quality, {}, phase));
           backend->render(scratch.data(), kCallbackFrames);
           assert(reference.size() == scratch.size());
           for (size_t sample = 0; sample < scratch.size(); sample++)
             assert(std::abs(reference[sample] - scratch[sample]) < 1e-5f);
+          if (phase == DspResamplerPhase::MinimumSmooth) {
+            const auto output = json_utils::fieldObject(pipeline.dspGraphStatusJson(), "outputStage");
+            assert(json_utils::fieldString(output, "effectiveResampler") == "soxr");
+            assert(json_utils::fieldString(output, "effectiveResamplerPhase") ==
+                (quality == DspResamplerQuality::Native ? "minimum" : "minimum-smooth"));
+          }
           assert(!pipeline.consumeTrackStarted(nullptr));
           break;
         }
@@ -865,7 +876,8 @@ void verifyAutoMixTransport(const std::filesystem::path& root) {
     }
   }
   std::cout << "PASS AutoMix real decoder natural/DJ, UTF-8 CUE ranges, single "
-               "promotion, exact continuation and stale source\n";
+               "promotion, exact continuation and stale source; phase="
+            << (phase == DspResamplerPhase::MinimumSmooth ? "minimum-smooth" : "linear") << '\n';
 }
 bool pumpCallback(const std::shared_ptr<ControlledBackendState> &backend,
                   std::vector<float> *scratch) {
@@ -894,6 +906,125 @@ bool pumpCallback(const std::shared_ptr<ControlledBackendState> &backend,
       ++backend->callbacksWithAudio;
   }
   return containsAudio;
+}
+
+int verifyChannelLayout() {
+  constexpr size_t sourceFrames = 16384, captureFrames = 4096;
+  const std::string graph = R"({"dspEnabled":true,"graph":{"nodes":[
+    {"id":"bass","type":"bassManagement","enabled":true,"params":{"crossoverHz":80,"lfeGainDb":0,"redirectLfe":true}}
+  ]}})";
+  int scenarios = 0;
+  for (const uint32_t mask : {7u, 0xbu, 0x3bu, 0x37u, 0x3fu, 0x707u, 0x63fu}) {
+    for (int mode = 0; mode < (mask == 7 ? 4 : 1); ++mode) {
+      resetBackend();
+      g_pcmSharedFormat = mode == 3;
+      auto currentBytes = std::make_shared<const std::vector<uint8_t>>(layout_fixture::wave(mask, sourceFrames));
+      auto nextBytes = std::make_shared<const std::vector<uint8_t>>(layout_fixture::wave(mask, sourceFrames, 1));
+      auto differentBytes = std::make_shared<const std::vector<uint8_t>>(layout_fixture::wave(0xb, sourceFrames, 1));
+      auto factory = std::make_shared<const SeekableInputFactory>([=](const std::string& source) {
+        return std::make_shared<layout_fixture::MemoryInput>(source.find("different") != std::string::npos
+            ? differentBytes : source.find("next") != std::string::npos ? nextBytes : currentBytes);
+      });
+      AudioPipeline pipeline;
+      pipeline.setInputFactory(factory);
+      OutputConfig config; config.allowedSampleRates = {48000};
+      if (mode == 1) config.routingMode = ChannelRoutingMode::Stereo;
+      if (mode == 2) config.continuityFirst = true;
+      std::string error;
+      assert(pipeline.setOutputConfig(config, &error));
+      assert(pipeline.setDspGraph(graph, &error));
+      QueueItem item; item.id = "current"; item.source = "memory-layout://current.wav";
+      assert(pipeline.play(item, std::nullopt, 0, "controlled-pump", "layout", 1,
+          R"({"dspEnabled":true,"clipGuard":false,"fftEnabled":false,"headroomEnabled":false,"crossfadeSeconds":0})",
+          true, &error) == TAE_RESULT_OK);
+      const auto backend = latestBackend();
+      const auto status = pipeline.status();
+      const uint64_t decodedMask = mode >= 2 ? 3 : mask;
+      assert(status.stream.sourceFormat.channelMask == mask);
+      assert(status.stream.decodedFormat.channelMask == decodedMask);
+      assert(status.outputFormat.channelMask == (mode == 0 ? mask : 3));
+      const int expectedLfe = decodedMask & 8 ? std::popcount(decodedMask & 7) : -1;
+      std::vector<float> actual, block;
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (actual.size() < captureFrames * status.outputFormat.channelCount && std::chrono::steady_clock::now() < deadline) {
+        const double before = pipeline.status().positionSeconds;
+        pumpCallback(backend, &block);
+        if (pipeline.status().positionSeconds > before) actual.insert(actual.end(), block.begin(), block.end());
+        else std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      assert(actual.size() == captureFrames * status.outputFormat.channelCount);
+      assert(std::all_of(actual.begin(), actual.end(), [](float value) { return std::isfinite(value); }));
+      const auto applied = pipeline.status();
+      if (applied.dspGraphJson.find("\"lfeChannelIndex\":" + std::to_string(expectedLfe)) == std::string::npos)
+        std::cerr << "Layout graph mask=" << mask << " decoded=" << decodedMask << " mode=" << mode
+                  << " requested/applied=" << applied.requestedConfigRevision << '/' << applied.appliedConfigRevision
+                  << " json=" << applied.dspGraphJson << '\n';
+      assert(applied.dspGraphJson.find("\"lfeChannelIndex\":" + std::to_string(expectedLfe)) != std::string::npos);
+      assert((applied.dspGraphJson.find("no LFE") != std::string::npos) == (expectedLfe < 0));
+      double maxError = 0;
+      if (mode == 0) {
+        auto expected = layout_fixture::samples(mask, captureFrames);
+        BassManagementProcessor reference;
+        DspConfig dsp; dsp.enabled = dsp.bassManagementEnabled = true;
+        reference.configure(dsp); reference.prepare(status.stream.decodedFormat);
+        reference.process(expected.data(), captureFrames);
+        for (size_t i = 0; i < actual.size(); ++i) maxError = std::max(maxError, std::abs(double(actual[i]) - expected[i]));
+        if (maxError > 1e-7) std::cerr << "Channel layout callback mismatch mask=" << mask << " error=" << maxError << '\n';
+        assert(maxError == 0);
+      }
+      if (mask == 7 && mode != 1 && mode != 3) {
+        QueueItem different; different.id = "different"; different.source = "memory-layout://different.wav";
+        const bool prepared = pipeline.preloadNext(different, &error);
+        assert(prepared == (mode == 2)); // Continuity converts both to the same stereo stream.
+        error.clear();
+      }
+      QueueItem next; next.id = "next"; next.source = "memory-layout://next.wav";
+      assert(pipeline.preloadNext(next, &error));
+      const auto readyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (!pipeline.status().preloadReady && std::chrono::steady_clock::now() < readyDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      assert(pipeline.status().preloadReady && pipeline.skipToPreloaded(next, &error));
+      const auto promoted = pipeline.status();
+      assert(promoted.stream.sourceFormat.channelMask == mask && promoted.stream.decodedFormat.channelMask == decodedMask);
+      assert(promoted.outputFormat.channelMask == (mode == 0 ? mask : 3));
+      pumpCallback(backend, &block);
+      double preloadDifference = 0;
+      if (mode == 0) {
+        auto expected = layout_fixture::samples(mask, kCallbackFrames, 1);
+        BassManagementProcessor reference;
+        DspConfig dsp; dsp.enabled = dsp.bassManagementEnabled = true;
+        reference.configure(dsp); reference.prepare(promoted.stream.decodedFormat);
+        reference.process(expected.data(), kCallbackFrames);
+        for (size_t i = 0; i < block.size(); ++i)
+          preloadDifference = std::max(preloadDifference, std::abs(double(block[i]) - expected[i]));
+        assert(preloadDifference == 0);
+      }
+      pipeline.stop();
+      std::cout << "{\"case\":\"pipeline-layout\",\"sourceMask\":\"" << channelMaskToString(mask)
+                << "\",\"decodedMask\":\"" << channelMaskToString(decodedMask) << "\",\"mode\":" << mode
+                << ",\"maxCallbackDifference\":" << (mode == 0 ? std::to_string(maxError) : "null")
+                << ",\"preloadCallbackDifference\":" << (mode == 0 ? std::to_string(preloadDifference) : "null")
+                << ",\"preloadPromoted\":true}\n";
+      ++scenarios;
+    }
+  }
+  g_pcmSharedFormat = false;
+  {
+    TwilightAudioEngine engine;
+    engine.setInputFactory(layout_fixture::factory(7, sourceFrames));
+    assert(engine.setDspConfig(R"({"dspEnabled":true,"clipGuard":false,"fftEnabled":false})") == TAE_RESULT_OK);
+    assert(engine.setDspGraph(graph) == TAE_RESULT_OK);
+    assert(engine.play("memory-layout://diagnostics.wav", 0) == TAE_RESULT_OK);
+    const auto json = engine.getPlaybackInfoJson();
+    assert(json_utils::fieldString(json, "sourceChannelMask") == "0x7");
+    assert(json_utils::fieldString(json, "decodedChannelMask") == "0x7");
+    assert(json_utils::fieldString(json, "outputChannelMask") == "0x7");
+    assert(engine.stop() == TAE_RESULT_OK);
+    assert(json_utils::fieldString(engine.getPlaybackInfoJson(), "outputChannelMask") == "0x0");
+    ++scenarios;
+  }
+  std::cout << "{\"suite\":\"channel-layout-pipeline\",\"scenarios\":" << scenarios << ",\"passed\":true}\n";
+  return 0;
 }
 
 int verifyFlacTailContinuation() {
@@ -1353,12 +1484,20 @@ int main(int argc, char** argv) {
 #else
   ScopedPerformanceTestThreadPriority performanceTestThreadPriority;
   ScopedControlledBackendFactory controlledBackendFactory;
+  if (argc == 2 && std::string(argv[1]) == "--verify-channel-layout")
+    return verifyChannelLayout();
   if (argc == 2 && std::string(argv[1]) == "--verify-flac-tail")
     return verifyFlacTailContinuation();
   if (argc == 2 && std::string(argv[1]) == "--verify-automix-transport") {
     const auto root = std::filesystem::temp_directory_path() / "twilight-automix-transport";
     std::filesystem::create_directories(root);
     verifyAutoMixTransport(root);
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--verify-automix-minimum-phase") {
+    const auto root = std::filesystem::temp_directory_path() / "twilight-automix-minimum-phase";
+    std::filesystem::create_directories(root);
+    verifyAutoMixTransport(root, DspResamplerPhase::MinimumSmooth);
     return 0;
   }
   if (argc == 3 && std::string(argv[1]) == "--verify-pcm")

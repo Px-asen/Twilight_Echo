@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url)
 const workspace = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 test(
-  'recent platform history locates only visible-page tracks in Electron',
+  'library pages keep unified history and aligned, single-count folder, artist, and album grids in Electron',
   { timeout: 90_000 },
   async () => {
     const directory = await mkdtemp(join(tmpdir(), 'twilight-recent-track-locator-'))
@@ -27,25 +27,19 @@ test(
           {
             name: 'recent-locator-boundaries',
             enforce: 'pre',
-            resolveId(source, importer) {
-              if (/\/stores\/usePlayerStore(?:\.ts)?$/.test(source))
-                return '\0recent-locator-player'
-              if (/\/stores\/useProviderStore(?:\.ts)?$/.test(source))
-                return '\0recent-locator-providers'
-              if (
-                importer?.replaceAll('\\', '/').endsWith('/RecentPlaybackPage.vue') &&
-                source === '@renderer/components/SongList.vue'
-              )
-                return '\0recent-locator-song-list'
+            resolveId(source) {
+              if (/(?:^|\/)coreConnection(?:\.ts)?$/.test(source)) return '\0recent-core'
+              if (/(?:^|\/)useSettingsStore(?:\.ts)?$/.test(source)) return '\0recent-settings'
+              if (/(?:^|\/)usePlayerStore(?:\.ts)?$/.test(source)) return '\0recent-player'
               return null
             },
             load(id) {
-              if (id === '\0recent-locator-player')
-                return 'export const usePlayerStore = () => window.locatePlayer'
-              if (id === '\0recent-locator-providers')
-                return 'export const useProviderStore = () => window.locateProviders'
-              if (id === '\0recent-locator-song-list')
-                return `import { h } from 'vue'; export default { props: ['category'], setup(){ return () => h('div', { class: 'device-song-list' }) } }`
+              if (id === '\0recent-core')
+                return 'export const useCoreConnection=()=>window.locateCore'
+              if (id === '\0recent-settings')
+                return 'export const useSettingsStore=()=>window.locateSettings'
+              if (id === '\0recent-player')
+                return 'export const usePlayerStore=()=>window.locatePlayer'
               return null
             }
           },
@@ -86,7 +80,7 @@ test(
       delete env.ELECTRON_RUN_AS_NODE
       const result = await promisify(execFile)(
         require('electron'),
-        [join(directory, 'runner.cjs'), directory],
+        ['--no-sandbox', '--enable-logging=stderr', join(directory, 'runner.cjs'), directory],
         { windowsHide: true, timeout: 80_000, env, maxBuffer: 1024 * 1024 }
       )
       assert.match(result.stdout, /RECENT_TRACK_LOCATOR_OK/)
@@ -97,4 +91,24 @@ test(
   }
 )
 
-const runner = `const {app,BrowserWindow}=require('electron');const path=require('node:path');app.setPath('userData',path.join(process.argv.at(-1),'profile'));app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1100,height:800,webPreferences:{nodeIntegration:false,contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(path.join(process.argv.at(-1),'index.html'));console.log(await win.webContents.executeJavaScript('window.runRecentLocatorChecks()'));app.exit(0)}catch(e){console.error(e.stack);app.exit(1)}});`
+const runner = `
+const {app,BrowserWindow}=require('electron'),path=require('node:path'),fs=require('node:fs')
+app.setPath('userData',path.join(process.argv.at(-1),'profile'))
+app.whenReady().then(async()=>{
+ const win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}})
+ const evidence=process.env.TWILIGHT_LIBRARY_UI_EVIDENCE_DIR
+ const capture=async name=>{if(evidence){fs.mkdirSync(evidence,{recursive:true});await new Promise(resolve=>setTimeout(resolve,100));fs.writeFileSync(path.join(evidence,name+'.png'),(await win.webContents.capturePage()).toPNG())}}
+ try{
+  await win.loadFile(path.join(process.argv.at(-1),'index.html'))
+  console.log(await win.webContents.executeJavaScript('window.runRecentLocatorChecks()'))
+  await win.webContents.executeJavaScript('window.checkRecentLayout()');await capture('recent-wide')
+  win.setContentSize(620,800);await win.webContents.executeJavaScript('window.checkRecentLayout()');await capture('recent-narrow')
+  await win.webContents.executeJavaScript('(async()=>{await window.openFolderChecks();await window.checkFolderLayout()})()');await capture('folders-narrow')
+  win.setContentSize(1200,800);await win.webContents.executeJavaScript('window.checkFolderLayout()');await capture('folders-wide')
+  for(const kind of ['artists','albums']){
+   win.setContentSize(1440,900);await win.webContents.executeJavaScript('(async()=>{await window.openCollectionChecks("'+kind+'");await window.checkCollectionLayout("'+kind+'")})()');await capture(kind+'-wide')
+   win.setContentSize(620,900);await win.webContents.executeJavaScript('window.checkCollectionLayout("'+kind+'")');await capture(kind+'-narrow')
+  }
+  await win.webContents.executeJavaScript('window.finishLibraryChecks()');app.exit(0)
+ }catch(e){console.error(e.stack);console.error(await win.webContents.executeJavaScript('document.body.innerText.slice(0,1800)'));app.exit(1)}
+})`

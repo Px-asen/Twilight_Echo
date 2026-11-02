@@ -44,7 +44,7 @@ defineProps<{
         <div data-setting-id="taskbar-controls" id="setting-taskbar-controls" class="setting-item">
           <div class="setting-copy">
             <strong>任务栏缩略图按钮</strong>
-            <span>在 Windows 任务栏窗口预览中直接控制上一首、播放与下一首。</span>
+            <span>悬停在 Windows 任务栏图标上，即可切歌、播放/暂停和喜欢歌曲。</span>
           </div>
           <button
             type="button"

@@ -172,4 +172,29 @@ extern "C" napi_status NAPI_CDECL napi_add_env_cleanup_hook(
   return fn ? fn(env, fun, arg) : napi_generic_failure;
 }
 
+extern "C" napi_status NAPI_CDECL napi_throw_range_error(napi_env env, const char* code, const char* msg) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, const char*, const char*);
+  static Fn fn = loadNodeApi<Fn>("napi_throw_range_error");
+  return fn ? fn(env, code, msg) : napi_generic_failure;
+}
+extern "C" napi_status NAPI_CDECL napi_create_object(napi_env env, napi_value* result) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, napi_value*);
+  static Fn fn = loadNodeApi<Fn>("napi_create_object");
+  return fn ? fn(env, result) : napi_generic_failure;
+}
+extern "C" napi_status NAPI_CDECL napi_is_buffer(napi_env env, napi_value value, bool* result) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, napi_value, bool*);
+  static Fn fn = loadNodeApi<Fn>("napi_is_buffer");
+  return fn ? fn(env, value, result) : napi_generic_failure;
+}
+extern "C" napi_status NAPI_CDECL napi_get_buffer_info(napi_env env, napi_value value, void** data, size_t* length) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, napi_value, void**, size_t*);
+  static Fn fn = loadNodeApi<Fn>("napi_get_buffer_info");
+  return fn ? fn(env, value, data, length) : napi_generic_failure;
+}
+extern "C" napi_status NAPI_CDECL napi_create_buffer_copy(napi_env env, size_t length, const void* data, void** copy, napi_value* result) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, size_t, const void*, void**, napi_value*);
+  static Fn fn = loadNodeApi<Fn>("napi_create_buffer_copy");
+  return fn ? fn(env, length, data, copy, result) : napi_generic_failure;
+}
 #endif  // defined(_WIN32)

@@ -14,8 +14,7 @@ bool bufferFormatsCompatible(const AudioFormat& left, const AudioFormat& right) 
     return sampleRateCompatible && left.channelCount > 0 && right.channelCount > 0 &&
            left.channelCount == right.channelCount && dsdFormatsExactMatch(left, right);
   }
-  return sampleRateCompatible && left.channelCount > 0 && right.channelCount > 0 &&
-         left.channelCount == right.channelCount &&
+  return sampleRateCompatible && pcmChannelLayoutsCompatible(left, right) &&
          effectivePcmBitDepth(left) == effectivePcmBitDepth(right) &&
          left.sampleFormat == right.sampleFormat;
 }
@@ -100,6 +99,7 @@ void AudioBuffer::reset(const AudioFormat& format, size_t capacityFrames) {
   writePosition_.store(0, std::memory_order_relaxed);
   sampleRateSnapshot_.store(normalized.sampleRate, std::memory_order_relaxed);
   channelSnapshot_.store(normalized.channelCount, std::memory_order_relaxed);
+  channelMaskSnapshot_.store(normalized.channelMask, std::memory_order_relaxed);
   bitDepthSnapshot_.store(normalized.bitDepth, std::memory_order_relaxed);
   sampleFormatSnapshot_.store(static_cast<int>(normalized.sampleFormat), std::memory_order_relaxed);
   endControlReset();
@@ -293,6 +293,7 @@ AudioFormat AudioBuffer::format() const {
   AudioFormat snapshot;
   snapshot.sampleRate = sampleRateSnapshot_.load(std::memory_order_relaxed);
   snapshot.channelCount = channelSnapshot_.load(std::memory_order_relaxed);
+  snapshot.channelMask = channelMaskSnapshot_.load(std::memory_order_relaxed);
   snapshot.bitDepth = bitDepthSnapshot_.load(std::memory_order_relaxed);
   snapshot.sampleFormat = static_cast<AudioSampleFormat>(sampleFormatSnapshot_.load(std::memory_order_relaxed));
   return snapshot;

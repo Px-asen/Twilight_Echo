@@ -6,6 +6,8 @@ import { createServicePort } from '../services/servicePort.ts'
 import { initProxy } from './proxyBootstrap'
 import { redactSensitiveText } from '../../shared/errors/redactSensitiveText.ts'
 import { QISHUI_PLUGIN_ID } from './qishuiAuthBridge.ts'
+import { createNcmApiRuntime } from '../ncm/runtimeAdapter.ts'
+import { normalizeInternalNcmRequestOptions } from '../../core/plugins/rpcCoordinator.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -266,6 +268,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
 const channel = createServicePort<PluginHostRequest | PluginHostApiResult, PluginHostResponse>()
 
 let activePlugin: PluginModule | null = null
+let localNcmRuntime: ReturnType<typeof createNcmApiRuntime> | null = null
 const eventHandlers = new Map<string, Set<(payload: unknown) => void>>()
 const providerHandlers = new Map<string, ProviderHandler>()
 const commandHandlers = new Map<string, CommandHandler>()
@@ -338,6 +341,11 @@ async function deactivatePlugin(requestId: string): Promise<void> {
   } catch (error) {
     reportError(error)
   } finally {
+    const ncmRuntime = localNcmRuntime
+    localNcmRuntime = null
+    if (ncmRuntime) {
+      await ncmRuntime.shutdown().catch(() => undefined)
+    }
     activePlugin = null
     eventHandlers.clear()
     providerHandlers.clear()
@@ -467,16 +475,18 @@ function createContext(
   if (pluginId === INTERNAL_NCM_PLUGIN_ID) {
     twilight.internal = {
       ncm: {
-        request: (path, cookie, options) =>
-          callInternalNcmApi(
-            'ncmRequest',
-            [
-              path,
-              cookie,
-              options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined
-            ],
-            options?.signal
-          ),
+        request: async (path, cookie, options) => {
+          if (typeof path !== 'string') throw new Error('ncmRequest path 必须是字符串')
+          const normalized = normalizeInternalNcmRequestOptions(
+            options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined
+          )
+          localNcmRuntime ??= createNcmApiRuntime()
+          return localNcmRuntime.request(
+            path,
+            typeof cookie === 'string' ? cookie : undefined,
+            { ...normalized, signal: options?.signal }
+          )
+        },
         officialLogin: () => callInternalNcmApi('ncmOfficialLogin', []) as Promise<string>,
         getCachedSong: (songId) =>
           callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,

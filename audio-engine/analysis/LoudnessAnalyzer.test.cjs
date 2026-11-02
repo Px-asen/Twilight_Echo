@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict')
-const { createHash } = require('node:crypto')
 const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join, resolve, sep } = require('node:path')
@@ -120,11 +119,11 @@ test('processed EQ loudness matches gain references and compensated remeasuremen
 test('native whole-track measurements repeat and meet sine loudness / true-peak tolerances', (t) => {
   const file = fixtures(t)
   const path = file('tone.wav', wav([{ seconds: 6, amplitude: 0.1 }]))
-  const before = createHash('sha256').update(readFileSync(path)).digest('hex')
+  const before = readFileSync(path)
   const first = analyze(path)
   const second = analyze(path)
   assert.equal(first.available, true, JSON.stringify(first))
-  assert.equal(first.algorithmVersion, 2)
+  assert.equal(first.algorithmVersion, 3)
   near(first.integratedLufs, -20.04, 0.15, 'stereo 1 kHz LUFS')
   near(first.truePeakDb, -20, 0.1, 'true peak')
   near(second.integratedLufs, first.integratedLufs, 0.001, 'repeat LUFS')
@@ -135,7 +134,7 @@ test('native whole-track measurements repeat and meet sine loudness / true-peak 
   assert.equal(first.waveformPeaks, second.waveformPeaks)
   assert.ok(first.noiseStartMs >= 0 && first.noiseStartMs <= first.noiseEndMs)
   assert.ok(first.noiseEndMs <= 6000)
-  assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), before)
+  assert.deepEqual(readFileSync(path), before)
   t.diagnostic(JSON.stringify({ fixture: 'stereo-1khz-0.1-6s', ...first }))
 })
 

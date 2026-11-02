@@ -46,12 +46,21 @@ import {
 } from './dspEditorWindow.ts'
 
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
+const HIDDEN_MAIN_WINDOW_UNLOAD_DELAY_MS = 30_000
 const closePersistenceAttemptGate = new ClosePersistenceAttemptGate()
 const pendingPlaybackSessionSaves = new Map<
   string,
   (outcome: RendererClosePersistenceOutcome) => void
 >()
 let afterglowUnloading = false
+let hiddenMainWindowUnloadTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearHiddenMainWindowUnloadTimer(): void {
+  if (hiddenMainWindowUnloadTimer) {
+    clearTimeout(hiddenMainWindowUnloadTimer)
+    hiddenMainWindowUnloadTimer = null
+  }
+}
 
 /**
  * Marks the next `closed` event as an intentional Afterglow unload so window
@@ -231,7 +240,8 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false
+      allowRunningInsecureContent: false,
+      spellcheck: false
     }
   })
   getCoreApplication()?.register(runtime.mainWindow)
@@ -246,6 +256,64 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
   runtime.mainWindow.on('ready-to-show', () => {
     if (windowState?.maximized) runtime.mainWindow?.maximize()
     runtime.mainWindow?.show()
+  })
+
+  clearHiddenMainWindowUnloadTimer()
+  const createdMainWindow = runtime.mainWindow
+  createdMainWindow.on('show', () => {
+    clearHiddenMainWindowUnloadTimer()
+  })
+  createdMainWindow.on('hide', () => {
+    clearHiddenMainWindowUnloadTimer()
+    if (
+      !getCoreApplication() ||
+      runtime.forceQuit ||
+      runtime.appSettings.unloadHiddenMainWindow === false
+    ) {
+      return
+    }
+    hiddenMainWindowUnloadTimer = setTimeout(() => {
+      hiddenMainWindowUnloadTimer = null
+      void (async () => {
+        if (
+          runtime.mainWindow !== createdMainWindow ||
+          createdMainWindow.isDestroyed() ||
+          createdMainWindow.isVisible() ||
+          runtime.forceQuit ||
+          afterglowUnloading ||
+          !getCoreApplication() ||
+          (runtime.appSettings.unloadHiddenMainWindow as boolean | undefined) === false
+        ) {
+          return
+        }
+        const afterglow = await import('./AfterglowModeService').catch(() => null)
+        if (afterglow?.isAfterglowModeActive()) return
+        await requestRendererPlaybackSessionSave().catch(() => undefined)
+        if (
+          runtime.mainWindow !== createdMainWindow ||
+          createdMainWindow.isDestroyed() ||
+          createdMainWindow.isVisible() ||
+          runtime.forceQuit ||
+          afterglowUnloading ||
+          !getCoreApplication() ||
+          (runtime.appSettings.unloadHiddenMainWindow as boolean | undefined) === false
+        ) {
+          return
+        }
+        try {
+          const bounds = createdMainWindow.getNormalBounds()
+          saveWindowState(windowStatePath, {
+            width: bounds.width,
+            height: bounds.height,
+            maximized: createdMainWindow.isMaximized()
+          })
+        } catch {
+          // Ignore bounds persistence errors during background teardown.
+        }
+        createdMainWindow.destroy()
+      })()
+    }, HIDDEN_MAIN_WINDOW_UNLOAD_DELAY_MS)
+    hiddenMainWindowUnloadTimer.unref?.()
   })
 
   runtime.mainWindow.on('minimize', () => {
@@ -327,17 +395,20 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
 
   if (process.platform === 'win32') {
     try {
-      createTaskbarThumbarButtons()
-    } catch (error) {
-      console.warn('[thumbar] unable to initialize taskbar buttons:', error)
-    }
-    try {
       if (getCoreApplication()) {
         rebindWindowsSmtc()
         destroyAfterglowAnchorWindow()
       } else initializeWindowsSmtc()
     } catch (error) {
       console.warn('[smtc] unable to initialize Windows media session:', error)
+    }
+    // SMTC sets the HWND's explicit AppUserModelID. Bind the thumbnail toolbar
+    // only after that identity is stable, otherwise the Shell can regroup the
+    // window and discard a toolbar registered under the old identity.
+    try {
+      createTaskbarThumbarButtons()
+    } catch (error) {
+      console.warn('[thumbar] unable to initialize taskbar buttons:', error)
     }
   }
 

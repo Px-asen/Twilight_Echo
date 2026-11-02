@@ -1491,6 +1491,13 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     return true
   }
 
+  async function releaseForTransfer(): Promise<void> {
+    leaveApproved = true
+    clearTimeout(recoveryTimer)
+    storeThemeStudioRecovery(null)
+    await clearStudioPreview()
+  }
+
   async function closeStudio(): Promise<void> {
     if (!(await prepareLeave())) return
     options.onBack()
@@ -1590,6 +1597,7 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   })
 
   return {
+    releaseForTransfer,
     BUILT_IN_THEME_FONTS,
     BUILT_IN_THEME_PRESETS,
     accentPalette,

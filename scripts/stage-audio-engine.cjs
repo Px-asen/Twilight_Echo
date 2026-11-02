@@ -1,5 +1,6 @@
 const {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -7,6 +8,7 @@ const {
   rmSync,
   statSync
 } = require('node:fs')
+const { execFileSync } = require('node:child_process')
 const { dirname, join, resolve } = require('node:path')
 const { collectImportClosure } = require('./pe-imports.cjs')
 const { createAudioCapabilityManifest } = require('./generate-audio-capability-manifest.cjs')
@@ -91,6 +93,34 @@ if (process.platform === 'darwin') {
   }
 }
 
+function findWindowsStripTool() {
+  if (process.platform !== 'win32') return null
+  for (const dir of toolchainRuntimeDirs()) {
+    const candidate = join(dir, 'strip.exe')
+    if (existsSync(candidate)) return candidate
+  }
+  const pathEntries = (process.env.PATH || '').split(';')
+  for (const entry of pathEntries) {
+    if (!entry) continue
+    const candidate = join(entry.trim(), 'strip.exe')
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+let cachedStripTool
+function stripStagedWindowsBinary(target, file) {
+  if (process.platform !== 'win32') return
+  if (!/^(?:lib)?twilight[-_].*\.(?:dll|node|exe)$/i.test(file)) return
+  if (cachedStripTool === undefined) cachedStripTool = findWindowsStripTool()
+  if (!cachedStripTool) return
+  try {
+    execFileSync(cachedStripTool, ['--strip-debug', target], { stdio: 'ignore' })
+  } catch {
+    // Keep the unstripped binary if the strip utility does not recognize this PE dialect.
+  }
+}
+
 function stageFile(source, file) {
   const target = join(outputDir, file)
   try {
@@ -102,6 +132,7 @@ function stageFile(source, file) {
     )
     process.exit(1)
   }
+  stripStagedWindowsBinary(target, file)
   const sizeMiB = (statSync(target).size / 1024 / 1024).toFixed(1)
   console.log(`已暂存原生音频文件：${file}（${sizeMiB} MiB）`)
   return target
@@ -160,6 +191,12 @@ function stageWindowsRuntimeDependencies() {
   const closure = collectImportClosure(
     runtimeFiles.map((file) => join(outputDir, file)),
     (name) => {
+      // This is a project-built library, not a reusable toolchain runtime.
+      // Refresh it even when a previous staging already contains the DLL.
+      const projectSoxr = join(buildDir, name)
+      if (name.toLowerCase() === 'libtwilight-soxr.dll' && existsSync(projectSoxr)) {
+        return stageFile(projectSoxr, name)
+      }
       const staged = join(outputDir, name)
       if (existsSync(staged)) return staged
       for (const dir of searchDirs) {
@@ -188,6 +225,20 @@ if (process.platform === 'win32') {
   if (existsSync(join(outputDir, 'twilight-asio-helper-x86.exe'))) {
     require('./verify-asio-helper-artifacts.cjs').verifyAsioHelperPair(outputDir)
   }
+}
+
+// Windows follows PE imports; macOS follows Mach-O imports above. The Linux
+// direct SoX target is a project-built sibling rather than a system dependency.
+if (process.platform === 'linux' && existsSync(join(buildDir, 'libtwilight-soxr.so'))) {
+  stageFile(join(buildDir, 'libtwilight-soxr.so'), 'libtwilight-soxr.so')
+}
+const soxrLibrary = process.platform === 'win32' ? 'libtwilight-soxr.dll'
+  : process.platform === 'darwin' ? 'libtwilight-soxr.dylib' : 'libtwilight-soxr.so'
+if (existsSync(join(outputDir, soxrLibrary))) {
+  // Include the complete small, modified library source and local build wrapper
+  // with the LGPL and embedded PFFFT/FFT4G notices, not just a repository link.
+  cpSync(join(root, 'audio-engine', 'third_party', 'soxr'),
+    join(outputDir, 'licenses', 'soxr-0.1.3'), { recursive: true })
 }
 
 const capabilityManifestPath = join(outputDir, 'audio-capabilities.json')

@@ -24,6 +24,17 @@ ta_am_source_lease *ta_am_source_acquire(const char *,
                                          const char expected_sha256[65],
                                          const ta_am_cancel *);
 void ta_am_source_release(ta_am_source_lease *);
+/* Non-RT content identity / validity checks. POSIX retains the descriptor but
+ * cannot deny external writes; stamps are checked before/after worker IO. */
+int ta_am_source_sha256(const char *, char hex[65], const ta_am_cancel *);
+int ta_am_source_valid(const ta_am_source_lease *);
+/* POSIX descriptor variants use pread and never change the caller's cursor.
+ * Borrowed fd must remain open throughout the call; leases retain a duplicate.
+ * Return unavailable on Windows. */
+int ta_am_source_snapshot_fd(int, ta_am_source_stamp *);
+int ta_am_source_sha256_fd(int, char hex[65], const ta_am_cancel *);
+ta_am_source_lease *ta_am_source_acquire_fd(int, const ta_am_source_stamp *,
+    const char expected_sha256[65], const ta_am_cancel *);
 #ifdef __cplusplus
 }
 #endif

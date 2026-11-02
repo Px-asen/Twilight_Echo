@@ -4,6 +4,8 @@
 
 #include "FFmpegDecoderUtils.h"
 #include "FFmpegDsdRate.h"
+#include "WavPackSource.h"
+#include "DsdReader.h"
 #include "SacdIsoProbe.h"
 #include "../core/DsdRate.h"
 #include "../core/Utf8Path.h"
@@ -36,6 +38,9 @@ extern "C" {
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 }
+#if defined(TAE_HAS_SOXR)
+#include <soxr.h>
+#endif
 #endif
 
 namespace twilight::audio {
@@ -279,6 +284,9 @@ struct FFmpegDecoder::Impl {
 #if defined(TAE_HAS_FFMPEG)
   AVFormatContext* formatContext = nullptr;
   FFmpegFileInput fileInput;
+  std::shared_ptr<DsdReader> dsdReader;
+  std::unique_ptr<SacdDstDecoderProvider> dsdDstProvider;
+  int64_t dsdPacketCursor = 0;
   AVIOContext* customIo = nullptr;
   int64_t inputPosition = 0;
 
@@ -310,6 +318,11 @@ struct FFmpegDecoder::Impl {
   AVPacket* packet = nullptr;
   AVFrame* frame = nullptr;
   SwrContext* swr = nullptr;
+#if defined(TAE_HAS_SOXR)
+  soxr_t soxr = nullptr;
+  std::vector<float> soxrInputScratch;
+  std::vector<uint8_t> soxrOutputScratch;
+#endif
   int audioStreamIndex = -1;
   bool inputEof = false;
   bool resamplerFlushed = false;
@@ -327,6 +340,25 @@ struct FFmpegDecoder::Impl {
   std::optional<int64_t> exactInputCursor;
   int64_t exactOutputCursor = 0;
   AVChannelLayout targetLayout{};
+
+  bool resetDsdCodec(const DsdStreamInfo& info, std::string* error) {
+    const auto* codec = avcodec_find_decoder(AV_CODEC_ID_DSD_MSBF);
+    if (!codec) { if (error) *error = "DSD PCM decoder is unavailable"; return false; }
+    auto* next = avcodec_alloc_context3(codec);
+    if (!next) { if (error) *error = "Cannot allocate DSD PCM decoder"; return false; }
+    next->sample_rate = info.dsdSampleRate / ffmpeg::kDsdBitsPerByte;
+    next->pkt_timebase = AVRational{1, next->sample_rate};
+    av_channel_layout_default(&next->ch_layout, info.channelCount);
+    const int result = avcodec_open2(next, codec, nullptr);
+    if (result < 0) {
+      avcodec_free_context(&next);
+      if (error) *error = "Cannot open DSD PCM decoder, code: " + std::to_string(result);
+      return false;
+    }
+    avcodec_free_context(&codecContext);
+    codecContext = next;
+    return true;
+  }
 
   static std::string avError(int code) {
     char buffer[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -382,6 +414,10 @@ struct FFmpegDecoder::Impl {
 
   void close() {
     resamplerEngine = FFmpegDecoder::ResamplerEngine::Unknown;
+#if defined(TAE_HAS_SOXR)
+    if (soxr) soxr_delete(soxr);
+    soxr = nullptr;
+#endif
     if (swr) {
       swr_free(&swr);
     }
@@ -403,6 +439,9 @@ struct FFmpegDecoder::Impl {
       avio_context_free(&customIo);
     }
     std::atomic_store(&customInput, std::shared_ptr<SeekableInput>{});
+    std::atomic_store(&dsdReader, std::shared_ptr<DsdReader>{});
+    dsdDstProvider.reset();
+    dsdPacketCursor = 0;
     fileInput.close();
     audioStreamIndex = -1;
     inputEof = false;
@@ -425,13 +464,15 @@ struct FFmpegDecoder::Impl {
     }
   }
 
-  // Drains whatever the resampler still holds once the decoder has run dry. swr keeps up
-  // to a filter-length of history buffered, so without this the tail of every resampled
-  // track is silently dropped -- and an input shorter than the filter (Ultra uses
-  // filter_size 64) decodes to nothing at all.
+  // Drain the rate converter after codec EOF, including tracks shorter than a
+  // filter. Direct SoX can still hold output after the equal-rate SWR is empty.
   bool flushResampler(std::string* error) {
     if (!swr || !codecContext) return true;
     const int pendingOut = swr_get_out_samples(swr, 0);
+#if defined(TAE_HAS_SOXR)
+    // The equal-rate layout converter can be empty while SoX still has a tail.
+    if (soxr) return convertSamples(nullptr, 0, std::max(1, pendingOut), error);
+#endif
     if (pendingOut <= 0) return true;
     return convertSamples(nullptr, 0, pendingOut, error);
   }
@@ -444,15 +485,18 @@ struct FFmpegDecoder::Impl {
 
     int skip = 0;
     if (exactSeek) {
-      const auto* stream = formatContext->streams[audioStreamIndex];
       const int64_t pts = frame->best_effort_timestamp;
       if (pts == AV_NOPTS_VALUE || codecContext->sample_rate <= 0) {
         if (error) *error = "Precise PCM seek requires frame timestamps";
         return false;
       }
-      const auto origin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
-      int64_t first = av_rescale_q_rnd(pts - origin, stream->time_base,
-          AVRational{1, codecContext->sample_rate}, AV_ROUND_NEAR_INF);
+      int64_t first = pts;
+      if (formatContext && !std::atomic_load(&dsdReader)) {
+        const auto* stream = formatContext->streams[audioStreamIndex];
+        const auto origin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+        first = av_rescale_q_rnd(pts - origin, stream->time_base,
+            AVRational{1, codecContext->sample_rate}, AV_ROUND_NEAR_INF);
+      }
       if (!exactInputCursor) {
         // Some codecs have already removed priming samples without updating
         // the first frame PTS (FFmpeg's skipped-samples warning). At source
@@ -475,9 +519,13 @@ struct FFmpegDecoder::Impl {
       *exactInputCursor = first + frame->nb_samples;
     }
     const int inputSamples = frame->nb_samples - skip;
+    int converterRate = outputFormat.sampleRate;
+#if defined(TAE_HAS_SOXR)
+    if (soxr) converterRate = codecContext->sample_rate;
+#endif
     const int outSamples = static_cast<int>(av_rescale_rnd(
         swr_get_delay(swr, codecContext->sample_rate) + inputSamples,
-        outputFormat.sampleRate,
+        converterRate,
         codecContext->sample_rate,
         AV_ROUND_UP));
     if (outSamples <= 0) return true;
@@ -495,6 +543,21 @@ struct FFmpegDecoder::Impl {
   // inputData == nullptr / inputSamples == 0 flushes the resampler instead of feeding it.
   bool convertSamples(const uint8_t** inputData, int inputSamples, int outSamples, std::string* error) {
     const int channels = std::max(1, outputFormat.channelCount);
+#if defined(TAE_HAS_SOXR)
+    if (soxr) {
+      // SWR only normalizes sample representation/channel layout at source rate.
+      // The sole rate conversion and phase response belong to the direct API.
+      soxrInputScratch.resize(static_cast<size_t>(outSamples) * channels);
+      uint8_t* floats[] = {reinterpret_cast<uint8_t*>(soxrInputScratch.data())};
+      const int converted = swr_convert(swr, floats, outSamples, inputData, inputSamples);
+      if (converted < 0) {
+        if (error) *error = "SoX 输入格式转换失败：" + avError(converted);
+        return false;
+      }
+      if (converted && !convertSoxr(soxrInputScratch.data(), converted, error)) return false;
+      return inputData ? true : convertSoxr(nullptr, 0, error);
+    }
+#endif
     const AVSampleFormat swrOutputFormat = swrSampleFormatFor(outputFormat.sampleFormat);
     const size_t swrBytesPerSample = static_cast<size_t>(std::max(1, av_get_bytes_per_sample(swrOutputFormat)));
     const size_t outputSamples = static_cast<size_t>(outSamples) * static_cast<size_t>(channels);
@@ -524,6 +587,10 @@ struct FFmpegDecoder::Impl {
           outputFormat.sampleFormat,
           &pending);
     }
+    return trimExactOutput(actualSamples, error);
+  }
+
+  bool trimExactOutput(size_t actualSamples, std::string* error) {
     if (exactSeek) {
       if (exactOutputCursor < 0 || static_cast<uint64_t>(exactOutputCursor) > exactTarget) {
         if (error) *error = "Precise PCM seek began beyond the requested frame";
@@ -540,6 +607,34 @@ struct FFmpegDecoder::Impl {
     }
     return true;
   }
+
+#if defined(TAE_HAS_SOXR)
+  bool convertSoxr(const float* input, size_t frames, std::string* error) {
+    constexpr size_t block = 4096;
+    const size_t channels = static_cast<size_t>(std::max(1, outputFormat.channelCount));
+    const size_t sampleBytes = av_get_bytes_per_sample(swrSampleFormatFor(outputFormat.sampleFormat));
+    soxrOutputScratch.resize(block * channels * sampleBytes);
+    size_t consumed = 0, produced = 0;
+    do {
+      size_t used = 0;
+      const auto result = soxr_process(soxr, input ? input + consumed * channels : nullptr,
+          frames - consumed, &used, soxrOutputScratch.data(), block, &produced);
+      if (result) {
+        if (error) *error = std::string("SoX 重采样失败：") + result;
+        return false;
+      }
+      consumed += used;
+      ffmpeg::appendConvertedSamples(soxrOutputScratch.data(), produced * channels,
+          outputFormat.sampleFormat, &pending);
+      if (!trimExactOutput(produced, error)) return false;
+      if (input && !used && !produced && consumed < frames) {
+        if (error) *error = "SoX 重采样未消耗输入";
+        return false;
+      }
+    } while (input ? consumed < frames : produced != 0);
+    return true;
+  }
+#endif
 
   // Runs the resampler drain exactly once per stream, so the EOF exits below cannot loop
   // on a flush that keeps reporting leftovers.
@@ -621,7 +716,29 @@ struct FFmpegDecoder::Impl {
         continue;
       }
 
-      ret = av_read_frame(formatContext, packet);
+      if (auto reader = std::atomic_load(&dsdReader)) {
+        if (interruptIo(this)) return failRead("decode_cancelled", error);
+        ret = av_new_packet(packet, 4096 * codecContext->ch_layout.nb_channels);
+        if (ret < 0) return failRead("Cannot allocate DSD audio packet", error);
+        std::string readError;
+        const auto count = reader->readBytes(packet->data, packet->size, &readError);
+        if (interruptIo(this) || !readError.empty()) {
+          av_packet_unref(packet);
+          return failRead(readError.empty() ? "decode_cancelled" : readError, error);
+        }
+        if (count == 0) { av_packet_unref(packet); inputEof = true; continue; }
+        if (count % codecContext->ch_layout.nb_channels != 0) {
+          av_packet_unref(packet);
+          return failRead("DSD audio packet ends within a channel frame", error);
+        }
+        av_shrink_packet(packet, static_cast<int>(count));
+        packet->stream_index = audioStreamIndex;
+        packet->pts = packet->dts = dsdPacketCursor;
+        packet->duration = count / codecContext->ch_layout.nb_channels;
+        dsdPacketCursor += packet->duration;
+      } else {
+        ret = av_read_frame(formatContext, packet);
+      }
       if (ret < 0) {
         if (ret != AVERROR_EOF) {
           DiagnosticLog::instance().append(DiagLevel::Error, "ffmpeg.read.failed", "read failed",
@@ -703,9 +820,14 @@ void FFmpegDecoder::setInputFactory(std::shared_ptr<const SeekableInputFactory> 
 
 bool FFmpegDecoder::cancelInput() {
   auto input = std::atomic_load(&impl_->customInput);
-  if (!input) return false;
-  input->cancel();
-  return true;
+  if (input) input->cancel();
+#if defined(TAE_HAS_FFMPEG)
+  auto dsd = std::atomic_load(&impl_->dsdReader);
+  const bool dsdCancelled = dsd && dsd->cancelInput();
+  return input != nullptr || dsdCancelled;
+#else
+  return input != nullptr;
+#endif
 }
 
 bool FFmpegDecoder::open(const std::string& source, std::string* error) {
@@ -721,16 +843,57 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   // Every failed open must release its partially allocated IO and decoder.
   const auto cleanup = [](Impl* impl) { impl->close(); };
   std::unique_ptr<Impl, decltype(cleanup)> failedOpen(impl_.get(), cleanup);
-  if (sourceLooksSacdIso(source)) {
-    const SacdIsoEntryProbe probe = probeSacdIsoEntry(source);
-    const SacdDstProviderSelection dstProvider = selectSacdDstProvider(avcodec_find_decoder_by_name(kSacdDstCodecName) != nullptr, nullptr);
-    if (error) {
-      *error = probe.reason.empty() ? kSacdIsoUnsupportedReason : probe.reason;
-      if (!dstProvider.available && !dstProvider.reason.empty()) {
-        *error += "; " + dstProvider.reason;
+  const auto inputSource = parseSacdSource(source).path;
+  if (impl_->inputFactory) std::atomic_store(&impl_->customInput, (*impl_->inputFactory)(inputSource));
+  const auto extension = sacdIsoExtensionOf(inputSource);
+  if (extension == "iso" || extension == "dff" || std::atomic_load(&impl_->customInput)) {
+    SeekableInputStream probeInput;
+    if (auto input = std::atomic_load(&impl_->customInput)) probeInput.open(std::move(input));
+    else probeInput.open(inputSource);
+    std::array<char, 4> magic{};
+    probeInput.read(magic.data(), magic.size());
+    const bool dff = std::memcmp(magic.data(), "FRM8", 4) == 0;
+    if (probeInput.is_open() && (dff || (std::memcmp(magic.data(), "DSD ", 4) != 0 &&
+        probeSacdIsoEntry(source, probeInput).isSacdIso()))) {
+      auto reader = std::make_shared<DsdReader>();
+      std::atomic_store(&impl_->dsdReader, reader);
+      // Keep DST unpacking identical to the typed DSD path. FFmpeg 7.1's DST
+      // uncompressed-frame branch copies packed bytes into a four-byte stride.
+      impl_->dsdDstProvider = createDefaultSacdDstDecoderProvider();
+      reader->setDstDecoderProvider(impl_->dsdDstProvider.get());
+      if (!reader->open(source, probeInput.input(), error)) return false;
+      // DFF retains FFmpeg's tag/ReplayGain demuxing below; only audio packets
+      // come from the shared raw/DST reader. SACD has its own track metadata.
+      if (!dff) {
+        const auto& info = reader->streamInfo();
+        if (!impl_->resetDsdCodec(info, error)) return false;
+        impl_->packet = av_packet_alloc();
+        impl_->frame = av_frame_alloc();
+        if (!impl_->packet || !impl_->frame) {
+          if (error) *error = "Cannot allocate DSD decode buffers";
+          return false;
+        }
+        impl_->audioStreamIndex = 0;
+        auto& stream = impl_->streamInfo;
+        stream.source = source;
+        stream.codec = "sacd_iso";
+        stream.durationSeconds = info.durationSeconds;
+        stream.sourceLossless = stream.isDsd = true;
+        stream.dsdMode = DsdMode::Pcm;
+        stream.dsdRate = info.dsdRate;
+        stream.sourceFormat.sampleRate = info.dsdSampleRate;
+        stream.sourceFormat.channelCount = info.channelCount;
+        stream.sourceFormat.bitDepth = 1;
+        stream.sourceFormat.sampleFormat = AudioSampleFormat::DsdInt8Msb1;
+        auto pcm = stream.sourceFormat;
+        pcm.sampleRate = impl_->codecContext->sample_rate;
+        pcm.sampleFormat = AudioSampleFormat::Float32Interleaved;
+        pcm.bitDepth = 32;
+        if (!setOutputFormat(pcm, error)) return false;
+        failedOpen.release();
+        return true;
       }
     }
-    return false;
   }
 
   // Recovery on decode workers can open concurrently with control-path preload.
@@ -778,7 +941,6 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
       inputFormat = av_find_input_format("wav");
     }
   }
-  if (impl_->inputFactory) std::atomic_store(&impl_->customInput, (*impl_->inputFactory)(source));
   if (std::atomic_load(&impl_->customInput)) {
     auto* buffer = static_cast<unsigned char*>(av_malloc(32768));
     if (!buffer) { av_dict_free(&openOptions); if (error) *error = "Cannot allocate input buffer"; return false; }
@@ -836,28 +998,31 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
         (static_cast<uint64_t>(info[14]) << 24) | (static_cast<uint64_t>(info[15]) << 16) |
         (static_cast<uint64_t>(info[16]) << 8) | info[17];
   }
-  const AVCodec* codec = avcodec_find_decoder(params->codec_id);
+  const auto dsd = std::atomic_load(&impl_->dsdReader);
+  const AVCodec* codec = avcodec_find_decoder(dsd ? AV_CODEC_ID_DSD_MSBF : params->codec_id);
   if (!codec) {
     if (error) *error = "当前音频格式没有可用解码器";
     return false;
   }
 
-  impl_->codecContext = avcodec_alloc_context3(codec);
-  if (!impl_->codecContext) {
-    if (error) *error = "无法分配解码器上下文";
-    return false;
-  }
-
-  ret = avcodec_parameters_to_context(impl_->codecContext, params);
-  if (ret < 0) {
-    if (error) *error = "无法读取解码参数，错误码：" + std::to_string(ret);
-    return false;
-  }
-
-  ret = avcodec_open2(impl_->codecContext, codec, nullptr);
-  if (ret < 0) {
-    if (error) *error = "无法打开解码器，错误码：" + std::to_string(ret);
-    return false;
+  if (dsd) {
+    if (!impl_->resetDsdCodec(dsd->streamInfo(), error)) return false;
+  } else {
+    impl_->codecContext = avcodec_alloc_context3(codec);
+    if (!impl_->codecContext) {
+      if (error) *error = "无法分配解码器上下文";
+      return false;
+    }
+    ret = avcodec_parameters_to_context(impl_->codecContext, params);
+    if (ret < 0) {
+      if (error) *error = "无法读取解码参数，错误码：" + std::to_string(ret);
+      return false;
+    }
+    ret = avcodec_open2(impl_->codecContext, codec, nullptr);
+    if (ret < 0) {
+      if (error) *error = "无法打开解码器，错误码：" + std::to_string(ret);
+      return false;
+    }
   }
 
   impl_->packet = av_packet_alloc();
@@ -875,20 +1040,16 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
                               : (params->bits_per_coded_sample > 0 ? params->bits_per_coded_sample : 0);
   const int decodedBitDepth = sampleBitDepth(impl_->codecContext->sample_fmt);
   const AVCodecDescriptor* descriptor = avcodec_descriptor_get(params->codec_id);
-  const std::string codecName = codec->name ? codec->name : "未知";
+  const std::string codecName = dsd ? avcodec_get_name(params->codec_id) : (codec->name ? codec->name : "未知");
   const std::string containerName =
       impl_->formatContext->iformat
           ? (impl_->formatContext->iformat->long_name ? impl_->formatContext->iformat->long_name
                                                       : (impl_->formatContext->iformat->name ? impl_->formatContext->iformat->name : ""))
           : "";
-  bool wavPackDsd = false;
-  if (!impl_->remoteIo && params->codec_id == AV_CODEC_ID_WAVPACK) {
-    // Read only the local block header; never infer DSD from a high PCM rate.
-    std::array<uint8_t, 32> header{};
-    SharedInputFile input(utf8Path(source), std::ios::binary);
-    input.read(reinterpret_cast<char*>(header.data()), header.size());
-    wavPackDsd = ffmpeg::wavPackHeaderIsDsd(header.data(), static_cast<size_t>(input.gcount()));
-  }
+  const auto sourceInput = std::atomic_load(&impl_->customInput);
+  const auto wavPack = params->codec_id == AV_CODEC_ID_WAVPACK && (!impl_->remoteIo || sourceInput)
+      ? readWavPackSource(source, sourceInput) : std::optional<WavPackSource>{};
+  const bool wavPackDsd = wavPack && wavPack->isDsd;
   const bool sourceDsd = wavPackDsd || codecLooksDsd(params->codec_id, codecName, containerName, extensionOf(source));
   const bool dopCarrier = sourceDsd && (textMentions(codecName, "dop") || textMentions(containerName, "dop"));
   const int reportedSampleRate = params->sample_rate > 0 ? params->sample_rate : impl_->codecContext->sample_rate;
@@ -904,7 +1065,10 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
       params->bit_rate > 0 ? params->bit_rate : impl_->formatContext->bit_rate;
   impl_->streamInfo.sourceFormat.sampleRate = sourceSampleRate;
   impl_->streamInfo.sourceFormat.channelCount = channels;
-  impl_->streamInfo.sourceFormat.bitDepth = sourceDsd ? 1 : (rawBitDepth > 0 ? rawBitDepth : decodedBitDepth);
+  impl_->streamInfo.sourceFormat.channelMask = impl_->codecContext->ch_layout.order == AV_CHANNEL_ORDER_NATIVE
+      ? impl_->codecContext->ch_layout.u.mask : 0;
+  impl_->streamInfo.sourceFormat.bitDepth = wavPack ? wavPack->bitDepth :
+      sourceDsd ? 1 : (rawBitDepth > 0 ? rawBitDepth : decodedBitDepth);
   impl_->streamInfo.sourceFormat.sampleFormat =
       sourceDsd ? AudioSampleFormat::Float32Interleaved : sourceSampleFormat(rawBitDepth, impl_->codecContext->sample_fmt);
   impl_->streamInfo.decodedFormat = impl_->streamInfo.sourceFormat;
@@ -920,6 +1084,9 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   } else if (impl_->formatContext->duration != AV_NOPTS_VALUE) {
     impl_->streamInfo.durationSeconds =
         static_cast<double>(impl_->formatContext->duration) / static_cast<double>(AV_TIME_BASE);
+  }
+  if (wavPack && wavPack->totalSamples > 0 && reportedSampleRate > 0) {
+    impl_->streamInfo.durationSeconds = static_cast<double>(wavPack->totalSamples) / reportedSampleRate;
   }
 
   impl_->refreshStreamTitleFromContext();
@@ -963,19 +1130,50 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
     return false;
   }
 
-  if (impl_->swr) {
-    swr_free(&impl_->swr);
+  // Configure off to the side: an allocation/filter failure must leave the
+  // last working converter, buffered PCM and observed state usable.
+  struct NextConverters {
+    SwrContext* swr = nullptr;
+    AVChannelLayout targetLayout{};
+#if defined(TAE_HAS_SOXR)
+    soxr_t soxr = nullptr;
+#endif
+    ~NextConverters() {
+      if (swr) swr_free(&swr);
+      av_channel_layout_uninit(&targetLayout);
+#if defined(TAE_HAS_SOXR)
+      if (soxr) soxr_delete(soxr);
+#endif
+    }
+  } next;
+  if (format.channelMask != 0) {
+    if (av_channel_layout_from_mask(&next.targetLayout, format.channelMask) < 0 ||
+        next.targetLayout.nb_channels != format.channelCount) {
+      if (error) *error = "请求的声道布局与声道数不一致";
+      return false;
+    }
+  } else {
+    av_channel_layout_default(&next.targetLayout, format.channelCount);
   }
-  av_channel_layout_uninit(&impl_->targetLayout);
-  av_channel_layout_default(&impl_->targetLayout, format.channelCount);
+
+  const bool wantsSoxr = impl_->resamplerQuality == ResamplerQuality::SoxrHq ||
+                         impl_->resamplerQuality == ResamplerQuality::SoxrVhq;
+  const bool minimum = impl_->resamplerPhase == ResamplerPhase::Minimum ||
+                       impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
+  const bool smooth = impl_->resamplerPhase == ResamplerPhase::LinearSmooth ||
+                      impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
+  bool directSoxr = false;
+#if defined(TAE_HAS_SOXR)
+  directSoxr = format.sampleRate != impl_->codecContext->sample_rate && (minimum || wantsSoxr);
+#endif
 
   const auto allocateSwr = [&]() -> int {
-    if (impl_->swr) swr_free(&impl_->swr);
+    if (next.swr) swr_free(&next.swr);
     return swr_alloc_set_opts2(
-        &impl_->swr,
-        &impl_->targetLayout,
-        swrSampleFormatFor(format.sampleFormat),
-        format.sampleRate,
+        &next.swr,
+        &next.targetLayout,
+        directSoxr ? AV_SAMPLE_FMT_FLT : swrSampleFormatFor(format.sampleFormat),
+        directSoxr ? impl_->codecContext->sample_rate : format.sampleRate,
         &impl_->codecContext->ch_layout,
         impl_->codecContext->sample_fmt,
         impl_->codecContext->sample_rate,
@@ -987,45 +1185,44 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
                                impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
     switch (quality) {
       case ResamplerQuality::Ultra:
-        av_opt_set_int(impl_->swr, "filter_size", 128, 0);
-        av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.96, 0);
+        av_opt_set_int(next.swr, "filter_size", 128, 0);
+        av_opt_set_int(next.swr, "phase_shift", 10, 0);
+        av_opt_set_double(next.swr, "cutoff", smoothRolloff ? 0.91 : 0.96, 0);
         break;
       case ResamplerQuality::High:
-        av_opt_set_int(impl_->swr, "filter_size", 64, 0);
-        av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-        av_opt_set_double(impl_->swr, "cutoff", smoothRolloff ? 0.91 : 0.94, 0);
+        av_opt_set_int(next.swr, "filter_size", 64, 0);
+        av_opt_set_int(next.swr, "phase_shift", 10, 0);
+        av_opt_set_double(next.swr, "cutoff", smoothRolloff ? 0.91 : 0.94, 0);
         break;
       case ResamplerQuality::Native:
       default:
-        av_opt_set_int(impl_->swr, "filter_size", 16, 0);
-        av_opt_set_int(impl_->swr, "phase_shift", 8, 0);
-        av_opt_set_double(impl_->swr, "cutoff", 0.90, 0);
+        av_opt_set_int(next.swr, "filter_size", 16, 0);
+        av_opt_set_int(next.swr, "phase_shift", 8, 0);
+        av_opt_set_double(next.swr, "cutoff", 0.90, 0);
         break;
     }
   };
 
   int ret = allocateSwr();
-  if (ret < 0 || !impl_->swr) {
+  if (ret < 0 || !next.swr) {
     if (error) *error = "无法分配解码重采样器";
     return false;
   }
 
-  const bool wantsSoxr = impl_->resamplerQuality == ResamplerQuality::SoxrHq ||
-                         impl_->resamplerQuality == ResamplerQuality::SoxrVhq;
   bool initialized = false;
+#if !defined(TAE_HAS_SOXR)
   if (wantsSoxr && soxrRuntimeAvailability() != SoxrRuntimeState::Unavailable) {
     // Probe the SoX engine at runtime. FFmpeg accepts the "resampler"/"engine"
     // option name even when libsoxr is absent — the failure only shows up at
     // swr_init ("Requested resampling engine is unavailable").
-    const int engineSet = av_opt_set(impl_->swr, "resampler", "soxr", 0);
+    const int engineSet = av_opt_set(next.swr, "resampler", "soxr", 0);
     if (engineSet >= 0) {
       av_opt_set_int(
-          impl_->swr,
+          next.swr,
           "precision",
           impl_->resamplerQuality == ResamplerQuality::SoxrVhq ? 28 : 20,
           0);
-      if (swr_init(impl_->swr) >= 0) {
+      if (swr_init(next.swr) >= 0) {
         initialized = true;
         reportSoxrRuntimeAvailability(true);
       }
@@ -1035,41 +1232,80 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
       // Recreate with the default swr engine; a failed init leaves the
       // context poisoned with the unavailable engine selection.
       ret = allocateSwr();
-      if (ret < 0 || !impl_->swr) {
+      if (ret < 0 || !next.swr) {
         if (error) *error = "无法分配解码重采样器";
         return false;
       }
     }
   }
+#endif
 
   if (!initialized) {
-    // Soxr tiers degrade to the strongest built-in swr settings when the
-    // engine is unavailable, keeping playback honest instead of failing.
+    // Without direct SoX, explicit SoX tiers can fall back to SWR Ultra. In
+    // the direct path this equal-rate SWR only converts layout/representation.
     applySwrQuality(wantsSoxr ? ResamplerQuality::Ultra : impl_->resamplerQuality);
-    ret = swr_init(impl_->swr);
+    ret = swr_init(next.swr);
     if (ret < 0) {
       if (error) *error = "无法初始化解码重采样器，错误码：" + std::to_string(ret);
       return false;
     }
   }
 
+#if defined(TAE_HAS_SOXR)
+  if (directSoxr) {
+    const auto quality = impl_->resamplerQuality;
+    const unsigned recipe = quality == ResamplerQuality::Native ? SOXR_16_BITQ :
+        (quality == ResamplerQuality::Ultra || quality == ResamplerQuality::SoxrVhq) ? SOXR_VHQ : SOXR_HQ;
+    auto specification = soxr_quality_spec(recipe, SOXR_HI_PREC_CLOCK);
+    specification.phase_response = minimum ? 0 : 50;
+    // Native retains a fixed rolloff; the explicit smooth variants start the
+    // transition earlier, independently of the chosen phase response.
+    if (smooth && quality != ResamplerQuality::Native) specification.passband_end = 0.85;
+    const auto outputType = format.sampleFormat == AudioSampleFormat::Int16Interleaved ? SOXR_INT16_I :
+        isTypedIntegerFormat(format.sampleFormat) ? SOXR_INT32_I : SOXR_FLOAT32_I;
+    auto io = soxr_io_spec(SOXR_FLOAT32_I, outputType);
+    io.flags |= SOXR_NO_DITHER; // Dither is owned by the configured output stage.
+    const auto runtime = soxr_runtime_spec(1);
+    soxr_error_t why = nullptr;
+    next.soxr = soxr_create(impl_->codecContext->sample_rate, format.sampleRate,
+        format.channelCount, &why, &io, &specification, &runtime);
+    if (!next.soxr || why) {
+      if (error) *error = std::string("无法初始化 SoX 相位重采样：") + (why ? why : "allocation failed");
+      return false;
+    }
+    reportSoxrRuntimeAvailability(true);
+  }
+#endif
+
+  if (impl_->swr) swr_free(&impl_->swr);
+  impl_->swr = next.swr;
+  next.swr = nullptr;
+  av_channel_layout_uninit(&impl_->targetLayout);
+  impl_->targetLayout = next.targetLayout;
+  next.targetLayout = {};
+#if defined(TAE_HAS_SOXR)
+  if (impl_->soxr) soxr_delete(impl_->soxr);
+  impl_->soxr = next.soxr;
+  next.soxr = nullptr;
+#endif
   impl_->outputFormat = format;
+  impl_->outputFormat.channelMask = impl_->targetLayout.order == AV_CHANNEL_ORDER_NATIVE
+      ? impl_->targetLayout.u.mask : 0;
   if (impl_->outputFormat.bitDepth <= 0) {
     impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
   }
   impl_->streamInfo.decodedFormat = impl_->outputFormat;
-  impl_->effectiveResamplerQuality = wantsSoxr && !initialized ? ResamplerQuality::Ultra : impl_->resamplerQuality;
+  impl_->effectiveResamplerQuality = wantsSoxr && !initialized && !directSoxr ? ResamplerQuality::Ultra : impl_->resamplerQuality;
   impl_->resamplerEngine = format.sampleRate == impl_->codecContext->sample_rate
-      ? ResamplerEngine::None : initialized ? ResamplerEngine::Soxr : ResamplerEngine::Swr;
-  // phase_shift is the polyphase table resolution, not a phase response.
-  // SWR is linear phase; FFmpeg's SoX wrapper also uses the default linear
-  // response. Only the High/Ultra SWR tiers apply our smooth cutoff.
-  const bool smooth = impl_->resamplerPhase == ResamplerPhase::LinearSmooth ||
-                      impl_->resamplerPhase == ResamplerPhase::MinimumSmooth;
-  impl_->effectiveResamplerPhase = !initialized && smooth &&
+      ? ResamplerEngine::None : (initialized || directSoxr) ? ResamplerEngine::Soxr : ResamplerEngine::Swr;
+  // Only direct SoX controls phase_response. SWR (phase_shift is table
+  // resolution) and the legacy FFmpeg SoX wrapper remain linear phase.
+  impl_->effectiveResamplerPhase = directSoxr ?
+      (minimum ? (smooth && impl_->resamplerQuality != ResamplerQuality::Native ? ResamplerPhase::MinimumSmooth : ResamplerPhase::Minimum) :
+                 (smooth ? ResamplerPhase::LinearSmooth : ResamplerPhase::Linear)) : !initialized && smooth &&
       impl_->effectiveResamplerQuality != ResamplerQuality::Native
       ? ResamplerPhase::LinearSmooth : ResamplerPhase::Linear;
-  // A brand new swr context has nothing buffered yet, so the drain has to be re-armed.
+  // New converter contexts have no history; re-arm the one-time EOF drain.
   impl_->resamplerFlushed = false;
   impl_->resetPending();
   return true;
@@ -1169,24 +1405,38 @@ size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
 bool FFmpegDecoder::seek(double seconds, std::string* error) {
   Impl::IoBudget ioBudget(*impl_, std::chrono::seconds(10));
 #if defined(TAE_HAS_FFMPEG)
-  if (!impl_->formatContext || impl_->audioStreamIndex < 0) {
+  auto dsd = std::atomic_load(&impl_->dsdReader);
+  if ((!impl_->formatContext && !dsd) || impl_->audioStreamIndex < 0) {
     if (error) *error = "Audio source is not open";
     return false;
   }
-  AVStream* stream = impl_->formatContext->streams[impl_->audioStreamIndex];
-  const int64_t timestamp = static_cast<int64_t>(seconds / av_q2d(stream->time_base));
-  const int ret = av_seek_frame(impl_->formatContext, impl_->audioStreamIndex, timestamp, AVSEEK_FLAG_BACKWARD);
-  if (ret < 0) {
-    if (error) *error = "音频跳转失败，错误码：" + std::to_string(ret);
-    DiagnosticLog::instance().append(DiagLevel::Error, "ffmpeg.seek.failed", "seek failed", "{\"code\":" + std::to_string(ret) + "}");
-    return false;
+  if (dsd) {
+    if (!dsd->seek(seconds, error) || !impl_->resetDsdCodec(dsd->streamInfo(), error)) return false;
+    impl_->dsdPacketCursor = dsd->streamInfo().container == "DFF"
+        ? static_cast<int64_t>(dsd->byteFramePosition())
+        : static_cast<int64_t>(std::llround(std::max(0.0, seconds) * impl_->codecContext->sample_rate));
+  } else {
+    AVStream* stream = impl_->formatContext->streams[impl_->audioStreamIndex];
+    const int64_t timestamp = static_cast<int64_t>(seconds / av_q2d(stream->time_base));
+    const int ret = av_seek_frame(impl_->formatContext, impl_->audioStreamIndex, timestamp, AVSEEK_FLAG_BACKWARD);
+    if (ret < 0) {
+      if (error) *error = "音频跳转失败，错误码：" + std::to_string(ret);
+      DiagnosticLog::instance().append(DiagLevel::Error, "ffmpeg.seek.failed", "seek failed", "{\"code\":" + std::to_string(ret) + "}");
+      return false;
+    }
+    avcodec_flush_buffers(impl_->codecContext);
   }
-  avcodec_flush_buffers(impl_->codecContext);
   // Decoder flush does not clear swr history from the old playback position.
   if (impl_->swr) {
     swr_close(impl_->swr);
     if (swr_init(impl_->swr) < 0) { if (error) *error = "Unable to reset seek resampler"; return false; }
   }
+#if defined(TAE_HAS_SOXR)
+  if (impl_->soxr) {
+    const auto why = soxr_clear(impl_->soxr);
+    if (why) { if (error) *error = std::string("Unable to reset seek SoX resampler: ") + why; return false; }
+  }
+#endif
   impl_->inputEof = false;
   impl_->resamplerFlushed = false;
   impl_->eof = false;
@@ -1209,12 +1459,16 @@ bool FFmpegDecoder::seek(double seconds, std::string* error) {
 bool FFmpegDecoder::seekOutputFrame(uint64_t frame, std::string* error) {
   Impl::IoBudget ioBudget(*impl_, std::chrono::seconds(10));
 #if defined(TAE_HAS_FFMPEG)
-  if (!impl_->formatContext || !impl_->swr || impl_->outputFormat.sampleRate <= 0 ||
+  const auto dsd = std::atomic_load(&impl_->dsdReader);
+  if ((!impl_->formatContext && !dsd) || !impl_->swr || impl_->outputFormat.sampleRate <= 0 ||
       frame >= static_cast<uint64_t>(INT64_MAX)) return false;
   // One second supplies codec and resampler history, bounded independent of
   // song duration. The final trim is in integer output frames, not seconds.
   const auto rate = static_cast<uint64_t>(impl_->outputFormat.sampleRate);
-  const auto preroll = frame > rate ? frame - rate : 0;
+  // DFF supplies its exact decoded-byte cursor. Scarletbook's ordinary seek
+  // is sector-based, so exact consumers establish the sample grid from the
+  // selected track's beginning rather than inventing a sector timestamp.
+  const auto preroll = dsd && dsd->streamInfo().container != "DFF" ? 0 : frame > rate ? frame - rate : 0;
   if (!seek(static_cast<double>(preroll) / rate, error)) return false;
   impl_->exactSeek = true;
   impl_->exactFromStart = preroll == 0;

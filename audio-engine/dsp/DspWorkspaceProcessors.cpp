@@ -1,12 +1,13 @@
 #include "DspWorkspaceProcessors.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <numbers>
 
 #if defined(TAE_HAS_EBUR128)
-#include <ebur128.h>
+#include "../analysis/Ebur128ChannelLayout.h"
 #endif
 
 namespace twilight::audio {
@@ -92,32 +93,6 @@ bool appliesToChannel(uint32_t channelMask, int channel) {
   return (channelMask & (uint32_t{1} << std::min(channel, 31))) != 0;
 }
 
-// Polyphase cubic interpolation uses four fixed FIR taps per phase. It is shared by
-// the limiter and meter so their true-peak readings always agree.
-constexpr std::array<std::array<double, 4>, 4> kTruePeakFir4x = {{
-    {{0.0, 1.0, 0.0, 0.0}},
-    {{-0.0546875, 0.8203125, 0.2734375, -0.0390625}},
-    {{-0.0625, 0.5625, 0.5625, -0.0625}},
-    {{-0.0390625, 0.2734375, 0.8203125, -0.0546875}},
-}};
-
-double addTruePeakSample(std::array<float, 4>& history, uint8_t& count, float sample) {
-  history[0] = history[1];
-  history[1] = history[2];
-  history[2] = history[3];
-  history[3] = std::isfinite(sample) ? sample : 0.0f;
-  count = std::min<uint8_t>(4, static_cast<uint8_t>(count + 1));
-
-  double peak = std::abs(static_cast<double>(history[3]));
-  if (count < 4) return peak;
-  for (const auto& phase : kTruePeakFir4x) {
-    double interpolated = 0.0;
-    for (size_t tap = 0; tap < phase.size(); ++tap) interpolated += phase[tap] * history[tap];
-    peak = std::max(peak, std::abs(interpolated));
-  }
-  return peak;
-}
-
 #if defined(TAE_HAS_EBUR128)
 void destroyEburState(void*& state) {
   auto* ebur = static_cast<ebur128_state*>(state);
@@ -132,10 +107,12 @@ void createEburState(void*& state, const AudioFormat& format, bool active) {
   // the audio thread for every gated block throughout an unbounded session.
   constexpr int kMeterModes = EBUR128_MODE_I | EBUR128_MODE_LRA | EBUR128_MODE_M |
       EBUR128_MODE_S | EBUR128_MODE_HISTOGRAM;
-  state = ebur128_init(
+  auto* ebur = ebur128_init(
       static_cast<unsigned int>(std::clamp(format.channelCount, 1, 8)),
       static_cast<unsigned long>(format.sampleRate),
       kMeterModes);
+  if (ebur) applyEbur128ChannelLayout(ebur, format.channelMask);
+  state = ebur;
 }
 #else
 void destroyEburState(void*& state) {
@@ -280,7 +257,12 @@ void BassManagementProcessor::prepare(const AudioFormat& format) {
 }
 
 void BassManagementProcessor::rebuild() {
-  active_ = config_.enabled && config_.bassManagementEnabled && format_.sampleRate > 0 && format_.channelCount >= 3;
+  const int channels = std::clamp(format_.channelCount, 1, 8);
+  constexpr uint64_t lfeBit = uint64_t{1} << 3;
+  lfeChannel_ = format_.channelMask == 0 ? (channels >= 6 ? 3 : channels - 1) :
+      (format_.channelMask & lfeBit) != 0 ? std::popcount(format_.channelMask & (lfeBit - 1)) : -1;
+  active_ = config_.enabled && config_.bassManagementEnabled && format_.sampleRate > 0 &&
+            format_.channelCount >= 3 && lfeChannel_ >= 0;
   if (!active_) return;
   lowpass_ = makeButterworth(format_.sampleRate, config_.bassCrossoverHz, false);
   highpass_ = makeButterworth(format_.sampleRate, config_.bassCrossoverHz, true);
@@ -291,12 +273,11 @@ void BassManagementProcessor::rebuild() {
 void BassManagementProcessor::process(float* samples, size_t frameCount) {
   if (!active_ || !samples) return;
   const int channels = std::clamp(format_.channelCount, 1, 8);
-  const int lfeChannel = channels >= 6 ? 3 : channels - 1;
   for (size_t frame = 0; frame < frameCount; ++frame) {
     float* current = samples + frame * static_cast<size_t>(channels);
     double redirected = 0.0;
     for (int channel = 0; channel < channels; ++channel) {
-      if (channel == lfeChannel) continue;
+      if (channel == lfeChannel_) continue;
       float low = current[channel];
       float high = current[channel];
       for (size_t stage = 0; stage < 2; ++stage) {
@@ -307,7 +288,7 @@ void BassManagementProcessor::process(float* samples, size_t frameCount) {
       redirected += low;
     }
     if (config_.bassRedirectLfe) {
-      current[lfeChannel] = static_cast<float>(std::clamp((current[lfeChannel] + redirected) * lfeGain_, -8.0, 8.0));
+      current[lfeChannel_] = static_cast<float>(std::clamp((current[lfeChannel_] + redirected) * lfeGain_, -8.0, 8.0));
     }
   }
 }
@@ -318,9 +299,14 @@ void BassManagementProcessor::reset() {
 }
 
 float DynamicEqProcessor::State::process(float input, const Biquad& filter) {
-  const double output = filter.b0 * input + z1;
-  z1 = filter.b1 * input - filter.a1 * output + z2;
-  z2 = filter.b2 * input - filter.a2 * output;
+  // Direct-form-I expressed as y = x + correction. These histories do not
+  // contain old coefficients when gain changes. Subtracting the identity
+  // coefficients first also keeps a zero-gain peak filter exactly transparent.
+  const double correction = (filter.b0 - 1.0) * input + (filter.b1 - filter.a1) * x1 +
+      (filter.b2 - filter.a2) * x2 - filter.a1 * correction1 - filter.a2 * correction2;
+  const double output = input + correction;
+  x2 = x1; x1 = input;
+  correction2 = correction1; correction1 = correction;
   if (!std::isfinite(output)) {
     reset();
     return 0.0f;
@@ -329,8 +315,7 @@ float DynamicEqProcessor::State::process(float input, const Biquad& filter) {
 }
 
 void DynamicEqProcessor::State::reset() {
-  z1 = 0.0;
-  z2 = 0.0;
+  x1 = x2 = correction1 = correction2 = 0.0;
 }
 
 void DynamicEqProcessor::configure(const DspConfig& config) {
@@ -473,6 +458,12 @@ void MultibandCompressorProcessor::rebuild() {
     previousCrossover = frequency;
     lowpass_[crossover] = makeDspBiquad<Biquad>(DspFilterType::LowPass, format_.sampleRate, frequency, 0.0, std::sqrt(0.5));
     highpass_[crossover] = makeDspBiquad<Biquad>(DspFilterType::HighPass, format_.sampleRate, frequency, 0.0, std::sqrt(0.5));
+    if (crossover > 0) {
+      // LP4 + HP4 is a second-order all-pass. Earlier bands must acquire
+      // the same phase rotation as the residual split at this crossover.
+      phaseCorrection_[crossover - 1] = makeDspBiquad<Biquad>(
+          DspFilterType::AllPass, format_.sampleRate, frequency, 0.0, std::sqrt(0.5));
+    }
   }
 
   bool anyBandEnabled = false;
@@ -503,6 +494,11 @@ void MultibandCompressorProcessor::process(float* samples, size_t frameCount) {
     for (int channel = 0; channel < channels; ++channel) {
       float residual = current[channel];
       for (size_t crossover = 0; crossover + 1 < bandCount_; ++crossover) {
+        for (size_t earlier = 0; earlier < crossover; ++earlier) {
+          auto& value = frameBands_[static_cast<size_t>(channel)][earlier];
+          value = phaseCorrectionState_[crossover - 1][earlier][static_cast<size_t>(channel)].process(
+              value, phaseCorrection_[crossover - 1]);
+        }
         float low = residual;
         float high = residual;
         for (size_t stage = 0; stage < 2; ++stage) {
@@ -549,6 +545,7 @@ void MultibandCompressorProcessor::process(float* samples, size_t frameCount) {
 void MultibandCompressorProcessor::reset() {
   for (auto& crossover : lowpassState_) for (auto& channel : crossover) for (State& state : channel) state.reset();
   for (auto& crossover : highpassState_) for (auto& channel : crossover) for (State& state : channel) state.reset();
+  for (auto& crossover : phaseCorrectionState_) for (auto& band : crossover) for (State& state : band) state.reset();
   envelope_.fill(0.0);
   gain_.fill(1.0);
 }
@@ -662,14 +659,17 @@ void DynamicsProcessor::configure(const DspConfig& config) {
   ratio_ = std::clamp(config_.compressorRatio, 1.0, 20.0);
 
   if (mode_ == DynamicsMode::TruePeakLimiter && active_) {
+    for (auto& detector : truePeakDetectors_) detector.prepare(format_.sampleRate);
     lookaheadFrames_ = static_cast<size_t>(std::round(
         std::clamp(config_.truePeakLookaheadMs, 0.1, 20.0) * static_cast<double>(format_.sampleRate) / 1000.0));
-    lookaheadFrames_ = std::max<size_t>(1, lookaheadFrames_);
+    lookaheadFrames_ = std::max(truePeakDetectors_[0].requiredLookaheadFrames(), lookaheadFrames_);
     const size_t ringFrames = lookaheadFrames_ + 1;
     lookaheadBuffer_.assign(ringFrames * static_cast<size_t>(std::clamp(format_.channelCount, 1, 8)), 0.0f);
+    peakWindow_.resize(ringFrames + truePeakDetectors_[0].requiredLookaheadFrames());
   } else {
     lookaheadFrames_ = 0;
     lookaheadBuffer_.clear();
+    peakWindow_.clear();
   }
   reset();
 }
@@ -685,15 +685,29 @@ void DynamicsProcessor::process(float* samples, size_t frameCount) {
   if (mode_ == DynamicsMode::TruePeakLimiter) {
     if (lookaheadBuffer_.empty()) return;
     const size_t ringFrames = lookaheadFrames_ + 1;
+    const size_t peakWindowFrames = peakWindow_.size();
     for (size_t frame = 0; frame < frameCount; ++frame) {
       float* current = samples + frame * static_cast<size_t>(channels);
       double truePeak = 0.0;
       for (int channel = 0; channel < channels; ++channel) {
         const size_t channelIndex = static_cast<size_t>(channel);
         lookaheadBuffer_[lookaheadWriteFrame_ * static_cast<size_t>(channels) + channelIndex] = current[channel];
-        truePeak = std::max(truePeak, addTruePeakSample(
-            truePeakHistory_[channelIndex], truePeakHistoryCount_[channelIndex], current[channel]));
+        truePeak = std::max(truePeak, truePeakDetectors_[channelIndex].add(current[channel]));
       }
+      // Hold through the audio delay and reconstruction tail before releasing:
+      // changing gain within the FIR support can regenerate intersample peaks.
+      // The monotonic queue is preallocated and O(1) amortized.
+      while (peakWindowSize_ > 0 && peakWindow_[peakWindowHead_].frame + peakWindowFrames <= peakFrame_) {
+        peakWindowHead_ = (peakWindowHead_ + 1) % peakWindowFrames;
+        --peakWindowSize_;
+      }
+      while (peakWindowSize_ > 0 &&
+             peakWindow_[(peakWindowHead_ + peakWindowSize_ - 1) % peakWindowFrames].peak <= truePeak) {
+        --peakWindowSize_;
+      }
+      peakWindow_[(peakWindowHead_ + peakWindowSize_) % peakWindowFrames] = {peakFrame_++, truePeak};
+      ++peakWindowSize_;
+      truePeak = peakWindow_[peakWindowHead_].peak;
       const double target = truePeak > ceilingLinear_ && truePeak > 1.0e-12 ? ceilingLinear_ / truePeak : 1.0;
       if (target < gain_) {
         const double smoothed = attackCoefficient_ * gain_ + (1.0 - attackCoefficient_) * target;
@@ -741,8 +755,9 @@ void DynamicsProcessor::process(float* samples, size_t frameCount) {
 void DynamicsProcessor::reset() {
   envelope_ = 0.0;
   gain_ = 1.0;
-  for (auto& history : truePeakHistory_) history.fill(0.0f);
-  truePeakHistoryCount_.fill(0);
+  for (auto& detector : truePeakDetectors_) detector.reset();
+  peakWindowHead_ = peakWindowSize_ = 0;
+  peakFrame_ = 0;
   std::fill(lookaheadBuffer_.begin(), lookaheadBuffer_.end(), 0.0f);
   lookaheadWriteFrame_ = 0;
 }
@@ -759,6 +774,7 @@ void LoudnessMeterProcessor::configure(const DspConfig& config) {
 
 void LoudnessMeterProcessor::prepare(const AudioFormat& format) {
   format_ = format;
+  for (auto& detector : truePeakDetectors_) detector.prepare(format_.sampleRate);
   active_ = config_.enabled && config_.meterEnabled && format_.sampleRate > 0 && format_.channelCount > 0;
   reset();
 }
@@ -778,8 +794,7 @@ void LoudnessMeterProcessor::process(float* samples, size_t frameCount) {
       const double sample = std::isfinite(value) ? static_cast<double>(value) : 0.0;
       frameEnergy += sample * sample;
       sumSquares_ += sample * sample;
-      truePeak_ = std::max(truePeak_, addTruePeakSample(
-          truePeakHistory_[static_cast<size_t>(channel)], truePeakHistoryCount_[static_cast<size_t>(channel)], value));
+      truePeak_ = std::max(truePeak_, truePeakDetectors_[static_cast<size_t>(channel)].add(value));
       if (std::abs(sample) > 1.0) ++clipCount_;
       ++sampleCount_;
     }
@@ -810,8 +825,7 @@ void LoudnessMeterProcessor::reset() {
   sumSquares_ = 0.0;
   sampleCount_ = 0;
   truePeak_ = 0.0;
-  for (auto& history : truePeakHistory_) history.fill(0.0f);
-  truePeakHistoryCount_.fill(0);
+  for (auto& detector : truePeakDetectors_) detector.reset();
   momentaryEnergy_ = 0.0;
   shortTermEnergy_ = 0.0;
   momentaryCoefficient_ = coefficientForMs(400.0, format_.sampleRate);
@@ -833,7 +847,7 @@ double LoudnessMeterProcessor::integratedLufs() const {
 #if defined(TAE_HAS_EBUR128)
   if (auto* ebur = static_cast<ebur128_state*>(eburState_)) {
     double value = 0.0;
-    if (ebur128_loudness_global(ebur, &value) == 0 && std::isfinite(value)) return value;
+    if (ebur128_loudness_global(ebur, &value) == EBUR128_SUCCESS) return value;
   }
 #endif
   if (sampleCount_ == 0 || sumSquares_ <= 1.0e-15) return -std::numeric_limits<double>::infinity();
@@ -844,7 +858,7 @@ double LoudnessMeterProcessor::momentaryLufs() const {
 #if defined(TAE_HAS_EBUR128)
   if (auto* ebur = static_cast<ebur128_state*>(eburState_)) {
     double value = 0.0;
-    if (ebur128_loudness_momentary(ebur, &value) == 0 && std::isfinite(value)) return value;
+    if (ebur128_loudness_momentary(ebur, &value) == EBUR128_SUCCESS) return value;
   }
 #endif
   return momentaryLufs_;
@@ -854,7 +868,7 @@ double LoudnessMeterProcessor::shortTermLufs() const {
 #if defined(TAE_HAS_EBUR128)
   if (auto* ebur = static_cast<ebur128_state*>(eburState_)) {
     double value = 0.0;
-    if (ebur128_loudness_shortterm(ebur, &value) == 0 && std::isfinite(value)) return value;
+    if (ebur128_loudness_shortterm(ebur, &value) == EBUR128_SUCCESS) return value;
   }
 #endif
   return shortTermLufs_;

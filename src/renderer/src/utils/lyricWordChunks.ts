@@ -45,6 +45,9 @@ export type LyricWordChunk = LyricWhitespaceChunk | LyricSingleWordChunk | Lyric
  * (U+AC00 and above) does not.
  */
 const CJK_EXP = /^[\p{Unified_Ideograph}\u0800-\u9FFC]+$/u
+const CONTAINS_CJK_EXP = /[\p{Unified_Ideograph}\u0800-\u9FFC]/u
+const OPENING_PUNCTUATION_EXP = /^[（「『【《〈〔“‘([<{]+$/u
+const CLOSING_PUNCTUATION_EXP = /^[、。，！？；：）」』】》〉〕”’～…—.!?,;:)\]]+$/u
 
 /** At most one run of non-space characters. */
 const SINGLE_WORD_RUN = /^\s*[^\s]*\s*$/
@@ -159,10 +162,22 @@ export function chunkAndSplitLyricWords(words: readonly ResolvedLyricWord[]): Ly
       continue
     }
 
+    if (group.length > 0 && CLOSING_PUNCTUATION_EXP.test(word.text)) {
+      group.push(word)
+      continue
+    }
+
+    const attachedToOpeningPunctuation =
+      group.length > 0 && group.every((entry) => OPENING_PUNCTUATION_EXP.test(entry.text))
+
     group.push(word)
     const joined = group.map((entry) => entry.text).join('')
-    // A second non-space run means a boundary was crossed; CJK always breaks.
-    if (!SINGLE_WORD_RUN.test(joined) || isCJK(word.text)) {
+    // A second non-space run means a boundary was crossed; CJK always breaks
+    // unless it is attaching to leading opening punctuation.
+    if (
+      !SINGLE_WORD_RUN.test(joined) ||
+      (!attachedToOpeningPunctuation && (isCJK(word.text) || CONTAINS_CJK_EXP.test(word.text)))
+    ) {
       group.pop()
       flush()
       group = [word]

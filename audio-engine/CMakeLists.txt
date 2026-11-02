@@ -9,8 +9,10 @@ option(TAE_ENABLE_ASIO "Enable the Windows x64 ASIO compatibility backend" ON)
 option(TAE_ENABLE_COREAUDIO "Enable the macOS CoreAudio backend" ON)
 option(TAE_ENABLE_ALSA "Enable the Linux ALSA backend" ON)
 option(TAE_ENABLE_OBOE "Enable Android Oboe output backend" OFF)
+option(TAE_ENABLE_USB_DIRECT "Enable Android USB Host direct PCM output" ON)
 option(TAE_ENABLE_IOS_AUDIOUNIT "Enable iOS AudioUnit output backend" OFF)
 option(TAE_ENABLE_MINIAUDIO "Enable the miniaudio Shared/default PCM provider PoC" OFF)
+option(TAE_ENABLE_SOXR "Build the direct SoX resampler with phase control" ON)
 
 if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(TAE_BUILD_NAPI OFF CACHE BOOL "Build the Node-API bridge" FORCE)
@@ -88,6 +90,15 @@ if(NOT WIN32 AND TAE_ENABLE_MINIAUDIO)
   message(WARNING "miniaudio PoC is currently limited to Windows WASAPI Shared/default PCM builds.")
 endif()
 
+set(TAE_DSD_READER_SOURCES
+  decoder/DsdReader.cpp
+  decoder/DstDecoder.cpp
+  decoder/SacdDstDecoderProvider.cpp
+  decoder/vendor/dstdec/dstdec.cpp
+  decoder/SacdIsoDemuxer.cpp
+  decoder/ScarletbookToc.cpp
+)
+
 set(TAE_ENGINE_SOURCES
   core/AudioBuffer.cpp
   core/AudioPipeline.cpp
@@ -97,15 +108,11 @@ set(TAE_ENGINE_SOURCES
   core/TwilightAudioEngine.cpp
   analysis/BpmAnalyzer.cpp
   analysis/LoudnessAnalyzer.cpp
+  media/PcmSegmentRenderer.cpp
   automix-native/AutoMixAdapter.cpp
   decoder/DopPacker.cpp
-  decoder/DsdReader.cpp
-  decoder/DstDecoder.cpp
-  decoder/SacdDstDecoderProvider.cpp
-  decoder/vendor/dstdec/dstdec.cpp
+  ${TAE_DSD_READER_SOURCES}
   decoder/FFmpegDecoder.cpp
-  decoder/SacdIsoDemuxer.cpp
-  decoder/ScarletbookToc.cpp
   devices/DeviceCatalog.cpp
   devices/DeviceManager.cpp
   dsp/ChannelRouter.cpp
@@ -123,6 +130,8 @@ set(TAE_ENGINE_SOURCES
   dsp/WsolaResampler.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
+  output/bridge/BridgeReceiver.cpp
+  output/bridge/BridgeApi.cpp
   playlist/QueueManager.cpp
   plugins/PluginRegistry.cpp
   utils/StringUtils.cpp
@@ -149,9 +158,18 @@ target_link_libraries(twilight_audio_engine PRIVATE ${CMAKE_DL_LIBS})
 if(UNIX AND NOT APPLE)
   target_link_options(twilight_audio_engine PRIVATE "-Wl,-Bsymbolic")
 endif()
+if(MINGW)
+  target_link_options(twilight_audio_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-Wl,--strip-debug>")
+endif()
 
-find_path(EBUR128_INCLUDE_DIR ebur128.h)
-find_library(EBUR128_LIBRARY NAMES ebur128 libebur128)
+if(ANDROID)
+  add_subdirectory(third_party/ebur128)
+  set(EBUR128_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ebur128/upstream/ebur128")
+  set(EBUR128_LIBRARY twilight_ebur128)
+else()
+  find_path(EBUR128_INCLUDE_DIR ebur128.h)
+  find_library(EBUR128_LIBRARY NAMES ebur128 libebur128)
+endif()
 set(TAE_EBUR128_AVAILABLE OFF)
 if(EBUR128_INCLUDE_DIR AND EBUR128_LIBRARY)
   set(TAE_EBUR128_AVAILABLE ON)
@@ -198,6 +216,12 @@ if(NOT FFMPEG_FOUND)
 endif()
 
 set(TAE_FFMPEG_EXTRA_LIBS)
+if(FFMPEG_FOUND AND TAE_ENABLE_SOXR)
+  add_subdirectory(third_party/soxr)
+  list(APPEND TAE_FFMPEG_EXTRA_LIBS twilight_soxr)
+  # The separately replaceable library is staged beside the engine on Linux.
+  set_target_properties(twilight_audio_engine PROPERTIES BUILD_RPATH_USE_ORIGIN ON)
+endif()
 if(WIN32)
   list(APPEND TAE_FFMPEG_EXTRA_LIBS ws2_32 secur32 ncrypt crypt32 bcrypt user32 atomic)
 elseif(UNIX AND NOT APPLE)
@@ -291,6 +315,16 @@ if(TAE_OBOE_AVAILABLE)
   endif()
 endif()
 
+if(ANDROID AND TAE_ENABLE_USB_DIRECT)
+  add_subdirectory(third_party/libusb)
+  target_sources(twilight_audio_engine PRIVATE
+    output/usb/LibusbOutputBackend.cpp
+    output/usb/UsbPacketScheduler.cpp
+  )
+  target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_USB_DIRECT=1)
+  target_link_libraries(twilight_audio_engine PRIVATE twilight_usb)
+endif()
+
 if(TAE_IOS_AUDIOUNIT_AVAILABLE)
   target_sources(twilight_audio_engine PRIVATE
     output/ios/IosAudioUnitBackend.cpp
@@ -325,6 +359,8 @@ if(TAE_BUILD_NAPI)
   )
   if(APPLE)
     target_link_options(twilight_audio_node PRIVATE "-undefined" "dynamic_lookup")
+  elseif(MINGW)
+    target_link_options(twilight_audio_node PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-Wl,--strip-debug>")
   endif()
 
   if(NOT TAE_NODE_INCLUDE_DIR)
@@ -364,6 +400,9 @@ message(STATUS "  Node-API: ${TAE_BUILD_NAPI}")
 
 if(TAE_BUILD_TESTS)
   enable_testing()
+  add_executable(twilight_usb_transport_tests
+    tests/usb_transport_tests.cpp output/usb/UsbPacketScheduler.cpp core/AudioTypes.cpp)
+  add_test(NAME twilight_usb_transport_unit COMMAND twilight_usb_transport_tests)
   add_executable(twilight_audio_tests tests/engine_smoke.cpp)
   target_link_libraries(twilight_audio_tests PRIVATE twilight_audio_engine)
   add_test(NAME twilight_audio_engine_smoke COMMAND twilight_audio_tests)
@@ -392,6 +431,63 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_dsp_tests PRIVATE ${EBUR128_LIBRARY})
   endif()
   add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
+  # Exercise the exact source-built dependency Android uses, even on hosts with
+  # a different (or missing) system libebur128 installation.
+  if(NOT TARGET twilight_ebur128)
+    add_subdirectory(third_party/ebur128)
+  endif()
+  add_executable(twilight_android_loudness_tests tests/loudness_meter_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_android_loudness_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_android_loudness_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_android_loudness_unit COMMAND twilight_android_loudness_tests)
+  if(FFMPEG_FOUND AND TAE_EBUR128_AVAILABLE)
+    add_executable(twilight_loudness_layout_tests tests/loudness_layout_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+    target_compile_definitions(twilight_loudness_layout_tests PRIVATE TAE_HAS_EBUR128=1)
+    target_link_libraries(twilight_loudness_layout_tests PRIVATE twilight_audio_engine twilight_ebur128)
+    add_test(NAME twilight_loudness_layout_unit COMMAND twilight_loudness_layout_tests)
+  endif()
+  add_executable(twilight_true_peak_tests tests/true_peak_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_true_peak_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_true_peak_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_true_peak_unit COMMAND twilight_true_peak_tests)
+  if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_definitions(twilight_true_peak_tests PRIVATE TAE_TEST_WRAP_ALLOCATORS=1)
+    target_link_options(twilight_true_peak_tests PRIVATE "-Wl,--wrap=malloc,--wrap=calloc,--wrap=free")
+  endif()
+  add_test(NAME twilight_true_peak_realtime_unit COMMAND twilight_true_peak_tests --realtime)
+  add_executable(twilight_audio_monitor_tests tests/audio_monitor_tests.cpp
+    dsp/FftSpectrumAnalyzer.cpp dsp/KissFftAdapter.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_audio_monitor_tests PRIVATE TAE_HAS_EBUR128=1 TAE_TEST_PEAK_BANDS=1)
+  target_link_libraries(twilight_audio_monitor_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_audio_monitor_unit COMMAND twilight_audio_monitor_tests)
+  add_executable(twilight_dynamics_response_tests tests/dynamics_response_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_dynamics_response_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_dynamics_response_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_dynamics_response_unit COMMAND twilight_dynamics_response_tests)
+  add_executable(twilight_spatial_response_tests tests/spatial_response_tests.cpp
+    dsp/DspWorkspaceProcessors.cpp dsp/CrossfeedProcessor.cpp third_party/bs2b/upstream/bs2b.c)
+  target_compile_definitions(twilight_spatial_response_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_spatial_response_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_spatial_response_unit COMMAND twilight_spatial_response_tests)
+  add_executable(twilight_crossfeed_response_tests tests/crossfeed_response_tests.cpp
+    dsp/CrossfeedProcessor.cpp third_party/bs2b/upstream/bs2b.c)
+  if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_definitions(twilight_crossfeed_response_tests PRIVATE TAE_TEST_WRAP_ALLOCATORS=1)
+    target_link_options(twilight_crossfeed_response_tests PRIVATE "-Wl,--wrap=malloc,--wrap=calloc,--wrap=free")
+  endif()
+  add_test(NAME twilight_crossfeed_response_unit COMMAND twilight_crossfeed_response_tests)
+  add_executable(twilight_double_bridge_tests tests/double_bridge_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_double_bridge_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_double_bridge_tests PRIVATE twilight_ebur128)
+  add_test(NAME twilight_double_bridge_unit COMMAND twilight_double_bridge_tests)
+  add_executable(twilight_android_loudness_realtime_tests tests/loudness_realtime_tests.cpp dsp/DspWorkspaceProcessors.cpp)
+  target_compile_definitions(twilight_android_loudness_realtime_tests PRIVATE TAE_HAS_EBUR128=1)
+  target_link_libraries(twilight_android_loudness_realtime_tests PRIVATE twilight_ebur128)
+  if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_definitions(twilight_android_loudness_realtime_tests PRIVATE TAE_TEST_WRAP_ALLOCATORS=1)
+    target_link_options(twilight_android_loudness_realtime_tests PRIVATE "-Wl,--wrap=malloc,--wrap=calloc,--wrap=free")
+  endif()
+  add_test(NAME twilight_android_loudness_realtime_unit COMMAND twilight_android_loudness_realtime_tests)
   add_executable(twilight_convolver_tests tests/convolver_tests.cpp dsp/ConvolverProcessor.cpp dsp/KissFftAdapter.cpp)
   target_include_directories(twilight_convolver_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_convolver_unit COMMAND twilight_convolver_tests)
@@ -490,6 +586,7 @@ if(TAE_BUILD_TESTS)
 
   add_executable(twilight_metadata_tests
     metadata/metadata_tests.cpp
+    tests/AudioFixtureLibrary.cpp
     metadata/AudioMetadataService.cpp
     decoder/SacdIsoDemuxer.cpp
     decoder/ScarletbookToc.cpp
@@ -517,6 +614,7 @@ if(TAE_BUILD_TESTS)
     tests/ffmpeg_decoder_tests.cpp
     tests/AudioFixtureLibrary.cpp
     decoder/FFmpegDecoder.cpp
+    ${TAE_DSD_READER_SOURCES}
     core/DiagnosticLog.cpp
     core/AudioTypes.cpp
   )
@@ -529,13 +627,44 @@ if(TAE_BUILD_TESTS)
   add_test(NAME twilight_ffmpeg_decoder_unit COMMAND twilight_ffmpeg_decoder_tests)
 
   if(FFMPEG_FOUND)
+    add_executable(twilight_channel_layout_tests
+      tests/channel_layout_tests.cpp dsp/DspWorkspaceProcessors.cpp decoder/FFmpegDecoder.cpp
+      ${TAE_DSD_READER_SOURCES} core/DiagnosticLog.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_channel_layout_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_channel_layout_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_channel_layout_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_channel_layout_unit COMMAND twilight_channel_layout_tests)
+    add_executable(twilight_pcm_segment_tests
+      tests/pcm_segment_tests.cpp media/PcmSegmentRenderer.cpp decoder/FFmpegDecoder.cpp
+      ${TAE_DSD_READER_SOURCES} core/DiagnosticLog.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_pcm_segment_tests PRIVATE TAE_HAS_FFMPEG=1 TAE_BUILDING_LIBRARY=1)
+    target_include_directories(twilight_pcm_segment_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_pcm_segment_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_pcm_segment_unit COMMAND twilight_pcm_segment_tests)
     add_executable(twilight_resampler_response_tests
       tests/resampler_response_tests.cpp decoder/FFmpegDecoder.cpp
+      ${TAE_DSD_READER_SOURCES}
       core/DiagnosticLog.cpp core/AudioTypes.cpp)
     target_compile_definitions(twilight_resampler_response_tests PRIVATE TAE_HAS_FFMPEG=1)
     target_include_directories(twilight_resampler_response_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
     target_link_libraries(twilight_resampler_response_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
     add_test(NAME twilight_resampler_response_unit COMMAND twilight_resampler_response_tests)
+    add_executable(twilight_usb_pcm_decoder_tests
+      tests/usb_pcm_decoder_tests.cpp decoder/FFmpegDecoder.cpp
+      ${TAE_DSD_READER_SOURCES}
+      core/DiagnosticLog.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_usb_pcm_decoder_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_usb_pcm_decoder_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_usb_pcm_decoder_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_usb_pcm_decoder_unit COMMAND twilight_usb_pcm_decoder_tests)
+    add_executable(twilight_convolver_format_tests
+      tests/convolver_format_tests.cpp dsp/ConvolverProcessor.cpp dsp/KissFftAdapter.cpp
+      decoder/FFmpegDecoder.cpp ${TAE_DSD_READER_SOURCES}
+      core/DiagnosticLog.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_convolver_format_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_convolver_format_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_convolver_format_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_convolver_format_unit COMMAND twilight_convolver_format_tests "${CMAKE_CURRENT_BINARY_DIR}")
   endif()
 
   add_executable(twilight_dsd_dop_tests
@@ -551,6 +680,12 @@ if(TAE_BUILD_TESTS)
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_dsd_dop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(FFMPEG_FOUND)
+    target_sources(twilight_dsd_dop_tests PRIVATE decoder/FFmpegDecoder.cpp core/DiagnosticLog.cpp)
+    target_compile_definitions(twilight_dsd_dop_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_dsd_dop_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_dsd_dop_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+  endif()
   add_test(NAME twilight_dsd_dop_unit COMMAND twilight_dsd_dop_tests)
 
   add_executable(twilight_dsd_mute_guard_tests
@@ -587,6 +722,10 @@ if(TAE_BUILD_TESTS)
     output/OutputBackendFactory.test.cpp
     output/OutputBackendFactory.cpp
   )
+  add_executable(twilight_bridge_receiver_tests tests/bridge_receiver_tests.cpp
+    output/bridge/BridgeReceiver.cpp core/AudioTypes.cpp)
+  target_include_directories(twilight_bridge_receiver_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_bridge_receiver_unit COMMAND twilight_bridge_receiver_tests)
   target_include_directories(twilight_backend_factory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(
     twilight_backend_factory_tests
@@ -996,6 +1135,9 @@ if(TAE_BUILD_TESTS)
   add_test(NAME twilight_audio_flac_tail_continuation
     COMMAND twilight_audio_performance_gate --verify-flac-tail)
   set_tests_properties(twilight_audio_flac_tail_continuation PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+  add_test(NAME twilight_audio_channel_layout
+    COMMAND twilight_audio_performance_gate --verify-channel-layout)
+  set_tests_properties(twilight_audio_channel_layout PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
   add_test(NAME twilight_audio_automix_continuation
     COMMAND twilight_audio_performance_gate --verify-automix-transport)
   set_tests_properties(twilight_audio_automix_continuation PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 77)
@@ -1049,10 +1191,22 @@ if(TAE_BUILD_TESTS)
   # That silently turns the whole suite into a no-op that still reports "Passed".
   # Keep assertions live on every test target regardless of configuration.
   set(TAE_TEST_TARGETS
+    twilight_bridge_receiver_tests
+    twilight_usb_transport_tests
     twilight_audio_tests
     twilight_dsp_tests
     twilight_convolver_tests
+    twilight_convolver_format_tests
     twilight_loudness_realtime_tests
+    twilight_android_loudness_tests
+    twilight_loudness_layout_tests
+    twilight_true_peak_tests
+    twilight_audio_monitor_tests
+    twilight_dynamics_response_tests
+    twilight_spatial_response_tests
+    twilight_crossfeed_response_tests
+    twilight_double_bridge_tests
+    twilight_android_loudness_realtime_tests
     twilight_channel_router_tests
     twilight_wsola_tests
     twilight_wsola_performance
@@ -1062,6 +1216,8 @@ if(TAE_BUILD_TESTS)
     twilight_metadata_tests
     twilight_bitperfect_tests
     twilight_ffmpeg_decoder_tests
+    twilight_pcm_segment_tests
+    twilight_channel_layout_tests
     twilight_dsd_dop_tests
     twilight_dsd_mute_guard_tests
     twilight_dsd_downrate_tests

@@ -88,7 +88,7 @@ function createFakePlatform(overrides = {}) {
         previous?.queueEntryId !== selected?.queueEntryId
       platform.queue = tracks
       platform.audio.queueGeneration = queueGeneration
-      platform.audio.queueIndex = startIndex
+      platform.audio.queueIndex = tracks.length === 0 ? -1 : startIndex
       if (changed) {
         platform.audio.state = 'paused'
         platform.audio.positionMs = 0

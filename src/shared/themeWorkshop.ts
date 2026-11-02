@@ -2,6 +2,9 @@ import type { StructuredPluginTheme, ThemeModes, ThemeShellLayout, ThemeTone } f
 import type { ThemeEditorDescriptor } from './themeEditor.ts'
 import type { WorkshopLayer, WorkshopSurface } from './themeWorkshopLayers.ts'
 import type { WorkshopDiagnosticReport } from './themeWorkshopDiagnostics.ts'
+import type { AppearanceDraft } from './appAppearance.ts'
+import type { ThemeProfileV2, ThemeSelection } from './theme.ts'
+import type { AppSettings } from './appSettings.ts'
 
 export { normalizeThemeEditor } from './themeEditor.ts'
 export type { ThemeEditorControl, ThemeEditorDescriptor } from './themeEditor.ts'
@@ -90,7 +93,8 @@ export interface WorkshopCompiledTheme {
 }
 
 export interface ThemeWorkshopApi {
-  onPrepareDisable(callback: () => Promise<void>): () => void
+  createFromAppearance(input: CustomThemeInput): Promise<WorkshopProject>
+  exportAppearance(input: CustomThemeInput): Promise<string | null>
   list(): Promise<WorkshopProjectSummary[]>
   get(id: string): Promise<WorkshopProject>
   sources(): Promise<WorkshopThemeSource[]>
@@ -108,6 +112,16 @@ export interface ThemeWorkshopApi {
     id: string,
     revision?: number
   ): Promise<{ pluginId: string; themeId: string; project: WorkshopProject }>
+}
+
+export interface CustomThemeInput {
+  selection: ThemeSelection
+  profile?: ThemeProfileV2
+  appearance: AppearanceDraft
+  preferences?: Pick<
+    AppSettings,
+    'fontFamily' | 'fontRendering' | 'lightAccentColor' | 'darkAccentColor'
+  >
 }
 
 export function workshopEditor(
@@ -145,6 +159,7 @@ export function workshopProjectSummary(project: WorkshopProject): WorkshopProjec
 export function copyWorkshopDraft(project: WorkshopProject): WorkshopProject {
   return {
     ...project,
+    base: JSON.parse(JSON.stringify(project.base)),
     editor: project.editor && {
       schemaVersion: 1,
       controls: project.editor.controls.map((control) => ({

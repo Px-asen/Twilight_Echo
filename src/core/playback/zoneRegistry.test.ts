@@ -1,0 +1,96 @@
+import '../../adapters-node/index.ts'
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { randomUUID } from 'node:crypto'
+import { CoreZoneRegistry, type ZoneRuntime } from './zoneRegistry.ts'
+import type { CorePlaybackSession } from './session.ts'
+import { isCoreRequest } from '../../shared/coreProtocol.ts'
+
+const signal = () => new AbortController().signal
+function runtime() {
+  let state = 'stopped', pauses = 0, stops = 0, closed = false
+  let pendingPlay: Promise<void> | undefined
+  const output = { supported: true, hosting: false, receiving: false, selected: true,
+    connected: false, peerName: null, error: null, receiver: null }
+  const playback = {
+    snapshot: () => ({ playback: { state }, track: null, queue: null, error: null }),
+    play: async () => { await pendingPlay; state = 'playing' },
+    pause: async () => { pauses++; state = 'paused' }, stop: async () => { stops++; state = 'stopped' },
+    maintainSources: async <T>(action: (sources: string[]) => Promise<T>) => action(['active.flac'])
+  } as unknown as CorePlaybackSession
+  const value: ZoneRuntime = { playback, dsp: {} as ZoneRuntime['dsp'], output: async () => ({ ...output }),
+    connect: async () => { throw new Error('Bridge connection refused') }, sources: () => ['active.flac'],
+    close: async () => { closed = true } }
+  return { value, get pauses() { return pauses }, get stops() { return stops }, get closed() { return closed },
+    slowPlay: (promise: Promise<void>) => { pendingPlay = promise } }
+}
+
+test('Zone topology is bounded, revision fenced, credential-free and independent of legacy local state', async t => {
+  const local = runtime(), created: ReturnType<typeof runtime>[] = []
+  let stored: unknown = []
+  const zones = new CoreZoneRegistry({ local: local.value, load: async () => [], save: async data => { stored = data },
+    create: async () => { const next = runtime(); created.push(next); return next.value }, newId: randomUUID, changed: () => {} })
+  t.after(() => zones.shutdown())
+  await zones.initialize()
+  const a = await zones.create('Study', 0)
+  await assert.rejects(zones.create('Stale', 0), { code: 'STALE_REVISION' })
+  const b = await zones.create('Bedroom', 1)
+  await zones.create('Kitchen', 2)
+  await assert.rejects(zones.create('Too many', 3), { code: 'BUSY' })
+  assert.equal((await zones.list()).zones.length, 4)
+  assert.doesNotMatch(JSON.stringify(stored), /token|fingerprint|host|filePath/)
+  await assert.rejects(zones.connect(a, { host: 'localhost', port: 1234, token: 'a'.repeat(48), fingerprint: 'b'.repeat(64) }, 0), /refused/)
+  await zones.transport(b, 0, { kind: 'pause' }, signal())
+  assert.equal(created[1].pauses, 1)
+  assert.equal(local.pauses, 0)
+  assert.equal(local.stops, 0)
+  assert.match((await zones.list()).zones.find(z => z.id === a)!.error!, /连接未成功/)
+  await zones.remove(a, 3)
+  assert.equal(created[0].closed, true)
+  assert.equal((await zones.list()).zones.length, 3)
+})
+
+test('a slow Zone Play never queues a different Zone Pause or same-Zone Stop', async t => {
+  const local = runtime(), remote = runtime()
+  let finish!: () => void
+  remote.slowPlay(new Promise(resolve => { finish = resolve }))
+  const zones = new CoreZoneRegistry({ local: local.value, load: async () => [], save: async () => {},
+    create: async () => remote.value, newId: randomUUID, changed: () => {} })
+  t.after(() => zones.shutdown())
+  const id = await zones.create('Study', 0)
+  const pending = zones.transport(id, 0, { kind: 'play' }, signal())
+  await zones.transport('local', 0, { kind: 'pause' }, signal())
+  await zones.transport(id, 1, { kind: 'stop' }, signal())
+  assert.equal(local.pauses, 1)
+  assert.equal(remote.stops, 1)
+  finish(); await pending
+})
+
+test('one failed restored Zone is visible offline; corrupt topology cannot overwrite saved zones', async t => {
+  const id = `zone-${randomUUID()}`, local = runtime()
+  const zones = new CoreZoneRegistry({ local: local.value, load: async () => [{ id, name: 'Offline' }], save: async () => {},
+    create: async () => { throw Error('Failed native start') }, newId: randomUUID, changed: () => {} })
+  t.after(() => zones.shutdown())
+  await zones.initialize()
+  assert.equal((await zones.list()).zones.length, 2)
+  assert.match((await zones.list()).zones[1].error!, /初始化失败/)
+  await zones.transport('local', 0, { kind: 'pause' }, signal())
+  const corrupt = new CoreZoneRegistry({ local: local.value, load: async () => { throw Error('Corrupt catalog') },
+    save: async () => assert.fail('Do not overwrite corrupt topology'), create: async () => local.value,
+    newId: randomUUID, changed: () => {} })
+  t.after(() => corrupt.shutdown())
+  await corrupt.initialize()
+  assert.match((await corrupt.list()).error!, /清单无法读取/)
+  await assert.rejects(corrupt.create('Replacement', 0), { code: 'NOT_READY' })
+})
+
+test('multi-Zone public requests reject arbitrary IDs, actions, files and malformed consent', () => {
+  const id = `zone-${randomUUID()}`
+  const request = (name: string, payload: unknown) => isCoreRequest({ kind: 'command', name, payload, requestId: 'test', epoch: 'epoch' })
+  assert.equal(request('zones.create', { revision: 0, name: 'Study' }), true)
+  assert.equal(request('zones.transport', { zoneId: id, revision: 0, action: { kind: 'volume', volume: 0.2 } }), true)
+  assert.equal(request('zones.transport', { zoneId: '../../settings', revision: 0, action: { kind: 'play' } }), false)
+  assert.equal(request('zones.transport', { zoneId: id, revision: 0, action: { kind: 'Play', source: 'secret.flac' } }), false)
+  assert.equal(request('zones.dsp.edit', { zoneId: id, revision: 0, edit: { kind: 'processing', settings: { convolverIrPath: 'secret.wav' } } }), false)
+  assert.equal(request('zones.create', { revision: 0, name: 'Study', token: 'secret' }), false)
+})

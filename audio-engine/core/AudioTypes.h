@@ -32,6 +32,9 @@ struct AudioFormat {
   int bitDepth = 0;
   AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved;
   bool dopEncoded = false;
+  // WAVE/FFmpeg native speaker bits, interleaved in ascending bit order.
+  // Zero means unspecified; existing count-only callers keep their contract.
+  uint64_t channelMask = 0;
 };
 
 struct PcmBlock {
@@ -390,6 +393,9 @@ size_t audioSampleFormatBytes(AudioSampleFormat format);
 size_t audioFormatBytesPerFrame(const AudioFormat& format);
 int normalizedPcmBitDepth(int bitDepth);
 int effectivePcmBitDepth(const AudioFormat& format);
+// Compatibility, not proof of speaker identity: zero retains count-only use.
+bool pcmChannelLayoutsCompatible(const AudioFormat& left, const AudioFormat& right);
+std::string channelMaskToString(uint64_t mask);
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
 /**
  * Whether two integer PCM sample formats hold the same significant bits.

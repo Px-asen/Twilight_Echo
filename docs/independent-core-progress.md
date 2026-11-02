@@ -71,6 +71,12 @@ renderer / auxiliary windows
 - Single-target Cast uses that session, including source/cache leases, independent
   position samples and statistics. Unknown LOAD is not retried or replaced with
   local audio. Main's stop-only lease supervises the exact remote receiver session.
+- Desktop Cast's CUE temporary files, TLS certificate issuance and UDP DLNA discovery
+  live in `src/adapters-node/{castPcmSegments,remoteTlsIdentity,dlnaDiscovery}.ts`.
+  The Core process composes these adapters; this does not move playback ownership
+  into Electron main. `createCastBackend` receives DLNA discovery explicitly, while
+  SOAP controls, certificate fingerprints and pairing codes remain in Core. Existing
+  desktop discovery options and persisted certificate/trust formats are unchanged.
 - Sleep deadlines, natural-boundary decisions and fade run in Core. Output routing,
   profiles, DSP assets/VST, automatic EQ compensation, audition and output-test
   orchestration retain native ACK, durable commit, rollback and safe-stop rules.

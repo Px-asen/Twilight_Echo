@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IAudioProcessor.h"
+#include "TruePeakDetector.h"
 
 #include <array>
 #include <limits>
@@ -14,6 +15,9 @@ class ChannelMatrixProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override {}
   bool isActive() const override { return active_; }
 
@@ -33,6 +37,9 @@ class ChannelStripProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
 
@@ -57,8 +64,13 @@ class BassManagementProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
+  int lfeChannelIndex() const { return lfeChannel_; }
+  bool usesLegacyChannelLayout() const { return format_.channelMask == 0; }
 
   struct Biquad {
     double b0 = 1.0;
@@ -84,6 +96,7 @@ class BassManagementProcessor final : public IAudioProcessor {
   std::array<std::array<State, 2>, 8> lowpassState_{};
   std::array<std::array<State, 2>, 8> highpassState_{};
   double lfeGain_ = 1.0;
+  int lfeChannel_ = -1;
   bool active_ = false;
 };
 
@@ -93,6 +106,9 @@ class DynamicEqProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
 
@@ -105,8 +121,8 @@ class DynamicEqProcessor final : public IAudioProcessor {
     double a2 = 0.0;
   };
   struct State {
-    double z1 = 0.0;
-    double z2 = 0.0;
+    double x1 = 0.0, x2 = 0.0;
+    double correction1 = 0.0, correction2 = 0.0;
     float process(float input, const Biquad& filter);
     void reset();
   };
@@ -134,6 +150,9 @@ class MultibandCompressorProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
 
@@ -158,8 +177,10 @@ class MultibandCompressorProcessor final : public IAudioProcessor {
   AudioFormat format_;
   std::array<Biquad, 3> lowpass_{};
   std::array<Biquad, 3> highpass_{};
+  std::array<Biquad, 2> phaseCorrection_{};
   std::array<std::array<std::array<State, 2>, 8>, 3> lowpassState_{};
   std::array<std::array<std::array<State, 2>, 8>, 3> highpassState_{};
+  std::array<std::array<std::array<State, 8>, 2>, 2> phaseCorrectionState_{};
   std::array<double, 4> envelope_{};
   std::array<double, 4> gain_{};
   std::array<double, 4> attackCoefficient_{};
@@ -179,6 +200,9 @@ class StereoFieldProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override {}
  bool isActive() const override { return active_; }
 
@@ -200,6 +224,9 @@ class LoudnessContourProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
 
@@ -239,8 +266,12 @@ class DynamicsProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
+  size_t latencyFrames() const { return active_ ? lookaheadFrames_ : 0; }
 
  private:
   DspConfig config_;
@@ -255,8 +286,12 @@ class DynamicsProcessor final : public IAudioProcessor {
   double makeupLinear_ = 1.0;
   double ratio_ = 1.0;
   std::vector<float> lookaheadBuffer_;
-  std::array<std::array<float, 4>, 8> truePeakHistory_{};
-  std::array<uint8_t, 8> truePeakHistoryCount_{};
+  std::array<TruePeakDetector, 8> truePeakDetectors_{};
+  struct PeakEntry { uint64_t frame; double peak; };
+  std::vector<PeakEntry> peakWindow_;
+  size_t peakWindowHead_ = 0;
+  size_t peakWindowSize_ = 0;
+  uint64_t peakFrame_ = 0;
   size_t lookaheadFrames_ = 0;
   size_t lookaheadWriteFrame_ = 0;
   bool active_ = false;
@@ -269,6 +304,9 @@ class LoudnessMeterProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat& format) override;
   void setTrackContext(const DspTrackContext&) override {}
   void process(float* samples, size_t frameCount) override;
+  void processDouble(double* samples, size_t frameCount) override {
+    processFloatBridge(samples, frameCount, format_.channelCount);
+  }
   void reset() override;
   bool isActive() const override { return active_; }
 
@@ -286,8 +324,7 @@ class LoudnessMeterProcessor final : public IAudioProcessor {
   double sumSquares_ = 0.0;
   uint64_t sampleCount_ = 0;
   double truePeak_ = 0.0;
-  std::array<std::array<float, 4>, 8> truePeakHistory_{};
-  std::array<uint8_t, 8> truePeakHistoryCount_{};
+  std::array<TruePeakDetector, 8> truePeakDetectors_{};
   double momentaryEnergy_ = 0.0;
   double shortTermEnergy_ = 0.0;
   double momentaryCoefficient_ = 0.0;

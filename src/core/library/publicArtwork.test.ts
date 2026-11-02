@@ -541,6 +541,54 @@ test('collection reads can include permitted automatic portraits without sharing
   assert.equal(validEntityMetadataPayload('metadata.entity.detail', { ...query, includeAutomaticArtwork: 'yes' }), false)
 })
 
+for (const change of ['unrelated', 'detach', 'hide'] as const)
+  test(`portrait materialization tolerates unrelated commits but fences source edits: ${change}`, async (t) => {
+    const db = new LibraryDatabase(':memory:')
+    t.after(() => db.close())
+    const entityId = seed(db, 'artist'), { state, provider } = fixture()
+    db.metadataEnqueue({ entityId, type: 'enrich', language: 'en', batchId: 'portrait',
+      provider: 'public-artwork', providerContext: provider.context() }, state.now)
+    const work = db.metadataClaim(state.now)!
+    const result = await provider.enrich({ kind: 'artist', externalId: ARTIST, language: 'en' }, signal())
+    db.metadataFinish(work, { state: 'completed', outcome: 'matched', ...result }, state.now)
+    let release!: () => void, projecting = false
+    const core = new CoreEntityMetadataService({
+      database: asyncDb(db), policy: () => state.policy,
+      provider: new MusicBrainzWikiProvider(() => state.policy),
+      enrichmentProviders: () => [provider], now: () => state.now, changed() {}, failed() {},
+      artwork: async () => {
+        projecting = true
+        await new Promise<void>((resolve) => { release = resolve })
+        return 'twilight-media://image/late-portrait'
+      }
+    })
+    t.after(() => core.shutdown())
+    const reading = core.detail(entityId, 'en', 'local')
+    // Observe a rejection immediately rather than leaving a pending read unhandled.
+    const settled = reading.then((value) => ({ value }), (error: { code: string }) => ({ error }))
+    await until(async () => projecting)
+    if (change === 'detach') {
+      const link = db.identificationDetail(entityId).link!
+      await core.detachIdentity(link.id, link.revision)
+    } else if (change === 'hide') {
+      await core.artworkOverride({ entityId, language: 'en', mode: 'clear',
+        revision: db.metadataDetail(entityId, 'en').revision })
+    } else {
+      const other = db.catalogQuery({ kind: 'release' }).items[0].id
+      await core.override({ entityId: other, language: 'en', mode: 'value', value: 'Other album',
+        revision: db.metadataDetail(other, 'en').revision })
+    }
+    release()
+    const read = await settled
+    if (change === 'unrelated') {
+      assert.ok('value' in read)
+      assert.equal(read.value.artwork?.[0].handle, 'twilight-media://image/late-portrait')
+    } else {
+      assert.ok('error' in read)
+      assert.equal(read.error.code, 'STALE_IDENTITY')
+    }
+  })
+
 test('image expiry and deployment context hide and retire only automatic resources', async (t) => {
   const db = new LibraryDatabase(':memory:')
   t.after(() => db.close())

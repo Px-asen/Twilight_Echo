@@ -49,6 +49,7 @@ const compareAlbumRows = (a: Row, b: Row): number =>
 export class LibraryDatabaseCollections {
   private readonly grouped = new Map<string, Summary[]>()
   private artistTotal: { revision: number; total: number } | null = null
+  private collectionSymSpell: { groupsRef: Summary[]; index: SymSpellIndex } | null = null
   private readonly cache = new Map<
     string,
     { rows: Summary[]; letterOffsets: Record<string, number> }
@@ -57,6 +58,12 @@ export class LibraryDatabaseCollections {
     this.cache.clear()
     this.grouped.clear()
     this.artistTotal = null
+    this.collectionSymSpell = null
+  }
+  clearTransientCaches(): void {
+    this.cache.clear()
+    this.grouped.clear()
+    this.collectionSymSpell = null
   }
 
   query(
@@ -353,11 +360,16 @@ export class LibraryDatabaseCollections {
       if (direct.length > 0 || !terms.some((term) => getMaxSymSpellTolerance(term) > 0)) {
         return direct
       }
-      const symSpell = new SymSpellIndex()
-      for (const group of groups) {
-        if (!group.genreMatched) continue
-        symSpell.addText(group.name, 3)
-        if (group.artist) symSpell.addText(group.artist, 2)
+      let symSpell =
+        this.collectionSymSpell?.groupsRef === groups ? this.collectionSymSpell.index : null
+      if (!symSpell) {
+        symSpell = new SymSpellIndex()
+        for (const group of groups) {
+          if (!group.genreMatched) continue
+          symSpell.addText(group.name, 3)
+          if (group.artist) symSpell.addText(group.artist, 2)
+        }
+        this.collectionSymSpell = { groupsRef: groups, index: symSpell }
       }
       const suggestion = symSpell.suggestQuery(query.search ?? '')
       if (!suggestion) return direct

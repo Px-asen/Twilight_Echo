@@ -29,14 +29,14 @@ void check(bool ok, const std::string& message) { if (!ok) throw std::runtime_er
 struct WaveInput final : SeekableInput {
   std::vector<uint8_t> bytes;
   std::atomic<bool> cancelled{false};
-  WaveInput(const std::vector<float>& samples, int rate) {
+  WaveInput(const std::vector<float>& samples, int rate, int channels = 1) {
     auto word = [&](uint32_t value, int count) {
       for (int i = 0; i < count; ++i) bytes.push_back((value >> (8 * i)) & 255);
     };
     auto tag = [&](const char* value) { bytes.insert(bytes.end(), value, value + 4); };
     tag("RIFF"); word(36 + samples.size() * 4, 4); tag("WAVE"); tag("fmt ");
-    word(16, 4); word(3, 2); word(1, 2); word(rate, 4); word(rate * 4, 4);
-    word(4, 2); word(32, 2); tag("data"); word(samples.size() * 4, 4);
+    word(16, 4); word(3, 2); word(channels, 2); word(rate, 4); word(rate * channels * 4, 4);
+    word(channels * 4, 2); word(32, 2); tag("data"); word(samples.size() * 4, 4);
     for (float sample : samples) word(std::bit_cast<uint32_t>(sample), 4);
   }
   int64_t size() override { return bytes.size(); }
@@ -61,10 +61,14 @@ std::vector<float> convert(const std::vector<float>& input, int from, int to,
   check(decoder.setOutputFormat(format, &error), error);
   const bool smooth = quality != Quality::Native &&
       (phase == Phase::LinearSmooth || phase == Phase::MinimumSmooth);
-  check(decoder.effectiveResamplerPhase() == (smooth ? Phase::LinearSmooth : Phase::Linear),
-        "effective phase disagrees with the configured SWR filter");
+  Phase effective = smooth ? Phase::LinearSmooth : Phase::Linear;
+#if defined(TAE_HAS_SOXR)
+  if (from != to && (phase == Phase::Minimum || phase == Phase::MinimumSmooth))
+    effective = smooth ? Phase::MinimumSmooth : Phase::Minimum;
+#endif
+  check(decoder.effectiveResamplerPhase() == effective, "effective phase disagrees with the configured filter");
   decoder.setResamplerPhase(Phase::Minimum);
-  check(decoder.effectiveResamplerPhase() == (smooth ? Phase::LinearSmooth : Phase::Linear),
+  check(decoder.effectiveResamplerPhase() == effective,
         "pending phase request overwrote active filter observation");
   std::vector<float> result, buffer(block);
   for (;;) {
@@ -106,6 +110,74 @@ double response(const std::vector<float>& impulse, int from, int to, double hz) 
   for (int i = std::max(0, center - 512); i < std::min<int>(impulse.size(), center + 513); ++i)
     sum += double(impulse[i]) * std::polar(1.0, -2 * pi * hz * (i - center) / to);
   return db(std::abs(sum) * from / to);
+}
+
+// A non-linear phase filter must be compared after fitting sine/cosine phase,
+// not against a zero-phase sine (which would count the intended phase as error).
+double fittedToneResidual(const std::vector<float>& samples, int rate) {
+  double sine = 0, cosine = 0;
+  const int first = rate / 20, last = rate * 3 / 20, count = last - first;
+  for (int i = first; i < last; ++i) {
+    sine += samples[i] * std::sin(2*pi*1000*i/rate);
+    cosine += samples[i] * std::cos(2*pi*1000*i/rate);
+  }
+  sine *= 2.0/count; cosine *= 2.0/count;
+  check(std::abs(std::hypot(sine, cosine) - 0.5) < 0.001, "minimum phase tone amplitude changed");
+  double residual = 0;
+  for (int i = first; i < last; ++i) {
+    const double difference = samples[i] - sine*std::sin(2*pi*1000*i/rate) - cosine*std::cos(2*pi*1000*i/rate);
+    residual += difference*difference;
+  }
+  return db(std::sqrt(residual/count) / (0.5/std::sqrt(2.0)));
+}
+
+void checkSeek(Quality quality, Phase phase, int from, int to);
+void minimumPhaseEvidence() {
+#if defined(TAE_HAS_SOXR)
+  for (auto quality : {Quality::SoxrHq, Quality::SoxrVhq}) {
+    for (bool smooth : {false, true}) {
+      for (auto [from,to] : {std::pair{44100,48000}, {48000,44100}, {96000,44100}}) {
+        std::vector<float> source(from/5); source[from/10] = 1;
+        const auto linear = convert(source, from,to,quality,smooth ? Phase::LinearSmooth : Phase::Linear);
+        const auto minimum = convert(source, from,to,quality,smooth ? Phase::MinimumSmooth : Phase::Minimum);
+        auto preFraction = [](const auto& samples) {
+          const size_t peak = std::max_element(samples.begin(), samples.end(), [](float a,float b){return std::abs(a)<std::abs(b);}) - samples.begin();
+          double pre = 0, total = 0;
+          for (size_t i = 0; i < samples.size(); ++i) {
+            const double energy = double(samples[i])*samples[i]; total += energy;
+            // Exclude the main lobe's rising edge (eight output samples). A
+            // minimum-phase peak can lie between samples, so all pre-peak
+            // energy is not a valid measure of oscillatory pre-ringing.
+            if (i + 8 < peak) pre += energy;
+          }
+          return pre / total;
+        };
+        const double linearPre = preFraction(linear), minimumPre = preFraction(minimum);
+        double magnitudeDifference = 0;
+        for (int hz : {1000,10000,18000,20000})
+          magnitudeDifference = std::max(magnitudeDifference,std::abs(response(linear,from,to,hz)-response(minimum,from,to,hz)));
+        check(magnitudeDifference < 0.03, "phase selection changed the matched SoX magnitude response");
+        check(minimumPre < linearPre * 0.75, "minimum phase did not reduce guarded pre-peak energy");
+        const double residual = fittedToneResidual(convert(tone(from,1000),from,to,quality,
+            smooth ? Phase::MinimumSmooth : Phase::Minimum),to);
+        check(residual < -90, "minimum-phase tone residual exceeds -90 dB");
+        std::cout << "{\"suite\":\"matched-soxr-phase\",\"from\":" << from << ",\"to\":" << to
+            << ",\"quality\":\"" << (quality == Quality::SoxrHq ? "HQ" : "VHQ") << "\",\"smooth\":" << (smooth?"true":"false")
+            << ",\"prePeakGuardFrames\":8,\"linearGuardedPrePeakEnergyFraction\":" << linearPre
+            << ",\"minimumGuardedPrePeakEnergyFraction\":" << minimumPre
+            << ",\"magnitudeDifferenceDb\":" << magnitudeDifference << ",\"fittedToneResidualDb\":" << residual << "}\n";
+      }
+    }
+  }
+  for (size_t length : {size_t(1),size_t(7),size_t(31)}) {
+    std::vector<float> input(length,0.25f);
+    for (auto [from,to] : {std::pair{44100,48000}, {96000,44100}})
+      convert(input,from,to,Quality::Ultra,Phase::Minimum);
+  }
+  for (auto [from,to] : {std::pair{44100,705600}, {768000,44100}})
+    checkSeek(Quality::Ultra,Phase::Minimum,from,to);
+  std::cout << "{\"minimumPhaseChecks\":\"passed\",\"matchedCases\":12,\"shortTailCases\":6,\"highRateSeekCases\":2}\n";
+#endif
 }
 
 void checkSeek(Quality quality, Phase phase, int from, int to) {
@@ -152,18 +224,27 @@ void measure() {
           after += double(impulse[center+n]) * impulse[center+n];
           symmetry = std::max(symmetry, double(std::abs(impulse[center-n] - impulse[center+n])));
         }
-        check(symmetry < 2e-5, "linear-phase impulse lost symmetry");
+        const bool minimum = phase == Phase::Minimum || phase == Phase::MinimumSmooth;
+        bool directMinimum = false;
+#if defined(TAE_HAS_SOXR)
+        directMinimum = minimum;
+#endif
+        if (!directMinimum) check(symmetry < 2e-5, "linear-phase impulse lost symmetry");
+        else check(symmetry > 1e-3, "minimum phase is still a symmetric linear alias");
         const auto convertedTone = convert(tone(from,1000), from,to,quality,phase);
         const double errorDb = db(rms(convertedTone,to,true) / (0.5 / std::sqrt(2.0)));
+        const double residualDb = fittedToneResidual(convertedTone,to);
         const double gain1k = response(impulse,from,to,1000);
         check(std::abs(gain1k) < 0.02, "1 kHz gain exceeds 0.02 dB");
-        check(errorDb < -65, "1 kHz conversion error exceeds -65 dB relative to tone RMS");
+        if (!directMinimum) check(errorDb < -65, "1 kHz conversion error exceeds -65 dB relative to tone RMS");
+        else check(residualDb < -90, "minimum-phase fitted tone residual exceeds -90 dB");
         std::cout << std::setprecision(10) << "{\"from\":" << from << ",\"to\":" << to
             << ",\"quality\":\"" << qualityName << "\",\"requestedPhase\":\"" << phaseName
             << "\",\"frames\":" << impulse.size() << ",\"symmetryMax\":" << symmetry
             << ",\"preEnergy\":" << before << ",\"postEnergy\":" << after
             << ",\"gain1kDb\":" << gain1k << ",\"gain18kDb\":" << response(impulse,from,to,18000)
-            << ",\"gain20kDb\":" << response(impulse,from,to,20000) << ",\"toneErrorDb\":" << errorDb;
+            << ",\"gain20kDb\":" << response(impulse,from,to,20000)
+            << ",\"zeroPhaseDifferenceDb\":" << errorDb << ",\"fittedToneResidualDb\":" << residualDb;
         if (from > to) {
           const double stopHz = from == 96000 ? 30000 : 23000;
           const auto stop = convert(tone(from,stopHz),from,to,quality,phase);
@@ -178,20 +259,27 @@ void measure() {
         std::cout << "}\n";
         impulses.push_back(std::move(impulse));
       }
-      // These are legacy request aliases, not minimum-phase implementations.
+#if !defined(TAE_HAS_SOXR)
+      // Builds without the direct library retain the explicit legacy fallback.
       check(maximumDifference(impulses[0],impulses[1]) == 0, "minimum alias changed");
       check(maximumDifference(impulses[2],impulses[3]) == 0, "minimum-smooth alias changed");
       if (quality == Quality::Native) check(impulses[0] == impulses[2], "native fixed rolloff changed");
       else check(maximumDifference(impulses[0],impulses[2]) > 1e-5, "smooth rolloff has no effect");
+#else
+      check(maximumDifference(impulses[0], impulses[1]) > 1e-3, "minimum still aliases linear");
+      check(maximumDifference(impulses[2], impulses[3]) > 1e-3, "minimum smooth still aliases linear");
+      if (quality == Quality::Native) check(impulses[1] == impulses[3], "native fixed minimum rolloff changed");
+      else check(maximumDifference(impulses[1], impulses[3]) > 1e-5, "minimum smooth rolloff has no effect");
+#endif
     }
   }
   const auto sameRate = tone(48000,1000);
   check(convert(sameRate,48000,48000,Quality::Ultra,Phase::MinimumSmooth) == sameRate,
         "equal-rate float conversion changed samples");
   for (auto quality : {Quality::High, Quality::Ultra})
-    for (auto phase : {Phase::Linear, Phase::LinearSmooth})
+    for (auto phase : {Phase::Linear, Phase::LinearSmooth, Phase::Minimum, Phase::MinimumSmooth})
       for (auto [from,to] : {std::pair{44100,48000}, {96000,44100}}) checkSeek(quality,phase,from,to);
-  std::cout << "{\"checks\":\"passed\",\"responseCases\":36,\"seekCases\":8,\"positionsPerSeekCase\":4}\n";
+  std::cout << "{\"checks\":\"passed\",\"responseCases\":36,\"seekCases\":16,\"positionsPerSeekCase\":4}\n";
 }
 
 void highRates() {
@@ -214,8 +302,126 @@ void highRates() {
   }
   std::cout << "{\"checks\":\"passed\",\"conversionCases\":4,\"sameRateCases\":2,\"seekCases\":4}\n";
 }
+
+void minimumTypedAndRecovery() {
+#if defined(TAE_HAS_SOXR)
+  constexpr int from = 48000, to = 44100;
+  for (auto phase : {Phase::Minimum, Phase::MinimumSmooth}) {
+    std::vector<float> channel[2];
+    for (int c = 0; c < 2; ++c) {
+      channel[c].resize(5003);
+      for (size_t i = 0; i < channel[c].size(); ++i)
+        channel[c][i] = float((c ? 0.13 : 0.31) * std::sin(2*pi*(c ? 11000 : 1000)*i/from));
+    }
+    const std::vector<float> reference[] = {
+        convert(channel[0],from,to,Quality::Ultra,phase),
+        convert(channel[1],from,to,Quality::Ultra,phase)};
+    for (int channels : {1,2}) {
+      std::vector<float> source;
+      for (size_t i = 0; i < channel[0].size(); ++i)
+        for (int c = 0; c < channels; ++c) source.push_back(channel[c][i]);
+      for (auto sample : {AudioSampleFormat::Int16Interleaved, AudioSampleFormat::Int24Interleaved,
+                          AudioSampleFormat::Int32Interleaved}) {
+        const int bits = sample == AudioSampleFormat::Int16Interleaved ? 16 :
+                         sample == AudioSampleFormat::Int24Interleaved ? 24 : 32;
+        const AudioFormat format{to,channels,bits,sample};
+        const size_t stride = audioFormatBytesPerFrame(format);
+        const auto open = [&](FFmpegDecoder& decoder) {
+          decoder.setInputFactory(std::make_shared<const SeekableInputFactory>(
+              [&](const std::string&) { return std::make_shared<WaveInput>(source,from,channels); }));
+          decoder.setResamplerQuality(Quality::Ultra); decoder.setResamplerPhase(phase);
+          std::string error;
+          check(decoder.open("host-audio://minimum-typed.wav", &error),error);
+          check(decoder.setOutputFormat(format,&error),error);
+          check(decoder.resamplerEngine() == FFmpegDecoder::ResamplerEngine::Soxr,"typed minimum did not use SoX");
+        };
+        std::vector<uint8_t> continuous;
+        for (size_t block : {size_t(257),size_t(4096)}) {
+          FFmpegDecoder decoder; open(decoder);
+          std::vector<uint8_t> actual, buffer(block*stride + 8,0xa5);
+          std::string error;
+          for (;;) {
+            PcmBlock pcm{format,buffer.data(),block,block*stride};
+            const auto read = decoder.readFrames(pcm,&error);
+            check(error.empty(),error);
+            check(std::all_of(buffer.begin()+block*stride,buffer.end(),[](uint8_t x){return x == 0xa5;}),
+                  "typed minimum wrote beyond output capacity");
+            check(std::all_of(buffer.begin()+read*stride,buffer.begin()+block*stride,[](uint8_t x){return x == 0;}),
+                  "typed minimum short tail was not silent");
+            actual.insert(actual.end(),buffer.begin(),buffer.begin()+read*stride);
+            if (!read) break;
+          }
+          check(actual.size() == reference[0].size()*stride,"typed minimum output length changed");
+          if (continuous.empty()) continuous = std::move(actual);
+          else check(actual == continuous,"typed minimum depends on read block size");
+        }
+        double maximumError = 0;
+        for (size_t frame = 0; frame < reference[0].size(); ++frame) {
+          for (int c = 0; c < channels; ++c) {
+            uint32_t raw = 0;
+            const auto* data = continuous.data()+frame*stride+c*(bits/8);
+            for (int b = 0; b < bits/8; ++b) raw |= uint32_t(data[b]) << (8*b);
+            const int32_t signedValue = std::bit_cast<int32_t>(raw << (32-bits)) >> (32-bits);
+            const double normalized = signedValue / std::ldexp(1.0,bits-1);
+            maximumError = std::max(maximumError,std::abs(normalized-reference[c][frame]));
+          }
+        }
+        // Float32 reference quantization plus at most one integer-output LSB.
+        check(maximumError < std::ldexp(1.0,-23)+std::ldexp(1.1,1-bits),
+              "typed minimum scale, packing or channel isolation changed");
+        FFmpegDecoder decoder; open(decoder);
+        std::string error;
+        for (size_t offset : {size_t(0),size_t(1),size_t(997),reference[0].size()-3}) {
+          check(decoder.seekOutputFrame(offset,&error),error);
+          std::vector<uint8_t> output(257*stride);
+          PcmBlock pcm{format,output.data(),257,output.size()};
+          const auto read = decoder.readFrames(pcm,&error);
+          check(error.empty(),error);
+          check(read == std::min<size_t>(257,reference[0].size()-offset),"typed minimum seek length changed");
+          check(std::equal(output.begin(),output.begin()+read*stride,continuous.begin()+offset*stride),
+                "typed minimum seek differs from continuous PCM bytes");
+        }
+        std::cout << "{\"suite\":\"minimum-typed\",\"encoding\":\"" << sampleFormatToString(sample)
+            << "\",\"channels\":" << channels << ",\"smooth\":" << (phase == Phase::MinimumSmooth ? "true" : "false")
+            << ",\"frames\":" << reference[0].size() << ",\"maxNormalizedError\":" << maximumError
+            << ",\"seekPositions\":4,\"blockSizes\":[257,4096]}\n";
+      }
+    }
+  }
+  const auto input = tone(from,1000);
+  const auto reference = convert(input,from,to,Quality::Ultra,Phase::Minimum);
+  FFmpegDecoder decoder;
+  decoder.setInputFactory(std::make_shared<const SeekableInputFactory>(
+      [&](const std::string&) { return std::make_shared<WaveInput>(input,from); }));
+  decoder.setResamplerQuality(Quality::Ultra); decoder.setResamplerPhase(Phase::Minimum);
+  std::string error;
+  check(decoder.open("host-audio://reconfigure.wav",&error),error);
+  check(decoder.setOutputFormat({to,1,32,AudioSampleFormat::Float32Interleaved},&error),error);
+  std::vector<float> prefix(257), suffix(257);
+  check(decoder.readFrames(prefix.data(),prefix.size(),&error) == prefix.size(),error);
+  // SWR rejects this unspecified layout during initialization, after allocation.
+  check(!decoder.setOutputFormat({to,65,32,AudioSampleFormat::Float32Interleaved},&error),
+        "unsupported output layout was accepted");
+  check(!error.empty(),"failed converter initialization omitted its error"); error.clear();
+  check(decoder.resamplerEngine() == FFmpegDecoder::ResamplerEngine::Soxr &&
+      decoder.effectiveResamplerPhase() == Phase::Minimum && decoder.outputFormat().channelCount == 1,
+      "failed reconfiguration overwrote accepted converter observations");
+  check(decoder.readFrames(suffix.data(),suffix.size(),&error) == suffix.size(),error);
+  check(std::equal(prefix.begin(),prefix.end(),reference.begin()) &&
+      std::equal(suffix.begin(),suffix.end(),reference.begin()+prefix.size()),
+      "failed reconfiguration destroyed buffered PCM or filter history");
+  decoder.setResamplerPhase(Phase::Linear);
+  check(decoder.setOutputFormat({to,1,32,AudioSampleFormat::Float32Interleaved},&error),error);
+  check(decoder.resamplerEngine() == FFmpegDecoder::ResamplerEngine::Swr,"linear reconfiguration retained SoX");
+  check(decoder.seekOutputFrame(0,&error),error);
+  check(decoder.readFrames(prefix.data(),prefix.size(),&error) == prefix.size(),error);
+  const auto linear = convert(input,from,to,Quality::Ultra,Phase::Linear);
+  check(std::equal(prefix.begin(),prefix.end(),linear.begin()),"SWR after SoX reused stale history");
+  std::cout << "{\"minimumTypedChecks\":\"passed\",\"typedCases\":12,\"positionsPerCase\":4,\"reconfigurationRecoveryCases\":1}\n";
+#endif
+}
 }
 int main() {
-  try { if (std::getenv("TAE_RESAMPLER_HIGH_RATE_ONLY")) highRates(); else { measure(); highRates(); } return 0; }
+  try { if (std::getenv("TAE_RESAMPLER_HIGH_RATE_ONLY")) highRates(); else { measure(); highRates(); minimumPhaseEvidence(); minimumTypedAndRecovery(); } return 0; }
   catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

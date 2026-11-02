@@ -270,7 +270,7 @@ app.whenReady().then(async()=>{
 const sharedPreviewRuntime = `
 import {createApp,h,nextTick,ref,shallowRef} from 'vue';
 import {createPinia} from 'pinia';
-import Page from '@renderer/components/theme-workshop/ThemeWorkshopPage.vue';
+import Page from '@renderer/components/theme-workshop/CustomThemeAdvancedPanel.vue';
 import {workshopTemplate} from '@shared/themeWorkshopTemplates.ts';
 import {copyWorkshopDraft,workshopProjectSummary} from '@shared/themeWorkshop.ts';
 import {createWorkshopLayer} from '@shared/themeWorkshopLayers.ts';
@@ -292,7 +292,7 @@ let saveBarrier,getBarrier;
 const api={
  list:async()=>[workshopProjectSummary(stored),workshopProjectSummary(nextProject)],sources:async()=>[],get:async id=>{if(getBarrier&&id===nextProject.id){const barrier=getBarrier;getBarrier=undefined;barrier.started=true;await barrier.promise}return copyWorkshopDraft(id===nextProject.id?nextProject:stored)},
  save:async project=>{if(saveBarrier){const barrier=saveBarrier;saveBarrier=undefined;barrier.started=true;await barrier.promise}expect(project.revision===stored.revision,'shared editor loses revision protection');saves++;stored={...copyWorkshopDraft(project),revision:project.revision+1};return copyWorkshopDraft(stored)},
- onPrepareDisable:()=>()=>{},preflight:async(id,revision)=>{preflights.push({id,revision});return diagnoseWorkshopProject(stored)},
+ preflight:async(id,revision)=>{preflights.push({id,revision});return diagnoseWorkshopProject(stored)},
  exportProject:async(id,format,revision)=>{exports.push({id,format,revision});return 'shared.'+format}
 };
 window.api=new Proxy(window.api,{get:(target,domain)=>domain==='themeWorkshop'?api:target[domain]});

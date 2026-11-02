@@ -8,6 +8,7 @@ import { CoreLibraryLoudnessService } from './libraryLoudnessService.ts'
 import { LibraryDatabase } from '../../main/library/libraryDatabase.ts'
 import type { LibraryTrackRecord } from '../../shared/libraryDatabase.ts'
 import type { LoudnessInputGroup, LoudnessGroupMeasurement } from '../../shared/libraryLoudness.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../../shared/libraryLoudness.ts'
 
 function deferred() {
   let resolve!: () => void
@@ -22,7 +23,7 @@ const measured = (group: LoudnessInputGroup): LoudnessGroupMeasurement => {
     truePeakDb: -1,
     source: 'analyzed' as const,
     analyzedAt: '2026-10-22T12:00:00Z',
-    algorithmVersion: 2,
+    algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION,
     available: true
   }
   return {

@@ -97,6 +97,10 @@ const SPONSORS: readonly Sponsor[] = [
   {
     id: 'lotywe',
     name: 'lotywe'
+  },
+  {
+    id: 'wan-zhong-kong-zou',
+    name: '晚钟空奏'
   }
 ]
 

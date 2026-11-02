@@ -8,6 +8,29 @@ import { createPlaybackSessionStoreBundle } from './playbackSessionRepository.ts
 import { createCorePlaybackRepository } from './corePlaybackRepository.ts'
 import { libraryQueueTrack } from '../../core/playback/libraryTrack.ts'
 
+test('persisted Zone owners never replace another session queue reference', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'core-zone-repository-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  db.replaceDocument({ version: 2, revision: 0, folders: [], exclusions: [], tracks: [{ id: 'one', filePath: 'D:/one.flac' }] })
+  const repositories = ['core:persisted-playback', 'zone:a:persisted', 'zone:b:persisted'].map((owner, i) =>
+    createCorePlaybackRepository(createPlaybackSessionStoreBundle(join(root, String(i))), {
+      syncLibraryQueueReferences: async (...args) => db.syncLibraryQueueReferences(...args)
+    }, owner))
+  const ids: string[] = []
+  for (const repository of repositories) {
+    const queue = db.createLibraryQueue({}); ids.push(queue.id)
+    const row = db.readLibraryQueue(queue.id).items[0]
+    await repository.save({ version: 1, savedAt: new Date().toISOString(), mode: 'trackAndPosition', position: 0,
+      track: libraryQueueTrack(row.track!, row.queueEntryId), libraryQueue: { id: queue.id, revision: queue.revision, index: queue.index, entryId: queue.selectedEntryId! } }, 0)
+  }
+  db.sql.exec('UPDATE queues SET created_at=0')
+  assert.equal(db.collectLibraryQueueGarbage(1), 0)
+  assert.ok(ids.every(id => db.getLibraryQueue(id).total === 1))
+  assert.deepEqual((await Promise.all(repositories.map(r => r.load()))).map(r => r?.data?.libraryQueue?.id), ids)
+})
+
 test('current and last-good playback files retain their SQL queues across owner disposal and GC', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'core-session-repository-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

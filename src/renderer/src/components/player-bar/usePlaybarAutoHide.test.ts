@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, { mock } from 'node:test'
-import { effectScope, nextTick, ref, type Ref } from 'vue'
+import { computed, effectScope, nextTick, ref, shallowRef, type Ref } from 'vue'
 
 import { shouldRevealForPointer, usePlaybarAutoHide } from './usePlaybarAutoHide.ts'
 
@@ -55,6 +55,9 @@ function createHarness(options: {
   revealThresholdPx?: number
   hideDelayMs?: number
   bar?: FakeElement
+  trackId?: () => string | null | undefined
+  isPlaying?: Ref<boolean>
+  suppressFeedbackReveal?: Ref<boolean>
 }): Harness & { hook: ReturnType<typeof usePlaybarAutoHide> } {
   const listeners = new Map<string, Set<(event: unknown) => void>>()
   const add = (type: string, fn: (event: unknown) => void): void => {
@@ -103,7 +106,10 @@ function createHarness(options: {
       keepOpen: options.keepOpen ?? ref(false),
       revealThresholdPx: ref(options.revealThresholdPx ?? 120),
       hideDelayMs: ref(options.hideDelayMs ?? 900),
-      barRef: ref(options.bar ?? null) as never
+      barRef: ref(options.bar ?? null) as never,
+      trackId: options.trackId,
+      isPlaying: options.isPlaying,
+      suppressFeedbackReveal: options.suppressFeedbackReveal
     })
   )
   console.warn = realWarn
@@ -363,6 +369,80 @@ test('flashReveal shows the bar for one delay window, and only while auto-hide i
     harness.hook.flashReveal()
     mock.timers.tick(10_000)
     assert.equal(harness.revealed(), true, 'with auto-hide off the bar never hides')
+    harness.dispose()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('re-projecting currentTrack on playback ticks does not prevent auto-hide when compact visualizer is off', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const coreSnapshot = shallowRef({
+      sequence: 1,
+      position: 0,
+      track: { id: 'track-1', title: 'Echo' }
+    })
+    const currentTrack = computed(() => Object.freeze({ ...coreSnapshot.value.track }))
+    const isPlaying = ref(true)
+    const suppressFeedbackReveal = ref(false)
+    const harness = createHarness({
+      autoHide: ref(true),
+      hideDelayMs: 900,
+      trackId: () => currentTrack.value?.id,
+      isPlaying,
+      suppressFeedbackReveal
+    })
+
+    // Simulate Core publishing fresh state snapshots every 200ms while playing.
+    for (let step = 1; step <= 5; step++) {
+      mock.timers.tick(200)
+      coreSnapshot.value = {
+        sequence: step + 1,
+        position: step * 0.2,
+        track: { id: 'track-1', title: 'Echo' }
+      }
+      await nextTick()
+    }
+
+    assert.equal(
+      harness.revealed(),
+      false,
+      'playback ticks with unchanged track id and play state must not reset the hide timer'
+    )
+
+    // Genuine track change reveals briefly when feedback is not suppressed (e.g. non-lyrics compact bar).
+    coreSnapshot.value = {
+      sequence: 10,
+      position: 0,
+      track: { id: 'track-2', title: 'Twilight' }
+    }
+    await nextTick()
+    assert.equal(harness.revealed(), true, 'actual track change reveals the bar briefly')
+    mock.timers.tick(900)
+    assert.equal(harness.revealed(), false)
+
+    // Lyrics-page compact bar stays tucked on track / play-state changes even with visualizer disabled.
+    suppressFeedbackReveal.value = true
+    coreSnapshot.value = {
+      sequence: 11,
+      position: 0,
+      track: { id: 'track-3', title: 'Horizon' }
+    }
+    await nextTick()
+    assert.equal(
+      harness.revealed(),
+      false,
+      'lyrics-page compact bar stays tucked on track change even when visualizer is turned off'
+    )
+    isPlaying.value = false
+    await nextTick()
+    assert.equal(
+      harness.revealed(),
+      false,
+      'lyrics-page compact bar stays tucked on play/pause change even when visualizer is turned off'
+    )
+
     harness.dispose()
   } finally {
     mock.timers.reset()

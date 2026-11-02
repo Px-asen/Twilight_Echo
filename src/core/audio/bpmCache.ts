@@ -4,6 +4,8 @@ import type { BpmAnalysisResult, BpmTempoSegment } from '../../shared/audioEngin
 export type { BpmAnalysisResult, BpmTempoSegment }
 
 export const BPM_ANALYSIS_ALGORITHM_VERSION = 1
+/** Soft cap on cached BPM entries; oldest analyzedAt entries are evicted first. */
+export const BPM_ANALYSIS_CACHE_MAX_ENTRIES = 2048
 
 export interface BpmAnalysisCacheIdentity {
   filePath: string
@@ -26,11 +28,30 @@ export class BpmAnalysisCache extends FileAnalysisCache<
   BpmAnalysisCacheIdentity,
   BpmAnalysisResult
 > {
-  constructor(cachePath: string) {
+  constructor(cachePath: string, maxEntries = BPM_ANALYSIS_CACHE_MAX_ENTRIES) {
+    const limit = Math.max(1, maxEntries)
     super(cachePath, {
       key: buildBpmAnalysisCacheKey,
-      isAnalysis: isBpmAnalysisResult
+      isAnalysis: isBpmAnalysisResult,
+      prune: (entries) => pruneBpmCacheEntries(entries, limit)
     })
+  }
+}
+
+export function pruneBpmCacheEntries(
+  entries: Record<string, BpmAnalysisResult>,
+  maxEntries: number
+): void {
+  const keys = Object.keys(entries)
+  if (keys.length <= maxEntries) return
+  const ordered = keys.sort((a, b) => {
+    const aAt = Date.parse(entries[a]?.analyzedAt ?? '') || 0
+    const bAt = Date.parse(entries[b]?.analyzedAt ?? '') || 0
+    return aAt - bAt
+  })
+  const removeCount = keys.length - maxEntries
+  for (let i = 0; i < removeCount; i += 1) {
+    delete entries[ordered[i]!]
   }
 }
 

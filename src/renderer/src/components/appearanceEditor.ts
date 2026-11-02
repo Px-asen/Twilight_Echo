@@ -55,6 +55,7 @@ export const APPEARANCE_CATEGORIES: AppearanceCategory[] = [
   { id: 'motion', label: '动画', studio: 'motion' },
   { id: 'assets', label: '素材与字体文件', workshop: '素材库' },
   { id: 'layers', label: '图层与蒙版', workshop: '图层与蒙版' },
+  { id: 'skins', label: '部件背景皮肤', workshop: '背景皮肤' },
   { id: 'layout', label: '布局与模式', workshop: '布局与模式' },
   { id: 'tokens', label: '全部外观参数', studio: 'advanced', workshop: '标准外观' },
   { id: 'parameters', label: '参数设计', workshop: '参数设计器' },

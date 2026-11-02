@@ -9,6 +9,7 @@
 #include "../decoder/DopPackerUtils.h"
 #include "../decoder/SacdIsoProbe.h"
 #include "../output/OutputBackendFactory.h"
+#include "../output/bridge/BridgeCaptureBackend.h"
 #include "../utils/JsonUtils.h"
 #include "../automix-native/AutoMixAdapter.h"
 #include "../automix-native/AutoMixJsonValidation.h"
@@ -135,6 +136,7 @@ bool outputTopologyChanged(
     const OutputConfig& next) noexcept {
   if (backendId == "asio") return previous.preferredBufferSize != next.preferredBufferSize ||
       previous.asioOutputChannelStart != next.asioOutputChannelStart;
+  if (backendId == "usb-direct") return previous.preferredBufferSize != next.preferredBufferSize;
   return backendId == "wasapi-exclusive" &&
          (previous.preferredBufferSize != next.preferredBufferSize ||
           previous.wasapiExclusivePushMode != next.wasapiExclusivePushMode);
@@ -182,7 +184,10 @@ AudioSampleFormat sampleFormatFromOutputLabel(const std::string& label, AudioSam
 AudioFormat actualOutputPcmFormat(const AudioFormat& fallback, const OutputInfo& info) {
   AudioFormat format = fallback;
   if (info.actualSampleRate > 0) format.sampleRate = info.actualSampleRate;
-  if (info.actualChannels > 0) format.channelCount = info.actualChannels;
+  if (info.actualChannels > 0 && info.actualChannels != format.channelCount) {
+    format.channelCount = info.actualChannels;
+    format.channelMask = 0;
+  }
   if (info.actualBitDepth > 0) {
     format.bitDepth = info.actualBitDepth;
   } else if (info.outputBitDepth > 0) {
@@ -208,15 +213,15 @@ AudioFormat actualOutputFormat(const AudioFormat& fallback, const OutputInfo& in
 }
 
 bool backendCanAttemptDop(const std::string& backendId) {
-  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive";
+  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive" || backendId == "usb-direct";
 }
 
 bool backendCanAttemptNativeDsd(const std::string& backendId) {
-  return backendId == "asio" || backendId == "alsa";
+  return backendId == "asio" || backendId == "alsa" || backendId == "usb-direct";
 }
 
 bool backendCanTypedPassthrough(const std::string& backendId) {
-  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive";
+  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive" || backendId == "usb-direct";
 }
 
 /**
@@ -836,6 +841,12 @@ struct AudioPipeline::DecodeStream {
   std::optional<uint64_t> exactLogicalStart;
   ta_am_source_stamp sourceStamp{};
   bool sourceStampKnown = false;
+  AutoMixSource sourceIdentity;
+  bool sourceUnchanged() const {
+    ta_am_source_stamp observed{};
+    return sourceStampKnown && sourceIdentity.snapshot(&observed) &&
+        ta_am_source_stamp_equal(&sourceStamp, &observed);
+  }
   int targetDsdRate = 0;
   int actualDsdSampleRate = 0;
   AudioBuffer buffer;
@@ -881,9 +892,19 @@ struct AudioPipeline::DecodeStream {
     routingSourceToken.store(nextRoutingSourceToken(), std::memory_order_release);
     mode = Mode::Pcm;
     decoder = std::make_unique<FFmpegDecoder>();
-    decoder->setInputFactory(inputFactory);
-    ta_am_source_stamp before{}, after{};
-    const bool hadBefore = ta_am_source_snapshot(item.source.c_str(), &before) != 0;
+    struct IdentityObservation { AutoMixSource source; ta_am_source_stamp before{}; bool known = false; };
+    auto identity = std::make_shared<IdentityObservation>();
+    identity->source = AutoMixSource(item.source);
+    identity->known = identity->source.snapshot(&identity->before);
+    if (inputFactory) decoder->setInputFactory(std::make_shared<const SeekableInputFactory>(
+        [factory = inputFactory, identity](const std::string& source) {
+          auto input = (*factory)(source);
+          if (input) {
+            identity->source = AutoMixSource(source, input);
+            identity->known = identity->source.snapshot(&identity->before);
+          }
+          return input;
+        }));
     decoder->setInterrupt([](void* p) -> int {
       const auto* stream = static_cast<const DecodeStream*>(p);
       return stream->stopRequested.load(std::memory_order_acquire) ||
@@ -894,8 +915,11 @@ struct AudioPipeline::DecodeStream {
       return false;
     }
     stream = decoder->streamInfo();
-    sourceStampKnown = hadBefore && ta_am_source_snapshot(item.source.c_str(), &after) &&
-        ta_am_source_stamp_equal(&before, &after);
+    sourceIdentity = identity->source;
+    ta_am_source_stamp after{};
+    sourceStampKnown = identity->known && sourceIdentity.snapshot(&after) &&
+        ta_am_source_stamp_equal(&identity->before, &after);
+    decoder->setInputFactory(inputFactory);
     sourceStamp = after;
     // Local CUE segments share an absolute output-frame grid with prepared
     // lanes. A packet-boundary seek can start early and shift every later
@@ -974,12 +998,14 @@ struct AudioPipeline::DecodeStream {
     item = queueItem;
     mode = Mode::Dop;
     dsdReader = std::make_unique<DsdReader>();
+    dsdReader->setInputFactory(inputFactory);
     dsdReader->setDstDecoderProvider(dstProvider.get());
     if (!dsdReader->open(item.source, error)) {
       dsdReader.reset();
       return false;
     }
     stream = streamInfoFromDsd(item, dsdReader->streamInfo(), DsdMode::Dop);
+    decoderNeedsReopen = false;
     if (hasCueRange()) stream.durationSeconds = cueLogicalDurationSeconds();
     return true;
   }
@@ -990,12 +1016,14 @@ struct AudioPipeline::DecodeStream {
     item = queueItem;
     mode = Mode::NativeDsd;
     dsdReader = std::make_unique<DsdReader>();
+    dsdReader->setInputFactory(inputFactory);
     dsdReader->setDstDecoderProvider(dstProvider.get());
     if (!dsdReader->open(item.source, error)) {
       dsdReader.reset();
       return false;
     }
     stream = streamInfoFromDsd(item, dsdReader->streamInfo(), DsdMode::Native);
+    decoderNeedsReopen = false;
     if (hasCueRange()) stream.durationSeconds = cueLogicalDurationSeconds();
     return true;
   }
@@ -1069,8 +1097,14 @@ struct AudioPipeline::DecodeStream {
     }
 
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
-    buffer.reset(decodeFormat, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
+    buffer.reset(decodeFormat, adaptiveDecodeBufferFrames(decodeFormat.sampleRate));
     return true;
+  }
+
+  static size_t adaptiveDecodeBufferFrames(int sampleRate) {
+    if (sampleRate <= 96000) return static_cast<size_t>(std::max(sampleRate * 2, 8192));
+    if (sampleRate <= 384000) return static_cast<size_t>(std::max(sampleRate, 8192));
+    return static_cast<size_t>(std::max(sampleRate / 2, 8192));
   }
 
   bool configureDop(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
@@ -1125,7 +1159,7 @@ struct AudioPipeline::DecodeStream {
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     // DoP is a raw 24-bit carrier. Preserve marker and payload bytes end-to-end;
     // any Float32 conversion, volume, DSP, dither, or requantization can make the DAC lose lock.
-    buffer.reset(decodeFormat, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
+    buffer.reset(decodeFormat, adaptiveDecodeBufferFrames(decodeFormat.sampleRate));
     return true;
   }
 
@@ -1204,7 +1238,7 @@ struct AudioPipeline::DecodeStream {
   void stop() {
     requestStop();
     // This path is control/reaper-only. No host/JNI call runs on the render thread.
-    const bool cancelledInput = decoder && decoder->cancelInput();
+    const bool cancelledInput = decoder ? decoder->cancelInput() : dsdReader && dsdReader->cancelInput();
     if (decodeThread.joinable()) decodeThread.join();
     if (cancelledInput) decoderNeedsReopen = true;
   }
@@ -1225,6 +1259,13 @@ struct AudioPipeline::DecodeStream {
       }
       if (!opened || !decoder->setOutputFormat(decodeFormat, error)) {
         markReadFailure(error ? *error : "Unable to reopen audio source for seek");
+        return false;
+      }
+      decoderNeedsReopen = false;
+    }
+    if (mode != Mode::Pcm && decoderNeedsReopen) {
+      if (!dsdReader->open(item.source, error)) {
+        markReadFailure(error ? *error : "Unable to reopen DSD source for seek");
         return false;
       }
       decoderNeedsReopen = false;
@@ -1643,9 +1684,11 @@ struct AudioPipeline::DecodeStream {
         continue;
       }
       if (!dsdReader) break;
-      const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
+      std::string error;
+      const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size(), &error);
       if (read == 0) {
-        markEof();
+        if (!error.empty()) { if (running.load()) markReadFailure(error); }
+        else markEof();
         break;
       }
       const uint8_t* packInput = dsdBytes.data();
@@ -1715,9 +1758,11 @@ struct AudioPipeline::DecodeStream {
         continue;
       }
       if (!dsdReader) break;
-      const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
+      std::string error;
+      const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size(), &error);
       if (read == 0) {
-        markEof();
+        if (!error.empty()) { if (running.load()) markReadFailure(error); }
+        else markEof();
         break;
       }
       size_t decodedFrames = 0;
@@ -1840,6 +1885,7 @@ struct AudioPipeline::AutoMixGeneration {
   std::shared_ptr<DecodeStream> outgoing, fallback, continuation;
   AudioFormat format;
   DspResamplerQuality quality[2]{DspResamplerQuality::Native, DspResamplerQuality::Native};
+  DspResamplerPhase phase[2]{DspResamplerPhase::Linear, DspResamplerPhase::Linear};
   size_t renderFrames = 0;
   std::vector<float> pcm[2];
   bool materialUsed[2]{};
@@ -1891,18 +1937,25 @@ struct AudioPipeline::AutoMixGeneration {
     auto& g = *static_cast<AutoMixGeneration*>(context);
     try {
       if (deck == 0) {
-        g.lease[0] = ta_am_source_acquire(g.outgoing->item.source.c_str(),
+        g.lease[0] = g.outgoing->sourceIdentity.acquire(
             &g.outgoing->sourceStamp, spec->binding.current_identity, cancel);
-        g.lease[1] = ta_am_source_acquire(g.fallback->item.source.c_str(),
+        g.lease[1] = g.fallback->sourceIdentity.acquire(
             &g.fallback->sourceStamp, spec->binding.next_identity, cancel);
         if (!g.lease[0] || !g.lease[1]) {
           std::snprintf(reason, n, "source_changed_or_identity_unavailable"); return 0;
         }
       }
       std::string error;
-      if (!decodeAutoMixFrames(deck ? g.fallback->item : g.outgoing->item,
-          g.format, first, wanted, &g.pcm[deck], &error, cancel, g.quality[deck])) {
+      const auto& source = deck ? g.fallback : g.outgoing;
+      auto boundedItem = source->item;
+      boundedItem.source = source->sourceIdentity.decodeSource(source->item.source);
+      if (!decodeAutoMixFrames(boundedItem,
+          g.format, first, wanted, &g.pcm[deck], &error, cancel, g.quality[deck],
+          source->sourceIdentity.decodeFactory(), g.phase[deck])) {
         std::snprintf(reason, n, "bounded_decode_failed"); return 0;
+      }
+      if (!ta_am_source_valid(g.lease[deck]) || !source->sourceUnchanged()) {
+        std::snprintf(reason, n, "source_changed_or_identity_unavailable"); return 0;
       }
       if (spec->stem_enhanced && !readMaterial(g, deck, first, wanted)) {
         g.materialFallback = "stems_material_invalid_fallback";
@@ -1923,7 +1976,11 @@ struct AudioPipeline::AutoMixGeneration {
       if (!stream->openSource(g.fallback->item, &error, cancel)) {
         std::snprintf(reason, n, "continuation_open_failed"); return 0;
       }
+      if (!stream->sourceStampKnown || !ta_am_source_stamp_equal(&stream->sourceStamp, &g.fallback->sourceStamp)) {
+        std::snprintf(reason, n, "source_changed_or_identity_unavailable"); return 0;
+      }
       stream->setResamplerQuality(g.quality[1]);
+      stream->setResamplerPhase(g.phase[1]);
       stream->exactLogicalStart = spec->next_end;
       if (!stream->configure(g.format, static_cast<double>(spec->next_end) /
           spec->binding.sample_rate, &error)) {
@@ -2002,6 +2059,10 @@ bool AudioPipeline::setAutoMixMode(const std::string& mode, std::string* error) 
   std::lock_guard lock(mutex_);
   synchronizeRenderPromotionLocked();
   const auto next = mode == "natural" ? TA_AM_NATURAL : mode == "dj" ? TA_AM_DJ : TA_AM_OFF;
+  if (next != TA_AM_OFF && outputConfig_.usbPcmPassthrough) {
+    if (error) *error = "USB 原样 PCM 与 AutoMix 冲突；请先关闭原样模式";
+    return false;
+  }
   if (next != autoMixMode_) cancelAutoMixLocked("mode_changed");
   autoMixMode_ = next;
   requestedAutoMixMode_.store(next, std::memory_order_release);
@@ -2103,7 +2164,7 @@ std::string AudioPipeline::selectAutoMix(const std::string& json) {
     const std::shared_ptr<DecodeStream> streams[] = {ticket->outgoing, ticket->incoming};
     for (unsigned d = 0; d < 2; d++) {
       auto lease = std::unique_ptr<ta_am_source_lease, decltype(&ta_am_source_release)>(
-          ta_am_source_acquire(streams[d]->item.source.c_str(), &streams[d]->sourceStamp,
+          streams[d]->sourceIdentity.acquire(&streams[d]->sourceStamp,
               d ? spec.binding.next_identity : spec.binding.current_identity, cancel.get()), ta_am_source_release);
       if (!lease) return "{\"ok\":false,\"reason\":\"source_changed_or_identity_unavailable\"}";
       uint64_t start = d ? spec.next_start : spec.current_start, end = d ? spec.next_end : spec.current_end;
@@ -2114,8 +2175,11 @@ std::string AudioPipeline::selectAutoMix(const std::string& json) {
       AudioFormat format;
       format.sampleRate = spec.binding.sample_rate; format.channelCount = spec.binding.channels;
       std::vector<float> pcm;
-      if (!decodeAutoMixFrames(streams[d]->item, format, ticket->origin[d], ticket->frames[d], &pcm, &error,
-          cancel.get(), streams[d]->actualResamplerQuality) || pcm.size() != ticket->frames[d] * spec.binding.channels)
+      auto boundedItem = streams[d]->item;
+      boundedItem.source = streams[d]->sourceIdentity.decodeSource(boundedItem.source);
+      if (!decodeAutoMixFrames(boundedItem, format, ticket->origin[d], ticket->frames[d], &pcm, &error,
+          cancel.get(), streams[d]->actualResamplerQuality, streams[d]->sourceIdentity.decodeFactory(),
+          streams[d]->actualResamplerPhase) || pcm.size() != ticket->frames[d] * spec.binding.channels)
         return "{\"ok\":false,\"reason\":\"material_export_decode_failed\"}";
       auto file = dir / (d ? "next.f32" : "current.f32");
       std::ofstream out(file, std::ios::binary | std::ios::trunc);
@@ -2210,6 +2274,8 @@ bool AudioPipeline::prepareAutoMix(const std::string& json, std::string* error) 
   generation->format = decodeFormat_;
   generation->quality[0] = activeStream_->actualResamplerQuality;
   generation->quality[1] = preloadStream_->actualResamplerQuality;
+  generation->phase[0] = activeStream_->actualResamplerPhase;
+  generation->phase[1] = preloadStream_->actualResamplerPhase;
   generation->renderFrames = std::max<size_t>(outputInfo_.bufferSizeFrames, 1);
   request.mode = autoMixMode_; request.kernels = ta_am_get_kernels(TA_AM_AUTO); request.timeout_ms = 20000;
   request.binding.plan_id = ++autoMixNextPlanId_;
@@ -2272,6 +2338,14 @@ void AudioPipeline::pollAutoMix() {
   if (autoMix_->state.load() == AutoMixGeneration::Cancelled) {
     cancelAutoMixLocked("render_plan_invalidated"); return;
   }
+  const auto phase = autoMix_->state.load(std::memory_order_acquire);
+  // POSIX readers cannot deny external writers. Recheck on the non-RT clock
+  // while a plan waits for its boundary; no filesystem calls enter render().
+  if ((phase == AutoMixGeneration::Ready || phase == AutoMixGeneration::Armed) &&
+      (!ta_am_source_valid(autoMix_->lease[0]) || !ta_am_source_valid(autoMix_->lease[1]) ||
+       !autoMix_->outgoing->sourceUnchanged() || !autoMix_->fallback->sourceUnchanged())) {
+    cancelAutoMixLocked("source_changed_or_identity_unavailable"); return;
+  }
   if (autoMix_->state.load() != AutoMixGeneration::Preparing) return;
   const auto state = ta_am_job_status(autoMix_->job);
   autoMixDecodeMs_ = ta_am_job_elapsed_ms(autoMix_->job, 1) + ta_am_job_elapsed_ms(autoMix_->job, 2);
@@ -2298,6 +2372,12 @@ bool AudioPipeline::submitAutoMix(uint64_t id, std::string* error) {
       requestedRenderDspEpoch_.load() != autoMix_->binding.format_revision ||
       appliedRenderDspEpoch_.load() != autoMix_->binding.format_revision) {
     if (error) *error = "stale_or_unready_plan"; return false;
+  }
+  if (!ta_am_source_valid(autoMix_->lease[0]) || !ta_am_source_valid(autoMix_->lease[1]) ||
+      !autoMix_->outgoing->sourceUnchanged() || !autoMix_->fallback->sourceUnchanged()) {
+    cancelAutoMixLocked("source_changed_or_identity_unavailable");
+    if (error) *error = "source_changed_or_identity_unavailable";
+    return false;
   }
   autoMix_->state.store(AutoMixGeneration::Armed, std::memory_order_release);
   autoMixOutputFrame_.store(0); autoMixNextSourceFrame_.store(0);
@@ -2638,6 +2718,10 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   const DspConfig requestedDspConfig = DspChain::parseConfigJson(dspConfigJson);
+  const bool networkPcm = backendId == "bridge-pcm";
+  // Network output must never discover/reroute to a local DSD device. Its
+  // negotiated wire format is PCM even when the saved local profile is DSD.
+  if (networkPcm) outputConfig.pcmToDsdMode = PcmToDsdMode::Off;
   const DspOutputStageRequest outputStageRequest = outputStageRequestFromGraphJson(dspGraphJson);
   // The DSD routes are decided against the graph that will run, not the legacy
   // module toggles that ride along with it.
@@ -2660,18 +2744,21 @@ TAE_Result AudioPipeline::playInternal(
 
   std::optional<DsdStreamInfo> dsdProbe;
   std::string dsdProbeError;
-  if (sourceLooksDsfOrDff(item.source) || sourceLooksSacdIso(item.source)) {
+  const bool namedDsdSource = sourceLooksDsfOrDff(item.source) ||
+      sacdIsoExtensionOf(parseSacdSource(item.source).path) == "iso";
+  if (namedDsdSource || item.source.rfind("content://", 0) == 0) {
     // DST-compressed sources (SACD ISO areas, DSDIFF 'DST ' form) only open
     // through the DSD-preserving provider; the probe needs the same decoder
     // the playback paths get, or those tracks never reach the DSD routes.
     auto probeDstProvider = createDefaultSacdDstDecoderProvider();
     DsdReader probe;
+    probe.setInputFactory(std::atomic_load(&inputFactory_));
     probe.setDstDecoderProvider(probeDstProvider.get());
     if (probe.open(item.source, &dsdProbeError)) {
       dsdProbe = probe.streamInfo();
     }
   }
-  if (!dsdProbe.has_value() && !dsdProbeError.empty()) {
+  if (!dsdProbe.has_value() && !dsdProbeError.empty() && namedDsdSource) {
     // Without the probe neither DSD route is attempted; this event is the only
     // durable record of why (e.g. an unreadable source path).
     DiagnosticLog::instance().append(DiagLevel::Error, "dsd_probe_failed", dsdProbeError,
@@ -2684,7 +2771,7 @@ TAE_Result AudioPipeline::playInternal(
   // reach a registered DSD-capable proxy driver. Empty fields inherit the main
   // route; the engine never inspects which proxy this is.
   const DsdRouteOverride& dsdRoute = requestedDspConfig.dsdRoute;
-  bool dsdRouteActive = dsdRouteOverrideTargetsDistinctRoute(dsdRoute);
+  bool dsdRouteActive = !networkPcm && dsdRouteOverrideTargetsDistinctRoute(dsdRoute);
   std::string dsdBackendId =
       dsdRouteActive && !dsdRoute.backendId.empty() ? dsdRoute.backendId : backendId;
   std::string dsdDeviceId =
@@ -2694,7 +2781,7 @@ TAE_Result AudioPipeline::playInternal(
   // DSD-capable ASIO driver rather than silently degrading to DoP/PCM. Only
   // engaged for real DSD sources, and never when the user pinned a route.
   bool dsdRouteAutoDiscovered = false;
-  if (!dsdRouteActive && dsdProbe.has_value() && !backendCanAttemptNativeDsd(backendId) &&
+  if (!networkPcm && !dsdRouteActive && dsdProbe.has_value() && !backendCanAttemptNativeDsd(backendId) &&
       !dsdOutputModePrefersPcm(requestedDspConfig.dsdOutputMode)) {
     const std::string discovered = autoDiscoveredNativeDsdDeviceId(backendId);
     if (!discovered.empty()) {
@@ -2749,7 +2836,7 @@ TAE_Result AudioPipeline::playInternal(
             << " probeError=" << dsdProbeError << '\n';
     }
   }
-  if (sourceLooksDsfOrDff(item.source) || sourceLooksSacdIso(item.source)) {
+  if (namedDsdSource || dsdProbe.has_value()) {
     const bool routeAllowed = canTryNativeDsd || canTryDop;
     const int dsdRate = dsdProbe.has_value() ? dsdProbe->dsdRate : 0;
     const double decisionRate = loadAtomicDouble(requestedPlaybackRateBits_);
@@ -2793,6 +2880,7 @@ TAE_Result AudioPipeline::playInternal(
     if (nativeActive->openNativeDsdSource(item, &nativeAttemptError)) {
       output = backendFactoryOverride() ? backendFactoryOverride()(routeBackendId)
                                         : createOutputBackend(routeBackendId, &nativeAttemptError);
+      if (output) output->setUsbDirectHost(usbDirectHost_);
       if (!output) {
         if (nativeAttemptError.empty()) {
           nativeAttemptError = "请求的音频输出后端不可用：" + routeBackendId;
@@ -2843,6 +2931,7 @@ TAE_Result AudioPipeline::playInternal(
     if (dopActive->openDsdSource(item, &dopAttemptError)) {
       output = backendFactoryOverride() ? backendFactoryOverride()(routeBackendId)
                                         : createOutputBackend(routeBackendId, &dopAttemptError);
+      if (output) output->setUsbDirectHost(usbDirectHost_);
       if (!output) {
         if (dopAttemptError.empty()) {
           dopAttemptError = "请求的音频输出后端不可用：" + routeBackendId;
@@ -2963,6 +3052,7 @@ TAE_Result AudioPipeline::playInternal(
       }
       requestedPcmFormat.sampleRate = outputConfig.continuitySampleRate;
       requestedPcmFormat.channelCount = 2;
+      requestedPcmFormat.channelMask = 0x3;
       requestedPcmFormat.bitDepth = 32;
       requestedPcmFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
     }
@@ -2985,12 +3075,15 @@ TAE_Result AudioPipeline::playInternal(
       case ChannelRoutingMode::MonoToStereo:
       case ChannelRoutingMode::Stereo:
         requestedPcmFormat.channelCount = 2;
+        requestedPcmFormat.channelMask = 0x3;
         break;
       case ChannelRoutingMode::StereoTo51:
         requestedPcmFormat.channelCount = 6;
+        requestedPcmFormat.channelMask = 0x3f;
         break;
       case ChannelRoutingMode::StereoTo71:
         requestedPcmFormat.channelCount = 8;
+        requestedPcmFormat.channelMask = 0x63f;
         break;
       default:
         break;
@@ -3018,6 +3111,7 @@ TAE_Result AudioPipeline::playInternal(
         return false;
       }
       output->setUsbPcmPolicy(usbPcmPolicy_);
+      output->setUsbDirectHost(usbDirectHost_);
       return output->setOutputConfig(outputConfig, error);
     };
 
@@ -3107,9 +3201,11 @@ TAE_Result AudioPipeline::playInternal(
         !outputConfig.continuityFirst && !pcmToDsdPath && !active->stream.isDsd && !processingRequiresPcm &&
         (backendCanTypedPassthrough(backendId) || (backendId == "oboe" && outputConfig.usbPcmPassthrough)) && formatCanTypedPassthrough(active->stream.sourceFormat) &&
         (pcmFormatsSemanticallyMatch(active->stream.sourceFormat, outputFormat) ||
-          (backendId == "asio" &&
+          ((backendId == "asio" || backendId == "usb-direct") &&
             pcmFormatsPreserveSource(active->stream.sourceFormat, outputFormat)));
-    if (outputConfig.usbPcmPassthrough && !canUseTypedPassthrough) {
+    const auto openedFacts = outputConfig.usbPcmPassthrough ? output->outputInfo() : OutputInfo{};
+    if (outputConfig.usbPcmPassthrough && (!canUseTypedPassthrough ||
+        !openedFacts.usbPcmPreferenceAccepted || !openedFacts.usbPcmFormatMatched)) {
       if (error) *error = "USB 原样 PCM 无法建立无转换样本通路";
       output->close();
       return TAE_RESULT_BACKEND_UNAVAILABLE;
@@ -3121,6 +3217,7 @@ TAE_Result AudioPipeline::playInternal(
     }
     if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
       decodeFormat.channelCount = std::max(1, active->stream.sourceFormat.channelCount);
+      decodeFormat.channelMask = active->stream.sourceFormat.channelMask;
     }
 
     const bool hasGraphOutputStage = !dspGraphJson.empty();
@@ -3137,6 +3234,12 @@ TAE_Result AudioPipeline::playInternal(
       return TAE_RESULT_INTERNAL_ERROR;
     }
 
+    if (outputConfig.usbPcmPassthrough &&
+        !pcmFormatsExactMatch(active->bufferFormat(), outputFormat)) {
+      if (error) *error = "USB 原样 PCM 解码器未保留请求的样本容器";
+      output->close();
+      return TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
     if (pcmToDsdPath) {
       PcmToDsdModulatorConfig modulatorConfig;
       modulatorConfig.inputSampleRate = decodeFormat.sampleRate;
@@ -3258,6 +3361,7 @@ TAE_Result AudioPipeline::playInternal(
     }
     if (outputConfig.routingMode != ChannelRoutingMode::Auto && !pcmToDsdPath) {
       decodeFormat_.channelCount = std::max(1, stream_.sourceFormat.channelCount);
+      decodeFormat_.channelMask = activeStream_->bufferFormat().channelMask;
     }
     // Allocate routing state before the callback starts. Runtime route changes
     // are delivered through the SPSC queue and do not resize these buffers.
@@ -3478,6 +3582,7 @@ TAE_Result AudioPipeline::playInternal(
     renderNativeDsdPathActive_.store(nativeDsdPathActive_, std::memory_order_release);
     renderPcmToDsdPathActive_.store(pcmToDsdPathActive_, std::memory_order_release);
     renderTypedPassthroughActive_.store(typedPassthroughActive_, std::memory_order_release);
+    renderUsbPcmPassthroughActive_.store(outputConfig.usbPcmPassthrough, std::memory_order_release);
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
     renderCrossfadeResetRequested_.store(false, std::memory_order_release);
@@ -3644,6 +3749,9 @@ bool AudioPipeline::shouldAttemptDopForCurrentConfig(
     std::optional<bool> graphProcessingActive) const {
   if (!dsdProbe.has_value()) return false;
   if (!dsdOutputModeRequestsDop(dspConfig.dsdOutputMode)) return false;
+  // UAC PCM formats do not advertise a DoP decoder. On USB direct, only an
+  // explicit DoP choice is the caller's confirmation that its DAC supports it.
+  if (backendId == "usb-direct" && dspConfig.dsdOutputMode != DsdOutputMode::Dop) return false;
   const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
   if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate, graphProcessingActive)) {
     return false;
@@ -3702,15 +3810,36 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
   return "DSD converted to PCM";
 }
 
+TAE_Result AudioPipeline::pullBridgePcm(float* data, size_t frames, TAE_BridgePcmInfo* info) {
+  if (!data || !info || frames == 0 || frames > 2048) return TAE_RESULT_INVALID_ARGUMENT;
+  std::lock_guard<std::recursive_mutex> transportLock(transportMutex_);
+  *info = {};
+  info->generation = bridgeGeneration_;
+  BridgeCaptureBackend* capture = nullptr;
+  {
+    std::lock_guard lock(mutex_);
+    capture = dynamic_cast<BridgeCaptureBackend*>(output_.get());
+    if (!capture) return TAE_RESULT_OK;
+    const auto format = capture->outputFormat();
+    info->sample_rate = format.sampleRate;
+    info->channels = format.channelCount;
+    info->playing = state_ == PipelineState::Playing;
+  }
+  if (info->playing) info->frames = static_cast<uint32_t>(capture->pull(data, frames));
+  return TAE_RESULT_OK;
+}
+
 TAE_Result AudioPipeline::togglePause() {
   std::lock_guard<std::recursive_mutex> transportLock(transportMutex_);
+  ++bridgeGeneration_;
   std::unique_lock lock(mutex_);
   if (state_ == PipelineState::Playing) {
     // Fade PCM on the callback, including integer passthrough and PCM-to-DSD
-    // before modulation. Raw DSD/DoP payloads must never be multiplied.
-    if (!autoMixProcessing_.load(std::memory_order_acquire) &&
+    // before modulation. Raw USB PCM and DSD/DoP payloads must never be multiplied.
+    if (!renderUsbPcmPassthroughActive_.load(std::memory_order_acquire) &&
+        !autoMixProcessing_.load(std::memory_order_acquire) &&
         ((!dopPathActive_ && !nativeDsdPathActive_) || pcmToDsdPathActive_) && output_ &&
-        loadAtomicDouble(requestedVolumeBits_) > 0.0) {
+        backendId_ != "bridge-pcm" && loadAtomicDouble(requestedVolumeBits_) > 0.0) {
       pauseFade_.begin(pcmToDsdPathActive_ ? renderDecodeFormat_.sampleRate : outputFormat_.sampleRate);
       lock.unlock();
       const auto deadline = std::chrono::steady_clock::now() +
@@ -3739,6 +3868,7 @@ TAE_Result AudioPipeline::stop() {
 }
 
 TAE_Result AudioPipeline::stopUnlocked() {
+  ++bridgeGeneration_;
   std::unique_ptr<IOutputBackend> output;
   std::shared_ptr<DecodeStream> active;
   std::shared_ptr<DecodeStream> preload;
@@ -3803,6 +3933,7 @@ TAE_Result AudioPipeline::stopUnlocked() {
     renderNativeDsdPathActive_.store(false, std::memory_order_release);
     renderPcmToDsdPathActive_.store(false, std::memory_order_release);
     renderTypedPassthroughActive_.store(false, std::memory_order_release);
+    renderUsbPcmPassthroughActive_.store(false, std::memory_order_release);
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
     renderCrossfadeResetRequested_.store(false, std::memory_order_release);
@@ -3855,6 +3986,7 @@ TAE_Result AudioPipeline::stopUnlocked() {
 
 TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
   std::lock_guard<std::recursive_mutex> transportLock(transportMutex_);
+  ++bridgeGeneration_;
   cancelAutoMix("seek");
   std::shared_ptr<DecodeStream> active;
   {
@@ -4372,6 +4504,10 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
     if (error) *error = "PCM 采样率与设备能力或允许集合不兼容";
     return false;
   }
+  if (config.usbPcmPassthrough && requestedAutoMixMode_.load(std::memory_order_acquire) != TA_AM_OFF) {
+    if (error) *error = "USB 原样 PCM 与 AutoMix 冲突；请先关闭 AutoMix";
+    return false;
+  }
   cancelAutoMix("output_changed");
   std::unique_lock lock(mutex_);
   synchronizeRenderPromotionLocked();
@@ -4423,7 +4559,7 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
   // Keep render callbacks silent while the current backend is fully stopped,
   // then only publish the requested config after the candidate has reopened
   // and started. The previous topology is reopened on every candidate failure.
-  const std::string backendLabel = backendId_ == "asio" ? "ASIO" : "WASAPI Exclusive";
+  const std::string backendLabel = backendId_ == "asio" ? "ASIO" : backendId_ == "usb-direct" ? "USB Direct" : "WASAPI Exclusive";
   renderState_.store(PipelineState::Paused, std::memory_order_release);
   lock.unlock();
   // The reopen below runs with mutex_ released; serialize it against
@@ -4863,7 +4999,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   const auto activeRate = selectedRate(activeSourceFormat.sampleRate);
   const auto nextRate = selectedRate(sourceFormat.sampleRate);
   const bool policyCompatible = ratePolicyActive && !typedPassthrough && activeRate && nextRate &&
-      *activeRate == *nextRate && sourceFormat.channelCount == activeSourceFormat.channelCount;
+      *activeRate == *nextRate && pcmChannelLayoutsCompatible(sourceFormat, activeSourceFormat);
   if (stream->stream.isDsd || activeIsDsd ||
       (!continuityFirst && !autoMixEnabled && !sourceCompatible && !policyCompatible) ||
       (ratePolicyActive && activeRate != nextRate)) {
@@ -5403,8 +5539,10 @@ std::string AudioPipeline::getVisualizationDataJson(
     size_t waveformPoints,
     size_t spectrogramFrames,
     size_t oscilloscopePoints,
-    size_t visualizerBarCount) const {
-  return spectrum_.readVisualizationJson(spectrumPoints, waveformPoints, spectrogramFrames, oscilloscopePoints, visualizerBarCount);
+    size_t visualizerBarCount,
+    bool visualizerBandPeaks) const {
+  return spectrum_.readVisualizationJson(spectrumPoints, waveformPoints, spectrogramFrames, oscilloscopePoints,
+                                       visualizerBarCount, visualizerBandPeaks);
 }
 
 bool AudioPipeline::configureActiveStreamLocked(
@@ -5590,8 +5728,10 @@ std::string AudioPipeline::appliedDspGraphStatusJsonLocked() const {
       quality == FFmpegDecoder::ResamplerQuality::High ? "high" : "native";
   const bool known = engine != FFmpegDecoder::ResamplerEngine::Unknown;
   const bool resampled = engine == FFmpegDecoder::ResamplerEngine::Swr || engine == FFmpegDecoder::ResamplerEngine::Soxr;
-  const char* phaseName = static_cast<FFmpegDecoder::ResamplerPhase>((observation >> 12) & 0xf) ==
-      FFmpegDecoder::ResamplerPhase::LinearSmooth ? "linear-smooth" : "linear";
+  const auto phase = static_cast<FFmpegDecoder::ResamplerPhase>((observation >> 12) & 0xf);
+  const char* phaseName = phase == FFmpegDecoder::ResamplerPhase::Minimum ? "minimum" :
+      phase == FFmpegDecoder::ResamplerPhase::MinimumSmooth ? "minimum-smooth" :
+      phase == FFmpegDecoder::ResamplerPhase::LinearSmooth ? "linear-smooth" : "linear";
   json.insert(*start + 1, std::string("\"effectiveResampler\":\"") + engineName +
       "\",\"effectiveResamplerQuality\":" + (known ? std::string("\"") + qualityName + "\"" : "null") +
       ",\"effectiveResamplerPhase\":" + (resampled ? std::string("\"") + phaseName + "\"" : "null") +
@@ -6074,7 +6214,8 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
       trackStarted_.store(true, std::memory_order_release);
     }
   }
-  if (!dsdTransportActive) pauseFade_.process(output);
+  if (!dsdTransportActive && !renderUsbPcmPassthroughActive_.load(std::memory_order_acquire))
+    pauseFade_.process(output);
   if (isDopCarrierFormat(output.format)) {
     if (dsdTransportActive) {
       finalizeDopCarrier(output, read, &renderDopMarkerIndex_);

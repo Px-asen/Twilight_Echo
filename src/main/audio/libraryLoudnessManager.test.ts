@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import test, { type TestContext } from 'node:test'
 import { LibraryLoudnessCache } from './libraryLoudnessCache.ts'
 import { LibraryLoudnessManager } from './libraryLoudnessManager.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../../shared/libraryLoudness.ts'
 import type {
   LoudnessBatchProgress,
   LoudnessGroupMeasurement,
@@ -14,7 +15,7 @@ import type {
 const measured = () => ({
   source: 'analyzed' as const,
   available: true,
-  algorithmVersion: 2,
+  algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION,
   integratedLufs: -18,
   truePeakDb: -2,
   analyzedAt: '2026-09-14T00:00:00Z'

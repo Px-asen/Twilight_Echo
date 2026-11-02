@@ -4,6 +4,7 @@ import TitleBar from './TitleBar.vue'
 import SideMenu from './SideMenu.vue'
 import OnlineHome from './local-dashboard/OnlineHome.vue'
 import PlayerBar from './PlayerBar.vue'
+import PlayingFluidBackdrop from './PlayingFluidBackdrop.vue'
 import { workshopPreviewTracks } from './theme-workshop/workshopPreviewData'
 import type { AppearanceDraft } from '../../../shared/appAppearance'
 import type { AppBackgroundPage } from '../../../shared/appSettings'
@@ -340,7 +341,7 @@ onMounted(() => {
         <section
           v-if="page === 'player'"
           class="appearance-preview-player-stage"
-          :data-preview-player-bg="nowPlayingBackground ?? 'blur'"
+          :data-preview-player-bg="nowPlayingBackground ?? 'fluid'"
           aria-label="播放页预览"
         >
           <div class="appearance-preview-player-backdrop" aria-hidden="true">
@@ -349,7 +350,14 @@ onMounted(() => {
               :src="previewCover"
               alt=""
             />
-            <div class="appearance-preview-player-fluid" />
+            <div class="appearance-preview-player-fluid">
+              <PlayingFluidBackdrop
+                :cover-url="previewCover"
+                preview
+                :playing="false"
+                motion-mode="reduced"
+              />
+            </div>
             <div class="appearance-preview-player-scrim" />
           </div>
           <div class="appearance-preview-player-grid">
@@ -437,20 +445,9 @@ html[data-te-player-custom-background='on'] .appearance-preview-player-backdrop 
 }
 .appearance-preview-player-fluid {
   position: absolute;
-  inset: -24%;
+  inset: 0;
   opacity: 0;
-  background:
-    radial-gradient(
-      circle at 22% 28%,
-      color-mix(in srgb, var(--te-playback-accent) 52%, transparent),
-      transparent 54%
-    ),
-    radial-gradient(
-      circle at 78% 70%,
-      color-mix(in srgb, var(--te-primary-500) 44%, transparent),
-      transparent 58%
-    );
-  filter: blur(36px);
+  pointer-events: none;
 }
 .appearance-preview-player-scrim {
   position: absolute;
@@ -459,12 +456,15 @@ html[data-te-player-custom-background='on'] .appearance-preview-player-backdrop 
 }
 .appearance-preview-player-stage[data-preview-player-bg='fluid']
   .appearance-preview-player-cover-glow {
-  opacity: 0.28;
-  filter: blur(68px) saturate(1.55);
+  opacity: 0;
 }
 .appearance-preview-player-stage[data-preview-player-bg='fluid'] .appearance-preview-player-fluid,
 html[data-te-player-backdrop='fluid'] .appearance-preview-player-fluid {
-  opacity: 0.9;
+  opacity: 1;
+}
+.appearance-preview-player-stage[data-preview-player-bg='fluid'] .appearance-preview-player-scrim,
+html[data-te-player-backdrop='fluid'] .appearance-preview-player-scrim {
+  background: color-mix(in srgb, var(--te-player-bg, var(--te-app-bg)) 14%, transparent);
 }
 .appearance-preview-player-stage[data-preview-player-bg='solid']
   .appearance-preview-player-cover-glow {
@@ -477,6 +477,9 @@ html[data-te-player-backdrop='cover-blur'] .appearance-preview-player-cover-glow
 html[data-te-player-backdrop='cover-blur'] .appearance-preview-player-fluid {
   opacity: 0;
 }
+html[data-te-player-backdrop='cover-blur'] .appearance-preview-player-scrim {
+  background: color-mix(in srgb, var(--te-player-bg, var(--te-app-bg)) 42%, transparent);
+}
 html[data-te-player-backdrop='solid'] .appearance-preview-player-cover-glow,
 html[data-te-player-backdrop='solid'] .appearance-preview-player-fluid,
 html[data-te-player-backdrop='image'] .appearance-preview-player-cover-glow,
@@ -484,8 +487,7 @@ html[data-te-player-backdrop='image'] .appearance-preview-player-fluid {
   opacity: 0;
 }
 html[data-te-player-backdrop='fluid'] .appearance-preview-player-cover-glow {
-  filter: blur(68px) saturate(1.55);
-  opacity: 0.32;
+  opacity: 0;
 }
 .appearance-preview-player-grid {
   width: min(

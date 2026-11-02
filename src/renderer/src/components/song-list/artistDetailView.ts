@@ -10,13 +10,14 @@ import type { MusicIdentityDetail } from '../../../../shared/musicIdentification
 import type { EntityMetadataReadApi } from '../music-metadata/entityMetadataView.ts'
 import { artistIdentityPresentation } from '../music-metadata/artistIdentityView.ts'
 import type { ArtistProfileChoice } from '../music-metadata/artistProfileChoice.ts'
+import { selectArtistProfile } from '../music-metadata/artistProfileSelection.ts'
 
 export const ARTIST_REFERENCE_PAGE_SIZE = 6
-export type ArtistSection = 'overview' | 'albums' | 'songs' | 'participation'
+export type ArtistSection = 'overview' | 'albums' | 'songs' | 'participation' | 'identity'
 interface ArtistDetailState {
   page: CatalogPage | null
   samples: Record<string, string>
-  identities: Record<string, string>
+  identities: Record<string, MusicIdentityDetail>
   selected: CatalogEntity | null
   detail: EntityMetadataDetail | null
   shared: boolean
@@ -95,80 +96,54 @@ export function createArtistDetailView(
         first = await api.catalog(base, controller.signal)
       }
       if (!current()) return
-      let page = first,
-        count = 0,
-        commonTarget: string | null = null
-      let consistent = exact && first.total > 1
-      const knownIdentities = new Map<string, MusicIdentityDetail>()
-      let selected: CatalogEntity | null = null
-      // Bounded batches, fenced to the exact collection revision. Collaborators
-      // returned by the legacy collection contract are excluded by artistName.
-      while (page.items.length) {
-        selected ??= page.items.find((item) => item.id === choice) ?? null
-        if (consistent) {
-          for (let i = 0; i < page.items.length && consistent; i += 8) {
-            const identities = await Promise.all(
-              page.items.slice(i, i + 8).map((item) => api.identity(item.id, controller.signal))
-            )
-            if (!current()) return
-            for (const identity of identities) {
-              knownIdentities.set(identity.entityId, identity)
-              if (
-                identity.link?.state !== 'confirmed' ||
-                !identity.link.targetId ||
-                (commonTarget && commonTarget !== identity.link.targetId)
-              ) {
-                consistent = false
-                break
-              }
-              commonTarget = identity.link.targetId
-            }
-          }
-        }
-        count += page.items.length
-        if (count >= first.total || (!consistent && (!choice || selected))) break
-        page = await api.catalog(
-          { ...base, offset: count, revision: first.revision },
-          controller.signal
-        )
-        if (!current()) return
-        if (page.total !== first.total || page.revision !== first.revision)
-          throw new Error('人物引用已变化，请重新读取')
+      // Legacy composite collections may contain collaborators, not same-name
+      // profile candidates. Only exact membership can choose a representative.
+      let profile =
+        exact || choice
+          ? await selectArtistProfile(api, base, first, controller.signal, choice)
+          : { selected: null, shared: false, targetId: undefined }
+      if (!current()) return
+      // A source being reviewed can leave the collection during a library update.
+      // Resume the automatic profile without requiring a second refresh.
+      if (choice && !profile.selected && api.choice?.(expected.name)?.entityId !== choice) {
+        choice = null
+        if (exact) profile = await selectArtistProfile(api, base, first, controller.signal)
       }
-      const shared = !selected && consistent && count === first.total
-      selected ??= exact && first.total === 1 ? first.items[0] : shared ? first.items[0] : null
+      const { selected, shared, targetId } = profile
       if (choice && !selected) choice = null
       offset = offset < first.total ? offset : 0
-      const choices =
+      const references =
         offset === 0
           ? { ...first, items: first.items.slice(0, ARTIST_REFERENCE_PAGE_SIZE) }
           : await api.catalog(
               { ...base, offset, limit: ARTIST_REFERENCE_PAGE_SIZE, revision: first.revision },
               controller.signal
             )
-      const references = await Promise.all(
-        choices.items.map(async (entity) => {
+      if (references.revision !== first.revision || references.total !== first.total)
+        throw new Error('人物引用已变化，请重新读取')
+      const entities = [...references.items]
+      if (selected && !entities.some((item) => item.id === selected.id)) entities.push(selected)
+      const entries = await Promise.all(
+        entities.map(async (entity) => {
           const [sourcePage, identity] = await Promise.all([
             api.sources(
               { entityId: entity.id, revision: first.revision, limit: 1 },
               controller.signal
             ),
-            knownIdentities.get(entity.id) ?? api.identity(entity.id, controller.signal)
+            api.identity(entity.id, controller.signal)
           ])
           const source = sourcePage.items[0]
-          return [
-            entity.id,
-            {
-              sample: source
-                ? [source.track.title, source.track.album].filter(Boolean).join(' · ')
-                : '',
-              identity: identity.link?.state === 'confirmed' ? '身份已确认' : '待核对身份'
-            }
-          ] as const
+          return {
+            id: entity.id,
+            identity,
+            sample: source
+              ? [source.track.title, source.track.album].filter(Boolean).join(' · ')
+              : ''
+          }
         })
       )
-      const samples = Object.fromEntries(references.map(([id, value]) => [id, value.sample]))
-      const identities = Object.fromEntries(references.map(([id, value]) => [id, value.identity]))
+      const samples = Object.fromEntries(entries.map((entry) => [entry.id, entry.sample]))
+      const identities = Object.fromEntries(entries.map((entry) => [entry.id, entry.identity]))
       const detail = selected
         ? await api.detail(selected.id, expected.language, 'local', controller.signal, shared)
         : null
@@ -181,14 +156,19 @@ export function createArtistDetailView(
           (saved.targetId && detail?.link?.state !== 'confirmed'))
       ) {
         choice = null
-        throw Object.assign(new Error('已保存的人物身份已变化，请重新选择资料条目'), {
+        throw Object.assign(new Error('已保存的人物身份已变化，请恢复自动选择'), {
           code: 'STALE_IDENTITY'
         })
       }
-      if (shared && (detail?.link?.state !== 'confirmed' || detail.targetId !== commonTarget))
+      if (
+        shared &&
+        (targetId
+          ? detail?.link?.state !== 'confirmed' || detail.targetId !== targetId
+          : detail?.link?.state === 'confirmed')
+      )
         throw Object.assign(new Error('人物身份已变化，请重新读取'), { code: 'STALE_IDENTITY' })
       state.value = {
-        page: choices,
+        page: references,
         samples,
         identities,
         selected,

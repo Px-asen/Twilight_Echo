@@ -62,6 +62,6 @@ test('plugin host idle tracker clear and destroy cancel pending countdowns', (t)
   assert.equal(tracker.isTracking('com.example.late'), false, 'a destroyed tracker ignores touches')
 })
 
-test('plugin host idle default keeps hosts warm for a few minutes of normal browsing', () => {
-  assert.equal(DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS, 5 * 60 * 1000)
+test('plugin host idle default keeps hosts warm for brief browsing bursts then reclaims RAM', () => {
+  assert.equal(DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS, 60 * 1000)
 })

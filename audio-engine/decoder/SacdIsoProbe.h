@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/SharedInputFile.h"
+#include "SacdSource.h"
 
 #include "../core/Utf8Path.h"
 
@@ -166,6 +167,7 @@ inline uint32_t sacdReadLe32(const uint8_t* data) {
 }
 
 inline bool sacdReadExactAt(std::istream& file, uint64_t offset, uint8_t* data, size_t size) {
+  file.clear();
   file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
   if (!file) return false;
   file.read(reinterpret_cast<char*>(data), static_cast<std::streamsize>(size));
@@ -256,26 +258,11 @@ inline void sacdCollectIsoDirectory(
   }
 }
 
-inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
-  if (sacdIsoExtensionOf(source) != "iso") return {};
-
+inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source, std::istream& file) {
   SacdIsoEntryProbe probe;
   probe.source = source;
   probe.codec = kSacdIsoCodecName;
   probe.container = kSacdIsoContainerName;
-
-  std::string cleanSource = source;
-  const size_t qm = cleanSource.find('?');
-  if (qm != std::string::npos) {
-    cleanSource = cleanSource.substr(0, qm);
-  }
-
-  SharedInputFile file(utf8Path(cleanSource), std::ios::binary);
-  if (!file) {
-    probe.reasonCode = kSacdIsoOpenFailedReasonCode;
-    probe.reason = "Unable to open ISO image";
-    return probe;
-  }
 
   std::array<uint8_t, 2048> sector{};
   uint32_t rootExtent = 0;
@@ -299,6 +286,15 @@ inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
 
   probe.isIso9660 = sawIsoDescriptor;
   if (!sawIsoDescriptor || rootExtent == 0 || rootSize == 0) {
+    // Raw Scarletbook images need not expose an ISO9660 filesystem. Their
+    // Master TOC lives at logical sector 510; the demuxer validates its areas.
+    std::array<uint8_t, 8> master{};
+    if (sacdReadExactAt(file, 510ULL * 2048, master.data(), master.size()) &&
+        std::memcmp(master.data(), "SACDMTOC", master.size()) == 0) {
+      probe.status = SacdIsoEntryStatus::Supported;
+      probe.hasSacdMarkers = probe.isDsd = true;
+      return probe;
+    }
     probe.reasonCode = kSacdIsoNotIso9660ReasonCode;
     probe.reason = "ISO candidate does not contain a readable ISO9660 primary volume descriptor";
     return probe;
@@ -335,6 +331,20 @@ inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
     probe.reason = kSacdIsoUnsupportedReason;
   }
   return probe;
+}
+
+inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
+  const auto path = parseSacdSource(source).path;
+  if (sacdIsoExtensionOf(path) != "iso") return {};
+  SharedInputFile file(utf8Path(path), std::ios::binary);
+  if (!file) {
+    SacdIsoEntryProbe probe;
+    probe.source = source;
+    probe.reasonCode = kSacdIsoOpenFailedReasonCode;
+    probe.reason = "Unable to open ISO image";
+    return probe;
+  }
+  return probeSacdIsoEntry(source, file);
 }
 
 }  // namespace twilight::audio

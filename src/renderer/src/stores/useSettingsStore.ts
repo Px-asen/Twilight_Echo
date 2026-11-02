@@ -33,6 +33,7 @@ import {
   clonePlayerBarSettings,
   normalizePlayerBarSettings
 } from '../../../shared/playerBar.ts'
+import { normalizeNowPlayingFluidSettings } from '../../../shared/appSettings.ts'
 import type { AppStartupSnapshot } from '../../../shared/appStartup.ts'
 import { useCoreConnection } from './coreConnection.ts'
 import type {
@@ -135,9 +136,11 @@ const fallbackSettings: AppSettings = {
   closeToTray: false,
   taskbarThumbarButtonsEnabled: true,
   afterglowAutoEntry: 'off',
+  unloadHiddenMainWindow: true,
   onboardingCompleted: false,
   developerMode: false,
   startupHomePage: 'local',
+  homePageMode: 'auto',
   startupExperience: null,
   navigationPages: normalizeNavigationPagePreferences(undefined),
   trackActivationMode: 'singleClick',
@@ -225,7 +228,8 @@ const fallbackSettings: AppSettings = {
   surfaceMaterial: 'standard',
   liquidGlass: DEFAULT_LIQUID_GLASS,
   playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
-  nowPlayingBackground: 'blur',
+  nowPlayingBackground: 'fluid',
+  nowPlayingFluid: { speed: 1, audioReactive: true },
   playbackResumeMode: 'off',
   previousButtonAction: 'restart',
   autoMixMode: 'off',
@@ -559,6 +563,8 @@ export function useSettingsStore() {
       'liquidGlass',
       'fontRendering',
       'playerBar',
+      'nowPlayingBackground',
+      'nowPlayingFluid',
       'lyricsAppearance',
       'lyricsPresets',
       'miniPlayer',
@@ -569,6 +575,10 @@ export function useSettingsStore() {
     }
     if (patch.playerBar)
       appearanceDraft.value.playerBar = normalizePlayerBarSettings(patch.playerBar)
+    if (patch.nowPlayingFluid)
+      appearanceDraft.value.nowPlayingFluid = normalizeNowPlayingFluidSettings(
+        patch.nowPlayingFluid
+      )
     applyDomSettings()
     const runUpdate = settingsUpdateQueue.then(async () => {
       const snapshot = await window.api.settings.update(toWirePatch(patch))

@@ -24,6 +24,7 @@ import { guardDspNavigation, type DspWorkspace } from './app/dspNavigationGuard'
 import {
   appearanceEditorOpen,
   appearanceChromePreview,
+  themeAppearance,
   appearanceFullWindowPreview
 } from './composables/appearanceEditorState.ts'
 const BackgroundAppearanceCustomizer = defineAsyncComponent(
@@ -190,7 +191,6 @@ const {
   localViewVisible,
   collapseMenu,
   onSelectView,
-  onSelectPluginPage,
   openPlayingPage: showPlaying,
   closePlayingPage,
   enterStreamingMode,
@@ -283,9 +283,11 @@ const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingMetadataRequest = ref<StreamingMetadataNavigationRequest | null>(null)
 let streamingMetadataRequestKey = 0
 const streamingMetadataTab = ref<StreamingPageTab>('home')
-// Keep StreamingPage mounted so contextual navigation preserves its detail.
-// Explicit sidebar selection returns the selected tab to its root instead.
+// Retain up to 2 recent StreamingPage sub-tabs so contextual back/forward stays
+// instant, and unload all retained streaming tabs upon returning to Local Library.
+const MAX_RETAINED_STREAMING_TABS = 2
 const streamingPageTabs = shallowRef<StreamingPageTab[]>([])
+let streamingTabLru: StreamingPageTab[] = []
 const streamingRootNavigationRevisions = ref<Partial<Record<StreamingPageTab, number>>>({})
 
 function selectSidebarPage(target: NavigationPageTarget): void {
@@ -297,18 +299,27 @@ function selectSidebarPage(target: NavigationPageTarget): void {
   navigation.selectSidebarPage(target)
 }
 watch(
-  [showStreamingPage, streamingTab],
-  ([visible, tab]) => {
-    if (visible && !streamingPageTabs.value.includes(tab))
-      streamingPageTabs.value = [...streamingPageTabs.value, tab]
-  },
-  { immediate: true }
-)
-const recentPageMounted = ref(false)
-watch(
-  showRecentPage,
-  (visible) => {
-    if (visible) recentPageMounted.value = true
+  [() => pageTarget.value.kind, showStreamingPage, streamingTab],
+  ([kind, visible, tab]) => {
+    if (kind === 'local') {
+      streamingTabLru = []
+      if (streamingPageTabs.value.length > 0) streamingPageTabs.value = []
+      return
+    }
+    if (!visible) return
+    streamingTabLru = [...streamingTabLru.filter((item) => item !== tab), tab]
+    if (streamingTabLru.length > MAX_RETAINED_STREAMING_TABS) {
+      streamingTabLru = streamingTabLru.slice(-MAX_RETAINED_STREAMING_TABS)
+    }
+    const allowed = new Set(streamingTabLru)
+    const next = streamingPageTabs.value.filter((item) => allowed.has(item))
+    if (!next.includes(tab)) next.push(tab)
+    if (
+      next.length !== streamingPageTabs.value.length ||
+      next.some((item, index) => item !== streamingPageTabs.value[index])
+    ) {
+      streamingPageTabs.value = next
+    }
   },
   { immediate: true }
 )
@@ -592,15 +603,6 @@ const { uiContributions, sidebarExperiences, syncExtensions } = useExtensionRegi
 const availablePluginPages = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
 )
-function openThemeWorkshop(): void {
-  const page = availablePluginPages.value.find(
-    (page) =>
-      page.pluginId === 'com.twilightecho.tool.theme-workshop' && page.id === 'theme-workshop'
-  )
-  if (!page) return
-  closeSettingsPage()
-  onSelectPluginPage(page)
-}
 const localSidebarItems = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
 )
@@ -649,7 +651,9 @@ const hasPlayerBar = computed(
    geometry flag both consumers read all live on it — so CSS does the hiding. */
 const playerBarPresentation = computed(() =>
   resolvePlayerBarPresentation(
-    appearanceChromePreview.value?.playerBar ?? settings.value.playerBar,
+    appearanceChromePreview.value?.playerBar ??
+      themeAppearance.value?.playerBar ??
+      settings.value.playerBar,
     {
       onPlayingPage: showPlayingPage.value
     }
@@ -1104,13 +1108,12 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           @login="handleStreamingLogin"
         />
         <RecentPlaybackPage
-          v-if="recentPageMounted"
+          v-if="pageTarget.kind === 'recent'"
           v-show="showRecentPage"
           :active="showRecentPage"
           :target="pageTarget.kind === 'recent' ? pageTarget : undefined"
           :has-player="hasPlayerBar"
           @select-view="onSelectView"
-          @login="handleStreamingLogin"
         />
         <RadioPodcastPage v-if="showRadioPodcastPage" />
         <NetworkSourcesPage v-if="showNetworkSourcesPage" />
@@ -1162,7 +1165,12 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     v-show="settingsOverlayVisible && !appearanceFullWindowPreview"
     :class="{ 'settings-overlay-root--active': settingsOverlayVisible }"
   >
-    <AppBackgroundLayer page="settings" embedded :reading="!appearanceFullWindowPreview" />
+    <AppBackgroundLayer
+      v-if="settingsOverlayVisible && !appearanceFullWindowPreview"
+      page="settings"
+      embedded
+      :reading="!appearanceFullWindowPreview"
+    />
     <Transition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
@@ -1180,7 +1188,6 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @tab-change="navigation.rememberAppearanceTab"
         @domain-change="navigation.rememberThemeStudioDomain"
         @back="closeAppearancePage"
-        @open-plugins="openPluginPage"
       />
     </Transition>
     <Transition
@@ -1196,8 +1203,6 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @section-change="navigation.rememberSettingsSection"
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
-        @open-theme-studio="openThemeStudioPage"
-        @open-theme-workshop="openThemeWorkshop"
         @open-appearance="openAppearancePage"
         @reopen-onboarding="handleReopenOnboarding"
       />
@@ -1208,18 +1213,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       @after-leave="releaseSettingsOverlay"
       @leave-cancelled="releaseSettingsOverlay"
     >
-      <PluginPage
-        v-if="showPluginPage"
-        @open-theme-workshop="
-          onSelectPluginPage({
-            pluginId: 'com.twilightecho.tool.theme-workshop',
-            id: 'theme-workshop',
-            kind: 'sidebarPage',
-            title: '主题插件工坊',
-            command: 'theme-workshop.open'
-          })
-        "
-      />
+      <PluginPage v-if="showPluginPage" />
     </Transition>
   </div>
   <ExperienceView

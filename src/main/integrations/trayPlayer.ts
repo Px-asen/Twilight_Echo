@@ -106,6 +106,28 @@ function positionTrayPlayerWindow(win: BrowserWindow): void {
   win.setBounds({ x, y, width: TRAY_PLAYER_WIDTH, height: TRAY_PLAYER_HEIGHT }, false)
 }
 
+const TRAY_PLAYER_IDLE_UNLOAD_MS = 15_000
+let trayPlayerUnloadTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearTrayPlayerUnloadTimer(): void {
+  if (trayPlayerUnloadTimer) {
+    clearTimeout(trayPlayerUnloadTimer)
+    trayPlayerUnloadTimer = null
+  }
+}
+
+function scheduleTrayPlayerUnload(): void {
+  clearTrayPlayerUnloadTimer()
+  trayPlayerUnloadTimer = setTimeout(() => {
+    trayPlayerUnloadTimer = null
+    const win = runtime.trayPlayerWindow
+    if (win && !win.isDestroyed() && !win.isVisible() && !win.webContents.isDevToolsOpened()) {
+      destroyTrayPlayerWindow()
+    }
+  }, TRAY_PLAYER_IDLE_UNLOAD_MS)
+  trayPlayerUnloadTimer.unref?.()
+}
+
 function createTrayPlayerWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: TRAY_PLAYER_WIDTH,
@@ -129,15 +151,23 @@ function createTrayPlayerWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false
+      allowRunningInsecureContent: false,
+      spellcheck: false
     }
   })
   runtime.trayPlayerWindow = win
 
+  win.on('show', () => {
+    clearTrayPlayerUnloadTimer()
+  })
+  win.on('hide', () => {
+    scheduleTrayPlayerUnload()
+  })
   win.on('blur', () => {
     if (!win.isDestroyed() && !win.webContents.isDevToolsOpened()) win.hide()
   })
   win.on('closed', () => {
+    clearTrayPlayerUnloadTimer()
     if (runtime.trayPlayerWindow === win) runtime.trayPlayerWindow = null
   })
   getCoreApplication()?.register(win, CORE_WINDOW_POLICIES.playback)
@@ -162,6 +192,7 @@ function createTrayPlayerWindow(): BrowserWindow {
 }
 
 export function showTrayPlayerWindow(options?: ExperienceWindowOptions): void {
+  clearTrayPlayerUnloadTimer()
   trayPlayerExperienceTheme = normalizeExperienceWindowTheme(options?.theme)
   const win =
     runtime.trayPlayerWindow && !runtime.trayPlayerWindow.isDestroyed()
@@ -189,6 +220,7 @@ export function hideTrayPlayerWindow(): void {
 }
 
 export function destroyTrayPlayerWindow(): void {
+  clearTrayPlayerUnloadTimer()
   const win = runtime.trayPlayerWindow
   runtime.trayPlayerWindow = null
   if (win && !win.isDestroyed()) win.destroy()

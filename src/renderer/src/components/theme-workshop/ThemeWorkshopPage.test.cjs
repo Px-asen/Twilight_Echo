@@ -5,7 +5,7 @@ const { join } = require('node:path')
 const { parse, compileScript, compileTemplate } = require('@vue/compiler-sfc')
 
 for (const filename of [
-  'ThemeWorkshopPage.vue',
+  'CustomThemeAdvancedPanel.vue',
   'WorkshopPreview.vue',
   'WorkshopLayersPanel.vue',
   'WorkshopAssetsPanel.vue',
@@ -35,19 +35,19 @@ for (const filename of [
   })
 }
 
-test('workshop opens below the theme studio in settings without a sidebar shortcut', () => {
-  const app = readFileSync(join(__dirname, '../../App.vue'), 'utf8')
+test('advanced authoring belongs to customization without optional plugin enablement', () => {
+  const page = readFileSync(join(__dirname, '../AppearancePage.vue'), 'utf8')
   const controls = readFileSync(
     join(__dirname, '../settings-page/ThemeControlsSettings.vue'),
     'utf8'
   )
-  assert.match(app, /page\.pluginId !== 'com\.twilightecho\.tool\.theme-workshop'/)
-  const titles = [...controls.matchAll(/<strong\b[^>]*>\s*(主题(?:创意|插件)工坊)/g)].map(
-    (match) => match[1]
+  assert.match(page, /CustomThemeAdvancedPanel/)
+  assert.match(page, /导出 \.TEP/)
+  assert.doesNotMatch(
+    page,
+    /appearance-selection-tab|appearance-workshop-tab|workshopEnableDialog|AppearanceThemeSelection/
   )
-  assert.deepEqual(titles, ['主题创意工坊', '主题插件工坊'])
-  assert.match(controls, /:disabled="!workshopEnabled"/)
-  assert.match(app, /@open-theme-workshop="openThemeWorkshop"/)
+  assert.doesNotMatch(controls, /主题创意工坊|主题插件工坊|workshopEnabled/)
 })
 
 test('preview refreshes mode-only edits and reads candidate layout independently of CSS validity', async () => {

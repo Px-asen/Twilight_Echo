@@ -2,6 +2,7 @@
 
 #include "../core/AudioTypes.h"
 #include "UsbPcmPolicy.h"
+#include "usb/UsbDirectHost.h"
 
 #include <cstddef>
 #include <functional>
@@ -84,6 +85,7 @@ class IOutputBackend {
 
   virtual const char* id() const = 0;
   virtual void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy>) {}
+  virtual void setUsbDirectHost(std::shared_ptr<UsbDirectHost>) {}
   virtual bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) = 0;
   virtual bool setOutputConfig(const OutputConfig& config, std::string* error) = 0;
   virtual bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) = 0;

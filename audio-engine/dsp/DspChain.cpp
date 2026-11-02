@@ -957,8 +957,7 @@ std::string DspChain::graphStatusJson() const {
   std::ostringstream json;
   const ConvolverInfo convolverInfo = convolver_ ? convolver_->info() : ConvolverInfo{};
   const uint32_t limiterLatency = truePeakLimiter_ && truePeakLimiter_->isActive()
-                                      ? static_cast<uint32_t>(std::max(1.0, std::round(
-                                            config_.truePeakLookaheadMs * static_cast<double>(format_.sampleRate) / 1000.0)))
+                                      ? static_cast<uint32_t>(truePeakLimiter_->latencyFrames())
                                       : 0;
   uint64_t totalLatency = 0;
   uint64_t totalTail = 0;
@@ -983,6 +982,8 @@ std::string DspChain::graphStatusJson() const {
     // A convolver bypassed on the render thread still reports isActive() here -- this chain
     // holds the control instance. convolverInfo() carries the shared realtime flag.
     const bool convolverRealtimeBypassed = node.type == "convolver" && convolverInfo.bypassed;
+    const auto* bass = node.type == "bassmanagement"
+        ? static_cast<const BassManagementProcessor*>(node.processor) : nullptr;
     const bool active = node.processor && node.enabled && node.bypassReason.empty() &&
                         node.processor->isActive() && !convolverRealtimeBypassed;
     const uint32_t latency = node.type == "convolver" ? convolverInfo.latencyFrames :
@@ -996,6 +997,8 @@ std::string DspChain::graphStatusJson() const {
     const std::string bypassReason =
         !node.bypassReason.empty() ? node.bypassReason :
         convolverRealtimeBypassed ? convolverInfo.lastError :
+        bass && node.enabled && !bass->usesLegacyChannelLayout() && bass->lfeChannelIndex() < 0
+            ? "The decoded channel layout has no LFE channel" :
         node.vst3Bridge && node.enabled && !active ? node.vst3Bridge->bypassReason() : "";
     const bool bypassed = !node.enabled || !bypassReason.empty();
     if (index > 0) json << ",";
@@ -1011,7 +1014,11 @@ std::string DspChain::graphStatusJson() const {
          << ",\"maxProcessMs\":" << (node.type == "convolver" ? convolverInfo.maxProcessMs :
              node.vst3Bridge ? node.vst3Bridge->maxProcessMs() : 0.0)
          << ",\"averageProcessMs\":0,\"overrunCount\":" << overrunCount << ",\"clipCount\":"
-         << clipCount << "}";
+         << clipCount;
+    if (bass) json << ",\"lfeChannelIndex\":" << bass->lfeChannelIndex()
+                   << ",\"channelLayoutSource\":\""
+                   << (bass->usesLegacyChannelLayout() ? "legacy-count" : "native-mask") << "\"";
+    json << "}";
   }
   const bool outputTargetRequested = config_.outputTargetSampleRate > 0;
   const bool outputActive = outputTargetRequested && config_.outputTargetSampleRate == format_.sampleRate;

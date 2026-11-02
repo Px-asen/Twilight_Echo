@@ -1,24 +1,33 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useThemeStore } from '@renderer/stores/useThemeStore'
+import { useSettingsStore } from '@renderer/stores/useSettingsStore'
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import type { StreamingPageTab } from '@renderer/app/navigationPages'
 import { createLibraryHomeStatus } from '@renderer/stores/library/libraryHomeStatus.ts'
 
 const OnlineDashboard = defineAsyncComponent(() => import('./OnlineDashboard.vue'))
 const props = defineProps<{ preview?: boolean }>()
+const { settings } = useSettingsStore()
 const core = useCoreConnection()
 const home = createLibraryHomeStatus({
   getStorageMode: async () => 'sqlite',
   api: { getMetadata: () => core.query('library.metadata', {}) }
 })
 const homeState = home.state
+const homePageMode = computed(() => settings.value.homePageMode ?? 'auto')
 const emptyLibrary = computed(
   () => homeState.value.mode === 'sqlite' && homeState.value.total === 0
+)
+const showOnlineDashboard = computed(
+  () =>
+    !props.preview &&
+    (homePageMode.value === 'streaming' || (homePageMode.value === 'auto' && emptyLibrary.value))
 )
 const homePending = computed(
   () =>
     !props.preview &&
+    homePageMode.value === 'auto' &&
     !homeState.value.error &&
     (homeState.value.mode === null ||
       (homeState.value.mode === 'sqlite' && homeState.value.total === null))
@@ -71,7 +80,7 @@ const emit = defineEmits<{
 <template>
   <div class="local-home-layout">
     <section
-      v-if="!preview && (homePending || homeState.error)"
+      v-if="!preview && homePageMode === 'auto' && (homePending || homeState.error)"
       class="home-status"
       role="status"
       aria-live="polite"
@@ -80,7 +89,7 @@ const emit = defineEmits<{
       <button v-if="homeState.error" type="button" @click="home.refresh()">重试</button>
     </section>
     <OnlineDashboard
-      v-else-if="!preview && emptyLibrary"
+      v-else-if="showOnlineDashboard"
       @select-view="(category, filter) => emit('select-view', category, filter)"
       @open-library-settings="emit('open-library-settings')"
       @open-streaming="emit('open-streaming', $event)"

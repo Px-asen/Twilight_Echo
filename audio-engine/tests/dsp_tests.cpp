@@ -33,6 +33,7 @@ class CountingProcessor final : public IAudioProcessor {
   void prepare(const AudioFormat&) override {}
   void setTrackContext(const DspTrackContext&) override {}
   void process(float*, size_t) override { ++processCalls; }
+  void processDouble(double*, size_t) override { ++processCalls; }
   void reset() override {}
   bool isActive() const override { return active_; }
 
@@ -556,6 +557,100 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
   return result;
 }
 
+void testGraphDoubleProcessingUsesPreparedSampleCount() {
+  const std::string graph = R"({"revision":39,"sceneId":"double-count","graph":{"nodes":[
+    {"id":"strip","type":"channelStrip","enabled":true,"params":{"channels":[
+      {"gainDb":-3,"delayMs":0.25,"polarityInverted":false,"mute":false},
+      {"gainDb":3,"delayMs":0,"polarityInverted":true,"mute":false}]}},
+    {"id":"stereo","type":"stereoField","enabled":true,"params":{"width":1.5,"balance":-0.25,"swap":true,"invertRight":true}},
+    {"id":"contour","type":"loudnessContour","enabled":true,"params":{"amount":0.6,"referenceVolume":0.5}}
+  ]}})";
+  for (int channels : {1, 2, 6, 8}) {
+    DspChain reference, candidate;
+    DspConfig config; config.enabled = true; config.clipGuard = false;
+    for (auto* chain : {&reference, &candidate}) {
+      chain->configure(config); chain->prepare(testFormat(channels));
+      std::string error; assert(chain->configureGraphJson(graph, &error));
+      assert(chain->status().channelStripActive && chain->status().loudnessContourActive);
+    }
+    constexpr size_t frames = 128;
+    constexpr double sentinel = 0.123456789012345;
+    std::vector<double> actual(frames * 8 + 8, sentinel);
+    std::vector<float> expected(frames * channels);
+    for (size_t i = 0; i < expected.size(); ++i) actual[i] = expected[i] = float(int(i % 17) - 8) / 64;
+    reference.process(expected.data(), frames);
+    candidate.processDouble(actual.data(), frames);
+    for (size_t i = 0; i < expected.size(); ++i) assert(actual[i] == double(expected[i]));
+    for (size_t i = expected.size(); i < actual.size(); ++i) assert(actual[i] == sentinel);
+  }
+}
+
+void testBassGraphUsesPreparedSpeakerLayout() {
+  DspChain chain;
+  DspConfig config; config.enabled = true; config.clipGuard = false;
+  chain.configure(config);
+  AudioFormat format = testFormat(3); format.channelMask = 7;
+  chain.prepare(format);
+  std::string error;
+  assert(chain.configureGraphJson(R"({"graph":{"nodes":[{"id":"bass","type":"bassManagement","enabled":true,"params":{}}]}})", &error));
+  auto json = chain.graphStatusJson();
+  assert(json.find("\"lfeChannelIndex\":-1") != std::string::npos);
+  assert(json.find("\"channelLayoutSource\":\"native-mask\"") != std::string::npos);
+  assert(json.find("\"bypassed\":true") != std::string::npos && json.find("no LFE") != std::string::npos);
+  std::vector<float> samples(512 * 3, .0125f);
+  const auto before = samples;
+  chain.process(samples.data(), 512);
+  assert(samples == before && !chain.status().bassManagementActive);
+  format.channelMask = 0xb;
+  chain.prepare(format);
+  json = chain.graphStatusJson();
+  assert(json.find("\"lfeChannelIndex\":2") != std::string::npos);
+  assert(json.find("\"active\":true") != std::string::npos && json.find("no LFE") == std::string::npos);
+  assert(chain.status().bassManagementActive);
+  format.channelMask = 0;
+  chain.prepare(format);
+  assert(chain.graphStatusJson().find("\"channelLayoutSource\":\"legacy-count\"") != std::string::npos);
+}
+
+void testNamedCrossfeedGraphAndLegacyPaths() {
+  size_t scenarios = 0;
+  for (const auto& entry : std::vector<std::pair<std::string, CrossfeedAlgorithm>>{
+           {"bauer", CrossfeedAlgorithm::Bauer}, {"bs2b", CrossfeedAlgorithm::Bs2b}, {"meier", CrossfeedAlgorithm::Meier}}) {
+    const auto& [name, algorithm] = entry;
+    DspChain legacy, graph;
+    legacy.configureFromJson("{\"dspEnabled\":true,\"crossfeedAlgorithm\":\""+name+
+        "\",\"crossfeedEnabled\":true,\"crossfeedStrength\":0.25,\"clipGuard\":false}");
+    legacy.prepare(testFormat());
+    std::string error;
+    assert(graph.configureGraphJson("{\"graph\":{\"nodes\":[{\"id\":\"crossfeed\",\"type\":\"crossfeed\",\"enabled\":true,\"params\":{\"algorithm\":\""+
+        name+"\",\"strength\":0.25}}],\"outputStage\":{\"safetyClamp\":false}}}", &error));
+    graph.prepare(testFormat());
+    DspConfig c; c.enabled = c.crossfeedEnabled = true; c.crossfeedAlgorithm = algorithm; c.crossfeedStrength = .25;
+    CrossfeedProcessor direct; direct.configure(c); direct.prepare(testFormat());
+    assert(legacy.config().crossfeedAlgorithm == algorithm && graph.config().crossfeedAlgorithm == algorithm);
+    assert(legacy.status().crossfeedActive && graph.status().crossfeedActive);
+    std::vector<float> input(4096*2);
+    for (size_t i = 0; i < input.size(); ++i) input[i] = static_cast<float>(.125*std::sin(i*.137));
+    auto actualLegacy = input, actualGraph = input, expected = input;
+    for (size_t offset : {size_t(0), size_t(2048)}) {
+      if (offset != 0) {
+        legacy.setCrossfeedStrength(.75); graph.setCrossfeedStrength(.75);
+        c.crossfeedStrength = .75; direct.configure(c);
+      }
+      legacy.process(actualLegacy.data()+offset*2, 2048);
+      graph.process(actualGraph.data()+offset*2, 2048);
+      direct.process(expected.data()+offset*2, 2048);
+    }
+    assert(actualLegacy == expected && actualGraph == expected);
+    legacy.reset(); graph.reset(); direct.reset();
+    std::vector<double> d(input.begin(),input.end()), l = d, g = d;
+    legacy.processDouble(l.data(),4096); graph.processDouble(g.data(),4096); direct.processDouble(d.data(),4096);
+    assert(l == d && g == d);
+    ++scenarios;
+  }
+  std::printf("named crossfeed legacy/graph float/double and live-strength scenarios=%zu passed\n", scenarios);
+}
+
 }  // namespace
 
 int main() {
@@ -622,6 +717,9 @@ int main() {
   testConvolverWaveExtensibleParsingUsesSubFormatGuid();
   testConvolverBypassesAfterRepeatedBudgetMisses();
   testConvolverRealtimeStateIsSharedWithRenderClone();
+  testGraphDoubleProcessingUsesPreparedSampleCount();
+  testBassGraphUsesPreparedSpeakerLayout();
+  testNamedCrossfeedGraphAndLegacyPaths();
   {
     CountingProcessor inactive(false);
     CountingProcessor active(true);
@@ -940,6 +1038,10 @@ int main() {
     assert(chain.configureGraphJson(graph, &error));
     std::vector<float> samples(512 * 2, 1.5f);
     chain.process(samples.data(), 512);
+    assert(chain.graphStatusJson().find("\"totalLatencyFrames\":11") != std::string::npos);
+    assert(chain.graphStatusJson().find("\"latencyFrames\":11") != std::string::npos);
+    for (size_t frame = 0; frame < 11; ++frame) assert(samples[frame * 2] == 0.0f);
+    assert(samples[11 * 2] > 0.0f);
     double peak = 0.0;
     for (size_t frame = 12; frame < 512; ++frame) {
       peak = std::max(peak, std::abs(static_cast<double>(samples[frame * 2])));
@@ -1286,6 +1388,24 @@ int main() {
     assert(chain.graphStatusJson().find("\"momentaryLufs\"") != std::string::npos);
     for (float sample : samples) assert(std::isfinite(sample));
   }
+
+#if defined(TAE_HAS_EBUR128)
+  {
+    // Negative infinity is a valid R128 silence/gating result. The Android
+    // status boundary must carry it as JSON null rather than an RMS estimate.
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    assert(chain.configureGraphJson(R"({"revision":22,"graph":{"nodes":[{"id":"meter","type":"meter","enabled":true,"params":{}}]}})", &error));
+    std::vector<float> silence(48000 * 2, 0.0f);
+    chain.process(silence.data(), 48000);
+    const std::string json = chain.graphStatusJson();
+    assert(json.find("\"momentaryLufs\":null") != std::string::npos);
+    assert(json.find("\"shortTermLufs\":null") != std::string::npos);
+    assert(json.find("\"integratedLufs\":null") != std::string::npos);
+  }
+#endif
 
   {
     // SoX-quality resampler tiers: parsing, status naming, and honest runtime

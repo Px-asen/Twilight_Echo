@@ -1,5 +1,4 @@
 import { app, dialog, ipcMain, nativeImage } from 'electron'
-import type { WebContents } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, mkdtemp, rm, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,7 +9,12 @@ import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import { WorkshopRepository } from '../themes/workshopRepository.ts'
-import { writeStoredZip } from '../themes/themeArchive.ts'
+import { writeStoredZip, resolveThemeAssetFile } from '../themes/themeArchive.ts'
+import { resolveBackgroundImageFile } from '../library/coverCache.ts'
+import { customThemeSnapshot } from '../themes/customThemeSnapshot.ts'
+import { loadThemeLibrary } from '../themes/themeLibrary.ts'
+import { getBuiltInThemePreset } from '../../shared/theme.ts'
+import { cloneAppearance } from '../../shared/appAppearance.ts'
 import { workshopTemplate } from '../../shared/themeWorkshopTemplates.ts'
 import {
   diagnoseWorkshopProject,
@@ -18,13 +22,13 @@ import {
 } from '../../shared/themeWorkshopDiagnostics.ts'
 import { diagnoseWorkshopAssetEncoding } from '../themes/workshopAssetValidation.ts'
 import {
-  THEME_WORKSHOP_ID,
   createWorkshopProject,
   compileWorkshopTheme,
   workshopProjectSummary,
   exportWorkshopEditor,
   isWorkshopProject,
   normalizeThemeEditor,
+  type CustomThemeInput,
   type WorkshopBase,
   type WorkshopProject,
   type WorkshopThemeSource
@@ -33,42 +37,17 @@ import {
 /** The workshop owns editing drafts; installed packages always use Core's manager. */
 function pluginAccess() {
   const core = getCoreApplication()
-  return core ? {
-    list: () => core.request('plugins.list', {}),
-    listExtensions: () => core.request('extensions.list', {}),
-    installFromPath: (path: string) => core.request('plugins.installSource', { path }),
-    enable: (id: string) => core.request('plugins.enable', { id })
-  } : runtime.pluginManager!
+  return core
+    ? {
+        list: () => core.request('plugins.list', {}),
+        listExtensions: () => core.request('extensions.list', {}),
+        installFromPath: (path: string) => core.request('plugins.installSource', { path }),
+        enable: (id: string) => core.request('plugins.enable', { id })
+      }
+    : runtime.pluginManager!
 }
 
 const MAX_BYTES = 64 * 1024 * 1024
-const editors = new Map<number, WebContents>()
-const pendingDisables = new Map<
-  string,
-  { senderId: number; finish: (error: string | null) => void }
->()
-
-export async function prepareThemeWorkshopDisable(): Promise<void> {
-  await Promise.all(
-    [...editors.values()]
-      .filter((contents) => !contents.isDestroyed())
-      .map(
-        (contents) =>
-          new Promise<void>((resolveRequest, rejectRequest) => {
-            const requestId = randomUUID()
-            const timer = setTimeout(() => finish('工坊尚未完成保存，请稍后重试停用'), 8000)
-            function finish(error: string | null): void {
-              clearTimeout(timer)
-              pendingDisables.delete(requestId)
-              if (error) rejectRequest(new Error(error))
-              else resolveRequest()
-            }
-            pendingDisables.set(requestId, { senderId: contents.id, finish })
-            contents.send('themeWorkshop:prepareDisable', requestId)
-          })
-      )
-  )
-}
 const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -81,8 +60,40 @@ async function assetData(path: string): Promise<string> {
   const mime = MIME[extname(path).toLowerCase()]
   if (!mime) throw new Error('支持 PNG、JPEG、WebP 和 WOFF2')
   const bytes = await readFile(path)
-  if (bytes.length > 16 * 1024 * 1024) throw new Error('单个素材不能超过 16 MB')
+  if (bytes.length > 20 * 1024 * 1024) throw new Error('单个素材不能超过 20 MB')
   return `data:${mime};base64,${bytes.toString('base64')}`
+}
+
+async function readLocalThemeAsset(source: string): Promise<string> {
+  const url = new URL(source)
+  const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  const path =
+    url.protocol === 'background:'
+      ? resolveBackgroundImageFile(url.hostname + url.pathname)
+      : url.protocol === 'theme-asset:' && url.hostname === 'asset'
+        ? resolveThemeAssetFile(segments.shift() ?? '', segments.join('/'))
+        : null
+  if (!path) throw new Error('主题图片或字体已丢失，请重新导入')
+  return assetData(path)
+}
+
+async function portableProject(project: WorkshopProject): Promise<WorkshopProject> {
+  const images = new Map<string, Promise<string>>()
+  async function embed(value: unknown): Promise<unknown> {
+    if (typeof value === 'string' && /^(?:background|theme-asset):\/\//.test(value)) {
+      if (!images.has(value)) images.set(value, readLocalThemeAsset(value))
+      return images.get(value)!
+    }
+    if (Array.isArray(value)) return Promise.all(value.map(embed))
+    if (value && typeof value === 'object')
+      return Object.fromEntries(
+        await Promise.all(
+          Object.entries(value).map(async ([key, entry]) => [key, await embed(entry)])
+        )
+      )
+    return value
+  }
+  return (await embed(project)) as WorkshopProject
 }
 
 async function snapshot(source: WorkshopThemeSource): Promise<WorkshopBase> {
@@ -166,8 +177,20 @@ async function snapshot(source: WorkshopThemeSource): Promise<WorkshopBase> {
 }
 
 async function packageProject(project: WorkshopProject, work: string): Promise<string> {
+  project = await portableProject(project)
+  const invalid = diagnoseWorkshopAssetEncoding(
+    project,
+    (value) => !nativeImage.createFromDataURL(value).isEmpty()
+  )
+  if (invalid.length) throw new Error(invalid[0].message)
   const pluginId = `com.twilightecho.theme.user-${project.id}`
   const compiled = compileWorkshopTheme(project)
+  const structured = compiled.structured
+  const completeAppearance =
+    structured?.schemaVersion === 3 &&
+    (structured.appearance ||
+      structured.toneSchedule ||
+      Object.keys(structured.iconAssets ?? {}).length > 0)
   await writeFile(join(work, 'theme.css'), compiled.css)
   await writeFile(
     join(work, 'plugin.json'),
@@ -175,13 +198,13 @@ async function packageProject(project: WorkshopProject, work: string): Promise<s
       {
         id: pluginId,
         name: project.name,
-        description: project.description || '主题插件工坊创建的主题',
+        description: project.description || '自定义主题',
         version: project.version,
         author: project.author || project.base.author || '个人主题',
         license: project.base.license || 'UNLICENSED',
         type: ['theme'],
         apiVersion: 3,
-        engines: { twilightEcho: '>=1.2.0' },
+        engines: { twilightEcho: completeAppearance ? '>=1.4.0-0' : '>=1.2.0' },
         permissions: [],
         contributes: {
           themes: [
@@ -219,36 +242,6 @@ async function packageProject(project: WorkshopProject, work: string): Promise<s
 }
 
 export function setupThemeWorkshopIpc(): void {
-  ipcMain.handle('themeWorkshop:editorSession', async (event, active: boolean) => {
-    assertTrustedIpcSender(event, 'theme workshop session')
-    if (typeof active !== 'boolean') throw new Error('无效编辑器会话')
-    if (!active) {
-      editors.delete(event.sender.id)
-      return
-    }
-    await runtime.pluginManagerReady
-    const enabled = (await pluginAccess().list()).some(
-      (plugin) => plugin.id === THEME_WORKSHOP_ID && plugin.enabled
-    )
-    if (!enabled) throw new Error('请先启用主题插件工坊')
-    if (!editors.has(event.sender.id)) {
-      const senderId = event.sender.id
-      event.sender.once('destroyed', () => {
-        editors.delete(senderId)
-      })
-    }
-    editors.set(event.sender.id, event.sender)
-  })
-  ipcMain.handle(
-    'themeWorkshop:readyToDisable',
-    async (event, requestId: string, error: string | null) => {
-      assertTrustedIpcSender(event, 'theme workshop session')
-      if (typeof requestId !== 'string' || (error !== null && typeof error !== 'string'))
-        throw new Error('无效保存响应')
-      const request = pendingDisables.get(requestId)
-      if (request?.senderId === event.sender.id) request.finish(error)
-    }
-  )
   let repository: WorkshopRepository | undefined
   const repo = (): WorkshopRepository =>
     (repository ??= new WorkshopRepository(
@@ -269,7 +262,84 @@ export function setupThemeWorkshopIpc(): void {
       )
     return project
   }
+  const capture = async (input: CustomThemeInput): Promise<WorkshopProject> => {
+    stringifyJsonForIpcStorage(input, 'custom theme snapshot', MAX_BYTES)
+    if (!input || !input.appearance || !input.selection) throw new Error('自定义主题快照无效')
+    const selection = input.selection
+    let profile = input.profile
+    let base: WorkshopBase | undefined
+    if (selection.kind === 'plugin') {
+      await runtime.pluginManagerReady
+      base = await snapshot({
+        pluginId: selection.pluginId,
+        themeId: selection.themeId,
+        name: '',
+        version: ''
+      })
+    } else if (!profile) {
+      if (selection.kind === 'builtin') profile = getBuiltInThemePreset(selection.id) ?? undefined
+      else if (selection.kind === 'user')
+        profile = (await loadThemeLibrary()).data.profiles.find((p) => p.id === selection.id)
+      if (!profile) throw new Error('来源主题已不可用')
+    }
+    const cache = new Map<string, Promise<string>>()
+    return customThemeSnapshot(randomUUID(), input, profile, base, (source) => {
+      if (!cache.has(source))
+        cache.set(
+          source,
+          (async () => {
+            return readLocalThemeAsset(source)
+          })()
+        )
+      return cache.get(source)!
+    })
+  }
+  const exportTep = async (project: WorkshopProject): Promise<string | null> => {
+    const result = await dialog.showSaveDialog({
+      title: '导出主题插件',
+      defaultPath: `${project.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'theme'}.tep`,
+      filters: [{ name: 'Twilight Echo 主题插件', extensions: ['tep'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    const target =
+      extname(result.filePath).toLowerCase() === '.tep' ? result.filePath : result.filePath + '.tep'
+    const work = await mkdtemp(join(tmpdir(), 'te-custom-theme-'))
+    try {
+      await packageProject(project, work)
+      await writeStoredZip(work, target, 'plugin-theme')
+    } finally {
+      await rm(work, { recursive: true, force: true })
+    }
+    return target
+  }
   const handlers = {
+    createFromAppearance: async (input: CustomThemeInput) => {
+      stringifyJsonForIpcStorage(input, 'custom theme snapshot', MAX_BYTES)
+      const projectId =
+        input.selection?.kind === 'plugin'
+          ? input.selection.pluginId.match(/^com\.twilightecho\.theme\.user-([a-f0-9-]{36})$/)?.[1]
+          : undefined
+      const existing = projectId && !input.profile ? repo().get(projectId) : undefined
+      if (existing) {
+        const appearance = cloneAppearance(input.appearance)
+        existing.base.structured = {
+          ...existing.base.structured,
+          schemaVersion: 3,
+          variants: existing.base.structured?.variants ?? {},
+          appearance,
+          appearanceLayers: appearance.appearanceLayers
+        }
+        return repo().save(await portableProject(existing))
+      }
+      return repo().save(await capture(input))
+    },
+    exportAppearance: async (input: CustomThemeInput) => {
+      const project = await capture(input)
+      const report = diagnoseWorkshopProject(project)
+      if (report.errors)
+        throw new Error(report.diagnostics.find((d) => d.severity === 'error')!.message)
+      return exportTep(project)
+    },
     list: async () => repo().list().map(workshopProjectSummary),
     get: async (id: string) => {
       const project = repo().get(id)
@@ -336,13 +406,13 @@ export function setupThemeWorkshopIpc(): void {
     importProject: async () => {
       const result = await dialog.showOpenDialog({
         properties: ['openFile'],
-        filters: [{ name: '工坊项目', extensions: ['teworkshop'] }]
+        filters: [{ name: '主题编辑项目', extensions: ['teworkshop'] }]
       })
       if (result.canceled) return null
       const bytes = await readFile(result.filePaths[0])
       if (bytes.length > MAX_BYTES) throw new Error('项目超过 64 MB')
       const parsed = tryParseJsonWithNestingLimit(bytes.toString('utf8'))
-      if (!parsed.ok || !isWorkshopProject(parsed.value)) throw new Error('无效工坊项目')
+      if (!parsed.ok || !isWorkshopProject(parsed.value)) throw new Error('无效主题项目')
       return repo().save({ ...parsed.value, id: randomUUID(), revision: 0 })
     },
     updateBase: async (id: string) => {
@@ -358,22 +428,14 @@ export function setupThemeWorkshopIpc(): void {
     exportProject: async (id: string, format: 'project' | 'tep', revision?: number) => {
       const project = format === 'tep' ? checked(id, revision) : repo().require(id, revision)
       if (format !== 'project' && format !== 'tep') throw new Error('无效导出格式')
-      const extension = format === 'tep' ? 'tep' : 'teworkshop'
+      if (format === 'tep') return exportTep(project)
+      const extension = 'teworkshop'
       const result = await dialog.showSaveDialog({
         defaultPath: `theme-${id}.${extension}`,
         filters: [{ name: '主题', extensions: [extension] }]
       })
       if (result.canceled || !result.filePath) return null
-      if (format === 'project') await writeFile(result.filePath, JSON.stringify(project))
-      else {
-        const work = await mkdtemp(join(tmpdir(), 'te-workshop-'))
-        try {
-          await packageProject(project, work)
-          await writeStoredZip(work, result.filePath, 'plugin-theme')
-        } finally {
-          await rm(work, { recursive: true, force: true })
-        }
-      }
+      await writeFile(result.filePath, JSON.stringify(await portableProject(project)))
       return result.filePath
     },
     apply: async (id: string, revision?: number) => {
@@ -397,11 +459,10 @@ export function setupThemeWorkshopIpc(): void {
     (handler: (...args: never[]) => Promise<unknown>) =>
     async (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => {
       assertTrustedIpcSender(event, 'theme workshop IPC')
-      await runtime.pluginManagerReady
-      const plugin = (await pluginAccess().list()).find((p) => p.id === THEME_WORKSHOP_ID)
-      if (!plugin?.enabled) throw new Error('请先启用主题插件工坊')
       return (handler as (...values: unknown[]) => Promise<unknown>)(...args)
     }
+  ipcMain.handle('themeWorkshop:createFromAppearance', guarded(handlers.createFromAppearance))
+  ipcMain.handle('themeWorkshop:exportAppearance', guarded(handlers.exportAppearance))
   ipcMain.handle('themeWorkshop:get', guarded(handlers.get))
   ipcMain.handle('themeWorkshop:duplicate', guarded(handlers.duplicate))
   ipcMain.handle('themeWorkshop:remove', guarded(handlers.remove))

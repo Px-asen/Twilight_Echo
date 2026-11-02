@@ -63,10 +63,7 @@ configureDevelopmentUserData()
 
 export const diagnosticDirectory =
   process.env.TWILIGHT_LOG_DIRECTORY || join(app.getPath('logs'), 'diagnostics')
-export const diagnosticWriter = new DiagnosticWriterClient(
-  diagnosticDirectory,
-  join(app.getAppPath(), 'out/main/diagnosticWriter.js')
-)
+export const diagnosticWriter = new DiagnosticWriterClient(diagnosticDirectory, null)
 configureDiagnosticLogger({ sessionId: randomUUID(), processRole: 'main' }, (event) =>
   diagnosticWriter.record(event)
 )

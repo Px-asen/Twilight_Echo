@@ -67,8 +67,9 @@ PCM 直通无缝衔接保留实际设备的 Int16 / Int24 / Int24-in-32 / Int32 
 - `spectrogramFrames`：0-96，默认 48；native 侧保留固定滚动窗口，不无限增长；传 0 表示本次查询不返回 spectrogram payload，适合全屏可视化高频轮询。
 - `oscilloscopePoints`：0-4096，默认 1024；请求的时域示波器样本数，独立于 `fftResolution` 与 `waveformPoints`，由专门的 decoupled tap 返回；传 0 表示本次查询不返回 oscilloscope payload。
 - `visualizerBarCount`：0-256，默认 0；main 进程可为全屏可视化预聚合 log-Hz 频谱柱，减少 renderer 与 iframe 间传输。
+- `visualizerBarMode`：原生 JSON 可选 `"interpolated"`（默认）或 `"peak"`。前者保留既有 log-Hz 采样点插值；后者在每个互不重叠的对数频带内取原生 FFT bin 的最大值，不受 `spectrumPoints` 虚拟网格影响，不做跨时间峰值保持。仅在 `visualizerBarCount > 0` 时生效。Android 直接 JNI 的 48 段监测使用 `"peak"`；桌面 TypeScript／Core 请求仍使用原有插值契约，未开放此选项。
 
-返回 JSON 固定包含：
+返回 JSON 字段（`?` 表示可选）：
 
 - `spectrum: number[]`
 - `waveform: number[]`
@@ -78,14 +79,83 @@ PCM 直通无缝衔接保留实际设备的 Int16 / Int24 / Int24-in-32 / Int32 
 - `spectrogram: number[][]`
 - `oscilloscope: number[]`
 - `visualizerBars?: number[]`
+- `visualizerBarMode?: "interpolated" | "peak"`：原生在返回柱条时附带；桌面 Core 仍按原有字段投影。
 - `sampleRate: number`
 - `active: boolean`
 - `tapStatus: "active" | "stopped" | "disabled" | "no-samples" | "native-unavailable" | "synthetic-fallback"`
 - `reason: string`
 
+请求柱条时，`spectrum`、`spectrogram` 和 `oscilloscope` 返回空数组，`waveform` 仍按请求长度返回。`"peak"` 的 B 个频带边界为 `20 × (min(20000, sampleRate/2)/20)^(i/B)` Hz，`i=0…B`；内部边界归入右侧频带，最后一带包含范围内的上端点，没有原生 bin 的频带为 0。
+
+频谱和时域波形的源是最终 PCM tap 各声道的算术平均，因此等幅反相 L/R 会相消；不是逐声道能量和。FFT 使用对称 Hann 窗，显示值保持既有 `clamp((20 log10(max(|DFT|/(N/4), 1e-6)) + 90)/100, 0, 1)` 标度：它是归一化显示电平，不是频带能量或 dBTP。`peakDb` 和 `rmsDb` 则按 tap 的原声道采样计算。
+
 `oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints` 决定，不随 `fftResolution` 或 `waveformPoints` 变化；返回 N 个 signed time-domain 样本，供 UI 做稳定波形触发与绘制。PlayerBar 在 `oscilloscope` 基础上提供独立的示波器子面板（canvas polyline、客户端零交叉触发、`transition:none`、渐变描边 `#2563eb`→`#14b8a6`），与频谱面板互不影响。
 
-当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` / `oscilloscope` 返回请求长度的零数组，`spectrogram=[]`，`lufsMomentary=null`，并通过 `tapStatus` / `reason` 区分 `stopped`、`disabled`、`no-samples`、`native-unavailable`。main 进程在播放中遇到旧 native binding 或 native tap 无采样时允许返回 `tapStatus="synthetic-fallback"` 的兼容数据；UI 必须把它识别为诊断 fallback，不能标成真实 native 采样成功。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
+当没有播放采样或 FFT tap 禁用时，`active=false`；请求柱条则返回对应数量的零柱，其他数组沿用上述 payload 规则；未请求柱条则 `spectrum` / `waveform` / `oscilloscope` 返回请求长度的零数组。`spectrogram=[]`、`lufsMomentary=null`，并通过 `tapStatus` / `reason` 区分 `stopped`、`disabled`、`no-samples`、`native-unavailable`。main 进程在播放中遇到旧 native binding 或 native tap 无采样时允许返回 `tapStatus="synthetic-fallback"` 的兼容数据；UI 必须把它识别为诊断 fallback，不能标成真实 native 采样成功。这里的 `lufsMomentary` 仍为当前 PCM 块 RMS 的可视化估算；DSP 仪表的标准 M／S／I／LRA 来自另一接口的 libebur128 计量。
+
+## 门限、压缩、多段压缩与动态 EQ
+
+门限和全频压缩以每帧各声道绝对值的最大值驱动同一包络与增益，最多处理 8 声道，保持声道间的幅度比例。压缩为硬拐点：包络电平 `L` 高于阈值 `T` 时，目标输出电平为 `T + (L-T)/ratio + makeupDb`；阈值以下只施加 makeup。门限在包络达到阈值时打开，否则关闭；reset 后包络为 0、增益为 1，因此低于阈值的起始音频按 release 逐渐关闭，而不是从首样本强制静音。
+
+`attackMs`／`releaseMs` 是每级一阶平滑的时间常数，系数为 `exp(-1/(timeSeconds × sampleRate))`：一个时间常数后，与固定目标的差值剩下 `1/e`。包络和增益分别平滑，不能把参数当作端到端完全打开／关闭或稳定所需的时间。门限增益上升用 attack、下降用 release；压缩增益下降用 attack、上升用 release。
+
+多段压缩将 2–4 个频带用串联的 LR4 分频器拆开。后续分频的二阶全通相位同时施加到先前低频带，再执行各带的包络／压缩／makeup，消除重新相加的相位失配。每带检测仍为各声道绝对值最大值，时间参数含义与全频压缩相同。各带 `ratio=1`、makeup 为 0 时，合成响应幅度平坦，但保留全通相位，不是输入的逐样本复制。禁用的单带保持该带单位增益；所有带禁用时整个处理器保持精确旁路。
+
+动态 EQ 每带用其频率与 Q 对应的带通检测器，在 `channelMask` 选中的声道中取绝对值最大值，并按 attack／release 平滑包络。动态增益幅度为 `min(abs(rangeDb), max(0, envelopeDb-thresholdDb) × (1-1/ratio))`，方向由 range 的正负决定；它与静态 `gainDb` 相加后生成该帧滤波系数。音频滤波器使用当前系数的差分方程，以输入历史和 `output-input` 修正历史保存状态，系数变化不会把旧系数权重留在状态中。峰值滤波器静态增益为 0 且 ratio 为 1 时精确保持输入；mask 外的声道不处理。
+
+`twilight_dynamics_response_tests` 对照解析 DC 包络／硬拐点、独立复数 LR4 传递函数和 long-double RBJ 当前系数差分方程，覆盖 44.1／48／96 kHz、分块、reset、声道链接和旁路。Android 的数值、构建与包内代码记录见相邻路线图第 38 节。
+
+## 声场、校准、低频与补偿
+
+- **立体声**：仅处理 2 声道，顺序为交换 → 左／右极性 → Mid／Side 增益与宽度 → 平衡。Mid 为 `(L+R)/2`，Side 为 `(L-R)/2`；mono 将 Side 置零。平衡衰减偏离方向的一侧，不放大另一侧。
+- **声道矩阵**：`matrix[output × channels + input]` 为行主序输入到输出系数。逐声道校准的延迟为 `round(delayMs × sampleRate / 1000)` 帧，范围 0–250 ms；增益、静音、极性各自独立。校准列表短于声道数时沿用最后一项设置。
+- **低频管理**：非 LFE 声道执行 LR4 高通，低通结果相加；启用 redirect 时，以 `(原 LFE + 低频和) × lfeGain` 写回，不按声道数归一。关闭 redirect 仍高通主声道，原 LFE 不过滤、不施加该增益。有明确布局时按 primary LFE 位定位，3.0／5.0 等无 LFE 布局完整旁路，不高通后丢掉低频。只给声道数的旧调用保留 6–8 声道索引 3、3–5 声道末项的原约定。
+- **等响度补偿**：当前为固定双搁架，`C=amount × (1-referenceVolume)`，105 Hz 低架增益 `12C dB`、8000 Hz 高架增益 `5C dB`，均为 S=1。参考音量是手动参数，不读取实时播放音量；该曲线不是声压校准后的等响标准。amount 为 0 或 reference 为 1 时旁路。
+- **交叉馈送**：仅处理 2 声道；命名模型使用 BS2B 的对侧低通＋本侧高频补偿，具体参数见下节。
+
+`twilight_spatial_response_tests` 用独立矩阵、索引延迟、双线性模拟传递函数与 z 域参考执行 1086 项检查。当前命名交叉馈送对照原版 libbs2b；第 39 节保留旧模型数列，第 43 节记录替换与新证据。真实 native 布局见相邻 Android 路线图第 41 节。
+
+### BS2B 命名模型与自定义模式
+
+| algorithm 值 | 实际模型 | 参数含义 |
+| --- | --- | --- |
+| bauer、bs2b | libbs2b 3.1.0 官方默认；两值是同一模型的兼容别名 | 700 Hz、低频 feed 4.5 dB |
+| meier | libbs2b 3.1.0 官方 JMEIER 预设 | 650 Hz、低频 feed 9.5 dB；拟合 Meier CORDA 的参数 |
+| custom | 原整数延迟＋一阶低通 | 用户 delayMs／cutoffHz；直达 `1-0.08s`、对侧 `0.38s` |
+
+命名模型的 strength 是干湿比例：`out=(1-s)×input+s×BS2B(input)`，1 为完整预设。沿用原启用门槛，strength ≤0.0001、非立体声或禁用时精确旁路。delayMs／cutoffHz 只影响 custom；命名模型的频率相关延迟来自滤波器相位，没有额外整数延迟。旧 JSON、枚举、场景和强度值继续可读，命名选项的声音行为改为上表模型；custom 的滤波、增益和 Float32 延迟存储保持原样。
+
+系数与双精度历史适配自 [BS2B 3.1.0 原始实现](https://bs2b.sourceforge.net/)，MIT 通知随包提供。按引擎实际速率计算到 768 kHz，不使用原库在 384 kHz 以上改用 44.1 kHz 的公共 setter。保留 DSP 的 ±4 钳位与后级限制器入口；预设比较使用未触发 sample-format clipping 的音频，不引入库的 ±1 整数／浮点格式剪裁。命名 Float32／double 路径共用双精度历史，custom double 路径仍保留原 Float32 延迟精度。
+
+相同配置／速率的 prepare 和强度调整保留历史；模型、自定义滤波参数、速率或声道数改变时重建并清空，禁用后不残留旧尾音。`twilight_crossfeed_response_unit` 对原版 C 实现、独立 long-double H-transform、分块、互易、reset、旁路及回调零分配执行 1320 项检查；Android 构建与范围见路线图第 43 节。
+
+### PCM 的声道数与扬声器身份
+
+`AudioFormat.channelMask` 是 64 位 WAVE／FFmpeg native speaker 位，交错采样按位从低到高排列；primary LFE 为 `0x8`。`0` 表示未提供，保留旧 count-only 调用。FFmpeg 解码器保留 native 源布局，接受明确目标布局，按实际 SWR 输出填写 decoded 布局；count-only 目标仍使用 FFmpeg 默认布局。custom／unspecified 源不伪造 native 身份。
+
+布局随环形缓冲进入控制／渲染 DSP 图，经过预加载与晋升保持。立体声／5.1／7.1 路由更新对应请求布局，DSP 使用路由前实际解码布局；连续播放的立体声转换不携带原多声道 mask。已知且不同的 mask 不满足 PCM exact／semantic／整数拓宽匹配；任一端未提供 mask 时仍按原声道数契约判断，这不是对未知扬声器身份的证明。
+
+Android API 32+ 动态接入 AAudio channel-mask 请求／查询，保持 API 26 可加载。共享 speaker 位覆盖到 TOP_BACK_RIGHT；Android MONO 归一到 native mono。未报告、索引布局及更高的异序位置保留未指定，不从源格式冒充实际输出。CUE PCM 导出的 WAVEFORMATEXTENSIBLE 写入实际 32 位 speaker mask；超出 WAVE 可表示范围的布局返回错误。
+
+播放 JSON 以十六进制字符串返回 `sourceChannelMask`、`decodedChannelMask`、`outputChannelMask`（未指定为 `"0x0"`）。低频节点状态增加零起点 `lfeChannelIndex`（无 LFE 为 -1）与 `channelLayoutSource`（`native-mask`／`legacy-count`）；明确无 LFE 时报告旁路原因。停止／输出释放清除输出 mask。
+
+`twilight_channel_layout_unit` 的 150 项检查覆盖 15 种 native 布局、LFE 位置、无 LFE 旁路、旧调用、格式匹配和 converter 事务；`twilight_audio_channel_layout` 在真实 FFmpeg／管线／DSP 与无设备回调后端中覆盖 11 个场景。环形缓冲、DSP 图及 CUE 导出另有回归。软件证据见相邻 Android 路线图第 41 节。
+
+### LUFS 按实际解码布局计权
+
+实时 `LoudnessMeterProcessor` 与离线 `LoudnessAnalyzer` 共用 `analysis/Ebur128ChannelLayout.h`，在 libebur128 初始化后按 native 位序设置每个声道角色。primary LFE 与 LFE2 都不计入 LUFS／LRA；真峰值与削波仍覆盖全部声道。未指定 mask 的旧调用保留 libebur128 原有声道数默认表，包括 4／5 声道约定，不把未知布局冒充已知。
+
+角色权重依据 [ITU-R BS.1770-5 Annex 3，表 4、5](https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf)：水平 ±60°／±90°／±110° 为 **1.41**，前方、±135°／180°、高度及下方位置为 **1.0**。native BL／BR 在没有同侧 SL／SR 时沿用常规 quad／5.x 的独立环绕对；存在同侧 SL／SR（含新 side-surround 位）时作为 ±135° 后方对。因此 7.1 的侧环绕不再被默认表忽略，后方对与侧方对分别计权；没有按所有“后方”位一律增加 1.41。mask 未定义的位置使用单位能量权重，不改写扬声器身份。这些是 native 布局的名义位置约定，精确物理角度不在 mask 中。
+
+离线结果的 `algorithmVersion` 与 TypeScript 的 `LIBRARY_LOUDNESS_ALGORITHM_VERSION` 同步为 **3**。自动 loudnorm 的缓存键、库内专辑／曲目侧车校验均据此使旧版本失效；缓存 schema、源文件标签和播放设置不改。离线超过 8 声道的输入仍按原入口转换为最多 8 声道，再使用实际输出布局计权。
+
+`twilight_android_loudness_unit` 的 322 项检查覆盖 36 个独立 speaker 位、完整布局、I／M／S、reset／同声道数换布局和旧调用；`twilight_loudness_layout_unit` 的 17 个场景覆盖真实 FFmpeg＋C ABI 单文件／CUE／专辑、LFE 真峰值和超过 8 声道输入。离线对独立 48 kHz K 加权参考的最大误差为 0.00052803 LU，与相同 PCM 的实时直方图仪表最大差为 0.046 LU。证据见相邻 Android 路线图第 42 节。
+
+## Float32 与 double 处理边界
+
+`IAudioProcessor::processDouble(samples, frameCount)` 沿用原调用签名。原生 double 实现继续自己的处理；Float32-only 节点通过 `processFloatBridge(samples, frameCount, format_.channelCount)` 转换恰好 `frameCount × 实际声道数` 个采样，不再以支持上限 8 作为缓冲区长度。内部 C++ 派生类须显式实现该方法，避免无格式的默认转换；公共 C ABI／JNI 和插件 C ABI 不变。
+
+Float32 桥保留原有精度与临时数组分配；不把它当成原生 64 位 DSP。当前播放管线仍走 Float32 `process`，本次修正不切换播放精度。`twilight_double_bridge_tests` 检查 1／2／6／8 声道的尾部哨兵、Float32 参考、分块和禁用旁路；DSP 图与卷积另有实际桥接回归。软件证据见相邻路线图第 40 节。
 
 ## Capabilities 与错误 JSON
 
@@ -184,7 +254,7 @@ main 进程（`engineIpc.ts`）在播放状态变化、引擎错误与诊断导�
 }
 ```
 
-分组返回 `{ tracks: LoudnessAnalysisResult[], album: LoudnessAnalysisResult | null }`。省略区间时测量完整文件；批量输入的 `maxAnalysisSeconds` 必须省略或为 0，不能把采样片段标为完整专辑。原始测量必须为 `source: 'analyzed'`、`available: true`、`algorithmVersion: 2`，且 LUFS、峰值和时间戳有效。旧原生模块、解码错误、静音 / 不足以形成综合响度的区间、缺失成员、越过文件末尾的 CUE 都显式失败；整个分组不返回半套 `tracks` 或 Album 值。
+分组返回 `{ tracks: LoudnessAnalysisResult[], album: LoudnessAnalysisResult | null }`。省略区间时测量完整文件；批量输入的 `maxAnalysisSeconds` 必须省略或为 0，不能把采样片段标为完整专辑。原始测量必须为 `source: 'analyzed'`、`available: true`、`algorithmVersion: 3`，且 LUFS、峰值和时间戳有效。旧原生模块、解码错误、静音 / 不足以形成综合响度的区间、缺失成员、越过文件末尾的 CUE 都显式失败；整个分组不返回半套 `tracks` 或 Album 值。
 
 | 数值              | 单位与计算                                                 |
 | ----------------- | ---------------------------------------------------------- |
@@ -194,7 +264,7 @@ main 进程（`engineIpc.ts`）在播放状态变化、引擎错误与诊断导�
 | R128 gain         | `−23 − integratedLufs` dB；Q7.8 数值为增益 dB × 256 后取整 |
 | Peak linear       | `10 ** (truePeakDb / 20)`                                  |
 
-Album 保留每首的 libebur128 测量状态，再调用 `ebur128_loudness_global_multiple` 合并门限统计；不能平均各曲目的 dB。专辑真峰值取成员最高值。JSON 数值保留至 0.001，界面展示两位小数。首版结果供库内查询与后续分析复用，不写文件标签，也不改变播放增益；既有自动 loudnorm 仍用独立的 512 项缓存，该缓存算法身份也升级至 2。
+Album 保留每首的 libebur128 测量状态及各自实际布局，再调用 `ebur128_loudness_global_multiple` 合并门限统计；不能平均各曲目的 dB。专辑真峰值取成员最高值。JSON 数值保留至 0.001，界面展示两位小数。结果供库内查询与后续分析复用，不写文件标签，也不改变播放增益；既有自动 loudnorm 仍用独立的 512 项缓存，当前算法身份为 3。
 
 专辑分组直接使用 `useMusicStore().albums`：其稳定 ID、合辑合并及多碟排序继续遵循已有曲库规则。选中一首进行 Album 分析也会包含该专辑在当前曲库中的全部成员。身份不是只凭同名标题重建的；曲库成员变化后，旧专辑测量无法命中新成员指纹。CUE 使用实际源区间 `[startSeconds, endSeconds)`，起止位置分别转换到最近 PCM 样本；显式 PREGAP 产生的虚拟静音不参与测量，源内 INDEX 00 仍按既有区间归属处理。为保证样本边界，离线分析从文件开头解码并跳过起点前的 PCM，后段 CUE 会重复解码前缀。没有 CUE 区间的容器子曲目尚不支持，不能退化为测量整个容器。
 

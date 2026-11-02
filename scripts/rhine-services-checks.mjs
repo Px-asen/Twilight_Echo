@@ -61,7 +61,6 @@ export async function checkRhineServices({ page, frame, profile }) {
   await page.waitForFunction(async()=>(await window.api.settings.get()).settings.startupExperience===null)
   await page.screenshot({path:join(profile,'workspace-settings.png')})
   await frame.getByRole('tab', {name:'主题工具',exact:true}).click()
-  await frame.getByRole('button',{name:'启用主题插件工坊',exact:true}).click()
   await frame.getByRole('button',{name:'新建主题',exact:true}).click()
   const project = frame.locator('#host-page-themes details').first()
   await project.locator('summary').click()

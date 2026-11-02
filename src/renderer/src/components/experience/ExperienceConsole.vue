@@ -8,8 +8,7 @@ const Settings = defineAsyncComponent(() => import('../SettingsPage.vue'))
 const Equalizer = defineAsyncComponent(() => import('../EqualizerPage.vue'))
 const Dsp = defineAsyncComponent(() => import('../DspRackPage.vue'))
 const Plugins = defineAsyncComponent(() => import('../PluginPage.vue'))
-const Themes = defineAsyncComponent(() => import('../ThemeStudioPage.vue'))
-const Workshop = defineAsyncComponent(() => import('../theme-workshop/ThemeWorkshopPage.vue'))
+const Themes = defineAsyncComponent(() => import('../AppearancePage.vue'))
 const sections = computed(() =>
   [
     ['settings', '01', '终端设置'],
@@ -52,17 +51,15 @@ const sections = computed(() =>
         v-if="panel === 'settings'"
         @open-equalizer="emit('navigate', 'equalizer')"
         @open-dsp-rack="emit('navigate', 'dsp')"
-        @open-theme-studio="emit('navigate', 'theme')"
-        @open-theme-workshop="emit('navigate', 'workshop')"
+        @open-appearance="emit('navigate', 'theme')"
       />
       <Equalizer v-else-if="panel === 'equalizer'" />
       <Dsp v-else-if="panel === 'dsp'" />
-      <Plugins
-        v-else-if="panel === 'plugins' && managePlugins"
-        @open-theme-workshop="emit('navigate', 'workshop')"
+      <Plugins v-else-if="panel === 'plugins' && managePlugins" />
+      <Themes
+        v-else-if="panel === 'theme' || panel === 'workshop'"
+        @back="emit('navigate', 'settings')"
       />
-      <Themes v-else-if="panel === 'theme'" />
-      <Workshop v-else-if="panel === 'workshop'" />
     </div>
   </section>
 </template>

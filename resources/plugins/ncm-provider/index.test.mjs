@@ -287,6 +287,75 @@ test('readPlaylistImportPage preserves occurrence IDs, unavailable songs and sta
   }finally{ncmProvider.deactivate()}
 })
 
+test('playlist browsing keeps returned occurrences when copyright restrictions reduce the ID list', async () => {
+  const requests = []
+  const provider = await activateProvider(async path => {
+    const url = parseRequest(path)
+    requests.push(url.pathname)
+    if (url.pathname === '/playlist/detail') return { playlist: {
+      name: 'Mixed rights', trackCount: 5, trackIds: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 1 }]
+    } }
+    if (url.pathname === '/song/detail') return { songs: [
+      { ...song(2), noCopyrightRcmd: { type: 2 } }, song(1)
+    ] }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+  try {
+    const first = await provider.fetchPlaylistTracksPage('77', 0, 3)
+    assert.equal(first.total, 4)
+    assert.equal(first.reportedTotal, 5)
+    assert.deepEqual(first.tracks.map(track => track.ncmSongId), [1, 2, 3])
+    assert.equal(first.tracks[0].unavailableReason, undefined)
+    assert.equal(first.tracks[1].unavailableReason, '原平台版权受限')
+    assert.match(first.tracks[2].unavailableReason, /缺少元数据/)
+    assert.equal(first.nextOffset, 3)
+    assert.equal(first.hasMore, true)
+    const last = await provider.fetchPlaylistTracksPage('77', 3, 3)
+    assert.deepEqual(last.tracks.map(track => track.ncmSongId), [1])
+    assert.equal(last.nextOffset, 4)
+    assert.equal(last.hasMore, false)
+    await assert.rejects(provider.readPlaylistImportPage('77'), /不完整的条目/)
+    assert.ok(requests.every(route => route === '/playlist/detail' || route === '/song/detail'))
+  } finally { ncmProvider.deactivate() }
+})
+
+test('playlist pages tolerate null song details and recover omitted metadata without dropping occurrences', async () => {
+  const provider = await activateProvider(async path => {
+    if (parseRequest(path).pathname === '/playlist/detail') return { playlist: {
+      name: 'Unavailable entries', trackCount: 4, trackIds: [1, { id: 2 }, { id: 3 }, { id: 4 }],
+      tracks: [{ ...song(3), name: 'Still named in playlist' }]
+    } }
+    return { songs: [null, { ...song(2), ar: [null, { name: 'Artist' }], noCopyrightRcmd: {} }, song(1)],
+      privileges: [{ id: 2, st: -200, pl: 0 }] }
+  })
+  try {
+    const page = await provider.fetchPlaylistTracksPage('77')
+    assert.deepEqual(page.tracks.map(track => track.ncmSongId), [1, 2, 3, 4])
+    assert.equal(page.tracks[0].title, 'song-1')
+    assert.equal(page.tracks[1].artist, 'Artist')
+    assert.equal(page.tracks[1].unavailableReason, '原平台版权受限')
+    assert.equal(page.tracks[2].title, 'Still named in playlist')
+    assert.match(page.tracks[2].unavailableReason, /无权访问/)
+    assert.equal(page.tracks[3].title, '未知歌曲')
+    const imported = await provider.readPlaylistImportPage('77')
+    assert.deepEqual(imported.songs.map(track => track.platformId), ['1', '2', '3', '4'])
+    assert.equal(imported.songs[1].artist, 'Artist')
+    assert.equal(imported.songs[2].title, 'Still named in playlist')
+    assert.match(imported.songs[3].unavailableReason, /缺少元数据/)
+  } finally { ncmProvider.deactivate() }
+})
+
+test('playlist browsing reports failed detail reads instead of presenting an empty successful page', async () => {
+  let details = { code: 200, playlist: { trackCount: 1, trackIds: [{ id: 1 }] } }
+  const provider = await activateProvider(async path => parseRequest(path).pathname === '/playlist/detail'
+    ? details : { code: 200 })
+  try {
+    await assert.rejects(provider.fetchPlaylistTracksPage('77'), /歌曲详情读取中断/)
+    details = { code: 200, playlist: { trackCount: 1 } }
+    await assert.rejects(provider.fetchPlaylistTracksPage('77'), /权限不足/)
+  } finally { ncmProvider.deactivate() }
+})
+
 test('album search is anonymous-capable and preserves totals, artist credits and cancellation', async () => {
   const controller = new AbortController()
   const provider = await activateProvider(async (path, cookie, options) => {
@@ -3289,36 +3358,43 @@ test('membership upgrade resolves full audio after trial without reusing trial c
   }
 })
 
-test('signing in again clears resolved audio and ignores downloads from the old session', async () => {
-  let finishOldDownload
-  let calls = 0
-  const provider = await activateProvider(
-    async (path) =>
-      path.startsWith('/login/status')
-        ? { data: { profile: { userId: 1 } } }
-        : {
-            code: 200,
-            data: [{ code: 200, url: `https://music.example/${++calls}.mp3` }]
-          },
-    undefined,
-    {
-      ncm: {
-        cacheSong: async () =>
-          new Promise((resolve) => {
-            finishOldDownload = resolve
-          })
+for (const loginMethod of ['QR', 'official web']) {
+  test(`signing in again by ${loginMethod} clears resolved audio and ignores downloads from the old session`, async () => {
+    let finishOldDownload
+    let calls = 0
+    const provider = await activateProvider(
+      async (path) => {
+        if (path.startsWith('/login/qr/check')) return { code: 803, cookie: 'MUSIC_U=renewed;' }
+        if (path.startsWith('/login/status')) return { data: { profile: { userId: 1 } } }
+        return {
+          code: 200,
+          data: [{ code: 200, url: `https://music.example/${++calls}.mp3` }]
+        }
+      },
+      undefined,
+      {
+        ncm: {
+          cacheSong: async () =>
+            new Promise((resolve) => {
+              finishOldDownload = resolve
+            })
+        }
       }
+    )
+    try {
+      assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/1.mp3')
+      const finish = finishOldDownload
+      if (loginMethod === 'QR') {
+        assert.equal((await provider.checkQrLogin('renewed-key')).code, 803)
+      } else {
+        await provider.openOfficialLogin()
+      }
+      assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
+      finish('D:/Cache/old.mp3')
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
+    } finally {
+      ncmProvider.deactivate()
     }
-  )
-  try {
-    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/1.mp3')
-    const finish = finishOldDownload
-    await provider.openOfficialLogin()
-    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
-    finish('D:/Cache/old.mp3')
-    await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }), 'https://music.example/2.mp3')
-  } finally {
-    ncmProvider.deactivate()
-  }
-})
+  })
+}

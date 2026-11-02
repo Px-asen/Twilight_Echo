@@ -8,6 +8,8 @@ import {
   loadNativeBindingWithDiagnostics
 } from './audio/nativeBinding.ts'
 import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
+import { AudioBridgeRuntime, type BridgeHostOptions } from './audio/bridgeRuntime.ts'
+import type { BridgePeer } from '../shared/audioBridge.ts'
 import {
   createAudioServiceCapabilities,
   REQUIRED_AUDIO_SERVICE_DSP_METHODS,
@@ -18,7 +20,7 @@ type AudioServiceRequest = {
   diagnosticContext?: DiagnosticContext
   kind: 'request'
   requestId: string
-  method: keyof NativeAudioBinding
+  method: string
   args: unknown[]
 }
 
@@ -35,6 +37,7 @@ type AudioServiceResponse = {
 function stopNativeAudioSafely(): boolean {
   if (!native) return false
   try {
+    void bridgeRuntime?.close()
     native.Stop()
     const rawInfo = native.GetPlaybackInfo?.()
     const info = typeof rawInfo === 'string' ? JSON.parse(rawInfo) : rawInfo
@@ -79,6 +82,16 @@ process.once('exit', () => {
 initializeUtilityDiagnostics('twilight-audio-engine')
 const nativeLoad = loadNativeBindingWithDiagnostics()
 const native = nativeLoad.binding
+const bridgeRuntime = native ? new AudioBridgeRuntime(native) : null
+const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
+  BridgeStatus: () => bridgeRuntime!.state(),
+  BridgeHostStart: (options: BridgeHostOptions) => bridgeRuntime!.startHost(options),
+  BridgeHostStop: () => bridgeRuntime!.stopHost(),
+  BridgeConnect: (peer: BridgePeer) => bridgeRuntime!.connectPeer(peer),
+  BridgeDisconnect: () => bridgeRuntime!.disconnectPeer(),
+  BridgeQuarantine: () => bridgeRuntime!.quarantine(),
+  BridgeShutdown: () => bridgeRuntime!.close()
+}
 const nativeMethods = native
   ? Object.getOwnPropertyNames(native).filter(
       (method) => typeof native[method as keyof NativeAudioBinding] === 'function'
@@ -99,7 +112,7 @@ if (nativeContractError) {
   servicePort.postMessage({
     kind: 'ready',
     capabilities: {
-      ...createAudioServiceCapabilities(nativeMethods),
+      ...createAudioServiceCapabilities([...nativeMethods, ...Object.keys(bridgeMethods)]),
       nativeRuntime: nativeLoad.runtime
     }
   })
@@ -111,6 +124,9 @@ servicePort.on('message', (message) => {
     return
   }
   if (message.kind !== 'request') return
+  // Pairing credentials and TLS private keys stay off the diagnostics argument
+  // stream. These are private process commands, not public remote RPC methods.
+  if (Object.hasOwn(bridgeMethods, message.method)) { void handleRequest(message); return }
   void observeDiagnosticOperation(
     'audio.native',
     String(message.method),
@@ -144,11 +160,13 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
     ) {
       throw new Error(`${String(message.method)} must use the isolated audio analysis service`)
     }
-    const method = native[message.method]
+    const bridgeMethod = bridgeMethods[message.method]
+    const method = bridgeMethod ?? native[message.method as keyof NativeAudioBinding]
     if (typeof method !== 'function') {
       throw new Error(`原生音频服务不支持方法：${String(message.method)}`)
     }
-    const value = (method as (...args: unknown[]) => unknown)(...message.args)
+    const args = bridgeMethod ? message.args : bridgeRuntime!.beforeCall(message.method, message.args)
+    const value = await (method as (...args: unknown[]) => unknown)(...args)
     post({ kind: 'response', requestId: message.requestId, ok: true, value })
   } catch (error) {
     writeDiagnostic('audio.native', 'call.failed', { method: message.method, error }, 'error')

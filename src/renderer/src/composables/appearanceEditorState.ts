@@ -3,6 +3,7 @@ import type { AppearanceDraft } from '../../../shared/appAppearance.ts'
 export type AppearanceEditorArea = 'background' | 'material' | 'advanced'
 export const appearanceEditorOpen = ref(false)
 export const appearanceFullWindowPreview = ref(false)
+export const themeAppearance = shallowRef<AppearanceDraft | null>(null)
 // A full-window chrome preview is an override, never a write to confirmed settings.
 export const appearanceChromePreview = shallowRef<Pick<
   AppearanceDraft,

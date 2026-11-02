@@ -77,18 +77,26 @@ function bareLocalCoverHandle(handle: string): string {
   return handle.trim().split(/[?#]/, 1)[0]
 }
 
+export type CoverDisplaySize = 'sm' | 'md'
+
+function localCoverCacheKey(bare: string, size?: CoverDisplaySize): string {
+  return size === 'sm' ? `${bare}?size=sm` : bare
+}
+
 /** Synchronous first paint for virtualized cards whose artwork is already resolved. */
 export function readCachedCover(
   handle: string | null | undefined,
-  durableSource?: string | null
+  durableSource?: string | null,
+  size?: CoverDisplaySize
 ): string | null {
   const trimmed = typeof handle === 'string' ? handle.trim() : ''
   if (trimmed && isProtocolLocalCoverHandle(trimmed)) {
     const bare = bareLocalCoverHandle(trimmed)
-    const cached = localCoverDataCache.get(bare)
+    const key = localCoverCacheKey(bare, size)
+    const cached = localCoverDataCache.get(key)
     if (!cached) return null
-    localCoverDataCache.delete(bare)
-    localCoverDataCache.set(bare, cached)
+    localCoverDataCache.delete(key)
+    localCoverDataCache.set(key, cached)
     return cached
   }
   if (/^(data|blob):/i.test(trimmed)) return trimmed
@@ -113,7 +121,8 @@ export function readCachedCover(
  */
 export async function resolveCover(
   handle: string | null | undefined,
-  durableSource?: string | null
+  durableSource?: string | null,
+  size?: CoverDisplaySize
 ): Promise<string | null> {
   const source =
     typeof durableSource === 'string' && isDurableRemoteCoverSource(durableSource)
@@ -126,7 +135,7 @@ export async function resolveCover(
   // may attach coverSource while the track still has a correct cover:// handle;
   // preferring remote after restart made playbar/home art sticky or wrong.
   if (trimmedHandle && isProtocolLocalCoverHandle(trimmedHandle)) {
-    const materialized = await materializeLocalCoverForDisplay(trimmedHandle)
+    const materialized = await materializeLocalCoverForDisplay(trimmedHandle, size)
     if (materialized) return materialized
     // Last resort: raw protocol URL (may stick in Chromium — prefer materialize).
     return bareLocalCoverHandle(trimmedHandle)
@@ -161,18 +170,22 @@ export async function resolveCover(
   return trimmedHandle
 }
 
-async function materializeLocalCoverForDisplay(handle: string): Promise<string | null> {
+async function materializeLocalCoverForDisplay(
+  handle: string,
+  size?: CoverDisplaySize
+): Promise<string | null> {
   const bare = bareLocalCoverHandle(handle)
   if (!bare) return null
+  const cacheKey = localCoverCacheKey(bare, size)
 
-  const cached = localCoverDataCache.get(bare)
+  const cached = localCoverDataCache.get(cacheKey)
   if (cached) {
-    localCoverDataCache.delete(bare)
-    localCoverDataCache.set(bare, cached)
+    localCoverDataCache.delete(cacheKey)
+    localCoverDataCache.set(cacheKey, cached)
     return cached
   }
 
-  const inflight = localCoverDataInflight.get(bare)
+  const inflight = localCoverDataInflight.get(cacheKey)
   if (inflight) return inflight
   const generation = localCoverGeneration
 
@@ -183,22 +196,26 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
           window?: {
             api?: {
               data?: {
-                getCover?: (src: string) => Promise<string | Uint8Array | null>
+                getCover?: (
+                  src: string,
+                  size?: CoverDisplaySize
+                ) => Promise<string | Uint8Array | null>
               }
             }
           }
         }
       ).window?.api?.data
       if (api?.getCover) {
-        const response = await api.getCover(bare)
+        const response =
+          size === 'sm' ? await api.getCover(bare, 'sm') : await api.getCover(bare)
         if (typeof response === 'string' && response.startsWith('data:')) {
           const dataUrl = response
-          if (generation === localCoverGeneration) cacheLocalCoverData(bare, dataUrl)
+          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, dataUrl)
           return dataUrl
         }
         const materialized = await coverBytesToDataUrl(response, bare)
         if (materialized) {
-          if (generation === localCoverGeneration) cacheLocalCoverData(bare, materialized)
+          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, materialized)
           return materialized
         }
       }
@@ -210,7 +227,7 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
         const blob = await response.blob()
         const dataUrl = await blobToDataUrl(blob)
         if (dataUrl) {
-          if (generation === localCoverGeneration) cacheLocalCoverData(bare, dataUrl)
+          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, dataUrl)
           return dataUrl
         }
       }
@@ -218,12 +235,51 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
     } catch {
       return null
     } finally {
-      if (generation === localCoverGeneration) localCoverDataInflight.delete(bare)
+      if (generation === localCoverGeneration) localCoverDataInflight.delete(cacheKey)
     }
   })()
 
-  localCoverDataInflight.set(bare, request)
+  localCoverDataInflight.set(cacheKey, request)
   return request
+}
+
+function sniffCoverBytesMime(bytes: Uint8Array, handle: string): string {
+  if (bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (
+    bytes.byteLength >= 4 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+  if (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  if (bytes.byteLength >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return 'image/gif'
+  }
+  const extension = handle.split(/[?#]/, 1)[0].toLowerCase()
+  return extension.endsWith('.png')
+    ? 'image/png'
+    : extension.endsWith('.webp')
+      ? 'image/webp'
+      : extension.endsWith('.gif')
+        ? 'image/gif'
+        : 'image/jpeg'
 }
 
 async function coverBytesToDataUrl(value: unknown, handle: string): Promise<string | null> {
@@ -233,12 +289,7 @@ async function coverBytesToDataUrl(value: unknown, handle: string): Promise<stri
     bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
   }
   if (!bytes || bytes.byteLength === 0) return null
-  const extension = handle.split(/[?#]/, 1)[0].toLowerCase()
-  const type = extension.endsWith('.png')
-    ? 'image/png'
-    : extension.endsWith('.webp')
-      ? 'image/webp'
-      : 'image/jpeg'
+  const type = sniffCoverBytesMime(bytes, handle)
   return blobToDataUrl(new Blob([bytes as unknown as BlobPart], { type }))
 }
 

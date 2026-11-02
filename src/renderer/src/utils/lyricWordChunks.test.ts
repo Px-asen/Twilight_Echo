@@ -45,6 +45,20 @@ test('CJK characters never merge, so a Chinese line cannot emphasize as one unit
   assert.deepEqual(texts(chunks), ['我', '爱', '你'])
 })
 
+test('CJK punctuation stays attached to its neighbouring glyph while fullwidth-punctuated tokens still split cleanly', () => {
+  const words = resolveLyricWordTimings([
+    { text: '「', time: 0, endTime: 0.2 },
+    { text: '夜', time: 0.2, endTime: 0.6 },
+    { text: '風，', time: 0.6, endTime: 1.2 },
+    { text: '吹', time: 1.2, endTime: 1.6 },
+    { text: '」', time: 1.6, endTime: 1.8 },
+    { text: '。', time: 1.8, endTime: 2.0 }
+  ])
+  const chunks = chunkAndSplitLyricWords(words)
+
+  assert.deepEqual(texts(chunks), ['[「|夜]', '風，', '[吹|」|。]'])
+})
+
 test('boundary spaces become collapsible chunks outside visual words', () => {
   const words = resolveLyricWordTimings([
     { text: 'is', time: 0, endTime: 1 },

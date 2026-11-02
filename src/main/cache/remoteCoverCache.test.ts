@@ -139,3 +139,29 @@ test('remote covers keep their original bytes when the resizer declines or throw
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('first-hit remote cover responses serve downscaled bytes directly to Chromium', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'te-cover-first-hit-'))
+  try {
+    const grants = new RemoteMediaGrantService()
+    const token = grants.grant('https://example.com/huge.png', 'image')
+    const cache = createRemoteCoverCache(() => root, {
+      resize: () => ({ bytes: new Uint8Array([7, 8, 9]), mime: 'image/jpeg' })
+    })
+    const handler = createRemoteMediaRequestHandler({
+      grants,
+      imageCache: cache,
+      fetch: async () =>
+        new Response(new Uint8Array(1024), {
+          headers: { 'content-type': 'image/png', 'content-length': '1024' }
+        })
+    })
+    const firstHit = await handler(new Request(token))
+    assert.equal(firstHit.status, 200)
+    assert.equal(firstHit.headers.get('content-type'), 'image/jpeg')
+    assert.equal(firstHit.headers.get('content-length'), null)
+    assert.deepEqual(new Uint8Array(await firstHit.arrayBuffer()), new Uint8Array([7, 8, 9]))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

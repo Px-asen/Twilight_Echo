@@ -92,7 +92,7 @@ export interface LocalLibraryScanServiceClientOptions {
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000
 const DEFAULT_SCAN_WATCHDOG_MS = 60_000
-const DEFAULT_IDLE_TIMEOUT_MS = 60_000
+const DEFAULT_IDLE_TIMEOUT_MS = 15_000
 const MAX_SCAN_WORKER_RESTARTS = 3
 
 export class LocalLibraryScanServiceClient extends EventEmitter implements LocalLibraryScanRunner {

@@ -161,8 +161,6 @@ const kindLabel = computed(() => {
   switch (props.kind) {
     case 'artist':
       return '艺人'
-    case 'user_list':
-      return '社交'
     case 'user_playlists':
       return '歌单集'
     default:
@@ -233,7 +231,12 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
 
 <template>
   <section class="detail-stage social-stage" :data-kind="kind">
-    <header class="stage-hero" :class="{ 'is-avatar': avatarCover }">
+    <header v-if="isPeopleMode" class="stage-people-header">
+      <h2 class="stage-title">{{ title }}</h2>
+      <p v-if="description" class="stage-people-count">{{ description }}</p>
+    </header>
+
+    <header v-else class="stage-hero" :class="{ 'is-avatar': avatarCover }">
       <div class="stage-cover-frame" :class="{ avatar: avatarCover }">
         <CoverImg
           v-if="cover"
@@ -334,7 +337,12 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
       </button>
     </div>
 
-    <div v-else-if="loading" class="stage-list stage-list-skeleton" aria-live="polite">
+    <div
+      v-else-if="loading"
+      class="stage-list-skeleton"
+      :class="{ 'stage-list': !isPeopleMode }"
+      aria-live="polite"
+    >
       <div v-if="isPeopleMode" class="stage-people-grid skeleton-grid">
         <div v-for="i in 12" :key="i" class="stage-person-card skeleton-card">
           <span class="sk sk-avatar"></span>

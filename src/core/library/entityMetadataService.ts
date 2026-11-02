@@ -188,10 +188,19 @@ export class CoreEntityMetadataService {
             ...(image.sourceReleaseId ? { sourceReleaseId: image.sourceReleaseId } : {}), handle })
         }
       }
+      // Materializing a portrait can download its bitmap. Recheck this source,
+      // not the global content revision: another artist's completion is harmless,
+      // but a detach, replacement or personal edit must fence the late image.
+      const current = await this.options.database.metadataDetail(entityId, language, {
+        sourceProvider, platformContexts, now: this.options.now()
+      })
+      if (current.targetId !== detail.targetId || current.revision !== detail.revision ||
+        current.link?.state !== detail.link?.state)
+        throw Object.assign(new Error('音乐身份或资料已变化，请重新读取'), { code: 'STALE_IDENTITY' })
       assertContext()
       if (artwork.some(image => image.usage.expiresAt !== undefined && image.usage.expiresAt <= this.options.now()))
         throw Object.assign(new Error('图片授权已过期，请重新读取'), { code: 'STALE_REVISION' })
-      return { ...detail, ...(artwork.length ? { artwork } : {}) }
+      return { ...current, ...(artwork.length ? { artwork } : {}) }
     })
   }
   jobs(query: EntityMetadataJobsQuery) {

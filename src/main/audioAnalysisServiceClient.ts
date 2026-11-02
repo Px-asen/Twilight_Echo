@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import type { CastPcmSegmentRequest } from '../shared/castPcmSegment.ts'
 import { EventEmitter } from 'events'
 import { createRequire } from 'module'
 import type { NativeAudioMetadata } from '../shared/audioEngineTypes.ts'
@@ -142,7 +143,7 @@ const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_AGING_INTERVAL_MS = 1000
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000
 const DEFAULT_RESTART_DELAY_MS = 250
-const DEFAULT_IDLE_TIMEOUT_MS = 60_000
+const DEFAULT_IDLE_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_CONCURRENCY = 1
 const DEFAULT_MAX_QUEUE_SIZE = 32
 const DEFAULT_MAX_STARTUP_FAILURES = 3
@@ -256,6 +257,14 @@ export class AudioAnalysisServiceClient extends EventEmitter {
 
   async hashContent(source: string, signal: AbortSignal): Promise<string> {
     return (await this.request('content-hash', source, '{}', { priority: -30, signal })) as string
+  }
+
+  async renderCastPcmSegment(
+    source: string, request: CastPcmSegmentRequest, signal: AbortSignal
+  ): Promise<void> {
+    await this.request('cast-pcm-segment', source, JSON.stringify(request), {
+      priority: 50, timeoutMs: MAX_TASK_TIMEOUT_MS, signal
+    })
   }
 
   /** Native container enumeration uses analysis workers, never playback's RPC lane. */
@@ -908,7 +917,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     if (task) {
       this.completeTask(worker, task)
       if (
-        ['download-metadata', 'library-tags', 'loudness-batch'].includes(task.analysis) &&
+        ['download-metadata', 'library-tags', 'loudness-batch', 'cast-pcm-segment'].includes(task.analysis) &&
         exited
       ) {
         // Writers may hold .tags files; an album decoder may hold any member,

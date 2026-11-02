@@ -210,6 +210,31 @@ test('compact auto-hide keeps the lyrics visualizer while hiding its controls', 
   assert.match(playerBarCss, /data-te-playbar-visibility='hidden'[\s\S]{0,220}visibility:\s*hidden/)
 })
 
+test('turning off the compact visualizer still lets compact auto-hide settle and drop rail hit-testing', () => {
+  assert.match(
+    playerBar,
+    /const suppressAutoHideFeedbackReveal = computed\(\(\) => isCompact\.value && Boolean\(props\.glass\)\)/
+  )
+  assert.match(
+    playerBar,
+    /usePlaybarAutoHide\(\{[\s\S]{0,420}trackId:\s*\(\)\s*=>\s*currentTrack\.value\?\.id,[\s\S]{0,160}isPlaying,[\s\S]{0,160}suppressFeedbackReveal:\s*suppressAutoHideFeedbackReveal/
+  )
+  assert.doesNotMatch(
+    playerBar,
+    /watch\(\s*\(\)\s*=>\s*\[currentTrack\.value\?\.id/,
+    'watching a fresh array from a single getter fires on every Core playback tick'
+  )
+  assert.doesNotMatch(
+    playerBar,
+    /if \(!showCompactVisualizer\.value\) flashReveal\(\)/,
+    'disabling the bottom visualizer must not re-enable lyrics-page feedback popups'
+  )
+  assert.match(
+    playerBarCss,
+    /\.player-bar-shell\[data-te-playbar-hidden='true'\]\s+\.player-bar\s*>\s*\.compact-progress-rail[\s\S]{0,160}pointer-events:\s*none/
+  )
+})
+
 test('every shape renders the same three regions, in a fixed order, with fixed class names', () => {
   assert.deepEqual([...PLAYER_BAR_REGION_NAMES], ['left', 'center', 'right'])
   assert.match(playerBar, /v-for="region in barRegions"/)

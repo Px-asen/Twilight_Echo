@@ -2,7 +2,7 @@
 
 This module owns bounded analysis, transition planning and prepared audio.
 The existing audio engine owns playback transport. Numerical kernels use Win64
-NASM with a C11 reference and explicit SSE2/AVX2 dispatch.
+NASM with explicit SSE2/AVX2 dispatch and portable C11 operators for Android.
 
 ## Current contracts
 
@@ -25,6 +25,16 @@ Only allowlisted, publicly licensed Beat This small0 and YAMNet assets are stage
 for native analysis. [dependencies.lock.json](./dependencies.lock.json) records
 the pinned inputs. ONNX/PyTorch/TensorFlow are development export/comparison
 tools for these graphs; native analysis uses the converted graph assets.
+
+Attention batches at most 32 queries within the graph's declared scratch
+budget, retaining every key/value without storing the full score matrix.
+Portable GEMM uses 4-by-8 output tiles and preserves each output's accumulation
+order. Softmax uses the Win64 kernel's sixth-order, range-reduced exponential
+on maximum-subtracted scores: relative error is below 1e-6 on [-87, 0],
+with smaller tails set to zero. Strict FP flags remain enabled; the Android
+compiler can vectorize independent lanes without fast-math. Model parity,
+complete analysis features and the original device boundary test remain the
+acceptance checks for inference changes.
 
 The region planner estimates tempo from Beat This events within each candidate
 region, using stable local evidence. Natural/DJ tempo limits remain ±4%/±8%;

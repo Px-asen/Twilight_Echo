@@ -80,7 +80,7 @@ const closeBehaviorOptions: {
       <div class="onb-toggle-row">
         <div class="onb-toggle-copy">
           <strong>任务栏缩略图按钮</strong>
-          <span>在 Windows 任务栏窗口预览中放置上一首、播放/暂停与下一首。</span>
+          <span>悬停在 Windows 任务栏图标上，即可切歌、播放/暂停和喜欢歌曲。</span>
         </div>
         <button
           type="button"

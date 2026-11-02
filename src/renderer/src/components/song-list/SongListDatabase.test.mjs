@@ -275,6 +275,24 @@ test('the complete production SongList template compiles, including context menu
   assert.deepEqual(compiled.errors, [])
 })
 
+test('song tables omit the sticky range strip while keeping header refresh and read-error recovery', () => {
+  const { descriptor } = parse(readFileSync(new URL('../SongList.vue', import.meta.url), 'utf8'))
+  const template = descriptor.template.content
+  assert.doesNotMatch(template, /database-track-window-status|aria-label="曲库浏览"/)
+  const toolbar = template.slice(
+    template.indexOf('<div ref="trackToolbarRef"'),
+    template.indexOf('<div class="library-quick-drawers">')
+  )
+  assert.match(
+    toolbar,
+    /<button\s+v-if="databaseTableEnabled"[^>]*class="song-list-refresh"[^>]*aria-label="刷新歌曲"[^>]*:disabled="databaseReadPending"[^>]*@click="refreshDatabaseTracks"/s
+  )
+  assert.match(
+    template,
+    /<p\s+v-if="databaseReadError && databasePageState\.total !== null"[^>]*role="alert"[^>]*>[\s\S]*?@click="retryDatabaseRead"/
+  )
+})
+
 test('page row, play-all, shuffle and bookmarks use the complete query, never the page as an array queue', () => {
   const f = fixture()
   f.context.playTableTrack(f.track)
@@ -867,6 +885,44 @@ test('last-played pages wait for confirmed SQL history and never fall back to th
   assert.equal(query.sort, 'lastPlayed')
   assert.equal(query.historyRevision, 7)
   assert.equal(query.search, 'moon')
+})
+
+test('history retry and refresh renew even a ready history fence before re-reading pages', async () => {
+  const calls = []
+  let fail = false
+  const context = vm.createContext({
+    props: { category: 'recent' },
+    libraryStorage: { mode: ref('sqlite') },
+    databaseHistoryRequested: ref(true),
+    historyProjectionState: ref({ ready: true }),
+    isPlaylistDetail: ref(false),
+    databasePlaylistState: ref({ error: 'view expired' }),
+    libraryListeningProjection: {
+      retry: async () => {
+        calls.push('history')
+        if (fail) throw new Error('history unavailable')
+      }
+    },
+    databasePlaylistView: { retry: async () => calls.push('view') },
+    databasePages: {
+      retry: () => calls.push('pages'),
+      invalidate: () => calls.push('invalidate')
+    }
+  })
+  install(context, ['retryDatabaseRead', 'refreshDatabaseTracks'])
+  await context.retryDatabaseRead()
+  assert.deepEqual(calls.splice(0), ['history', 'view', 'pages'])
+  await context.refreshDatabaseTracks()
+  assert.deepEqual(calls.splice(0), ['history', 'view', 'invalidate'])
+  fail = true
+  await context.retryDatabaseRead()
+  await context.refreshDatabaseTracks()
+  assert.deepEqual(calls.splice(0), ['history', 'history'], 'failed history cannot start old reads')
+  fail = false
+  context.props.category = 'allSongs'
+  context.databaseHistoryRequested.value = false
+  await context.retryDatabaseRead()
+  assert.deepEqual(calls, ['pages'], 'other sorts retain the original direct retry path')
 })
 
 test('playlist playback freezes the full query and selects the exact occurrence; edits address the original configured member', () => {

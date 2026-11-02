@@ -1,5 +1,8 @@
 import type { CoreMusicExplorationService } from './library/explorationService.ts'
 import type { CoreCastService } from './cast/service.ts'
+import type { CoreBridgeService } from './audio/bridgeService.ts'
+import type { CoreZoneRegistry } from './playback/zoneRegistry.ts'
+import { buildSignalPath } from '../shared/remoteDsp.ts'
 import type { CoreQueueSubmission } from './playback/queueSubmission.ts'
 import type { CorePlaylistSubmission } from './playlists/submission.ts'
 import type { CoreRecordingCatalog } from './playlists/recordingCatalog.ts'
@@ -71,6 +74,7 @@ import type { CoreStateApi } from '../shared/coreState.ts'
 import type { LibraryDatabaseApi } from '../shared/libraryDatabase.ts'
 import type { CorePlaybackSession } from './playback/session.ts'
 import { projectCoreError, projectCoreScan, projectCoreTrack } from './projections.ts'
+import { CORE_RECENT_PLAYLIST_ID } from '../shared/corePlaylists.ts'
 import type { CoreScanService } from './library/scanService.ts'
 import type { CoreLibraryBackground } from './library/background.ts'
 import type { CoreMetadataService } from './library/metadataService.ts'
@@ -145,7 +149,11 @@ export interface CoreApplicationDependencies {
   scan: Omit<CoreScanService, 'maintain'>
   libraryBackground?: Pick<CoreLibraryBackground, 'activate' | 'snapshot' | 'shutdown'>
   metadata?: CoreMetadataService
-  statistics: Omit<CoreStatisticsService, 'exportData' | 'projectPage' | 'rememberArtwork' | 'artworkTracks'> & Partial<Pick<CoreStatisticsService, 'projectPage' | 'rememberArtwork' | 'artworkTracks'>>
+  statistics: Omit<
+    CoreStatisticsService,
+    'exportData' | 'projectPage' | 'rememberArtwork' | 'artworkTracks' | 'recentPlaylist'
+  > &
+    Partial<Pick<CoreStatisticsService, 'projectPage' | 'rememberArtwork' | 'artworkTracks'>>
   pluginExperiences?: CorePluginExperiences
   pluginMarketplace?: CorePluginMarketplace
   plugins?: TwilightPluginManager
@@ -162,6 +170,8 @@ export interface CoreApplicationDependencies {
   audition?: CoreAuditionService
   outputTest?: CoreOutputTestService
   cast?: CoreCastService
+  bridge?: CoreBridgeService
+  zones?: CoreZoneRegistry
   dsp?: CoreDspService
   output?: Pick<
     CoreAudioOutputService,
@@ -298,6 +308,7 @@ export class CoreApplication {
     ])
     await this.dependencies.dsp?.initialize()
     await this.dependencies.playback.initialize()
+    await this.dependencies.zones?.initialize()
     await Promise.all([
       this.dependencies.visualization?.initialize(),
       this.dependencies.scan.initialize(),
@@ -1296,6 +1307,54 @@ export class CoreApplication {
         if (request.name === 'sleep.configure') return timer.configure(request.payload, signal)
         return timer.cancel(request.payload.revision, signal)
       }
+      case 'audio.signalPath': {
+        if (!this.dependencies.dsp) throw failure('NOT_READY', 'DSP runtime unavailable')
+        return buildSignalPath(playback.snapshot().playback, await this.dependencies.dsp.status(),
+          this.dependencies.bridge ? await this.dependencies.bridge.state() : null)
+      }
+      case 'zones.list':
+      case 'zones.create':
+      case 'zones.remove':
+      case 'zones.connect':
+      case 'zones.transport':
+      case 'zones.queueFromQuery':
+      case 'zones.dsp':
+      case 'zones.dsp.edit':
+      case 'zones.signalPath': {
+        const zones = this.dependencies.zones
+        if (!zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        if (['zones.create', 'zones.remove', 'zones.connect'].includes(request.name) && identity.role !== 'desktop')
+          throw failure('FORBIDDEN', 'Zone consent requires the desktop')
+        switch (request.name) {
+          case 'zones.list': return zones.list()
+          case 'zones.create': return { id: await zones.create(request.payload.name, request.payload.revision) }
+          case 'zones.remove': return zones.remove(request.payload.zoneId, request.payload.revision)
+          case 'zones.connect': return zones.connect(request.payload.zoneId, request.payload.peer, request.payload.revision)
+          case 'zones.transport': return zones.transport(request.payload.zoneId, request.payload.revision, request.payload.action, signal)
+          case 'zones.queueFromQuery':
+            if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
+            return zones.fromQuery(request.payload.zoneId, request.payload.revision, request.payload.query, request.payload.selectedId, signal)
+          case 'zones.dsp': return zones.dsp(request.payload.zoneId)
+          case 'zones.signalPath': return zones.signalPath(request.payload.zoneId)
+          case 'zones.dsp.edit': return zones.editDsp(request.payload.zoneId, request.payload, signal)
+        }
+        break
+      }
+      case 'zones.state':
+      case 'bridge.invitation':
+      case 'bridge.host':
+      case 'bridge.connect':
+      case 'zones.select': {
+        const bridge = this.dependencies.bridge
+        if (!bridge) throw failure('NOT_READY', 'Audio Bridge is unavailable')
+        if (request.name.startsWith('bridge.') && identity.role !== 'desktop')
+          throw failure('FORBIDDEN', 'Audio Bridge consent requires the desktop')
+        if (request.name === 'zones.state') return bridge.state()
+        if (request.name === 'bridge.invitation') return bridge.invite()
+        if (request.name === 'bridge.host') return bridge.host(request.payload.revision, request.payload.enabled, request.payload.sampleRate)
+        if (request.name === 'bridge.connect') return bridge.connect(request.payload.revision, request.payload.peer)
+        return bridge.select(request.payload.revision, request.payload.outputId)
+      }
       case 'cast.state':
       case 'cast.devices':
       case 'cast.discover':
@@ -1307,7 +1366,10 @@ export class CoreApplication {
         if (request.name === 'cast.devices')
           return cast.page(request.payload.offset, request.payload.limit)
         if (request.name === 'cast.discover') return cast.discover()
-        if (request.name === 'cast.start') return playback.startCast(request.payload, signal)
+        if (request.name === 'cast.start') {
+          await this.dependencies.bridge?.assertLocal()
+          return playback.startCast(request.payload, signal)
+        }
         return playback.endCast(request.payload.revision)
       }
       case 'remote.status':
@@ -1340,6 +1402,7 @@ export class CoreApplication {
         if (request.name === 'audio.outputTest') return test.state()
         if (identity.role !== 'desktop') throw failure('FORBIDDEN', '试听仅可从主窗口发起')
         if (request.name === 'audio.outputTest.stop') return test.stop()
+        await this.dependencies.bridge?.assertLocal()
         return test.play(request.payload.revision, request.payload.exclusive, signal)
       }
       case 'audio.audition':
@@ -1424,8 +1487,10 @@ export class CoreApplication {
           case 'audio.profiles':
             return output.profiles()
           case 'audio.output.edit':
+            await this.dependencies.bridge?.assertLocal()
             return output.edit(request.payload, signal)
           case 'audio.profiles.edit':
+            await this.dependencies.bridge?.assertLocal()
             return output.editProfiles(request.payload, signal)
         }
         break
@@ -1748,6 +1813,11 @@ export class CoreApplication {
         await this.dependencies.importPreviews?.cancel(request.payload.id)
         return this.dependencies.imports?.stop(request.payload.id)
       case 'playlists.view':
+        if (
+          request.payload.id === CORE_RECENT_PLAYLIST_ID &&
+          !identity.permissions.includes('statistics:read')
+        )
+          throw failure('FORBIDDEN', '最近播放需要读取播放记录的权限')
         if (!this.dependencies.playlists) throw failure('FAILED', 'Playlist runtime unavailable')
         return this.dependencies.playlists.view(request.payload, signal)
       case 'versions.catalog':
@@ -2213,6 +2283,8 @@ export class CoreApplication {
       await this.dependencies.playlists?.shutdown()
       await this.dependencies.recordingVersions?.flush()
       await this.dependencies.dsp?.shutdown()
+      await this.dependencies.zones?.shutdown()
+      await this.dependencies.bridge?.shutdown()
       await this.dependencies.output?.shutdown()
       await this.dependencies.playback.shutdown()
       await this.dependencies.diagnostics?.shutdown()
