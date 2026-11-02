@@ -66,11 +66,13 @@ export function buildRenderingControlSoap(
 
 /** UPnP seek target: H+:MM:SS or H+:MM:SS.F */
 export function formatUpnpTime(seconds: number): string {
-  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0))
+  const micros = Math.round(Math.max(0, Number.isFinite(seconds) ? seconds : 0) * 1_000_000)
+  const total = Math.floor(micros / 1_000_000)
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   const s = total % 60
-  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  const fraction = String(micros % 1_000_000).padStart(6, '0').replace(/0+$/, '')
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}${fraction ? `.${fraction}` : ''}`
 }
 
 export function parseUpnpTime(value: string): number | null {
@@ -81,7 +83,7 @@ export function parseUpnpTime(value: string): number | null {
   const m = Number(match[2])
   const s = Number(match[3])
   if (m >= 60 || s >= 60) return null
-  return h * 3600 + m * 60 + s
+  return h * 3600 + m * 60 + s + (match[4] ? Number(`0.${match[4]}`) : 0)
 }
 
 export function escapeXml(value: string): string {

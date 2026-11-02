@@ -139,6 +139,39 @@ test('scene resolver prefers a manual pin and otherwise uses priority then speci
   assert.equal(resolveDspScene(scenes, context, 'default').scene?.id, 'default')
 })
 
+test('desktop scene normalization carries phone settings without using them as desktop processing', () => {
+  const android = {
+    schemaVersion: 1,
+    dspEnabled: false,
+    bandsDb: [3, -2],
+    parametricBands: [{ frequency: 105, gain: 4.5, q: 0.7 }],
+    dsdOutputMode: 'native',
+    dsdRatePolicy: 'exact',
+    allowedSampleRates: [44100, 96000],
+    futurePhoneSetting: { mode: 'keep', values: [1, null] }
+  }
+  const graph = createDspFactoryScene('transparent').graph
+  const [scene] = normalizeDspScenes([{ id: 'phone', name: '手机', graph, android }])
+  assert.deepEqual(scene.android, android)
+  assert.notEqual(scene.android, android)
+  android.parametricBands[0].gain = 0
+  assert.equal((scene.android!.parametricBands as Array<{ gain: number }>)[0].gain, 4.5)
+  const resolution = resolveDspScene(
+    [scene],
+    {
+      deviceId: 'dac',
+      backend: 'wasapi',
+      channelLayout: 'stereo',
+      sourceKind: 'pcm',
+      sampleRate: 48000
+    },
+    'phone'
+  )
+  assert.deepEqual(resolution.graph, graph)
+  assert.equal(resolution.requiresPcmFallback, false)
+  assert.equal(normalizeDspScenes([{ id: 'old', graph }])[0].android, undefined)
+})
+
 test('DSD resolution reports a PCM fallback requirement without applying it', () => {
   const scenes = normalizeDspScenes([
     {

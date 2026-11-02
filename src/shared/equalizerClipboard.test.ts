@@ -27,8 +27,8 @@ test('EQ clipboard round trips all supported filters and optional bypass/channel
     'allPass',
     'notch'
   ].map((filterType) => ({ ...band, filterType: filterType as EqualizerBand['filterType'] }))
-  bands.push({ frequency: 24000, gain: 24, q: 20, filterType: 'peak' })
-  bands.push({ frequency: 20, gain: -24, q: 0.1, filterType: 'peak', channelMask: 0xffffffff })
+  bands.push({ frequency: 96000, gain: 24, q: 20, filterType: 'peak' })
+  bands.push({ frequency: 10, gain: -24, q: 0.1, filterType: 'peak', channelMask: 0xffffffff })
   assert.deepEqual(parseEqBandClipboard(formatEqBandClipboard(bands)), bands)
 })
 
@@ -55,8 +55,8 @@ test('clipboard rejects non-EQ text, unsupported versions and oversized input', 
 
 test('clipboard rejects invalid parameters and counts without partially accepting a selection', () => {
   for (const patch of [
-    { frequency: 19 },
-    { frequency: 24001 },
+    { frequency: 9 },
+    { frequency: 96001 },
     { frequency: '1000' },
     { gain: NaN },
     { gain: Infinity },

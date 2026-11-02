@@ -210,6 +210,48 @@ test('unconfirmed same-name sources never fetch details; confirmed local and str
   assert.equal(db.metadataDetail(entity(db, 'local', 'release'), 'zh-Hans').introduction, null)
 })
 
+test('confirmed artist follow-ups reach the next bounded schedule page ahead of an identification backlog', (t) => {
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  db.replaceDocument({
+    version: 2, revision: 1, folders: [], exclusions: [],
+    tracks: Array.from({ length: 125 }, (_, i) => ({
+      id: `local-${i}`, source: 'local', filePath: `D:/music/${i}.flac`,
+      title: `Song ${i}`, artist: `Artist ${i}`, album: '', duration: 200
+    }))
+  })
+  while (db.catalogStatus().localPending) db.catalogAdvance()
+  drain(db)
+  const id = String(db.sql.prepare(`SELECT s.entity_id FROM metadata_identification_schedule s
+    JOIN catalog_entities e ON e.id=s.entity_id WHERE e.kind='artist' ORDER BY s.id DESC LIMIT 1`).get()!.entity_id)
+  const target = confirm(db, id).link!.targetId!
+  db.sql.exec('UPDATE metadata_identification_schedule SET dirty=1')
+  assert.ok(db.identificationScheduleStatus().pending > 200)
+  const scheduled = db.identificationSchedule(configuration(), 2000)
+  assert.equal(scheduled.processed, 200)
+  assert.equal(scheduled.more, true)
+  const work = db.metadataClaim(2000)
+  assert.equal(work?.job.type, 'enrich', 'known identities must not wait behind unrelated search pages')
+  assert.equal(work?.job.entityId, target)
+  db.metadataFinish(work!, completed(), 2001, configuration())
+  assert.equal(db.metadataDetail(id, 'zh-Hans').introduction?.value, '介绍')
+})
+
+test('automatic portraits already queued are not overtaken by later album detail jobs', (t) => {
+  const db = fixture(t)
+  const artist = entity(db), release = entity(db, 'local', 'release')
+  confirm(db, artist)
+  drain(db)
+  confirm(db, release)
+  drain(db, configuration(), 2001)
+  const work = db.metadataClaim(2001)!
+  assert.equal(work.job.type, 'enrich')
+  assert.equal(work.job.entityKind, 'artist')
+  db.metadataFinish(work, completed(), 2002, configuration())
+  assert.equal(db.metadataDetail(artist, 'zh-Hans').introduction?.value, '介绍')
+  assert.equal(db.metadataClaim(2002)?.job.entityKind, 'release')
+})
+
 for (const running of [false, true])
   test(`${running ? 'running' : 'queued'} automatic biography work survives a pending local catalog projection`, t => {
     const db = fixture(t), id = entity(db)

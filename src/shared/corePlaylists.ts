@@ -11,6 +11,9 @@ import type { PlaylistPersistenceStatus, PlaylistPersistenceNotice } from './pla
 import type { PlaylistFileFormat } from './playlistLifecycle.ts'
 import type { CoreQueueTrackInput } from './coreQueueSubmission.ts'
 
+/** Read-only history membership. Its revision belongs to statistics, not saved playlists. */
+export const CORE_RECENT_PLAYLIST_ID = 'core:recent'
+
 export type CorePlaylistSummary = Pick<
   Playlist,
   'id' | 'name' | 'kind' | 'isDefault' | 'createdAt' | 'updatedAt' | 'pinnedAt'

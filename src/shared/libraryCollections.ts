@@ -3,30 +3,53 @@ import { getPinyinInitial } from './pinyinInitials.ts'
 import { fileArtistCredits, type TrackIdentityTags } from './trackIdentification.ts'
 
 export function libraryArtistCredits(track: {
+  artist?: string
   artists?: readonly { name: string; id?: string | number }[]
   identityTags?: TrackIdentityTags
 }): { name: string; id?: string | number }[] {
   const artists = Array.isArray(track.artists)
-    ? track.artists.filter(artist => artist && typeof artist.name === 'string' && artist.name.trim())
+    ? track.artists.filter(
+        (artist) => artist && typeof artist.name === 'string' && artist.name.trim()
+      )
     : undefined
-  return artists?.length ? [...artists] : fileArtistCredits(track.identityTags)
+  if (artists?.length && (artists.length > 1 || artists[0].id !== undefined)) return [...artists]
+  const fileCredits = fileArtistCredits(track.identityTags)
+  // Older scans copied a single joined ARTIST tag into `artists`. It is still
+  // display text, unlike explicit members or credits with provider identities.
+  const copiedFileCredit =
+    artists?.length === 1 && fileCredits.length === 1 &&
+    artists[0].name.trim() === fileCredits[0].name
+  if (artists?.length && !copiedFileCredit) return [...artists]
+  if (fileCredits.length > 1 || track.identityTags?.ncm?.artists?.length) return fileCredits
+  const displayArtist = typeof track.artist === 'string' ? track.artist : ''
+  return splitJoinedArtistNames(fileCredits[0]?.name ?? displayArtist).map((name) => ({ name }))
 }
 
-/** Structured credits describe members; the joined display credit is not another artist.
- * Only the legacy, whitespace-delimited slash is a separator without structured tags.
- * Punctuation inside a real name (AC/DC, Earth, Wind & Fire) stays literal.
- */
+/** Display credits use slashes or a spaced ampersand; structured provider names stay literal. */
+function splitJoinedArtistNames(value: string): string[] {
+  const names: string[] = []
+  for (const credit of value.split(/\s+[&＆]\s+/u)) {
+    const parts = credit.split(/[/／]/u).map((name) => name.trim()).filter(Boolean)
+    for (let index = 0; index < parts.length; index++) {
+      // This band's slash is part of its name, including in AC/DC/Guest credits.
+      const name =
+        /^ac$/i.test(parts[index]) && /^dc$/i.test(parts[index + 1] ?? '')
+          ? `${parts[index]}/${parts[++index]}`
+          : parts[index]
+      names.push(name)
+    }
+  }
+  return [...new Set(names)]
+}
+
+/** One collection per credited member; never add the joined display credit. */
 export function libraryArtistNames(track: {
   artist: string
   artists?: readonly { name: string }[]
   identityTags?: TrackIdentityTags
 }): string[] {
   const credits = libraryArtistCredits(track).map((artist) => artist.name.trim()).filter(Boolean)
-  if (credits?.length) return [...new Set(credits)]
-  const names = track.artist.split(/\s+\/\s+/)
-  return names.length > 1
-    ? [...new Set(names.map((name) => name.trim()).filter(Boolean))]
-    : [track.artist || '未知艺术家']
+  return credits.length ? [...new Set(credits)] : ['未知艺术家']
 }
 
 export function collectionIndexLetter(name: string): string | null {

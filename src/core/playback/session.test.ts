@@ -27,6 +27,7 @@ import { libraryQueueTrack } from './libraryTrack.ts'
 import type { PlaybackSourceRecovery } from './sourceRecovery.ts'
 import { SourceResources } from './sourceResources.ts'
 import { CoreCastService } from '../cast/service.ts'
+import type { CastPcmSegments } from '../cast/pcmSegments.ts'
 import { RemoteHttpServer } from '../cast/httpServer.ts'
 import type { CastDevice, CastLoadRequest, CastSample } from '../cast/castBackend.ts'
 import { CoreSleepTimer } from './sleepService.ts'
@@ -61,6 +62,7 @@ async function castFixture(
     observePlayback?: CorePlaybackSessionOptions['observePlayback']
     sleepTimer?: CoreSleepTimer
     automaticPlaybackAllowed?: CorePlaybackSessionOptions['automaticPlaybackAllowed']
+    segments?: CastPcmSegments
   } = {}
 ) {
   const resources = new SourceResources()
@@ -90,6 +92,7 @@ async function castFixture(
       useSource: (action) => resources.use(action)
     }),
     authorizeFile: async (source) => source,
+    segments: options.segments,
     backend: {
       discover: async () => [device],
       load: async (_device, request) => {
@@ -252,6 +255,66 @@ test('Cast validates discovery, queue revision and occurrence before touching th
   )
   assert.deepEqual(transportCalls(f.engine), before)
   assert.equal(f.loads.length, 0)
+})
+
+test('Cast CUE retains its occurrence and relative cursor across remote controls and return to local', async (t) => {
+  const rendered: { source: string; range: unknown }[] = []
+  let released = 0
+  const f = await castFixture(t, { segments: {
+    prepare: async (source, range) => {
+      rendered.push({ source, range })
+      return { path: 'D:/Cast/segment.wav', release: async () => { released++ } }
+    }
+  } })
+  const track = { ...recommended(1), source: 'local', filePath: 'D:/Music/disc.flac',
+    cueRange: { startSeconds: 20, endSeconds: 40, pregapSeconds: 2, virtualPregapSeconds: 2 } }
+  await f.session.fromTrack(track, 12.75)
+  const occurrence = f.session.snapshot().queue!.occurrenceId
+  await f.start()
+  assert.deepEqual(rendered, [{ source: track.filePath, range: track.cueRange }])
+  assert.equal(f.loads[0].positionSeconds, 12.75)
+  assert.equal(f.loads[0].contentType, 'audio/wav')
+  assert.equal(f.session.snapshot().queue!.occurrenceId, occurrence)
+  const before = transportCalls(f.engine)
+  await f.session.pause()
+  await f.session.seek(15.25)
+  await f.session.play()
+  assert.deepEqual(transportCalls(f.engine), before)
+  assert.equal(rendered.length, 1, 'remote Seek never regenerates or reopens the whole source')
+  assert.equal(f.session.snapshot().playback!.position, 15.25)
+  await f.session.endCast(f.cast.state().revision)
+  assert.equal(released, 1)
+  assert.equal(f.session.snapshot().playback!.state, 'paused')
+  await f.session.play()
+  assert.equal(f.session.snapshot().queue!.occurrenceId, occurrence)
+  assert.deepEqual(f.engine.items[0].cueRange, track.cueRange)
+  assert.equal(f.engine.info.position, 15.25)
+  assert.equal(f.engine.calls.filter(call => call === 'play').length, 2)
+})
+
+test('Cast CUE EOF prepares the successor range once without replaying the album or touching native output', async (t) => {
+  const ranges: unknown[] = []
+  let released = 0
+  const f = await castFixture(t, { segments: {
+    prepare: async (source, range) => {
+      assert.equal(source, 'D:/Music/disc.flac')
+      ranges.push(range)
+      return { path: `D:/Cast/${ranges.length}.wav`, release: async () => { released++ } }
+    }
+  } })
+  await f.session.fromQuery({ ids: ['a', 'b'], sort: 'playlist' }, undefined)
+  await tick()
+  await f.start()
+  const occurrence = f.session.snapshot().queue!.occurrenceId
+  const native = transportCalls(f.engine)
+  await f.fire({ state: 'stopped', position: 60, duration: 60, ended: true })
+  assert.equal(f.session.snapshot().track!.id, 'b')
+  assert.notEqual(f.session.snapshot().queue!.occurrenceId, occurrence)
+  assert.deepEqual(ranges, [{ startSeconds: 10, endSeconds: 70 }, { startSeconds: 70, endSeconds: 130 }])
+  assert.equal(f.loads.length, 2)
+  assert.equal(f.loads[1].positionSeconds, 0)
+  assert.equal(released, 1)
+  assert.deepEqual(transportCalls(f.engine), native)
 })
 
 test('Cast queue edits and undo keep duplicate occurrences; selected removal stays paused until Play', async (t) => {
@@ -2173,8 +2236,8 @@ class Engine extends EventEmitter implements CorePlaybackEngine {
     this.calls.push('loadQueue')
     this.items = items
     this.token += ':load'
-    this.info.queueIndex = startIndex
-    this.info.source = items[startIndex].source
+    this.info.queueIndex = items.length === 0 ? -1 : startIndex
+    this.info.source = items[startIndex]?.source ?? ''
     if (this.failLoad) throw new Error('Reply lost after native LoadQueue')
   }
   async rebindQueue(request: NativeQueueRebind) {
@@ -2618,6 +2681,21 @@ async function fixture(
     }
   }
 }
+
+test('a disconnected Zone prepares an independent paused SQL queue without resolving or loading audio', async t => {
+  let resolutions = 0
+  const f = await fixture(t, { resolve: async () => { resolutions++; throw new Error('No decoder authorized') } })
+  await f.session.fromQuery({}, 'b', false, undefined, { prepareOnly: true })
+  assert.equal(resolutions, 0)
+  assert.equal(f.engine.items.length, 0)
+  assert.equal(f.session.snapshot().playback?.state, 'paused')
+  assert.equal(f.session.snapshot().track?.id, 'b')
+  assert.equal(f.saved?.data?.libraryQueue?.id, f.session.snapshot().queue?.id)
+  // Existing callers without prepareOnly retain their old source resolution contract.
+  await assert.rejects(f.session.fromQuery({}, 'a', false), /No decoder authorized/)
+  assert.equal(resolutions, 1)
+  assert.equal(f.session.snapshot().track?.id, 'b')
+})
 
 test('catalog sources enter the existing durable queue and native resolution with exact CUE identity and fresh occurrences', async t => {
   const resolved: TrackData[] = []
@@ -3083,6 +3161,66 @@ test('a stale displayed queue revision is rejected before any native mutation', 
     code: 'STALE_REVISION'
   })
   assert.deepEqual(f.engine.calls, calls)
+})
+
+for (const kind of ['clear', 'remove'] as const) {
+  test(`${kind} of the last selected row clears native playback and the saved session`, async (t) => {
+    const f = await fixture(t)
+    await f.session.fromQuery({ ids: ['a'], sort: 'playlist' }, undefined)
+    await tick()
+    const queue = f.session.snapshot().queue!
+    const edit = kind === 'clear' ? { kind } : { kind, entryIds: [queue.occurrenceId!] }
+    const before = f.engine.calls.length
+    await f.session.edit(queue.id, queue.revision, edit)
+    const snapshot = f.session.snapshot()
+    assert.equal(snapshot.track, null)
+    assert.equal(snapshot.queue?.total, 0)
+    assert.equal(snapshot.queue?.occurrenceId, null)
+    assert.equal(snapshot.playback?.state, 'stopped')
+    assert.equal(snapshot.playback?.position, 0)
+    assert.deepEqual(f.engine.items, [])
+    assert.equal(f.engine.info.queueIndex, -1)
+    assert.equal(f.engine.info.source, '')
+    assert.deepEqual(
+      f.engine.calls.slice(before).filter((call) => ['stop', 'loadQueue', 'play'].includes(call)),
+      ['stop', 'loadQueue']
+    )
+    assert.equal((await f.repository.load())?.data, null)
+    const restored = f.create()
+    await restored.initialize()
+    assert.equal(restored.snapshot().track, null)
+    assert.equal(restored.snapshot().queue, null)
+    await restored.shutdown()
+  })
+}
+
+test('a failed native queue clear is reported and leaves audio stopped', async (t) => {
+  const f = await fixture(t)
+  await f.session.fromQuery({ ids: ['a'], sort: 'playlist' }, undefined)
+  await tick()
+  const queue = f.session.snapshot().queue!
+  f.engine.failLoad = true
+  await assert.rejects(f.session.edit(queue.id, queue.revision, { kind: 'clear' }), /Reply lost after native LoadQueue/)
+  assert.equal(f.engine.info.state, 'stopped')
+  assert.match(f.session.snapshot().error ?? '', /Reply lost after native LoadQueue/)
+  f.engine.failLoad = false
+})
+
+test('undo after clear restores a paused selection and only explicit Play reloads native audio', async (t) => {
+  const f = await fixture(t)
+  await f.session.fromQuery({ ids: ['a', 'b'], sort: 'playlist' }, undefined)
+  await tick()
+  let queue = f.session.snapshot().queue!
+  await f.session.edit(queue.id, queue.revision, { kind: 'clear' })
+  queue = f.session.snapshot().queue!
+  await f.session.edit(queue.id, queue.revision, { kind: 'undo' })
+  assert.equal(f.session.snapshot().queue?.total, 2)
+  assert.equal(f.session.snapshot().track?.id, 'a')
+  assert.equal(f.session.snapshot().playback?.state, 'paused')
+  assert.equal(f.engine.items.length, 0)
+  await f.session.play()
+  assert.equal(f.session.snapshot().playback?.state, 'playing')
+  assert.equal(f.engine.items[f.engine.info.queueIndex].id, 'a')
 })
 
 test('native EOF during a slow manual preview wins its occurrence fence without a stale Play or SQL cursor overwrite', async (t) => {

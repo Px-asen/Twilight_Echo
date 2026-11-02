@@ -158,6 +158,7 @@ test('BSOD-truncated 0-byte or corrupt auxiliary stores self-heal instead of bri
   const { createPersistentDevicePairing, loadRemoteTlsIdentity } = await import(
     '../remote/deviceTrust.ts'
   )
+  const { bridgeSelectionStore } = await import('../audio/bridgeSelectionStore.ts')
 
   const directory = await mkdtemp(join(tmpdir(), 'twilight-bsod-heal-'))
   t.after(async () => {
@@ -202,4 +203,10 @@ test('BSOD-truncated 0-byte or corrupt auxiliary stores self-heal instead of bri
   assert.equal(typeof tls.fingerprint, 'string')
   assert.ok(tls.fingerprint.length > 0)
   assert.equal(await readFile(`${tlsPath}.corrupt`, 'utf8'), '{corrupt-tls')
+
+  // 4. Bridge corruption must not brick startup or imply consent to local playback.
+  const bridgePath = join(directory, 'bridge-output-selection.json')
+  await writeFile(bridgePath, '{"selected":', 'utf8')
+  const bridgeStore = await bridgeSelectionStore(directory)
+  assert.equal(bridgeStore.selected, true)
 })

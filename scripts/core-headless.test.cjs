@@ -63,7 +63,8 @@ test(
         'twilight-audio',
         'twilight-audio-test',
         'twilight-database',
-        'twilight-scan'
+        'twilight-scan',
+        'twilight-zone-audio'
       ])
       assert.equal(result.serviceBusinessMessages, 0)
       assert.equal(result.tracks, 2)
@@ -184,7 +185,8 @@ async function main() {
         return path
       },
       'files.trashAudio': async () => { throw Error('No deletion is authorized in this fixture') },
-      'artwork.normalizeCachedCover': async ({ handle }) => normalizeCachedCoverHandle(handle)
+      'artwork.normalizeCachedCover': async ({ handle }) => normalizeCachedCoverHandle(handle),
+      'artwork.remotePreview': async () => null
     },
     fork(entry, args, serviceName) {
       const child = utilityProcess.fork(entry, args, { serviceName, stdio: 'pipe' })
@@ -289,6 +291,45 @@ async function main() {
   // No route is opened: save a disconnected device profile through the public
   // Core domain and the real synchronous settings repository.
   const audioOutput = await request('query', 'audio.output')
+  // Production Core -> private utility RPC -> staged native Bridge support.
+  // These operations stay stopped and never open an output device.
+  const zone = await request('query', 'zones.state')
+  assert.equal(zone.supported, true)
+  assert.equal(zone.zoneId, 'local')
+  assert.equal(zone.selectedOutputId, 'local')
+  assert.equal(zone.hosting, false)
+  const path = await request('query', 'audio.signalPath')
+  assert.equal(path.transport.kind, 'local')
+  assert.equal(path.hardware, null)
+  await request('command', 'zones.select', { revision: zone.revision, outputId: 'local' })
+  assert.equal((await request('query', 'zones.state')).revision, zone.revision + 1)
+  // Multi-Zone composition uses separate real native utility processes. Build
+  // paused SQL queues and change DSP only; no decoder or output device opens.
+  const zoneDesktop = { ...identity, id: 'desktop:zones', role: 'desktop' }
+  supervisor.connect(zoneDesktop)
+  const zoneCommand = (name, payload) => supervisor.request(zoneDesktop.id, { kind: 'command', name, payload,
+    epoch: supervisor.getStatus().epoch, requestId: 'zones:' + ++serial })
+  assert.equal((await request('query', 'zones.list')).zones.length, 1)
+  const zoneA = (await zoneCommand('zones.create', { revision: 0, name: 'Study' })).id
+  const zoneB = (await zoneCommand('zones.create', { revision: 1, name: 'Bedroom' })).id
+  await zoneCommand('zones.queueFromQuery', { zoneId: zoneA, revision: 0, query: { ids: ['one'] } })
+  await zoneCommand('zones.queueFromQuery', { zoneId: zoneB, revision: 0, query: { ids: ['two'] } })
+  const beforeZoneDsp = await request('query', 'zones.dsp', { zoneId: zoneA })
+  await zoneCommand('zones.dsp.edit', { zoneId: zoneA, revision: beforeZoneDsp.revision,
+    edit: { kind: 'processing', settings: { eqPreamp: -6 } } })
+  assert.equal((await request('query', 'zones.dsp', { zoneId: zoneA })).processing.eqPreamp, -6)
+  assert.notEqual((await request('query', 'zones.dsp', { zoneId: zoneB })).processing.eqPreamp, -6)
+  const independentZones = (await request('query', 'zones.list')).zones
+  const aQueue = independentZones.find(z => z.id === zoneA).queue.id
+  const bQueue = independentZones.find(z => z.id === zoneB).queue.id
+  assert.notEqual(aQueue, bQueue)
+  assert.equal(independentZones.find(z => z.id === zoneA).track.id, 'one')
+  assert.equal(independentZones.find(z => z.id === zoneB).track.id, 'two')
+  assert.equal(independentZones.find(z => z.id === zoneA).output.selected, true)
+  await assert.rejects(zoneCommand('zones.transport', { zoneId: zoneA, revision: 1, action: { kind: 'play' } }), /未连接/)
+  assert.equal((await request('query', 'zones.list')).zones.find(z => z.id === zoneB).queue.id, bQueue)
+  assert.equal((await request('query', 'state.snapshot')).queue, null)
+  supervisor.disconnect(zoneDesktop.id)
   assert.equal((await request('query', 'state.snapshot')).playback.state, 'stopped')
   const audioProfiles = await request('query', 'audio.profiles')
   const savedProfile = { ...audioProfiles.profiles.current, id: 'headless-dac', name: 'Headless DAC', stableDeviceId: 'fixture-disconnected-dac' }
@@ -319,6 +360,7 @@ async function main() {
   assert.equal((await testRequest('audio.outputTest')).active, false)
   assert.equal(existsSync(simulatedSource), false)
   assert.equal([...alive].some(child => children.find(row => row.child === child)?.serviceName === 'twilight-audio-test'), false)
+  assert.equal(testCalls().filter(row => row.method === 'supervisor:stop-audio').length, 1)
   assert.equal((await request('query', 'state.snapshot')).queue, null)
   assert.deepEqual(await request('query', 'statistics.tracks', { limit: 1 }), importedStatistics)
   supervisor.disconnect(desktop.id)
@@ -396,6 +438,7 @@ async function main() {
   const crashedTest = testRequest('audio.outputTest.play', { revision: (await request('query', 'audio.output')).revision, exclusive: false })
   const crashedTestReply = assert.rejects(crashedTest, error => error.code === 'OUTCOME_UNKNOWN')
   await waitForTest(2)
+  const stopsBeforeCrash = testCalls().filter(row => row.method === 'supervisor:stop-audio').length
   // Lose the resume reply after its durable state change. No client remains;
   // the new Core must recover the task without replaying that old command.
   const crashOnResume = (id, message) => {
@@ -412,12 +455,18 @@ async function main() {
   await newReady
   await crashedTestReply
   supervisor.disconnect(desktop.id)
-  assert.equal(testCalls().filter(row => row.method === 'supervisor:stop-audio').length, 1)
+  assert.equal(testCalls().filter(row => row.method === 'supervisor:stop-audio').length - stopsBeforeCrash, 1)
   console.log('[headless] Core recovered')
   supervisor.connect(identity)
   let oldEpochRejected = false
   try { await request('command', 'playback.pause', {}, epoch) } catch (e) { oldEpochRejected = e.code === 'STALE_EPOCH' }
   const recovered = await request('query', 'state.snapshot')
+  const recoveredZones = (await request('query', 'zones.list')).zones
+  assert.equal(recoveredZones.length, 3)
+  assert.equal(recoveredZones.find(z => z.id === zoneA).queue.id, aQueue)
+  assert.equal(recoveredZones.find(z => z.id === zoneB).queue.id, bQueue)
+  assert.equal(recoveredZones.find(z => z.id === zoneB).playback.state, 'paused')
+  assert.equal((await request('query', 'zones.dsp', { zoneId: zoneA })).processing.eqPreamp, -6)
   const recoveredMetadata = await request('query', 'metadata.entity.detail', { entityId: metadataArtist, language: 'en' })
   assert.equal(recoveredMetadata.introduction.value, 'Headless user introduction')
   assert.equal((await request('query', 'metadata.entity.jobs', { jobId: metadataJob.id })).items[0].state, 'blocked')

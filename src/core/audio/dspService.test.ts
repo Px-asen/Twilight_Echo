@@ -13,7 +13,7 @@ import { AudioEngineManager } from '../../main/audioEngineManager.ts'
 import { coreAudioConfiguration, createCoreAudioPersistence } from './settings.ts'
 import { createDefaultPlaybackInfo, normalizeOutputConfig } from './audioEngineHelpers.ts'
 import type { NativeAudioBinding } from './audioEngineTypes.ts'
-import type { DspScene } from '../../shared/dspGraph.ts'
+import type { DspScene, DspSceneState } from '../../shared/dspGraph.ts'
 import type { AudioProcessingSettings } from '../../shared/audioEngineTypes.ts'
 import type { CoreStateRow } from '../../shared/coreState.ts'
 import { computeAutoPreampDb } from '../../shared/eqResponse.ts'
@@ -280,6 +280,14 @@ test('managed asset references survive profile round-trip and prevent deletion w
   const id = page.items[0].id
   assert.equal((await f.dsp.correction(id)).preampDb, -3)
   const scenes = structuredClone((await f.dsp.state()).scenes.scenes)
+  scenes[0].android = {
+    schemaVersion: 1,
+    crossfadeSeconds: 2.5,
+    allowedSampleRates: [44100, 96000],
+    dsdOutputMode: 'native',
+    dsdRatePolicy: 'exact',
+    futurePhoneSetting: { enabled: true }
+  }
   scenes[0].graph.nodes.push({
     id: 'correction',
     type: 'equalizer',
@@ -294,7 +302,13 @@ test('managed asset references survive profile round-trip and prevent deletion w
   const archive = join(f.root, 'roundtrip.tedsp')
   f.choose(archive)
   await f.dsp.export(f.output.getRevision(), 'Round trip', signal())
-  await f.dsp.import({ revision: f.output.getRevision(), kind: 'profile' }, signal())
+  const imported = (await f.dsp.import(
+    { revision: f.output.getRevision(), kind: 'profile' },
+    signal()
+  )) as { state: DspSceneState }
+  assert.deepEqual(imported.state, f.engine.getDspSceneState())
+  assert.deepEqual(imported.state.scenes[0].android, scenes[0].android)
+  imported.state.scenes[0].android!.crossfadeSeconds = 9
   assert.deepEqual(f.settings.read().dspScenes, scenes)
   assert.equal((await f.dsp.assets()).items[0].referenceCount, 1)
   const reopened = new DspAssetLibrary(join(f.root, 'dsp-assets'), {

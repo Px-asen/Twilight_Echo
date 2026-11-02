@@ -26,6 +26,10 @@ export const UNITY_SOFTWARE_VOLUME = 1
 /** Below this a gain stage is bit-transparent. Mirrors the engine's own epsilon. */
 export const TRANSPARENT_GAIN_EPSILON_DB = 0.0001
 
+/** Stored EQ parameters, distinct from the editor's audible-frequency viewport. */
+export const EQ_BAND_MIN_FREQUENCY_HZ = 10
+export const EQ_BAND_MAX_FREQUENCY_HZ = 96000
+
 /**
  * Whether an equalizer band changes the signal.
  *

@@ -47,6 +47,8 @@ import type {
 import type { DspGraphStatus, Vst3ScanDescriptor } from '../../shared/dspGraph.ts'
 import {
   DEFAULT_DSD_ROUTE,
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ,
   dsdRouteSettingsEqual,
   normalizeDsdRouteSettings
 } from '../../shared/audioProcessingOptions.ts'
@@ -741,7 +743,12 @@ export function normalizeAudioProcessingSettings(
       ? rawBands.slice(0, MAX_PARAMETRIC_EQ_BANDS).map((band, index) => {
           const defaultBand = DEFAULT_EQ_BANDS[index % DEFAULT_EQ_BANDS.length]
           return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            frequency: clampNumber(
+              band.frequency,
+              EQ_BAND_MIN_FREQUENCY_HZ,
+              EQ_BAND_MAX_FREQUENCY_HZ,
+              defaultBand.frequency
+            ),
             gain: clampNumber(band.gain, PARAMETRIC_EQ_GAIN_MIN_DB, PARAMETRIC_EQ_GAIN_MAX_DB, 0),
             q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
             filterType: normalizeEqualizerFilterType(band.filterType),
@@ -755,7 +762,12 @@ export function normalizeAudioProcessingSettings(
       : DEFAULT_EQ_BANDS.map((defaultBand, index) => {
           const band = rawBands[index] ?? defaultBand
           return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            frequency: clampNumber(
+              band.frequency,
+              EQ_BAND_MIN_FREQUENCY_HZ,
+              EQ_BAND_MAX_FREQUENCY_HZ,
+              defaultBand.frequency
+            ),
             gain: clampNumber(band.gain, GRAPHIC_EQ_GAIN_MIN_DB, GRAPHIC_EQ_GAIN_MAX_DB, 0),
             q: clampNumber(band.q, GRAPHIC_EQ_Q_MIN, GRAPHIC_EQ_Q_MAX, 1),
             filterType: normalizeEqualizerFilterType(band.filterType),

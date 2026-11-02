@@ -29,7 +29,7 @@ test('DLNA sampling uses actual transport and source position; cancellation inte
     const xml =
       action === 'GetTransportInfo'
         ? '<u:CurrentTransportState>PLAYING</u:CurrentTransportState>'
-        : '<RelTime>0:02:13</RelTime><TrackDuration>1:03:04</TrackDuration>'
+        : '<RelTime>0:02:13.75</RelTime><TrackDuration>1:03:04.125</TrackDuration>'
     res.end(`<Envelope><Body>${xml}</Body></Envelope>`)
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -40,8 +40,8 @@ test('DLNA sampling uses actual transport and source position; cancellation inte
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/control`
   assert.deepEqual(await dlnaStatus(url), {
     state: 'playing',
-    position: 133,
-    duration: 3784,
+    position: 133.75,
+    duration: 3784.125,
     buffering: false,
     ended: false
   })

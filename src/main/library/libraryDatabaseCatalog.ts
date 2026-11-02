@@ -16,11 +16,11 @@ import { validCatalogPayload, CATALOG_MAX_BATCH_BYTES } from '../../shared/music
 import { parseMusicVersions, type MusicVersionsDocument } from '../../shared/musicVersions.ts'
 import { getTrackSource, versionSourceKey } from '../../shared/trackSourceIdentity.ts'
 import { getAlbumIdentity } from '../../shared/libraryIdentity.ts'
-import type { TrackData } from '../../shared/track.ts'
+import type { TrackArtistRef, TrackData } from '../../shared/track.ts'
 import { projectCoreTrack } from '../../core/projections.ts'
 import { normalizeCueRange } from '../../shared/cue.ts'
 import { libraryTrack } from '../../core/playback/libraryTrack.ts'
-import { normalizeTrackIdentityTags } from '../../shared/trackIdentification.ts'
+import { fileArtistCredits, normalizeTrackIdentityTags } from '../../shared/trackIdentification.ts'
 import { libraryArtistCredits } from '../../shared/libraryCollections.ts'
 import { catalogArtistAlias } from './catalogArtistAlias.ts'
 
@@ -223,7 +223,7 @@ export class LibraryDatabaseCatalog {
       localHorizon: horizon,
       localPending:
         cursor < horizon || dirty > 0 ||
-        Number(this.state('file_artist_cursor_v1')) < Number(this.state('file_artist_horizon_v1')) ||
+        Number(this.state('file_artist_cursor_v3')) < Number(this.state('file_artist_horizon_v3')) ||
         Number(this.state('project_cursor')) < Number(this.state('project_horizon')),
       dirtySources: dirty,
       playlistsRevision: playlists === null ? null : Number(playlists),
@@ -278,18 +278,23 @@ export class LibraryDatabaseCatalog {
       const projectCursor = Number(this.state('project_cursor')),
         projectHorizon = Number(this.state('project_horizon'))
       let remaining = limit - processed - pending.length
-      const creditCursor = Number(this.state('file_artist_cursor_v1')),
-        creditHorizon = Number(this.state('file_artist_horizon_v1'))
+      const creditCursor = Number(this.state('file_artist_cursor_v3')),
+        creditHorizon = Number(this.state('file_artist_horizon_v3'))
       let creditsVisited = 0
       if (creditCursor < creditHorizon && remaining > 0) {
         const rows = this.sql.prepare('SELECT seq,payload FROM tracks WHERE seq>? AND seq<=? ORDER BY seq LIMIT ?')
           .all(creditCursor, creditHorizon, remaining) as Row[]
         for (const row of rows) {
           const raw = JSON.parse(str(row.payload))
-          if (!raw.artists?.length && libraryArtistCredits(raw).length)
+          const credits = libraryArtistCredits(raw)
+          const previous = raw.artists?.length ? raw.artists : [{ name: str(raw.artist) }]
+          const missingFileCredits = !raw.artists?.length && fileArtistCredits(raw.identityTags).length > 0
+          const changed = credits.length !== previous.length ||
+            credits.some((credit, index) => credit.name.trim() !== str(previous[index]?.name).trim())
+          if (credits.length && (missingFileCredits || changed))
             this.upsert(libraryTrack(raw), 'local', raw)
         }
-        this.set('file_artist_cursor_v1', rows.length === remaining ? Number(rows.at(-1)!.seq) : creditHorizon)
+        this.set('file_artist_cursor_v3', rows.length === remaining ? Number(rows.at(-1)!.seq) : creditHorizon)
         creditsVisited = rows.length
         remaining -= rows.length
       }
@@ -416,7 +421,7 @@ export class LibraryDatabaseCatalog {
         )
     }
     if (release) this.project(release)
-    const track = snapshot(input, provider)
+    const track = snapshot(input, provider, libraryArtistCredits(raw))
     if (owner) {
       // A changed selector/path is a different source. Retain its offline record,
       // but do not keep it as a live library member under the same Track ID.
@@ -454,8 +459,7 @@ export class LibraryDatabaseCatalog {
     if (str(raw.title).trim()) fact(recording, 'title', str(raw.title))
     if (str(raw.artist).trim()) fact(recording, 'artist', str(raw.artist))
     if (release) fact(release, 'album', input.album)
-    const credits = libraryArtistCredits(track)
-    const artists = credits.length ? credits : [{ name: str(raw.artist) }]
+    const artists = track.artists ?? []
     const performerIds: string[] = []
     for (const [index, artist] of artists.entries()) {
       if (!str(artist.name).trim()) continue
@@ -813,7 +817,7 @@ function displayTrack(track: TrackData) {
 }
 
 /** A safe durable provider reference, never a captured URL, credential or analysis payload. */
-function snapshot(track: TrackData, provider: string): TrackData {
+function snapshot(track: TrackData, provider: string, credits: readonly TrackArtistRef[]): TrackData {
   const result: TrackData = {
     id: track.id,
     title: str(track.title),
@@ -849,7 +853,6 @@ function snapshot(track: TrackData, provider: string): TrackData {
       Object.assign(result, { [field]: track[field] })
   if (track.cueRange) result.cueRange = normalizeCueRange(track.cueRange) ?? undefined
   result.identityTags = normalizeTrackIdentityTags(track.identityTags)
-  const credits = libraryArtistCredits(track)
   if (credits.length)
     result.artists = credits
       .slice(0, 128)

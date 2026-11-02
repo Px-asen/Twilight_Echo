@@ -26,7 +26,8 @@ test('mobile repository rejects unsafe entry paths, broader permissions, duplica
 test('the packaged serial Android runtime executes the original NCM search, QR and YRC logic without Node', () => {
   const settings = new Map()
   const requests: any[] = []
-  const sandbox = vm.createContext({ __PLUGIN_HOST__: { call(method: string, json: string) {
+  let now = Date.now()
+  const sandbox = vm.createContext({ Date: class extends Date { static now() { return now } }, __PLUGIN_HOST__: { call(method: string, json: string) {
     const args = JSON.parse(json); let value: any = null
     if (method === 'settings.get') value = args.key ? settings.get(args.key) ?? null : Object.fromEntries(settings)
     else if (method === 'settings.set') settings.set(args.key, args.value)
@@ -35,16 +36,21 @@ test('the packaged serial Android runtime executes the original NCM search, QR a
       requests.push(args)
       const body = args.uri.includes('cloudsearch') ? { code: 200, result: { songs: [{ id: 42, name: 'Shared NCM', ar: [{ name: 'Artist' }], al: { name: 'Album' }, dt: 5000 }], songCount: 1 } }
         : args.uri.includes('unikey') ? { code: 200, unikey: 'fixture-key' }
+        : args.uri.endsWith('/playlist/detail') ? { code: 200, playlist: { name: 'Mixed rights', trackCount: 4, trackIds: [{ id: 42 }, { id: 43 }, { id: 42 }] } }
+        : args.uri.endsWith('/song/detail') ? { code: 200, songs: [null, { id: 43, name: 'Restricted', ar: [null], noCopyrightRcmd: {} },
+            { id: 42, name: 'Shared NCM', dt: 5000 }] }
         : { code: 200, yrc: { lyric: '[1000,2000](1000,500,0)Shared(1500,500,0) lyrics' } }
       value = { status: 200, body, cookie: [] }
     } else if (method === 'qrImage') { assert.equal(args.data.length, args.size ** 2); value = 'data:image/png;base64,fixture' }
-    else if (method !== 'sleep') throw new Error('Unexpected host method ' + method)
+    else if (method === 'sleep') now += args.ms
+    else throw new Error('Unexpected host method ' + method)
     return JSON.stringify({ ok: true, value })
   } } })
   vm.runInContext(readFileSync(new URL('../../../dist/android-plugins/ncm/android.js', import.meta.url), 'utf8'), sandbox)
   function invoke(method: string, args: unknown[] = []) {
-    sandbox.input = { method, args }; sandbox.output = undefined
-    vm.runInContext(`Promise.resolve(__TWILIGHT_PLUGIN__.${method === 'activate' ? 'activate()' : 'call(input)'}).then(v => output = v,e => {throw e})`, sandbox)
+    sandbox.input = { method, args }; sandbox.output = undefined; sandbox.failure = undefined
+    vm.runInContext(`Promise.resolve(__TWILIGHT_PLUGIN__.${method === 'activate' ? 'activate()' : 'call(input)'}).then(v => output = v,e => failure = e)`, sandbox)
+    if (sandbox.failure) throw sandbox.failure
     assert.notEqual(sandbox.output, undefined, 'ABI v1 must settle synchronously')
     return sandbox.output as any
   }
@@ -53,5 +59,11 @@ test('the packaged serial Android runtime executes the original NCM search, QR a
   assert.equal(requests[0].uri, '/api/cloudsearch/pc')
   const qr = invoke('getQrLogin'); assert.equal(qr.key, 'fixture-key'); assert.match(qr.imageDataUrl, /^data:/)
   const lyric = invoke('getLyrics', [{ ncmSongId: 42 }]); assert.match(lyric.mobileLrc, /\[00:01\.000\]Shared lyrics/)
+  const page = invoke('fetchPlaylistTracksPage', ['77'])
+  assert.equal(page.total, 3)
+  assert.equal(page.reportedTotal, 4)
+  assert.deepEqual(Array.from(page.tracks, (track: any) => track.ncmSongId), [42, 43, 42])
+  assert.equal(page.tracks[1].unavailableReason, '原平台版权受限')
+  assert.throws(() => invoke('readPlaylistImportPage', ['77']), /不完整的条目/)
   assert.equal(invoke('checkLogin').loggedIn, false)
 })

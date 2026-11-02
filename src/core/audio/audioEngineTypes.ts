@@ -88,6 +88,11 @@ export interface NativeAudioBinding {
   SetVisualizationDemand?: (enabled: boolean) => void
   AnalyzeBpm?: (source: string, optionsJson?: string) => string | BpmAnalysisResult
   AnalyzeLoudness?: (source: string, optionsJson?: string) => string | LoudnessAnalysisResult
+  /** Background worker only; writes a bounded, unprocessed PCM WAV. */
+  RenderPcmSegment?: (
+    source: string, outputPath: string, startSeconds: number, endSeconds: number,
+    virtualPregapSeconds: number
+  ) => void
   AnalyzeAutoMix?: (
     source: string,
     optionsJson?: string
@@ -129,6 +134,8 @@ export interface AudioOutputCommit {
 }
 
 export interface AudioEngineManagerDependencies {
+  initialBridgeSelected?: boolean
+  persistBridgeSelection?: (selected: boolean) => Promise<void>
   platform?: CorePlatformId
   persistAudioOutput?: (commit: AudioOutputCommit) => void
   persistDeviceProfiles?: (commit: import('./deviceProfiles.ts').DeviceProfileCommit) => void

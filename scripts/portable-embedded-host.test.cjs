@@ -4,6 +4,298 @@ const { PortError, createEmbeddedHarness, createFakePlatform, wireTrack } = requ
 
 const TRACKS = ['a', 'b', 'c'].map((id) => wireTrack(id))
 
+test('SAF identity migration preserves CUE/SACD, favorites, playlists, lyrics, bookmarks and a paused session through rescan and restart', async () => {
+  const platform = createFakePlatform()
+  const authority = 'alpha.documents'
+  const uri = (name, tree = 'root') => `content://${authority}/tree/${tree}/document/${encodeURIComponent(`shared:Music/${name}`)}`
+  const saf = `local:saf:${'a'.repeat(24)}`
+  const cue = `local:cue:${'b'.repeat(24)}`
+  const sacd = `local:sacd:${'c'.repeat(24)}:stereo:2`
+  const external = `local:saf:${'d'.repeat(24)}`
+  const tracks = [
+    wireTrack(saf, { source: uri('Song #?%.flac') }),
+    wireTrack(cue, { source: uri('Disc.flac'), cueRange: { startSeconds: 10, endSeconds: 42 } }),
+    wireTrack(sacd, { source: `${uri('Disc.iso')}#twilight-sacd=stereo:2`, format: 'SACD ISO' }),
+    wireTrack(external, { source: 'content://com.android.externalstorage.documents/tree/primary%3AMusic/document/primary%3AMusic%2FSong.flac' })
+  ]
+  const first = createEmbeddedHarness({ platform })
+  await first.boot({ epoch: 'saf-old' })
+  await first.value('library.syncTracks', { tracks })
+  await first.value('playlists.toggleFavorite', { trackId: cue })
+  await first.value('playlists.create', { name: 'SAF mix', trackIds: [saf, cue, sacd, external] })
+  await first.value('lyrics.importLrc', { trackId: cue, lrcText: '[00:01.00]Preserved lyrics' })
+  await first.value('playback.replaceQueue', { tracks, startIndex: 1, play: true })
+  await first.value('bookmarks.add', { trackId: cue, positionSec: 8, label: 'CUE marker' })
+  await first.value('playback.seek', { position: 12.75 })
+  await first.value('playback.pause')
+  await first.value('settings.edit', { key: 'playbackResumeMode', valueJson: '"trackAndPosition"' })
+  const occurrence = (await first.snapshot()).queue.occurrenceId
+  await first.shutdown()
+  // Emulate the actual pre-namespace bookmark format, while keeping the real Core's envelope.
+  const old = JSON.parse(platform.stored)
+  old.bookmarks.bookmarks.find(({ label }) => label === 'CUE marker').trackKey = `local:${uri('Disc.flac')}#cue:10`
+  const deleted = `local:saf:${'f'.repeat(24)}`
+  old.lyricsManagement.tracks[deleted] = { ...old.lyricsManagement.tracks[cue], original: '[00:01.00]Offline edit' }
+  old.bookmarks.bookmarks.push({ ...old.bookmarks.bookmarks[0], id: 'offline-marker', trackId: deleted,
+    trackKey: 'local:content://offline.documents/tree/root/document/removed%3ASong.flac', label: 'Offline marker' })
+  platform.stored = JSON.stringify(old)
+
+  const migrated = createEmbeddedHarness({ platform })
+  assert.equal((await migrated.boot({ epoch: 'saf-migrated' })).boot.ok, true)
+  const qualified = (id) => id === external ? id : `${id}@${authority}`
+  let snapshot = await migrated.snapshot()
+  assert.equal(snapshot.track.id, qualified(cue))
+  assert.equal(snapshot.queue.occurrenceId, occurrence)
+  assert.equal(snapshot.playback.state, 'paused')
+  assert.equal(snapshot.playback.position, 12.75)
+  assert.deepEqual(snapshot.favoriteTrackIds, [qualified(cue)])
+  assert.deepEqual(snapshot.playlists[0].trackIds, tracks.map(({ id }) => qualified(id)))
+  assert.equal(snapshot.bookmarks.find(({ label }) => label === 'CUE marker').trackId, qualified(cue))
+  const lyrics = await migrated.value('lyrics.current', { trackId: qualified(cue) }, 'query')
+  assert.equal(lyrics.lines[0].text, 'Preserved lyrics')
+
+  const next = tracks.map((track) => ({ ...track, id: qualified(track.id), source: track.source.replace('/tree/root/', '/tree/nested/') }))
+  await migrated.value('library.syncTracks', { tracks: next })
+  await migrated.value('library.syncTracks', { tracks: [...next].reverse() })
+  assert.equal((await migrated.snapshot()).libraryTrackCount, 4)
+  const page = await migrated.value('playback.getQueueWindow', { offset: 0, limit: 10 }, 'query')
+  assert.deepEqual(page.items.map(({ track }) => track.id), tracks.map(({ id }) => qualified(id)))
+  await migrated.value('playback.play')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, next[1].source)
+  assert.deepEqual(platform.queue[platform.audio.queueIndex].cueRange, { startSeconds: 10, endSeconds: 42,
+    pregapSeconds: 0, virtualPregapSeconds: 0, sourcePregapSeconds: 0 })
+  const plays = platform.calls.filter(({ key }) => key === 'audioEngine.play').length
+  const replacement = next.map((track) => ({ ...track, source: track.source.replace('/tree/nested/', '/tree/replacement/') }))
+  await migrated.value('library.syncTracks', { tracks: replacement })
+  await migrated.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  assert.equal(platform.calls.filter(({ key }) => key === 'audioEngine.play').length, plays,
+    'a playing rescan must not restart the native selection')
+  assert.equal(platform.audio.state, 'playing')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, next[1].source)
+  await migrated.value('playback.pause')
+  platform.revoked.add(next[1].source)
+  await migrated.value('playback.play')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, replacement[1].source)
+  assert.equal((await migrated.snapshot()).playback.position, 12.75)
+  assert.equal((await migrated.snapshot()).queue.occurrenceId, occurrence)
+  await migrated.value('bookmarks.add', { trackId: qualified(cue), positionSec: 9, label: 'New grant marker' })
+  await migrated.value('playback.pause')
+  await migrated.shutdown()
+  const saved = JSON.parse(platform.stored)
+  assert.ok(saved.tracks.some(({ id, subTrack }) => id === qualified(sacd) && subTrack.endsWith('#twilight-sacd=stereo:2')))
+  const markers = saved.bookmarks.bookmarks.filter(({ label }) => label === 'CUE marker' || label === 'New grant marker')
+  assert.equal(new Set(markers.map(({ trackKey }) => trackKey)).size, 1, 'grant changes must not detach bookmarks')
+  assert.equal(markers[0].trackKey, `saf:${qualified(cue)}`)
+  assert.equal(saved.lyricsManagement.tracks[cue], undefined)
+  assert.ok(saved.lyricsManagement.tracks[qualified(cue)])
+  assert.ok(saved.lyricsManagement.tracks[`${deleted}@offline.documents`])
+  assert.equal(saved.lyricsManagement.tracks[deleted], undefined)
+  const final = createEmbeddedHarness({ platform })
+  await final.boot({ epoch: 'saf-restart' })
+  snapshot = await final.snapshot()
+  assert.deepEqual(snapshot.favoriteTrackIds, [qualified(cue)])
+  assert.equal(snapshot.playback.state, 'paused')
+  assert.equal(snapshot.track.id, qualified(cue))
+  assert.equal(snapshot.libraryTrackCount, 4)
+  await final.shutdown()
+})
+
+test('legacy Kotlin mirror collision uses the saved source for each queue occurrence and never attaches favorites by new scan order', async () => {
+  const platform = createFakePlatform()
+  const id = `local:saf:${'e'.repeat(24)}`
+  const make = (authority) => wireTrack(id, { source: `content://${authority}/tree/root/document/shared%3ASong.flac` })
+  const alpha = make('alpha.documents'), beta = make('beta.documents'), external = make('com.android.externalstorage.documents')
+  platform.stored = JSON.stringify({ libraryTracks: [alpha], queueTracks: [beta, external], currentQueueIndex: 0,
+    favoriteTrackIds: [id], playlists: [{ id: 'legacy-mix', name: 'Old list', trackIds: [id] }],
+    bookmarks: [{ id: 'bm', trackId: id, positionSec: 3, label: 'Library marker', createdAtMs: 1700000000000 }] })
+  const h = createEmbeddedHarness({ platform })
+  assert.equal((await h.boot({ epoch: 'saf-collision' })).boot.ok, true)
+  const initial = await h.snapshot()
+  assert.equal(initial.track.id, `${id}@beta.documents`)
+  assert.deepEqual(initial.favoriteTrackIds, [`${id}@alpha.documents`])
+  assert.deepEqual(initial.playlists[0].trackIds, [`${id}@alpha.documents`])
+  assert.equal(initial.bookmarks[0].trackId, `${id}@alpha.documents`)
+  const tracks = [external, { ...beta, id: `${id}@beta.documents` }, { ...alpha, id: `${id}@alpha.documents` }]
+  await h.value('library.syncTracks', { tracks })
+  await h.value('library.syncTracks', { tracks: [...tracks].reverse() })
+  const snapshot = await h.snapshot()
+  assert.equal(snapshot.libraryTrackCount, 3)
+  assert.deepEqual(snapshot.favoriteTrackIds, [`${id}@alpha.documents`])
+  const queue = await h.value('playback.getQueueWindow', { offset: 0, limit: 10 }, 'query')
+  assert.deepEqual(queue.items.map(({ track }) => track.id), [`${id}@beta.documents`, id])
+  await h.value('playback.play')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, beta.source)
+  await h.shutdown()
+})
+
+test('USB direct IDs and DSD requests reach the native port, persist, and keep PCM as the legacy default', async () => {
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'dsd-settings' })
+  const initial = (await h.snapshot()).eqConfig
+  assert.equal(initial.dsp.dsdOutputMode, 'pcm')
+  assert.equal(initial.dsp.dsdRatePolicy, 'pcm-fallback')
+  const device = 'usb-direct:/dev/bus/usb/001/002'
+  let dsp
+  for (const mode of ['pcm', 'auto', 'native', 'dop']) {
+    dsp = { ...initial.dsp, outputDeviceId: device, dsdOutputMode: mode,
+      dsdRatePolicy: 'downrate', dopConfirmedDeviceKey: '8369:123:1.00' }
+    await h.value('audio.setEq', { dsp })
+    assert.equal(platform.appliedDsp.dsp.outputDeviceId, device)
+    assert.equal(platform.appliedDsp.dsp.dsdOutputMode, mode)
+    assert.equal(platform.appliedDsp.dsp.dsdRatePolicy, 'downrate')
+    assert.equal(platform.appliedDsp.dsp.playbackRate, initial.dsp.playbackRate)
+    assert.equal(platform.appliedDsp.enabled, initial.enabled)
+  }
+  for (const patch of [{ dsdOutputMode: 'DSD' }, { dsdRatePolicy: 'guess' }, { dopConfirmedDeviceKey: true },
+    { outputDeviceId: 'usb-direct:' }]) {
+    assert.equal((await h.request('audio.setEq', { dsp: { ...dsp, ...patch } })).ok, false)
+    assert.equal((await h.snapshot()).eqConfig.dsp.dsdOutputMode, 'dop')
+  }
+  await h.shutdown()
+  const restored = createEmbeddedHarness({ platform })
+  await restored.boot({ epoch: 'dsd-settings-restored' })
+  assert.deepEqual((await restored.snapshot()).eqConfig.dsp, platform.appliedDsp.dsp)
+  assert.equal(platform.appliedDsp.dsp.outputDeviceId, device)
+  await restored.shutdown()
+  const legacy = JSON.parse(platform.stored)
+  for (const field of ['dsdOutputMode', 'dsdRatePolicy', 'dopConfirmedDeviceKey']) delete legacy.eqConfig.dsp[field]
+  platform.stored = JSON.stringify(legacy)
+  const migrated = createEmbeddedHarness({ platform })
+  await migrated.boot({ epoch: 'dsd-settings-legacy' })
+  assert.equal((await migrated.snapshot()).eqConfig.dsp.dsdOutputMode, 'pcm')
+  assert.equal((await migrated.snapshot()).eqConfig.dsp.dopConfirmedDeviceKey, '')
+  await migrated.shutdown()
+})
+
+test('DSD source bit clocks, DoP carriers and Native word clocks stay distinct through the actual bundle', async () => {
+  const assert = require('node:assert/strict')
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'dsd-facts' })
+  await h.value('library.syncTracks', { tracks: [wireTrack('dsd')] })
+  await h.value('playback.replaceQueue', { tracks: [{ id: 'dsd' }], startIndex: 0, play: true })
+  platform.route.routeType = 'usb_dac'
+  Object.assign(platform.audio, { isDsd: true, dsdRate: 64, sampleRate: 2822400, bitDepth: 1,
+    outputBackend: 'usb-direct', exclusive: true, actualDeviceName: 'USB DAC', dsdRatePolicy: 'exact',
+    dsdConversion: 'exact', dsdConversionReason: '', outputPerfect: false })
+  for (const [mode, actualRate, bits, transport] of [['dop', 176400, 24, 176400], ['native', 2822400, 1, 88200]]) {
+    Object.assign(platform.audio, { dsdMode: mode, actualSampleRate: actualRate, actualBitDepth: bits,
+      actualDsdRate: 64, semanticSampleRate: actualRate, transportSampleRate: transport })
+    await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+    const p = (await h.snapshot()).playback
+    assert.equal(p.outputBackend, 'usb-direct')
+    assert.equal(p.sourceSampleRate, 2822400)
+    assert.equal(p.sourceBitDepth, 1)
+    assert.equal(p.dsdMode, mode)
+    assert.equal(p.dsdRate, 64)
+    assert.equal(p.actualDsdRate, 64)
+    assert.equal(p.actualSampleRate, actualRate)
+    assert.equal(p.transportSampleRate, transport)
+    assert.equal(p.outputPerfect, false)
+  }
+  Object.assign(platform.audio, { isDsd: false, dsdMode: null, dsdRate: null, actualDsdRate: null,
+    dsdConversion: null, dsdConversionReason: null, transportSampleRate: null, semanticSampleRate: null })
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  const cleared = (await h.snapshot()).playback
+  assert.equal(cleared.isDsd, false)
+  assert.equal(cleared.dsdMode, undefined)
+  assert.equal(cleared.actualDsdRate, undefined)
+  assert.equal(cleared.transportSampleRate, undefined)
+  await h.shutdown()
+  assert.equal(platform.stored.includes('"transportSampleRate"'), false)
+})
+
+test('Kotlin-mirror SACD bookmarks migrate to each logical track rather than the whole disc', async () => {
+  const physical = 'content://docs/iso?grant=kept#original'
+  const tracks = [1, 2].map(n => ({ ...wireTrack(`mirror-sacd-${n}`), source: `${physical}#twilight-sacd=stereo:${n}` }))
+  const platform = createFakePlatform()
+  platform.stored = JSON.stringify({ libraryTracks: tracks, queueTracks: tracks, currentQueueIndex: 1,
+    bookmarks: tracks.map((track, n) => ({ id: `bm-sacd-${n}`, trackId: track.id, positionSec: n + 1, label: `Track ${n}`, createdAtMs: 1700000000000 })) })
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'sacd-mirror' })
+  const snapshot = await h.snapshot()
+  assert.deepEqual(snapshot.bookmarks.map(({ trackId }) => trackId).sort(), tracks.map(({ id }) => id).sort())
+  await h.shutdown()
+  const saved = JSON.parse(platform.stored).bookmarks.bookmarks
+  assert.equal(new Set(saved.map(({ trackKey }) => trackKey)).size, 2)
+  assert.ok(saved.every(({ trackKey }) => trackKey.startsWith(`local:${physical}#${physical}#twilight-sacd=stereo:`)))
+})
+
+test('SACD tracks retain physical grants, logical native sources, availability and distinct bookmarks after restart', async () => {
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'sacd-input' })
+  const physical = 'content://documents/tree/disc?provider=keep#original'
+  const tracks = ['stereo:1', 'stereo:2', 'multichannel:1'].map((selector, index) => wireTrack(`sacd-${index}`, {
+    source: `${physical}#twilight-sacd=${selector}`, format: 'SACD ISO', sampleRate: 2822400, bitDepth: 1
+  }))
+  tracks.push(wireTrack('sacd-unavailable', { source: `${physical}#twilight-sacd=stereo:3`, unavailableReason: 'DST unavailable' }))
+  await h.value('library.syncTracks', { tracks })
+  const page = await h.value('search.songs', { query: 'Title sacd' }, 'query')
+  assert.deepEqual(page.items.map(({ id, source }) => ({ id, source })).sort((a, b) => a.id.localeCompare(b.id)),
+    tracks.map(({ id, source }) => ({ id, source })).sort((a, b) => a.id.localeCompare(b.id)))
+  assert.equal(page.items.find(({ id }) => id === 'sacd-unavailable').unavailableReason, 'DST unavailable')
+  await h.value('playback.replaceQueue', { tracks: tracks.slice(0, 3).map(({ id }) => ({ id })), startIndex: 0, play: true })
+  await h.value('bookmarks.add', { trackId: tracks[0].id, positionSec: 5, label: 'First' })
+  await h.value('playback.next')
+  await h.value('bookmarks.add', { trackId: tracks[1].id, positionSec: 8, label: 'Second' })
+  assert.equal(platform.queue[platform.audio.queueIndex].source, tracks[1].source)
+  assert.ok(platform.calls.filter(({ key }) => key === 'resourceAccess.resolveNativeUri').every(({ args }) => args.resourceId === physical))
+  assert.equal((await h.snapshot()).track.source, tracks[1].source)
+  await h.shutdown()
+  const saved = JSON.parse(platform.stored)
+  for (const track of saved.tracks) {
+    assert.equal(track.filePath, physical)
+    assert.equal(track.subTrack, tracks.find(({ id }) => id === track.id).source)
+    assert.equal(track.cueRange, undefined)
+  }
+  const bookmarks = saved.bookmarks.bookmarks.filter(({ label }) => label === 'First' || label === 'Second')
+  assert.equal(new Set(bookmarks.map(({ trackKey }) => trackKey)).size, 2)
+  assert.ok(bookmarks.every(({ trackKey }) => trackKey.startsWith(`local:${physical}#${physical}#twilight-sacd=stereo:`)))
+  const restored = createEmbeddedHarness({ platform })
+  await restored.boot({ epoch: 'sacd-restored' })
+  const snapshot = await restored.snapshot()
+  assert.equal(snapshot.track.source, tracks[1].source)
+  assert.equal(snapshot.playback.state, 'paused')
+  assert.deepEqual(snapshot.bookmarks.filter(({ label }) => label === 'First' || label === 'Second').map(({ trackId }) => trackId).sort(),
+    [tracks[0].id, tracks[1].id].sort())
+  await restored.value('playback.play')
+  assert.equal(platform.queue[platform.audio.queueIndex].source, tracks[1].source)
+  await restored.shutdown()
+})
+
+test('USB PCM request is independent, defaults off, persists and projects preference facts conservatively', async () => {
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'usb-pcm' })
+  const initial = (await h.snapshot()).eqConfig
+  assert.equal(initial.dsp.usbPcmPassthrough, false)
+  const dsp = { ...initial.dsp, usbPcmPassthrough: true }
+  await h.value('audio.setEq', { dsp })
+  assert.equal(platform.appliedDsp.dsp.usbPcmPassthrough, true)
+  assert.equal((await h.snapshot()).eqConfig.bitPerfect, initial.bitPerfect)
+  const invalid = await h.request('audio.setEq', { dsp: { ...dsp, usbPcmPassthrough: 'true' } })
+  assert.equal(invalid.ok, false)
+  assert.equal((await h.snapshot()).eqConfig.dsp.usbPcmPassthrough, true)
+  Object.assign(platform.audio, { usbPcmPreferenceAccepted: true, usbPcmFormatMatched: true, outputPerfect: false })
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  const playback = (await h.snapshot()).playback
+  assert.equal(playback.usbPcmPreferenceAccepted, true)
+  assert.equal(playback.usbPcmFormatMatched, true)
+  assert.equal(playback.outputPerfect, false)
+  await h.shutdown()
+  assert.equal(platform.stored.includes('"usbPcmPreferenceAccepted"'), false)
+  assert.equal(platform.stored.includes('"usbPcmFormatMatched"'), false)
+  Object.assign(platform.audio, { usbPcmPreferenceAccepted: false, usbPcmFormatMatched: false })
+  const restored = createEmbeddedHarness({ platform })
+  await restored.boot({ epoch: 'usb-pcm-restored' })
+  assert.equal((await restored.snapshot()).eqConfig.dsp.usbPcmPassthrough, true)
+  assert.equal((await restored.snapshot()).playback.usbPcmPreferenceAccepted, false)
+  assert.equal((await restored.snapshot()).playback.usbPcmFormatMatched, false)
+  await restored.shutdown()
+})
+
 test('705.6 and 768 kHz fixed targets survive the embedded host and persisted reconstruction', async () => {
   for (const rate of [705600, 768000]) {
     const platform = createFakePlatform()
@@ -443,6 +735,82 @@ test('a restart restores the queue, settings and documents from the session stor
   assert.equal(snapshot.queue.total, 3)
   assert.equal(snapshot.libraryTrackCount, 3)
   assert.deepEqual(snapshot.favoriteTrackIds, ['c'])
+})
+
+test('queue clear removes a stopped selection and native queue, persists empty, and keeps the library and settings', async () => {
+  const platform = createFakePlatform()
+  const h = await bootWithQueue({ platform })
+  await h.value('playback.setVolume', { volume: 0.42 })
+  await h.value('playback.setPlayMode', { mode: 'loop' })
+  await h.value('audio.setEq', { preampDb: -2 })
+  await h.value('playlists.toggleFavorite', { trackId: 'c' })
+  await h.value('playback.stop')
+  const before = await h.snapshot()
+  assert.equal(before.track.id, 'a')
+  const emptyReplacement = await h.request('playback.replaceQueue', { tracks: [], play: false })
+  assert.equal(emptyReplacement.ok, false, 'ReplaceQueue retains its nonempty contract')
+  assert.equal(emptyReplacement.error.code, 'INVALID_REQUEST')
+  const { id, revision } = (await h.snapshot()).queue
+  await h.value('queue.edit', { id, revision, edit: { kind: 'clear' } }, 'command', { expectedRevision: revision })
+  const cleared = await h.snapshot()
+  assert.equal(cleared.track, undefined)
+  assert.equal(cleared.queue.total, 0)
+  assert.equal(cleared.queue.index, 0)
+  assert.equal(cleared.queue.occurrenceId, undefined)
+  assert.equal(cleared.playback.state, 'stopped')
+  assert.equal(cleared.playback.position, 0)
+  assert.equal(cleared.playback.volume, 0.42)
+  assert.equal(cleared.playback.playMode, 'loop')
+  assert.equal(cleared.libraryTrackCount, 3)
+  assert.deepEqual(cleared.favoriteTrackIds, ['c'])
+  assert.deepEqual(platform.queue, [])
+  assert.equal(platform.audio.queueIndex, -1)
+  await h.shutdown()
+  const saved = JSON.parse(platform.stored)
+  assert.equal(saved.session, null)
+  assert.ok(saved.queues.every(queue => queue.rows.length === 0 && queue.selectedEntryId === null))
+
+  const restoredPlatform = createFakePlatform()
+  restoredPlatform.stored = platform.stored
+  restoredPlatform.revision = platform.revision
+  const restored = createEmbeddedHarness({ platform: restoredPlatform })
+  await restored.boot({ epoch: 'empty-queue-restored' })
+  const snapshot = await restored.snapshot()
+  assert.equal(snapshot.track, undefined)
+  assert.equal(snapshot.queue, undefined)
+  assert.equal(snapshot.playback.state, 'stopped')
+  assert.equal(snapshot.playback.volume, 0.42)
+  assert.equal(snapshot.eqConfig.preampDb, -2)
+  assert.equal(snapshot.libraryTrackCount, 3)
+  assert.deepEqual(snapshot.favoriteTrackIds, ['c'])
+  assert.deepEqual(restoredPlatform.queue, [])
+  await restored.shutdown()
+})
+
+test('clear keeps an editable queue revision and undo restores a paused selection without native replay', async () => {
+  const h = await bootWithQueue()
+  async function edit(kind) {
+    const { id, revision } = (await h.snapshot()).queue
+    return h.value('queue.edit', { id, revision, edit: { kind } }, 'command', { expectedRevision: revision })
+  }
+  await edit('clear')
+  assert.deepEqual(h.platform.queue, [])
+  await edit('undo')
+  let snapshot = await h.snapshot()
+  assert.equal(snapshot.track.id, 'a')
+  assert.equal(snapshot.queue.total, 3)
+  assert.equal(snapshot.playback.state, 'paused')
+  assert.deepEqual(h.platform.queue, [])
+  await h.value('playback.play')
+  assert.equal((await h.snapshot()).playback.state, 'playing')
+  assert.equal(h.platform.queue[h.platform.audio.queueIndex].id, 'a')
+  await edit('clear')
+  await edit('clear')
+  snapshot = await h.snapshot()
+  assert.equal(snapshot.track, undefined)
+  assert.equal(snapshot.queue.total, 0)
+  assert.deepEqual(h.platform.queue, [])
+  await h.shutdown()
 })
 
 test('legacy Kotlin-mirror and corrupt payloads migrate instead of failing boot', async () => {

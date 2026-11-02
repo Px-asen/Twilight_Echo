@@ -7,12 +7,15 @@ import type { RemoteHttpServer } from './httpServer.ts'
 import { guessAudioContentType } from './mediaTokens.ts'
 import type { SourceResources } from '../playback/sourceResources.ts'
 import { projectCoreError } from '../projections.ts'
+import { normalizeCueRange } from '../../shared/cue.ts'
+import type { CastPcmSegments, PreparedCastSegment } from './pcmSegments.ts'
 
 interface Options {
   backend: CoreCastBackend
   media: RemoteHttpServer
   resources: SourceResources
   authorizeFile(path: string): Promise<string>
+  segments?: CastPcmSegments
   changed(): void
   observe(sample: CastSample, revision: number): void
   failed(error: Error, revision: number): void
@@ -43,6 +46,7 @@ export class CoreCastService {
   private releaseSource: (() => void) | null = null
   private token: string | null = null
   private dispatched = false
+  private segment: PreparedCastSegment | null = null
 
   constructor(options: Options) {
     this.options = options
@@ -109,11 +113,20 @@ export class CoreCastService {
     this.cancelTimer?.()
     this.cancelTimer = null
   }
-  private releaseMedia(): void {
+  private async releaseMedia(): Promise<void> {
     if (this.token) this.options.media.getMediaGrants().revoke(this.token)
     this.token = null
     this.releaseSource?.()
     this.releaseSource = null
+    await this.segment?.release()
+    this.segment = null
+  }
+
+  assertTrack(track: TrackData): void {
+    if (track.cueRange) {
+      if (!normalizeCueRange(track.cueRange)) throw new Error('Invalid Cast CUE range')
+      if (!this.options.segments) throw new Error('Cast CUE media preparation is unavailable')
+    } else if (track.subTrack) throw new Error('Cast does not support native container subtracks')
   }
 
   /** Caller holds SourceResources.use() from source preparation through this ACK.
@@ -126,8 +139,7 @@ export class CoreCastService {
     signal: AbortSignal
   ): Promise<CastSample> {
     if (!this.target) throw new Error('No Cast target selected')
-    if (track.subTrack || track.cueRange)
-      throw new Error('Cast does not support native subtracks or CUE segments')
+    this.assertTrack(track)
     await this.stop()
     signal.throwIfAborted()
     const device = this.target
@@ -141,16 +153,25 @@ export class CoreCastService {
       if (remote) assertCastUpstream(source)
       const physical = remote ? source : await this.options.authorizeFile(source)
       cancellation.throwIfAborted()
+      if (track.cueRange) {
+        this.segment = await this.options.segments!.prepare(physical, track.cueRange, cancellation)
+      }
+      cancellation.throwIfAborted()
+      const mediaPath = this.segment?.path ?? physical
+      const proxyRemote = remote && !this.segment
       if (!this.options.media.getStatus().running) {
         await this.options.media.start(0, { mode: 'mediaOnly' })
       }
       cancellation.throwIfAborted()
-      const url = remote
-        ? this.options.media.issueRemoteMediaUrl(physical, { title: track.title })
-        : this.options.media.issueMediaUrl(physical, track.title)
+      const url = proxyRemote
+        ? this.options.media.issueRemoteMediaUrl(mediaPath, { title: track.title })
+        : this.options.media.issueMediaUrl(mediaPath, track.title)
       if (!url) throw new Error('Unable to issue Cast media URL')
       this.token = new URL(url).pathname.slice('/media/'.length)
-      this.releaseSource = this.options.resources.pin(remote ? [] : [physical])
+      this.releaseSource = this.options.resources.pin([
+        ...(remote ? [] : [physical]),
+        ...(this.segment ? [mediaPath] : [])
+      ])
       this.dispatched = true
       await this.options.backend.load(
         device,
@@ -160,7 +181,7 @@ export class CoreCastService {
           title: track.title,
           artist: track.artist,
           album: track.album,
-          contentType: guessAudioContentType(physical),
+          contentType: guessAudioContentType(mediaPath),
           positionSeconds: position,
           autoplay
         },
@@ -175,6 +196,7 @@ export class CoreCastService {
       this.schedule()
       return sample
     } catch (error) {
+      if (!this.dispatched) await this.releaseMedia()
       // A failed/unknown LOAD is never replayed and never falls back to local audio.
       this.fail(error)
       throw error
@@ -211,9 +233,9 @@ export class CoreCastService {
       throw error
     }
     this.dispatched = false
-    this.releaseMedia()
     this.phase = 'selected'
-    this.changed()
+    try { await this.releaseMedia() }
+    finally { this.changed() }
   }
   async shutdown(): Promise<void> {
     await this.end()

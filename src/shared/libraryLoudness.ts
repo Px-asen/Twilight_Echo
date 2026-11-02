@@ -1,7 +1,7 @@
 import type { LoudnessAnalysisResult } from './audioEngineTypes.ts'
 import { normalizeCueRange, type CueRange } from './cue.ts'
 
-export const LIBRARY_LOUDNESS_ALGORITHM_VERSION = 2
+export const LIBRARY_LOUDNESS_ALGORITHM_VERSION = 3
 export const MAX_LOUDNESS_BATCH_TRACKS = 10_000
 export const MAX_LOUDNESS_ALBUM_TRACKS = 256
 export const REPLAYGAIN2_REFERENCE_LUFS = -18

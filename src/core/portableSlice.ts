@@ -17,6 +17,9 @@ import {
 } from './playlists/submission.ts'
 import { CoreMusicSearchService } from './search/service.ts'
 import { CoreSettingsService } from './settings/service.ts'
+import { TwilightAutoMixCoordinator } from './audio/autoMixCoordinator.ts'
+import { AutoMixWindowCache, type AutoMixWindowStorage } from './audio/autoMixWindowCache.ts'
+import type { AutoMixMode, AutoMixAnalysisResult, AutoMixSelection } from '../shared/twilightAutoMix.ts'
 import {
   createDefaultSettings,
   normalizeAppSettings,
@@ -77,6 +80,7 @@ import {
 import type { PlaybackSessionData } from '../shared/playbackSession.ts'
 import type { Playlist } from '../shared/playlists.ts'
 import type { TrackData } from '../shared/track.ts'
+import { safBookmarkTrackKey, safDocumentKey } from '../shared/safTrackIdentity.ts'
 import type {
   NativeQueueCommit,
   NativeQueueRebind,
@@ -424,6 +428,16 @@ export interface PortableAudioEnginePort {
   next?(): Promise<boolean>
   previous?(): Promise<boolean>
   setDspConfig?(config: CoreEqConfigView): Promise<void> | void
+  autoMix?: {
+    setMode(mode: AutoMixMode): Promise<boolean>
+    identify(source: string, signal?: AbortSignal): Promise<string>
+    analyze(source: string, options: string, priority: 'boundary' | 'background', signal?: AbortSignal): Promise<AutoMixAnalysisResult>
+    select(request: string): Promise<AutoMixSelection>
+    prepare(request: string): Promise<boolean>
+    submit(planId: number): Promise<boolean>
+    cancel(): Promise<boolean>
+    cache: AutoMixWindowStorage
+  }
   getSnapshot(): Promise<PlaybackInfo>
   subscribe(listener: (event: PortableAudioNativeEvent) => void): PortableUnsubscribe
 }
@@ -885,7 +899,15 @@ class PortableQueueAndLibraryStore {
   private resolveRowTrack(row: StoredQueueRow): LibraryTrackRecord | null {
     const fromLibrary = this.tracks.get(row.trackId)
     if (fromLibrary && row.snapshot) {
-      return structuredClone({ ...fromLibrary, ...row.snapshot })
+      const track = { ...fromLibrary, ...row.snapshot }
+      // A snapshot owns its tags and logical range, but not an obsolete tree
+      // grant. Refresh only the access path to the very same SAF document.
+      if (safBookmarkTrackKey(row.trackId, fromLibrary.filePath) &&
+          safDocumentKey(fromLibrary.filePath) === safDocumentKey(row.snapshot.filePath)) {
+        track.filePath = fromLibrary.filePath
+        if (fromLibrary.subTrack) track.subTrack = fromLibrary.subTrack
+      }
+      return structuredClone(track)
     }
     if (row.snapshot) return structuredClone(row.snapshot)
     if (fromLibrary) return structuredClone(fromLibrary)
@@ -1516,18 +1538,60 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   private continuationIntent = 0
   private endEligible = false
   private unsubscribePort: PortableUnsubscribe | null = null
+  private readonly autoMix: TwilightAutoMixCoordinator | null
+  private autoMixAnalysis: { state: 'preparing' | 'ready' | 'degraded' | 'off'; reason: string } | null = null
 
   constructor(port: PortableAudioEnginePort) {
     this.port = port
+    const mix = port.autoMix
+    this.autoMix = mix ? new TwilightAutoMixCoordinator({
+      context: () => {
+        const info = this.info, current = info && this.queueItems[info.queueIndex], next = info?.upcomingTrack
+        return info?.state === 'playing' && this.currentQueueToken && current && next
+          ? { queueToken: this.currentQueueToken, current, next, info } : null
+      },
+      authorize: async (source) => source,
+      identify: mix.identify,
+      allowSourceUris: true,
+      analyze: mix.analyze,
+      scopedCancellation: true,
+      cancelAnalysis: () => {},
+      select: mix.select,
+      prepare: mix.prepare,
+      submit: mix.submit,
+      cancel: mix.cancel,
+      status: () => this.port.getSnapshot(),
+      cache: new AutoMixWindowCache(mix.cache),
+      backgroundAnalysis: false,
+      onState: (state, reason) => { this.autoMixAnalysis = { state, reason }; this.publishAutoMix() },
+      onNativePreparation: () => { this.autoMixAnalysis = null }
+    }) : null
     this.unsubscribePort = port.subscribe((event) => {
       this.handlePortEvent(event)
     })
   }
 
   dispose(): void {
+    this.autoMix?.destroy()
     this.unsubscribePort?.()
     this.unsubscribePort = null
     this.listeners.clear()
+  }
+  async shutdownAutoMix(): Promise<void> { await this.autoMix?.shutdown() }
+  async setAutoMixMode(mode: AutoMixMode): Promise<boolean> {
+    if (!this.port.autoMix) return mode === 'off'
+    if (!(await this.port.autoMix.setMode(mode))) return false
+    this.autoMix?.setMode(mode)
+    return true
+  }
+  invalidateAutoMixSource(): void { this.autoMix?.invalidate('source_or_queue_changed') }
+  private withAutoMix(info: PlaybackInfo): PlaybackInfo {
+    const analysis = this.autoMixAnalysis
+    return analysis && !['mixing', 'completed'].includes(info.autoMixState ?? '')
+      ? { ...info, autoMixState: analysis.state, autoMixReason: analysis.reason } : info
+  }
+  private publishAutoMix(): void {
+    if (this.info) this.emitEvent('playback-info', this.withAutoMix({ ...this.info, queueToken: this.currentQueueToken }))
   }
 
   private emitEvent(event: string, ...args: unknown[]): void {
@@ -1555,7 +1619,8 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
         ...event.info,
         queueToken: event.info.queueToken ?? this.currentQueueToken
       }
-      this.emitEvent('playback-info', enriched)
+      this.emitEvent('playback-info', this.withAutoMix(enriched))
+      this.autoMix?.observe()
       return
     }
     if (event.type === 'end-file') {
@@ -1598,7 +1663,8 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   async getPlaybackInfo(): Promise<PlaybackInfo> {
     const info = await this.port.getSnapshot()
     this.info = info
-    return info
+    this.autoMix?.observe()
+    return this.withAutoMix(info)
   }
 
   getQueueSnapshot(): readonly AudioEngineQueueItem[] {
@@ -1704,6 +1770,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   }
 
   async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
+    this.autoMix?.invalidate('source_or_queue_changed')
     this.transportRevision++
     const revision = ++this.queueMutationRevision
     this.revokePlaybackEnd()
@@ -1715,6 +1782,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
     if (revision !== this.queueMutationRevision) return
     this.queueItems = nextQueue
     this.currentQueueToken = this.nextQueueToken()
+    this.autoMix?.observe()
   }
 
   /** Android has no native compare-and-rebind, so the portable adapter checks
@@ -1745,6 +1813,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
     // Lookahead preserves the active decoder and must not cancel an in-flight Play.
     // Only another queue mutation can supersede its confirmed queue assignment.
     const revision = ++this.queueMutationRevision
+    this.autoMix?.invalidate('source_or_queue_changed')
     this.currentQueueToken = ''
     const superseded = () => new Error('Native queue handoff superseded; queue authority must be refreshed')
     const before = await this.port.getSnapshot()
@@ -1773,6 +1842,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
       throw new Error('Native queue handoff raced a track change; queue authority must be refreshed')
     this.queueItems = nextQueue
     this.currentQueueToken = this.nextQueueToken()
+    this.autoMix?.observe()
     return { queueToken: this.currentQueueToken }
   }
 
@@ -1799,18 +1869,21 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
   }
 
   async pause(): Promise<void> {
+    this.autoMix?.invalidate('transport_changed')
     this.transportRevision++
     this.revokePlaybackEnd()
     await this.port.pause()
   }
 
   async stop(): Promise<void> {
+    this.autoMix?.invalidate('transport_changed')
     this.transportRevision++
     this.revokePlaybackEnd()
     await this.port.stop()
   }
 
   async seek(position: number): Promise<void> {
+    this.autoMix?.invalidate('transport_changed')
     const revision = ++this.transportRevision
     this.revokePlaybackEnd()
     await this.port.seek(position)
@@ -1819,6 +1892,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
     if (revision !== this.transportRevision) return
     this.info = info
     this.endEligible = info.state === 'playing'
+    this.autoMix?.observe()
   }
 
   async seekConfirmed(position: number): Promise<void> {
@@ -1835,6 +1909,7 @@ class PortablePlaybackEngineAdapter implements CorePlaybackEngine {
 
   async setPlayMode(mode: PlayMode): Promise<void> {
     if (mode === this.playMode) return
+    this.autoMix?.invalidate('source_or_queue_changed')
     const revision = this.transportRevision
     const endEligible = this.endEligible && this.info?.state === 'playing'
     this.revokePlaybackEnd()
@@ -2427,8 +2502,8 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
       if (error instanceof Error) options.onFatalError?.(error)
     },
     audio: {
-      setAutoMixMode: async () => true,
-      invalidateAutoMixSource: () => {},
+      setAutoMixMode: (mode) => engineAdapter.setAutoMixMode(mode),
+      invalidateAutoMixSource: () => engineAdapter.invalidateAutoMixSource(),
       stop: async () => {
         await engineAdapter.stop()
       }
@@ -2466,7 +2541,7 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
           return options.resourceAccess.resolveTrackSource(track)
         }
         return {
-          source: track.filePath || track.streamUrl || `resource://${track.id}`,
+          source: (!track.cueRange && track.subTrack) || track.filePath || track.streamUrl || `resource://${track.id}`,
           expiresAt: null
         }
       }
@@ -2623,10 +2698,12 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
     },
     seedTracks(tracks) {
       queueStore.upsertTracks(tracks)
+      playbackSession.invalidateLibrary(queueStore.getLibraryRevision())
       application.changed()
     },
     replaceLibraryTracks(tracks) {
       queueStore.replaceLibraryTracks(tracks)
+      playbackSession.invalidateLibrary(queueStore.getLibraryRevision())
       void persistEnvelope().catch((error) => {
         options.onFatalError?.(error instanceof Error ? error : new Error(String(error)))
       })
@@ -2718,6 +2795,7 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
       await playbackSession.flush()
     },
     async shutdown() {
+      await engineAdapter.shutdownAutoMix()
       application.disconnect(hostClientIdentity.id)
       messageSubscribers.clear()
       await application.shutdown()

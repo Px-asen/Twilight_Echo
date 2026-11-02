@@ -183,12 +183,16 @@ export class AudioEngineManager extends EventEmitter {
   private pendingNativeSource: string | null = null
   private directModePlaybackRateRestore: number | null = null
   private visualizationDemand: boolean | null = null
+  private bridgeSelected = false
+  private persistBridgeSelection?: (selected: boolean) => Promise<void>
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
     dependencies: AudioEngineManagerDependencies = {}
   ) {
     super()
+    this.bridgeSelected = dependencies.initialBridgeSelected === true
+    this.persistBridgeSelection = dependencies.persistBridgeSelection
     this.scheduler = {
       ...DEFAULT_AUDIO_ENGINE_SCHEDULER,
       ...(dependencies.scheduler ?? {})
@@ -661,6 +665,7 @@ export class AudioEngineManager extends EventEmitter {
     outputRouteSynced: boolean
     errors: string[]
   }> {
+    if (this.bridgeSelected) await this.audioServiceBinding!.callAsync!('BridgeQuarantine', [])
     const routeRestore = await this.restoreAudioServiceOutputRoute()
     // Volume / rate / queue state must be re-applied even when the output
     // route restore failed. A freshly started audio-service process begins at
@@ -1532,6 +1537,22 @@ export class AudioEngineManager extends EventEmitter {
     } catch {
       return null
     }
+  }
+
+  /** Keep selected-output intent across service restarts without persisting consent credentials. */
+  async callBridge(method: 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown', args: unknown[] = []): Promise<unknown> {
+    if (!this.audioServiceBinding?.callAsync) throw new Error('输出桥需要隔离的原生音频服务')
+    await this.audioServiceReadyRestore
+    if (method === 'BridgeConnect') {
+      await this.persistBridgeSelection?.(true)
+      this.bridgeSelected = true
+    }
+    const result = await this.audioServiceBinding.callAsync(method, args)
+    if (method === 'BridgeDisconnect') {
+      await this.persistBridgeSelection?.(false)
+      this.bridgeSelected = false
+    }
+    return result
   }
 
   /**

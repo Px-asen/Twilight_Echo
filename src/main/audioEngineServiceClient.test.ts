@@ -6,6 +6,7 @@ import { AudioEngineServiceBinding } from './audioEngineServiceClient.ts'
 import { AudioAnalysisServiceClient } from './audioAnalysisServiceClient.ts'
 import { createAudioServiceCapabilities } from '../shared/audioServiceContract.ts'
 import type { DspGraphStatus } from '../shared/dspGraph.ts'
+import { configureDiagnosticLogger } from './diagnostics/logger.ts'
 
 class SilentUtilityProcess extends EventEmitter {
   stdout = new EventEmitter()
@@ -37,6 +38,44 @@ class ThrowingUtilityProcess extends ManualUtilityProcess {
     throw new Error('utility pipe closed')
   }
 }
+
+test('private Bridge RPC keeps credentials out of diagnostics while delivering them only to its utility', async () => {
+  const events: unknown[] = []
+  configureDiagnosticLogger({}, event => events.push(event))
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js', electron: { utilityProcess: { fork: () => child } }
+  })
+  try {
+    const args = [{ key: 'TEST_ONLY_PRIVATE_KEY', cert: 'TEST_ONLY_CERT', token: 'TEST_ONLY_INVITE' }]
+    const call = binding.callAsync('BridgeHostStart' as any, args)
+    const request = child.messages.find((m: any) => m.method === 'BridgeHostStart') as any
+    assert.deepEqual(request.args, args)
+    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true, value: { token: 'TEST_ONLY_RESULT' } })
+    await call
+    const diagnostic = JSON.stringify(events)
+    assert.ok(diagnostic.includes('BridgeHostStart'))
+    assert.ok(!diagnostic.includes('TEST_ONLY_'))
+  } finally {
+    binding.destroy()
+    configureDiagnosticLogger({}, () => {})
+  }
+})
+
+test('Bridge driver/TLS lifecycle uses the topology deadline instead of the short control watchdog', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({ serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 15, topologyRequestTimeoutMs: 1000,
+    electron: { utilityProcess: { fork: () => child } } })
+  try {
+    const call = binding.callAsync('BridgeConnect', [])
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(child.killCount, 0)
+    const request = child.messages.find((m: any) => m.method === 'BridgeConnect') as any
+    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
+    await call
+  } finally { binding.destroy() }
+})
 
 test('an unanswered FFT read never queues Pause or the runtime capture gate behind it', async () => {
   const child = new ManualUtilityProcess()

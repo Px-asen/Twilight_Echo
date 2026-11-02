@@ -1,6 +1,5 @@
 import '../../adapters-node/index.ts'
 import { readFile } from 'node:fs/promises'
-import { parseFile } from 'music-metadata'
 import {
   extractEmbeddedLyrics,
   loadLocalCompanionLyrics as loadCoreLocalCompanionLyrics,
@@ -13,8 +12,10 @@ export { extractEmbeddedLyrics, type EmbeddedLyricsMetadata, type LocalLyricsFil
 
 export const nodeLocalLyricsFilePort: LocalLyricsFilePort = {
   readFile: (path) => readFile(path),
-  parseAudioFileMetadata: (filePath, options) =>
-    parseFile(filePath, options) as Promise<EmbeddedLyricsMetadata>
+  parseAudioFileMetadata: async (filePath, options) => {
+    const { parseFile } = await import('music-metadata')
+    return parseFile(filePath, options) as Promise<EmbeddedLyricsMetadata>
+  }
 }
 
 export function loadLocalLyrics(

@@ -1,6 +1,5 @@
 import type { CastDevice, CastLoadRequest, CastSample } from './castBackend.ts'
 import {
-  discoverDlnaDevices,
   dlnaSetAvTransportUri,
   dlnaPlay,
   dlnaPause,
@@ -21,6 +20,7 @@ import {
 } from './chromecastClient.ts'
 import { buildDidlLiteMetadata } from './didl.ts'
 import type { CoreCastSafetyTarget } from '../../shared/coreCast.ts'
+import type { DlnaDeviceInfo } from '../../shared/remoteControl.ts'
 
 export interface CoreCastBackend {
   discover(): Promise<CastDevice[]>
@@ -34,10 +34,13 @@ export interface CoreCastBackend {
 }
 
 /** Reuse both existing wire protocols. Only discovered endpoints reach here. */
-export function createCastBackend(safety: {
-  arm(target: CoreCastSafetyTarget): Promise<void>
-  disarm(deviceId: string): Promise<void>
-}): CoreCastBackend {
+export function createCastBackend(
+  safety: {
+    arm(target: CoreCastSafetyTarget): Promise<void>
+    disarm(deviceId: string): Promise<void>
+  },
+  discoverDlnaDevices: () => Promise<DlnaDeviceInfo[]>
+): CoreCastBackend {
   return {
     discover: async () => {
       const [dlna, chromecast] = await Promise.all([
@@ -80,7 +83,7 @@ export function createCastBackend(safety: {
         signal
       )
       if (request.autoplay !== false) await dlnaPlay(device.avTransportUrl, signal)
-      if ((request.positionSeconds ?? 0) > 1) {
+      if ((request.positionSeconds ?? 0) > 0) {
         await dlnaSeek(device.avTransportUrl, request.positionSeconds!, signal)
       }
     },

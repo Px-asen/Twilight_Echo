@@ -237,7 +237,12 @@ export class LibraryDatabaseIdentificationSchedule {
         budget--
       }
       for (const row of this.sql
-        .prepare('SELECT * FROM metadata_identification_schedule WHERE dirty=1 ORDER BY id LIMIT ?')
+        // A confirmed identity has exact-ID detail work ready to run. Do not
+        // leave its follow-up behind pages of speculative identification input:
+        // each page can otherwise be separated by a slow network lookup.
+        .prepare(`SELECT s.* FROM metadata_identification_schedule s
+          LEFT JOIN metadata_identity_links l ON l.entity_id=s.entity_id
+          WHERE s.dirty=1 ORDER BY CASE WHEN l.state='confirmed' THEN 0 ELSE 1 END,s.id LIMIT ?`)
         .all(budget) as Row[])
         process(row)
       if (request.enabled && request.history && budget > 0) {

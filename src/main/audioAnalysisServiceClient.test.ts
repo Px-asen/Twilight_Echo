@@ -7,6 +7,7 @@ import { createAudioServiceCapabilities } from '../shared/audioServiceContract.t
 import { TWILIGHT_AUTOMIX_MODEL_VERSION, type AutoMixFeatures } from '../shared/twilightAutoMix.ts'
 import type { AudioAnalysisWorkerRequest } from '../shared/audioAnalysisContract.ts'
 import type { LoudnessInputGroup } from '../shared/libraryLoudness.ts'
+import { LIBRARY_LOUDNESS_ALGORITHM_VERSION } from '../shared/libraryLoudness.ts'
 
 class Worker extends EventEmitter {
   messages: unknown[] = []
@@ -34,11 +35,44 @@ class Worker extends EventEmitter {
 const measurement = {
   source: 'analyzed',
   available: true,
-  algorithmVersion: 2,
+  algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION,
   integratedLufs: -18,
   truePeakDb: -1,
   analyzedAt: '2026-09-14T00:00:00Z'
 }
+
+test('Cast PCM rendering uses the worker lane and cancellation waits for native writer exit', async () => {
+  const worker = new Worker()
+  let retire!: () => void
+  const exited = new Promise<void>(resolve => { retire = resolve })
+  const service = new AudioAnalysisServiceClient({
+    serviceEntry: 'analysis.js',
+    launch: () => Object.assign(worker, { terminate: () => exited })
+  })
+  try {
+    const request = { outputPath: 'cast-media/segment/audio.wav', startSeconds: 20,
+      endSeconds: 40, virtualPregapSeconds: 2 }
+    const first = service.renderCastPcmSegment('disc.flac', request, new AbortController().signal)
+    worker.ready()
+    const sent = worker.messages[0] as AudioAnalysisWorkerRequest
+    assert.equal(sent.analysis, 'cast-pcm-segment')
+    assert.equal(sent.source, 'disc.flac')
+    assert.deepEqual(JSON.parse(sent.optionsJson), request)
+    worker.respond(0, null)
+    await first
+    const abort = new AbortController()
+    let settled = false
+    const next = service.renderCastPcmSegment('disc.flac', request, abort.signal)
+      .finally(() => { settled = true })
+    const rejected = assert.rejects(next, { code: 'ERR_AUDIO_ANALYSIS_CANCELLED' })
+    abort.abort()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(settled, false)
+    retire()
+    await rejected
+    assert.equal(worker.messages.length, 2)
+  } finally { service.destroy() }
+})
 
 const autoMixFeatures: AutoMixFeatures = {
   ok: true,

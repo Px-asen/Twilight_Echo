@@ -22,6 +22,7 @@ import {
   type RemoteProviderSession
 } from '../../shared/remoteCoreBridge.ts'
 import { REMOTE_STREAM_FORMATS } from '../../shared/remoteMedia.ts'
+import { projectRemoteDsp, projectRemoteDspStatus, validRemoteDspEdit } from '../../shared/remoteDsp.ts'
 import type { TrackData } from '../../shared/track.ts'
 import type { CorePlaybackSession } from '../playback/session.ts'
 import type { RemoteMediaResolver } from './media.ts'
@@ -339,6 +340,8 @@ export class RemoteCoreBridge {
       const names: readonly string[] =
         env.kind === 'query' ? REMOTE_CORE_QUERIES : REMOTE_CORE_COMMANDS
       if (!names.includes(env.name)) throw error('FORBIDDEN', messages.FORBIDDEN)
+      if ((env.name.startsWith('zones.') || ['audio.dsp', 'audio.dsp.status', 'audio.dsp.edit', 'audio.signalPath'].includes(env.name)) &&
+          (!principal || context?.encrypted !== true)) throw error('FORBIDDEN', messages.FORBIDDEN)
       const bootstrap =
         env.kind === 'query' && ['core.getSnapshot', 'state.snapshot'].includes(env.name)
       this.ready(bootstrap ? undefined : env.epoch)
@@ -431,6 +434,30 @@ export class RemoteCoreBridge {
     const p = env.payload,
       epoch = this.ready().epoch
     switch (env.name) {
+      case 'zones.list': {
+        this.validate('zones.list', p, epoch)
+        const list = await this.options.request('query', 'zones.list', {}, epoch)
+        return { ...list, zones: list.zones.map(zone => ({ ...zone,
+          track: zone.track ? this.track(zone.track) : null,
+          playback: zone.playback ? { ...zone.playback,
+            upcomingTrack: zone.playback.upcomingTrack ? this.track(zone.playback.upcomingTrack as CoreTrackView) : null } : null })) }
+      }
+      case 'zones.dsp':
+        this.validate('zones.dsp', p, epoch)
+        return projectRemoteDsp(await this.options.request('query', 'zones.dsp', p, epoch))
+      case 'zones.signalPath':
+        this.validate('zones.signalPath', p, epoch)
+        return this.options.request('query', 'zones.signalPath', p, epoch)
+      case 'zones.state':
+      case 'audio.signalPath':
+        this.validate(env.name, p, epoch)
+        return this.options.request('query', env.name, p, epoch)
+      case 'audio.dsp':
+        this.validate('audio.dsp', p, epoch)
+        return projectRemoteDsp(await this.options.request('query', 'audio.dsp', {}, epoch))
+      case 'audio.dsp.status':
+        this.validate('audio.dsp.status', p, epoch)
+        return projectRemoteDspStatus(await this.options.request('query', 'audio.dsp.status', {}, epoch))
       case 'providers.session': {
         if (!only(p, ['providerId']) || !text(p.providerId)) throw invalid()
         if (!principal || context?.encrypted !== true) throw error('FORBIDDEN', messages.FORBIDDEN)
@@ -792,6 +819,7 @@ export class RemoteCoreBridge {
             : p.mode
     const payload = name === 'playback.mode' ? { ...p, mode } : p
     const raw = { kind: 'command', name, payload, requestId: env.requestId, epoch: env.epoch }
+    if (name === 'audio.dsp.edit' && !validRemoteDspEdit(payload)) throw invalid()
     if (!isCoreRequest(raw) || raw.kind !== 'command') throw invalid()
     await this.options.request('command', raw.name, raw.payload, env.epoch)
   }

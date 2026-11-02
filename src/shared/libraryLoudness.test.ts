@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  LIBRARY_LOUDNESS_ALGORITHM_VERSION,
   isLoudnessMeasurement,
   loudnessGainValues,
   normalizeLoudnessGroups
@@ -10,7 +11,7 @@ test('library loudness units distinguish measurement, ReplayGain 2, R128 and lin
   const result = {
     source: 'analyzed' as const,
     available: true,
-    algorithmVersion: 2,
+    algorithmVersion: LIBRARY_LOUDNESS_ALGORITHM_VERSION,
     integratedLufs: -14,
     truePeakDb: -6.020599913,
     analyzedAt: '2026-09-14T00:00:00Z'
@@ -24,6 +25,7 @@ test('library loudness units distinguish measurement, ReplayGain 2, R128 and lin
   for (const patch of [
     { available: false },
     { algorithmVersion: 1 },
+    { algorithmVersion: 2 },
     { integratedLufs: NaN },
     { source: 'tags' },
     { analyzedAt: 'invalid' }

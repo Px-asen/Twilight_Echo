@@ -1,4 +1,7 @@
 import { validCoreDspPayload } from './coreDsp.ts'
+import { validBridgePeer } from './audioBridge.ts'
+import { validZoneId } from './coreZones.ts'
+import { validRemoteDspEdit } from './remoteDsp.ts'
 import { EXPERIENCE_MUSIC_OPERATIONS } from './pluginExperience.ts'
 import { validCatalogPayload } from './musicCatalog.ts'
 import { validLibraryHealthPayload } from './libraryHealth.ts'
@@ -415,6 +418,39 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
   if (!isBoundedCoreJson(payload, budget) || !record(payload)) return false
   const p = payload
   switch (name) {
+    case 'zones.state':
+    case 'zones.list':
+    case 'audio.signalPath':
+    case 'bridge.invitation':
+      return keys(p, [])
+    case 'bridge.host':
+      return keys(p, ['revision', 'enabled', 'sampleRate']) && uint(p.revision) && typeof p.enabled === 'boolean' &&
+        typeof p.sampleRate === 'number' && [44100, 48000, 88200, 96000, 176400, 192000].includes(p.sampleRate)
+    case 'bridge.connect':
+      return keys(p, ['revision', 'peer']) && uint(p.revision) && validBridgePeer(p.peer)
+    case 'zones.select':
+      return keys(p, ['revision', 'outputId']) && uint(p.revision) && ['local', 'bridge'].includes(String(p.outputId))
+    case 'zones.create':
+      return keys(p, ['revision', 'name']) && uint(p.revision) && text(p.name, 80) && p.name.trim().length > 0
+    case 'zones.remove':
+      return keys(p, ['revision', 'zoneId']) && uint(p.revision) && validZoneId(p.zoneId)
+    case 'zones.connect':
+      return keys(p, ['revision', 'zoneId', 'peer']) && uint(p.revision) && validZoneId(p.zoneId) && validBridgePeer(p.peer)
+    case 'zones.dsp':
+    case 'zones.signalPath':
+      return keys(p, ['zoneId']) && validZoneId(p.zoneId)
+    case 'zones.dsp.edit':
+      return keys(p, ['zoneId', 'revision', 'edit']) && validZoneId(p.zoneId) && validRemoteDspEdit({ revision: p.revision, edit: p.edit })
+    case 'zones.queueFromQuery':
+      return keys(p, ['zoneId', 'revision', 'query', 'selectedId']) && validZoneId(p.zoneId) && uint(p.revision) &&
+        validCorePayload('queue.fromQuery', { query: p.query, selectedId: p.selectedId, play: false })
+    case 'zones.transport': {
+      if (!keys(p, ['zoneId', 'revision', 'action']) || !validZoneId(p.zoneId) || !uint(p.revision) || !record(p.action)) return false
+      const a = p.action
+      if (['play', 'pause', 'stop', 'next', 'previous'].includes(String(a.kind))) return keys(a, ['kind'])
+      if (a.kind === 'seek') return keys(a, ['kind', 'position']) && positive(a.position)
+      return a.kind === 'volume' && keys(a, ['kind', 'volume']) && positive(a.volume) && Number(a.volume) <= 1
+    }
     case 'opra.search':
       return keys(p, ['query']) && typeof p.query === 'string' && p.query.length <= 256 && !p.query.includes('\0')
     case 'opra.profile':

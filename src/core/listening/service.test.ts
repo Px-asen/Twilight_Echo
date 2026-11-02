@@ -497,3 +497,23 @@ test('projectPage recovers and persists missing artwork in the background for le
     'https://p2.music.126.net/legacy-1.jpg'
   )
 })
+
+test('recent membership contains only played tracks, reuses its revision and updates after clearing', async (t) => {
+  const f = await fixture(t)
+  const remote = { ...provider, title: 'Another song' }
+  const empty = f.service.recentPlaylist()
+  assert.deepEqual(empty.trackIds, [])
+  f.observe(local, 'playing')
+  f.timers.advance(5_000)
+  f.observe(remote, 'playing')
+  f.timers.advance(5_000)
+  const recent = f.service.recentPlaylist()
+  assert.deepEqual(new Set(recent.trackIds), new Set([local.id, provider.id]))
+  assert.equal(recent.trackIds[0], provider.id)
+  assert.equal(recent.trackSnapshots?.[provider.id]?.source, 'provider')
+  assert.equal(f.service.recentPlaylist(), recent)
+  f.observe(null, 'stopped')
+  await f.service.clear(null, f.service.getRevision())
+  assert.deepEqual(f.service.recentPlaylist().trackIds, [])
+  assert.notEqual(f.service.recentPlaylist(), recent)
+})

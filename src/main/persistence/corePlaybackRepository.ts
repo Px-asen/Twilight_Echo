@@ -24,7 +24,8 @@ function savedTrack(value: unknown): TrackData {
  * must not outlive its queue, nor may GC invalidate its last good backup. */
 export function createCorePlaybackRepository(
   bundle: PlaybackSessionStoreBundle,
-  queues: Pick<LibraryDatabaseApi, 'syncLibraryQueueReferences'>
+  queues: Pick<LibraryDatabaseApi, 'syncLibraryQueueReferences'>,
+  owner = 'core:persisted-playback'
 ): CoreSessionRepository {
   async function references(): Promise<void> {
     const [current, backup] = await Promise.all([
@@ -37,8 +38,8 @@ export function createCorePlaybackRepository(
       current?.data?.heart?.baseQueue?.id,
       backup?.data?.heart?.baseQueue?.id
     ].filter((id): id is string => !!id)
-    await queues.syncLibraryQueueReferences('core:persisted-playback', [...new Set(ids)])
-    if (current?.data?.libraryQueue)
+    await queues.syncLibraryQueueReferences(owner, [...new Set(ids)])
+    if (owner === 'core:persisted-playback' && current?.data?.libraryQueue)
       await queues.syncLibraryQueueReferences('core:legacy-import', [])
   }
   return {

@@ -19,6 +19,9 @@ export interface PortableDspSettings {
   bufferFrames: number
   continuitySampleRate: number
   playbackRate: number
+  dsdOutputMode: 'pcm' | 'auto' | 'native' | 'dop'
+  dsdRatePolicy: 'pcm-fallback' | 'exact' | 'downrate'
+  dopConfirmedDeviceKey: string
   usbPcmPassthrough: boolean
   sampleRateFamilySync: boolean
   allowedSampleRates: number[]
@@ -34,6 +37,7 @@ export function defaultPortableDspSettings(): PortableDspSettings {
       dither: 'off', headroomEnabled: false, headroomGainDb: -3, safetyClamp: true },
     crossfadeSeconds: 0, crossfadeCurve: 'equal-power', crossfadeContent: 'conservative',
     outputDeviceId: 'auto', exclusive: false, bufferFrames: 0, continuitySampleRate: 48000, playbackRate: 1,
+    dsdOutputMode: 'pcm', dsdRatePolicy: 'pcm-fallback', dopConfirmedDeviceKey: '',
     usbPcmPassthrough: false, sampleRateFamilySync: false, allowedSampleRates: []
   }
 }
@@ -48,6 +52,9 @@ const finite = (n: unknown, min: number, max: number): n is number =>
 export function normalizePortableDspSettings(value: unknown): PortableDspSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid DSP settings')
   const v = { ...defaultPortableDspSettings(), ...value } as PortableDspSettings
+  if (!['pcm', 'auto', 'native', 'dop'].includes(v.dsdOutputMode) ||
+    !['pcm-fallback', 'exact', 'downrate'].includes(v.dsdRatePolicy) || typeof v.dopConfirmedDeviceKey !== 'string')
+    throw new Error('Invalid DSD output settings')
   if (typeof v.usbPcmPassthrough !== 'boolean' || typeof v.sampleRateFamilySync !== 'boolean' || !Array.isArray(v.allowedSampleRates) ||
     v.allowedSampleRates.length > 32 || v.allowedSampleRates.some(rate => !Number.isInteger(rate) || !finite(rate, 8000, 768000)) ||
     new Set(v.allowedSampleRates).size !== v.allowedSampleRates.length)
@@ -67,7 +74,7 @@ export function normalizePortableDspSettings(value: unknown): PortableDspSetting
     !['linear', 'equal-power'].includes(v.crossfadeCurve) ||
     !['conservative', 'all', 'live'].includes(v.crossfadeContent) ||
     !['graphic', 'parametric'].includes(v.eqMode) || typeof v.enabled !== 'boolean' ||
-    typeof v.exclusive !== 'boolean' || !/^(auto|[1-9][0-9]*)$/.test(v.outputDeviceId))
+    typeof v.exclusive !== 'boolean' || !/^(auto|[1-9][0-9]*|usb-direct:\/.+)$/.test(v.outputDeviceId))
     throw new Error('Invalid audio output settings')
   const graph = normalizeDspGraph({ nodes: v.nodes, outputStage: {
     ...v.outputStage, targetSampleRate: v.outputStage?.targetSampleRate || 'device'

@@ -115,11 +115,11 @@ test('patches, clear and cache invalidation preserve ordering ties and reject st
   )
   assert.throws(
     () => db.queryTracks({ sort: 'lastPlayed', historyRevision: first.revision }),
-    /history changed/
+    { code: 'STALE_HISTORY_REVISION', message: /history changed/ }
   )
   assert.throws(
     () => db.createLibraryQueue({ sort: 'lastPlayed', historyRevision: first.revision }),
-    /history changed/
+    { code: 'STALE_HISTORY_REVISION', message: /history changed/ }
   )
   assert.throws(
     () =>

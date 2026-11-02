@@ -100,6 +100,9 @@ const AUDIO_SERVICE_INVALID_MESSAGE = 'audio service returned an invalid or over
 // service mid-flight is the watchdog misfire that turns any legitimate slow
 // operation into a crash/restart loop.
 const SLOW_NATIVE_METHODS = new Set<string>([
+  // Bridge lifecycle opens/closes explicit drivers or waits for a bounded TLS
+  // handshake. It must not trip the short control-RPC watchdog.
+  'BridgeHostStart', 'BridgeHostStop', 'BridgeConnect', 'BridgeDisconnect', 'BridgeShutdown',
   'Play',
   // Pause includes a PCM fade and may close/reopen an exclusive device.
   'Pause',
@@ -1180,7 +1183,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       'audio.rpc',
       String(method),
       () => this.callUnobserved(method, args),
-      args,
+      // Private Bridge calls can carry a TLS private key or invitation token.
+      // Keep RPC timing, but never send their arguments to diagnostic observers.
+      String(method).startsWith('Bridge') ? [] : args,
       { serviceGeneration: this.generation }
     )
   }

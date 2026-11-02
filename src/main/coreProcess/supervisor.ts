@@ -40,7 +40,7 @@ interface Pending {
 }
 export interface CoreSupervisorOptions {
   /** Fixed main-owned entry registry. Never built from IPC payloads. */
-  entries: Readonly<Record<CoreServiceKind | 'core', string>>
+  entries: Readonly<Record<Exclude<CoreServiceKind, 'zone-audio'> | 'core', string>>
   configuration: Omit<CoreProcessConfiguration, 'epoch' | 'recovery'>
   fork(entry: string, args: string[], serviceName: string): SupervisedProcess
   channel(): { port1: ServiceMessagePort; port2: ServiceMessagePort }
@@ -305,7 +305,7 @@ export class CoreSupervisor extends EventEmitter {
     service: CoreServiceKind
   ): void {
     if (
-      !['audio', 'audio-test', 'database', 'scan', 'analysis', 'plugin'].includes(service) ||
+      !['audio', 'audio-test', 'zone-audio', 'database', 'scan', 'analysis', 'plugin'].includes(service) ||
       typeof leaseId !== 'string' ||
       leaseId.length > 128 ||
       this.peers.has(leaseId)
@@ -315,7 +315,7 @@ export class CoreSupervisor extends EventEmitter {
         core.postMessage({ kind: 'core:service-exit', leaseId, code: null })
       return
     }
-    const limit = service === 'analysis' ? 4 : service === 'plugin' ? 32 : 1
+    const limit = service === 'zone-audio' ? 3 : service === 'analysis' ? 4 : service === 'plugin' ? 32 : 1
     if (
       [...this.peers.values()].filter((p) => p.service === service && !p.exited).length >= limit
     ) {
@@ -327,7 +327,7 @@ export class CoreSupervisor extends EventEmitter {
     let ports: { port1: ServiceMessagePort; port2: ServiceMessagePort } | null = null
     try {
       const child = this.options.fork(
-        this.options.entries[service],
+        this.options.entries[service === 'zone-audio' ? 'audio' : service],
         ['--twilight-core-service'],
         `twilight-${service}`
       )
@@ -550,7 +550,7 @@ export class CoreSupervisor extends EventEmitter {
   private async stopServices(): Promise<void> {
     const peers = [...this.peers.values()]
     const audio = peers.filter(
-      (p) => (p.service === 'audio' || p.service === 'audio-test') && !p.exited
+      (p) => ['audio', 'audio-test', 'zone-audio'].includes(p.service) && !p.exited
     )
     const silenced = await Promise.all(audio.map((peer) => this.silenceAudio(peer)))
     for (const peer of peers) if (!peer.exited) terminateProcess(peer.child)
@@ -579,7 +579,7 @@ export class CoreSupervisor extends EventEmitter {
 
   private async closePeer(peer: Peer): Promise<void> {
     if (peer.exited) return
-    if (peer.service === 'audio' || peer.service === 'audio-test') {
+    if (['audio', 'audio-test', 'zone-audio'].includes(peer.service)) {
       await this.silenceAudio(peer)
     }
     if (!peer.exited) terminateProcess(peer.child)

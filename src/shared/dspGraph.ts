@@ -88,6 +88,8 @@ export interface DspScene {
   rules: DspSceneRule
   graph: DspGraphConfig
   allowDsdPcmFallback?: boolean
+  /** Phone-only scene settings, carried through desktop edits and exports without applying them. */
+  android?: Record<string, unknown>
 }
 
 export const DSP_FACTORY_SCENE_TEMPLATES = [
@@ -1066,6 +1068,9 @@ export function normalizeDspScenes(value: unknown, legacy: LegacyDspSettings = {
           : 0,
       rules: normalizeDspSceneRule(raw.rules),
       graph: normalizeDspGraph(raw.graph),
+      ...(raw.android && typeof raw.android === 'object' && !Array.isArray(raw.android)
+        ? { android: JSON.parse(JSON.stringify(raw.android)) as Record<string, unknown> }
+        : {}),
       ...(raw.allowDsdPcmFallback === true ? { allowDsdPcmFallback: true } : {})
     })
   }

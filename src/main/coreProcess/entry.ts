@@ -6,6 +6,8 @@ import { createPersistentDevicePairing, loadRemoteTlsIdentity } from '../remote/
 import { persistentLibraryId } from '../remote/libraryIdentity.ts'
 import { RemoteMediaResolver } from '../../core/remote/media.ts'
 import { CoreCastService } from '../../core/cast/service.ts'
+import { createCastPcmSegments } from '../../adapters-node/castPcmSegments.ts'
+import { discoverDlnaDevices } from '../../adapters-node/dlnaDiscovery.ts'
 import { CoreNcmCloudTransferService } from '../../core/ncm/cloudTransferService.ts'
 import { RemoteHttpServer } from '../../core/cast/httpServer.ts'
 import { createCastBackend } from '../../core/cast/backend.ts'
@@ -116,6 +118,10 @@ import type { TrackData } from '../../shared/track.ts'
 import { CoreSettingsRepository } from '../../core/persistence/settingsRepository.ts'
 import { applyDevelopmentMetadataSetup } from './developmentMetadataSetup.ts'
 import { CoreAudioOutputService } from '../../core/audio/outputService.ts'
+import { CoreBridgeService } from '../../core/audio/bridgeService.ts'
+import { CoreZoneRegistry } from '../../core/playback/zoneRegistry.ts'
+import { zoneCatalog, createZoneRuntime, playbackQueueApi } from './zoneRuntime.ts'
+import { bridgeSelectionStore } from '../audio/bridgeSelectionStore.ts'
 import { CoreDspService } from '../../core/audio/dspService.ts'
 import { DspAssetLibrary } from '../../core/audio/dspAssetLibrary.ts'
 import { Vst3CatalogService } from '../../core/audio/vst3Catalog.ts'
@@ -376,7 +382,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       now: Date.now
     }
   )
+  const bridgeSelection = await bridgeSelectionStore(config.root)
   audio = new AudioEngineManager(coreAudioConfiguration(settings.read()), {
+    initialBridgeSelected: bridgeSelection.selected,
+    persistBridgeSelection: selected => bridgeSelection.save(selected),
     platform: process.platform,
     persistDeviceProfiles: persistAudio.profile,
     persistAudioOutput: persistAudio.output,
@@ -831,6 +840,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   })
   const repairOwner = { isDestroyed: () => false, once: () => {}, removeListener: () => {} }
   const playlists = new CorePlaylistService({
+    recentHistory: statistics,
     preferencesTrackStates: async tracks => {
       const states: Array<import('../../shared/musicPreferences.ts').MusicPreferenceState | null> = []
       for (let offset = 0; offset < tracks.length; offset += 200)
@@ -913,10 +923,14 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     backend: createCastBackend({
       arm: (target) => platform!.call('cast.arm', { target }),
       disarm: (deviceId) => platform!.call('cast.disarm', { deviceId })
-    }),
+    }, discoverDlnaDevices),
     media: mediaServer,
     resources: sourceResources,
     authorizeFile: (path) => platform!.call('paths.authorizeAudioFile', { path }),
+    segments: createCastPcmSegments({
+      root: join(config.root, 'cast-media'),
+      render: (source, request, signal) => analysis!.renderCastPcmSegment(source, request, signal)
+    }),
     changed: () => application?.changed(),
     observe: (sample, revision) => playback.observeCast(sample, revision),
     failed: (error, revision) => playback.castFailed(error, revision),
@@ -955,24 +969,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     engine: audio,
     runTransport: (action) => outputTest.withTransport(action),
     resources: sourceResources,
-    queues: {
-      libraryRevision: async () => (await database!.getMetadata()).revision,
-      importLegacyPlaybackQueue: (command) => database!.importLegacyPlaybackQueue(command),
-      restoreNamedPlaybackQueue: (command) => database!.restoreNamedPlaybackQueue(command),
-      restoreHeartBaseQueue: (...args) => database!.restoreHeartBaseQueue(...args),
-      extendQueue: (...args) => database!.extendPlaybackQueue(...args),
-      replaceSource: (command) => database!.replacePlaybackQueueSource(command),
-      buildQueue: (...args) => database!.buildLibraryQueue(...args),
-      createQueue: (...args) => database!.createLibraryQueue(...args),
-      getQueue: (...args) => database!.getLibraryQueue(...args),
-      readQueue: (...args) => database!.readLibraryQueue(...args),
-      editQueue: (id, revision, edit) => edit.kind === 'insert'
-        ? database!.insertCorePlaybackQueue(id, revision, edit)
-        : database!.editLibraryQueue(id, revision, edit),
-      deleteQueue: (...args) => database!.deleteLibraryQueue(...args),
-      syncQueueReferences: (...args) => database!.syncLibraryQueueReferences(...args),
-      readNeighbor: (...args) => database!.readLibraryQueueNeighbor(...args)
-    },
+    queues: playbackQueueApi(database),
     resolver,
     automaticPlaybackAllowed: async (tracks, signal) => {
       const allowed: boolean[] = []
@@ -1032,6 +1029,32 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       }
     },
     fatal: (error) => send({ kind: 'core:fatal', epoch: config.epoch, error: errorText(error) })
+  })
+  const bridge = new CoreBridgeService({
+    call: (method, args) => audio!.callBridge(method, args),
+    output, outputState: () => audio!.getAudioOutputState(), playback, cast,
+    identity: () => loadRemoteTlsIdentity(config.root), name: hostname(),
+    address: () => Object.values(networkInterfaces()).flatMap(entries => entries ?? [])
+      .find(entry => !entry.internal && String(entry.family) === 'IPv4')?.address ?? '127.0.0.1',
+    changed: () => application?.changed()
+  })
+  const catalogStore = zoneCatalog(config.root)
+  const zones = new CoreZoneRegistry({
+    ...catalogStore, newId: randomUUID, changed: () => application?.changed(),
+    local: { playback, dsp, output: () => bridge.state(),
+      connect: async () => { throw new Error('Use the existing primary output connection') },
+      sources: () => audio!.getQueueSnapshot().map(item => item.source), close: async () => {} },
+    create: descriptor => createZoneRuntime({ root: config.root, zone: descriptor, database: database!, launcher: launcher!, platform: platform!,
+      playback: { queues: playbackQueueApi(database!), resolver, resources: sourceResources,
+        authorize: source => platform!.call('paths.authorizeAudio', { source }),
+        automaticPlaybackAllowed: async (tracks, signal) => {
+          const allowed: boolean[] = []
+          for (let offset = 0; offset < tracks.length; offset += 200) {
+            signal?.throwIfAborted()
+            allowed.push(...await database!.preferencesAutomaticEligibility(tracks.slice(offset, offset + 200)))
+          }
+          return allowed
+        } }, changed: () => application?.changed() })
   })
   analysis = new AudioAnalysisServiceClient({
     serviceEntry: 'analysis',
@@ -1235,16 +1258,16 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       root: () => musicCacheRoot(),
       maintainSources: (action) =>
         autoMix.maintain(() =>
-          sourceResources.maintain(async () => {
+          zones.maintainSources(sources => sourceResources.maintain(async () => {
             // All source reads have committed or cancelled before this sample.
             // Pause/Seek may still run; neither can introduce a new physical source.
             const actual = await audio!.getPlaybackInfo()
             return action([
-              ...audio!.getQueueSnapshot().map((item) => item.source),
+              ...sources,
               actual.source,
               ...sourceResources.protectedSources()
             ])
-          })
+          }))
         )
     })
     const control = (operation: () => Promise<void>) => {
@@ -1255,6 +1278,18 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       appVersion: config.plugins.appVersion,
       bundledPlugins: config.plugins.bundledPlugins,
       hostIdleTimeoutMs: config.plugins.hostIdleTimeoutMs,
+      isPlaybackProxyActive: (_pluginId, proxySources) => {
+        if (proxySources.size === 0) return false
+        const currentSource = playback.snapshot().playback.source
+        if (currentSource && proxySources.has(currentSource)) return true
+        for (const source of zones.sources()) {
+          if (proxySources.has(source)) return true
+        }
+        for (const source of sourceResources.protectedSources()) {
+          if (proxySources.has(source)) return true
+        }
+        return false
+      },
       recordPlaybackIdentity: (...args) => providerPlaybackIdentities.record(...args),
       settings: new PluginSettingsRepository({
         protect: (value, scope) => platform!.call('credentials.protect', { scope, value }),
@@ -1837,6 +1872,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     failed: error => console.error('[core.catalog]', error)
   })
   application = new CoreApplication({
+    bridge, zones,
     catalog,
     genres,
     ratings,
@@ -1964,7 +2000,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       scanner: scan,
       maintainFiles: (paths, action) =>
         autoMix.maintain(() =>
-          playback.maintainSources((sources) =>
+          zones.maintainSources((sources) =>
             sourceResources.maintain(() =>
               playbackAnalysis.maintain(() =>
                 libraryLoudness.maintain(async () => {
@@ -1976,7 +2012,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
                       targets.has(pathKey(source))
                     )
                   )
-                    await playback.stop()
+                    await zones.stopSources(source => targets.has(pathKey(source)))
                   return action()
                 })
               )
@@ -2055,7 +2091,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       authorize: async () => {
         await platform!.call('cache.authorizeRoot', {})
       },
-      maintainSources: (action) => autoMix.maintain(() => playback.maintainSources(action)),
+      maintainSources: (action) => autoMix.maintain(() => zones.maintainSources(action)),
       maintainResources: (action) => sourceResources.maintain(action),
       maintainNetwork: (action) => network.maintainCache(action),
       maintainProvider: (action) => (ncmCache ? ncmCache.maintain(action) : action()),
@@ -2072,7 +2108,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         network.clearCache(
           (action) =>
             autoMix.maintain(() =>
-              playback.maintainSources((sources) =>
+              zones.maintainSources((sources) =>
                 sourceResources.maintain(() =>
                   action([...sources, ...sourceResources.protectedSources()])
                 )

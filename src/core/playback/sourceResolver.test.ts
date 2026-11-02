@@ -6,6 +6,22 @@ const now = 1_000_000
 const ttl = 8 * 60_000
 const track = { id: 'ncm:123', source: 'ncm', filePath: 'ncm:123' }
 
+test('SAF SACD authorization keeps the provider query and fragment outside the logical selector', async () => {
+  const physical = 'content://documents/opaque?provider=keep#original'
+  for (const area of ['stereo', 'multichannel']) {
+    const suffix = `#twilight-sacd=${area}:2`
+    const calls: string[] = []
+    assert.equal(await prepareNativeSource(physical + suffix, async (source) => {
+      calls.push(source)
+      return source + '-resolved'
+    }), physical + '-resolved' + suffix)
+    assert.deepEqual(calls, [physical])
+    assert.equal(await prepareNativeSource(physical + suffix, async () => null), null)
+    await assert.rejects(prepareNativeSource(physical + suffix, async () => { throw new Error('grant revoked') }),
+      { code: 'SOURCE_ACCESS_DENIED' })
+  }
+})
+
 test('native preparation distinguishes a missing source from an authorization refusal for files and SACD selectors', async () => {
   for (const source of ['D:/Music/song.flac', 'D:/Music/disc.iso?area=stereo&track=1']) {
     assert.equal(await prepareNativeSource(source, async () => null), null)

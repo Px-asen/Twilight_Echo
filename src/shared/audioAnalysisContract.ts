@@ -10,6 +10,7 @@ export type AudioAnalysisKind =
   | 'download-metadata'
   | 'library-tags'
   | 'content-hash'
+  | 'cast-pcm-segment'
 
 export interface AudioAnalysisWorkerRequest {
   kind: 'request'

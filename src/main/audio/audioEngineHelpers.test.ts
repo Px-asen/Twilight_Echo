@@ -336,6 +336,26 @@ test('normalization preserves an explicitly empty parametric EQ through a settin
   assert.equal(normalizeAudioProcessingSettings({ eqMode: 'parametric' }).eqBands.length, 10)
 })
 
+test('phone EQ frequencies and per-band flags survive desktop processing normalization', () => {
+  const bands: EqualizerBand[] = [
+    {
+      frequency: 10,
+      gain: 3,
+      q: 0.7,
+      filterType: 'lowShelf',
+      enabled: true,
+      channelMask: 0xffffffff
+    },
+    { frequency: 96000, gain: -2, q: 1.2, filterType: 'highShelf', enabled: false, channelMask: 2 }
+  ]
+  const processing = normalizeAudioProcessingSettings({ eqMode: 'parametric', eqBands: bands })
+  assert.deepEqual(processing.eqBands, bands)
+  assert.deepEqual(
+    normalizeAudioProcessingSettings({ ...processing, dspEnabled: true }).eqBands,
+    bands
+  )
+})
+
 test('normalizeAudioProcessingSettings keeps graphic band gains through a round trip', () => {
   const first = normalizeAudioProcessingSettings({ eqMode: 'graphic' })
   const edited = normalizeAudioProcessingSettings({
@@ -344,6 +364,17 @@ test('normalizeAudioProcessingSettings keeps graphic band gains through a round 
   })
   assert.equal(edited.eqBands[3].gain, 5)
   assert.equal(normalizeAudioProcessingSettings({ ...edited }).eqBands[3].gain, 5)
+})
+
+test('graphic frequencies survive the native processing settings round trip', () => {
+  const defaults = normalizeAudioProcessingSettings({ eqMode: 'graphic' })
+  const bands = defaults.eqBands.map((band, index) => ({
+    ...band,
+    frequency: index === 0 ? 10 : index === 9 ? 96000 : band.frequency
+  }))
+  const processing = normalizeAudioProcessingSettings({ ...defaults, eqBands: bands })
+  assert.deepEqual(processing.eqBands, bands)
+  assert.deepEqual(normalizeAudioProcessingSettings(JSON.parse(JSON.stringify(processing))), processing)
 })
 
 test('main and renderer agree on capability candidates without promoting IDs to verified support', () => {

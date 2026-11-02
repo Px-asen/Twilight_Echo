@@ -12,7 +12,11 @@ import type { PlaylistRuntime } from './ports.ts'
 export interface CorePlaylistViewOptions {
   database: Pick<LibraryDatabaseApi, 'syncPlaylistView' | 'queryTracks'> & Partial<Pick<LibraryDatabaseApi, 'queryCollections'>>
   playlist(id: string, revision: number): Playlist
-  versions: { getRevision(): number; snapshot(): MusicVersionsDocument }
+  versions: {
+    getRevision(): number
+    snapshot(): MusicVersionsDocument
+    readonlySnapshot?(): Readonly<MusicVersionsDocument>
+  }
   runtime: PlaylistRuntime
   loadJsonLibrary?: () => Promise<{ revision: number; tracks: TrackData[] }>
 }
@@ -79,7 +83,9 @@ export class CorePlaylistViews {
         } else {
           await owner.setPlaylist(playlist, {
             revision,
-            versions: this.options.versions.snapshot().tracks.versions,
+            versions: (
+              this.options.versions.readonlySnapshot?.() ?? this.options.versions.snapshot()
+            ).tracks.versions,
             preserveSources: playlist.kind === 'aggregate' || query.preserveSources
           })
           fence()
@@ -131,7 +137,9 @@ export class CorePlaylistViews {
       const owner = this.owner(`catalog:${!!query.aggregate}`)
       await owner.setCatalog(playlists, {
         revision: query.versionsRevision,
-        versions: this.options.versions.snapshot().tracks.versions,
+        versions: (
+          this.options.versions.readonlySnapshot?.() ?? this.options.versions.snapshot()
+        ).tracks.versions,
         preserveSources: query.aggregate
       })
       const id = owner.state.value.id

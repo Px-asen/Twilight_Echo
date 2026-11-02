@@ -17,6 +17,7 @@ import type { DownloadMetadataRequest } from '../shared/coreDownloadMetadata.ts'
 import { runLibraryTagWorker } from '../core/library/tagWorker.ts'
 import type { LibraryTagWorkerRequest } from '../shared/coreLibraryMaintenance.ts'
 import { contentHash } from './library/duplicateDetection.ts'
+import type { CastPcmSegmentRequest } from '../shared/castPcmSegment.ts'
 
 const servicePort = createServicePort<AudioAnalysisWorkerRequest, AudioAnalysisWorkerMessage>()
 initializeUtilityDiagnostics('twilight-audio-analysis')
@@ -46,7 +47,8 @@ servicePort.postMessage({
           'loudness-batch',
           'dsp-audition',
           ...(typeof native?.GetMetadata === 'function' ? ['metadata' as const] : []),
-          ...(typeof native?.AnalyzeAutoMix === 'function' ? ['automix' as const] : [])
+          ...(typeof native?.AnalyzeAutoMix === 'function' ? ['automix' as const] : []),
+          ...(typeof native?.RenderPcmSegment === 'function' ? ['cast-pcm-segment' as const] : [])
         ] as const))
   ]
 })
@@ -101,6 +103,14 @@ async function handleRequest(message: AudioAnalysisWorkerRequest): Promise<void>
     }
     if (!native || startupError)
       throw new Error(startupError || 'native audio analysis binding unavailable')
+    if (message.analysis === 'cast-pcm-segment') {
+      if (!native.RenderPcmSegment) throw new Error('Native CUE Cast renderer unavailable')
+      const request = JSON.parse(message.optionsJson) as CastPcmSegmentRequest
+      native.RenderPcmSegment(message.source, request.outputPath, request.startSeconds,
+        request.endSeconds, request.virtualPregapSeconds)
+      servicePort.postMessage({ kind: 'response', requestId: message.requestId, ok: true })
+      return
+    }
     const method: keyof NativeAudioBinding =
       message.analysis === 'metadata'
         ? 'GetMetadata'

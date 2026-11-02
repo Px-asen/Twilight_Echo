@@ -13,6 +13,8 @@ import type {
   CoreStatisticsSummary
 } from '../../shared/coreStatistics.ts'
 import type { CoreStatisticsOverview } from '../../shared/coreStatistics.ts'
+import type { Playlist } from '../../shared/playlists.ts'
+import { CORE_RECENT_PLAYLIST_ID } from '../../shared/corePlaylists.ts'
 import { summarizeRecordedTracks } from '../../shared/listeningRecordedSummary.ts'
 import { projectCoreError, projectCoreTrack } from '../projections.ts'
 import { CoreStatisticsRepository, type StatisticsCheckpoint } from './repository.ts'
@@ -88,6 +90,7 @@ export class CoreStatisticsService {
   private stopped = false
   private generation = 0
   private revision = 0
+  private recentView: { revision: number; playlist: Playlist } | null = null
   private replace = 0
   private savedReplacement = 0
   private readonly dirtyTracks = new Map<string, number>()
@@ -128,6 +131,39 @@ export class CoreStatisticsService {
   }
   getRevision(): number {
     return this.revision
+  }
+
+  /** Keep membership in Core; SQL supplies bounded pages, current local metadata and source filters. */
+  recentPlaylist(): Playlist {
+    if (this.recentView?.revision === this.revision) return this.recentView.playlist
+    const trackIds: string[] = []
+    const trackSnapshots: Record<string, TrackData> = Object.create(null)
+    const seen = new Set<string>()
+    const entries = Object.entries(this.stats.tracks)
+      .filter(([, stat]) => stat.lastPlayed > 0)
+      .map(([id, stat]) => ({ id, ...stat }))
+      .sort(compareRecentTracks)
+    for (const stat of entries) {
+      const id = stat.track?.id ?? stat.sourceIds?.[0]?.trackId ?? stat.id
+      if (seen.has(id)) continue
+      seen.add(id)
+      trackIds.push(id)
+      if (stat.track)
+        trackSnapshots[id] = {
+          ...stat.track,
+          cover: stat.cover ?? stat.track.cover,
+          coverSource: stat.coverSource ?? stat.track.coverSource
+        }
+    }
+    const playlist: Playlist = {
+      id: CORE_RECENT_PLAYLIST_ID,
+      name: '最近播放',
+      createdAt: '',
+      trackIds,
+      trackSnapshots
+    }
+    this.recentView = { revision: this.revision, playlist }
+    return playlist
   }
   historySnapshot(): ReadonlyMap<string, number> {
     return new Map([...buildLastPlayedByTrackId(this.stats), ...buildLastPlayedBySource(this.stats)])

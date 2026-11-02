@@ -13,6 +13,7 @@ import {
 import {
   playlistDataEqual,
   replayPlaylistTransaction,
+  sharePlaylistSnapshot,
   slimPlaylistLegacySnapshots
 } from './data.ts'
 
@@ -35,7 +36,7 @@ export function createPlaylistState({
   let playlistPersistence: PlaylistPersistence<Playlist[]> | null = null
 
   function clonePlaylistSnapshot(source: Playlist[] = playlists.value): Playlist[] {
-    return runtime.clone(source)
+    return sharePlaylistSnapshot(source)
   }
 
   function getPlaylistPersistence(): PlaylistPersistence<Playlist[]> {
@@ -229,7 +230,7 @@ export function createPlaylistState({
 
     // 旧版本保存的歌单快照可能携带歌词全文 / bpmAnalysis / metadataMatch，
     // 加载时统一瘦身，避免数十 MB 载荷随歌单驻留。
-    const loaded = (saved as Playlist[]).map(slimPlaylistLegacySnapshots)
+    const loaded = sharePlaylistSnapshot((saved as Playlist[]).map(slimPlaylistLegacySnapshots))
     // Ensure default playlist exists
     if (!loaded.find((p) => p.isDefault)) {
       loaded.unshift(DEFAULT_PLAYLIST)
@@ -250,6 +251,7 @@ export function createPlaylistState({
   }
   return {
     getRevision: () => playlistsRevision,
+    getAuthoritativeSnapshot: () => playlistAuthoritativeSnapshot,
     dispose: () => playlistPersistence?.dispose(),
     clonePlaylistSnapshot,
     queuePlaylistPersistence,

@@ -33,7 +33,7 @@ test('a cache peek spanning maintenance cannot publish the pre-clear measurement
       truePeakDb: -1,
       source: 'analyzed',
       analyzedAt: '2026-10-23T00:00:00Z',
-      algorithmVersion: 2
+      algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
     }
   }
   const manager = new LoudnessAnalysisManager({ cache, analyzeFile: async () => null })

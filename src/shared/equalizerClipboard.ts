@@ -1,4 +1,8 @@
 import type { EqualizerBand, EqualizerFilterType } from './audioEngineTypes.ts'
+import {
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ
+} from './audioProcessingOptions.ts'
 
 export interface EqualizerClipboardApi {
   copyEqBands: (bands: EqualizerBand[]) => Promise<void>
@@ -24,8 +28,8 @@ export function normalizeEqClipboardBands(value: unknown): EqualizerBand[] {
     const band = item as EqualizerBand
     if (
       !Number.isFinite(band.frequency) ||
-      band.frequency < 20 ||
-      band.frequency > 24000 ||
+      band.frequency < EQ_BAND_MIN_FREQUENCY_HZ ||
+      band.frequency > EQ_BAND_MAX_FREQUENCY_HZ ||
       !Number.isFinite(band.gain) ||
       band.gain < -24 ||
       band.gain > 24 ||
