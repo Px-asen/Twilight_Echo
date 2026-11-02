@@ -73,35 +73,86 @@ document.addEventListener(
   true
 )
 
+function createFallbackLoadingOverlay(): HTMLDivElement {
+  const overlay = document.createElement('div')
+  overlay.style.cssText =
+    'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-secondary,#9ca3af);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;z-index:9999;pointer-events:auto;'
+  const dragBar = document.createElement('div')
+  dragBar.style.cssText =
+    'position:fixed;top:0;left:0;right:0;height:36px;-webkit-app-region:drag;'
+  const label = document.createElement('div')
+  label.textContent = '正在启动核心服务…'
+  label.style.cssText = 'opacity:0.78;letter-spacing:0.02em;-webkit-app-region:no-drag;'
+  overlay.append(dragBar, label)
+  return overlay
+}
+
 async function mountApp(): Promise<void> {
+  const iconsPromise = import('./assets/icon-fonts')
+  const startupSnapshot = isSatelliteWindow ? null : beginStartupSnapshot()
   if (!isSatelliteWindow) {
+    let loadingOverlay: HTMLDivElement | null = null
+    const loadingTimer = setTimeout(() => {
+      loadingOverlay = createFallbackLoadingOverlay()
+      document.getElementById('app')?.append(loadingOverlay)
+    }, 120)
     try {
       await initializeCoreWindow(useCoreConnection())
     } catch (error) {
+      clearTimeout(loadingTimer)
+      loadingOverlay?.remove()
+      void iconsPromise.catch(() => null)
+      const container = document.createElement('div')
+      container.style.cssText =
+        'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;box-sizing:border-box;color:var(--text-primary,#e5e7eb);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;z-index:9999;'
+      const dragBar = document.createElement('div')
+      dragBar.style.cssText =
+        'position:fixed;top:0;left:0;right:0;height:36px;-webkit-app-region:drag;'
+      const card = document.createElement('div')
+      card.style.cssText =
+        'max-width:520px;width:100%;padding:24px 28px;border-radius:14px;background:rgba(128,128,128,0.12);border:1px solid rgba(128,128,128,0.22);box-sizing:border-box;-webkit-app-region:no-drag;'
       const message = document.createElement('p')
       message.textContent = `Core 初始化未完成：${error instanceof Error ? error.message : String(error)}`
+      message.style.cssText =
+        'margin:0 0 18px;line-height:1.6;font-size:14px;word-break:break-word;white-space:pre-wrap;'
+      const actions = document.createElement('div')
+      actions.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;'
+      const buttonStyle =
+        'padding:7px 16px;border-radius:8px;border:1px solid rgba(128,128,128,0.3);background:rgba(128,128,128,0.16);color:inherit;font-size:13px;cursor:pointer;'
       const retry = document.createElement('button')
       retry.textContent = '重试'
+      retry.style.cssText = buttonStyle
       retry.onclick = () => {
-        message.remove()
-        retry.remove()
+        container.remove()
         void mountApp()
       }
-      document.getElementById('app')?.append(message, retry)
+      const closeBtn = document.createElement('button')
+      closeBtn.textContent = '关闭应用'
+      closeBtn.style.cssText = buttonStyle
+      closeBtn.onclick = () => {
+        if (window.api?.window?.close) window.api.window.close()
+        else window.close()
+      }
+      actions.append(retry, closeBtn)
+      card.append(message, actions)
+      container.append(dragBar, card)
+      document.getElementById('app')?.append(container)
       return
     }
+    clearTimeout(loadingTimer)
+    loadingOverlay?.remove()
   }
-  await import('./assets/icon-fonts')
-  const startupSnapshot = isSatelliteWindow ? null : beginStartupSnapshot()
-  const rootComponent = isMiniPlayer
-    ? (await import('./mini-player/MiniPlayerApp.vue')).default
+  const rootComponentPromise = isMiniPlayer
+    ? import('./mini-player/MiniPlayerApp.vue')
     : isTrayPlayer
-      ? (await import('./tray-player/TrayPlayerApp.vue')).default
+      ? import('./tray-player/TrayPlayerApp.vue')
       : isDesktopLyrics
-        ? (await import('./desktop-lyrics/DesktopLyricsApp.vue')).default
+        ? import('./desktop-lyrics/DesktopLyricsApp.vue')
         : isDynamicIsland
-          ? (await import('./dynamic-island/DynamicIslandApp.vue')).default
-          : (await import('./App.vue')).default
+          ? import('./dynamic-island/DynamicIslandApp.vue')
+          : import('./App.vue')
+  const [, rootComponentModule] = await Promise.all([iconsPromise, rootComponentPromise])
+  const rootComponent = rootComponentModule.default
   // The lyrics window reads no theme tokens: every colour arrives in its settings
   // payload, so it must not pay for (or wait on) the theme runtime.
   if (isMiniPlayer) await bootstrapThemeRuntime()

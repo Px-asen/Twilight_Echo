@@ -4146,3 +4146,18 @@ test('shutdown preserves the persisted libraryQueue when engine.stop emits playb
   assert.equal(cold.snapshot().playback?.position, 37)
   await cold.shutdown()
 })
+
+test('initialize recovers to an empty paused session when a BSOD rolls back the SQLite queue referenced by playback-session.json', async (t) => {
+  const f = await fixture(t)
+  await f.session.fromQuery({}, 'a')
+  await f.session.shutdown()
+  f.queues.getQueue = async () => {
+    throw new Error('Queue missing after WAL rollback')
+  }
+  const cold = f.create()
+  await cold.initialize()
+  assert.equal(cold.snapshot().queue, null)
+  assert.equal(cold.snapshot().track, null)
+  assert.match(cold.snapshot().error ?? '', /Queue missing after WAL rollback/)
+  await cold.shutdown()
+})

@@ -244,3 +244,36 @@ test('frame replacement, renderer crash and window disposal retire connections w
   f.bridge.dispose()
   assert.equal(f.handlers.size, 0)
 })
+
+test('connect and status surface supervisor getLastError detail when Core is unavailable', async (t) => {
+  const f = fixture(t)
+  const unavailableSupervisor = f.supervisor as unknown as {
+    getStatus: () => { phase: 'failed' | 'starting'; epoch: string | null }
+    getLastError?: () => string | null
+    connect: (identity: CoreClientIdentity) => void
+  }
+  unavailableSupervisor.getStatus = () => ({ phase: 'failed', epoch: null })
+  unavailableSupervisor.getLastError = () => 'Database quick_check failed'
+
+  const connectReply = await f.invoke('connect', f.desktop, {})
+  assert.deepEqual(connectReply, {
+    ok: false,
+    error: {
+      code: 'NOT_READY',
+      message: 'Core is not available (Database quick_check failed)'
+    }
+  })
+
+  // Also verify an in-flight connect when supervisor transitions to 'failed' via status event
+  unavailableSupervisor.getStatus = () => ({ phase: 'starting', epoch: null })
+  unavailableSupervisor.connect = () => {}
+  const pendingConnect = f.invoke('connect', f.desktop, {})
+  f.supervisor.emit('status', { phase: 'failed', epoch: null })
+  assert.deepEqual(await pendingConnect, {
+    ok: false,
+    error: {
+      code: 'NOT_READY',
+      message: 'Core is not available (Database quick_check failed)'
+    }
+  })
+})

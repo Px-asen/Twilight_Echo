@@ -275,15 +275,24 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   })
   await database.coreStateOpen(join(config.root, 'core-state.sqlite'))
   // Recover the old journal before any staged owner can scan or mutate the library.
-  await database.recoverRemoval()
-  await recoverLocalLibraryRemovalFromDatabase(config.libraryFilePath, database)
+  try {
+    await database.recoverRemoval()
+    await recoverLocalLibraryRemovalFromDatabase(config.libraryFilePath, database)
+  } catch (error) {
+    console.warn('[core.removal] Recovery skipped due to error:', error)
+  }
   const personalBackupRepository = createPersonalBackupRepository()
   try {
     await personalBackupRepository.applyPendingPersonalRestoreFromDatabase(config.root, database)
   } catch (error) {
-    if ((error as { code?: string }).code !== 'STALE_REVISION' ||
-      !personalBackupRepository.deferStalePersonalRestore(config.root)) throw error
-    console.warn('[core.backup] Music data changed after preview; restore awaits a fresh review in Settings')
+    if (
+      (error as { code?: string }).code === 'STALE_REVISION' &&
+      personalBackupRepository.deferStalePersonalRestore(config.root)
+    ) {
+      console.warn('[core.backup] Music data changed after preview; restore awaits a fresh review in Settings')
+    } else {
+      console.warn('[core.backup] Pending personal restore failed and was skipped:', error)
+    }
   }
   const initialLibrary = await database.getMetadata()
   libraryRevision = initialLibrary.revision
@@ -528,7 +537,13 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     label: 'playback bookmarks',
     maxBytes: 4 * 1024 * 1024,
     isData: isPlaybackBookmarksDocument,
-    isLegacy: isPlaybackBookmarksDocument
+    isLegacy: isPlaybackBookmarksDocument,
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt store reset to default:',
+        error.filePath,
+        error.primaryError
+      )
   })
   const bookmarks = new CoreBookmarksService({
     repository: bookmarkRepository,
@@ -543,7 +558,13 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       label: 'lyrics management',
       maxBytes: 8 * 1024 * 1024,
       isData: isLyricsManagementDocument,
-      isLegacy: isLyricsManagementDocument
+      isLegacy: isLyricsManagementDocument,
+      onCorrupt: (error) =>
+        console.warn(
+          '[core.persistence] Corrupt store reset to default:',
+          error.filePath,
+          error.primaryError
+        )
     }),
     now: Date.now,
     timers: {
@@ -640,7 +661,13 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     label: 'queue workspace',
     maxBytes: 32 * 1024 * 1024,
     isData: isQueueWorkspaceDocument,
-    isLegacy: isQueueWorkspaceDocument
+    isLegacy: isQueueWorkspaceDocument,
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt store reset to default:',
+        error.filePath,
+        error.primaryError
+      )
   })
   const workspace = new CoreWorkspaceService({
     repository: {
@@ -744,7 +771,13 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     label: 'playlists',
     maxBytes: 20 * 1024 * 1024,
     isData: Array.isArray,
-    isLegacy: Array.isArray
+    isLegacy: Array.isArray,
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt store reset to default:',
+        error.filePath,
+        error.primaryError
+      )
   })
   const playlistRepository = createPreferencesPlaylistRepository({
     legacy: legacyPlaylistRepository, database, identity: recordingVersions.identity, now: Date.now
@@ -1086,7 +1119,13 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     isData: (value): value is string[] =>
       Array.isArray(value) && value.every((root) => typeof root === 'string' && root.length > 0),
     isLegacy: (value): value is string[] =>
-      Array.isArray(value) && value.every((root) => typeof root === 'string' && root.length > 0)
+      Array.isArray(value) && value.every((root) => typeof root === 'string' && root.length > 0),
+    onCorrupt: (error) =>
+      console.warn(
+        '[core.persistence] Corrupt store reset to default:',
+        error.filePath,
+        error.primaryError
+      )
   })
   let scanDirectoryRevision = 0
   const scan = new CoreScanService({

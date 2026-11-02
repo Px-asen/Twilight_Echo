@@ -87,11 +87,13 @@ export function createCoreApplication(): CoreApplicationRuntime {
   supervisor.on('status', (status) => {
     if (status.phase !== 'failed' || runtime.forceQuit || retryPromptOpen) return
     retryPromptOpen = true
+    const detail = supervisor.getLastError()
     void dialog
       .showMessageBox({
         type: 'error',
         title: 'Music Core 已停止',
         message: '后台核心未能恢复，播放已停止。',
+        ...(detail ? { detail: `故障原因：${detail}` } : {}),
         buttons: ['重试 Core', '稍后重试'],
         defaultId: 0,
         cancelId: 1

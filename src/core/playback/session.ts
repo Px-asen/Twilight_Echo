@@ -593,6 +593,7 @@ export class CorePlaybackSession {
     const saved = await this.options.repository.load()
     this.revision = saved?.revision ?? 0
     if (saved?.data && this.options.resumeMode() !== 'off') {
+      try {
       const session = saved.data
       this.options.sleepTimer?.restore(session.sleepTimer)
       let position = session.position
@@ -689,6 +690,19 @@ export class CorePlaybackSession {
           position: this.options.resumeMode() === 'trackAndPosition' ? position : 0,
           duration: this.currentTrack.duration
         }
+      }
+      } catch (error) {
+        this.controller.dispose()
+        this.controller = createLibraryPlaybackController(this.options.queues)
+        this.clearHeart()
+        this.personalized?.stop()
+        await this.updateTrack(null)
+        this.currentTrack = null
+        this.restored = false
+        this.detachedHeartTrack = false
+        this.heartBase = null
+        this.mode = 'sequential'
+        this.error = errorText(error)
       }
     }
     this.initialized = true

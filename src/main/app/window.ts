@@ -75,7 +75,15 @@ export async function requestRendererPlaybackSessionSave(
   options: PlaybackSessionSaveOptions = {}
 ): Promise<void> {
   const win = runtime.mainWindow
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+  if (
+    !win ||
+    win.isDestroyed() ||
+    win.webContents.isDestroyed() ||
+    win.webContents.isLoading?.() ||
+    win.webContents.isCrashed?.() ||
+    getCoreApplication()?.snapshot?.() === null
+  )
+    return
 
   const requestId = randomUUID()
   await new Promise<void>((resolve, reject) => {
@@ -260,7 +268,12 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
       console.error('[window] Unable to save window size:', error)
     }
     const closeBehavior = runtime.appSettings.closeWindowBehavior ?? 'quit'
-    if (!runtime.forceQuit && (closeBehavior === 'tray' || closeBehavior === 'miniPlayer')) {
+    const coreUnready = getCoreApplication()?.snapshot?.() === null
+    if (
+      !runtime.forceQuit &&
+      !coreUnready &&
+      (closeBehavior === 'tray' || closeBehavior === 'miniPlayer')
+    ) {
       event.preventDefault()
       if (closeBehavior === 'miniPlayer') {
         showMiniPlayer()

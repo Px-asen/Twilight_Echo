@@ -62,6 +62,7 @@ export class CoreSupervisor extends EventEmitter {
   private coreExit: Promise<void> | null = null
   private epoch: string | null = null
   private phase: CorePhase = 'stopped'
+  private lastError: string | null = null
   private readonly peers = new Map<string, Peer>()
   private readonly clients = new Map<string, CoreClientIdentity>()
   private readonly pending = new Map<string, Pending>()
@@ -86,6 +87,9 @@ export class CoreSupervisor extends EventEmitter {
   }
   getStatus(): { phase: CorePhase; epoch: string | null } {
     return { phase: this.phase, epoch: this.epoch }
+  }
+  getLastError(): string | null {
+    return this.lastError
   }
   private setPhase(phase: CorePhase): void {
     this.phase = phase
@@ -177,6 +181,7 @@ export class CoreSupervisor extends EventEmitter {
         this.emit('settings', raw.state, epoch)
         break
       case 'core:initialized':
+        this.lastError = null
         this.initialized = true
         this.clearReadyTimer()
         for (const identity of this.clients.values())
@@ -184,6 +189,7 @@ export class CoreSupervisor extends EventEmitter {
         this.emit('initialized', this.getStatus())
         break
       case 'core:ready':
+        this.lastError = null
         this.clearReadyTimer()
         this.setPhase('ready')
         this.readyResolve?.()
@@ -474,6 +480,7 @@ export class CoreSupervisor extends EventEmitter {
   }
   private fail(error: Error): Promise<void> {
     if (this.failureInProgress) return this.failureInProgress
+    this.lastError = error.message
     const allowAutomaticRestart = !this.stopping && !this.shutdownCheckpoint
     this.shutdownReply?.reject(error)
     // Invalidate before any await; old commands cannot cross into a new epoch.

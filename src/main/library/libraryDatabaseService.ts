@@ -1,3 +1,4 @@
+import { existsSync, renameSync } from 'node:fs'
 import { createServicePort } from '../services/servicePort.ts'
 import { CoreStateDatabase, CoreStateDurabilityError } from './coreStateDatabase.ts'
 import {
@@ -42,6 +43,40 @@ type Work = {
   selection?: LibrarySelectionPreparation
 }
 
+function openResilientCoreStateDatabase(filePath: string): CoreStateDatabase {
+  let db: CoreStateDatabase | null = null
+  try {
+    db = new CoreStateDatabase(filePath)
+    const check = db.sql.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined
+    if (check?.quick_check !== 'ok') throw new Error('Core state quick_check failed')
+    return db
+  } catch (error) {
+    try {
+      db?.close()
+    } catch {
+      // Ignore close failure on unreadable/corrupt Core state connection.
+    }
+    if (filePath !== ':memory:') {
+      const corruptBase = `${filePath}.corrupt-${Date.now()}`
+      for (const suffix of ['', '-wal', '-shm']) {
+        const candidate = `${filePath}${suffix}`
+        if (existsSync(candidate)) {
+          try {
+            renameSync(candidate, `${corruptBase}${suffix}`)
+          } catch {
+            // Best-effort quarantine of corrupt core-state artifacts.
+          }
+        }
+      }
+    }
+    console.warn(
+      '[core-state] Quarantined corrupt core-state.sqlite and initialized a fresh state database:',
+      error
+    )
+    return new CoreStateDatabase(filePath)
+  }
+}
+
 async function dispatch(work: Work): Promise<void> {
   const { request } = work
   if (request.kind === 'open') {
@@ -50,7 +85,7 @@ async function dispatch(work: Work): Promise<void> {
       if (request.libraryFilePath)
         database = await openLibraryDatabase(request.libraryFilePath, request.coverCacheDir)
       if (request.coreStateFilePath) {
-        coreState = new CoreStateDatabase(request.coreStateFilePath)
+        coreState = openResilientCoreStateDatabase(request.coreStateFilePath)
         coreStateFilePath = request.coreStateFilePath
       }
       // Explicitly cancelled or paused jobs stay that way. A running job belongs
@@ -90,7 +125,7 @@ async function dispatch(work: Work): Promise<void> {
       if (coreState && coreStateFilePath !== filePath)
         throw new Error('Core state connection is already open at a different path')
       if (!coreState) {
-        coreState = new CoreStateDatabase(filePath)
+        coreState = openResilientCoreStateDatabase(filePath)
         coreStateFilePath = filePath
       }
       servicePort.postMessage({

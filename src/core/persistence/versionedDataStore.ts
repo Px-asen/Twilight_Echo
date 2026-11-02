@@ -3,6 +3,7 @@ import {
   backupPathFor,
   clearJsonFileArtifacts,
   loadJsonFileWithBackup,
+  PersistentJsonFileError,
   readJsonCandidate,
   writeJsonValueAtomic,
   type JsonFileLoadResult,
@@ -24,6 +25,7 @@ export interface VersionedDataStoreOptions<T> {
   onRecovery?: (
     result: Extract<JsonFileLoadResult<VersionedDataEnvelope<T> | T>, { status: 'recovered' }>
   ) => void
+  onCorrupt?: (error: PersistentJsonFileError) => void
 }
 
 /**
@@ -102,7 +104,16 @@ export class VersionedDataStore<T> {
   }
 
   private loadCurrent(): VersionedDataEnvelope<T> | null {
-    const loaded = loadJsonFileWithBackup(this.config.filePath, this.options)
+    let loaded: JsonFileLoadResult<VersionedDataEnvelope<T> | T>
+    try {
+      loaded = loadJsonFileWithBackup(this.config.filePath, this.options)
+    } catch (error) {
+      if (error instanceof PersistentJsonFileError && this.config.onCorrupt) {
+        this.config.onCorrupt(error)
+        return null
+      }
+      throw error
+    }
     if (loaded.status === 'missing') return null
     if (loaded.status === 'recovered') this.config.onRecovery?.(loaded)
     if (isVersionedDataEnvelope(loaded.value, this.config.isData)) return loaded.value
