@@ -105,6 +105,7 @@ export interface AudioOutputOption {
 }
 
 export interface AudioDeviceOption {
+  driverArchitecture?: 'x64' | 'x86'
   id: string
   label: string
   isDefault: boolean
@@ -251,6 +252,8 @@ export interface OutputDiagnostics {
   asioRegisteredDriverCount32?: number
   asioRegisteredDriverCount64?: number
   asioLoadableDriverCount64?: number
+  asioLoadableDriverCount32?: number
+  asioHelperArchitecture?: string
   /** DSD 兼容层路由的运行时事实（实际走了哪条线），不是配置意图。 */
   dsdRouteOverrideActive?: boolean
   dsdRouteBackend?: string

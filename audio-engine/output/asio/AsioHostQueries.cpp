@@ -22,15 +22,17 @@ bool asioEnabled() {
 std::vector<AsioDeviceInfo> enumerateCatalogAsioDevices() {
   if (!asioEnabled()) return {};
   std::vector<AsioDeviceInfo> devices;
-  for (const auto& entry : asio_windows::AsioDriverCatalog::enumerate()) {
+  for (const auto& entry : asio_windows::AsioDriverCatalog::enumerateAll()) {
     AsioDeviceInfo device;
     device.id = entry.id;
     device.name = entry.displayName;
     device.driverName = entry.displayName;
+    device.driverArchitecture = asioArchitectureName(entry.architecture);
     if (const auto cached = DeviceCapabilityCache::instance().get(device.id)) {
       AsioDeviceInfo merged = *cached;
       merged.id = device.id;
       merged.name = device.name;
+      merged.driverArchitecture = device.driverArchitecture;
       if (merged.driverName.empty()) merged.driverName = device.driverName;
       device = std::move(merged);
     }
@@ -119,7 +121,8 @@ std::string enumerateAsioDevicesJson() {
     if (!first) json << ',';
     first = false;
     json << "{\"id\":\"" << jsonEscape(device.id) << "\",\"label\":\""
-         << jsonEscape(device.name) << "\",\"name\":\"" << jsonEscape(device.name)
+         << jsonEscape(device.name + (device.driverArchitecture.empty() ? "" : " (ASIO " + device.driverArchitecture + ")")) << "\",\"name\":\"" << jsonEscape(device.name)
+         << "\",\"driverArchitecture\":\"" << jsonEscape(device.driverArchitecture)
          << "\",\"backend\":\"asio\",\"isDefault\":"
          << (device.isDefault ? "true" : "false") << ",\"capabilityProbed\":"
          << (device.capabilityProbed ? "true" : "false");

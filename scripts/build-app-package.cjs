@@ -6,6 +6,8 @@ const { verifyWindowsAppBranding } = require('./verify-windows-app-branding.cjs'
 const { preparePackagedAudioStaging } = require('./packaged-audio-staging.cjs')
 const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
+const { buildAsioHelper } = require('./build-asio-helper.cjs')
+const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -41,17 +43,20 @@ function main(args = process.argv.slice(2)) {
     throw new Error('Windows packaging with native VST3/SMTC helpers must run on Windows x64.')
   }
   let smtc = null
+  let asio = null
   if (windowsPackage) {
+    asio = buildAsioHelper({ root, tests: false })
     smtc = prepareSmtcMsvc({ root, stage: false })
     prepareVst3Msvc({ root })
   }
   const staging = windowsPackage
     ? preparePackagedAudioStaging(root, {
-        nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath }
+        nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath, 'twilight-asio-helper-x86.exe': asio.artifactPath }
       })
     : null
   let result
   try {
+    if (staging) verifyAsioHelperPair(staging.nativeDir)
     result = run(staging ? [...args, '--config', staging.configPath] : args, {
       ...process.env,
       TWILIGHT_PACKAGED_AUDIO_PRESTRIPPED: staging ? '1' : '0'

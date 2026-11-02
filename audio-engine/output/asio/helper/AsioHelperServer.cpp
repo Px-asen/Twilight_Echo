@@ -420,10 +420,10 @@ int runAsioHelperServer(
     const std::wstring& responseEventName,
     std::unique_ptr<IAsioHost> host,
     AsioHelperServerOptions options) {
-  HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, mappingName.c_str());
+  HANDLE mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, mappingName.c_str());
   if (!mapping) return 2;
   auto* shared = static_cast<SharedMemory*>(
-      MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemory)));
+      MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedMemory)));
   if (!shared) {
     CloseHandle(mapping);
     return 2;
@@ -450,6 +450,7 @@ int runAsioHelperServer(
     return 2;
   }
 
+  shared->helperArchitecture = sizeof(void*) == 8 ? 64 : 32;
   Server server(shared, responseEvent, callbackEvent, std::move(host), std::move(options));
   exchangeAtomic(&shared->failureReason, static_cast<LONG>(FailureReason::None));
   exchangeAtomic(&shared->helperState, static_cast<LONG>(HelperState::Ready));

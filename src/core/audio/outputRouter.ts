@@ -894,7 +894,9 @@ export class OutputRouter {
   }
 
   private resolveCompatibleAsioDevice(normalized: string, options: AudioDeviceOption[]): string {
-    const asioOptions = deviceOptionsForOutput('asio', options)
+    const asioOptions = deviceOptionsForOutput('asio', options).sort(
+      (a, b) => Number(a.driverArchitecture === 'x86') - Number(b.driverArchitecture === 'x86')
+    )
     // Nothing is known about the catalog yet. This runs from the manager
     // constructor too, before the audio service is up, so rewriting the selection
     // here silently discarded a persisted ASIO driver on every launch.
@@ -902,8 +904,12 @@ export class OutputRouter {
 
     if (normalized.startsWith('asio:')) {
       if (asioOptions.some((option) => option.id === normalized)) return normalized
+      if (/^asio:(?:x86:)?\{/.test(normalized)) return normalized
       const legacyName = normalized.slice('asio:'.length)
-      const matches = asioOptions.filter((option) => option.label === legacyName)
+      const candidates = asioOptions.filter((option) =>
+        option.name === legacyName || option.label === legacyName)
+      const x64 = candidates.filter((option) => option.driverArchitecture !== 'x86')
+      const matches = x64.length ? x64 : candidates
       if (matches.length === 1) return matches[0].id
       // An ambiguous legacy display name must not be resolved to one of its
       // candidates. Keep it unresolved so the backend reports it by name.

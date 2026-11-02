@@ -38,6 +38,7 @@ Windows MinGW 的构建能力与 provider 采用状态分开记录：preset 会�
 
 - `twilight_audio_engine`：共享 C 接口动态库，Windows 输出名为 `twilight-audio-engine.dll`。
 - `twilight_audio_node`：Node-API 桥接模块，MinGW preset 默认启用。
+- `twilight_asio_helper`：x64 构建输出 `twilight-asio-helper.exe`；独立 MSVC Win32 构建输出 `twilight-asio-helper-x86.exe`，不构建 x86 引擎或 Node addon。[双架构构建、暂存和验收](../docs/asio-x86-bridge.md)。
 - `twilight_audio_tests` 和相关单元测试：C ABI、DSP、metadata、bit-perfect evaluator、queue、backend factory、platform backend smoke、ASIO mock、CoreAudio mock、ALSA mock、output backend。
 
 ## Windows MinGW
@@ -110,7 +111,7 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 
 ## 当前非闭环范围
 
-- ASIO 兼容层不携带 SDK，只在 Windows x64 构建中编译并默认启用；设置 `TWILIGHT_DISABLE_ASIO=1` 可停止枚举和激活驱动。
+- ASIO 兼容层不携带 SDK，Windows x64 引擎通过 x64/x86 helper 加载相应位数的驱动；发布包需同时携带两个 helper。设置 `TWILIGHT_DISABLE_ASIO=1` 可停止枚举和激活驱动。BRAVO-HD 3.14 / DETHONRAY Clarinet 的 PCM 与 Native DSD 兼容性仍待实机验收。
 - 真实设备 smoke 是 opt-in；没有目标平台工具链或对应设备时跳过，不阻塞默认 CI。
 - Crossfade 已进入 native float 渲染路径，能对预加载下一首做 overlap mixing，并在启用时稳定报告 `outputPerfect=false` / `perfectReasonCode=crossfade_active`。
 - DSF/DFF DSD64/128/256/512 可进入 DoP carrier path（遵循 dCS DoP open standard v1.1，carrier 上限 DSD512，运行时由设备 carrier-rate 能力门控：ASIO `dopCarrierSampleRates` 或 WASAPI/CoreAudio Exclusive `IsFormatSupported` 探测），并在 UI 中展示 DSD 源到 `DoP carrier` 再到后端实际输出；DoP 是用 PCM carrier 承载 DSD bitstream，不等同于把 DSD 转成 PCM。

@@ -33,14 +33,15 @@ std::wstring readString(HKEY key, const wchar_t* name) {
   return value;
 }
 
-bool hasInProcessServer(const std::wstring& clsid) {
+bool hasInProcessServer(const std::wstring& clsid, REGSAM registryView) {
   HKEY key = nullptr;
   const std::wstring path = L"CLSID\\" + clsid + L"\\InprocServer32";
   const LSTATUS status = RegOpenKeyExW(
-      HKEY_CLASSES_ROOT, path.c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &key);
+      HKEY_CLASSES_ROOT, path.c_str(), 0, KEY_READ | registryView, &key);
   if (status != ERROR_SUCCESS) return false;
+  const bool hasPath = !readString(key, nullptr).empty();
   RegCloseKey(key);
-  return true;
+  return hasPath;
 }
 
 int countRegisteredDrivers(REGSAM registryView) {
@@ -73,11 +74,12 @@ int countRegisteredDrivers(REGSAM registryView) {
 
 }  // namespace
 
-std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
+std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate(AsioArchitecture architecture) {
+  const REGSAM registryView = architecture == AsioArchitecture::X86 ? KEY_WOW64_32KEY : KEY_WOW64_64KEY;
   std::vector<AsioDriverEntry> entries;
   HKEY catalog = nullptr;
   if (RegOpenKeyExW(
-          HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, KEY_READ | KEY_WOW64_64KEY, &catalog) != ERROR_SUCCESS) {
+          HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, KEY_READ | registryView, &catalog) != ERROR_SUCCESS) {
     return entries;
   }
 
@@ -89,13 +91,13 @@ std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
     if (enumStatus != ERROR_SUCCESS) continue;
 
     HKEY driverKey = nullptr;
-    if (RegOpenKeyExW(catalog, keyName, 0, KEY_READ | KEY_WOW64_64KEY, &driverKey) != ERROR_SUCCESS) continue;
+    if (RegOpenKeyExW(catalog, keyName, 0, KEY_READ | registryView, &driverKey) != ERROR_SUCCESS) continue;
     const std::wstring clsidText = readString(driverKey, L"CLSID");
     const std::wstring description = readString(driverKey, L"Description");
     RegCloseKey(driverKey);
 
     CLSID clsid{};
-    if (clsidText.empty() || FAILED(CLSIDFromString(clsidText.c_str(), &clsid)) || !hasInProcessServer(clsidText)) {
+    if (clsidText.empty() || FAILED(CLSIDFromString(clsidText.c_str(), &clsid)) || !hasInProcessServer(clsidText, registryView)) {
       continue;
     }
     wchar_t canonical[64] = {};
@@ -103,7 +105,8 @@ std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
 
     AsioDriverEntry entry;
     entry.clsid = utf8(canonical);
-    entry.id = "asio:" + entry.clsid;
+    entry.architecture = architecture;
+    entry.id = asioDeviceId(entry.clsid, architecture);
     entry.displayName = utf8(description.empty() ? std::wstring(keyName, keyNameSize) : description);
     entries.push_back(std::move(entry));
   }
@@ -112,6 +115,16 @@ std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
   std::sort(entries.begin(), entries.end(), [](const AsioDriverEntry& left, const AsioDriverEntry& right) {
     return left.id < right.id;
   });
+  entries.erase(std::unique(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+    return left.id == right.id;
+  }), entries.end());
+  return entries;
+}
+
+std::vector<AsioDriverEntry> AsioDriverCatalog::enumerateAll() {
+  auto entries = enumerate(AsioArchitecture::X64);
+  auto x86 = enumerate(AsioArchitecture::X86);
+  entries.insert(entries.end(), x86.begin(), x86.end());
   return entries;
 }
 
@@ -119,27 +132,40 @@ AsioDriverCatalogDiagnostics AsioDriverCatalog::diagnostics() {
   AsioDriverCatalogDiagnostics result;
   result.registeredDriverCount32 = countRegisteredDrivers(KEY_WOW64_32KEY);
   result.registeredDriverCount64 = countRegisteredDrivers(KEY_WOW64_64KEY);
-  result.loadableDriverCount64 = static_cast<int>(enumerate().size());
+  result.loadableDriverCount64 = static_cast<int>(enumerate(AsioArchitecture::X64).size());
+  result.loadableDriverCount32 = static_cast<int>(enumerate(AsioArchitecture::X86).size());
   return result;
 }
 
 std::optional<AsioDriverEntry> AsioDriverCatalog::resolve(const std::string& id) {
-  const auto entries = enumerate();
-  if (id.empty() || id == "auto") return entries.empty() ? std::nullopt : std::optional(entries.front());
+  return resolveEntries(enumerate(), id);
+}
+
+std::optional<AsioDriverEntry> AsioDriverCatalog::resolveEntries(
+    const std::vector<AsioDriverEntry>& entries, const std::string& id) {
+  if (id.empty() || id == "auto") {
+    const auto x64 = std::find_if(entries.begin(), entries.end(), [](const auto& entry) {
+      return entry.architecture == AsioArchitecture::X64;
+    });
+    return x64 != entries.end() ? std::optional(*x64) : entries.empty() ? std::nullopt : std::optional(entries.front());
+  }
 
   const auto exact = std::find_if(entries.begin(), entries.end(), [&](const AsioDriverEntry& entry) {
     return entry.id == id;
   });
   if (exact != entries.end()) return *exact;
-  if (!id.starts_with("asio:")) return std::nullopt;
-
-  std::optional<AsioDriverEntry> legacy;
-  for (const auto& entry : entries) {
-    if (entry.displayName != id.substr(5)) continue;
-    if (legacy) return std::nullopt;
-    legacy = entry;
+  if (id.starts_with("asio:x86:") || id.starts_with("asio:{")) return std::nullopt;
+  const auto name = id.starts_with("asio:") ? id.substr(5) : id;
+  for (const auto architecture : {AsioArchitecture::X64, AsioArchitecture::X86}) {
+    std::optional<AsioDriverEntry> legacy;
+    for (const auto& entry : entries) {
+      if (entry.architecture != architecture || entry.displayName != name) continue;
+      if (legacy) return std::nullopt;
+      legacy = entry;
+    }
+    if (legacy) return legacy;
   }
-  return legacy;
+  return std::nullopt;
 }
 
 }  // namespace twilight::audio::asio_windows

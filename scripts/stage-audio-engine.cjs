@@ -24,6 +24,7 @@ function optionValue(flag) {
 const buildDirOption = optionValue('--build-dir')
 const runtimeDirOption = optionValue('--runtime-dir')
 const outputDirOption = optionValue('--output-dir')
+const asioX86BuildDirOption = optionValue('--asio-x86-build-dir')
 const outputDir = outputDirOption.provided
   ? outputDirOption.value
   : join(root, 'resources', 'audio-engine')
@@ -31,10 +32,11 @@ const selectedBuildDir = buildDirOption.value
 if (
   (buildDirOption.provided && !selectedBuildDir) ||
   (runtimeDirOption.provided && !runtimeDirOption.value) ||
-  (outputDirOption.provided && !outputDirOption.value)
+  (outputDirOption.provided && !outputDirOption.value) ||
+  (asioX86BuildDirOption.provided && !asioX86BuildDirOption.value)
 ) {
   console.error(
-    'Usage: node scripts/stage-audio-engine.cjs [--build-dir <path>] [--runtime-dir <toolchain bin>] [--output-dir <path>]'
+    'Usage: node scripts/stage-audio-engine.cjs [--build-dir <path>] [--runtime-dir <toolchain bin>] [--output-dir <path>] [--asio-x86-build-dir <path>]'
   )
   process.exit(1)
 }
@@ -109,6 +111,10 @@ for (const file of runtimeFiles) {
   stageFile(join(buildDir, file), file)
 }
 
+if (process.platform === 'win32' && asioX86BuildDirOption.provided) {
+  stageFile(join(asioX86BuildDirOption.value, 'twilight-asio-helper-x86.exe'), 'twilight-asio-helper-x86.exe')
+}
+
 if (process.platform === 'darwin') {
   const bundled = bundleMacOSRuntimeDependencies(
     runtimeFiles.map((file) => join(outputDir, file)),
@@ -177,7 +183,12 @@ function stageWindowsRuntimeDependencies() {
   }
 }
 
-if (process.platform === 'win32') stageWindowsRuntimeDependencies()
+if (process.platform === 'win32') {
+  stageWindowsRuntimeDependencies()
+  if (existsSync(join(outputDir, 'twilight-asio-helper-x86.exe'))) {
+    require('./verify-asio-helper-artifacts.cjs').verifyAsioHelperPair(outputDir)
+  }
+}
 
 const capabilityManifestPath = join(outputDir, 'audio-capabilities.json')
 const binaryCapabilityManifest = createAudioCapabilityManifest({ artifactDir: outputDir })

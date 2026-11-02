@@ -148,6 +148,19 @@ jobs:
       - name: Test audio engine
         run: ctest --test-dir audio-engine/build/default --output-on-failure --timeout 180 -C Release
 
+      - name: Setup Node.js for cross-bitness ASIO checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate x86 ASIO bridge
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $env:TAE_ASIO_MSVC_INSTALL_ROOT = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          node scripts/run-asio-x86-bridge.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'ASIO cross-bitness validation failed' }
+
   required:
     name: Required Quality Gate
     if: always()

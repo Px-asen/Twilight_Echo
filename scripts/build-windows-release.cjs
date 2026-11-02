@@ -9,6 +9,8 @@ const { verifyWindowsAppBranding } = require('./verify-windows-app-branding.cjs'
 const { preparePackagedAudioStaging } = require('./packaged-audio-staging.cjs')
 const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
+const { buildAsioHelper } = require('./build-asio-helper.cjs')
+const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
 const {
   verifyReleaseCapabilityConsistency
 } = require('./verify-release-capability-consistency.cjs')
@@ -54,11 +56,13 @@ async function main() {
   )
   const smtc = prepareSmtcMsvc({ root, environment: releaseEnvironment, stage: false })
   prepareVst3Msvc({ root, environment: releaseEnvironment })
+  const asio = buildAsioHelper({ root, environment: releaseEnvironment, tests: false })
   const staging = preparePackagedAudioStaging(root, {
-    nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath }
+    nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath, 'twilight-asio-helper-x86.exe': asio.artifactPath }
   })
   let build
   try {
+    verifyAsioHelperPair(staging.nativeDir)
     build = run(
       process.execPath,
       [electronBuilder, '--win', '--config', staging.configPath],

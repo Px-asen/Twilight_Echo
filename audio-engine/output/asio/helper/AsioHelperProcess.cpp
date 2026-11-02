@@ -77,10 +77,11 @@ std::wstring quoteWindowsArgument(const std::wstring& value) {
   return quoted;
 }
 
-std::wstring environmentHelperPath() {
+std::wstring environmentHelperPath(AsioArchitecture architecture) {
   std::vector<wchar_t> value(32768, L'\0');
   const DWORD length = GetEnvironmentVariableW(
-      L"TAE_ASIO_HELPER_PATH", value.data(), static_cast<DWORD>(value.size()));
+      architecture == AsioArchitecture::X86 ? L"TAE_ASIO_HELPER_X86_PATH" : L"TAE_ASIO_HELPER_PATH",
+      value.data(), static_cast<DWORD>(value.size()));
   if (length == 0 || length >= value.size()) return {};
   return std::wstring(value.data(), length);
 }
@@ -88,12 +89,16 @@ std::wstring environmentHelperPath() {
 }  // namespace
 
 std::wstring locateAsioHelperExecutable(std::string* error) {
-  const std::wstring overridePath = environmentHelperPath();
+  return locateAsioHelperExecutable(AsioArchitecture::X64, error);
+}
+
+std::wstring locateAsioHelperExecutable(AsioArchitecture architecture, std::string* error) {
+  const std::wstring overridePath = environmentHelperPath(architecture);
   if (!overridePath.empty()) return overridePath;
   HMODULE module = nullptr;
   if (!GetModuleHandleExW(
           GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-          reinterpret_cast<LPCWSTR>(locateAsioHelperExecutable),
+          reinterpret_cast<LPCWSTR>(environmentHelperPath),
           &module)) {
     if (error) *error = "Unable to locate the audio engine module: " + windowsError(GetLastError());
     return {};
@@ -110,11 +115,13 @@ std::wstring locateAsioHelperExecutable(std::string* error) {
     if (error) *error = "Unable to locate the ASIO helper directory";
     return {};
   }
-  return modulePath.substr(0, separator + 1) + L"twilight-asio-helper.exe";
+  return modulePath.substr(0, separator + 1) + (architecture == AsioArchitecture::X86
+      ? L"twilight-asio-helper-x86.exe" : L"twilight-asio-helper.exe");
 }
 
-AsioHelperProcess::AsioHelperProcess(std::wstring executablePath)
-    : executablePath_(std::move(executablePath)) {}
+AsioHelperProcess::AsioHelperProcess(std::wstring executablePath,
+    std::optional<AsioArchitecture> expectedArchitecture)
+    : executablePath_(std::move(executablePath)), expectedArchitecture_(expectedArchitecture) {}
 
 AsioHelperProcess::~AsioHelperProcess() {
   shutdown();
@@ -131,7 +138,7 @@ bool AsioHelperProcess::launch(std::string* error) {
     lastFailure_.clear();
   }
   if (executablePath_.empty() || GetFileAttributesW(executablePath_.c_str()) == INVALID_FILE_ATTRIBUTES) {
-    const std::string detail = "The isolated ASIO helper is missing beside the audio engine";
+    const std::string detail = "The isolated ASIO helper is missing: " + wideToUtf8(executablePath_);
     publishFailure(FailureReason::LaunchFailed, detail);
     if (error) *error = failureMessage(FailureReason::LaunchFailed, detail);
     return false;
@@ -263,16 +270,32 @@ bool AsioHelperProcess::launch(std::string* error) {
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline) {
-    const HelperState state = static_cast<HelperState>(readAtomic(&shared_->helperState));
+    auto state = static_cast<HelperState>(readAtomic(&shared_->helperState));
     if (state == HelperState::Ready) {
+      if (shared_->version != kProtocolVersion || shared_->structureBytes != sizeof(SharedMemory) ||
+          (expectedArchitecture_ && shared_->helperArchitecture != static_cast<uint32_t>(*expectedArchitecture_))) {
+        publishFailure(FailureReason::ProtocolError, "ASIO helper protocol or architecture mismatch");
+        TerminateProcess(process_, 0xC000013A);
+        WaitForSingleObject(process_, 500);
+        if (error) *error = lastFailure();
+        return false;
+      }
       nextRequestSequence_ = 1;
       return true;
     }
     if (state == HelperState::Failed || WaitForSingleObject(process_, 0) == WAIT_OBJECT_0) {
+      // The child can publish a startup failure between the initial state read
+      // and its exit. Re-read after observing exit to retain the protocol error.
+      state = static_cast<HelperState>(readAtomic(&shared_->helperState));
       const FailureReason reason = state == HelperState::Failed
           ? static_cast<FailureReason>(readAtomic(&shared_->failureReason))
           : FailureReason::ProcessExited;
-      const std::string detail = readText(shared_->statusMessage);
+      std::string detail = readText(shared_->statusMessage);
+      if (reason == FailureReason::ProcessExited && detail.empty()) {
+        DWORD exitCode = 0;
+        GetExitCodeProcess(process_, &exitCode);
+        detail = "ASIO helper exited during handshake (Windows exit code " + std::to_string(exitCode) + ")";
+      }
       publishFailure(reason == FailureReason::None ? FailureReason::ProtocolError : reason, detail);
       if (alive()) {
         TerminateProcess(process_, 0xC000013A);

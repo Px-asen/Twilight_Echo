@@ -2,7 +2,7 @@
 
 Status: lightweight personal open-source provenance record
 
-The compatibility implementation is limited to Windows x64 system APIs and the internal ABI
+The compatibility implementation is limited to Windows system APIs and the internal x64/x86 ABI
 contract under `audio-engine/output/asio/abi`. No SDK header, source file, binary, archive, or
 vendor-private header may be added to the repository or used as implementation input.
 
@@ -11,6 +11,11 @@ negotiation as original field and lifecycle descriptions in
 `docs/legal/asio-interoperability-spec.md`. The repository retains only its independently named
 contract, golden layout manifest, fake-driver behavior, and test results; it does not retain a
 third-party interface file or copied implementation.
+
+2026-11-02: added the MSVC Win32 helper contract. The retained material consists of original
+field/calling-convention descriptions in the interoperability specification, a separate x86 layout
+manifest, and an independently declared test-side DLL interface. The host ABI header is excluded
+from the x86 fake driver. No vendor SDK was added as source, a build dependency or a distributed file.
 
 `pnpm run verify:asio-sdk-free` scans the current source tree and Git path history for prohibited
 SDK directories, headers, and source files. It is a mechanical safeguard; retain its result with

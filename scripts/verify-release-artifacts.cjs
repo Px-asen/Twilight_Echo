@@ -9,6 +9,7 @@ const DEFAULT_BUDGETS = Object.freeze({
   'twilight_audio_node.node': 16 * MIB,
   'twilight_smtc_node.node': 16 * MIB,
   'twilight-asio-helper.exe': 32 * MIB,
+  'twilight-asio-helper-x86.exe': 32 * MIB,
   'twilight-vst3-host.exe': 32 * MIB,
   'twilight-vst3-scanner.exe': 32 * MIB,
   installer: 384 * MIB
@@ -27,7 +28,8 @@ const REQUIRED_RELEASE_NATIVE_BINARIES = Object.freeze([
   ...REQUIRED_NATIVE_BINARIES,
   'twilight-vst3-host.exe',
   'twilight-vst3-scanner.exe',
-  'twilight_smtc_node.node'
+  'twilight_smtc_node.node',
+  'twilight-asio-helper-x86.exe'
 ])
 const PE_MACHINE_AMD64 = 0x8664
 
@@ -215,7 +217,12 @@ function findInstaller(options) {
 function verifyReleaseArtifacts(options) {
   const nativeBinaries = listReleaseNativeBinaries(options.nativeDir)
   const shippedBinaries = listShippedBinaries(options.nativeDir)
-  for (const filePath of shippedBinaries) assertX64Pe(filePath)
+  for (const filePath of shippedBinaries) {
+    if (path.basename(filePath) === 'twilight-asio-helper-x86.exe') {
+      assert.equal(readPeHeader(filePath).machine, 0x14c, 'The ASIO x86 helper must be a Windows x86 PE')
+    } else assertX64Pe(filePath)
+  }
+  require('./verify-asio-helper-artifacts.cjs').verifyAsioHelperPair(options.nativeDir)
   const runtimeDependencies = listRuntimeDependencies(options.nativeDir, nativeBinaries)
   const installer = findInstaller(options)
   const sizes = {}

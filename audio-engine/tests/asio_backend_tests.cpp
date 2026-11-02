@@ -91,6 +91,21 @@ void testAsioQuirkRegistryAppliesExactMechanisms() {
   assert(application.dsdControlOrder == AsioNativeDsdControlOrder::RateOnly);
   assert(application.applied.size() == 2);
 
+  auto x86Device = device;
+  x86Device.id = "asio:x86:{12345678-1234-1234-1234-1234567890AB}";
+  x86Device.driverArchitecture = "x86";
+  const auto x86Fingerprint = AsioQuirkRegistry::capabilityFingerprint(x86Device);
+  assert(x86Fingerprint == fingerprint + ";architecture=x86");
+  assert(registry.apply(x86Device).registryState == "no-match");
+  auto x86Json = json;
+  for (size_t at = 0; (at = x86Json.find(fingerprint, at)) != std::string::npos;) {
+    x86Json.replace(at, fingerprint.size(), x86Fingerprint);
+    at += x86Fingerprint.size();
+  }
+  const auto x86Registry = AsioQuirkRegistry::fromJson(x86Json);
+  assert(x86Registry.apply(x86Device).applied.size() == 2);
+  assert(x86Registry.apply(device).registryState == "no-match");
+
   auto host = std::make_unique<MockAsioHost>();
   host->devices.push_back(device);
   auto* rawHost = host.get();
@@ -666,7 +681,7 @@ void testAsioEmptyCatalogReportsArchitectureMismatch() {
   AsioBackend backend(std::make_unique<DiagnosticHost>());
   std::string error;
   assert(!backend.open("auto", sourceFormat(48000, 32), &error));
-  assert(error.find("32 位 ASIO 驱动") != std::string::npos);
+  assert(error.find("32 位 ASIO 注册项") != std::string::npos);
   const OutputInfo info = backend.outputInfo();
   assert(info.diagnostics.processArchitecture == "x64");
   assert(info.diagnostics.asioBuildEnabled);

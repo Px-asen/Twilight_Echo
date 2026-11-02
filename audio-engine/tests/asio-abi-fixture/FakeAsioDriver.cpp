@@ -1,4 +1,8 @@
+#if defined(_WIN64)
 #include "output/asio/abi/AsioAbi.h"
+#else
+#include "X86DriverContract.h"
+#endif
 
 #include <Windows.h>
 
@@ -89,6 +93,12 @@ class FakeAsioDriver final : public AsioDriver {
     }
     if (callbacks_.bufferSwitchTimeInfo) {
       AsioTime time{};
+#if !defined(_WIN64)
+      time.timeInfo.systemTime = 0x123456789abcdef0ULL;
+      time.timeInfo.samplePosition = 0x23456789abcdef01ULL;
+      time.timeInfo.sampleRate = sampleRate_;
+      time.timeInfo.flags = 0x1234;
+#endif
       callbacks_.bufferSwitchTimeInfo(&time, 1, kAsioTrue);
     }
     return kAsioOk;
@@ -164,8 +174,8 @@ class FakeAsioDriver final : public AsioDriver {
 
   AsioError getSamplePosition(AsioSamples* samplePosition, AsioTimeStamp* systemTime) override {
     if (!samplePosition || !systemTime) return -1;
-    *samplePosition = 128;
-    *systemTime = 256;
+    *samplePosition = 0x1234567800000080ULL;
+    *systemTime = 0x2345678900000100ULL;
     return kAsioOk;
   }
 

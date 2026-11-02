@@ -51,6 +51,7 @@ struct AsioDeviceInfo {
   std::string id;
   std::string name;
   std::string driverName;
+  std::string driverArchitecture;
   long driverVersion = 0;
   int outputChannels = 0;
   std::vector<int> supportedSampleRates;
@@ -124,11 +125,13 @@ struct AsioOpenResult {
 
 struct AsioHostDiagnostics {
   std::string processArchitecture;
+  std::string helperArchitecture;
   bool buildEnabled = false;
   bool environmentDisabled = false;
   int registeredDriverCount32 = 0;
   int registeredDriverCount64 = 0;
   int loadableDriverCount64 = 0;
+  int loadableDriverCount32 = 0;
 };
 
 struct AsioRenderHealth {

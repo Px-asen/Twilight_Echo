@@ -20,7 +20,7 @@ std::string normalizedClsid(std::string value) {
 }
 
 std::optional<std::string> clsidFromDeviceId(const std::string& deviceId) {
-  constexpr std::string_view kPrefix = "asio:";
+  const std::string_view kPrefix = deviceId.starts_with("asio:x86:") ? "asio:x86:" : "asio:";
   if (!deviceId.starts_with(kPrefix)) return std::nullopt;
   const std::string candidate = deviceId.substr(kPrefix.size());
   static const std::regex kClsid(R"(^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$)");
@@ -227,6 +227,7 @@ std::string AsioQuirkRegistry::capabilityFingerprint(const AsioDeviceInfo& devic
   appendSorted(&fingerprint, device.nativeDsdSampleRates);
   fingerprint << ";buffer=" << device.minBufferSize << ',' << device.maxBufferSize << ','
               << device.preferredBufferSize << ',' << device.bufferGranularity;
+  if (device.id.starts_with("asio:x86:")) fingerprint << ";architecture=x86";
   return fingerprint.str();
 }
 

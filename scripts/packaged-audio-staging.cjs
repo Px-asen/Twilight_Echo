@@ -103,6 +103,7 @@ function preparePackagedAudioStaging(
   writeFileSync(configPath, stagedConfig)
   return {
     configPath,
+    nativeDir,
     dispose: () => {
       try {
         rmSync(temporaryDir, { recursive: true, force: true, maxRetries: 60, retryDelay: 500 })
