@@ -1,5 +1,6 @@
 #include "OboeOutputBackend.h"
 #include "AndroidPcmCallback.h"
+#include "AndroidChannelLayout.h"
 
 #include <algorithm>
 #include <atomic>
@@ -100,8 +101,7 @@ struct OboeOutputBackend::Impl {
   int usbDeviceId = 0;
   int requestedAAudioFormat = 2; // AAUDIO_FORMAT_PCM_FLOAT
   void releaseUsbLease() {
-    if (usbLease && usbPolicy) usbPolicy->release();
-    usbLease = false;
+    if (usbLease && usbPolicy) usbLease = !usbPolicy->release();
   }
   OutputEventCallback eventCallback;
   OutputConfig outputConfig;
@@ -199,6 +199,7 @@ struct OboeOutputBackend::Impl {
       int32_t deviceId,
       int32_t sampleRate,
       int32_t channelCount,
+      uint32_t channelMask,
       int32_t preferredBufferFrames,
       aaudio_sharing_mode_t sharingMode,
       AAudioStream** outStream,
@@ -227,6 +228,11 @@ struct OboeOutputBackend::Impl {
     }
     AAudioStreamBuilder_setSampleRate(builder, sampleRate);
     AAudioStreamBuilder_setChannelCount(builder, channelCount);
+    // API 32; keep the count-only path available on API 26–31.
+    using SetChannelMask = void (*)(AAudioStreamBuilder*, uint32_t);
+    static auto setChannelMask = reinterpret_cast<SetChannelMask>(
+        dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setChannelMask"));
+    if (setChannelMask && channelMask != 0) setChannelMask(builder, channelMask);
     if (deviceId != AAUDIO_UNSPECIFIED) {
       AAudioStreamBuilder_setDeviceId(builder, deviceId);
     }
@@ -356,7 +362,13 @@ bool OboeOutputBackend::open(
 
 #if defined(__ANDROID__)
   int32_t androidDeviceId = parseAndroidDeviceId(impl_->currentDeviceId);
+  const uint32_t requestedChannelMask = requestedChannels == requestedFormat.channelCount
+      ? androidOutputChannelMask(requestedFormat) : 0;
   impl_->rawPcm = impl_->outputConfig.usbPcmPassthrough;
+  if (!impl_->rawPcm && impl_->usbPolicy && !impl_->usbPolicy->release()) {
+    if (error) *error = "USB 混音偏好尚未释放；请停止其他播放会话或检查系统权限后重试";
+    return false;
+  }
   if (impl_->rawPcm) {
     if (!impl_->usbPolicy || requestedChannels != requestedFormat.channelCount ||
         requestedChannels > 2 || requestedFormat.dopEncoded) {
@@ -391,6 +403,7 @@ bool OboeOutputBackend::open(
             androidDeviceId,
             requestedFormat.sampleRate,
             requestedChannels,
+            requestedChannelMask,
             preferredBufferFrames,
             AAUDIO_SHARING_MODE_EXCLUSIVE,
             &stream,
@@ -401,6 +414,7 @@ bool OboeOutputBackend::open(
               androidDeviceId,
               requestedFormat.sampleRate,
               requestedChannels,
+              requestedChannelMask,
               preferredBufferFrames,
               AAUDIO_SHARING_MODE_SHARED,
               &stream,
@@ -414,6 +428,7 @@ bool OboeOutputBackend::open(
             androidDeviceId,
             requestedFormat.sampleRate,
             requestedChannels,
+            requestedChannelMask,
             preferredBufferFrames,
             AAUDIO_SHARING_MODE_SHARED,
             &stream,
@@ -452,6 +467,11 @@ bool OboeOutputBackend::open(
 
   impl_->format.sampleRate = actualSampleRate > 0 ? actualSampleRate : requestedFormat.sampleRate;
   impl_->format.channelCount = actualChannels > 0 ? actualChannels : requestedChannels;
+  using GetChannelMask = uint32_t (*)(AAudioStream*);
+  static auto getChannelMask = reinterpret_cast<GetChannelMask>(
+      dlsym(RTLD_DEFAULT, "AAudioStream_getChannelMask"));
+  impl_->format.channelMask = getChannelMask
+      ? nativeOutputChannelMask(getChannelMask(stream), impl_->format.channelCount) : 0;
   if (actualAAudioFormat == AAUDIO_FORMAT_PCM_I16) {
     impl_->format.sampleFormat = AudioSampleFormat::Int16Interleaved;
     impl_->format.bitDepth = 16;
@@ -486,7 +506,7 @@ bool OboeOutputBackend::open(
   const double burstMs = framesToLatencyMs(impl_->framesPerBurst, impl_->format.sampleRate);
 
   const bool sampleRateConverted = requestedFormat.sampleRate != impl_->format.sampleRate;
-  const bool channelLayoutConverted = requestedFormat.channelCount != impl_->format.channelCount;
+  const bool channelLayoutConverted = !pcmChannelLayoutsCompatible(requestedFormat, impl_->format);
   const bool sampleFormatConverted =
       effectivePcmBitDepth(requestedFormat) != impl_->format.bitDepth ||
       requestedFormat.sampleFormat != impl_->format.sampleFormat;
@@ -571,6 +591,7 @@ bool OboeOutputBackend::open(
   }
   impl_->format.sampleRate = requestedFormat.sampleRate;
   impl_->format.channelCount = requestedChannels;
+  impl_->format.channelMask = requestedChannels == requestedFormat.channelCount ? requestedFormat.channelMask : 0;
   impl_->format.sampleFormat = AudioSampleFormat::Float32Interleaved;
   impl_->format.bitDepth = 32;
   impl_->format.dopEncoded = false;
@@ -650,8 +671,7 @@ bool OboeOutputBackend::startTyped(TypedRenderCallback callback, RenderCallback 
     close();
     return false;
   }
-  impl_->typedCallback = std::move(callback);
-  return start(std::move(fallback), std::move(event), error);
+  return startInternal(std::move(callback), std::move(fallback), std::move(event), error);
 }
 
 void OboeOutputBackend::setExclusiveMode(bool exclusive) {
@@ -666,10 +686,15 @@ bool OboeOutputBackend::start(
     RenderCallback callback,
     OutputEventCallback eventCallback,
     std::string* error) {
-  if (impl_->rawPcm && !impl_->typedCallback) {
+  if (impl_->rawPcm) {
     if (error) *error = "USB 原样 PCM 不能使用浮点回退回调";
     return false;
   }
+  return startInternal({}, std::move(callback), std::move(eventCallback), error);
+}
+
+bool OboeOutputBackend::startInternal(TypedRenderCallback typed, RenderCallback callback,
+    OutputEventCallback eventCallback, std::string* error) {
   if (!impl_->opened.load(std::memory_order_acquire)) {
     if (error) *error = "Oboe output backend is not open";
     return false;
@@ -680,6 +705,7 @@ bool OboeOutputBackend::start(
   }
   {
     std::lock_guard lock(impl_->mutex);
+    impl_->typedCallback = std::move(typed);
     impl_->callback = std::move(callback);
     impl_->eventCallback = std::move(eventCallback);
   }

@@ -15,8 +15,8 @@ class FFmpegDecoder {
     Native,
     High,
     Ultra,
-    // SoX engine tiers (libswresample "resampler=soxr", precision 20 / 28).
-    // When the linked FFmpeg lacks libsoxr they fall back to Ultra swr settings.
+    // Direct SoX engine tiers (precision 20 / 28), with explicit phase control.
+    // Builds without direct SoX retain the FFmpeg probe / Ultra SWR fallback.
     SoxrHq,
     SoxrVhq
   };
@@ -45,8 +45,7 @@ class FFmpegDecoder {
   ResamplerEngine resamplerEngine() const;
   ResamplerQuality effectiveResamplerQuality() const;
   ResamplerPhase effectiveResamplerPhase() const;
-  // Saved request, retained for compatibility. Minimum variants are legacy
-  // aliases until a backend with actual minimum-phase control is integrated.
+  // Saved request, independent of the last successfully configured observation.
   ResamplerPhase resamplerPhase() const;
   size_t readFrames(float* output, size_t frameCount, std::string* error);
   size_t readFrames(PcmBlock& output, std::string* error);

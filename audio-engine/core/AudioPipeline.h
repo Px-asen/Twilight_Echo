@@ -124,7 +124,9 @@ class AudioPipeline {
   AudioPipeline& operator=(const AudioPipeline&) = delete;
 
   void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) { usbPcmPolicy_ = std::move(policy); }
+  void setUsbDirectHost(std::shared_ptr<UsbDirectHost> host) { usbDirectHost_ = std::move(host); }
   void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) { std::atomic_store(&inputFactory_, std::move(factory)); }
+  std::shared_ptr<const SeekableInputFactory> inputFactory() const { return std::atomic_load(&inputFactory_); }
 
   TAE_Result play(
       const QueueItem& item,
@@ -145,6 +147,7 @@ class AudioPipeline {
       const std::string& dspConfigJson,
       std::string* error);
   TAE_Result togglePause();
+  TAE_Result pullBridgePcm(float* data, size_t frames, TAE_BridgePcmInfo* info);
   TAE_Result stop();
   /** stop() body without the transport lock; callers must hold transportMutex_. */
   TAE_Result stopUnlocked();
@@ -201,7 +204,8 @@ class AudioPipeline {
       size_t waveformPoints,
       size_t spectrogramFrames,
       size_t oscilloscopePoints = 1024,
-      size_t visualizerBarCount = 0) const;
+      size_t visualizerBarCount = 0,
+      bool visualizerBandPeaks = false) const;
   bool isDopPathActive() const;
   bool isNativeDsdPathActive() const;
   bool needsPcmFallback(std::string* reason) const;
@@ -313,6 +317,8 @@ class AudioPipeline {
   static constexpr size_t kRetiredStreamSlots = 16;
 
   std::shared_ptr<UsbPcmPolicy> usbPcmPolicy_;
+  uint64_t bridgeGeneration_ = 0; // protected by transportMutex_
+  std::shared_ptr<UsbDirectHost> usbDirectHost_;
   std::shared_ptr<const SeekableInputFactory> inputFactory_;
   static std::shared_ptr<DecodeStream> makeDecodeStream(std::shared_ptr<const SeekableInputFactory> factory);
   static DecodeStreamReaper& decodeStreamReaper();
@@ -531,6 +537,7 @@ class AudioPipeline {
   std::atomic<bool> renderNativeDsdPathActive_{false};
   std::atomic<bool> renderPcmToDsdPathActive_{false};
   std::atomic<bool> renderTypedPassthroughActive_{false};
+  std::atomic<bool> renderUsbPcmPassthroughActive_{false};
   std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
   std::atomic<bool> renderPromotionPending_{false};
   std::atomic<bool> renderCrossfadeResetRequested_{false};

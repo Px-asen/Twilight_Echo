@@ -427,10 +427,13 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"bitrate\":" << info.bitrate << ","
        << "\"sourceSampleRate\":" << info.sourceSampleRate << ","
        << "\"sourceChannels\":" << info.sourceChannels << ","
+       << "\"sourceChannelMask\":\"" << channelMaskToString(info.sourceChannelMask) << "\","
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
        << "\"decodedSampleRate\":" << info.decodedSampleRate << ","
        << "\"decodedBitDepth\":" << info.decodedBitDepth << ","
        << "\"decodedChannels\":" << info.decodedChannels << ","
+       << "\"decodedChannelMask\":\"" << channelMaskToString(info.decodedChannelMask) << "\","
+       << "\"outputChannelMask\":\"" << channelMaskToString(info.outputChannelMask) << "\","
        << "\"decodedSampleFormat\":\"" << json_utils::escape(info.decodedSampleFormat) << "\","
        << "\"outputBackend\":\"" << json_utils::escape(info.outputBackend) << "\","
        << "\"outputDevice\":\"" << json_utils::escape(info.outputDevice) << "\","
@@ -711,6 +714,8 @@ OutputConfig parseOutputConfigJson(const std::string& json) {
   };
   config.allowedSampleRates = parseRates("allowedSampleRates");
   config.deviceSampleRates = parseRates("deviceSampleRates");
+  if (json_utils::topLevelFieldValueStart(json, "usbPcmPassthrough") &&
+      !json_utils::fieldBool(json, "usbPcmPassthrough").has_value()) config.allowedSampleRates = {-1};
   if (json_utils::topLevelFieldValueStart(json, "sampleRateFamilySync") &&
       !json_utils::fieldBool(json, "sampleRateFamilySync").has_value()) config.allowedSampleRates = {-1};
   std::sort(config.allowedSampleRates.begin(), config.allowedSampleRates.end());
@@ -743,6 +748,7 @@ struct VisualizationQuery {
   size_t spectrogramFrames = 48;
   size_t oscilloscopePoints = 1024;
   size_t visualizerBarCount = 0;
+  bool visualizerBandPeaks = false;
 };
 
 VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
@@ -752,6 +758,7 @@ VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
   query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 0, 96);
   query.oscilloscopePoints = std::clamp<uint32_t>(parseUintField(json, "oscilloscopePoints", 1024), 0, 4096);
   query.visualizerBarCount = std::clamp<uint32_t>(parseUintField(json, "visualizerBarCount", 0), 0, 256);
+  query.visualizerBandPeaks = parseStringField(json, "visualizerBarMode", "interpolated") == "peak";
   return query;
 }
 
@@ -768,7 +775,8 @@ std::string inactiveVisualizationJson(const VisualizationQuery& query, int sampl
   json << "{\"spectrum\":";
   writeZeros(json, query.visualizerBarCount > 0 ? 0 : query.spectrumPoints);
   if (query.visualizerBarCount > 0) {
-    json << ",\"visualizerBars\":";
+    json << ",\"visualizerBarMode\":\"" << (query.visualizerBandPeaks ? "peak" : "interpolated")
+         << "\",\"visualizerBars\":";
     writeZeros(json, query.visualizerBarCount);
   }
   json << ",\"waveform\":";
@@ -829,6 +837,10 @@ void TwilightAudioEngine::setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) 
   pipeline_->setUsbPcmPolicy(std::move(policy));
 }
 
+void TwilightAudioEngine::setUsbDirectHost(std::shared_ptr<UsbDirectHost> host) {
+  pipeline_->setUsbDirectHost(std::move(host));
+}
+
 void TwilightAudioEngine::suspendUsbPcm(const std::string& reason) {
   std::lock_guard transportLock(transportMutex_);
   {
@@ -841,11 +853,24 @@ void TwilightAudioEngine::suspendUsbPcm(const std::string& reason) {
   emitError(reason, TAE_RESULT_BACKEND_UNAVAILABLE, "usb-pcm");
 }
 
+void TwilightAudioEngine::suspendUsbDirect(const std::string& reason, bool reportError) {
+  std::lock_guard transportLock(transportMutex_);
+  {
+    std::lock_guard lock(mutex_);
+    if (info_.outputBackend != "usb-direct" || pausedOutputReleased_ || info_.state == PlaybackState::Stopped) return;
+    if (pipeline_) info_.positionSeconds = pipeline_->status().positionSeconds;
+    info_.state = PlaybackState::Paused;
+  }
+  releasePausedOutput();
+  if (reportError) emitError(reason, TAE_RESULT_BACKEND_UNAVAILABLE, "usb-direct");
+}
+
 void TwilightAudioEngine::setInputFactory(std::shared_ptr<const SeekableInputFactory> factory) {
   pipeline_->setInputFactory(std::move(factory));
 }
 
-TAE_Result TwilightAudioEngine::play(const std::string& source, double startTimeSeconds, bool initiallyPaused) {
+TAE_Result TwilightAudioEngine::play(const std::string& source, double startTimeSeconds, bool initiallyPaused,
+    const std::string& errorContext) {
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   if (source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
@@ -899,6 +924,12 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
     gaplessEnabled = gaplessEnabledFromConfig(dspConfig_);
   }
 
+  // Restoring a paused USB selection must not request permission or take the
+  // DAC from Android. Decode/open the saved source when the user presses Play.
+  if (initiallyPaused && backend == "usb-direct") {
+    releasePausedOutput();
+    return TAE_RESULT_OK;
+  }
   std::string error;
   const TAE_Result result =
       pipeline_ ? pipeline_->play(item, upcoming, startTimeSeconds, backend, device, volume, dspConfigJson, gaplessEnabled, &error, initiallyPaused)
@@ -906,10 +937,16 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   if (result != TAE_RESULT_OK) {
     {
       std::lock_guard lock(mutex_);
-      info_.state = PlaybackState::Stopped;
-      info_.positionSeconds = 0.0;
+      const bool retain = outputConfig_.usbPcmPassthrough || backend == "usb-direct";
+      info_.state = retain ? PlaybackState::Paused : PlaybackState::Stopped;
+      info_.positionSeconds = retain ? std::max(0.0, startTimeSeconds) : 0.0;
+      if (retain) {
+        pausedOutputReleased_ = true;
+        markOutputReleasedLocked();
+      }
     }
-    emitError(error.empty() ? "无法启动原生音频播放" : error, result, "play");
+    emitError(error.empty() ? "无法启动原生音频播放" : error, result,
+        backend == "usb-direct" ? "usb-direct" : outputConfig_.usbPcmPassthrough ? "usb-pcm" : errorContext);
     return result;
   }
 
@@ -920,6 +957,11 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   }
   applyPipelineStatusLocked(pipeline_->status());
   lastTick_ = std::chrono::steady_clock::now();
+  if (initiallyPaused && outputConfig_.usbPcmPassthrough) {
+    pausedOutputReleased_ = true;
+    pipeline_->stop();
+    markOutputReleasedLocked();
+  }
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -968,10 +1010,16 @@ TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double star
   if (result != TAE_RESULT_OK) {
     {
       std::lock_guard lock(mutex_);
-      info_.state = PlaybackState::Stopped;
-      info_.positionSeconds = 0.0;
+      const bool retain = outputConfig_.usbPcmPassthrough || backend == "usb-direct";
+      info_.state = retain ? PlaybackState::Paused : PlaybackState::Stopped;
+      info_.positionSeconds = retain ? std::max(0.0, startTimeSeconds) : 0.0;
+      if (retain) {
+        pausedOutputReleased_ = true;
+        markOutputReleasedLocked();
+      }
     }
-    emitError(error.empty() ? "无法启动原生音频播放" : error, result, "play");
+    emitError(error.empty() ? "无法启动原生音频播放" : error, result,
+        backend == "usb-direct" ? "usb-direct" : outputConfig_.usbPcmPassthrough ? "usb-pcm" : "play");
     return result;
   }
 
@@ -1023,12 +1071,13 @@ TAE_Result TwilightAudioEngine::pause() {
 
 bool TwilightAudioEngine::shouldReleaseOutputLocked() const {
   const auto& backend = info_.outputInfo.actualBackend;
-  return outputConfig_.usbPcmPassthrough || (outputConfig_.releaseExclusiveOnPause &&
+  return info_.outputBackend == "usb-direct" || outputConfig_.usbPcmPassthrough || (outputConfig_.releaseExclusiveOnPause &&
          (info_.outputInfo.exclusive || backend == "wasapi-exclusive" ||
           backend == "coreaudio-exclusive" || backend == "asio"));
 }
 
 void TwilightAudioEngine::markOutputReleasedLocked() {
+  info_.outputChannelMask = 0;
   info_.outputInfo.outputReleased = true;
   info_.outputInfo.usbPcmPreferenceAccepted = false;
   info_.outputInfo.usbPcmFormatMatched = false;
@@ -1082,6 +1131,7 @@ TAE_Result TwilightAudioEngine::stop() {
   std::lock_guard lock(mutex_);
   info_.state = PlaybackState::Stopped;
   info_.positionSeconds = 0.0;
+  info_.outputChannelMask = 0;
   if (outputConfig_.usbPcmPassthrough || outputConfig_.releaseExclusiveOnPause || pausedOutputReleased_) markOutputReleasedLocked();
   pausedOutputReleased_ = false;
   publishStateLocked();
@@ -1201,8 +1251,11 @@ TAE_Result TwilightAudioEngine::setLoopRange(double startSeconds, double endSeco
 
 TAE_Result TwilightAudioEngine::setOutputDevice(const std::string& deviceId) {
   std::lock_guard transportLock(transportMutex_);
-  std::lock_guard lock(mutex_);
   const std::string nextDevice = deviceId.empty() ? "auto" : deviceId;
+  if (outputConfig_.usbPcmPassthrough && nextDevice != info_.outputDevice)
+    suspendUsbPcm("输出设备改变，USB 原样 PCM 已暂停；请确认新设备后播放");
+  if (nextDevice != info_.outputDevice) suspendUsbDirect("USB 直连设备改变，已暂停", false);
+  std::lock_guard lock(mutex_);
   if (nextDevice != info_.outputDevice ||
       (nextDevice == "auto" && info_.state != PlaybackState::Stopped)) {
     outputRoutePending_ = true;
@@ -1237,6 +1290,9 @@ TAE_Result TwilightAudioEngine::setOutputBackend(const std::string& backendId) {
         "output-backend");
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
+  if (outputConfig_.usbPcmPassthrough && nextBackend != info_.outputBackend)
+    suspendUsbPcm("输出后端改变，USB 原样 PCM 已暂停");
+  if (nextBackend != info_.outputBackend) suspendUsbDirect("已离开 USB 直连输出", false);
   std::lock_guard lock(mutex_);
   if (pausedOutputReleased_) info_.outputInfo.backend = nextBackend;
   if (nextBackend != info_.outputBackend) outputRoutePending_ = true;
@@ -1279,9 +1335,23 @@ TAE_Result TwilightAudioEngine::setAutoMixMode(const std::string& mode) {
   if (mode != "off" && before.autoMixMode != mode && !before.stream.isDsd &&
       (before.outputInfo.pcmPassthrough || !before.sourceTimelineExact) &&
       before.state != PipelineState::Stopped) {
-    return restartCurrentPlaybackForReroute(before.positionSeconds,
+    const auto result = restartCurrentPlaybackForReroute(before.positionSeconds,
         before.state == PipelineState::Paused ? PlaybackState::Paused : PlaybackState::Playing,
         "automix_pcm_processing", "set-auto-mix-mode");
+    if (result != TAE_RESULT_OK) {
+      // The settings transaction persists only an accepted mode. Restore the
+      // previous route too: some backends must close before opening a new one.
+      pipeline_->setAutoMixMode(before.autoMixMode, nullptr);
+      const auto restored = restartCurrentPlaybackForReroute(before.positionSeconds,
+          before.state == PipelineState::Paused ? PlaybackState::Paused : PlaybackState::Playing,
+          "automix_mode_rollback", "set-auto-mix-mode");
+      if (restored != TAE_RESULT_OK)
+        emitError("AutoMix 模式未被接受，恢复普通播放失败；请重试播放", restored, "play");
+      std::lock_guard lock(mutex_);
+      applyPipelineStatusLocked(pipeline_->status());
+      publishStateLocked();
+    }
+    return result;
   }
   if (mode != "off" && before.state != PipelineState::Stopped) {
     std::optional<QueueItem> upcoming;
@@ -1964,6 +2034,10 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   std::lock_guard transportLock(transportMutex_);
   const ClockWake wake(*this);
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
+  if (parsed.usbPcmPassthrough && pipeline_ && pipeline_->status().autoMixMode != "off") {
+    emitError("USB 原样 PCM 与 AutoMix 冲突；请先关闭 AutoMix", TAE_RESULT_INVALID_ARGUMENT, "output-config");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
   const int fixedRate = [&] {
     std::lock_guard lock(mutex_);
     const auto graph = json_utils::fieldObject(dspGraphJson_, "graph");
@@ -2245,7 +2319,7 @@ std::string TwilightAudioEngine::getDspGraphStatusJson() const {
 }
 
 std::string TwilightAudioEngine::getMetadataJson(const std::string& source) const {
-  return readMetadataJson(source);
+  return readMetadataJson(source, inputFactory());
 }
 
 std::string TwilightAudioEngine::getQueueJson() const {
@@ -2463,7 +2537,8 @@ std::string TwilightAudioEngine::getVisualizationDataJson(const std::string& opt
         query.waveformPoints,
         query.spectrogramFrames,
         query.oscilloscopePoints,
-        query.visualizerBarCount);
+        query.visualizerBarCount,
+        query.visualizerBandPeaks);
   }
   std::lock_guard lock(mutex_);
   return inactiveVisualizationJson(query, info_.actualSampleRate);
@@ -2621,6 +2696,12 @@ void TwilightAudioEngine::clockLoop() {
       // Promotion can occur between the snapshot and the track-start flag.
       if(trackStarted)pipelineStatus=pipeline_->status();
       lastPipelineState=pipelineStatus.state;
+    }
+    if (info_.outputBackend == "usb-direct" && (deviceInvalidated || renderError)) {
+      suspendUsbDirect(deviceInvalidated ?
+          (deviceInvalidatedMessage.empty() ? "USB 设备已断开，请重新连接后播放" : deviceInvalidatedMessage) :
+          (renderErrorMessage.empty() ? "USB 传输失败，请检查设备后播放" : renderErrorMessage));
+      continue;
     }
     if (outputConfig_.usbPcmPassthrough && (deviceInvalidated || renderError ||
         (hasPipelineStatus && pipelineStatus.outputInfo.usbPcmInvalid))) {
@@ -2864,10 +2945,13 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.bitrate = static_cast<int>(std::max<int64_t>(0, status.stream.bitrate));
   info_.sourceSampleRate = status.stream.sourceFormat.sampleRate;
   info_.sourceChannels = status.stream.sourceFormat.channelCount;
+  info_.sourceChannelMask = status.stream.sourceFormat.channelMask;
   info_.sourceBitDepth = status.stream.sourceFormat.bitDepth;
   info_.decodedSampleRate = status.stream.decodedFormat.sampleRate;
   info_.decodedBitDepth = status.stream.decodedFormat.bitDepth;
   info_.decodedChannels = status.stream.decodedFormat.channelCount;
+  info_.decodedChannelMask = status.stream.decodedFormat.channelMask;
+  info_.outputChannelMask = status.outputFormat.channelMask;
   info_.decodedSampleFormat = sampleFormatToString(status.stream.decodedFormat.sampleFormat);
   info_.queueIndex = queue_.currentIndex();
   info_.playMode = queue_.playModeId();
@@ -2969,6 +3053,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
   AudioFormat sourceFormat;
   sourceFormat.sampleRate = info_.sourceSampleRate;
   sourceFormat.channelCount = info_.sourceChannels;
+  sourceFormat.channelMask = info_.sourceChannelMask;
   sourceFormat.bitDepth = info_.sourceBitDepth;
   sourceFormat.sampleFormat = sampleFormatFromText("", sourceFormat.bitDepth);
 
@@ -2976,12 +3061,14 @@ void TwilightAudioEngine::updatePerfectLocked() {
   decodedFormat.sampleRate = info_.decodedSampleRate > 0 ? info_.decodedSampleRate : info_.outputSampleRate;
   decodedFormat.channelCount =
       info_.decodedChannels > 0 ? info_.decodedChannels : (info_.channelCount > 0 ? info_.channelCount : info_.outputInfo.actualChannels);
+  decodedFormat.channelMask = info_.decodedChannelMask;
   decodedFormat.bitDepth = info_.decodedBitDepth > 0 ? info_.decodedBitDepth : info_.outputBitDepth;
   decodedFormat.sampleFormat = sampleFormatFromText(info_.decodedSampleFormat, decodedFormat.bitDepth);
 
   AudioFormat outputFormat;
   outputFormat.sampleRate = info_.outputInfo.outputSampleRate;
   outputFormat.channelCount = info_.outputInfo.actualChannels > 0 ? info_.outputInfo.actualChannels : info_.channelCount;
+  outputFormat.channelMask = info_.outputChannelMask;
   outputFormat.bitDepth =
       info_.outputInfo.actualBitDepth > 0 ? info_.outputInfo.actualBitDepth : info_.outputInfo.outputBitDepth;
   outputFormat.sampleFormat = sampleFormatFromText(info_.outputInfo.actualOutputFormat, outputFormat.bitDepth);
@@ -3089,7 +3176,6 @@ TAE_Result TwilightAudioEngine::restartCurrentPlaybackForReroute(
     PlaybackState previousState,
     const std::string& reason,
     const std::string& context) {
-  (void)context;
   std::string source;
   {
     std::lock_guard lock(mutex_);
@@ -3103,7 +3189,8 @@ TAE_Result TwilightAudioEngine::restartCurrentPlaybackForReroute(
     return TAE_RESULT_OK;
   }
 
-  const TAE_Result result = play(source, std::max(0.0, positionSeconds), previousState == PlaybackState::Paused);
+  const TAE_Result result = play(source, std::max(0.0, positionSeconds), previousState == PlaybackState::Paused,
+      context == "set-auto-mix-mode" ? context : "play");
   {
     std::lock_guard lock(mutex_);
     if (pipeline_) pipeline_->setRerouteInProgress(false);
@@ -3142,14 +3229,16 @@ struct AnalysisProbeResult {
   std::string value;
 };
 
-using AnalysisFunction = std::string (*)(const std::string&, const std::string&);
+using AnalysisFunction = std::function<std::string(const std::string&, const std::string&)>;
 
 thread_local AnalysisProbeResult bpmProbeResult;
 thread_local AnalysisProbeResult loudnessProbeResult;
 thread_local AnalysisProbeResult autoMixProbeResult;
+thread_local AnalysisProbeResult autoMixIdentityProbeResult;
 std::atomic<uint64_t> bpmAnalysisExecutionCount{0};
 std::atomic<uint64_t> loudnessAnalysisExecutionCount{0};
 std::atomic<uint64_t> autoMixAnalysisExecutionCount{0};
+std::atomic<uint64_t> autoMixIdentityExecutionCount{0};
 
 TAE_Result analyzeWithProbeResult(
     TAE_EngineHandle engine,
@@ -3268,6 +3357,7 @@ void TAE_DestroyEngine(TAE_EngineHandle engine) {
   if (bpmProbeResult.engine == engine) bpmProbeResult = AnalysisProbeResult{};
   if (loudnessProbeResult.engine == engine) loudnessProbeResult = AnalysisProbeResult{};
   if (autoMixProbeResult.engine == engine) autoMixProbeResult = AnalysisProbeResult{};
+  if (autoMixIdentityProbeResult.engine == engine) autoMixIdentityProbeResult = AnalysisProbeResult{};
   delete fromHandle(engine);
 }
 
@@ -3295,27 +3385,68 @@ TAE_Result TAE_SetUsbPcmPolicy(TAE_EngineHandle engine, const TAE_UsbPcmCallback
     return id;
   };
   policy->valid = [cb, user_data] { return cb.valid(user_data) != 0; };
-  policy->release = [cb, user_data] { cb.release(user_data); };
+  policy->release = [cb, user_data] { return cb.release(user_data) != 0; };
   fromHandle(engine)->setUsbPcmPolicy(std::move(policy));
   return TAE_RESULT_OK;
 }
 
+TAE_Result TAE_SetUsbDirectHost(TAE_EngineHandle engine, const TAE_UsbDirectCallbacks* callbacks, void* user_data) {
+  if (!engine || !callbacks || !callbacks->acquire || !callbacks->configure || !callbacks->restore || !callbacks->release)
+    return TAE_RESULT_INVALID_ARGUMENT;
+  const auto cb = *callbacks;
+  auto host = std::make_shared<twilight::audio::UsbDirectHost>();
+  host->acquire = [cb, user_data](const std::string& device, const twilight::audio::AudioFormat& format) {
+    const std::string wireRequest = (format.dopEncoded ? "dop-" : "") +
+        twilight::audio::sampleFormatToString(format.sampleFormat);
+    const char* value = cb.acquire(device.c_str(), format.sampleRate, format.channelCount,
+        wireRequest.c_str(), format.bitDepth, user_data);
+    return std::string(value ? value : "{\"error\":\"USB Host 未返回连接\"}");
+  };
+  host->configure = [cb, user_data](int profile, int rate) {
+    const char* value = cb.configure(profile, rate, user_data);
+    return std::string(value ? value : "USB 时钟设置未返回结果");
+  };
+  host->restore = [cb, user_data] {
+    const char* value = cb.restore(user_data);
+    return std::string(value ? value : "USB 时钟恢复未返回结果");
+  };
+  host->release = [cb, user_data] { cb.release(user_data); };
+  fromHandle(engine)->setUsbDirectHost(std::move(host));
+  return TAE_RESULT_OK;
+}
+
 TAE_Result TAE_SetInputProvider(TAE_EngineHandle engine, const TAE_InputCallbacks* callbacks, void* user_data) {
+  if (!callbacks) return TAE_RESULT_INVALID_ARGUMENT;
+  const TAE_InputCallbacksV2 v2{*callbacks, nullptr, nullptr};
+  return TAE_SetInputProviderV2(engine, &v2, user_data);
+}
+
+TAE_Result TAE_SetInputProviderV2(TAE_EngineHandle engine, const TAE_InputCallbacksV2* v2, void* user_data) {
+  if (!v2) return TAE_RESULT_INVALID_ARGUMENT;
+  const auto* callbacks = &v2->input;
   if (!engine || !callbacks || !callbacks->open || !callbacks->size || !callbacks->read_at ||
       !callbacks->cancel || !callbacks->close) return TAE_RESULT_INVALID_ARGUMENT;
   struct CallbackInput final : twilight::audio::SeekableInput {
     TAE_InputCallbacks callbacks;
+    int (*localPathCallback)(void*, char*, size_t);
+    int (*localFdCallback)(void*);
     void* stream;
-    CallbackInput(TAE_InputCallbacks cb, void* s) : callbacks(cb), stream(s) {}
+    CallbackInput(TAE_InputCallbacks cb, int (*path)(void*, char*, size_t), int (*fd)(void*), void* s)
+        : callbacks(cb), localPathCallback(path), localFdCallback(fd), stream(s) {}
     ~CallbackInput() override { callbacks.close(stream); }
     int64_t size() override { return callbacks.size(stream); }
     int readAt(int64_t position, uint8_t* bytes, int count) override { return callbacks.read_at(stream, position, bytes, count); }
     void cancel() override { callbacks.cancel(stream); }
+    std::string localPath() override {
+      char path[32768]{};
+      return localPathCallback && localPathCallback(stream, path, sizeof(path)) ? path : std::string{};
+    }
+    int localFileDescriptor() override { return localFdCallback ? localFdCallback(stream) : -1; }
   };
   auto factory = std::make_shared<const twilight::audio::SeekableInputFactory>(
-      [cb = *callbacks, user_data](const std::string& source) -> std::shared_ptr<twilight::audio::SeekableInput> {
+      [cb = *callbacks, path = v2->local_path, fd = v2->local_fd, user_data](const std::string& source) -> std::shared_ptr<twilight::audio::SeekableInput> {
         void* stream = cb.open(source.c_str(), user_data);
-        return stream ? std::make_shared<CallbackInput>(cb, stream) : nullptr;
+        return stream ? std::make_shared<CallbackInput>(cb, path, fd, stream) : nullptr;
       });
   fromHandle(engine)->setInputFactory(std::move(factory));
   return TAE_RESULT_OK;
@@ -3720,9 +3851,35 @@ TAE_Result TAE_AnalyzeLoudness(
 
 TAE_Result TAE_AnalyzeAutoMix(TAE_EngineHandle engine, const char* source,
     const char* options_json, char* buffer, size_t buffer_size, size_t* required_size) {
+  return TAE_AnalyzeAutoMixCancellable(engine, source, options_json, nullptr, buffer, buffer_size, required_size);
+}
+
+TAE_AutoMixCancel TAE_CreateAutoMixCancel(unsigned timeout_ms) {
+  auto* token = ta_am_cancel_create();
+  if (token) ta_am_cancel_set_timeout(token, timeout_ms);
+  return token;
+}
+void TAE_CancelAutoMixAnalysis(TAE_AutoMixCancel token) { ta_am_cancel_request(static_cast<ta_am_cancel*>(token)); }
+void TAE_DestroyAutoMixCancel(TAE_AutoMixCancel token) { ta_am_cancel_free(static_cast<ta_am_cancel*>(token)); }
+TAE_Result TAE_AnalyzeAutoMixCancellable(TAE_EngineHandle engine, const char* source,
+    const char* options_json, TAE_AutoMixCancel token, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_INVALID_ARGUMENT;
   return analyzeWithProbeResult(engine, source, options_json, buffer, buffer_size,
       required_size, &autoMixProbeResult, &autoMixAnalysisExecutionCount,
-      twilight::audio::analyzeAutoMixJson);
+      [engine, token](const auto& file, const auto& options) {
+        return twilight::audio::analyzeAutoMixJson(file, options, fromHandle(engine)->inputFactory(),
+            static_cast<const ta_am_cancel*>(token));
+      });
+}
+TAE_Result TAE_IdentifyAutoMixSource(TAE_EngineHandle engine, const char* source,
+    TAE_AutoMixCancel token, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_INVALID_ARGUMENT;
+  return analyzeWithProbeResult(engine, source, "{}", buffer, buffer_size,
+      required_size, &autoMixIdentityProbeResult, &autoMixIdentityExecutionCount,
+      [engine, token](const auto& file, const auto&) {
+        return twilight::audio::identifyAutoMixSourceJson(file, fromHandle(engine)->inputFactory(),
+            static_cast<const ta_am_cancel*>(token));
+      });
 }
 
 uint64_t TAE_GetAnalysisExecutionCount(const char* analysis_kind) {

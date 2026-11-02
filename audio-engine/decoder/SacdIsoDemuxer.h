@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/AudioTypes.h"
+#include "SeekableInput.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -40,13 +41,16 @@ class SacdIsoDemuxer {
   ~SacdIsoDemuxer();
 
   bool open(const std::string& path, std::string* error);
+  bool open(const std::string& source, std::shared_ptr<SeekableInput> input, std::string* error);
+  void setInputFactory(std::shared_ptr<const SeekableInputFactory> factory);
+  bool cancelInput();
   void close();
 
   const std::vector<SacdIsoTrackInfo>& tracks() const;
 
   bool selectTrack(int trackNumber, std::string* error);
   bool selectTrack(const std::string& area, int trackNumber, std::string* error);
-  size_t readBytes(uint8_t* output, size_t maxBytes);
+  size_t readBytes(uint8_t* output, size_t maxBytes, std::string* error = nullptr);
   size_t readFrames(PcmBlock& output, std::string* error);
   bool seek(double seconds, std::string* error);
   bool eof() const;

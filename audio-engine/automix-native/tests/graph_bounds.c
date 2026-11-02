@@ -93,6 +93,74 @@ static void fixture(unsigned which, const char *path) {
   fwrite(weights, 4, 4, f);
   fclose(f);
 }
+static void attention(const ta_am_kernels *kernels, unsigned scratch_rows,
+                        unsigned cols, float *previous) {
+  const unsigned batches = 2, rows = 37, inner = 5, width = 9;
+  const unsigned qcount = batches * rows * inner,
+                 kcount = inner * cols, vcount = batches * cols * width,
+                 outcount = batches * rows * width;
+  uint32_t counts[4] = {4, 1, 1, 1}, io[2] = {0, 3};
+  uint64_t sizes[3] = {(qcount + outcount) * 4, scratch_rows * cols * 4,
+                        (kcount + vcount) * 4};
+  tensor t[4] = {{3, 0, {batches, rows, inner}, qcount, 0},
+                  {3, 1, {1, inner, cols}, kcount, 0},
+                  {3, 1, {batches, cols, width}, vcount, kcount * 4},
+                  {3, 0, {batches, rows, width}, outcount, qcount * 4}};
+  node n = {0};
+  n.op = 22; n.ni = 3; n.no = 1;
+  n.in[1] = 1; n.in[2] = 2; n.out[0] = 3;
+  float query[2 * 37 * 5], weights[5 * 13 + 2 * 13 * 9];
+  for (unsigned i = 0; i < qcount; i++) query[i] = ((int)(i % 17) - 8) * .03f;
+  for (unsigned i = 0; i < kcount + vcount; i++)
+    weights[i] = ((int)(i % 19) - 9) * .07f;
+  const char *path = "automix-attention-test.tamg";
+  FILE *f = fopen(path, "wb");
+  require(f != NULL, "attention fixture file");
+  fwrite("TAMG0001", 1, 8, f);
+  fwrite(counts, 4, 4, f); fwrite(sizes, 8, 3, f);
+  fwrite(t, sizeof(tensor), 4, f); fwrite(&n, sizeof(n), 1, f);
+  fwrite(io, 4, 2, f); fwrite(weights, 4, kcount + vcount, f);
+  fclose(f);
+  char error[128];
+  ta_am_graph *g = ta_am_graph_load(path, kernels, error, sizeof(error));
+  require(g != NULL, error);
+  require(ta_am_graph_memory(g) == sizes[0] + sizes[1] + sizes[2],
+          "attention keeps declared memory budget");
+  require(!ta_am_graph_run(g, query, qcount, NULL), "attention run");
+  const float *out = ta_am_graph_output(g, 0);
+  for (unsigned b = 0; b < batches; b++)
+    for (unsigned row = 0; row < rows; row++) {
+      float score[13], maximum = -INFINITY;
+      for (unsigned j = 0; j < cols; j++) {
+        score[j] = 0;
+        for (unsigned p = 0; p < inner; p++)
+          score[j] += query[(b * rows + row) * inner + p] * weights[p * cols + j];
+        maximum = fmaxf(maximum, score[j]);
+      }
+      double sum = 0;
+      for (unsigned j = 0; j < cols; j++) {
+        score[j] = expf(score[j] - maximum);
+        sum += score[j];
+      }
+      if (cols)
+        for (unsigned j = 0; j < cols; j++) score[j] *= (float)(1 / sum);
+      for (unsigned d = 0; d < width; d++) {
+        float expected = 0;
+        for (unsigned j = 0; j < cols; j++)
+          expected += score[j] * weights[kcount + (b * cols + j) * width + d];
+        float actual = out[(b * rows + row) * width + d];
+        require(isfinite(actual) && fabsf(actual - expected) < 2e-6f,
+                "attention matches independent expf reference");
+      }
+    }
+  if (cols && scratch_rows == 1)
+    memcpy(previous, out, outcount * sizeof(float));
+  else if (cols)
+    require(!memcmp(previous, out, outcount * sizeof(float)),
+            "attention batching keeps output bits across scratch sizes");
+  ta_am_graph_free(g);
+  remove(path);
+}
 int main(void) {
   const char *path = "automix-boundary-test.tamg";
   char error[128];
@@ -120,6 +188,16 @@ int main(void) {
     ta_am_graph_free(g);
   }
   remove(path);
-  puts("PASS graph scratch, rank, IO, params, matrix and cancellation bounds");
+  for (int cpu = TA_AM_C; cpu <= TA_AM_AVX2; cpu++) {
+    const ta_am_kernels *kernels = ta_am_get_kernels((ta_am_cpu)cpu);
+    if (kernels) {
+      float previous[2 * 37 * 9];
+      const unsigned scratch_rows[] = {1, 3, 8, 32, 64};
+      for (unsigned i = 0; i < sizeof(scratch_rows) / sizeof(*scratch_rows); i++)
+        attention(kernels, scratch_rows[i], 13, previous);
+      attention(kernels, 0, 0, previous);
+    }
+  }
+  puts("PASS graph scratch, rank, IO, params, matrix, bounded attention and cancellation");
   return 0;
 }

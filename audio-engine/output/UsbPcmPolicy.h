@@ -7,6 +7,7 @@ namespace twilight::audio {
 struct UsbPcmPolicy {
   std::function<int(const std::string&, const AudioFormat&, std::string*)> acquire;
   std::function<bool()> valid;
-  std::function<void()> release;
+  // False retains the UID lease: ordinary output must wait for a successful explicit cleanup.
+  std::function<bool()> release;
 };
 }

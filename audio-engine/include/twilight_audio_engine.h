@@ -19,6 +19,17 @@ extern "C" {
 
 typedef void* TAE_EngineHandle;
 
+/** Post-DSP PCM pull. Control/network thread only; never call concurrently
+ * with destruction. Frames are interleaved Float32, little endian on the wire. */
+typedef struct TAE_BridgePcmInfo {
+  uint64_t generation;
+  uint32_t sample_rate;
+  uint32_t channels;
+  uint32_t frames;
+  int playing;
+} TAE_BridgePcmInfo;
+typedef void* TAE_BridgeReceiverHandle;
+
 typedef enum TAE_Result {
   TAE_RESULT_OK = 0,
   TAE_RESULT_INVALID_ARGUMENT = 1,
@@ -39,6 +50,15 @@ typedef void (*TAE_EventCallback)(const char* event_type, const char* payload_js
  */
 TAE_API TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine);
 TAE_API void TAE_DestroyEngine(TAE_EngineHandle engine);
+TAE_API TAE_Result TAE_PullBridgePcm(TAE_EngineHandle engine, float* data, size_t frames, TAE_BridgePcmInfo* info);
+/** Receiver bypasses decoder, DSP and saved local routing. Explicit device
+ * required; it never retries another backend or default speakers. */
+TAE_API TAE_Result TAE_OpenBridgeReceiver(const char* backend, const char* device, int rate, int channels,
+    TAE_BridgeReceiverHandle* receiver, char* error, size_t error_size);
+TAE_API TAE_Result TAE_WriteBridgePcm(TAE_BridgeReceiverHandle receiver, const float* data, size_t frames);
+TAE_API TAE_Result TAE_StartBridgeReceiver(TAE_BridgeReceiverHandle receiver);
+TAE_API TAE_Result TAE_GetBridgeReceiverInfo(TAE_BridgeReceiverHandle receiver, char* buffer, size_t capacity, size_t* required);
+TAE_API void TAE_CloseBridgeReceiver(TAE_BridgeReceiverHandle receiver);
 TAE_API TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callback, void* user_data);
 /**
  * Playback snapshot events ("property-change" clock ticks and "playback-info")
@@ -62,16 +82,49 @@ typedef struct TAE_InputCallbacks {
   void (*close)(void* stream);
 } TAE_InputCallbacks;
 TAE_API TAE_Result TAE_SetInputProvider(TAE_EngineHandle engine, const TAE_InputCallbacks* callbacks, void* user_data);
+/** V2 keeps the original ABI intact. local_path copies a complete local backing
+ * file path into buffer (NUL terminated), or returns 0 when identity is unknown.
+ * It is optional; its path must stay valid until close(stream).
+ * local_fd optionally returns a borrowed POSIX descriptor for the complete
+ * regular backing file, or -1. It must remain open through cancel until close.
+ * No permission to reopen that file by path is required. */
+typedef struct TAE_InputCallbacksV2 {
+  TAE_InputCallbacks input;
+  int (*local_path)(void* stream, char* buffer, size_t capacity);
+  int (*local_fd)(void* stream);
+} TAE_InputCallbacksV2;
+TAE_API TAE_Result TAE_SetInputProviderV2(TAE_EngineHandle engine, const TAE_InputCallbacksV2* callbacks, void* user_data);
 
 /** Android host policy, installed once before playback. Callbacks run on non-RT threads;
  * user_data must outlive the engine. acquire returns the exact positive Android device ID.
- * Errors go to the supplied UTF-8 buffer. valid must not re-enter this engine. */
+ * Errors go to the supplied UTF-8 buffer. No callback may re-enter this engine.
+ * release returns nonzero only after this session's preference is gone. Zero retains
+ * ownership and blocks subsequent ordinary/raw output until explicit cleanup succeeds. */
 typedef struct TAE_UsbPcmCallbacks {
   int (*acquire)(const char* device, int rate, int channels, const char* format, char* error, size_t error_size, void* user_data);
   int (*valid)(void* user_data);
-  void (*release)(void* user_data);
+  int (*release)(void* user_data);
 } TAE_UsbPcmCallbacks;
 TAE_API TAE_Result TAE_SetUsbPcmPolicy(TAE_EngineHandle engine, const TAE_UsbPcmCallbacks* callbacks, void* user_data);
+
+/** Android direct USB Host, installed before playback. acquire returns a JSON
+ * lease containing a borrowed authorized fd, name and wire profiles. configure
+ * runs after native interface claims; restore runs before native releases them;
+ * release closes the host connection last. configure/restore return empty text
+ * on success or a UTF-8 error. Returned strings live until the next callback on
+ * this host. Calls are serialized on control threads and must not re-enter the
+ * engine. user_data outlives engine destruction. The USB render thread calls none
+ * of these functions. Existing preferred-mixer callbacks are independent.
+ * acquire format is a sample-format ID, prefixed with "dop-" for an explicit
+ * DoP carrier request. Native DSD uses dsd-int8-* and rate is its DSD bit-clock;
+ * each DSD wire profile records clockDivisor=32. PCM profiles may omit it (1). */
+typedef struct TAE_UsbDirectCallbacks {
+  const char* (*acquire)(const char* device, int rate, int channels, const char* format, int bits, void* user_data);
+  const char* (*configure)(int profile, int rate, void* user_data);
+  const char* (*restore)(void* user_data);
+  void (*release)(void* user_data);
+} TAE_UsbDirectCallbacks;
+TAE_API TAE_Result TAE_SetUsbDirectHost(TAE_EngineHandle engine, const TAE_UsbDirectCallbacks* callbacks, void* user_data);
 
 TAE_API TAE_Result TAE_Play(TAE_EngineHandle engine, const char* source, double start_time_seconds);
 /** Prepare a source and its output in paused state, without briefly starting playback. */
@@ -206,6 +259,12 @@ TAE_API TAE_Result TAE_AnalyzeLoudness(
     char* buffer,
     size_t buffer_size,
     size_t* required_size);
+/** Background-only, independent of engine/output state. Writes a zero-based PCM WAV using
+ * exact source-frame bounds, optional synthetic silence, and the decoder's rate/channels.
+ * The caller owns a new output path and removes incomplete output on failure/cancellation. */
+TAE_API TAE_Result TAE_RenderPcmSegment(const char* source, const char* output_path,
+    double start_seconds, double end_seconds, double virtual_pregap_seconds,
+    char* error_buffer, size_t error_capacity);
 /* Worker-only bounded public-model analysis. options binds actual source identity
  * and source range; no model inference is performed by the render callback. */
 TAE_API TAE_Result TAE_AnalyzeAutoMix(
@@ -215,6 +274,16 @@ TAE_API TAE_Result TAE_AnalyzeAutoMix(
     char* buffer,
     size_t buffer_size,
     size_t* required_size);
+/** One worker owns this token; cancel may race with that worker. Destroy only
+ * after its native calls returned. timeout_ms=0 has no deadline. */
+typedef void* TAE_AutoMixCancel;
+TAE_API TAE_AutoMixCancel TAE_CreateAutoMixCancel(unsigned timeout_ms);
+TAE_API void TAE_CancelAutoMixAnalysis(TAE_AutoMixCancel token);
+TAE_API void TAE_DestroyAutoMixCancel(TAE_AutoMixCancel token);
+TAE_API TAE_Result TAE_AnalyzeAutoMixCancellable(TAE_EngineHandle engine, const char* source,
+    const char* options_json, TAE_AutoMixCancel token, char* buffer, size_t buffer_size, size_t* required_size);
+TAE_API TAE_Result TAE_IdentifyAutoMixSource(TAE_EngineHandle engine, const char* source,
+    TAE_AutoMixCancel token, char* buffer, size_t buffer_size, size_t* required_size);
 /* Diagnostic counter: number of actual analyzer executions, excluding cached size-probe reads. */
 TAE_API uint64_t TAE_GetAnalysisExecutionCount(const char* analysis_kind);
 TAE_API const char* TAE_GetVersion(void);

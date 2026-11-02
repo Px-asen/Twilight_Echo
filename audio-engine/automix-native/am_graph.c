@@ -363,7 +363,7 @@ const float *ta_am_graph_output(const ta_am_graph *g, unsigned i) {
 static void softmax(ta_am_graph *g, float *x, size_t n) {
   float max = g->k->maximum(x, n, 1);
   g->k->affine(x, x, 1, -max, n);
-  g->k->unary(x, x, n, 0);
+  ta_am_c_exp_negative(x, n);
   double sum = g->k->sum(x, n, 1);
   g->k->affine(x, x, (float)(1 / sum), 0, n);
 }
@@ -511,12 +511,20 @@ static void run_node(ta_am_graph *g, const node *n) {
         const tensor *vt = g->t + n->in[2];
         size_t d = vt->d[vt->rank - 1];
         const float *values = data(g, n->in[2]) + batch_offset(vt, o, batch);
-        for (size_t row = 0; row < m; row++) {
-          if (!(row % 32) && ta_am_cancelled(g->cancel))
+        /* Reuse the graph's existing scratch budget, never a quadratic score
+         * tensor. Batching queries lets GEMM reuse keys/values across rows. */
+        size_t block = cols ? g->scratch_size / (cols * sizeof(float)) : 32;
+        if (block > 32)
+          block = 32;
+        for (size_t row = 0; row < m; row += block) {
+          if (ta_am_cancelled(g->cancel))
             return;
-          g->k->gemm(u + row * k, v, g->scratch, 1, k, cols);
-          softmax(g, g->scratch, cols);
-          g->k->gemm(g->scratch, values, z + (batch * m + row) * d, 1, cols, d);
+          size_t rows = m - row < block ? m - row : block;
+          g->k->gemm(u + row * k, v, g->scratch, rows, k, cols);
+          for (size_t q = 0; q < rows; q++)
+            softmax(g, g->scratch + q * cols, cols);
+          g->k->gemm(g->scratch, values, z + (batch * m + row) * d,
+                       rows, cols, d);
         }
       } else
         g->k->gemm(u, v, z + batch * m * cols, m, k, cols);

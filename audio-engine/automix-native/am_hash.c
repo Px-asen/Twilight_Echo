@@ -1,6 +1,11 @@
 #include "am_hash.h"
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include <stdint.h>
@@ -131,6 +136,7 @@ int ta_am_source_stamp_equal(const ta_am_source_stamp *a,
 #if defined(_WIN32)
 struct ta_am_source_lease {
   HANDLE file;
+  ta_am_source_stamp stamp;
 };
 static HANDLE source_open(const char *path, DWORD access, DWORD share) {
   if (!path || !path[0])
@@ -203,6 +209,7 @@ ta_am_source_lease *ta_am_source_acquire(const char *path,
   if (!lease)
     goto fail;
   lease->file = h;
+  lease->stamp = actual;
   return lease;
 fail:
   CloseHandle(h);
@@ -214,24 +221,107 @@ void ta_am_source_release(ta_am_source_lease *s) {
     free(s);
   }
 }
+int ta_am_source_valid(const ta_am_source_lease *s) {
+  ta_am_source_stamp actual;
+  return s && stamp(s->file, &actual) && ta_am_source_stamp_equal(&actual, &s->stamp);
+}
+int ta_am_source_snapshot_fd(int fd, ta_am_source_stamp *s) { (void)fd; (void)s; return 0; }
+int ta_am_source_sha256_fd(int fd, char hex[65], const ta_am_cancel *c) { (void)fd; (void)hex; (void)c; return 0; }
+ta_am_source_lease *ta_am_source_acquire_fd(int fd, const ta_am_source_stamp *s,
+    const char h[65], const ta_am_cancel *c) { (void)fd; (void)s; (void)h; (void)c; return NULL; }
 #else
-struct ta_am_source_lease {
-  int unused;
-};
-int ta_am_source_snapshot(const char *path, ta_am_source_stamp *s) {
-  (void)path;
-  (void)s;
-  return 0;
-}
-ta_am_source_lease *ta_am_source_acquire(const char *p,
-                                         const ta_am_source_stamp *s,
-                                         const char hash[65],
-                                         const ta_am_cancel *c) {
-  (void)p;
-  (void)s;
-  (void)hash;
-  (void)c;
-  return NULL;
-}
-void ta_am_source_release(ta_am_source_lease *s) { free(s); }
+struct ta_am_source_lease { int file; ta_am_source_stamp stamp; };
+static int stamp(int fd, ta_am_source_stamp *s) {
+  struct stat f;
+  if (fstat(fd, &f) || !S_ISREG(f.st_mode) || f.st_size < 0) return 0;
+#if defined(__APPLE__)
+  const struct timespec m = f.st_mtimespec, c = f.st_ctimespec;
+#else
+  const struct timespec m = f.st_mtim, c = f.st_ctim;
 #endif
+  *s = (ta_am_source_stamp){(uint64_t)f.st_size,
+      (uint64_t)m.tv_sec * 1000000000u + m.tv_nsec,
+      (uint64_t)c.tv_sec * 1000000000u + c.tv_nsec,
+      (uint64_t)f.st_ino, (uint32_t)f.st_dev};
+  return 1;
+}
+static int source_open(const char *path) {
+  if (!path || !*path || strstr(path, "://")) return -1;
+  return open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+}
+int ta_am_source_snapshot(const char *path, ta_am_source_stamp *s) {
+  if (!s) return 0;
+  int fd = source_open(path);
+  if (fd < 0) return 0;
+  int ok = stamp(fd, s);
+  close(fd);
+  return ok;
+}
+ta_am_source_lease *ta_am_source_acquire(const char *path,
+    const ta_am_source_stamp *expected, const char hash[65], const ta_am_cancel *cancel) {
+  int fd = source_open(path);
+  if (fd < 0) return NULL;
+  ta_am_source_lease *lease = ta_am_source_acquire_fd(fd, expected, hash, cancel);
+  close(fd);
+  return lease;
+}
+int ta_am_source_snapshot_fd(int fd, ta_am_source_stamp *s) { return s && stamp(fd, s); }
+int ta_am_source_sha256_fd(int fd, char hex[65], const ta_am_cancel *cancel) {
+  ta_am_source_stamp before, after;
+  if (ta_am_cancelled(cancel) || !stamp(fd, &before)) return 0;
+  sha256 digest = initialise();
+  unsigned char bytes[32768];
+  uint64_t total = 0;
+  for (;;) {
+    if (ta_am_cancelled(cancel)) return 0;
+    ssize_t got = pread(fd, bytes, sizeof(bytes), (off_t)total);
+    if (got < 0 && errno == EINTR) continue;
+    if (got < 0) return 0;
+    if (!got) break;
+    update(&digest, bytes, (size_t)got); total += (size_t)got;
+  }
+  if (ta_am_cancelled(cancel) || total != before.size || !stamp(fd, &after) ||
+      !ta_am_source_stamp_equal(&before, &after)) return 0;
+  finish(&digest, hex); return 1;
+}
+ta_am_source_lease *ta_am_source_acquire_fd(int fd, const ta_am_source_stamp *expected,
+    const char hash[65], const ta_am_cancel *cancel) {
+  fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+  if (fd < 0) return NULL;
+  ta_am_source_stamp before, after;
+  char hex[65];
+  if (!stamp(fd, &before) || !ta_am_source_stamp_equal(expected, &before) ||
+      !ta_am_source_sha256_fd(fd, hex, cancel) || !hash || strcmp(hash, hex) ||
+      !stamp(fd, &after) || !ta_am_source_stamp_equal(&before, &after)) goto fail;
+  ta_am_source_lease *lease = malloc(sizeof(*lease));
+  if (!lease) goto fail;
+  lease->file = fd; lease->stamp = before;
+  return lease;
+fail:
+  close(fd); return NULL;
+}
+void ta_am_source_release(ta_am_source_lease *s) { if (s) { close(s->file); free(s); } }
+int ta_am_source_valid(const ta_am_source_lease *s) {
+  ta_am_source_stamp actual;
+  return s && stamp(s->file, &actual) && ta_am_source_stamp_equal(&s->stamp, &actual);
+}
+#endif
+
+int ta_am_source_sha256(const char *path, char hex[65], const ta_am_cancel *cancel) {
+  ta_am_source_stamp before, after;
+  if (ta_am_cancelled(cancel) || !ta_am_source_snapshot(path, &before)) return 0;
+  FILE *file = ta_am_open_read(path);
+  if (!file) return 0;
+  sha256 digest = initialise();
+  unsigned char bytes[32768];
+  uint64_t total = 0;
+  size_t got;
+  while (!ta_am_cancelled(cancel) && (got = fread(bytes, 1, sizeof(bytes), file))) {
+    update(&digest, bytes, got); total += got;
+  }
+  int ok = !ferror(file) && !ta_am_cancelled(cancel) && total == before.size &&
+      ta_am_source_snapshot(path, &after) && ta_am_source_stamp_equal(&before, &after);
+  fclose(file);
+  if (ok) finish(&digest, hex);
+  return ok;
+}

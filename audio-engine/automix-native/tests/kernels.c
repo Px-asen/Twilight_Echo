@@ -26,6 +26,62 @@ static void equal(const float *a, const float *b, size_t n, float tol,
       exit(1);
     }
 }
+static void reference_gemm(const float *a, const float *b, float *c,
+                            size_t m, size_t k, size_t n) {
+  for (size_t i = 0; i < m; i++)
+    for (size_t j = 0; j < n; j++) {
+      float sum = 0;
+      for (size_t p = 0; p < k; p++)
+        sum += a[i * k + p] * b[p * n + j];
+      c[i * n + j] = sum;
+    }
+}
+static void gemm_tiles(const ta_am_kernels *kernels) {
+  const size_t shapes[][3] = {
+      {3, 31, 7}, {4, 32, 8}, {5, 33, 9}, {7, 127, 15},
+      {8, 128, 16}, {9, 129, 17}, {31, 32, 33}, {32, 32, 1500},
+      {33, 1500, 32}, {35, 0, 35}, {4, 128, 0}};
+  for (size_t s = 0; s < sizeof(shapes) / sizeof(*shapes); s++) {
+    size_t m = shapes[s][0], k = shapes[s][1], n = shapes[s][2], count = m * n;
+    float *a = malloc((m * k + 1) * sizeof(float)),
+          *b = malloc((k * n + 1) * sizeof(float)),
+          *expected = calloc(count + 2, sizeof(float)),
+          *actual = calloc(count + 2, sizeof(float));
+    check(a && b && expected && actual, "tile test buffers");
+    for (size_t i = 0; i < m * k + 1; i++) a[i] = random_sample();
+    for (size_t i = 0; i < k * n + 1; i++) b[i] = random_sample();
+    actual[0] = actual[count + 1] = 123.5f;
+    reference_gemm(a + 1, b + 1, expected + 1, m, k, n);
+    kernels->gemm(a + 1, b + 1, actual + 1, m, k, n);
+    equal(expected + 1, actual + 1, count,
+          kernels->cpu == TA_AM_C ? 0 : 4e-5f, "GEMM tile and long reduction");
+    if (kernels->cpu == TA_AM_C)
+      check(!memcmp(expected + 1, actual + 1, count * sizeof(float)),
+            "C GEMM preserves accumulation bits");
+    check(actual[0] == 123.5f && actual[count + 1] == 123.5f, "GEMM tile bounds");
+    free(a); free(b); free(expected); free(actual);
+  }
+}
+static void softmax_exponential(void) {
+  float maximum = 0;
+  for (unsigned batch = 0; batch < 87; batch++) {
+    float input[1001], actual[1001];
+    for (unsigned i = 0; i <= 1000; i++)
+      input[i] = actual[i] = -(float)batch - (float)i / 1000;
+    ta_am_c_exp_negative(actual, 1001);
+    for (unsigned i = 0; i <= 1000; i++) {
+      float expected = expf(input[i]);
+      float relative = fabsf(actual[i] - expected) / expected;
+      maximum = fmaxf(maximum, relative);
+      check(relative < 1e-6f, "normalized exponential relative error");
+    }
+  }
+  float special[] = {0, -INFINITY, -88, NAN};
+  ta_am_c_exp_negative(special, 4);
+  check(special[0] == 1 && special[1] == 0 && special[2] == 0 && isnan(special[3]),
+        "normalized exponential endpoints");
+  printf("PASS softmax exp: 87087 values, maximum relative error %.9g\n", maximum);
+}
 static void differential(const ta_am_kernels *k) {
   float a[2048], b[2048], ga[2048], gb[2048], c[2048], d[2048];
   for (size_t i = 0; i < 2048; i++) {
@@ -85,12 +141,13 @@ static void differential(const ta_am_kernels *k) {
       for (size_t n = 0; n < 19; n++) {
         memset(c, 0x55, sizeof(c));
         memset(d, 0x55, sizeof(d));
-        ta_am_c_gemm(a, b, c, m, inner, n);
+        reference_gemm(a, b, c, m, inner, n);
         k->gemm(a, b, d, m, inner, n);
         equal(c, d, m * n, 2e-6f, "gemm");
         check(memcmp(c + m * n, d + m * n, (2048 - m * n) * sizeof(float)) == 0,
               "gemm bounds");
       }
+  gemm_tiles(k);
   for (size_t stride = 1; stride <= 8; stride++)
     for (size_t n = 0; n < 130; n++) {
       memcpy(c, a, sizeof(c));
@@ -271,6 +328,7 @@ static void differential(const ta_am_kernels *k) {
          ta_am_cpu_name(k->cpu));
 }
 int main(void) {
+  softmax_exponential();
   check(ta_am_get_kernels((ta_am_cpu)99) == NULL, "invalid CPU rejected");
   check(ta_am_fft_create(3, ta_am_get_kernels(TA_AM_C)) == NULL,
         "invalid FFT rejected");

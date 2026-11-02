@@ -16,13 +16,13 @@
 #include <vector>
 
 #if defined(TAE_HAS_EBUR128)
-#include <ebur128.h>
+#include "Ebur128ChannelLayout.h"
 #endif
 
 namespace twilight::audio {
 namespace {
 
-constexpr int kAlgorithmVersion = 2;
+constexpr int kAlgorithmVersion = 3;
 constexpr size_t kMaxAlbumTracks = 256;
 constexpr double kHardMaxAnalysisSeconds = 3600.0 * 4.0;
 
@@ -120,7 +120,9 @@ bool measureSegment(const std::string& source, double start, double end, double 
   }
   AudioFormat format = decoder.streamInfo().sourceFormat;
   if (format.sampleRate <= 0) format.sampleRate = 48000;
-  format.channelCount = std::clamp(format.channelCount, 1, 8);
+  const int channels = std::clamp(format.channelCount, 1, 8);
+  if (channels != format.channelCount) format.channelMask = 0;
+  format.channelCount = channels;
   format.bitDepth = 32;
   format.sampleFormat = AudioSampleFormat::Float32Interleaved;
   if (!decoder.setOutputFormat(format, &error)) return false;
@@ -141,6 +143,7 @@ bool measureSegment(const std::string& source, double start, double end, double 
     error = "failed to initialize libebur128";
     return false;
   }
+  applyEbur128ChannelLayout(result.state.get(), format.channelMask);
   const double maxSeconds = static_cast<double>(std::numeric_limits<size_t>::max() / result.sampleRate);
   if (start >= maxSeconds || end >= maxSeconds) {
     error = "loudness measurement range is too large";

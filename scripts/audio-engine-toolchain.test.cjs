@@ -1110,14 +1110,27 @@ for (const fallbackName of ['windows-msvc', 'default']) {
 // twilight_audio_node.node". Windows-only because the step parses PE imports.
 const windowsStagingOnly = process.platform === 'win32' ? {} : { skip: 'Windows-only staging step' }
 
-function stageRuntimeDependencyFixture(fixtureRoot, { provideRuntimeDll }) {
+function stageRuntimeDependencyFixture(fixtureRoot, { provideRuntimeDll, provideSoxr = false }) {
   const fixtureScripts = join(fixtureRoot, 'scripts')
   copyStagingScripts(fixtureScripts)
 
   const nativeLibrary = nativeLibraryName()
   const buildDir = join(fixtureRoot, 'audio-engine', 'build', 'default')
   mkdirSync(buildDir, { recursive: true })
-  writeRuntimeFixture(buildDir, nativeLibrary, { imports: ['libstdc++-6.dll', 'KERNEL32.dll'] })
+  writeRuntimeFixture(buildDir, nativeLibrary, {
+    imports: ['libstdc++-6.dll', 'KERNEL32.dll', ...(provideSoxr ? ['libtwilight-soxr.dll'] : [])]
+  })
+  if (provideSoxr) {
+    writeRuntimeFixture(buildDir, 'libtwilight-soxr.dll')
+    const previousStage = join(fixtureRoot, 'resources', 'audio-engine')
+    mkdirSync(previousStage, { recursive: true })
+    writeFileSync(join(previousStage, 'libtwilight-soxr.dll'), 'stale SoX must be replaced')
+    const sources = join(fixtureRoot, 'audio-engine', 'third_party', 'soxr')
+    mkdirSync(join(sources, 'upstream', 'src'), { recursive: true })
+    writeFileSync(join(sources, 'CMakeLists.txt'), '# replaceable shared library')
+    writeFileSync(join(sources, 'upstream', 'LICENCE'), 'LGPL-2.1-or-later fixture')
+    writeFileSync(join(sources, 'upstream', 'src', 'soxr.c'), '/* source fixture */')
+  }
   writeRuntimeFixture(buildDir, 'twilight_audio_node.node', {
     imports: [nativeLibrary, 'libstdc++-6.dll']
   })
@@ -1141,6 +1154,10 @@ function stageRuntimeDependencyFixture(fixtureRoot, { provideRuntimeDll }) {
       encoding: 'utf8',
       env: {
         ...process.env,
+        // Synthetic PE import fixtures are not executable toolchain output.
+        // Do not let an unrelated strip.exe on the developer PATH rewrite them.
+        PATH: '',
+        Path: '',
         TAE_MINGW_BUILD_DIR: '',
         TAE_MINGW_RUNTIME_DIR: '',
         W64DEVKIT_ROOT: '',
@@ -1166,6 +1183,26 @@ test(
     for (const file of ['libstdc++-6.dll', 'libmcfgthread-2.dll']) {
       assert.ok(existsSync(join(stagedDir, file)), `${file} was not staged beside the addon`)
     }
+  }
+)
+
+test(
+  'Windows staging includes direct SoX and its corresponding source and license',
+  windowsStagingOnly,
+  (t) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'twilight-audio-soxr-'))
+    t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+    const { result, stagedDir } = stageRuntimeDependencyFixture(fixtureRoot, {
+      provideRuntimeDll: true, provideSoxr: true
+    })
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    for (const file of ['libtwilight-soxr.dll', 'licenses/soxr-0.1.3/CMakeLists.txt',
+      'licenses/soxr-0.1.3/upstream/LICENCE', 'licenses/soxr-0.1.3/upstream/src/soxr.c']) {
+      assert.ok(existsSync(join(stagedDir, file)), `SoX staging omitted ${file}`)
+    }
+    const config = readFileSync(join(__dirname, '..', 'electron-builder.yml'), 'utf8')
+    assert.match(config, /- libtwilight-soxr\.dll/)
+    assert.match(config, /licenses\/soxr-0\.1\.3\/\*\*\/\*/)
   }
 )
 

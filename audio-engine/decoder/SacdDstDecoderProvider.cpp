@@ -38,7 +38,9 @@ class DstDecoderProvider final : public SacdDstDecoderProvider {
     return dstdec::frameBytesPerChannelForSampleRate(sampleRate);
   }
 
-  void reset() override { decoder_.reset(); }
+  // Each access unit is independently decoded; seeking has no filter/history
+  // to flush. Keep the track geometry established by open().
+  void reset() override {}
 
  private:
   DstDecoder decoder_;

@@ -57,6 +57,9 @@ extraResources:
       - twilight-audio-engine.dll
       - libtwilight-audio-engine.so
       - libtwilight-audio-engine.dylib
+      - libtwilight-soxr.dll
+      - libtwilight-soxr.so
+      - 'licenses/soxr-0.1.3/**/*'
       # Include the complete dependency closure staged by macos-audio-runtime.cjs.
       - '*.dylib'
       - twilight_audio_node.node

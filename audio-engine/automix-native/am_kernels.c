@@ -29,10 +29,41 @@ float ta_am_c_dot(const float *a, const float *b, size_t n) {
     x += a[i] * b[i];
   return x;
 }
+/* Independent output lanes stay in registers; each lane still accumulates p
+ * in source order, with separate multiply/add under the strict FP flags. */
+static void gemm_4x8(const float *a, const float *b, float *c, size_t k,
+                     size_t n) {
+  float s0[8] = {0}, s1[8] = {0}, s2[8] = {0}, s3[8] = {0};
+  for (size_t p = 0; p < k; p++) {
+    float a0 = a[p], a1 = a[k + p], a2 = a[2 * k + p],
+          a3 = a[3 * k + p];
+    const float *row = b + p * n;
+    for (size_t j = 0; j < 8; j++) {
+      s0[j] += a0 * row[j];
+      s1[j] += a1 * row[j];
+      s2[j] += a2 * row[j];
+      s3[j] += a3 * row[j];
+    }
+  }
+  memcpy(c, s0, sizeof(s0));
+  memcpy(c + n, s1, sizeof(s1));
+  memcpy(c + 2 * n, s2, sizeof(s2));
+  memcpy(c + 3 * n, s3, sizeof(s3));
+}
 void ta_am_c_gemm(const float *a, const float *b, float *c, size_t m, size_t k,
                   size_t n) {
   memset(c, 0, m * n * sizeof(float));
-  for (size_t i = 0; i < m; i++)
+  size_t i = 0;
+  for (; i + 4 <= m; i += 4) {
+    size_t j = 0;
+    for (; j + 8 <= n; j += 8)
+      gemm_4x8(a + i * k, b + j, c + i * n + j, k, n);
+    for (size_t r = 0; r < 4; r++)
+      for (size_t p = 0; p < k; p++)
+        ta_am_c_axpy(c + (i + r) * n + j, b + p * n + j,
+                      a[(i + r) * k + p], n - j);
+  }
+  for (; i < m; i++)
     for (size_t p = 0; p < k; p++)
       ta_am_c_axpy(c + i * n, b + p * n, a[i * k + p], n);
 }
@@ -79,6 +110,31 @@ void ta_am_c_unary(float *d, const float *a, size_t n, unsigned op) {
            : op == 5 ? sqrtf(x)
            : op == 6 ? logf(x)
                      : log1pf(x);
+  }
+}
+/* Softmax scores have already had their maximum subtracted. This is the same
+ * sixth-order range reduction used by the Win64 activation kernel. */
+void ta_am_c_exp_negative(float *x, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    float value = x[i];
+    if (!(value >= -87.0f)) {
+      x[i] = value < 0 ? 0 : value; /* Preserve NaN for graph error reporting. */
+      continue;
+    }
+    int exponent = (int)(value * 1.4426950408889634f - 0.5f);
+    float r = value - exponent * 0.693145751953125f;
+    r -= exponent * 0.000001428606765330187f;
+    float p = 0.001388888888888889f;
+    p = p * r + 0.008333333333333333f;
+    p = p * r + 0.041666666666666664f;
+    p = p * r + 0.16666666666666666f;
+    p = p * r + 0.5f;
+    p = p * r + 1;
+    p = p * r + 1;
+    uint32_t bits = (uint32_t)(exponent + 127) << 23;
+    float scale;
+    memcpy(&scale, &bits, sizeof(scale));
+    x[i] = p * scale;
   }
 }
 void ta_am_c_window(float *d, const float *x, const float *w, size_t n,

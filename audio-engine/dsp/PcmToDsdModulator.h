@@ -20,7 +20,7 @@ struct PcmToDsdModulatorConfig {
   // Bit order of the produced per-channel DSD bytes (8 bits per byte).
   // MsbFirst: the earliest bit in time occupies bit 7 (DFF/DoP convention).
   DsdBitOrder bitOrder = DsdBitOrder::MsbFirst;
-  // Sigma-delta loop filter order: 5 (5th-order CIFB, default) or 7 (7th-order CLANS-style CIFB).
+  // Sigma-delta loop filter order: 5 (default) or 7, with a Butterworth NTF and CIFB recurrence.
   int modulatorOrder = 5;
 };
 
@@ -29,7 +29,7 @@ struct PcmToDsdModulatorConfig {
  *
  * Interpolation is a cascade of x2 polyphase halfband FIR stages (up to x64,
  * 6 stages), followed by zero-order hold for any residual ratio; the 5th-order
- * or 7th-order (CLANS-style) CIFB sigma-delta quantizer runs at the full DSD
+ * or 7th-order Butterworth-NTF CIFB sigma-delta quantizer runs at the full DSD
  * rate with double-precision per-channel state. A fixed -6 dB headroom scale
  * is applied at the input so full-scale PCM maps to +/-0.5 FS at the modulator
  * (stable operating range); an integrator magnitude guard resets the loop state

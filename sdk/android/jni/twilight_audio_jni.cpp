@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -13,6 +14,7 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <unistd.h>
 #define TAE_JNI_LOGW(...) __android_log_print(ANDROID_LOG_WARN, "TwilightAudioJNI", __VA_ARGS__)
 #else
 #define TAE_JNI_LOGW(...) ((void)0)
@@ -134,6 +136,12 @@ struct JniInputStream {
   jobject input = nullptr;
   jbyteArray buffer = nullptr;
   jmethodID size = nullptr, read = nullptr, close = nullptr;
+  int localFd = -1;
+  ~JniInputStream() {
+#if defined(__ANDROID__)
+    if (localFd >= 0) ::close(localFd);
+#endif
+  }
 };
 struct JniInputProvider {
   jobject provider = nullptr;
@@ -153,6 +161,17 @@ struct JniUsbPolicy {
   }
 };
 std::unordered_map<TAE_EngineHandle, std::shared_ptr<JniUsbPolicy>> g_usbPolicies;
+
+struct JniUsbDirectHost {
+  jobject provider = nullptr;
+  jmethodID acquire = nullptr, configure = nullptr, restore = nullptr, release = nullptr;
+  std::string reply; // Control-thread callbacks are serialized; copied by the C++ host immediately.
+  ~JniUsbDirectHost() {
+    ScopedJniEnv scope(getJavaVm());
+    if (scope.get() && provider) scope.get()->DeleteGlobalRef(provider);
+  }
+};
+std::unordered_map<TAE_EngineHandle, std::shared_ptr<JniUsbDirectHost>> g_usbDirectHosts;
 
 bool clearInputException(JNIEnv* env) {
   if (!env->ExceptionCheck()) return false;
@@ -174,6 +193,8 @@ void* openInput(const char* source, void* context) {
   stream->size = env->GetMethodID(cls, "size", "()J");
   stream->read = env->GetMethodID(cls, "readAt", "(J[BII)I");
   stream->close = env->GetMethodID(cls, "close", "()V");
+  const auto localFdMethod = env->GetMethodID(cls, "duplicateLocalFileDescriptor", "()I");
+  if (localFdMethod) stream->localFd = env->CallIntMethod(input, localFdMethod);
   stream->input = env->NewGlobalRef(input);
   jbyteArray bytes = env->NewByteArray(32768);
   stream->buffer = static_cast<jbyteArray>(env->NewGlobalRef(bytes));
@@ -357,7 +378,71 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeDes
     std::lock_guard lock(g_contextsMutex);
     g_inputs.erase(engine);
     g_usbPolicies.erase(engine);
+    g_usbDirectHosts.erase(engine);
   }
+}
+
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSetUsbDirectHost(
+    JNIEnv* env, jobject, jlong handle, jobject provider) {
+  const auto engine = toEngineHandle(handle);
+  if (!engine || !provider) return TAE_RESULT_INVALID_ARGUMENT;
+  std::lock_guard lock(g_contextsMutex);
+  if (g_usbDirectHosts.count(engine)) return TAE_RESULT_INVALID_ARGUMENT;
+  auto context = std::make_shared<JniUsbDirectHost>();
+  context->provider = env->NewGlobalRef(provider);
+  const auto cls = env->GetObjectClass(provider);
+  context->acquire = env->GetMethodID(cls, "acquire", "(Ljava/lang/String;IILjava/lang/String;I)Ljava/lang/String;");
+  context->configure = env->GetMethodID(cls, "configure", "(II)Ljava/lang/String;");
+  context->restore = env->GetMethodID(cls, "restore", "()Ljava/lang/String;");
+  context->release = env->GetMethodID(cls, "release", "()V");
+  env->DeleteLocalRef(cls);
+  if (clearInputException(env) || !context->acquire || !context->configure || !context->restore || !context->release)
+    return TAE_RESULT_INVALID_ARGUMENT;
+  const TAE_UsbDirectCallbacks callbacks{
+    [](const char* device, int rate, int channels, const char* format, int bits, void* ctx) -> const char* {
+      auto& p = *static_cast<JniUsbDirectHost*>(ctx);
+      ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      p.reply = "{\"error\":\"USB Host JNI 连接失败\"}";
+      if (!e) return p.reply.c_str();
+      const auto d = e->NewStringUTF(device), f = e->NewStringUTF(format);
+      const auto result = static_cast<jstring>(e->CallObjectMethod(p.provider, p.acquire, d, rate, channels, f, bits));
+      e->DeleteLocalRef(d); e->DeleteLocalRef(f);
+      if (!clearInputException(e) && result) p.reply = jstringToUtf8(e, result);
+      if (result) e->DeleteLocalRef(result);
+      return p.reply.c_str();
+    },
+    [](int profile, int rate, void* ctx) -> const char* {
+      auto& p = *static_cast<JniUsbDirectHost*>(ctx);
+      ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      p.reply = "USB Host JNI 时钟设置失败";
+      if (!e) return p.reply.c_str();
+      const auto result = static_cast<jstring>(e->CallObjectMethod(p.provider, p.configure, profile, rate));
+      if (!clearInputException(e) && result) p.reply = jstringToUtf8(e, result);
+      if (result) e->DeleteLocalRef(result);
+      return p.reply.c_str();
+    },
+    [](void* ctx) -> const char* {
+      auto& p = *static_cast<JniUsbDirectHost*>(ctx);
+      ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      p.reply = "USB Host JNI 时钟恢复失败";
+      if (!e) return p.reply.c_str();
+      const auto result = static_cast<jstring>(e->CallObjectMethod(p.provider, p.restore));
+      if (!clearInputException(e) && result) p.reply = jstringToUtf8(e, result);
+      if (result) e->DeleteLocalRef(result);
+      return p.reply.c_str();
+    },
+    [](void* ctx) {
+      auto& p = *static_cast<JniUsbDirectHost*>(ctx);
+      ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
+      if (!e) return;
+      e->CallVoidMethod(p.provider, p.release);
+      if (clearInputException(e)) TAE_JNI_LOGW("USB Host JNI release failed");
+    }
+  };
+  const auto result = TAE_SetUsbDirectHost(engine, &callbacks, context.get());
+  if (result == TAE_RESULT_OK) g_usbDirectHosts[engine] = std::move(context);
+  return result;
 }
 
 JNIEXPORT jint JNICALL
@@ -372,7 +457,7 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSet
   auto cls = env->GetObjectClass(provider);
   context->acquire = env->GetMethodID(cls, "acquire", "(Ljava/lang/String;IILjava/lang/String;)Ljava/lang/String;");
   context->valid = env->GetMethodID(cls, "valid", "()Z");
-  context->release = env->GetMethodID(cls, "release", "()V");
+  context->release = env->GetMethodID(cls, "release", "()Z");
   env->DeleteLocalRef(cls);
   if (clearInputException(env) || !context->acquire || !context->valid || !context->release) return TAE_RESULT_INVALID_ARGUMENT;
   const TAE_UsbPcmCallbacks callbacks{
@@ -394,9 +479,11 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSet
       auto valid = e->CallBooleanMethod(p->provider, p->valid);
       return !clearInputException(e) && valid;
     },
-    [](void* ctx) {
+    [](void* ctx) -> int {
       auto* p = static_cast<JniUsbPolicy*>(ctx); ScopedJniEnv scope(getJavaVm()); auto* e = scope.get();
-      if (e) { e->CallVoidMethod(p->provider, p->release); clearInputException(e); }
+      if (!e) return 0;
+      auto released = e->CallBooleanMethod(p->provider, p->release);
+      return !clearInputException(e) && released;
     }
   };
   const auto result = TAE_SetUsbPcmPolicy(engine, &callbacks, context.get());
@@ -419,8 +506,9 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSet
   context->open = env->GetMethodID(cls, "open", "(Ljava/lang/String;)Lcom/twilightecho/android/nativeintegration/NativeAudioInput;");
   env->DeleteLocalRef(cls);
   if (clearInputException(env) || !context->open) return TAE_RESULT_INVALID_ARGUMENT;
-  const TAE_InputCallbacks callbacks{openInput, inputSize, readInput, cancelInput, closeInput};
-  const auto result = TAE_SetInputProvider(engine, &callbacks, context.get());
+  const TAE_InputCallbacksV2 callbacks{{openInput, inputSize, readInput, cancelInput, closeInput}, nullptr,
+    [](void* p) -> int { return static_cast<JniInputStream*>(p)->localFd; }};
+  const auto result = TAE_SetInputProviderV2(engine, &callbacks, context.get());
   if (result == TAE_RESULT_OK) { std::lock_guard lock(g_contextsMutex); g_inputs[engine] = std::move(context); }
   return result;
 }
@@ -642,6 +730,15 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeApp
 }
 
 JNIEXPORT jstring JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeGetMetadataJson(
+    JNIEnv* env, jobject, jlong handle, jstring source) {
+  const auto name = jstringToUtf8(env, source);
+  return readEngineJson(env, toEngineHandle(handle), [&name](TAE_EngineHandle engine, char* buffer, size_t size, size_t* required) {
+    return TAE_GetMetadata(engine, name.c_str(), buffer, size, required);
+  });
+}
+
+JNIEXPORT jstring JNICALL
 Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeGetDspGraphStatusJson(
     JNIEnv* env, jobject, jlong handle) {
   return readEngineJson(env, toEngineHandle(handle), &TAE_GetDspGraphStatus, "{}");
@@ -740,6 +837,62 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeGet
   if (!env) return nullptr;
   const char* version = TAE_GetVersion();
   return env->NewStringUTF(version ? version : "0.1.0");
+}
+
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSetAutoMixMode(
+    JNIEnv* env, jobject, jlong handle, jstring mode) {
+  return TAE_SetAutoMixMode(toEngineHandle(handle), jstringToUtf8(env, mode).c_str());
+}
+JNIEXPORT jstring JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSelectAutoMix(
+    JNIEnv* env, jobject, jlong handle, jstring request) {
+  const auto json = jstringToUtf8(env, request);
+  return readEngineJson(env, toEngineHandle(handle), [&json](auto engine, char* b, size_t n, size_t* r) {
+    return TAE_SelectAutoMix(engine, json.c_str(), b, n, r);
+  }, "{\"ok\":false,\"reason\":\"candidate_selection_failed\"}");
+}
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativePrepareAutoMix(
+    JNIEnv* env, jobject, jlong handle, jstring request) {
+  return TAE_PrepareAutoMix(toEngineHandle(handle), jstringToUtf8(env, request).c_str());
+}
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSubmitAutoMix(
+    JNIEnv*, jobject, jlong handle, jlong plan) {
+  return plan > 0 ? TAE_SubmitAutoMix(toEngineHandle(handle), static_cast<uint64_t>(plan)) : TAE_RESULT_INVALID_ARGUMENT;
+}
+JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeCancelAutoMix(
+    JNIEnv*, jobject, jlong handle) { return TAE_CancelAutoMix(toEngineHandle(handle)); }
+JNIEXPORT jlong JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeCreateAutoMixCancel(
+    JNIEnv*, jobject, jint timeout) {
+  return static_cast<jlong>(reinterpret_cast<uintptr_t>(TAE_CreateAutoMixCancel(static_cast<unsigned>(std::max(0, timeout)))));
+}
+JNIEXPORT void JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeCancelAutoMixAnalysis(
+    JNIEnv*, jobject, jlong token) { TAE_CancelAutoMixAnalysis(reinterpret_cast<TAE_AutoMixCancel>(static_cast<uintptr_t>(token))); }
+JNIEXPORT void JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeDestroyAutoMixCancel(
+    JNIEnv*, jobject, jlong token) { TAE_DestroyAutoMixCancel(reinterpret_cast<TAE_AutoMixCancel>(static_cast<uintptr_t>(token))); }
+JNIEXPORT jstring JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeAnalyzeAutoMix(
+    JNIEnv* env, jobject, jlong handle, jstring source, jstring options, jlong token) {
+  const auto file = jstringToUtf8(env, source), json = jstringToUtf8(env, options);
+  return readEngineJson(env, toEngineHandle(handle), [&](auto engine, char* b, size_t n, size_t* r) {
+    return TAE_AnalyzeAutoMixCancellable(engine, file.c_str(), json.c_str(),
+        reinterpret_cast<TAE_AutoMixCancel>(static_cast<uintptr_t>(token)), b, n, r);
+  }, "{\"ok\":false,\"reason\":\"analysis_failed\"}");
+}
+JNIEXPORT jstring JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeIdentifyAutoMixSource(
+    JNIEnv* env, jobject, jlong handle, jstring source, jlong token) {
+  const auto file = jstringToUtf8(env, source);
+  return readEngineJson(env, toEngineHandle(handle), [&](auto engine, char* b, size_t n, size_t* r) {
+    return TAE_IdentifyAutoMixSource(engine, file.c_str(),
+        reinterpret_cast<TAE_AutoMixCancel>(static_cast<uintptr_t>(token)), b, n, r);
+  }, "{\"ok\":false,\"reason\":\"actual_source_identity_unavailable\"}");
 }
 
 }  // extern "C"

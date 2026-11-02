@@ -1,4 +1,5 @@
 #include "OutputBackendFactory.h"
+#include "bridge/BridgeCaptureBackend.h"
 
 #include <cstdlib>
 
@@ -8,6 +9,10 @@
 
 #if defined(__ANDROID__) && defined(TAE_ENABLE_OBOE)
 #include "android/OboeOutputBackend.h"
+#endif
+
+#if defined(__ANDROID__) && defined(TAE_ENABLE_USB_DIRECT)
+#include "usb/LibusbOutputBackend.h"
 #endif
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
@@ -126,9 +131,13 @@ std::string defaultBackendId() {
 }
 
 bool isOutputBackendAvailable(const std::string& backendId) {
+  if (backendId == "bridge-pcm") return true;
   (void)backendId;  // Builds with every platform backend disabled still compile cleanly.
 #if defined(__ANDROID__) && defined(TAE_ENABLE_OBOE)
   if (backendId == "oboe") return true;
+#endif
+#if defined(__ANDROID__) && defined(TAE_ENABLE_USB_DIRECT)
+  if (backendId == "usb-direct") return true;
 #endif
 #if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE && defined(TAE_ENABLE_IOS_AUDIOUNIT)
   if (backendId == "audiounit") return true;
@@ -149,10 +158,14 @@ bool isOutputBackendAvailable(const std::string& backendId) {
 }
 
 std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId, std::string* error) {
+  if (backendId == "bridge-pcm") return std::make_unique<BridgeCaptureBackend>();
   if (!isOutputBackendAvailable(backendId)) {
     if (error) *error = "Output backend is not available in this build: " + backendId;
     return nullptr;
   }
+#if defined(__ANDROID__) && defined(TAE_ENABLE_USB_DIRECT)
+  if (backendId == "usb-direct") return std::make_unique<LibusbOutputBackend>();
+#endif
 #if defined(__ANDROID__) && defined(TAE_ENABLE_OBOE)
   if (backendId == "oboe") {
     return std::make_unique<OboeOutputBackend>();

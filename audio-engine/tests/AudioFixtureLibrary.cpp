@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -10,6 +11,12 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+
+#if defined(TAE_HAS_FFMPEG)
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+#endif
 
 namespace twilight::audio::test {
 namespace {
@@ -310,6 +317,70 @@ TempAudioFixture writeWavPackDsdFixture(const std::string& name) {
   for (uint32_t i = 0; i < kDataBytes; ++i) out.put(static_cast<char>(0x69));
   return TempAudioFixture(path);
 }
+
+#if defined(TAE_HAS_FFMPEG)
+TempAudioFixture writeWavPackPcmFixture(const std::string& name, int bits, bool floatingPoint, int rate) {
+  const auto path = tempPathFor(name);
+  const auto* encoder = avcodec_find_encoder(AV_CODEC_ID_WAVPACK);
+  assert(encoder);
+  auto* context = avcodec_alloc_context3(encoder);
+  assert(context);
+  context->sample_fmt = floatingPoint ? AV_SAMPLE_FMT_FLTP : bits <= 16 ? AV_SAMPLE_FMT_S16P : AV_SAMPLE_FMT_S32P;
+  context->sample_rate = rate;
+  context->bits_per_raw_sample = bits;
+  context->frame_size = 128;
+  av_channel_layout_default(&context->ch_layout, 2);
+  assert(avcodec_open2(context, encoder, nullptr) == 0);
+  auto* frame = av_frame_alloc();
+  auto* packet = av_packet_alloc();
+  assert(frame && packet);
+  frame->format = context->sample_fmt;
+  frame->sample_rate = rate;
+  frame->nb_samples = 128;
+  assert(av_channel_layout_copy(&frame->ch_layout, &context->ch_layout) == 0);
+  assert(av_frame_get_buffer(frame, 0) == 0);
+  for (int channel = 0; channel < 2; ++channel) {
+    for (int i = 0; i < 128; ++i) {
+      const int value = (channel ? -1 : 1) * (i % 64 - 32);
+      if (floatingPoint) reinterpret_cast<float*>(frame->data[channel])[i] = value / 64.0f;
+      else if (bits <= 16) reinterpret_cast<int16_t*>(frame->data[channel])[i] = value * 127;
+      else reinterpret_cast<int32_t*>(frame->data[channel])[i] = value * (bits <= 24 ? 256 : 1);
+    }
+  }
+  assert(avcodec_send_frame(context, frame) == 0);
+  assert(avcodec_receive_packet(context, packet) == 0);
+  assert(packet->size >= 32);
+  // The standalone single-block fixture has a known total. The encoder leaves
+  // it unknown for a muxer to fill in. Give the 20-bit case four padding bits;
+  // the decoder applies that shift after unpacking the small integer payload.
+  packet->data[12] = 128;
+  packet->data[13] = packet->data[14] = packet->data[15] = 0;
+  if (bits == 20 && !floatingPoint) packet->data[25] |= 0x80; // 4 << SHIFT_LSB (13).
+  std::ofstream out(path, std::ios::binary);
+  out.write(reinterpret_cast<const char*>(packet->data), packet->size);
+  const std::vector<std::pair<std::string, std::string>> tags = {
+      {"Title", "Moonrise"}, {"Artist", "Twilight"}, {"Album", "Night"}, {"Track", "3/9"}, {"Disc", "2/2"}};
+  uint32_t tagSize = 32;
+  for (const auto& [key, value] : tags) {
+    writeLe32(out, value.size());
+    writeLe32(out, 0);
+    out.write(key.c_str(), key.size() + 1);
+    out.write(value.data(), value.size());
+    tagSize += 8 + key.size() + 1 + value.size();
+  }
+  out.write("APETAGEX", 8);
+  writeLe32(out, 2000);
+  writeLe32(out, tagSize);
+  writeLe32(out, tags.size());
+  writeLe32(out, 0);
+  writeLe64(out, 0);
+  assert(out.good());
+  av_packet_free(&packet);
+  av_frame_free(&frame);
+  avcodec_free_context(&context);
+  return TempAudioFixture(path);
+}
+#endif
 
 std::vector<std::filesystem::path> findExternalAudioFixtures() {
   auto manifestFixtures = findExternalAudioFixturesFromManifest();

@@ -1,5 +1,6 @@
 #include "../core/TwilightAudioEngine.h"
 #include "../core/AudioPipeline.h"
+#include "../output/android/AndroidPcmCallback.h"
 #include "../core/AudioPipelineRenderUtils.h"
 #include "../core/PcmSampleRatePolicy.h"
 #include "../core/FixedSpscQueue.h"
@@ -136,6 +137,8 @@ std::string readTextFile(const std::filesystem::path& path) {
 
 std::string extractFunctionBody(const std::string& source, const std::string& signature) {
   const size_t signaturePos = source.find(signature);
+  if (signaturePos == std::string::npos)
+    std::fprintf(stderr, "Source guard cannot find function: %s\n", signature.c_str());
   assert(signaturePos != std::string::npos);
   const size_t bodyStart = source.find('{', signaturePos);
   assert(bodyStart != std::string::npos);
@@ -479,7 +482,7 @@ void testTwilightAudioEngineReusesParsedDspConfigSnapshot() {
   const std::string source = readTextFile(sourcePath);
   const std::string header = readTextFile(headerPath);
   const std::string playBody =
-      extractFunctionBody(source, "TAE_Result TwilightAudioEngine::play(const std::string& source, double startTimeSeconds, bool initiallyPaused)");
+      extractFunctionBody(source, "TAE_Result TwilightAudioEngine::play(");
   const std::string playQueueBody =
       extractFunctionBody(source, "TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double startTimeSeconds)");
   const std::string perfectBody = extractFunctionBody(source, "void TwilightAudioEngine::updatePerfectLocked()");
@@ -1082,6 +1085,10 @@ class FakeOutputBackend final : public IOutputBackend {
     return state_->backendId.c_str();
   }
 
+  void setUsbPcmPolicy(std::shared_ptr<UsbPcmPolicy> policy) override { usbPolicy_ = std::move(policy); }
+  void setUsbDirectHost(std::shared_ptr<UsbDirectHost> host) override { directHost_ = std::move(host); }
+  ~FakeOutputBackend() override { if (usbLease_ && usbPolicy_) usbPolicy_->release(); releaseDirect(); }
+
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override {
     std::lock_guard lock(g_backendRegistry.mutex);
     ++state_->openCalls;
@@ -1099,6 +1106,18 @@ class FakeOutputBackend final : public IOutputBackend {
       state_->info.actualDeviceName = deviceId;
       if (error) *error = "Fake DSD proxy device is not installed";
       return false;
+    }
+    if (state_->outputConfig.usbPcmPassthrough) {
+      if (!usbPolicy_ || usbPolicy_->acquire(deviceId, requestedFormat, error) <= 0) return false;
+      usbLease_ = true;
+    }
+    if (state_->backendId == "usb-direct") {
+      assert(directHost_); // The pipeline must forward its per-engine host to the backend.
+      const auto acquired = directHost_->acquire(deviceId, requestedFormat);
+      if (acquired.find("error") != std::string::npos) { if (error) *error = acquired; return false; }
+      directLease_ = true;
+      const auto configured = directHost_->configure(0, requestedFormat.sampleRate);
+      if (!configured.empty()) { if (error) *error = configured; return false; }
     }
     AudioFormat opened = requestedFormat;
     if (formatLooksDopCarrier(requestedFormat) && g_maxDopCarrierSampleRate.load() > 0 &&
@@ -1137,7 +1156,7 @@ class FakeOutputBackend final : public IOutputBackend {
     state_->openedFormat = opened;
 
     OutputInfo info;
-    info.exclusive = state_->backendId == "wasapi-exclusive";
+    info.exclusive = state_->backendId == "wasapi-exclusive" || state_->backendId == "usb-direct";
     info.supportsOutputPerfect =
         state_->backendId == "wasapi-exclusive" || state_->backendId == "asio" || state_->backendId == "alsa";
     info.backend = state_->backendId;
@@ -1164,6 +1183,8 @@ class FakeOutputBackend final : public IOutputBackend {
     info.driverNativeDsdCapable = state_->backendId == "asio" || state_->backendId == "alsa";
     info.driverNativeDsdSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate, kDsd512Rate};
     info.channelRoutingMode = "auto";
+    info.usbPcmPreferenceAccepted = state_->outputConfig.usbPcmPassthrough;
+    info.usbPcmFormatMatched = info.usbPcmPreferenceAccepted;
     state_->info = info;
     return true;
   }
@@ -1242,6 +1263,9 @@ class FakeOutputBackend final : public IOutputBackend {
     std::lock_guard lock(g_backendRegistry.mutex);
     ++state_->closeCalls;
     state_->closed = true;
+    if (usbLease_ && usbPolicy_) usbPolicy_->release();
+    usbLease_ = false;
+    releaseDirect();
   }
 
   AudioFormat outputFormat() const override {
@@ -1251,7 +1275,9 @@ class FakeOutputBackend final : public IOutputBackend {
 
   OutputInfo outputInfo() const override {
     std::lock_guard lock(g_backendRegistry.mutex);
-    return state_->info;
+    auto info = state_->info;
+    if (usbLease_ && usbPolicy_ && !usbPolicy_->valid()) info.usbPcmInvalid = true;
+    return info;
   }
 
   DopRuntimeFacts dopRuntimeFacts() const override {
@@ -1299,7 +1325,7 @@ class FakeOutputBackend final : public IOutputBackend {
     }
     facts.requestedDsdRate = state_->requestedFormat.sampleRate;
     facts.channelCount = state_->requestedFormat.channelCount;
-    facts.explicitlyCapable = state_->backendId == "asio" || state_->backendId == "alsa";
+    facts.explicitlyCapable = state_->backendId == "asio" || state_->backendId == "alsa" || state_->backendId == "usb-direct";
     facts.advertisedSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate, kDsd512Rate};
     if (!facts.explicitlyCapable || g_fakeNativeDsdBehavior == FakeNativeDsdBehavior::Unsupported) {
       facts.state = NativeDsdRuntimeFactState::Unsupported;
@@ -1342,6 +1368,13 @@ class FakeOutputBackend final : public IOutputBackend {
   }
 
  private:
+  std::shared_ptr<UsbPcmPolicy> usbPolicy_;
+  bool usbLease_ = false;
+  std::shared_ptr<UsbDirectHost> directHost_;
+  bool directLease_ = false;
+  void releaseDirect() {
+    if (directLease_) { directHost_->restore(); directHost_->release(); directLease_ = false; }
+  }
   std::shared_ptr<BackendState> state_;
 };
 
@@ -2459,6 +2492,18 @@ void testVisualizationDemandDisablesCaptureWithoutChangingDspPreference() {
   engine.setDspConfig("{\"fftEnabled\":true}");
   pumpBackend(backend, 2, 128);
   assert(read().find("\"active\":true") != std::string::npos);
+  const auto monitor = engine.getVisualizationDataJson(
+      R"({"spectrumPoints":4096,"visualizerBarCount":48,"visualizerBarMode":"peak","waveformPoints":16,"spectrogramFrames":0,"oscilloscopePoints":0})");
+  assert(monitor.find("\"visualizerBarMode\":\"peak\"") != std::string::npos);
+  assert(monitor.find("\"spectrum\":[]") != std::string::npos);
+  assert(monitor.find("\"oscilloscope\":[]") != std::string::npos);
+  assert(monitor.find("\"spectrogram\":[]") != std::string::npos);
+  const size_t barsStart = monitor.find("\"visualizerBars\":[");
+  assert(barsStart != std::string::npos);
+  const size_t barsEnd = monitor.find(']', barsStart);
+  assert(std::count(monitor.begin() + barsStart, monitor.begin() + barsEnd, ',') == 47);
+  const auto legacy = engine.getVisualizationDataJson(R"({"visualizerBarCount":48})");
+  assert(legacy.find("\"visualizerBarMode\":\"interpolated\"") != std::string::npos);
   assert(g_backendRegistry.snapshots().size() == 1);
   assertLatestPlaybackContains(engine, "\"pcmPassthrough\":true");
 }
@@ -5417,6 +5462,403 @@ void testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek() {
   pipeline.stop();
 }
 
+
+struct UsbPolicyFixture {
+  std::atomic<bool> accepted{true}, active{false}, valid{true};
+  std::atomic<int> acquires{0}, releases{0};
+  std::shared_ptr<UsbPcmPolicy> policy = std::make_shared<UsbPcmPolicy>();
+  UsbPolicyFixture() {
+    policy->acquire = [this](const std::string&, const AudioFormat&, std::string* error) {
+      ++acquires;
+      if (!accepted) { if (error) *error = "USB preference rejected"; return 0; }
+      active = true; return 7;
+    };
+    policy->valid = [this] { return active && valid; };
+    policy->release = [this] { if (active.exchange(false)) ++releases; return true; };
+  }
+};
+
+struct UsbDirectFixture {
+  std::atomic<int> acquires{0}, configures{0}, restores{0}, releases{0};
+  std::atomic<bool> accepted{true}, active{false};
+  std::shared_ptr<UsbDirectHost> host = std::make_shared<UsbDirectHost>();
+  UsbDirectFixture() {
+    host->acquire = [this](const std::string& device, const AudioFormat&) {
+      assert(device == "usb-direct:/dev/bus/usb/001/002");
+      ++acquires;
+      if (!accepted) return std::string("{\"error\":\"USB permission denied\"}");
+      active = true; return std::string("{}");
+    };
+    host->configure = [this](int profile, int rate) {
+      assert(profile == 0 && rate > 0); ++configures; return std::string{};
+    };
+    host->restore = [this] { ++restores; return std::string{}; };
+    host->release = [this] { assert(active.exchange(false)); ++releases; };
+  }
+  void install(TwilightAudioEngine& engine) {
+    engine.setUsbDirectHost(host);
+    assert(engine.setOutputBackend("usb-direct") == TAE_RESULT_OK);
+    assert(engine.setOutputDevice("usb-direct:/dev/bus/usb/001/002") == TAE_RESULT_OK);
+  }
+};
+
+void testUsbDirectPausedRestoreDefersOwnershipAndResumeReacquires() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.play("typed-gapless-s32-next.flac", .05, true) == TAE_RESULT_OK);
+  assert(usb.acquires == 0 && g_backendRegistry.snapshots().empty());
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(engine.seek(.1) == TAE_RESULT_OK);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assert(usb.active && usb.acquires == 1 && usb.configures == 1);
+  assertLatestPlaybackContains(engine, "\"typedRawPath\":true");
+  assertLatestPlaybackContains(engine, "\"exclusive\":true");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assert(engine.setPaused(true) == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 1 && usb.restores == 1);
+  assertLatestPlaybackContains(engine, "\"exclusive\":false");
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assert(usb.active && usb.acquires == 2);
+  assert(engine.stop() == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 2 && usb.restores == 2);
+}
+
+void testUsbDirectFailuresKeepPositionWithoutOpeningAnotherBackend() {
+  for (const auto event : {OutputBackendEvent::DeviceInvalidated, OutputBackendEvent::RenderError}) {
+    UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+    assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+    const auto backend = waitForLatestStartedBackendState(); assert(backend);
+    OutputEventCallback notify;
+    { std::lock_guard lock(g_backendRegistry.mutex); notify = backend->event; }
+    notify(event, "USB transfer failed");
+    assert(waitUntil([&] { return !usb.active; }));
+    assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+    assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+    assert(usb.acquires == 1 && g_backendRegistry.snapshots().size() == 1);
+    assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.acquires == 2);
+  }
+}
+
+void testUsbDirectRejectedOpenRemainsPausedAndExplicitRetryWorks() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  usb.accepted = false;
+  assert(engine.play("typed-gapless-s32-next.flac", .1) != TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+  assert(usb.acquires == 1 && usb.releases == 0 && !usb.active);
+  usb.accepted = true;
+  assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.acquires == 2 && usb.active);
+  for (const auto& backend : g_backendRegistry.snapshots()) assert(backend.backendId == "usb-direct");
+}
+
+void testLeavingUsbDirectReleasesAndWaitsForExplicitPlayback() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+  assert(engine.setOutputBackend("oboe") == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 1);
+  assert(engine.setOutputDevice("auto") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{}") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(g_backendRegistry.snapshots().size() == 1);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assert(usb.acquires == 1 && g_backendRegistry.snapshots().back().backendId == "oboe");
+}
+
+void testUsbDirectBufferEditReopensTheSameOwnedDevice() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"preferredBufferSize\":512}") == TAE_RESULT_OK);
+  assert(usb.acquires == 2 && usb.releases == 1 && usb.active);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"bufferSizeFrames\":512");
+}
+
+void testUsbDirectDopReceivesTheHostAndReleasesOnPause() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"dop\"}") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"dsdMutePreRollFrames\":0,\"dsdMutePostRollFrames\":0}") == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState(); assert(backend && backend->typedStarted);
+  assert(backend->requestedFormat.dopEncoded && backend->requestedFormat.sampleRate == 176400);
+  const auto bytes = renderBackendTypedBytes(backend, 1);
+  const std::vector<uint8_t> expected{0x44, 0x88, 0x05, 0x55, 0x99, 0x05};
+  assert(bytes == expected);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assert(engine.setPaused(true) == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 1);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assert(usb.acquires == 2 && usb.active);
+  for (const auto& state : g_backendRegistry.snapshots()) assert(state.backendId == "usb-direct");
+}
+
+void testUsbDirectNativeDsdReceivesTheHostWithoutPcmConversion() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"native\"}") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"dsdMutePreRollFrames\":0,\"dsdMutePostRollFrames\":0}") == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState(); assert(backend && backend->typedStarted);
+  assert(isDsdSampleFormat(backend->requestedFormat.sampleFormat));
+  assert(backend->requestedFormat.sampleRate == kDsd64Rate);
+  const auto bytes = renderBackendTypedBytes(backend, 2);
+  const std::vector<uint8_t> expected{0x11, 0x99, 0x22, 0xaa};
+  assert(bytes == expected);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdActualRate\":2822400");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assert(engine.setPaused(true) == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 1);
+}
+
+void testUsbDirectAutoDoesNotInferDopSupportFromAHighRatePcmCarrier() {
+  UsbDirectFixture usb; EngineHarness harness; auto& engine = harness.engine(); usb.install(engine);
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"auto\"}") == TAE_RESULT_OK);
+  g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Unsupported;
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 2);
+  assert(isDsdSampleFormat(snapshots.front().requestedFormat.sampleFormat));
+  assert(!isDsdSampleFormat(snapshots.back().requestedFormat.sampleFormat));
+  for (const auto& state : snapshots) {
+    assert(!state.requestedFormat.dopEncoded && state.backendId == "usb-direct");
+  }
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+}
+
+void testAndroidTypedCallbackPreservesBytesAndSilencesTail() {
+  for (const auto sample : {AudioSampleFormat::Int16Interleaved, AudioSampleFormat::Int24Interleaved,
+                           AudioSampleFormat::Int32Interleaved, AudioSampleFormat::Float32Interleaved}) {
+    for (const int channels : {1, 2}) {
+      AudioFormat format = makePcmFormat(48000, channels,
+          sample == AudioSampleFormat::Int16Interleaved ? 16 : sample == AudioSampleFormat::Int24Interleaved ? 24 : 32, sample);
+      const size_t stride = audioFormatBytesPerFrame(format);
+      std::vector<uint8_t> output(9 * stride + 16, 0xa5), source(5 * stride);
+      for (size_t i = 0; i < source.size(); ++i) source[i] = static_cast<uint8_t>(i * 103 + 1);
+      int floatCalls = 0;
+      const auto typed = [&](PcmBlock& block) {
+        assert(block.format.sampleFormat == sample && block.frames == 9 && block.byteSize == 9 * stride);
+        std::memcpy(block.data, source.data(), source.size()); return size_t(5);
+      };
+      const auto floats = [&](float*, size_t frames) { ++floatCalls; return frames; };
+      renderAndroidPcm(output.data(), 9, format, true, true, typed, floats);
+      assert(std::equal(source.begin(), source.end(), output.begin()));
+      assert(std::all_of(output.begin() + source.size(), output.begin() + 9 * stride, [](auto b) { return b == 0; }));
+      assert(std::all_of(output.begin() + 9 * stride, output.end(), [](auto b) { return b == 0xa5; }));
+      assert(floatCalls == 0);
+      renderAndroidPcm(output.data(), 9, format, false, true, typed, floats);
+      assert(std::all_of(output.begin(), output.begin() + 9 * stride, [](auto b) { return b == 0; }));
+      renderAndroidPcm(output.data(), 9, format, true, true, {}, floats);
+      assert(floatCalls == 0); // raw mode cannot enter the float fallback, even on a missing callback
+    }
+  }
+  AudioFormat floats = makePcmFormat(48000, 2, 32, AudioSampleFormat::Float32Interleaved);
+  std::vector<float> buffer(18, 1.0f); int calls = 0;
+  renderAndroidPcm(buffer.data(), 9, floats, true, false, {}, [&](float* out, size_t) {
+    ++calls; std::fill_n(out, 10, .25f); return size_t(5);
+  });
+  assert(calls == 1 && buffer[0] == .25f && buffer[9] == .25f && buffer[10] == 0 && buffer[17] == 0);
+}
+
+void testUsbPcmTypedTransportAndPauseResume() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy);
+  assert(engine.setOutputBackend("oboe") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  const std::string source = "typed-gapless-s32-next.flac";
+  assert(engine.play(source, 0) == TAE_RESULT_OK);
+  auto backend = waitForLatestStartedBackendState(); assert(backend);
+  const auto bytes = renderBackendTypedBytes(backend, 13);
+  std::vector<uint8_t> expected(bytes.size());
+  for (size_t frame = 0; frame < 13; ++frame) for (size_t ch = 0; ch < 2; ++ch)
+    writeTypedGaplessSample(source, AudioSampleFormat::Int32Interleaved, frame, ch, expected.data() + (frame * 2 + ch) * 4);
+  assert(bytes == expected);
+  assertLatestPlaybackContains(engine, "\"usbPcmPreferenceAccepted\":true");
+  assertLatestPlaybackContains(engine, "\"usbPcmFormatMatched\":true");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assertLatestPlaybackContains(engine, "\"typedRawPath\":true");
+  assert(engine.setPaused(true) == TAE_RESULT_OK); assert(!usb.active && usb.releases == 1);
+  assertLatestPlaybackContains(engine, "\"usbPcmPreferenceAccepted\":false");
+  assert(engine.seek(.1) == TAE_RESULT_OK);
+  assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.acquires == 2 && usb.active);
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+  assert(engine.stop() == TAE_RESULT_OK); assert(!usb.active && usb.releases == 2);
+}
+
+void testUsbPcmPauseNeverAppliesTheOrdinaryPcmFade() {
+  for (const auto* format : {"s16", "s24", "s32", "f32"}) {
+    UsbPolicyFixture usb; EngineHarness harness; AudioPipeline pipeline;
+    pipeline.setUsbPcmPolicy(usb.policy);
+    OutputConfig config; config.usbPcmPassthrough = true;
+    std::string error;
+    assert(pipeline.setOutputConfig(config, &error));
+    const std::string source = std::string("typed-gapless-") + format + "-next.flac";
+    assert(pipeline.play(source, 0, "oboe", "auto", 1.0,
+                         "{\"fftEnabled\":false}", &error) == TAE_RESULT_OK);
+    const auto backend = waitForLatestStartedBackendState(); assert(backend);
+    const auto sampleFormat = backend->openedFormat.sampleFormat;
+    const size_t sampleBytes = audioSampleFormatBytes(sampleFormat);
+    const size_t frameBytes = audioFormatBytesPerFrame(backend->openedFormat);
+    size_t nextFrame = 0;
+    const auto exactOrSilent = [&] {
+      const auto actual = renderBackendTypedBytes(backend, 64);
+      if (std::all_of(actual.begin(), actual.end(), [](auto byte) { return byte == 0; })) return;
+      std::vector<uint8_t> expected(actual.size());
+      for (size_t frame = 0; frame < 64; ++frame) for (size_t channel = 0; channel < 2; ++channel)
+        writeTypedGaplessSample(source, sampleFormat, nextFrame + frame, channel,
+            expected.data() + frame * frameBytes + channel * sampleBytes);
+      assert(actual == expected); // No fractional-gain samples, including the integer low bits.
+      nextFrame += 64;
+    };
+    exactOrSilent(); assert(nextFrame == 64);
+    std::atomic<bool> pausing{false};
+    std::thread control([&] { pausing = true; assert(pipeline.togglePause() == TAE_RESULT_OK); });
+    assert(waitUntil([&] { return pausing.load(); }));
+    // Pump concurrently so an incorrectly enabled 200 ms fade changes the next block.
+    for (int callback = 0; callback < 25; ++callback) {
+      exactOrSilent(); std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    control.join();
+    assert(pipeline.status().state == PipelineState::Paused);
+    const auto silence = renderBackendTypedBytes(backend, 64);
+    assert(std::all_of(silence.begin(), silence.end(), [](auto byte) { return byte == 0; }));
+    assert(pipeline.togglePause() == TAE_RESULT_OK);
+    exactOrSilent();
+    pipeline.stop();
+  }
+}
+
+void testUsbPcmNegotiatedMismatchReleasesWithoutFallback() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy); engine.setOutputBackend("oboe");
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  g_negotiatedPcmSampleRate = 48000; // Source is 44100: acceptance alone is insufficient.
+  assert(engine.play("typed-gapless-s32-next.flac", .1) != TAE_RESULT_OK);
+  assert(!usb.active && usb.acquires == 1 && usb.releases == 1);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assertLatestPlaybackContains(engine, "\"usbPcmFormatMatched\":false");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+  assert(g_backendRegistry.snapshots().size() == 1);
+  g_negotiatedPcmSampleRate = 0;
+  assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.acquires == 2);
+}
+
+void testUsbPcmBackendFailurePausesWithoutAutomaticReopen() {
+  for (const auto event : {OutputBackendEvent::DeviceInvalidated, OutputBackendEvent::RenderError}) {
+    UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+    engine.setUsbPcmPolicy(usb.policy); engine.setOutputBackend("oboe");
+    assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+    assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+    const auto backend = waitForLatestStartedBackendState(); assert(backend);
+    OutputEventCallback notify;
+    { std::lock_guard lock(g_backendRegistry.mutex); notify = backend->event; }
+    notify(event, "USB stream invalidated");
+    assert(waitUntil([&] { return !usb.active; }));
+    assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+    assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+    assert(usb.acquires == 1 && g_backendRegistry.snapshots().size() == 1);
+    assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.acquires == 2);
+  }
+}
+
+void testUsbPcmPreferenceLossPausesWithoutFallbackAndKeepsPosition() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy); engine.setOutputBackend("oboe");
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+  usb.valid = false;
+  assert(waitUntil([&] { return !usb.active; }));
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assertLatestPlaybackContains(engine, "\"usbPcmFormatMatched\":false");
+  assert(usb.acquires == 1 && g_backendRegistry.snapshots().size() == 1);
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+  // Explicitly leave strict mode, retain the paused position, then resume ordinary output.
+  assert(engine.setOutputConfig("{}") == TAE_RESULT_OK);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assert(usb.acquires == 1);
+}
+
+void testUsbPcmFailedOpenAndProcessingEditsNeverFallback() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy); engine.setOutputBackend("oboe");
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  usb.accepted = false;
+  assert(engine.play("typed-gapless-s32-next.flac", .1) != TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - .1) < .0001);
+  assert(!usb.active);
+  usb.accepted = true;
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assert(engine.setVolume(.5) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\""); assert(!usb.active);
+  const int attempts = usb.acquires;
+  assert(engine.setPaused(false) != TAE_RESULT_OK); // processing precondition checked before policy acquire
+  assert(usb.acquires == attempts);
+  assert(engine.setVolume(1) == TAE_RESULT_OK);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assert(engine.setOutputDevice("8") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\""); assert(!usb.active);
+}
+
+void testUsbPcmInitialPausedLoadAndModeChangeRelease() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy); engine.setOutputBackend("oboe");
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  assert(engine.play("typed-gapless-s32-next.flac", .1, true) == TAE_RESULT_OK);
+  assert(!usb.active && usb.releases == 1);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(engine.setPaused(false) == TAE_RESULT_OK); assert(usb.active);
+  const auto state = "{\"revision\":1,\"processing\":{},\"graph\":{\"nodes\":[],\"outputStage\":{}},\"outputConfig\":{}}";
+  assert(engine.applyDspState(1, state) == TAE_RESULT_OK);
+  assert(!usb.active);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+}
+
+void testAutoMixFailedRerouteKeepsAcceptedModeAndTransport() {
+  for (const bool paused : {false, true}) {
+    EngineHarness harness; auto& engine = harness.engine();
+    assert(engine.play("automix-mode-rollback.flac", 6.25, paused) == TAE_RESULT_OK);
+    const auto backend = waitForLatestStartedBackendState(); assert(backend);
+    g_failNextSeek = true;
+    assert(engine.setAutoMixMode("natural") != TAE_RESULT_OK);
+    assertLatestPlaybackContains(engine, "\"autoMixMode\":\"off\"");
+    assertLatestPlaybackContains(engine, paused ? "\"state\":\"paused\"" : "\"state\":\"playing\"");
+    assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") - 6.25) < .001);
+    const auto restoredBackend = waitForLatestStartedBackendState(); assert(restoredBackend);
+    renderBackendFrames(restoredBackend, 128);
+    if (!paused) assert(waitUntil([&] { return playbackJsonNumber(engine.getPlaybackInfoJson(), "position") > 6.25; }));
+    else std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    const auto after = playbackJsonNumber(engine.getPlaybackInfoJson(), "position");
+    assert(paused ? std::abs(after - 6.25) < .001 : after > 6.25);
+  }
+}
+
+void testAutoMixAndUsbPcmRejectEachOtherBeforeChangingOutput() {
+  UsbPolicyFixture usb; EngineHarness harness; auto& engine = harness.engine();
+  engine.setUsbPcmPolicy(usb.policy); assert(engine.setOutputBackend("oboe") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+  assert(engine.play("typed-gapless-s32-next.flac", .1) == TAE_RESULT_OK);
+  assert(engine.setAutoMixMode("natural") != TAE_RESULT_OK);
+  assert(usb.active && usb.acquires == 1 && usb.releases == 0);
+  assertLatestPlaybackContains(engine, "\"autoMixMode\":\"off\"");
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assert(engine.setOutputConfig("{}") == TAE_RESULT_OK);
+  assert(engine.setAutoMixMode("natural") == TAE_RESULT_OK);
+  assert(engine.setPaused(false) == TAE_RESULT_OK);
+  const int releases = usb.releases;
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") != TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"autoMixMode\":\"natural\"");
+  assert(usb.releases == releases && !usb.active);
+  assert(engine.applyDspState(1, "{\"revision\":1,\"processing\":{},\"graph\":{\"nodes\":[],\"outputStage\":{}},\"outputConfig\":{\"usbPcmPassthrough\":true}}") != TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"autoMixMode\":\"natural\"");
+  assert(engine.setAutoMixMode("off") == TAE_RESULT_OK);
+  assert(engine.setOutputConfig("{\"usbPcmPassthrough\":true}") == TAE_RESULT_OK);
+}
+
 }  // namespace
 
 namespace twilight::audio {
@@ -5440,7 +5882,7 @@ std::string enumeratePlatformDevicesJson() {
   return "[]";
 }
 
-std::string readMetadataJson(const std::string& source) {
+std::string readMetadataJson(const std::string& source, std::shared_ptr<const SeekableInputFactory>) {
   return "{\"source\":\"" + source + "\"}";
 }
 
@@ -5685,7 +6127,39 @@ void FFmpegDecoder::pollStreamMetadata() {}
     expression; \
   } while (false)
 
+static void runUsbPcmCases() {
+  RUN_RUNTIME_CASE(testAndroidTypedCallbackPreservesBytesAndSilencesTail());
+  RUN_RUNTIME_CASE(testUsbPcmTypedTransportAndPauseResume());
+  RUN_RUNTIME_CASE(testUsbPcmPauseNeverAppliesTheOrdinaryPcmFade());
+  RUN_RUNTIME_CASE(testUsbPcmNegotiatedMismatchReleasesWithoutFallback());
+  RUN_RUNTIME_CASE(testUsbPcmBackendFailurePausesWithoutAutomaticReopen());
+  RUN_RUNTIME_CASE(testUsbPcmPreferenceLossPausesWithoutFallbackAndKeepsPosition());
+  RUN_RUNTIME_CASE(testUsbPcmFailedOpenAndProcessingEditsNeverFallback());
+  RUN_RUNTIME_CASE(testUsbPcmInitialPausedLoadAndModeChangeRelease());
+}
+
+static void runUsbDirectCases() {
+  RUN_RUNTIME_CASE(testUsbDirectPausedRestoreDefersOwnershipAndResumeReacquires());
+  RUN_RUNTIME_CASE(testUsbDirectFailuresKeepPositionWithoutOpeningAnotherBackend());
+  RUN_RUNTIME_CASE(testUsbDirectRejectedOpenRemainsPausedAndExplicitRetryWorks());
+  RUN_RUNTIME_CASE(testLeavingUsbDirectReleasesAndWaitsForExplicitPlayback());
+  RUN_RUNTIME_CASE(testUsbDirectBufferEditReopensTheSameOwnedDevice());
+  RUN_RUNTIME_CASE(testUsbDirectDopReceivesTheHostAndReleasesOnPause());
+  RUN_RUNTIME_CASE(testUsbDirectNativeDsdReceivesTheHostWithoutPcmConversion());
+  RUN_RUNTIME_CASE(testUsbDirectAutoDoesNotInferDopSupportFromAHighRatePcmCarrier());
+}
+
 int main() {
+  if (std::getenv("TAE_RUNTIME_USB_DIRECT_ONLY")) { runUsbDirectCases(); return 0; }
+  if (std::getenv("TAE_RUNTIME_AUTOMIX_MODE_ONLY")) {
+    RUN_RUNTIME_CASE(testAutoMixFailedRerouteKeepsAcceptedModeAndTransport());
+    RUN_RUNTIME_CASE(testAutoMixAndUsbPcmRejectEachOtherBeforeChangingOutput());
+    return 0;
+  }
+  if (std::getenv("TAE_RUNTIME_USB_PCM_ONLY")) {
+    runUsbPcmCases();
+    return 0;
+  }
   if (std::getenv("TAE_RUNTIME_RESAMPLER_ONLY")) {
     RUN_RUNTIME_CASE(testResamplerStatusUsesTheCurrentDecodeStream());
     RUN_RUNTIME_CASE(testResamplerPhaseStatusSeparatesRequestFromActiveFilter());
@@ -5745,6 +6219,10 @@ int main() {
     return 0;
   }
   RUN_RUNTIME_CASE(testFixedSpscQueuePreservesFifoAndReportsFull());
+  RUN_RUNTIME_CASE(testAutoMixFailedRerouteKeepsAcceptedModeAndTransport());
+  RUN_RUNTIME_CASE(testAutoMixAndUsbPcmRejectEachOtherBeforeChangingOutput());
+  runUsbPcmCases();
+  runUsbDirectCases();
   RUN_RUNTIME_CASE(testFloatScratchResizeForOverwritePreservesSameSizedScratch());
   RUN_RUNTIME_CASE(testVisualizationFftResolutionMatchesWebAudioReference());
   RUN_RUNTIME_CASE(testRenderCallbacksDoNotResizePipelineScratchBuffers());

@@ -12,12 +12,40 @@
 #include "../decoder/FFmpegDecoder.h"
 #include "../utils/JsonUtils.h"
 #include "am_asset_lock.h"
+#include "am_hash.h"
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <atomic>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace twilight::audio {
 namespace {
+#if !defined(_WIN32)
+class AutoMixFdInput final : public SeekableInput {
+ public:
+  explicit AutoMixFdInput(int fd) : fd_(fcntl(fd, F_DUPFD_CLOEXEC, 0)) {}
+  ~AutoMixFdInput() override { if (fd_ >= 0) ::close(fd_); }
+  int64_t size() override {
+    ta_am_source_stamp s{};
+    return !cancelled_ && ta_am_source_snapshot_fd(fd_, &s) ? static_cast<int64_t>(s.size) : -1;
+  }
+  int readAt(int64_t position, uint8_t* bytes, int count) override {
+    if (cancelled_ || position < 0 || count < 0) return -1;
+    ssize_t n;
+    do { n = pread(fd_, bytes, static_cast<size_t>(count), position); } while (n < 0 && errno == EINTR && !cancelled_);
+    return cancelled_ ? -1 : static_cast<int>(n);
+  }
+  void cancel() override { cancelled_ = true; }
+  int localFileDescriptor() override { return fd_; }
+ private:
+  int fd_;
+  std::atomic<bool> cancelled_{false};
+};
+#endif
 std::string utf8(const std::filesystem::path &path) {
   auto s = path.u8string();
   return {reinterpret_cast<const char *>(s.data()), s.size()};
@@ -92,10 +120,39 @@ bool numberArray(const std::string &json, const char *name, double *values,
   return false;
 }
 } // namespace
+AutoMixSource::AutoMixSource(std::string source, std::shared_ptr<SeekableInput> input)
+    : path_(input ? input->localPath() : std::move(source)) {
+#if !defined(_WIN32)
+  if (input && input->localFileDescriptor() >= 0)
+    file_ = std::make_shared<AutoMixFdInput>(input->localFileDescriptor());
+#endif
+}
+bool AutoMixSource::snapshot(ta_am_source_stamp* s) const {
+  return file_ ? ta_am_source_snapshot_fd(file_->localFileDescriptor(), s) :
+      ta_am_source_snapshot(path_.c_str(), s);
+}
+bool AutoMixSource::identify(char hash[65], const ta_am_cancel* c) const {
+  return file_ ? ta_am_source_sha256_fd(file_->localFileDescriptor(), hash, c) :
+      ta_am_source_sha256(path_.c_str(), hash, c);
+}
+ta_am_source_lease* AutoMixSource::acquire(const ta_am_source_stamp* s, const char hash[65], const ta_am_cancel* c) const {
+  return file_ ? ta_am_source_acquire_fd(file_->localFileDescriptor(), s, hash, c) :
+      ta_am_source_acquire(path_.c_str(), s, hash, c);
+}
+std::shared_ptr<const SeekableInputFactory> AutoMixSource::decodeFactory() const {
+#if !defined(_WIN32)
+  if (file_) return std::make_shared<const SeekableInputFactory>([file = file_](const std::string&) {
+    return std::make_shared<AutoMixFdInput>(file->localFileDescriptor());
+  });
+#endif
+  return {};
+}
 bool decodeAutoMixFrames(const QueueItem &item, const AudioFormat &format,
                          uint64_t first, size_t frames, std::vector<float> *pcm,
                          std::string *error, const ta_am_cancel *cancel,
-                         DspResamplerQuality quality) {
+                         DspResamplerQuality quality,
+                         std::shared_ptr<const SeekableInputFactory> factory,
+                         DspResamplerPhase phase) {
   if (!pcm || format.sampleRate < 8000 || format.sampleRate > 384000 ||
       format.channelCount < 1 || format.channelCount > 8 ||
       frames > static_cast<size_t>(format.sampleRate) * 40 ||
@@ -105,6 +162,7 @@ bool decodeAutoMixFrames(const QueueItem &item, const AudioFormat &format,
     return false;
   }
   FFmpegDecoder decoder;
+  decoder.setInputFactory(std::move(factory));
   decoder.setInterrupt([](void *p) { return ta_am_cancelled(static_cast<const ta_am_cancel *>(p)); },
                        const_cast<ta_am_cancel *>(cancel));
   if (!decoder.open(item.source, error))
@@ -120,6 +178,16 @@ bool decodeAutoMixFrames(const QueueItem &item, const AudioFormat &format,
     decoder.setResamplerQuality(FFmpegDecoder::ResamplerQuality::High); break;
   default:
     decoder.setResamplerQuality(FFmpegDecoder::ResamplerQuality::Native); break;
+  }
+  switch (phase) {
+  case DspResamplerPhase::Minimum:
+    decoder.setResamplerPhase(FFmpegDecoder::ResamplerPhase::Minimum); break;
+  case DspResamplerPhase::MinimumSmooth:
+    decoder.setResamplerPhase(FFmpegDecoder::ResamplerPhase::MinimumSmooth); break;
+  case DspResamplerPhase::LinearSmooth:
+    decoder.setResamplerPhase(FFmpegDecoder::ResamplerPhase::LinearSmooth); break;
+  default:
+    decoder.setResamplerPhase(FFmpegDecoder::ResamplerPhase::Linear); break;
   }
   AudioFormat f = format;
   f.bitDepth = 32;
@@ -398,8 +466,19 @@ bool parseAutoMixWindows(const std::string& request, const char* name,
   }
   return ta_am_features_valid(out) != 0;
 }
+std::string identifyAutoMixSourceJson(const std::string &source,
+    std::shared_ptr<const SeekableInputFactory> factory, const ta_am_cancel* cancel) {
+  auto input = factory ? (*factory)(source) : nullptr;
+  const AutoMixSource backing(source, input);
+  char hash[65]{};
+  if (!backing.identify(hash, cancel))
+    return failure(ta_am_cancelled(cancel) ? "analysis_cancelled" : "actual_source_identity_unavailable");
+  return std::string("{\"ok\":true,\"sourceIdentity\":\"") + hash + "\"}";
+}
 std::string analyzeAutoMixJson(const std::string &source,
-                               const std::string &options) {
+                               const std::string &options,
+                               std::shared_ptr<const SeekableInputFactory> factory,
+                               const ta_am_cancel* cancel) {
   if (options.size() > 64 * 1024 || !AutoMixJsonValidation(options).valid())
     return failure("invalid_analysis_options");
   const auto identity =
@@ -407,10 +486,22 @@ std::string analyzeAutoMixJson(const std::string &source,
   if (identity.size() != 64 ||
       identity.find_first_not_of("0123456789abcdef") != std::string::npos)
     return failure("invalid_source_identity");
+  if (ta_am_cancelled(cancel)) return failure("analysis_cancelled");
+  auto input = factory ? (*factory)(source) : nullptr;
+  const AutoMixSource backing(source, input);
+  ta_am_source_stamp before{};
+  if (!backing.snapshot(&before))
+    return failure("actual_source_identity_unavailable");
+  auto lease = std::unique_ptr<ta_am_source_lease, decltype(&ta_am_source_release)>(
+      backing.acquire(&before, identity.c_str(), cancel), ta_am_source_release);
+  if (!lease) return failure(ta_am_cancelled(cancel) ? "analysis_cancelled" : "source_changed_or_identity_unavailable");
   FFmpegDecoder probe;
+  probe.setInputFactory(backing.decodeFactory());
+  probe.setInterrupt([](void* p) { return ta_am_cancelled(static_cast<const ta_am_cancel*>(p)); },
+      const_cast<ta_am_cancel*>(cancel));
   std::string error;
-  if (!probe.open(source, &error))
-    return failure("decode_failed", error);
+  if (!probe.open(backing.decodeSource(source), &error))
+    return failure(ta_am_cancelled(cancel) ? "analysis_cancelled" : "decode_failed", error);
   const double physicalDuration = probe.streamInfo().durationSeconds;
   if (!std::isfinite(physicalDuration) || physicalDuration <= 0 || physicalDuration > 604800 ||
       probe.streamInfo().isDsd)
@@ -431,7 +522,7 @@ std::string analyzeAutoMixJson(const std::string &source,
     return failure("invalid_analysis_range");
   const double length = std::min(30.0, duration - start);
   QueueItem item;
-  item.source = source;
+  item.source = backing.decodeSource(source);
   item.cueStartSeconds = cueStart;
   item.cueEndSeconds = cueEnd;
   AudioFormat format;
@@ -440,14 +531,16 @@ std::string analyzeAutoMixJson(const std::string &source,
   std::vector<float> stereo;
   if (!decodeAutoMixFrames(
           item, format, static_cast<uint64_t>(std::llround(start * 22050)),
-          static_cast<size_t>(std::floor(length * 22050)), &stereo, &error))
-    return failure("decode_failed", error);
+          static_cast<size_t>(std::floor(length * 22050)), &stereo, &error, cancel,
+          DspResamplerQuality::High, backing.decodeFactory()))
+    return failure(ta_am_cancelled(cancel) ? "analysis_cancelled" : "decode_failed", error);
   auto beat = downmix(stereo);
   format.sampleRate = 16000;
   if (!decodeAutoMixFrames(
           item, format, static_cast<uint64_t>(std::llround(start * 16000)),
-          static_cast<size_t>(std::floor(length * 16000)), &stereo, &error))
-    return failure("decode_failed", error);
+          static_cast<size_t>(std::floor(length * 16000)), &stereo, &error, cancel,
+          DspResamplerQuality::High, backing.decodeFactory()))
+    return failure(ta_am_cancelled(cancel) ? "analysis_cancelled" : "decode_failed", error);
   auto voice = downmix(stereo);
   const std::string assets = json_utils::fieldString(options, "assetDirectory")
                                  .value_or(assetDirectory());
@@ -460,6 +553,7 @@ std::string analyzeAutoMixJson(const std::string &source,
   static std::unique_ptr<ta_am_analyser, decltype(&ta_am_analyser_free)>
       analyser(nullptr, ta_am_analyser_free);
   std::lock_guard lock(mutex);
+  if (ta_am_cancelled(cancel)) return failure("analysis_cancelled");
   if (!analyser || currentAssets != assets) {
     char why[256] = {};
     const auto folder = std::filesystem::u8path(assets);
@@ -474,7 +568,11 @@ std::string analyzeAutoMixJson(const std::string &source,
   auto features = std::make_unique<ta_am_features>();
   int result = ta_am_analyse_window(analyser.get(), beat.data(), beat.size(),
                                     voice.data(), voice.size(), start, duration,
-                                    features.get(), nullptr);
+                                    features.get(), cancel);
+  if (ta_am_cancelled(cancel)) return failure("analysis_cancelled");
+  ta_am_source_stamp after{};
+  if (!ta_am_source_valid(lease.get()) || !backing.snapshot(&after) ||
+      !ta_am_source_stamp_equal(&before, &after)) return failure("source_changed_or_identity_unavailable");
   if (result)
     return failure("analysis_failed", std::to_string(result));
   return autoMixFeaturesJson(*features, identity);

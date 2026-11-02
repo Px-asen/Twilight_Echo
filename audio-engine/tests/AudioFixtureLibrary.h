@@ -39,6 +39,9 @@ TempAudioFixture writeFlacTailFixture(
     int fullFrames = 1);
 TempAudioFixture writeDsfFixture(const std::string& name, int sampleRate = 2822400, int blockSizePerChannel = 4096);
 TempAudioFixture writeWavPackDsdFixture(const std::string& name);
+#if defined(TAE_HAS_FFMPEG)
+TempAudioFixture writeWavPackPcmFixture(const std::string& name, int bits, bool floatingPoint = false, int rate = 48000);
+#endif
 std::vector<std::filesystem::path> findExternalAudioFixtures();
 
 }  // namespace twilight::audio::test

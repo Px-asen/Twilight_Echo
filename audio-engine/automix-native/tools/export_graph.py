@@ -2,8 +2,8 @@
 
 This tool and ORT are development dependencies. Model binaries belong in the
 external asset cache/release staging directory, never in the source repository.
-Attention is scheduled one query at a time: no quadratic attention tensor is
-retained. This preserves the public graph computation (no approximate attention).
+The runtime schedules attention in small query blocks within its fixed scratch
+budget. Every key/value participates without retaining a quadratic score tensor.
 """
 import argparse
 import hashlib

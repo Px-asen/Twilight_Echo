@@ -40,7 +40,9 @@ inline bool isRawDsdCodec(AVCodecID codecId) {
 // Converts the rate FFmpeg reports into the DSD bit rate the rest of the engine expects.
 // Non-raw-DSD streams (including DoP) pass through unchanged.
 inline int dsdSampleRateFromCodecRate(AVCodecID codecId, int reportedSampleRate) {
-  if (reportedSampleRate <= 0 || !isRawDsdCodec(codecId)) return reportedSampleRate;
+  // DSDIFF DST is decoded through the same 8:1 DSD-to-PCM filter; IFF's FS
+  // property is likewise divided by eight before entering codec parameters.
+  if (reportedSampleRate <= 0 || (!isRawDsdCodec(codecId) && codecId != AV_CODEC_ID_DST)) return reportedSampleRate;
   return reportedSampleRate * kDsdBitsPerByte;
 }
 

@@ -28,7 +28,8 @@ class FftSpectrumAnalyzer {
       size_t waveformPoints,
       size_t spectrogramFrames,
       size_t oscilloscopePoints = 1024,
-      size_t visualizerBarCount = 0) const;
+      size_t visualizerBarCount = 0,
+      bool visualizerBandPeaks = false) const;
   bool isActive() const;
 
  private:

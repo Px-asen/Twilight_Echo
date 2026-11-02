@@ -222,6 +222,28 @@ void testResetStorageResizeShrinksWithoutClearingPrefix() {
   assert((storage == std::vector<uint8_t>{0x10, 0x20}));
 }
 
+void testPcmSpeakerLayoutSurvivesTheRingBuffer() {
+  AudioFormat format{48000, 3, 32}; format.channelMask = 7;
+  AudioBuffer buffer; buffer.reset(format, 4);
+  assert(buffer.format().channelMask == 7);
+  std::atomic<bool> running{true};
+  std::array<float, 3> input{.0125f, -.025f, .05f}, output{};
+  AudioFormat other = format; other.channelMask = 0xb;
+  PcmBlock source{other, reinterpret_cast<uint8_t*>(input.data()), 1, sizeof(input)};
+  assert(buffer.writeBlocking(source, running) == 0 && buffer.availableFrames() == 0);
+  source.format = format;
+  assert(buffer.writeBlocking(source, running) == 1);
+  PcmBlock target{other, reinterpret_cast<uint8_t*>(output.data()), 1, sizeof(output)};
+  assert(buffer.read(target) == 0 && buffer.availableFrames() == 1);
+  // Original count-only callers still use the buffer without a new prerequisite.
+  target.format.channelMask = 0;
+  assert(buffer.read(target) == 1 && output == input);
+  buffer.clear();
+  assert(buffer.format().channelMask == 7);
+  buffer.reset(3, 4);
+  assert(buffer.format().channelMask == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -234,5 +256,6 @@ int main() {
   testWritePcmBlockCapsFramesToByteSize();
   testResetStorageResizeDoesNotRewriteSameSizedStorage();
   testResetStorageResizeShrinksWithoutClearingPrefix();
+  testPcmSpeakerLayoutSurvivesTheRingBuffer();
   return 0;
 }

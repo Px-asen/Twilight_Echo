@@ -1,0 +1,43 @@
+#include "../../include/twilight_audio_engine.h"
+#include "../../core/TwilightAudioEngine.h"
+#include "../OutputBackendFactory.h"
+#include "BridgeReceiver.h"
+#include <cstring>
+
+using namespace twilight::audio;
+extern "C" {
+TAE_Result TAE_PullBridgePcm(TAE_EngineHandle engine, float* data, size_t frames, TAE_BridgePcmInfo* info) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<TwilightAudioEngine*>(engine)->pullBridgePcm(data, frames, info);
+}
+TAE_Result TAE_OpenBridgeReceiver(const char* backend, const char* device, int rate, int channels,
+    TAE_BridgeReceiverHandle* handle, char* error, size_t errorSize) {
+  if (!handle || !backend || !device || std::string(backend) == "bridge-pcm") return TAE_RESULT_INVALID_ARGUMENT;
+  *handle = nullptr;
+  auto receiver = std::make_unique<BridgeReceiver>();
+  std::string message;
+  if (!receiver->open(createOutputBackend(backend, &message), device, rate, channels, &message)) {
+    if (error && errorSize) { const size_t n = std::min(message.size(), errorSize - 1);
+      std::memcpy(error, message.data(), n); error[n] = 0; }
+    return TAE_RESULT_BACKEND_UNAVAILABLE;
+  }
+  *handle = receiver.release();
+  return TAE_RESULT_OK;
+}
+TAE_Result TAE_WriteBridgePcm(TAE_BridgeReceiverHandle receiver, const float* data, size_t frames) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->write(data, frames, nullptr) ? TAE_RESULT_OK : TAE_RESULT_INVALID_ARGUMENT;
+}
+TAE_Result TAE_StartBridgeReceiver(TAE_BridgeReceiverHandle receiver) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->start(nullptr) ? TAE_RESULT_OK : TAE_RESULT_BACKEND_UNAVAILABLE;
+}
+TAE_Result TAE_GetBridgeReceiverInfo(TAE_BridgeReceiverHandle receiver, char* buffer, size_t capacity, size_t* required) {
+  if (!receiver || !required) return TAE_RESULT_INVALID_ARGUMENT;
+  const auto json = static_cast<BridgeReceiver*>(receiver)->status();
+  *required = json.size() + 1;
+  if (buffer && capacity >= *required) std::memcpy(buffer, json.c_str(), *required);
+  return TAE_RESULT_OK;
+}
+void TAE_CloseBridgeReceiver(TAE_BridgeReceiverHandle receiver) { delete static_cast<BridgeReceiver*>(receiver); }
+}

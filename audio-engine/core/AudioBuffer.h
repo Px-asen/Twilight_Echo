@@ -75,6 +75,7 @@ class AudioBuffer {
 
   std::atomic<int> sampleRateSnapshot_{0};
   std::atomic<int> channelSnapshot_{1};
+  std::atomic<uint64_t> channelMaskSnapshot_{0};
   std::atomic<int> bitDepthSnapshot_{32};
   std::atomic<int> sampleFormatSnapshot_{static_cast<int>(AudioSampleFormat::Float32Interleaved)};
 };
