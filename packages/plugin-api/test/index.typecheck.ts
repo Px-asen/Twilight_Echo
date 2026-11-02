@@ -94,6 +94,10 @@ const themeContribution: TwilightThemeContribution = {
 const structuredThemeV3: TwilightStructuredThemeV3 = {
   schemaVersion: 3,
   variants: {},
+  appearance: { playerBar: { mode: 'compact' } },
+  appearanceLayers: { version: 1, innerRadius: 12 },
+  toneSchedule: { lightStartMinutes: 420, darkStartMinutes: 1140 },
+  iconAssets: {},
   layout: {
     desktop: {
       columns: ['standard', 'fill'],

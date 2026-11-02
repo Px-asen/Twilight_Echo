@@ -44,11 +44,13 @@ test('artist details include solo tracks and every collaboration without substri
   const solo = { ...track('solo', null, 0), artist: 'Alice' }
   const duet = { ...track('duet', null, 0), artist: 'Alice / Bob' }
   const guest = { ...track('guest', null, 0), artist: ' Carol  /  Alice ' }
+  const compact = { ...track('compact', null, 0), artist: 'Alice/Bob' }
   const other = { ...track('other', null, 0), artist: 'Alice Cooper' }
-  const tracks = [solo, duet, guest, other]
-  assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Alice'), [solo, duet, guest])
-  assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Bob'), [duet])
+  const tracks = [solo, duet, guest, compact, other]
+  assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Alice'), [solo, duet, guest, compact])
+  assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Bob'), [duet, compact])
   assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Alice / Bob'), [duet])
+  assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Alice/Bob'), [compact])
   assert.deepEqual(resolveLibraryArtistTracks(tracks, 'Missing'), [])
 })
 

@@ -157,3 +157,27 @@ test('compiled packages keep structured layout, modes and explicit token overrid
   assert.equal(compiled.structured?.variants.dark?.tokens?.['color.primary.500'], '#112233')
   assert.match(compiled.css, /--te-primary-500:#112233/)
 })
+
+test('advanced font assignments override captured profile fonts and remain replaceable', () => {
+  const project = createWorkshopProject('00000000-0000-0000-0000-000000000000', '字体')
+  project.base.css = "html:root[data-theme]{--te-font-sans:'captured',sans-serif!important}"
+  project.assets = [
+    {
+      id: 'font',
+      name: 'new.woff2',
+      type: 'font',
+      dataUrl: 'data:font/woff2;base64,d09GMg==',
+      source: '',
+      license: ''
+    }
+  ]
+  project.fonts = { sans: 'font' }
+  const css = compileWorkshopProject(project)
+  assert.match(
+    css,
+    /html:root\[data-theme\]\{--te-font-sans:'workshop-sans',sans-serif!important\}/
+  )
+  assert.ok(
+    css.indexOf("--te-font-sans:'workshop-sans'") > css.indexOf("--te-font-sans:'captured'")
+  )
+})

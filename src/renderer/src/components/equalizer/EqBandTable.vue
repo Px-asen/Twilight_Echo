@@ -1,6 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { EqualizerBand } from '@renderer/types/settings'
 import { filterTypes } from '@renderer/utils/equalizerPageLogic'
+import {
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ
+} from '../../../../shared/audioProcessingOptions.ts'
 const props = defineProps<{
   bands: EqualizerBand[]
   selectedIndices: number[]
@@ -12,13 +17,18 @@ const emit = defineEmits<{
   patch: [index: number, patch: Partial<EqualizerBand>]
   remove: [index: number]
 }>()
+const limits = computed(() => ({
+  frequency: { min: EQ_BAND_MIN_FREQUENCY_HZ, max: EQ_BAND_MAX_FREQUENCY_HZ },
+  gain: { min: props.graphic ? -12 : -24, max: props.graphic ? 12 : 24 },
+  q: { min: props.graphic ? 0.25 : 0.1, max: props.graphic ? 8 : 20 }
+}))
 function number(index: number, key: 'frequency' | 'gain' | 'q', event: Event): void {
   const input = event.target as HTMLInputElement
   if (!Number.isFinite(input.valueAsNumber)) {
     input.value = String(props.bands[index][key])
     return
   }
-  const [min, max] = key === 'frequency' ? [20, 20000] : key === 'gain' ? [-24, 24] : [0.1, 20]
+  const { min, max } = limits.value[key]
   emit('patch', index, { [key]: Math.min(max, Math.max(min, input.valueAsNumber)) })
 }
 </script>
@@ -88,8 +98,8 @@ function number(index: number, key: 'frequency' | 'gain' | 'q', event: Event): v
           <td>
             <input
               type="number"
-              min="20"
-              max="20000"
+              :min="limits.frequency.min"
+              :max="limits.frequency.max"
               step="1"
               :value="band.frequency"
               :aria-label="`频段 ${index + 1} 频率`"
@@ -99,8 +109,8 @@ function number(index: number, key: 'frequency' | 'gain' | 'q', event: Event): v
           <td>
             <input
               type="number"
-              :min="graphic ? -12 : -24"
-              :max="graphic ? 12 : 24"
+              :min="limits.gain.min"
+              :max="limits.gain.max"
               step="0.1"
               :value="band.gain"
               :aria-label="`频段 ${index + 1} 增益`"
@@ -110,8 +120,8 @@ function number(index: number, key: 'frequency' | 'gain' | 'q', event: Event): v
           <td>
             <input
               type="number"
-              :min="graphic ? 0.25 : 0.1"
-              :max="graphic ? 8 : 20"
+              :min="limits.q.min"
+              :max="limits.q.max"
               step="0.1"
               :value="band.q"
               :aria-label="`频段 ${index + 1} Q`"

@@ -16,6 +16,9 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let refreshGeneration = 0
 let disposed = false
 const autoEntry = computed<AfterglowAutoEntry>(() => settings.value.afterglowAutoEntry ?? 'off')
+const unloadHiddenMainWindow = computed<boolean>(
+  () => settings.value.unloadHiddenMainWindow !== false
+)
 const restoreHint = computed(() =>
   (status.value?.restoreAccelerator ?? 'CommandOrControl+Shift+E').replace(
     'CommandOrControl',
@@ -76,6 +79,10 @@ async function enterAfterglow(): Promise<void> {
 
 function setAutoEntry(value: string): void {
   void updateSettings({ afterglowAutoEntry: value as AfterglowAutoEntry })
+}
+
+function toggleUnloadHiddenMainWindow(): void {
+  void updateSettings({ unloadHiddenMainWindow: !unloadHiddenMainWindow.value })
 }
 </script>
 
@@ -139,6 +146,27 @@ function setAutoEntry(value: string): void {
         <option value="hide">仅隐藏到托盘时</option>
         <option value="minimizeOrHide">最小化或隐藏时</option>
       </select>
+    </div>
+    <div
+      data-setting-id="unload-hidden-main-window"
+      id="setting-unload-hidden-main-window"
+      class="setting-item"
+    >
+      <div class="setting-copy">
+        <strong>后台自动释放主窗口内存</strong>
+        <span>
+          隐藏到系统托盘或切换到迷你播放器满 30 秒后，自动卸载隐藏的主界面渲染进程以释放内存；迷你播放器、桌面歌词与系统媒体控制保持运行，点击托盘或还原时自动重建主界面。
+        </span>
+      </div>
+      <button
+        type="button"
+        class="toggle-switch"
+        :class="{ active: unloadHiddenMainWindow, inactive: !unloadHiddenMainWindow }"
+        role="switch"
+        aria-label="后台自动释放主窗口内存"
+        :aria-checked="unloadHiddenMainWindow"
+        @click="toggleUnloadHiddenMainWindow()"
+      ></button>
     </div>
   </div>
 </template>

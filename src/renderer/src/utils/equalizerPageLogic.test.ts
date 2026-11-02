@@ -48,7 +48,7 @@ test('preset normalization clamps bands and modes without mutating source arrays
   })
   assert.equal(normalized.eqMode, 'parametric')
   assert.equal(normalized.eqBands.length, 1)
-  assert.equal(normalized.eqBands[0].frequency, 20)
+  assert.equal(normalized.eqBands[0].frequency, 10)
   assert.equal(normalized.eqBands[0].gain, 24)
   assert.equal(normalized.eqBands[0].q, 20)
   assert.equal(normalized.eqBands[0].filterType, 'notch')
@@ -104,13 +104,35 @@ test('normalization preserves per-band bypass and channel routing in both modes'
 test('band patches are clamped by the active mode and never mutate inputs', () => {
   const source = [makeBand({ frequency: 1000, gain: 0, q: 1 })]
   const parametric = patchBand(source, 0, { frequency: 100000, gain: 100, q: 100 }, 'parametric')
-  assert.equal(parametric[0].frequency, 24000)
+  assert.equal(parametric[0].frequency, 96000)
   assert.equal(parametric[0].gain, 24)
   assert.equal(parametric[0].q, 20)
   const graphic = patchBand(source, 0, { gain: 100, q: 100 }, 'graphic')
   assert.equal(graphic[0].gain, 12)
   assert.equal(graphic[0].q, 8)
   assert.deepEqual(source, [makeBand({ frequency: 1000, gain: 0, q: 1 })])
+})
+
+test('phone EQ frequencies survive normalization and unrelated gain edits', () => {
+  const bands = [
+    makeBand({ frequency: 10 }),
+    makeBand({ frequency: 96000, enabled: false, channelMask: 2 })
+  ]
+  assert.deepEqual(
+    normalizeAudioProcessing({ eqMode: 'parametric', eqBands: bands }).eqBands,
+    bands
+  )
+  assert.equal(patchBand(bands, 1, { gain: -2 }, 'parametric')[1].frequency, 96000)
+})
+
+test('graphic frequency edits use the same stored domain as the shared numeric controls', () => {
+  const source = defaultEqBands.map((band) => ({ ...band }))
+  const low = patchBand(source, 0, { frequency: 1, gain: -100, q: 0 }, 'graphic')
+  const edited = patchBand(low, 9, { frequency: 100000, gain: 100, q: 100 }, 'graphic')
+  assert.deepEqual(edited[0], { ...source[0], frequency: 10, gain: -12, q: 0.25 })
+  assert.deepEqual(edited[9], { ...source[9], frequency: 96000, gain: 12, q: 8 })
+  assert.deepEqual(normalizeAudioProcessing({ eqMode: 'graphic', eqBands: edited }).eqBands, edited)
+  assert.deepEqual(source, defaultEqBands)
 })
 
 test('unknown filter types normalize to peak and cloneBands is deep by one level', () => {

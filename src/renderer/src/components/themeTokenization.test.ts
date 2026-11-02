@@ -59,6 +59,7 @@ const settingsThemeControls = readFileSync(
   'utf8'
 )
 const settingsSurfaces = [settingsPage, settingsAppearance, settingsThemeControls].join('\n')
+const appearance = readFileSync(new URL('./AppearancePage.vue', import.meta.url), 'utf8')
 const studio = readFileSync(new URL('./ThemeStudioPage.vue', import.meta.url), 'utf8')
 const studioEditor = readFileSync(
   new URL('./theme-studio/useThemeStudioEditor.ts', import.meta.url),
@@ -101,6 +102,7 @@ const onboardingStyle = readFileSync(
   'utf8'
 )
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
+const appAccent = readFileSync(new URL('../../../shared/appAccent.ts', import.meta.url), 'utf8')
 const previewScheduler = readFileSync(
   new URL('../utils/themePreviewScheduler.ts', import.meta.url),
   'utf8'
@@ -191,11 +193,14 @@ test('every registered playback token is wired into a real playback or DSP surfa
   for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
 })
 
-test('theme studio is a dedicated navigable settings surface', () => {
-  assert.match(app, /ThemeStudioPage/)
-  assert.match(app, /@open-theme-studio="openThemeStudioPage"/)
-  assert.match(settingsSurfaces, /打开主题创意工坊/)
-  assert.match(settingsSurfaces, /@click="emit\('openThemeStudio'\)"/)
+test('custom theme workspace unifies theme editing and advanced tools behind one settings entry', () => {
+  assert.match(app, /@open-appearance="openAppearancePage"/)
+  assert.match(settingsSurfaces, /打开自定义主题/)
+  assert.match(settingsSurfaces, /@click="emit\('openAppearance'\)"/)
+  assert.doesNotMatch(settingsSurfaces, /openThemeWorkshop|openThemeStudio/)
+  assert.match(appearance, /CustomThemeAdvancedPanel/)
+  assert.match(appearance, /ThemeStudioPage/)
+  assert.match(appearance, /导出 \.TEP/)
   assert.doesNotMatch(studioSurfaces, /structuredClone\(profile\)/)
   assert.match(studioSurfaces, /配色与背景/)
   assert.match(studio, /theme-domain-list/)
@@ -258,7 +263,8 @@ test('phase two runtime reuses cached cover media and supports native and timed 
 })
 
 test('settings appearance choices override the active theme and provide usable density rules', () => {
-  assert.match(themeStore, /const SETTINGS_ACCENT_COLORS/)
+  assert.match(appAccent, /const APP_ACCENT_COLORS/)
+  assert.match(themeStore, /resolveAppAccentColor/)
   assert.match(themeStore, /cacheSettingsAppearance\(bootstrap\.settings\)/)
   assert.match(
     themeStore,

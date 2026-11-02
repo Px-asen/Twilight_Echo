@@ -303,6 +303,7 @@ test('about settings expose bundled sponsor payment options and sponsor list', (
   assert.match(source, /name: '冷莺zz'/)
   assert.match(source, /name: '超新星燃烧小小行星带'/)
   assert.match(source, /name: 'lotywe'/)
+  assert.match(source, /name: '晚钟空奏'/)
   assert.match(source, /useEscapeToClose\(sponsorDialogOpen, closeSponsorDialog\)/)
   assert.match(source, /useFocusTrap\(sponsorDialogRef, sponsorDialogOpen\)/)
   assert.match(source, /const QQ_GROUP_QR_URL = '\.\/qq-group-qrcode\.jpg'/)
@@ -366,14 +367,24 @@ test('startup home page setting is persisted and selectable from general setting
   )
   assert.match(storeSource, /startupHomePage: 'local'/)
   assert.match(appSource, /if \(loadedSettings\.startupHomePage === 'streaming'\) \{/)
-  assert.match(settingsPageSource, /const startupHomePageOptions/)
+
+  assert.match(settingsTypes, /export type HomePageMode = 'auto' \| 'local' \| 'streaming'/)
+  assert.match(settingsTypes, /homePageMode: HomePageMode/)
+  assert.match(mainSettings, /homePageMode: 'auto'/)
+  assert.match(mainSettings, /function normalizeHomePageMode\(value: unknown\): HomePageMode/)
+  assert.match(
+    mainSettings,
+    /homePageMode: normalizeHomePageMode\(settings\.homePageMode\)/
+  )
+  assert.match(storeSource, /homePageMode: 'auto'/)
+  assert.match(settingsPageSource, /const homePageModeOptions/)
   assert.match(
     settingsPageSource,
-    /function setStartupHomePage\(startupHomePage: StartupHomePage\)/
+    /function setHomePageMode\(homePageMode: HomePageMode\)/
   )
-  assert.match(settingsPageSource, /启动后进入/)
-  assert.match(settingsPageSource, /本地音乐主页/)
-  assert.match(settingsPageSource, /流媒体主页/)
+  assert.match(settingsPageSource, /首页内容模式/)
+  assert.match(settingsPageSource, /本地音乐为主/)
+  assert.match(settingsPageSource, /流媒体为主/)
 })
 
 test('track activation mode is persisted across layers and applied to all track lists', () => {

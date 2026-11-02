@@ -94,7 +94,6 @@ function handleCreated(): void {
     <header class="library-header">
       <div>
         <h1>歌单</h1>
-        <p>{{ cards.length }} 份 · 应用、聚合与外部歌单</p>
       </div>
       <div class="library-actions">
         <button type="button" @click="createDialog = true">
@@ -231,11 +230,6 @@ h1 {
   margin: 0;
   font-size: 25px;
   font-weight: 700;
-}
-.library-header p {
-  margin: 7px 0 0;
-  color: var(--te-neutral-500);
-  font-size: 13px;
 }
 .library-actions {
   display: flex;

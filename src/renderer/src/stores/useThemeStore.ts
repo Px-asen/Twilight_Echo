@@ -1,3 +1,4 @@
+import { resolveAppAccentColor } from '../../../shared/appAccent.ts'
 import { applyExplicitThemePreferences } from '@renderer/extensions/themeProfilePriority'
 import { useCoreConnection } from './coreConnection.ts'
 import { corePlugins } from '../extensions/corePlugins.ts'
@@ -12,13 +13,13 @@ import {
   type AppearanceDraft
 } from '../../../shared/appAppearance.ts'
 import { documentMotionMode } from '@renderer/app/scrollMotion'
-import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
+import { appearanceChromePreview, themeAppearance } from '../composables/appearanceEditorState.ts'
 import {
   explicitPlaybackColorVariables,
   sharedPlayerBarStylesheet
 } from '../../../shared/themePlayerBar.ts'
 import { computed, nextTick, ref, shallowRef, watchEffect } from 'vue'
-import { setThemeIconProfile } from '../app/themeIconRuntime'
+import { setThemeIconProfile, setPluginThemeIcons } from '../app/themeIconRuntime'
 import {
   DEFAULT_THEME_TONE_SCHEDULE,
   THEME_MANAGED_DATA_ATTRIBUTES,
@@ -85,14 +86,6 @@ import {
 const effectiveVariables = shallowRef<Record<string, string>>({})
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
-const SETTINGS_ACCENT_COLORS: Readonly<Record<string, string>> = Object.freeze({
-  violet: '#8b5cf6',
-  blue: '#2563eb',
-  emerald: '#10b981',
-  rose: '#e11d48',
-  amber: '#f59e0b',
-  slate: '#334155'
-})
 const APP_BACKGROUND_PAGES: readonly AppBackgroundPage[] = [
   'local',
   'settings',
@@ -176,7 +169,7 @@ type SettingsAppearanceInput = Pick<
 
 function cacheSettingsAppearance(settings: SettingsAppearanceInput): void {
   savedAppearance = settings
-  const appearance = appearancePreview ?? settings
+  const appearance = appearancePreview ?? themeAppearance.value ?? settings
   lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
   darkAccentColor = settings.darkAccentColor || settings.accentColor || 'blue'
   uiFontFamily = normalizeAppFontFamily(settings.fontFamily)
@@ -263,12 +256,8 @@ function usesSharedLiquidGlassProfile(): boolean {
   )
 }
 
-function resolveSettingsAccentColor(color: string): string {
-  return SETTINGS_ACCENT_COLORS[color] ?? color.trim()
-}
-
 function applySettingsAccentColor(tone: ThemeTone, variables: Record<string, string>): void {
-  const color = resolveSettingsAccentColor(tone === 'dark' ? darkAccentColor : lightAccentColor)
+  const color = resolveAppAccentColor(tone === 'dark' ? darkAccentColor : lightAccentColor)
   const background =
     variables['--te-app-bg'] ?? TWILIGHT_DEFAULT_THEME.variants[tone].tokens['surface.app']
   Object.assign(
@@ -474,7 +463,23 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       shellLayout = contract.layout
     }
   }
-  const tone = resolveRuntimeTone(selectedProfile, modes)
+  themeAppearance.value =
+    selectedPluginTheme?.structured?.schemaVersion === 3
+      ? (selectedPluginTheme.structured.appearance ?? null)
+      : null
+  if (savedAppearance) cacheSettingsAppearance(savedAppearance)
+  setPluginThemeIcons(
+    selectedPluginTheme?.structured?.schemaVersion === 3
+      ? selectedPluginTheme.structured.iconAssets
+      : undefined
+  )
+  const tone = resolveRuntimeTone(
+    selectedProfile ??
+      (selectedPluginTheme?.structured?.schemaVersion === 3
+        ? { toneSchedule: selectedPluginTheme.structured.toneSchedule }
+        : null),
+    modes
+  )
   if (selectedProfile) {
     await assertProfileAssetsAvailable(selectedProfile)
     const resolvedTokens = resolveThemeProfileTokens(selectedProfile, tone)
@@ -548,7 +553,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
         applyProfileModeVariables(modes, tone, contract.resolvedTokens, variables)
       }
       if (contribution.stylesheet) {
-        stylesheet = await useCoreConnection().query('extensions.stylesheet', { pluginId: contribution.pluginId, themeId: contribution.id })
+        stylesheet = await useCoreConnection().query('extensions.stylesheet', {
+          pluginId: contribution.pluginId,
+          themeId: contribution.id
+        })
       }
     } else if (previewTone.value) {
       const resolvedTokens = TWILIGHT_DEFAULT_THEME.variants[tone].tokens
@@ -744,7 +752,10 @@ function toBackgroundImageValue(background: AppBackgroundColorPair): string {
   return `url("${escapeCssUrl(backgroundDisplayUrl(background.image))}")`
 }
 
-function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): ThemeTone {
+function resolveRuntimeTone(
+  profile: Pick<ThemeProfileV2, 'toneSchedule'> | null,
+  modes: ThemeModes
+): ThemeTone {
   if (previewTone.value) {
     clearTimedToneRefresh()
     return previewTone.value
@@ -766,7 +777,7 @@ function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): 
   return themePreference === 'system' ? systemTone.value : resolveThemeMode(themePreference)
 }
 
-function scheduleTimedToneRefresh(profile: ThemeProfileV2 | null): void {
+function scheduleTimedToneRefresh(profile: Pick<ThemeProfileV2, 'toneSchedule'> | null): void {
   clearTimedToneRefresh()
   const schedule = profile?.toneSchedule ?? DEFAULT_THEME_TONE_SCHEDULE
   const now = new Date()
@@ -1282,6 +1293,7 @@ export function useThemeStore() {
 
   return {
     snapshot,
+    effectiveThemeAppearance: themeAppearance,
     effectiveThemeLayers: computed(() => {
       const selection = previewSelection.value ?? activeTheme.value
       const profile = getSelectedProfile(selection)

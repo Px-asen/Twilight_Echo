@@ -54,7 +54,7 @@ body{padding:24px}.settings-preview-page,.onboarding-wizard{position:static;inse
 .settings-preview-layout{display:block}.fixture-card{padding:16px;background:var(--te-card-bg)}
 </style></head><body>
 <main class="settings-preview-page"><div class="settings-preview-layout"><div class="fixture-card">
-<div class="setting-item"><button id="primary" class="primary-button">打开主题创意工坊</button><button id="brand" class="brand-soft-button">应用设置</button><button id="pill" class="pill-action">管理</button></div>
+<div class="setting-item"><button id="primary" class="primary-button">打开自定义主题</button><button id="brand" class="brand-soft-button">应用设置</button><button id="pill" class="pill-action">管理</button></div>
 <div class="setting-item"><div class="segmented-control"><button id="segment">跟随系统</button></div><button id="settings-off" class="toggle-switch inactive" role="switch" aria-checked="false"></button><input id="checkbox" type="checkbox" checked></div>
 </div></div></main>
 <div class="fixture-card"><div id="menu" class="menu-item">添加到播放队列</div><span id="badge" style="font-size:var(--te-badge-font-size)">Beta</span></div>

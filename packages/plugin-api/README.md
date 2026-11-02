@@ -40,7 +40,10 @@ stylesheets are the advanced compatibility path and may depend on host selectors
 Plugin API v2 adds `structured` schemaVersion 2 with host-registered `modes`. Plugin API v3 adds
 `structured` schemaVersion 3 with a host-owned shell grid that can rearrange the title bar,
 navigation, content, and player bar without executing plugin code. API v1 and v2 themes remain
-supported without behavior changes. The machine-readable token, mode, visibility, and layout
+supported without behavior changes. The host's custom theme editor can also export a complete
+appearance snapshot, component skins, a tone schedule, and embedded icon assets in schemaVersion 3.
+Its advanced tools preserve editable projects and export standalone `.TEP` theme plugins.
+The machine-readable token, mode, visibility, and layout
 registry ships as `theme-contract.json`; the complete authoring guide is
 `docs/theme-plugin-authoring.md` in the Twilight Echo repository.
 

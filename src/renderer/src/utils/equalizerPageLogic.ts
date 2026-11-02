@@ -5,6 +5,10 @@ export {
   responseToPath
 } from '@renderer/utils/eqViewport.ts'
 import { EQ_MIN_FREQUENCY, EQ_MAX_FREQUENCY } from '@renderer/utils/eqViewport.ts'
+import {
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ
+} from '../../../shared/audioProcessingOptions.ts'
 import type { OpraCatalogStatus } from '../../../shared/coreOpra.ts'
 import type {
   AudioEqPreset,
@@ -181,7 +185,12 @@ export function normalizeAudioProcessing(
       ? rawBands.slice(0, 32).map((band, index) => {
           const defaultBand = defaultEqBands[index % defaultEqBands.length]
           return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            frequency: clampNumber(
+              band.frequency,
+              EQ_BAND_MIN_FREQUENCY_HZ,
+              EQ_BAND_MAX_FREQUENCY_HZ,
+              defaultBand.frequency
+            ),
             gain: clampNumber(band.gain, -24, 24, 0),
             q: clampNumber(band.q, 0.1, 20, 1),
             filterType: normalizeFilterType(band.filterType),
@@ -191,7 +200,12 @@ export function normalizeAudioProcessing(
       : defaultEqBands.map((defaultBand, index) => {
           const band = rawBands[index] ?? defaultBand
           return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            frequency: clampNumber(
+              band.frequency,
+              EQ_BAND_MIN_FREQUENCY_HZ,
+              EQ_BAND_MAX_FREQUENCY_HZ,
+              defaultBand.frequency
+            ),
             gain: clampNumber(band.gain, -12, 12, 0),
             q: clampNumber(band.q, 0.25, 8, 1),
             filterType: normalizeFilterType(band.filterType),
@@ -239,7 +253,12 @@ export function patchBand(
     ...patch,
     frequency:
       patch.frequency !== undefined
-        ? clampNumber(patch.frequency, 20, 24000, next[index].frequency)
+        ? clampNumber(
+            patch.frequency,
+            EQ_BAND_MIN_FREQUENCY_HZ,
+            EQ_BAND_MAX_FREQUENCY_HZ,
+            next[index].frequency
+          )
         : next[index].frequency,
     gain:
       patch.gain !== undefined

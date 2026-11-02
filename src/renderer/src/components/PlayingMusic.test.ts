@@ -84,7 +84,11 @@ test('active lyrics keep their size while auxiliary layers render smaller and co
     /font-weight: var\(--lyric-style-font-weight, var\(--te-lyric-font-weight, 600\)\)/
   )
   assert.match(activeText, /text-shadow:/)
+  assert.match(source, /:deep\(\.lyric-word-group\) \{[\s\S]*display: inline-block/)
   assert.match(source, /:deep\(\.lyric-word\) \{[\s\S]*display: inline-block/)
+  const voiceStyles = lyricLine.match(/\n\n\.lyric-voice \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(voiceStyles, /width:\s*100%/)
+  assert.doesNotMatch(lyricLine, /32rem|26rem/)
   // The sweep masks the word itself now. The old duplicated `::after` text layer
   // is gone, so the fill cannot drift out of register with the glyphs it reveals.
   assert.doesNotMatch(source, /:deep\(\.lyric-word\)::after/)

@@ -1326,6 +1326,23 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(duetRow.classList.contains('is-singing'), 'hot duet row did not receive singing state')
   expect(duetRow.getAttribute('aria-current') === 'true', 'duet anchor was not exposed separately')
   expect(!duetRow.textContent.includes('[te:voice'), 'internal voice marker leaked into the playing page')
+  const ordinaryRow = duetRows[1]
+  const ordinaryContent = ordinaryRow.querySelector('.lyric-row-content')
+  const ordinaryCenterLane = ordinaryRow.querySelector('.lyric-lane--center')
+  const ordinaryVoice = ordinaryRow.querySelector('.lyric-lane--center .lyric-voice')
+  expect(
+    ordinaryContent && ordinaryCenterLane && ordinaryVoice,
+    'ordinary center lyric row did not render its voice container'
+  )
+  const ordinaryContentWidth = ordinaryContent.getBoundingClientRect().width
+  const ordinaryVoiceWidth = ordinaryVoice.getBoundingClientRect().width
+  expect(
+    ordinaryVoiceWidth >= ordinaryContentWidth - 1,
+    'ordinary center lyric voice wrapped early instead of filling available row width; content=' +
+      ordinaryContentWidth +
+      '; voice=' +
+      ordinaryVoiceWidth
+  )
 
   document.documentElement.dataset.teMotion = 'reduced'
   await tick()

@@ -4,11 +4,13 @@ import {
   clampEqValue,
   displayBandGain,
   filterUsesGain,
-  PARAMETRIC_EQ_MIN_FREQUENCY,
-  PARAMETRIC_EQ_MAX_FREQUENCY,
   PARAMETRIC_EQ_MIN_Q,
   PARAMETRIC_EQ_MAX_Q
 } from '@renderer/utils/parametricEqInteraction'
+import {
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ
+} from '../../../shared/audioProcessingOptions.ts'
 
 export type EqBandPatch = { index: number; patch: Partial<EqualizerBand> }
 export type EqSelection = { indices: number[]; primary: number }
@@ -71,8 +73,8 @@ export function groupEqBandPatches(
     let min = 0,
       max = Infinity
     for (const index of indices) {
-      min = Math.max(min, PARAMETRIC_EQ_MIN_FREQUENCY / bands[index].frequency)
-      max = Math.min(max, PARAMETRIC_EQ_MAX_FREQUENCY / bands[index].frequency)
+      min = Math.max(min, EQ_BAND_MIN_FREQUENCY_HZ / bands[index].frequency)
+      max = Math.min(max, EQ_BAND_MAX_FREQUENCY_HZ / bands[index].frequency)
     }
     frequencyRatio = clampEqValue(patch.frequency / anchor.frequency, min, max)
   }

@@ -111,7 +111,7 @@ test('main-process startup creates the window before deferred runtime work', asy
   const desktopLyrics = source.indexOf(
     'if (runtime.appSettings.desktopLyrics.enabled) showDesktopLyrics()'
   )
-  const engineStartup = source.indexOf('void ensureAudioEngineRuntime().catch')
+  const engineStartup = source.indexOf('ensureAudioEngineRuntime()')
   const runtimeSettings = source.indexOf('applyRuntimeSettings()')
 
   assert.notEqual(createWindowCall, -1)
@@ -154,6 +154,16 @@ test('windows main window wires taskbar thumbnail buttons separately from native
   assert.match(source, /integrations\/taskbarThumbar/)
   assert.match(source, /initializeWindowsSmtc/)
   assert.match(source, /destroyWindowsSmtc/)
+  const setup = source.slice(
+    source.indexOf(
+      "if (process.platform === 'win32') {",
+      source.indexOf('installAudioDeviceHotplugWatcher(runtime.mainWindow)')
+    )
+  )
+  assert.ok(setup.indexOf('createTaskbarThumbarButtons()') > setup.indexOf('rebindWindowsSmtc()'))
+  assert.ok(
+    setup.indexOf('createTaskbarThumbarButtons()') > setup.indexOf('initializeWindowsSmtc()')
+  )
 })
 
 test('explicit light/dark backgrounds are independent of the system theme', () => {

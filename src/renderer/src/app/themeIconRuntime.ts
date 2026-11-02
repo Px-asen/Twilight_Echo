@@ -11,14 +11,22 @@ import { isThemeLibrarySnapshotNewer } from '../utils/themeRuntimeRevision'
 // Icons also run in satellite windows and isolated component previews. Keep
 // their reactive input independent of the main settings/plugin runtime.
 const profile = shallowRef<ThemeProfileV2 | null>(null)
+const pluginIcons = shallowRef<Partial<Record<ThemeIconSlot, string>>>({})
 const urls = computed(() =>
   Object.fromEntries(
-    THEME_ICON_SLOTS.map((slot) => [slot, resolveThemeIconUrl(profile.value, slot)])
+    THEME_ICON_SLOTS.map((slot) => [
+      slot,
+      resolveThemeIconUrl(profile.value, slot) || pluginIcons.value[slot] || ''
+    ])
   )
 )
 
 export function setThemeIconProfile(value: ThemeProfileV2 | null): void {
   profile.value = value
+}
+
+export function setPluginThemeIcons(value: Partial<Record<ThemeIconSlot, string>> = {}): void {
+  pluginIcons.value = value
 }
 
 export function resolveActiveThemeIconUrl(slot: ThemeIconSlot): string {

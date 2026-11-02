@@ -68,25 +68,6 @@
   font-size: calc(var(--te-font-size-body, 14px) * 0.92857);
 }
 
-.database-track-window-status {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  padding: 6px 12px;
-  border-radius: var(--te-control-radius-sm);
-  background: var(--te-card-bg);
-  color: var(--te-neutral-700);
-}
-
-.database-track-window-status .database-page-actions {
-  margin-inline-start: auto;
-}
-
-.database-track-window-status [role='alert'] {
-  flex-basis: 100%;
-  line-height: 1.5;
-}
-
 .database-page-actions label {
   display: flex;
   align-items: center;
@@ -171,6 +152,51 @@
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+.song-list:is(.folder-library, .collection-library) .song-list-header,
+.song-list:is(.folder-library, .collection-library) .card-grid {
+  padding-inline: 0;
+}
+
+:is(.folder-library, .collection-library) .view-stats {
+  transform: none;
+}
+
+@container te-song-list (max-width: 640px) {
+  .song-list:is(.folder-library, .collection-library) .song-list-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  :is(.folder-library, .collection-library) .header-right {
+    display: contents;
+  }
+
+  :is(.folder-library, .collection-library) .song-list-refresh {
+    justify-self: end;
+  }
+
+  :is(.folder-library, .collection-library) .search-box {
+    grid-column: 1 / -1;
+    box-sizing: border-box;
+    min-width: 0;
+  }
+
+  .collection-library .collection-view-controls {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .collection-library .collection-view-controls input {
+    width: 100%;
+    max-width: none;
+  }
+
+  .collection-library .song-list-refresh {
+    grid-column: 2;
+    grid-row: 1;
+  }
 }
 
 :global(html[data-te-library-title-overlay='on'] .song-list-header) {
@@ -3469,7 +3495,7 @@
   gap: 8px;
   min-width: 0;
 }
-.album-tracks-refresh {
+.song-list-refresh {
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -3482,15 +3508,15 @@
   color: var(--te-neutral-500);
   cursor: pointer;
 }
-.album-tracks-refresh:hover:not(:disabled) {
+.song-list-refresh:hover:not(:disabled) {
   color: var(--te-neutral-900);
   background: var(--te-subtle-bg);
 }
-.album-tracks-refresh:disabled {
+.song-list-refresh:disabled {
   opacity: 0.4;
   cursor: default;
 }
-.album-tracks-refresh:focus-visible {
+.song-list-refresh:focus-visible {
   outline: 2px solid var(--te-primary-500);
   outline-offset: 2px;
 }

@@ -58,21 +58,40 @@ export function useBackgroundAppearanceEditor(options: { embedded?: boolean } = 
   const confirmedAppearance = () =>
     cloneAppearance({
       ...settings.value,
+      ...themeStore.effectiveThemeAppearance?.value,
       appearanceLayers:
-        themeStore.activeProfile?.value?.appearanceLayers ?? settings.value.appearanceLayers
+        themeStore.effectiveThemeLayers?.value ??
+        themeStore.activeProfile?.value?.appearanceLayers ??
+        settings.value.appearanceLayers
     })
   const themeKey = () => JSON.stringify(themeStore.activeTheme?.value)
   let baselineThemeKey = themeKey()
   const session = useAppearanceDraft({
     confirmed: confirmedAppearance,
-    persist: (draft) =>
-      persistAppearanceLayers(draft, {
+    persist: async (draft) => {
+      const selection = themeStore.activeTheme.value
+      if (selection.kind === 'plugin' && themeStore.effectiveThemeAppearance?.value) {
+        const project = await window.api.themeWorkshop.createFromAppearance(
+          JSON.parse(JSON.stringify({ selection, appearance: draft }))
+        )
+        const result = await window.api.themeWorkshop.apply(project.id, project.revision)
+        await themeStore.setActive({
+          kind: 'plugin',
+          pluginId: result.pluginId,
+          themeId: result.themeId
+        })
+        if (draftTheme.value !== baselineTheme.value)
+          await updateSettings({ theme: draftTheme.value })
+        return
+      }
+      await persistAppearanceLayers(draft, {
         settings: settings.value,
         theme: draftTheme.value === baselineTheme.value ? undefined : draftTheme.value,
         profile: themeStore.activeProfile?.value ?? null,
         saveProfile: themeStore.saveProfile,
         updateSettings
-      }),
+      })
+    },
     preview: (draft) => {
       cancelPendingPreview()
       return draft && (disposed || document.hidden) ? Promise.resolve() : previewAppearance(draft)

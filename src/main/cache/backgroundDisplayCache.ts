@@ -23,6 +23,20 @@ type DisplayImage = {
   getSize(): { width: number; height: number }
   resize(size: { width: number; height: number; quality: 'best' }): DisplayImage
   toPNG(): Buffer
+  toBitmap?(): Buffer
+  toJPEG?(quality: number): Buffer
+}
+
+function canEncodeOpaqueJpeg(source: string, image: DisplayImage): boolean {
+  if (typeof image.toJPEG !== 'function') return false
+  if (/\.jpe?g$/i.test(source)) return true
+  if (typeof image.toBitmap !== 'function') return false
+  const bitmap = image.toBitmap()
+  if (bitmap.byteLength < 4) return false
+  for (let i = 3; i < bitmap.byteLength; i += 4) {
+    if (bitmap[i] !== 255) return false
+  }
+  return true
 }
 
 /** Originals remain untouched for export. Only paths, never decoded images, are retained. */
@@ -35,22 +49,24 @@ export function createBackgroundDisplayCache(decode: (bytes: Buffer) => DisplayI
   async function prepare(source: string): Promise<string> {
     const info = await stat(source)
     const directory = join(dirname(source), 'display-v1')
-    const target = join(
-      directory,
-      `${basename(source)}-${info.size}-${Math.floor(info.mtimeMs)}.png`
-    )
-    try {
-      await stat(target)
-      return target
-    } catch {
-      // Generate once, then reuse the encoded derivative across app launches.
+    const base = join(directory, `${basename(source)}-${info.size}-${Math.floor(info.mtimeMs)}`)
+    for (const candidate of [`${base}.jpg`, `${base}.png`]) {
+      try {
+        await stat(candidate)
+        return candidate
+      } catch {
+        // Generate once, then reuse the encoded derivative across app launches.
+      }
     }
     const image = decode(await readFile(source))
     if (image.isEmpty()) return source
     const size = image.getSize()
     const displaySize = backgroundDisplaySize(size.width, size.height)
     if (size.width === displaySize.width && size.height === displaySize.height) return source
-    const bytes = image.resize({ ...displaySize, quality: 'best' }).toPNG()
+    const resized = image.resize({ ...displaySize, quality: 'best' })
+    const useJpeg = canEncodeOpaqueJpeg(source, resized)
+    const target = useJpeg ? `${base}.jpg` : `${base}.png`
+    const bytes = useJpeg ? resized.toJPEG!(90) : resized.toPNG()
     await mkdir(directory, { recursive: true })
     const temporary = `${target}.${randomUUID()}.tmp`
     try {

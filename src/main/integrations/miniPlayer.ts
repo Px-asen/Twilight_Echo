@@ -327,7 +327,8 @@ function createMiniPlayerWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false
+      allowRunningInsecureContent: false,
+      spellcheck: false
     }
   })
   runtime.miniPlayerWindow = win

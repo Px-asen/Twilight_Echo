@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { computed, ref } from 'vue'
+import { computed, markRaw, ref } from 'vue'
 import ts from 'typescript'
 import {
   UNKNOWN_NCM_ALBUM_CLASSIFICATION,
@@ -96,6 +96,7 @@ const pageCode = ts.transpileModule(statements.map((node) => node.getText(ast)).
 function artistPage() {
   const bindings = {
     computed,
+    markRaw,
     filterNcmAlbums,
     formatNcmAlbumClassification,
     NCM_PROVIDER_ID: 'ncm',

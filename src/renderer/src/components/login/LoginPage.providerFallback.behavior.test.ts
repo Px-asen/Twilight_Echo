@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import test from 'node:test'
 import { compileScript, compileStyle, parse } from '@vue/compiler-sfc'
+import QRCode from 'qrcode'
 import ts from 'typescript'
 import { THEME_ICON_SLOT_REGISTRY } from '../../../../shared/theme.ts'
 
@@ -58,7 +59,8 @@ test('login and title bar recover from disabled providers in real Electron rende
       baseStyle,
       appearanceStyle,
       themeIcon,
-      themeIconStyle
+      themeIconStyle,
+      loginStyle
     ] = await Promise.all([
       readFile(require.resolve('vue/dist/vue.global.prod.js'), 'utf8'),
       component('../LoginPage.vue'),
@@ -73,12 +75,20 @@ test('login and title bar recover from disabled providers in real Electron rende
       readFile(new URL('../../assets/base.css', import.meta.url), 'utf8'),
       readFile(new URL('../../assets/appearance.css', import.meta.url), 'utf8'),
       component('../ThemeIcon.vue'),
-      componentStyle('../ThemeIcon.vue')
+      componentStyle('../ThemeIcon.vue'),
+      componentStyle('../LoginPage.vue')
     ])
+    const primeIconFont = await readFile(require.resolve('primeicons/fonts/primeicons.woff2'))
+    const primeIconStyle = (
+      await readFile(require.resolve('primeicons/primeicons.css'), 'utf8')
+    ).replace(
+      "url('./fonts/primeicons.woff2')",
+      `url(data:font/woff2;base64,${primeIconFont.toString('base64')})`
+    )
     await writeFile(
       join(directory, 'index.html'),
-      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}</style><div id="title"></div><div id="app"></div>
-      <script>${vue}</script><script>${runtime}</script>
+      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}\n${loginStyle}\n${primeIconStyle}\n.stage-enter-active,.stage-leave-active{transition:none!important}</style><div id="title"></div><div id="app"></div>
+      <script>${vue}</script><script>window.qrImageFixture = ${JSON.stringify(await QRCode.toDataURL('https://music.163.com/login?codekey=fixture', { margin: 1, width: 220 }))};</script><script>${runtime}</script>
       <script>
         const load = source => {
           const module = { exports: {} };
@@ -129,6 +139,16 @@ test('login and title bar recover from disabled providers in real Electron rende
           await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
           await win.webContents.executeJavaScript('window.checkForcedColorPlaybackCaption()');
           await win.webContents.executeJavaScript('window.finishPlaybackCaptionCases()');
+          if (process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR) {
+            const fs = require('node:fs'), path = require('node:path');
+            fs.mkdirSync(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, { recursive: true });
+            win.setSize(1040, 780);
+            await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+            for (const theme of ['pureWhite', 'dark']) {
+              await win.webContents.executeJavaScript('(async () => { document.documentElement.dataset.theme = ' + JSON.stringify(theme) + '; delete document.documentElement.dataset.tePresetLayout; for (const property of ["--te-player-bg", "--te-app-bg", "--te-playback-page-text"]) document.documentElement.style.removeProperty(property); await mountLogin([ncm]); await document.fonts.ready; await new Promise(resolve => setTimeout(resolve, 650)); })()');
+              fs.writeFileSync(path.join(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, 'ncm-qr-' + theme + '.png'), (await win.webContents.capturePage()).toPNG());
+            }
+          }
           console.log('LOGIN_PROVIDER_FALLBACK_OK ' + cases);
           app.exit(0);
         } catch (error) { console.error(error.stack); app.exit(1); }
@@ -139,7 +159,7 @@ test('login and title bar recover from disabled providers in real Electron rende
       ['--no-sandbox', join(directory, 'runner.cjs'), join(directory, 'index.html')],
       { windowsHide: true, timeout: 60_000 }
     )
-    assert.match(stdout, /LOGIN_PROVIDER_FALLBACK_OK 14/)
+    assert.match(stdout, /LOGIN_PROVIDER_FALLBACK_OK 17/)
   } finally {
     const target = resolve(directory)
     assert.ok(
@@ -156,7 +176,7 @@ const settle = async () => {
   for (let i = 0; i < 12; i++) { await nextTick(); await Promise.resolve(); }
   await new Promise(resolve => setTimeout(resolve, 60));
 };
-const ncm = { id: 'ncm', name: '网易云音乐', capabilities: ['login'], supportedMethods: [] };
+const ncm = { id: 'ncm', name: '网易云音乐', capabilities: ['login'], supportedMethods: ['getQrLogin', 'checkQrLogin', 'openOfficialLogin', 'sendCaptcha', 'loginByPhonePassword', 'loginByPhoneCaptcha', 'loginByEmailPassword'], ui: { authType: 'qr', icon: 'pi pi-cloud', color: '#c20c0c', loginInstructions: '请使用网易云音乐 App 扫码登录', loginExtraActions: [{ label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin' }] } };
 const bili = { id: 'bili', name: '哔哩哔哩', capabilities: ['login'], supportedMethods: [] };
 const server = { id: 'jellyfin', name: 'Jellyfin', capabilities: ['login'], supportedMethods: ['loginWithServer'], ui: { authType: 'settings' } };
 const settings = { id: 'apple', name: 'Apple Music', capabilities: ['login'], supportedMethods: [], ui: { authType: 'settings' } };
@@ -213,8 +233,14 @@ window.requestAnimationFrame = callback => setTimeout(() => callback(performance
 window.cancelAnimationFrame = clearTimeout;
 window.setInterval = (callback, interval) => { const id = ++timerId; timers.set(id, { callback, interval }); return id; };
 window.clearInterval = id => timers.delete(id);
+const coreState = ref({ epoch: 'fixture', pluginsRevision: 0, phase: 'ready' });
+changed = () => coreState.value.pluginsRevision++;
+const core = {
+  state: coreState,
+  query: async name => { expect(name === 'providers.list', 'unexpected query: ' + name); return available; },
+  command: async (name, { providerId, method, args }) => { expect(name === 'providers.call', 'unexpected command: ' + name); return window.api.providers.call(providerId, method, args); }
+};
 window.api = {
-  plugins: { onChanged: listener => { changed = listener; } },
   providers: {
     list: async () => available,
     call: async (id, method, args) => {
@@ -223,7 +249,7 @@ window.api = {
       const custom = handler?.(id, method, args);
       if (custom !== undefined) return custom;
       if (method === 'checkLogin') return { loggedIn: false, profile: null };
-      if (method === 'getQrLogin') return { key: id + '-key', imageDataUrl: 'data:image/png;base64,fixture' };
+      if (method === 'getQrLogin') return { key: id + '-key', imageDataUrl: window.qrImageFixture };
       if (method === 'checkQrLogin') return { code: 801 };
     }
   },
@@ -231,7 +257,8 @@ window.api = {
 };
 window.fixtureRequire = id => {
   if (id === 'vue') return Vue;
-  if (id === 'qrcode') return { default: { toDataURL: async () => 'fixture-qr' } };
+  if (id === './coreConnection.ts') return { useCoreConnection: () => core };
+  if (id === 'qrcode') return { default: { toDataURL: async () => window.qrImageFixture } };
   if (id.endsWith('.css')) return {};
   if (id.endsWith('/ServerLoginForm.vue')) return { default: window.ServerLoginForm };
   if (id.endsWith('/TitleBarIcon.vue')) return { default: window.TitleBarIcon };
@@ -247,6 +274,8 @@ window.fixtureRequire = id => {
   if (id.includes('useBackStack')) return { useBackHandler() {}, useBackStack: () => ({ canGoBack, backHint: ref(null) }) };
   if (id.includes('useWindowChrome')) return { useWindowChrome: () => ({ maximized: ref(false) }) };
   if (id.includes('useAppNoticeStore')) return { useAppNoticeStore: () => ({ unreadCount: ref(0), activeTaskCount: ref(0), doNotDisturb: ref(false) }) };
+  if (id.includes('extensions/registry')) return { useExtensionRegistry: () => ({ uiContributions: ref([]) }) };
+  if (id.includes('usePluginFlyout')) return { usePluginFlyout: () => ({ target: ref(null), toggle() {} }) };
   throw new Error('Unexpected dependency: ' + id);
 };
 const store = () => window.providerStoreModule.useProviderStore();
@@ -261,6 +290,44 @@ const mountLogin = async (providers, initialProviderId = 'ncm', forceProfile = f
 const text = () => document.querySelector('#app').textContent;
 const qrPolls = () => [...timers.values()].filter(timer => timer.interval === 5000);
 window.runProviderFallbackTests = async () => {
+  // The in-app NCM form is QR-only; official web login remains a separate action.
+  let qrCode = 801;
+  await mountLogin([ncm], 'ncm', false, (id, method) => method === 'checkQrLogin' ? { code: qrCode } : undefined);
+  expect(text().includes('请使用网易云音乐 App 扫码登录'), 'NCM QR instructions are missing');
+  expect(document.querySelector('.qr-image') && !document.querySelector('[role="tablist"], .account-form, input'), 'NCM still offers an in-app account form');
+  expect(document.querySelector('.extra-actions button')?.textContent.includes('使用官方网页登录'), 'official web login is missing');
+  expect(qrPolls().length === 1, 'NCM QR polling did not start');
+  qrCode = 802; await qrPolls()[0].callback(); await settle();
+  expect(text().includes('已扫码，请在手机上确认'), 'scan confirmation state is missing');
+  qrCode = 800; await qrPolls()[0].callback(); await settle();
+  expect(text().includes('点击刷新二维码') && qrPolls().length === 0, 'expired QR did not stop polling');
+  const oldQrRequests = calls.filter(call => call.method === 'getQrLogin').length;
+  document.querySelector('[aria-label="刷新二维码"]').click(); await settle();
+  expect(calls.filter(call => call.method === 'getQrLogin').length === oldQrRequests + 1 && qrPolls().length === 1, 'expired QR could not be refreshed');
+  qrCode = 803;
+  handler = (id, method) => method === 'checkQrLogin' ? { code: qrCode } : method === 'checkLogin' ? { loggedIn: true, profile: { userId: 42, nickname: '扫码账号' } } : undefined;
+  await qrPolls()[0].callback(); await settle();
+  expect(success === 1 && qrPolls().length === 0 && calls.some(call => call.method === 'ncmCheckLogin'), 'QR success did not synchronize the account');
+  expect(!calls.some(call => ['sendCaptcha', 'loginByPhonePassword', 'loginByPhoneCaptcha', 'loginByEmailPassword'].includes(call.method)), 'desktop QR login called an account method retained for mobile compatibility');
+
+  // QR errors retain their retry path without introducing an account form.
+  await mountLogin([ncm], 'ncm', false, (id, method) => method === 'checkQrLogin' ? { code: 503 } : undefined);
+  await qrPolls()[0].callback(); await settle();
+  expect(text().includes('高频限制') && qrPolls().length === 0, 'QR error was not shown or kept polling');
+  document.querySelector('.error-actions .btn-primary').click(); await settle();
+  expect(document.querySelector('.qr-image') && qrPolls().length === 1, 'QR error retry did not restart login');
+
+  // Official web login still stops QR polling and synchronizes the authenticated account.
+  let officialLoggedIn = false;
+  await mountLogin([ncm], 'ncm', false, (id, method) => {
+    if (method === 'openOfficialLogin') { officialLoggedIn = true; return { loggedIn: true }; }
+    if (method === 'checkLogin') return { loggedIn: officialLoggedIn, profile: officialLoggedIn ? { userId: 42, nickname: '网页账号' } : null };
+  });
+  document.querySelector('.extra-actions button').click(); await settle();
+  expect(text().includes('登录成功') && qrPolls().length === 0, 'official web login did not complete or kept QR polling');
+  await new Promise(resolve => setTimeout(resolve, 1300)); await settle();
+  expect(success === 1 && calls.some(call => call.method === 'openOfficialLogin') && calls.some(call => call.method === 'ncmCheckLogin'), 'official web login did not synchronize the account');
+
   // Stale persisted or caller-selected NCM defaults must only call enabled login providers.
   await mountLogin([searchOnly, bili]);
   expect(text().includes('登录 哔哩哔哩'), 'disabled initial NCM did not fall back: ' + text() + JSON.stringify(calls));
@@ -308,15 +375,14 @@ window.runProviderFallbackTests = async () => {
   await mountLogin([settings]);
   expect(configure === 1 && !calls.some(call => call.method === 'getQrLogin'), 'settings fallback did not open configuration');
 
-  // A disabled account request cannot keep the fallback server form busy or release its newer request.
+  // A disabled server request cannot keep the fallback server form busy or release its newer request.
   let failAccount, failServer;
-  await mountLogin([ncm, server], 'ncm', false, (id, method) => {
-    if (method === 'loginByPhonePassword') return new Promise((resolve, reject) => failAccount = reject);
-    if (method === 'loginWithServer') return new Promise((resolve, reject) => failServer = reject);
+  const oldServer = { ...server, id: 'navidrome', name: 'Navidrome' };
+  await mountLogin([oldServer, server], oldServer.id, false, (id, method) => {
+    if (method === 'loginWithServer') return new Promise((resolve, reject) => { if (id === oldServer.id) failAccount = reject; else failServer = reject; });
   });
-  [...document.querySelectorAll('.method-tab')].find(button => button.textContent.includes('密码登录')).click(); await settle();
-  document.querySelector('.account-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
-  expect(typeof failAccount === 'function', 'account request did not start');
+  document.querySelector('.server-login-form').dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  expect(typeof failAccount === 'function', 'first server request did not start');
   await replaceProviders([server]);
   let serverButton = document.querySelector('.server-login-form button');
   expect(serverButton && !serverButton.disabled, 'old account kept fallback server form busy');
@@ -360,7 +426,7 @@ window.runProviderFallbackTests = async () => {
     const frame = document.querySelector('#title .title-bar').getBoundingClientRect();
     const tools = document.querySelector('#title .title-bar-tools').getBoundingClientRect();
     expect(frame.height === 40 && tools.right > frame.width / 2, 'title height or right tool placement changed');
-    button.click(); expect(selected === 'ncm', 'persistent account lost its enabled provider');
+    button.click(); expect(selected === (surface.preview ? null : 'ncm'), 'persistent account selected the wrong provider');
   }
   titleProps.value = { streaming: false }; await settle();
 
@@ -453,6 +519,6 @@ window.runProviderFallbackTests = async () => {
   finishCheck({ loggedIn: false, profile: null }); await settle();
   expect(calls.length === beforeUnmountedResult && qrPolls().length === 0 && configure === 0, 'unmounted login resumed authentication');
   store().stopProviderHealthPolling();
-  return 14;
+  return 17;
 };
 `

@@ -33,7 +33,9 @@ test('current appearance UI connects real settings, draft history, search and th
           name: 'appearance-capability-boundaries',
           enforce: 'pre',
           resolveId(source, importer) {
-            if (source.endsWith('/ThemeWorkshopPage.vue')) return '\0capabilities-unused'
+            if (source.endsWith('/WorkshopPreview.vue')) return '\0capabilities-unused'
+            if (/\/(?:EmbeddedExperience|ExperienceView)\.vue$/.test(source))
+              return '\0capabilities-unused'
             if (source === '/icon.png') return resolve('resources/icon.png')
             if (/\/extensions\/registry(?:\.ts)?$/.test(source)) return '\0capabilities-registry'
             if (
@@ -52,7 +54,7 @@ test('current appearance UI connects real settings, draft history, search and th
           },
           load(id) {
             if (id === '\0capabilities-registry')
-              return "import {ref} from 'vue';const empty=ref([]);export const syncExtensions=async()=>{};export const useExtensionRegistry=()=>({themeContributions:empty,uiContributions:empty,syncExtensions})"
+              return "import {ref} from 'vue';export const fixtureThemes=ref([]);const empty=ref([]);export const syncExtensions=async()=>{};export const useExtensionRegistry=()=>({themeContributions:fixtureThemes,uiContributions:empty,syncExtensions})"
             if (id === '\0capabilities-unused') return 'export default {render:()=>null}'
             return null
           }
@@ -63,6 +65,8 @@ test('current appearance UI connects real settings, draft history, search and th
         alias: {
           '@renderer': resolve('src/renderer/src'),
           '@shared': resolve('src/shared'),
+          '@main': resolve('src/main'),
+          pinia: require.resolve('pinia'),
           vue: require.resolve('vue/dist/vue.esm-bundler.js')
         }
       },
@@ -121,6 +125,16 @@ win.setContentSize(width,height);for(const panel of ['global-font','player-bar',
 await win.webContents.executeJavaScript('window.inspectCapabilityPanel('+[panel,tone,font].map(JSON.stringify).join(',')+')');
 if(process.env.TE_CAPABILITIES_EVIDENCE)await fs.writeFile(path.join(process.env.TE_CAPABILITIES_EVIDENCE,panel+'-'+tone+'-'+width+'.png'),(await win.webContents.capturePage()).toPNG());
 }}
+win.setContentSize(1280,800);
+await win.webContents.executeJavaScript('window.runAdvancedCapabilities()');
+for(const [width,height,tone,font] of [[1280,800,'dark',14],[521,720,'pureWhite',22]]){
+win.setContentSize(width,height);for(const panel of ['css','layers','parameters','layout','skin']){
+await win.webContents.executeJavaScript('window.inspectAdvancedPanel('+[panel,tone,font].map(JSON.stringify).join(',')+')');
+if(process.env.TE_CAPABILITIES_EVIDENCE)await fs.writeFile(path.join(process.env.TE_CAPABILITIES_EVIDENCE,'advanced-'+panel+'-'+width+'.png'),(await win.webContents.capturePage()).toPNG());
+}
+await win.webContents.executeJavaScript('window.closeAdvancedPanel()');
+if(process.env.TE_CAPABILITIES_EVIDENCE)await fs.writeFile(path.join(process.env.TE_CAPABILITIES_EVIDENCE,'advanced-workspace-'+width+'.png'),(await win.webContents.capturePage()).toPNG());
+}
 await win.webContents.executeJavaScript('window.runLegacyPlayerSettings()');
 console.log('APPEARANCE_CAPABILITIES_REAL_OK');win.destroy();app.exit(0);
 }catch(e){console.error(e.stack);if(win&&process.env.TE_CAPABILITIES_EVIDENCE)await fs.writeFile(path.join(process.env.TE_CAPABILITIES_EVIDENCE,'failed.png'),(await win.webContents.capturePage()).toPNG());app.exit(1)}});

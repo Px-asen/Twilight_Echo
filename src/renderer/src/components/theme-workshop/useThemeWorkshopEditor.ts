@@ -30,7 +30,6 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
   let gestureStart: WorkshopProject | undefined
   let gestureGeneration = 0
   let pendingCheckpoint = false
-  let disabled = false
   let stopTrial: () => void = () => undefined
   let metadataValid: () => boolean = () => true
   const previewProject = computed(() =>
@@ -60,7 +59,7 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
     }, 600)
   }
   function change(edit: (project: WorkshopProject) => void, continuous = false): void {
-    if (!draft.value || disabled) return
+    if (!draft.value) return
     if (!continuous) finishInput()
     const next = copyWorkshopDraft(draft.value)
     edit(next)
@@ -214,15 +213,9 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
     ;[projects.value, sources.value] = await Promise.all([api.list(), api.sources()])
     if (projects.value[0]) adopt(await api.get(projects.value[0].id))
   }
-  function bindLifecycle(stop: () => void, valid: () => boolean): () => void {
+  function bindLifecycle(stop: () => void, valid: () => boolean): void {
     stopTrial = stop
     metadataValid = valid
-    return api.onPrepareDisable(async () => {
-      endGesture()
-      await persist()
-      stopTrial()
-      disabled = true
-    })
   }
   onBeforeUnmount(() => {
     clearTimeout(timer)
@@ -230,7 +223,7 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
     endGesture()
     clearTimeout(timer)
     stopTrial()
-    if (!disabled) void persist().catch(() => undefined)
+    void persist().catch(() => undefined)
   })
   return {
     projects,

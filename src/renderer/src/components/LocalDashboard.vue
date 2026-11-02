@@ -472,9 +472,9 @@ const DSP_PARAM_LABELS: Record<string, string> = {
   graphic: '图形',
   parametric: '参数',
   custom: '自定义',
-  bauer: 'Bauer',
+  bauer: 'Bauer（BS2B）',
   bs2b: 'BS2B',
-  meier: 'Meier',
+  meier: 'Meier（BS2B 预设）',
   mono: '单声道',
   stereo: '立体声'
 }

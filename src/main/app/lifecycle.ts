@@ -6,10 +6,10 @@ import { join, extname } from 'path'
 import { cpus } from 'os'
 import { pathToFileURL } from 'url'
 import { fetch as undiciFetch } from 'undici'
-import { electronApp, optimizer } from '@electron-toolkit/utils'
+import { optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { mediaCoverCache } from '../cache/mediaCoverCache.ts'
-import { ensureMusicCacheDirectories, shutdownNcmCache } from '../cache/ncmCache'
+import { ensureMusicCacheDirectories } from '../../core/providers/ncmCache.ts'
 import { readCachedProtocolFile } from '../cache/protocolAssetCache'
 import { kwinHasInputMethodConfigured } from '../imeBackend'
 import {
@@ -48,33 +48,12 @@ import {
   ensureWindowsShellIdentity,
   WINDOWS_APP_USER_MODEL_ID
 } from '../integrations/windowsAppIdentity.ts'
-import { setupNcmIpc, shutdownNcmApi } from '../ncm/api'
-import { ensureAudioEngineRuntime, setupAudioEngineIpc } from '../audio/engineIpc'
-import { AudioAnalysisServiceClient } from '../audioAnalysisServiceClient.ts'
-import { LocalLibraryScanServiceClient } from '../library/libraryScanServiceClient.ts'
-import { LibraryDatabaseServiceClient } from '../library/libraryDatabaseServiceClient.ts'
-import { LibraryDatabaseRuntime } from '../library/libraryDatabaseRuntime.ts'
 import { selectLibraryStorage } from '../library/libraryStorageMode.ts'
-import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
-import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
-import { setupOpraIpc } from '../ipc/opra'
-import { setupPluginIpc } from '../ipc/plugins'
-import { setupDataIpc, setupCoreShellIpc } from '../ipc/data'
-import {
-  ensureActiveLibraryExclusionsLoaded,
-  prepareAudioFilesForRemoval,
-  trashLocalFileWithRetry,
-  readSacdIsoMetadata
-} from '../ipc/libraryIpc.ts'
+import { setupCoreShellIpc } from '../ipc/coreShellIpc.ts'
 import { filterAuthorizedLibraryRoots } from '../security/localPaths'
-import { normalizeLocalPath } from '../security/ipcValidation.ts'
 import { normalizeCachedCoverHandle } from '../library/coverCache'
-import { setupLibraryDatabaseIpc } from '../ipc/libraryDatabaseIpc.ts'
 import { setupThemeIpc } from '../ipc/themes'
 import { resolveThemeAssetFile } from '../themes/themeArchive.ts'
-import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
-import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
-import { setupNetworkSourceIpc } from '../network/networkIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { destroyTelemetry, initializeTelemetry } from '../analytics/index.ts'
@@ -114,7 +93,10 @@ export function startCoreApp(): void {
 
 function startDesktopApp(owner: 'legacy' | 'core'): void {
   app.setName('TwilightEcho')
-  electronApp.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
+  // The toolkit substitutes electron.exe's path in development. SMTC and the
+  // Shell shortcut use our explicit ID, so keep the process on that same ID
+  // before creating any windows or their taskbar toolbars.
+  if (process.platform === 'win32') app.setAppUserModelId?.(WINDOWS_APP_USER_MODEL_ID)
   runtime.launchSettings = { ...runtime.appSettings }
 
   if (!runtime.appSettings.hardwareAcceleration) {
@@ -276,7 +258,10 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       win.focus()
     })
 
-    const acrylicBackdropWarmup = warmWindowsAcrylicBackdropAvailability()
+    const acrylicBackdropWarmup =
+      runtime.appSettings.windowTransparency === true
+        ? warmWindowsAcrylicBackdropAvailability()
+        : Promise.resolve()
     app.whenReady().then(async () => {
       if (owner === 'legacy' && libraryStorage === 'sqlite') {
         try {
@@ -470,6 +455,15 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       })
 
       if (owner === 'legacy') {
+        const [
+          { LocalLibraryScanServiceClient },
+          { setupLibraryDatabaseIpc },
+          { setupDataIpc }
+        ] = await Promise.all([
+          import('../library/libraryScanServiceClient.ts'),
+          import('../ipc/libraryDatabaseIpc.ts'),
+          import('../ipc/data')
+        ])
         runtime.localLibraryScanService ??= new LocalLibraryScanServiceClient({
           serviceEntry: join(__dirname, 'libraryScanService.js')
         })
@@ -499,6 +493,29 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       setupWindowsSmtcIpc()
 
       if (owner === 'legacy') {
+        const [
+          { setupAudioEngineIpc },
+          { AudioAnalysisServiceClient },
+          { setupBpmAnalysisIpc },
+          { setupLoudnessAnalysisIpc },
+          { setupNcmIpc },
+          { setupRadioMediaIpc },
+          { setupRemoteIpc },
+          { setupNetworkSourceIpc },
+          { setupOpraIpc },
+          { setupPluginIpc }
+        ] = await Promise.all([
+          import('../audio/engineIpc'),
+          import('../audioAnalysisServiceClient.ts'),
+          import('../bpm/bpmIpc'),
+          import('../audio/loudnessIpc'),
+          import('../ncm/api'),
+          import('../radio/radioMediaIpc.ts'),
+          import('../remote/remoteIpc.ts'),
+          import('../network/networkIpc.ts'),
+          import('../ipc/opra'),
+          import('../ipc/plugins')
+        ])
         setupAudioEngineIpc()
         runtime.audioAnalysisService = new AudioAnalysisServiceClient({
           serviceEntry: join(__dirname, 'audioAnalysisService.js'),
@@ -642,15 +659,32 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       runtime.loudnessAnalysisManager = null
       runtime.libraryLoudnessManager = null
       runtime.pluginManager = null
-      destroyRadioMediaIpc()
-      void destroyRemoteIpc()
-      void shutdownNcmCache()
-      void shutdownNcmApi().catch((error) => console.error('[ncm.shutdown]', error))
+      void import('../radio/radioMediaIpc.ts').then(({ destroyRadioMediaIpc }) =>
+        destroyRadioMediaIpc()
+      )
+      void import('../remote/remoteIpc.ts').then(({ destroyRemoteIpc }) => destroyRemoteIpc())
+      void import('../cache/ncmCache').then(({ shutdownNcmCache }) => shutdownNcmCache())
+      void import('../ncm/api')
+        .then(({ shutdownNcmApi }) => shutdownNcmApi())
+        .catch((error) => console.error('[ncm.shutdown]', error))
     })
   }
 }
 
 async function initializeDatabaseLibrary(): Promise<void> {
+  const [
+    { LibraryDatabaseServiceClient },
+    { LocalLibraryScanServiceClient },
+    { LibraryDatabaseRuntime },
+    { prepareAudioFilesForRemoval, trashLocalFileWithRetry, readSacdIsoMetadata },
+    { normalizeLocalPath }
+  ] = await Promise.all([
+    import('../library/libraryDatabaseServiceClient.ts'),
+    import('../library/libraryScanServiceClient.ts'),
+    import('../library/libraryDatabaseRuntime.ts'),
+    import('../ipc/libraryIpc.ts'),
+    import('../security/ipcValidation.ts')
+  ])
   const root = app.getPath('userData')
   const database = new LibraryDatabaseServiceClient({
     serviceEntry: join(__dirname, 'libraryDatabaseService.js'),
@@ -707,11 +741,14 @@ function createMainWindowAndScheduleDeferredStartup(): void {
       syncTrayState()
       return
     }
-    void ensureAudioEngineRuntime().catch((error) => {
-      console.error('[音频引擎] 初始化失败：', error instanceof Error ? error.message : error)
-    })
+    void import('../audio/engineIpc')
+      .then(({ ensureAudioEngineRuntime }) => ensureAudioEngineRuntime())
+      .catch((error) => {
+        console.error('[音频引擎] 初始化失败：', error instanceof Error ? error.message : error)
+      })
     setTimeout(() => {
-      void ensureActiveLibraryExclusionsLoaded()
+      void import('../ipc/libraryIpc.ts')
+        .then(({ ensureActiveLibraryExclusionsLoaded }) => ensureActiveLibraryExclusionsLoaded())
         .catch((error) => {
           console.error(
             '[library] failed to initialize exclusions before starting watchers:',

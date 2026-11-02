@@ -1,6 +1,6 @@
 import { createApp, h, nextTick, shallowRef } from 'vue'
 import { createPinia } from 'pinia'
-import Page from '@renderer/components/theme-workshop/ThemeWorkshopPage.vue'
+import Page from '@renderer/components/theme-workshop/CustomThemeAdvancedPanel.vue'
 import { useThemeWorkshopEditor } from '@renderer/components/theme-workshop/useThemeWorkshopEditor.ts'
 import { useWorkshopDiagnostics } from '@renderer/components/theme-workshop/useWorkshopDiagnostics.ts'
 import { workshopTemplate } from '@shared/themeWorkshopTemplates.ts'
@@ -73,7 +73,6 @@ const api = {
     lastSaved = stored
     return copyWorkshopDraft(stored)
   },
-  onPrepareDisable: () => () => {},
   preflight: async () => diagnoseWorkshopProject(stored),
   exportProject: async () => 'theme.tep',
   importProject: async () => null

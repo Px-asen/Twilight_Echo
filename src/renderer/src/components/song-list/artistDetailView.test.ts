@@ -7,6 +7,7 @@ import type {
 } from '../../../../shared/entityMetadata.ts'
 import type { CatalogEntity, CatalogQuery } from '../../../../shared/musicCatalog.ts'
 import type { MusicIdentityDetail } from '../../../../shared/musicIdentification.ts'
+import { createArtistIdentityView } from '../music-metadata/artistIdentityView.ts'
 
 const attribution: MetadataAttribution = {
   provider: 'wikipedia',
@@ -142,7 +143,7 @@ test('many exact source identities share automatic facts, never a representative
   view.dispose()
 })
 
-test('homonyms and unresolved identities require selection; composite collection names never auto-pick a member', async () => {
+test('homonyms use a stable confirmed profile; unresolved members do not block it, and composites never auto-pick collaborators', async () => {
   const f = fixture([entity('a'), entity('b'), entity('c', 'Bob')])
   f.setIdentities(
     new Map([
@@ -153,8 +154,9 @@ test('homonyms and unresolved identities require selection; composite collection
   )
   const view = createArtistDetailView(f.api)
   await view.setContext('Alice', 'en')
-  assert.equal(view.state.value.selected, null)
-  assert.equal(view.state.value.detail, null)
+  assert.equal(view.state.value.selected?.id, 'a')
+  assert.equal(view.state.value.detail?.entityId, 'a')
+  assert.equal(view.state.value.shared, true)
   assert.equal(view.state.value.page?.total, 2)
   await view.select(entity('b'))
   assert.equal((view.state.value.selected as CatalogEntity | null)?.id, 'b')
@@ -170,7 +172,7 @@ test('homonyms and unresolved identities require selection; composite collection
     ])
   )
   await view.setContext('Alice', 'en')
-  assert.equal(view.state.value.detail, null)
+  assert.equal(view.state.value.detail?.entityId, 'a')
   view.dispose()
 })
 
@@ -199,6 +201,47 @@ test('language priority, explicit hide, expiry and detached identities apply to 
   d.link!.state = 'detached'
   assert.equal(artistDetailPresentation(d, true, 'Alice', 'en', 100).introduction, null)
   assert.equal(artistDetailPresentation(d, false, 'Alice', 'en', 100).name, 'Alice')
+})
+
+test('detail and card choose the same trusted profile and re-rank when that identity is detached', async (t) => {
+  const f = fixture([entity('a'), entity('b'), entity('c')])
+  const automatic = identity('b', 'other'), manual = identity('c')
+  automatic.link!.confirmation = { mode: 'automatic', rule: 'artist_recordings' }
+  manual.link!.confirmation = { mode: 'manual' }
+  f.setIdentities(new Map([['a', identity('a', null)], ['b', automatic], ['c', manual]]))
+  f.details.set('b', { ...detail('b'), targetId: 'other' })
+  const view = createArtistDetailView(f.api), card = createArtistIdentityView(f.api)
+  t.after(() => { view.dispose(); card.dispose() })
+  await Promise.all([view.setContext('Alice', 'en'), card.setContext('Alice', 'en')])
+  assert.equal(view.state.value.selected?.id, 'c')
+  assert.equal(card.detail.value?.entityId, 'c')
+  assert.equal(view.state.value.identities.a.link, null, 'display selection leaves other identities unresolved')
+  manual.link!.state = 'detached'
+  await Promise.all([view.refresh(), card.refresh()])
+  assert.equal(view.state.value.selected?.id, 'b')
+  assert.equal(card.detail.value?.entityId, 'b')
+  f.details.get('b')!.link!.state = 'detached'
+  await Promise.all([view.refresh(), card.refresh()])
+  assert.equal(view.state.value.detail, null)
+  assert.match(view.state.value.error, /身份已变化/)
+  assert.equal(card.detail.value, null)
+})
+
+test('unconfirmed collections keep identity review available without borrowing a biography or photo', async (t) => {
+  const f = fixture([entity('b'), entity('a')])
+  f.setIdentities(new Map([['a', identity('a', null)], ['b', identity('b', null)]]))
+  for (const d of f.details.values()) { d.link = null; d.targetId = null }
+  const view = createArtistDetailView(f.api)
+  t.after(view.dispose)
+  await view.setContext('Alice', 'en')
+  assert.equal(view.state.value.selected?.id, 'a')
+  assert.equal(view.state.value.shared, true)
+  const p = artistDetailPresentation(view.state.value.detail, true, 'Alice', 'en', 100)
+  assert.equal(p.cover, null)
+  assert.equal(p.introduction, null)
+  await view.select(entity('b'))
+  assert.equal(view.state.value.selected?.id, 'b')
+  assert.equal(view.state.value.shared, false)
 })
 
 test('shared NCM biography fills a missing field without displacing another source or borrowing a personal preference', () => {
@@ -265,7 +308,7 @@ test('explicit profile choice restores one source without confirming the other s
   view.dispose()
 })
 
-test('background reads keep unresolved choices usable and coalesce progress instead of restarting reads', async t => {
+test('background reads retain the automatic profile and coalesce progress instead of restarting reads', async t => {
   const f = fixture([entity('a'), entity('b')])
   f.setIdentities(new Map([['a', identity('a')], ['b', identity('b', 'homonym')]]))
   let hold = false, reads = 0, release!: () => void
@@ -283,7 +326,7 @@ test('background reads keep unresolved choices usable and coalesce progress inst
   assert.equal(view.state.value.loading, false)
   assert.equal(view.state.value.refreshing, true)
   assert.equal(view.state.value.page, painted)
-  assert.equal(view.state.value.selected, null)
+  assert.equal(view.state.value.selected?.id, 'a')
   assert.equal(reads, 2, 'one in-flight read, no abort/restart for each progress event')
   hold = false; release()
   await Promise.all([first, next])

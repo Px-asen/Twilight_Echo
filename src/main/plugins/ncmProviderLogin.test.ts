@@ -14,6 +14,10 @@ function queryValue(path: string, key: string): string | null {
 }
 
 interface TestNcmProvider {
+  ui: { authType: string; loginExtraActions?: unknown[] }
+  checkLogin(): Promise<{ loggedIn: boolean; profile: { userId: number } | null }>
+  logout(): Promise<void>
+  openOfficialLogin(): Promise<unknown>
   getQrKey(): Promise<unknown>
   getQrImage(key: string): Promise<unknown>
   checkQrLogin(key: string): Promise<{ code: number; message?: string }>
@@ -106,6 +110,11 @@ test('bundled NCM provider follows documented QR login request params', async ()
 
   assert.ok(registeredProvider.current)
   const provider = registeredProvider.current
+  assert.equal(provider.ui.authType, 'qr')
+  assert.deepEqual(provider.ui.loginExtraActions, [
+    { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin' }
+  ])
+  assert.equal(typeof provider.openOfficialLogin, 'function')
 
   await provider.getQrKey()
   await provider.getQrImage('qr-key')
@@ -450,6 +459,87 @@ test('bundled NCM provider logs in with phone captcha and email password', async
   assert.equal(queryValue(emailRequest.path, 'password'), 'email-password')
   assert.equal(settings.get('cookie'), 'MUSIC_U=email-token')
 
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider saves the QR session, restores its profile and logs out', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            if (path.startsWith('/login/qr/check')) {
+              return { code: 803, cookie: 'MUSIC_U=qr-token;__csrf=csrf-token' }
+            }
+            if (path.startsWith('/login/status')) {
+              return {
+                code: 200,
+                data: {
+                  code: 200,
+                  profile: { userId: 1001, nickname: 'qr-user', avatarUrl: 'avatar.jpg' }
+                }
+              }
+            }
+            return { code: 200 }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const provider = registeredProvider.current
+  assert.ok(provider)
+  assert.equal((await provider.checkQrLogin('qr-key')).code, 803)
+  assert.equal(settings.get('cookie'), 'MUSIC_U=qr-token;__csrf=csrf-token')
+  const state = await provider.checkLogin()
+  assert.equal(state.loggedIn, true)
+  assert.equal(state.profile?.userId, 1001)
+  const statusRequest = requests.find((request) => request.path.startsWith('/login/status'))
+  assert.equal(statusRequest?.cookie, 'MUSIC_U=qr-token;__csrf=csrf-token')
+
+  await provider.logout()
+  assert.equal(settings.has('cookie'), false)
+  assert.deepEqual(await provider.checkLogin(), { loggedIn: false, profile: null })
   providerModule.deactivate()
 })
 

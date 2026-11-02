@@ -15,8 +15,6 @@ import { normalizeAppFontFamily } from '../../../../shared/appFont.ts'
 import type { AppSettings, UiDensity } from '../../types/settings'
 
 const emit = defineEmits<{
-  openThemeStudio: []
-  openThemeWorkshop: []
   openAppearance: []
 }>()
 
@@ -62,21 +60,18 @@ function toggleSetting(key: BooleanSettingKey): void {
     <div class="setting-list">
       <div data-setting-id="appearance-workspace" class="setting-item">
         <div class="setting-copy">
-          <strong>外观工作区</strong>
-          <span>通过 2D/3D 预览调整外观、制作主题和管理主题插件。</span>
+          <strong>自定义主题</strong>
+          <span>通过 2D/3D 预览调整外观，使用高级工具制作并导出 .TEP 主题插件。</span>
         </div>
         <button type="button" class="soft-button" @click="emit('openAppearance')">
-          打开新版外观
+          打开自定义主题
         </button>
       </div>
     </div>
     <div class="section-block">
       <h3>主题与配色</h3>
       <div class="setting-list">
-        <ThemeControlsSettings
-          @open-theme-studio="emit('openThemeStudio')"
-          @open-theme-workshop="emit('openThemeWorkshop')"
-        />
+        <ThemeControlsSettings />
       </div>
     </div>
     <div class="section-block">

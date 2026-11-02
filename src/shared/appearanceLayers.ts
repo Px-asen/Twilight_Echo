@@ -1,3 +1,5 @@
+import { isThemeImageSource } from './themeImageSource.ts'
+
 export const APPEARANCE_LAYER_SCOPES = [
   'inner-panel',
   'outer-panel',
@@ -144,10 +146,7 @@ function normalizeBody(raw: unknown, fallback: AppearanceBodyLayer): AppearanceB
   }
 }
 function imageHandle(value: unknown): string {
-  return typeof value === 'string' &&
-    /^background:\/\/[a-zA-Z0-9_-]+\.(?:png|webp|jpe?g)$/i.test(value)
-    ? value
-    : ''
+  return isThemeImageSource(value) ? value : ''
 }
 function normalizeSkin(raw: unknown, fallback: AppearanceSkinLayer): AppearanceSkinLayer {
   const value = object(raw)

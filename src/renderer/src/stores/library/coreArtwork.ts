@@ -9,8 +9,8 @@ export function createCoreArtwork(core: Client, revision: () => number | null) {
   const pending = new Map<string, Waiting[]>()
   let current = '',
     pumping = false
-  const key = () =>
-    core.state.value?.phase === 'ready' ? `${core.state.value.epoch}:${revision()}` : ''
+  const epoch = () => (core.state.value?.phase === 'ready' ? core.state.value.epoch : '')
+  const key = () => (epoch() ? `${epoch()}:${revision()}` : '')
   function sync() {
     const next = key()
     if (next !== current) {
@@ -57,6 +57,7 @@ export function createCoreArtwork(core: Client, revision: () => number | null) {
     }
   }
   return {
+    epoch,
     key,
     read(id: string, refresh = false): Promise<string | null> {
       sync()
@@ -86,6 +87,7 @@ function artwork() {
   return (singleton ??= createCoreArtwork(core, () => core.state.value?.libraryRevision ?? null))
 }
 export const coreArtworkKey = () => artwork().key()
+export const coreArtworkEpoch = () => artwork().epoch()
 export const readCoreArtwork = (id: string, refresh = false) => artwork().read(id, refresh)
 if (import.meta.hot)
   import.meta.hot.dispose(() => {

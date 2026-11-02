@@ -8,7 +8,6 @@ import type {
 import { useCoreConnection } from '../../stores/coreConnection.ts'
 import IntroductionEditor from '../music-metadata/IntroductionEditor.vue'
 import PersonalMetadataEditor from '../music-metadata/PersonalMetadataEditor.vue'
-import IdentityReviewPanel from '../music-metadata/IdentityReviewPanel.vue'
 import PersonalPreferencesPanel from '../music-preferences/PersonalPreferencesPanel.vue'
 import {
   metadataTaskReasonLabel,
@@ -25,6 +24,7 @@ const props = defineProps<{
   available: boolean
   refresh: () => Promise<void>
 }>()
+defineEmits<{ edit: [] }>()
 const core = useCoreConnection()
 const update = createArtistMetadataUpdate({
   policy: (signal) => core.query('metadata.entity.policy', {}, signal),
@@ -57,7 +57,9 @@ watch(
   }
 )
 const hasUpdateProvider = computed(
-  () => !!state.value.policy && artistUpdateProviders(state.value.policy, 'artist', state.value.references).length > 0
+  () =>
+    !!state.value.policy &&
+    artistUpdateProviders(state.value.policy, 'artist', state.value.references).length > 0
 )
 const canUpdate = computed(() => props.available && hasUpdateProvider.value)
 onBeforeUnmount(update.dispose)
@@ -65,7 +67,6 @@ onBeforeUnmount(update.dispose)
 
 <template>
   <section class="artist-manager" aria-label="管理艺术家资料">
-    <slot />
     <div class="update-row">
       <div>
         <h3>公开资料</h3>
@@ -80,7 +81,7 @@ onBeforeUnmount(update.dispose)
         {{ state.submitting ? '正在提交…' : '更新资料' }}
       </button>
     </div>
-    <p v-if="!confirmed" class="hint">先选择资料条目并确认人物身份，即可更新公开资料。</p>
+    <p v-if="!confirmed" class="hint">确认人物身份后，即可更新公开资料。</p>
     <template v-else-if="state.policy">
       <p v-if="!hasUpdateProvider" class="hint">
         {{
@@ -101,13 +102,16 @@ onBeforeUnmount(update.dispose)
     </p>
     <ul v-if="state.jobs.length" class="artist-update-jobs" aria-label="艺术家资料任务">
       <li v-for="job in state.jobs" :key="job.id">
-        <span>{{ metadataProviderLabel(job.provider) }} · {{
-          job.provider === 'public-artwork'
-            ? '人物照片'
-            : job.type === 'enrich'
-              ? '人物资料'
-              : '身份识别'
-        }}</span>
+        <span
+          >{{ metadataProviderLabel(job.provider) }} ·
+          {{
+            job.provider === 'public-artwork'
+              ? '人物照片'
+              : job.type === 'enrich'
+                ? '人物资料'
+                : '身份识别'
+          }}</span
+        >
         <span
           >{{ metadataTaskStateLabel[job.state]
           }}<template v-if="job.outcome === 'not_found'"> · 未找到资料</template
@@ -116,7 +120,8 @@ onBeforeUnmount(update.dispose)
       </li>
     </ul>
     <p v-if="shared" class="hint">
-      当前展示共享人物资料。选择一个库内条目后，编辑其专属简介、图片与来源偏好。
+      当前自动展示公开资料，手工编辑只影响当前库内条目。
+      <button type="button" @click="$emit('edit')">编辑当前条目</button>
     </p>
     <template v-if="editable">
       <IntroductionEditor
@@ -141,7 +146,6 @@ onBeforeUnmount(update.dispose)
         :scope="scope"
         label="艺人"
       />
-      <IdentityReviewPanel :entity-id="editable.entityId" :scope="scope" @changed="refresh()" />
     </template>
   </section>
 </template>

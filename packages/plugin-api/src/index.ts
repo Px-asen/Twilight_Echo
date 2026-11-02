@@ -1117,6 +1117,13 @@ export interface TwilightStructuredThemeV3 extends Omit<
   schemaVersion: 3
   /** Host-owned shell grid. It can rearrange components but cannot inject DOM or script. */
   layout?: TwilightThemeShellLayout
+  /** Normalized appearance snapshot produced by the host's custom theme editor. */
+  appearance?: Record<string, unknown>
+  /** Host-owned component materials, effects, and skins. Raster data travels with the theme. */
+  appearanceLayers?: Record<string, unknown>
+  toneSchedule?: { lightStartMinutes: number; darkStartMinutes: number }
+  /** Registered icon slot IDs mapped to self-contained raster data URLs. */
+  iconAssets?: Record<string, string>
 }
 
 export type TwilightStructuredTheme =

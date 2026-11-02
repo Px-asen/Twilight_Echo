@@ -406,7 +406,7 @@ test('bundled plugins are compatible with the current application version', asyn
   const { version } = JSON.parse(
     await readFile(new URL('../../../package.json', import.meta.url), 'utf-8')
   )
-  for (const directory of ['ncm-provider', 'theme-workshop']) {
+  for (const directory of ['ncm-provider']) {
     const manifest = validatePluginManifest(
       JSON.parse(
         await readFile(

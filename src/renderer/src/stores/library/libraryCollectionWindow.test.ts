@@ -95,6 +95,42 @@ test('kind/search changes and deep jumps share two stale transport slots and onl
   assert.equal(source.cacheState.activeRequests, 0)
 })
 
+test('metadata refresh retains collection cards and letters until their replacement arrives', async (t) => {
+  const pending: {
+    kind: LibraryCollectionKind
+    query: LibraryQuery
+    resolve(value: LibraryCollectionPage): void
+  }[] = []
+  const source = createLibraryCollectionWindow({
+    queryCollections: (kind, query) =>
+      new Promise((resolve) => pending.push({ kind, query: query!, resolve }))
+  })
+  t.after(() => source.dispose())
+  source.setQuery('albums')
+  pending[0].resolve(page(pending[0].kind, pending[0].query))
+  await settled(source)
+  const album = source.itemAt(0)!
+  source.invalidate(2)
+  source.setRange(0, 20)
+  assert.equal(source.itemAt(0), album)
+  assert.deepEqual(source.letterOffsets.value, { A: 0, Z: 299999 })
+  assert.equal(source.state.value.loading, true)
+  assert.equal(source.cacheState.cachedItems, 0)
+  const updated = page(pending[1].kind, pending[1].query, 2)
+  updated.items[0] = { ...updated.items[0], name: 'Enriched album' }
+  pending[1].resolve(updated)
+  await settled(source)
+  assert.equal(source.itemAt(0)?.name, 'Enriched album')
+  source.setQuery('artists', {}, true)
+  assert.equal(
+    source.itemAt(0),
+    undefined,
+    'preserving position cannot carry cards into another query'
+  )
+  pending[2].resolve(page(pending[2].kind, pending[2].query, 2))
+  await settled(source)
+})
+
 test('failed pages and lease replacement retain extent and letters, do not retry on overscan, and shrink safely', async (t) => {
   let fail = false,
     total = 300_000,

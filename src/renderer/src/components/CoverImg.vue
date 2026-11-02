@@ -20,7 +20,7 @@
 import { computed, ref, watch } from 'vue'
 import DEFAULT_TRACK_COVER from '../assets/images/default-track-cover-light.webp'
 import '../assets/default-track-cover.css'
-import { coreArtworkKey, readCoreArtwork } from '../stores/library/coreArtwork.ts'
+import { coreArtworkEpoch, coreArtworkKey, readCoreArtwork } from '../stores/library/coreArtwork.ts'
 import { recordCoverDiagnostic } from '../utils/coverDiagnostics.ts'
 import {
   clearLocalCoverDataCache,
@@ -38,6 +38,8 @@ const props = withDefaults(
     identity?: string | null | undefined
     /** Core-owned local track identity; no source path or durable URL is required. */
     coreTrackId?: string
+    /** Compact row thumbnails pass 'sm' (128px) to avoid decoding 500px bitmaps. */
+    size?: 'sm' | 'md'
     alt?: string
     fallback?: string
     loading?: 'lazy' | 'eager'
@@ -59,12 +61,15 @@ const coverIdentityKey = computed(
     `${props.identity ?? ''}:${props.cover ?? ''}:${props.coverSource ?? ''}:${remountNonce.value}`
 )
 
-async function reloadCover(): Promise<void> {
+async function reloadCover(preserveDisplay = false): Promise<void> {
   const id = ++requestId
   retriedCover = false
   // Never keep another identity's bitmap, but reuse this cover's resolved src
   // immediately when a virtualized card returns to the viewport.
-  displayCover.value = props.coreTrackId ? null : readCachedCover(props.cover, props.coverSource)
+  if (!preserveDisplay)
+    displayCover.value = props.coreTrackId
+      ? null
+      : readCachedCover(props.cover, props.coverSource, props.size)
 
   const cover = typeof props.cover === 'string' ? props.cover.trim() : ''
   const source = typeof props.coverSource === 'string' ? props.coverSource.trim() : ''
@@ -75,7 +80,7 @@ async function reloadCover(): Promise<void> {
 
   try {
     const handle = props.coreTrackId ? await readCoreArtwork(props.coreTrackId) : cover || null
-    const next = await resolveCover(handle, props.coreTrackId ? null : source || null)
+    const next = await resolveCover(handle, props.coreTrackId ? null : source || null, props.size)
     if (id !== requestId) return
     displayCover.value = next
     if (!next) recordCoverDiagnostic('resolve.empty', cover, source, {}, 'warn')
@@ -87,17 +92,25 @@ async function reloadCover(): Promise<void> {
 }
 
 watch(
-  () =>
-    [
-      props.identity,
-      props.cover,
-      props.coverSource,
-      props.coreTrackId,
-      props.coreTrackId ? coreArtworkKey() : ''
-    ] as const,
-  () => {
-    remountNonce.value += 1
-    void reloadCover()
+  [
+    () => props.identity,
+    () => props.cover,
+    () => props.coverSource,
+    () => props.coreTrackId,
+    () => props.size,
+    () => (props.coreTrackId ? coreArtworkEpoch() : ''),
+    () => (props.coreTrackId ? coreArtworkKey() : '')
+  ],
+  (current, previous) => {
+    // Progress-only Core snapshots need no reload. A new library revision does,
+    // but the same track in the same Core epoch keeps its decoded bitmap while
+    // its artwork is revalidated. Identity/epoch changes still clear it at once.
+    const preserveDisplay =
+      !!current[3] &&
+      !!current[5] &&
+      current.slice(0, -1).every((value, index) => value === previous[index])
+    if (!preserveDisplay) remountNonce.value += 1
+    void reloadCover(preserveDisplay)
   },
   { immediate: true }
 )
@@ -122,7 +135,7 @@ async function onImageError(event: Event): Promise<void> {
     try {
       if (props.coreTrackId) {
         const handle = await readCoreArtwork(props.coreTrackId, true)
-        const next = await resolveCover(handle, null)
+        const next = await resolveCover(handle, null, props.size)
         if (id !== requestId) return
         if (next && next !== displayCover.value) {
           displayCover.value = next
@@ -132,7 +145,7 @@ async function onImageError(event: Event): Promise<void> {
       }
       if (source) {
         invalidateRemoteCoverGrant(source)
-        const next = await resolveCover(null, source)
+        const next = await resolveCover(null, source, props.size)
         if (id !== requestId) return
         recordCoverDiagnostic('retry.resolved', next, source, {
           sameHandle: next === displayCover.value,
@@ -147,7 +160,7 @@ async function onImageError(event: Event): Promise<void> {
       // Local protocol art: drop materialize cache and retry once.
       if (typeof props.cover === 'string' && /^cover:/i.test(props.cover)) {
         clearLocalCoverDataCache()
-        const next = await resolveCover(props.cover, null)
+        const next = await resolveCover(props.cover, null, props.size)
         if (id !== requestId) return
         if (next && next !== displayCover.value) {
           displayCover.value = next

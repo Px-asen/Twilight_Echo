@@ -2,6 +2,7 @@
 import {
   computed,
   defineAsyncComponent,
+  markRaw,
   nextTick,
   onMounted,
   onUnmounted,
@@ -294,8 +295,8 @@ const {
   tracks: visibleDetailTracks
 } = useStreamingTrackView(detailTracks, () => currentDetail.value)
 const detailUsers = ref<NcmUserSummary[]>([])
-const artistAlbums = ref<MediaProviderAlbumSummary[]>([])
-const artistPlaylists = ref<MediaProviderPlaylistSummary[]>([])
+const artistAlbums = shallowRef<MediaProviderAlbumSummary[]>([])
+const artistPlaylists = shallowRef<MediaProviderPlaylistSummary[]>([])
 const artistIntro = ref('')
 const artistFollowed = ref<boolean | null>(null)
 const activeArtistTab = ref<ArtistDetailTab>('songs')
@@ -1460,7 +1461,7 @@ function clearDetailState(): void {
 }
 
 function captureDetailState(): DetailSnapshot {
-  return {
+  return markRaw({
     tracks: detailTracks.value,
     users: detailUsers.value,
     artistAlbumsList: artistAlbums.value,
@@ -1476,7 +1477,7 @@ function captureDetailState(): DetailSnapshot {
       total: likedTracksTotal.value,
       hasMore: likedTracksHasMore.value
     }
-  }
+  })
 }
 
 function applyDetailState(snapshot: DetailSnapshot | undefined): void {

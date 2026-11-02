@@ -13,9 +13,11 @@ export function createCoreListeningStats(options: {
   const overview = shallowRef<CoreStatisticsOverview | null>(null)
   const windows = shallowRef<Record<'recent' | 'plays' | 'seconds', CoreStatisticsTrackView[]>>({ recent: [], plays: [], seconds: [] })
   const error = shallowRef('')
+  const pending = shallowRef(false)
   let active: AbortController | null = null
   let work: Promise<void> | null = null
   let disposed = false
+  let historyRecovery: { epoch: string; revision: number } | null = null
   const key = () => {
     const state = options.state.value
     return state?.phase === 'ready' && state.statisticsRevision !== null
@@ -25,11 +27,13 @@ export function createCoreListeningStats(options: {
     active?.abort()
     const expected = key()
     if (!expected || disposed) {
+      pending.value = false
       overview.value = null
       windows.value = { recent: [], plays: [], seconds: [] }
       return Promise.resolve()
     }
     const request = active = new AbortController()
+    pending.value = true
     const task = (async () => {
       try {
         const summary = await options.overview(request.signal)
@@ -51,19 +55,45 @@ export function createCoreListeningStats(options: {
           throw failure
         }
       }
-    })().finally(() => { if (work === task) work = null })
+    })().finally(() => {
+      if (work === task) work = null
+      if (active === request) pending.value = false
+    })
     work = task
     return task
   }
   const stop = watch(key, () => { void refresh().catch(() => {}) }, { immediate: true, flush: 'sync' })
   return {
     overview: shallowReadonly(overview), windows: shallowReadonly(windows), error: shallowReadonly(error),
+    history: computed<CoreStatisticsOverview['history']>(() => {
+      const history = overview.value?.history
+      return {
+        mode: history?.mode ?? null,
+        ready: !!history?.ready && !error.value,
+        pending: pending.value || !!history?.pending,
+        revision: history?.revision ?? null,
+        error: error.value || history?.error || ''
+      }
+    }),
     ready: computed(() => overview.value !== null && !error.value),
     async ensure() {
       await (work ?? (overview.value ? Promise.resolve() : refresh()))
       if (error.value) throw new Error(error.value)
     },
     refresh,
+    recoverHistory(revision: number | undefined, failure: unknown): boolean {
+      if (
+        disposed || !key() || revision === undefined ||
+        (failure as { code?: unknown } | null)?.code !== 'STALE_HISTORY_REVISION'
+      ) return false
+      const epoch = options.state.value!.epoch
+      if (historyRecovery?.epoch === epoch && revision <= historyRecovery.revision) return false
+      // Concurrent page failures share one refresh. Never loop if Core returns
+      // the same fence, and never replay a selection or playback command.
+      historyRecovery = { epoch, revision }
+      void refresh().catch(() => {})
+      return true
+    },
     async clear(range: ListeningStatsClearRange, revision?: number): Promise<boolean> {
       if (!overview.value) throw new Error('聆听统计尚未就绪')
       await options.clear(range, revision ?? overview.value.revision)

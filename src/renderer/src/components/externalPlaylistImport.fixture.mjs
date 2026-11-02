@@ -102,6 +102,7 @@ window.runExternalPlaylistImportTests=async screenshot=>{
   ]
   const catalog=createApp(defineComponent({setup:()=>()=>h(PlaylistLibraryPage,{onSelectView:(...event)=>catalogEvents.push(event),onImportExternal:()=>catalogEvents.push(['import'])})}))
   catalog.mount(document.body.appendChild(document.createElement('div')));await settle()
+  expect(document.querySelector('.library-header h1')?.textContent==='歌单'&&!document.querySelector('.library-header p'),'playlist header should show only the title without a description')
   expect(document.querySelectorAll('.playlist-card').length===3,'application, aggregate and staged playlists should share one catalogue')
   document.querySelector('[aria-label="打开聚合歌单"]').click();await settle()
   expect(JSON.stringify(catalogEvents.at(-1))===JSON.stringify(['aggregate','aggregate']),'aggregate card should retain aggregate detail navigation')

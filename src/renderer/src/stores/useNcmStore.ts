@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import type { NcmCloudSelectedFile, NcmCloudTransferProgress } from '../../../shared/ncmCloud.ts'
 import type { NcmCloudUploadResult, NcmCloudDownloadResult } from '../../../shared/ncmCloud.ts'
 import { useCoreConnection } from './coreConnection.ts'
@@ -145,9 +145,9 @@ const libraryLoading = ref(false)
 const libraryLoaded = ref(false)
 const libraryError = ref('')
 const likedPlaylist = ref<NcmPlaylistSummary | null>(null)
-const userPlaylists = ref<NcmPlaylistSummary[]>([])
-const likedSongIds = ref<Set<number>>(new Set())
-const cloudSongs = ref<NcmCloudSong[]>([])
+const userPlaylists = shallowRef<NcmPlaylistSummary[]>([])
+const likedSongIds = shallowRef<Set<number>>(new Set())
+const cloudSongs = shallowRef<NcmCloudSong[]>([])
 const cloudTotal = ref(0)
 const cloudNextOffset = ref(0)
 const cloudHasMore = ref(false)

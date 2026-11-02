@@ -41,7 +41,10 @@ export function mountBackgroundImageFallback(layer: HTMLElement, changed?: () =>
     changed?.()
   }
   const release = () => {
-    if (image) image.onload = image.onerror = null
+    if (image) {
+      image.onload = image.onerror = null
+      image.removeAttribute('src')
+    }
     image = undefined
   }
   const refresh = () => {
@@ -68,10 +71,16 @@ export function mountBackgroundImageFallback(layer: HTMLElement, changed?: () =>
     const pending = layer.ownerDocument.createElement('img')
     image = pending
     pending.onload = () => {
-      if (!disposed && image === pending) state('ready')
+      if (!disposed && image === pending) {
+        release()
+        state('ready')
+      }
     }
     pending.onerror = () => {
-      if (!disposed && image === pending) state('error')
+      if (!disposed && image === pending) {
+        release()
+        state('error')
+      }
     }
     pending.src = url
   }

@@ -80,40 +80,45 @@ export function createRemoteCoverCache(
       type: string,
       bytes: Uint8Array,
       started = generation
-    ): Promise<void> {
-      if (clearing || started !== generation) return
-      const work = (async () => {
-        const path = cachePath(source)
-        let mime = type.split(';', 1)[0].trim()
-        if (!path || !/^image\/[a-z0-9.+-]+$/i.test(mime) || bytes.byteLength > 25 * 1024 * 1024) {
-          writeDiagnostic(
-            'cover.cache',
-            'write.skipped',
-            {
-              source,
-              reason: !path
-                ? 'disabled'
-                : bytes.byteLength > 25 * 1024 * 1024
-                  ? 'oversized'
-                  : 'content-type'
-            },
-            'debug'
-          )
-          return
-        }
-        let stored = bytes
-        if (options.resize) {
-          try {
-            const resized = options.resize(bytes, mime)
-            if (resized && resized.bytes.byteLength > 0) {
-              stored = resized.bytes
-              mime = resized.mime.split(';', 1)[0].trim() || mime
-            }
-          } catch (error) {
-            writeDiagnostic('cover.cache', 'resize.failed', { source, error }, 'warn')
-            // Keep the original bytes when downscaling fails.
+    ): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+      let mime = type.split(';', 1)[0].trim()
+      const path = cachePath(source)
+      if (!/^image\/[a-z0-9.+-]+$/i.test(mime) || bytes.byteLength > 25 * 1024 * 1024) {
+        writeDiagnostic(
+          'cover.cache',
+          'write.skipped',
+          {
+            source,
+            reason: !path
+              ? 'disabled'
+              : bytes.byteLength > 25 * 1024 * 1024
+                ? 'oversized'
+                : 'content-type'
+          },
+          'debug'
+        )
+        return null
+      }
+      let stored = bytes
+      if (options.resize) {
+        try {
+          const resized = options.resize(bytes, mime)
+          if (resized && resized.bytes.byteLength > 0) {
+            stored = resized.bytes
+            mime = resized.mime.split(';', 1)[0].trim() || mime
           }
+        } catch (error) {
+          writeDiagnostic('cover.cache', 'resize.failed', { source, error }, 'warn')
+          // Keep the original bytes when downscaling fails.
         }
+      }
+      const result = { bytes: stored, contentType: mime }
+      if (clearing || started !== generation) return result
+      if (!path) {
+        writeDiagnostic('cover.cache', 'write.skipped', { source, reason: 'disabled' }, 'debug')
+        return result
+      }
+      const work = (async () => {
         const temporary = `${path}.${randomUUID()}.part`
         try {
           await mkdir(join(path, '..'), { recursive: true })
@@ -136,6 +141,7 @@ export function createRemoteCoverCache(
       } finally {
         writes.delete(work)
       }
+      return result
     }
   }
 }

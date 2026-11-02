@@ -7,6 +7,8 @@ const unit = [
   'src/shared/appearanceLayers.test.ts',
   'src/shared/materials.test.ts',
   'src/shared/theme.test.ts',
+  'src/main/themes/customThemeSnapshot.test.ts',
+  'src/main/ipc/themeWorkshop.test.cjs',
   'src/renderer/src/app/appearanceNavigationGuard.test.ts',
   'src/renderer/src/app/pageDock.test.ts',
   'src/renderer/src/app/uiMotion.test.ts',

@@ -33,13 +33,12 @@ import {
   type SettingsSearchEntry
 } from './types.ts'
 import { normalizeAppFontFamily } from '../../../../shared/appFont.ts'
+import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS } from '../../../../shared/appSettings.ts'
 import type { AppSettings, UiDensity } from '../../types/settings'
 import type { AppearanceHistoryActions } from '../appearanceEditor'
 import type { NavigationPageDefinition } from '../../app/navigationPages'
 
 const emit = defineEmits<{
-  openThemeStudio: []
-  openThemeWorkshop: []
   draftChange: [dirty: boolean]
   editTheme: [region: string, domain?: ThemeStudioDomain]
   toneChange: [tone: 'pureWhite' | 'dark']
@@ -245,6 +244,38 @@ function updateLyricsLayoutField(
     lyricsAppearance: {
       ...settings.value.lyricsAppearance,
       [key]: value
+    }
+  }).catch(() => undefined)
+}
+const effectivePlayerPageBgMode = computed<'blur' | 'fluid' | 'solid' | 'image'>(() => {
+  const pageBg = backgroundEditor.value?.previewDraft?.appBackground?.pages?.player
+  if (pageBg && !pageBg.inherit && pageBg.kind === 'image') return 'image'
+  if (pageBg && !pageBg.inherit && pageBg.kind === 'color') return 'solid'
+  return settings.value.nowPlayingBackground
+})
+const fluidSpeed = computed(
+  () => settings.value.nowPlayingFluid?.speed ?? DEFAULT_NOW_PLAYING_FLUID_SETTINGS.speed
+)
+const fluidAudioReactive = computed(
+  () =>
+    settings.value.nowPlayingFluid?.audioReactive ??
+    DEFAULT_NOW_PLAYING_FLUID_SETTINGS.audioReactive
+)
+function updateFluidSpeed(event: Event): void {
+  const speed = Number((event.target as HTMLInputElement).value)
+  if (!Number.isFinite(speed)) return
+  void updateSettings({
+    nowPlayingFluid: {
+      speed,
+      audioReactive: fluidAudioReactive.value
+    }
+  }).catch(() => undefined)
+}
+function toggleFluidAudioReactive(): void {
+  void updateSettings({
+    nowPlayingFluid: {
+      speed: fluidSpeed.value,
+      audioReactive: !fluidAudioReactive.value
     }
   }).catch(() => undefined)
 }
@@ -527,34 +558,52 @@ defineExpose({
         </template>
         <template v-if="activePanel === 'player-page'">
           <p class="appearance-immediate-note">
-            播放页默认使用当前封面的动态模糊背景，也可切换为流体光影、纯色底色或自选背景图片。
+            播放页默认使用基于专辑封面感知色彩的流体光影背景，也可切换为模糊封面、纯色底色或自选背景图片。
           </p>
           <div data-setting-id="player-page-background" class="setting-item">
             <strong>播放页背景模式</strong>
             <select
               class="preview-select"
               aria-label="播放页背景模式"
-              :value="
-                !backgroundEditor?.previewDraft?.appBackground?.pages?.player?.inherit &&
-                backgroundEditor?.previewDraft?.appBackground?.pages?.player?.kind === 'image'
-                  ? 'image'
-                  : !backgroundEditor?.previewDraft?.appBackground?.pages?.player?.inherit &&
-                      backgroundEditor?.previewDraft?.appBackground?.pages?.player?.kind === 'color'
-                    ? 'solid'
-                    : settings.nowPlayingBackground
-              "
+              :value="effectivePlayerPageBgMode"
               @change="
                 backgroundEditor?.setPlayerPageBackgroundMode(
                   ($event.target as HTMLSelectElement).value as 'blur' | 'fluid' | 'solid' | 'image'
                 )
               "
             >
-              <option value="blur">模糊封面（默认）</option>
-              <option value="fluid">流体光影</option>
+              <option value="fluid">流体光影（默认）</option>
+              <option value="blur">模糊封面</option>
               <option value="solid">纯色底色</option>
               <option value="image">自选背景图片</option>
             </select>
           </div>
+          <template v-if="effectivePlayerPageBgMode === 'fluid'">
+            <div data-setting-id="player-page-fluid-speed" class="setting-item">
+              <strong>流光速度（{{ fluidSpeed.toFixed(2) }}×）</strong>
+              <input
+                type="range"
+                min="0.25"
+                max="2.5"
+                step="0.05"
+                aria-label="流光速度"
+                :value="fluidSpeed"
+                @input="updateFluidSpeed"
+              />
+            </div>
+            <div data-setting-id="player-page-fluid-reactive" class="setting-item">
+              <strong>低频节拍律动</strong>
+              <button
+                type="button"
+                class="toggle-switch"
+                role="switch"
+                aria-label="低频节拍律动"
+                :aria-checked="fluidAudioReactive"
+                :class="{ active: fluidAudioReactive }"
+                @click="toggleFluidAudioReactive"
+              />
+            </div>
+          </template>
           <div class="setting-item">
             <strong>播放页自选图片</strong>
             <button

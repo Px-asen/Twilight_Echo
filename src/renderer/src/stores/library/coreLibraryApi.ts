@@ -3,6 +3,7 @@ import { useCoreConnection } from '../coreConnection.ts'
 import type { LibraryQuery, LibraryCollectionKind } from '../../../../shared/libraryDatabase.ts'
 import type { CorePlaylistDescriptor } from '../../../../shared/corePlaylists.ts'
 import type { CoreLibraryPage } from '../../../../shared/coreViews.ts'
+import { CORE_RECENT_PLAYLIST_ID } from '../../../../shared/corePlaylists.ts'
 export interface CoreLibraryReadApi {
   queryTracks(
     query?: LibraryQuery,
@@ -11,11 +12,12 @@ export interface CoreLibraryReadApi {
 }
 export function createCoreLibraryApi(core = useCoreConnection()) {
   const views = new Map<string, { id: string; preserveSources?: boolean }>()
-  const revision = () => {
+  const revision = (id?: string) => {
     const s = core.state.value
-    if (s?.playlistsRevision == null || s.versionsRevision == null)
+    const revision = id === CORE_RECENT_PLAYLIST_ID ? s?.statisticsRevision : s?.playlistsRevision
+    if (revision == null || s?.versionsRevision == null)
       throw new Error('Core 歌单尚未就绪')
-    return { revision: s.playlistsRevision, versionsRevision: s.versionsRevision }
+    return { revision, versionsRevision: s.versionsRevision }
   }
   async function readView(
     id: string,
@@ -26,7 +28,7 @@ export function createCoreLibraryApi(core = useCoreConnection()) {
     const { playlistView: _view, aggregate, ...scope } = query
     const result = await core.query('playlists.view', {
       id,
-      ...revision(),
+      ...revision(id),
       query: scope,
       preserveSources,
       includeHiddenSources,
@@ -68,17 +70,18 @@ export function createCoreLibraryApi(core = useCoreConnection()) {
         error: '',
         generation: 0
       })
-      let current: CorePlaylistDescriptor | null = null,
+      let current: Pick<CorePlaylistDescriptor, 'id'> | null = null,
         preserveSources = false,
         disposed = false
       async function setPlaylist(
-        playlist: CorePlaylistDescriptor | null,
+        playlist: Pick<CorePlaylistDescriptor, 'id'> | null,
         options?: { preserveSources?: boolean }
       ) {
         const generation = state.value.generation + 1
+        const retainedId = playlist?.id === current?.id ? state.value.id : null
         current = playlist
         preserveSources = !!options?.preserveSources
-        state.value = { id: null, pending: !!playlist, error: '', generation }
+        state.value = { id: retainedId, pending: !!playlist, error: '', generation }
         if (!playlist) return
         try {
           const result = await readView(playlist.id, { limit: 1 }, preserveSources)

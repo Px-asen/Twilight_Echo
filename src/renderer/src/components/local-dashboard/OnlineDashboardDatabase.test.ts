@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Track } from '../../types/music.ts'
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -57,7 +57,99 @@ test('online history errors remain visible and a successful explicit retry repla
 test('online home owns only UI requests and waits for the Core playback command', async () => {
   const source = readFileSync(new URL('./OnlineDashboard.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /history\.(capture|confirm)|window\.api\.library|useMusicStore|musicVersion/)
+  assert.match(source, /const current = player\.currentTrack\.value\s+if \(current\)/)
   assert.match(source, /await player\.playTrack\(track, queue\)/)
   assert.match(source, /await player\.playTrack\(queue\[0\], queue\)/)
   assert.match(source, /request !== actionRevision/)
+})
+
+test('online home hero prioritizes the active track over recent and recommended tracks', () => {
+  const source = readFileSync(new URL('./OnlineDashboard.vue', import.meta.url), 'utf8')
+  const ast = ts.createSourceFile(
+    'online-dashboard.ts',
+    source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)![1],
+    ts.ScriptTarget.Latest,
+    true
+  )
+  const script = ast.statements
+    .filter((node) => !ts.isImportDeclaration(node))
+    .map((node) => node.getText(ast))
+    .join('\n')
+  const recentTrack: Track = {
+    id: 'local:recent',
+    title: 'Electromagnetic Stealth Girl Born In Philadelphia',
+    artist: 'Camellia',
+    album: 'U.U.F.O.',
+    duration: 200,
+    size: 1,
+    cover: 'cover://recent'
+  }
+  const activeTrack: Track = {
+    id: 'local:active',
+    title: 'FEHLT',
+    artist: 'アリスシャッハと魔法の楽団',
+    album: 'SCHACH',
+    duration: 254,
+    size: 1,
+    cover: 'cover://active'
+  }
+  const currentTrack = ref<Track | null>(null)
+  const isPlaying = ref(false)
+  const recent = ref<Track[]>([recentTrack])
+  const tracks = ref<Track[]>([])
+  const entry = runInNewContext(
+    ts.transpileModule(script + '\n;({ hero })', {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+    }).outputText,
+    {
+      computed,
+      ref,
+      watch,
+      onBeforeUnmount: () => {},
+      defineEmits: () => () => {},
+      useProviderStore: () => ({
+        providers: ref([]),
+        getProvider: () => undefined,
+        checkLogin: async () => ({ loggedIn: false, profile: null }),
+        callProvider: async () => [],
+        fetchPlaylistTracks: async () => []
+      }),
+      useSettingsStore: () => ({
+        settings: ref({ streamingActiveProvider: 'ncm' }),
+        updateSettings: async () => {}
+      }),
+      usePlayerStore: () => ({
+        currentTrack,
+        isPlaying,
+        playTrack: async () => {},
+        togglePlay: async () => {}
+      }),
+      useLibraryRecentTracks: () => ({
+        tracks: recent,
+        state: ref({ loading: false }),
+        error: ref(''),
+        retry() {}
+      }),
+      getTrackSource: () => 'local',
+      friendlyStreamingError: (_cause: unknown, fallback: string) => fallback,
+      useOnlineHome: () => ({
+        providers: ref([]),
+        provider: ref(null),
+        loading: ref(false),
+        loggedIn: ref(false),
+        error: ref(''),
+        tracks,
+        playlists: ref([]),
+        sectionTitle: ref('为你推荐'),
+        playlistTitle: ref('精选歌单'),
+        reload: async () => {}
+      })
+    }
+  ) as { hero: { value: Track | null } }
+
+  assert.equal(entry.hero.value?.id, 'local:recent')
+  currentTrack.value = activeTrack
+  isPlaying.value = true
+  assert.equal(entry.hero.value?.id, 'local:active')
+  assert.equal(entry.hero.value?.title, 'FEHLT')
 })

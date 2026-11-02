@@ -183,10 +183,10 @@ test('card presentation honors clear/manual art, expiry, local-source permission
     fallback = { name: 'Tag', cover: 'track-cover' }
   assert.equal(model.artistIdentityPresentation(d, fallback, 1000).name, 'Canonical name')
   d.artwork![0].usage.expiresAt = 1001
-  assert.equal(model.artistIdentityPresentation(d, fallback, 1001).cover, null)
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1001).cover, 'track-cover')
   d.artwork![0].usage.expiresAt = undefined
   d.artwork![0].usage.crossSource = false
-  assert.equal(model.artistIdentityPresentation(d, fallback, 1000).cover, null)
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1000).cover, 'track-cover')
   d.artworkOverride = { mode: 'clear' }
   assert.equal(model.artistIdentityPresentation(d, fallback, 1000).cover, null)
   d.artworkOverride = { mode: 'value' }
@@ -196,12 +196,38 @@ test('card presentation honors clear/manual art, expiry, local-source permission
   d.link!.state = 'detached'
   assert.deepEqual(model.artistIdentityPresentation(d, fallback, 1000), {
     name: fallback.name,
-    cover: null,
+    cover: 'track-cover',
+    coverSource: null,
     attribution: null
   })
 })
 
-test('multiple source-scoped performers share a card only when every member confirms the same target', async () => {
+test('artist card song covers fill missing or broken portraits without reviving hidden images or portrait credits', () => {
+  const fallback = { name: '打打だいず', cover: 'cover://song.jpg', coverSource: 'https://example.com/song.jpg' }
+  assert.equal(model.artistIdentityPresentation(null, fallback, 1000).cover, fallback.cover)
+  const remote = model.artistIdentityPresentation(null, { name: fallback.name, coverSource: fallback.coverSource }, 1000)
+  assert.equal(remote.cover, null)
+  assert.equal(remote.coverSource, fallback.coverSource, 'source-only song artwork remains usable')
+  const d = detail()
+  const failed = new Set(['avatar-handle'])
+  const song = model.artistIdentityPresentation(d, fallback, 1000, failed)
+  assert.equal(song.cover, fallback.cover)
+  assert.equal(song.coverSource, fallback.coverSource)
+  assert.equal(song.attribution, null)
+  failed.add(fallback.cover)
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1000, failed).cover, null)
+  const native = model.artistIdentityPresentation(d, fallback, 1000)
+  assert.equal(native.cover, 'avatar-handle')
+  assert.equal(native.coverSource, null, 'a song URL must never regrant the artist portrait')
+  d.artworkOverride = { mode: 'clear' }
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1000).cover, null)
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1000).coverSource, null)
+  d.artworkOverride = { mode: 'value' }
+  d.manualArtwork = { dataUrl: 'personal-bitmap', mime: 'image/png', bytes: 1, width: 1, height: 1 }
+  assert.equal(model.artistIdentityPresentation(d, fallback, 1000).cover, 'personal-bitmap')
+})
+
+test('multiple source-scoped performers use the same automatic representative even beside another identity', async () => {
   let otherTarget = 'target'
   const view = model.createArtistIdentityView({
     catalog: async (query) => ({
@@ -227,7 +253,7 @@ test('multiple source-scoped performers share a card only when every member conf
   assert.equal(view.detail.value?.targetId, 'target')
   otherTarget = 'homonym'
   await view.refresh()
-  assert.equal(view.detail.value, null)
+  assert.equal(view.detail.value?.targetId, 'target')
   view.dispose()
 })
 
@@ -315,9 +341,54 @@ test('compiled identity slot updates the visible name/avatar and withdraws revok
   result = null
   state.value = { ...state.value, settingsRevision: 2 }
   await nextTick()
-  assert.equal(ui.nodes().find((n) => n.tag === 'img')?.props.src, null)
+  assert.equal(ui.nodes().find((n) => n.tag === 'img')?.props.src, 'track-cover')
   await settle()
   assert.equal(ui.text(), 'Tag')
+})
+
+test('compiled artist cards paint completed portraits while other artists keep committing metadata', async (t) => {
+  const state = shallowRef({
+    phase: 'ready', epoch: 'portraits', settingsRevision: 1,
+    entityMetadataRevision: 1, entityMetadataContentRevision: 1,
+    catalogRevision: 1, libraryRevision: 1
+  })
+  const pending: Array<{ resolve(value: EntityMetadataDetail): void; signal: AbortSignal }> = []
+  const core = {
+    state,
+    query: (name: string, _query: unknown, signal: AbortSignal) =>
+      name === 'catalog.query'
+        ? Promise.resolve(page())
+        : new Promise<EntityMetadataDetail>((resolve) => pending.push({ resolve, signal }))
+  }
+  const Identity = component('../music-metadata/ArtistMetadataIdentity.vue', {
+    './artistProfileChoice.ts': profileChoice,
+    './artistIdentityView.ts': model,
+    '../../stores/coreConnection.ts': { useCoreConnection: () => core },
+    '../../stores/useSettingsStore.ts': {
+      useSettingsStore: () => ({ settings: shallowRef({ musicIdentification: {} }) })
+    }
+  })
+  const ui = mount(t, () => h(Identity, { name: '*Luna', enabled: true }, {
+    default: (p) => h('img', { src: p.cover })
+  }))
+  await settle()
+  assert.equal(pending.length, 1)
+  state.value = { ...state.value, entityMetadataContentRevision: 2 }
+  await settle()
+  pending[0].resolve(detail())
+  await settle()
+  assert.equal(pending.length, 2, 'one follow-up read catches up with the new content')
+  assert.equal(ui.nodes().find((node) => node.tag === 'img')?.props.src, 'avatar-handle',
+    'a different artist finishing must not discard a usable portrait')
+  state.value = { ...state.value, settingsRevision: 2 }
+  await nextTick()
+  assert.equal(pending[1].signal.aborted, true)
+  pending[1].resolve(detail())
+  await settle()
+  assert.equal(ui.nodes().find((node) => node.tag === 'img')?.props.src, null,
+    'a permission change still rejects the late portrait')
+  pending[2].resolve({ ...detail(), artwork: [] })
+  await settle()
 })
 
 test('album overview displays the project introduction without claiming the unresolved pressing, and respects a local clear', async (t) => {

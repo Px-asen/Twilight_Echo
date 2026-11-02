@@ -1,17 +1,19 @@
 import {
-  PARAMETRIC_EQ_MAX_FREQUENCY,
   PARAMETRIC_EQ_MAX_GAIN,
   PARAMETRIC_EQ_MAX_Q,
-  PARAMETRIC_EQ_MIN_FREQUENCY,
   PARAMETRIC_EQ_MIN_GAIN,
   PARAMETRIC_EQ_MIN_Q,
   clampEqValue
 } from './parametricEqInteraction.ts'
+import {
+  EQ_BAND_MIN_FREQUENCY_HZ,
+  EQ_BAND_MAX_FREQUENCY_HZ
+} from '../../../shared/audioProcessingOptions.ts'
 
 export type EqParameter = 'frequency' | 'gain' | 'q'
 
 export const eqParameterLimits = {
-  frequency: { min: PARAMETRIC_EQ_MIN_FREQUENCY, max: PARAMETRIC_EQ_MAX_FREQUENCY, step: 1 },
+  frequency: { min: EQ_BAND_MIN_FREQUENCY_HZ, max: EQ_BAND_MAX_FREQUENCY_HZ, step: 1 },
   gain: { min: PARAMETRIC_EQ_MIN_GAIN, max: PARAMETRIC_EQ_MAX_GAIN, step: 0.1 },
   q: { min: PARAMETRIC_EQ_MIN_Q, max: PARAMETRIC_EQ_MAX_Q, step: 0.01 }
 } as const

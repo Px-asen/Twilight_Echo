@@ -96,3 +96,30 @@ test('small images decode once per session and failures fall back without poison
   assert.equal(await cache(source), source)
   assert.equal(decodes, 2)
 })
+
+test('opaque wallpapers encode as compact JPEG derivatives while transparent wallpapers stay PNG', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'twilight-background-opaque-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const opaquePng = join(root, 'opaque.png')
+  const alphaPng = join(root, 'alpha.png')
+  await writeFile(opaquePng, 'opaque')
+  await writeFile(alphaPng, 'alpha')
+  const cache = createBackgroundDisplayCache((bytes) => {
+    const isOpaque = bytes.toString('utf8') === 'opaque'
+    const image = {
+      isEmpty: () => false,
+      getSize: () => ({ width: 5000, height: 3000 }),
+      resize: () => image,
+      toBitmap: () => Buffer.from([10, 20, 30, isOpaque ? 255 : 128]),
+      toJPEG: () => Buffer.from('compact-jpeg'),
+      toPNG: () => Buffer.from('alpha-png')
+    }
+    return image
+  })
+  const opaquePath = await cache(opaquePng)
+  const alphaPath = await cache(alphaPng)
+  assert.ok(opaquePath.endsWith('.jpg'))
+  assert.ok(alphaPath.endsWith('.png'))
+  assert.equal(await readFile(opaquePath, 'utf8'), 'compact-jpeg')
+  assert.equal(await readFile(alphaPath, 'utf8'), 'alpha-png')
+})

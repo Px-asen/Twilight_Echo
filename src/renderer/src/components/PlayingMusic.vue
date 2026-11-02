@@ -22,9 +22,11 @@ import { isAmlTtml } from '../utils/amllTtml.ts'
 import { resolveLyricVoiceLayout } from '../utils/lyricVoiceLayout.ts'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
+import PlayingFluidBackdrop from './PlayingFluidBackdrop.vue'
 import PlayingLyricLine from './PlayingLyricLine.vue'
 import PlayingMusicTimeChip from './PlayingMusicTimeChip.vue'
 import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
+import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS } from '../../../shared/appSettings.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
   resolveCascadeSpeedFactor,
@@ -53,6 +55,7 @@ const visualizationStore = useVisualizationStore()
 const {
   currentTrack,
   dominantColor,
+  themeCoverUrl,
   lyricsLoadState,
   isPlaying,
   playbackClockSnapshot,
@@ -216,6 +219,14 @@ const lyricHarmonyStyle = computed(() => lyricStyleVars('harmony'))
 const isBlurBackground = computed(() => effectiveNowPlayingBackground.value === 'blur')
 const isFluidBackground = computed(() => effectiveNowPlayingBackground.value === 'fluid')
 const isSolidBackground = computed(() => effectiveNowPlayingBackground.value === 'solid')
+const fluidSpeed = computed(
+  () => settings.value.nowPlayingFluid?.speed ?? DEFAULT_NOW_PLAYING_FLUID_SETTINGS.speed
+)
+const fluidAudioReactive = computed(
+  () =>
+    settings.value.nowPlayingFluid?.audioReactive ??
+    DEFAULT_NOW_PLAYING_FLUID_SETTINGS.audioReactive
+)
 
 const lyricStyle = computed<Record<string, string>>(() => {
   const appearance = lyricsAppearance.value
@@ -860,7 +871,16 @@ onBeforeUnmount(() => {
               />
             </div>
           </Transition>
-          <div v-if="isFluidBackground" class="backdrop-fluid" />
+          <div v-if="isFluidBackground" class="backdrop-fluid">
+            <PlayingFluidBackdrop
+              :cover-url="themeCoverUrl"
+              :fallback-color="dominantColor"
+              :playing="isPlaying"
+              :motion-mode="lyricMotionLevel"
+              :speed="fluidSpeed"
+              :audio-reactive="fluidAudioReactive"
+            />
+          </div>
           <div v-if="isSolidBackground" class="backdrop-solid" />
           <div class="backdrop-scrim" />
           <div class="backdrop-accent" />
@@ -1326,17 +1346,34 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   pointer-events: none;
 }
 
-.backdrop-fluid::before {
-  content: '';
-  position: absolute;
-  inset: -50%;
+.playing-music.bg-fluid .backdrop-scrim {
   background: var(
-    --te-playback-fluid-bg,
-    linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a)
+    --te-playback-fluid-scrim,
+    linear-gradient(
+      180deg,
+      rgba(5, 7, 12, 0.22) 0%,
+      rgba(5, 7, 12, 0.11) 46%,
+      rgba(5, 7, 12, 0.28) 100%
+    )
   );
-  background-size: 400% 400%;
-  will-change: transform;
-  animation: fluid-drift-transform var(--te-playback-fluid-tempo, 18s) ease-in-out infinite;
+  backdrop-filter: none;
+}
+
+:global(html[data-theme='light'] .playing-music.bg-fluid .backdrop-scrim),
+:global(html[data-theme='pureWhite'] .playing-music.bg-fluid .backdrop-scrim) {
+  background: var(
+    --te-playback-fluid-scrim,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--te-player-bg) 12%, transparent) 0%,
+      color-mix(in srgb, var(--te-player-bg) 4%, transparent) 46%,
+      color-mix(in srgb, var(--te-player-bg) 18%, transparent) 100%
+    )
+  );
+}
+
+.playing-music.bg-fluid .backdrop-accent {
+  opacity: 0.06;
 }
 
 .backdrop-solid {
@@ -1347,30 +1384,6 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-}
-
-@keyframes fluid-drift-transform {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-  25% {
-    transform: translate3d(-12%, 0, 0);
-  }
-  50% {
-    transform: translate3d(-12%, -12%, 0);
-  }
-  75% {
-    transform: translate3d(0, -12%, 0);
-  }
-}
-
-/* Ancestors stay unwrapped so Vue's scoped transform attaches the scope
-   attribute to `.backdrop-fluid` — wrapping them in `:global()` drops the scope
-   from the descendant and pauses every matching element on the page. */
-html[data-te-motion='reduced'] .backdrop-fluid::before,
-html[data-te-motion='off'] .backdrop-fluid::before {
-  animation-play-state: paused;
 }
 
 .stage {
@@ -1746,7 +1759,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 .lyrics-list {
   position: absolute;
   inset: 0;
-  max-width: var(--te-lyric-max-width, 820px);
+  max-width: var(--te-lyric-max-width, var(--te-playback-stage-span, 820px));
   margin: 0 auto;
 }
 
@@ -1905,8 +1918,9 @@ html[data-te-motion='off'] .backdrop-fluid::before {
  * `mask-image`, `mask-size` and friends are set inline by the component, because
  * the gradient geometry depends on the measured width of each word.
  */
-.lyric-word-group {
+:deep(.lyric-word-group) {
   display: inline-block;
+  max-width: 100%;
   white-space: pre-wrap;
 }
 
@@ -2353,7 +2367,7 @@ html[data-te-motion='off'] .backdrop-fluid::before {
 }
 
 :global(html[data-te-player-layout='lyrics-focus'] .playing-music .lyrics-list) {
-  max-width: 980px;
+  max-width: var(--te-lyric-max-width, 980px);
 }
 
 :global(html[data-te-player-layout='split'] .playing-music .layout) {

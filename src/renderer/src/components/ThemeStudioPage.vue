@@ -79,6 +79,7 @@ const {
   changeName,
   closeStudio: closeEditorStudio,
   prepareLeave: prepareEditorLeave,
+  releaseForTransfer,
   contrastWarnings,
   deleteSelected,
   domain,
@@ -511,7 +512,17 @@ async function discard(): Promise<void> {
       : selectedKey.value
   await selectKey(key)
 }
-defineExpose({ prepareLeave, state, perform, selectKey, setTone, discard, openTools })
+defineExpose({
+  prepareLeave,
+  state,
+  perform,
+  selectKey,
+  setTone,
+  discard,
+  openTools,
+  releaseForTransfer,
+  snapshot: () => (draft.value ? JSON.parse(JSON.stringify(draft.value)) : undefined)
+})
 watch(
   () => props.initialDomain,
   (value) => {
@@ -873,7 +884,7 @@ void editorPaneRef.value
                   :value="activeModes.player?.backdrop ?? 'follow'"
                   @change="updatePlayerMode('backdrop', $event)"
                 >
-                  <option value="follow">默认（模糊封面）</option>
+                  <option value="follow">默认（跟随播放设置）</option>
                   <option value="cover-blur">固定模糊封面</option>
                   <option value="fluid">流体渐变光影</option>
                   <option value="solid">纯色底色</option>
@@ -1719,7 +1730,7 @@ void editorPaneRef.value
                   :disabled="!draft"
                   @change="updatePlayerMode('backdrop', $event)"
                 >
-                  <option value="follow">默认（跟随播放设置 / 模糊封面）</option>
+                  <option value="follow">默认（跟随播放设置 / 流体光影）</option>
                   <option value="cover-blur">固定模糊封面</option>
                   <option value="fluid">流体渐变光影</option>
                   <option value="solid">纯色底色</option>
@@ -1727,7 +1738,9 @@ void editorPaneRef.value
                 </select>
               </label>
               <label class="studio-setting-row">
-                <span>播放页背景图片<small>{{ assetSource('playerBackground') }}</small></span>
+                <span
+                  >播放页背景图片<small>{{ assetSource('playerBackground') }}</small></span
+                >
                 <select
                   aria-label="播放页背景图片"
                   :value="draft?.assetBindings?.playerBackground ?? ''"
@@ -1813,7 +1826,11 @@ void editorPaneRef.value
                 </select>
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>封面缩放比例<small>{{ numericTokenValue('playback.cover.scale', 100) }}%</small></span>
+                <span
+                  >封面缩放比例<small
+                    >{{ numericTokenValue('playback.cover.scale', 100) }}%</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="60"
@@ -1825,7 +1842,11 @@ void editorPaneRef.value
                 />
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>封面与歌词间距<small>{{ numericTokenValue('playback.stage.spread', 40) }}px</small></span>
+                <span
+                  >封面与歌词间距<small
+                    >{{ numericTokenValue('playback.stage.spread', 40) }}px</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="16"
@@ -1837,7 +1858,11 @@ void editorPaneRef.value
                 />
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>播放舞台展开度<small>{{ numericTokenValue('playback.stage.span', 820) }}px</small></span>
+                <span
+                  >播放舞台展开度<small
+                    >{{ numericTokenValue('playback.stage.span', 820) }}px</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="520"
@@ -1907,7 +1932,11 @@ void editorPaneRef.value
                 </select>
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>歌词行距间隔<small>{{ numericTokenValue('playback.lyrics.density', 10) }}px</small></span>
+                <span
+                  >歌词行距间隔<small
+                    >{{ numericTokenValue('playback.lyrics.density', 10) }}px</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="4"
@@ -1919,7 +1948,11 @@ void editorPaneRef.value
                 />
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>当前歌词放大比例<small>{{ numericTokenValue('playback.lyrics.activeScale', 102) }}%</small></span>
+                <span
+                  >当前歌词放大比例<small
+                    >{{ numericTokenValue('playback.lyrics.activeScale', 102) }}%</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="100"
@@ -1931,7 +1964,11 @@ void editorPaneRef.value
                 />
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>未唱歌词不透明度<small>{{ numericTokenValue('playback.lyrics.inactiveOpacity', 66) }}%</small></span>
+                <span
+                  >未唱歌词不透明度<small
+                    >{{ numericTokenValue('playback.lyrics.inactiveOpacity', 66) }}%</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="20"
@@ -1943,7 +1980,11 @@ void editorPaneRef.value
                 />
               </label>
               <label class="studio-setting-row window-range-row">
-                <span>远端歌词景深模糊<small>{{ numericTokenValue('playback.lyrics.inactiveBlur', 0.8) }}px</small></span>
+                <span
+                  >远端歌词景深模糊<small
+                    >{{ numericTokenValue('playback.lyrics.inactiveBlur', 0.8) }}px</small
+                  ></span
+                >
                 <input
                   type="range"
                   min="0"

@@ -1,43 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import SettingsGroup from './SettingsGroup.vue'
 import ExperienceSettings from './ExperienceSettings.vue'
 import { useSettingsStore } from '../../stores/useSettingsStore'
-import { useThemeStore } from '../../stores/useThemeStore'
-import { useExtensionRegistry } from '../../extensions/registry'
-import { getPluginThemeKey } from '../../extensions/themeSelection'
 import { accentColorOptions, colorModeOptions, motionPreferenceOptions } from './types.ts'
 import type { AppTheme, MotionPreference } from '../../types/settings'
 const props = defineProps<{ integrated?: boolean; colorMode?: AppTheme; paletteOnly?: boolean }>()
 
 const emit = defineEmits<{
   'update:colorMode': [value: AppTheme]
-  openThemeStudio: []
-  openThemeWorkshop: []
 }>()
 
 const { settings, updateSettings, lastSettingsError } = useSettingsStore()
-const themeStore = useThemeStore()
-const { themeContributions, uiContributions } = useExtensionRegistry()
-
-const workshopEnabled = computed(() =>
-  uiContributions.value.some(
-    (entry) =>
-      entry.pluginId === 'com.twilightecho.tool.theme-workshop' && entry.id === 'theme-workshop'
-  )
-)
-
-const pluginThemeOptions = computed(() =>
-  themeContributions.value.map((theme) => ({
-    value: getPluginThemeKey(theme),
-    label: theme.name
-  }))
-)
-const selectedPluginThemeKey = computed(() => {
-  const selection = themeStore.activeTheme.value
-  return selection.kind === 'plugin' ? `${selection.pluginId}:${selection.themeId}` : ''
-})
-
 function setTheme(theme: AppTheme): void {
   if ((props.colorMode ?? settings.value.theme) === theme) return
   if (props.colorMode !== undefined) emit('update:colorMode', theme)
@@ -57,21 +30,6 @@ function setAccentColor(mode: 'light' | 'dark', color: string): void {
   }
   if (settings.value.darkAccentColor === color) return
   void updateSettings({ darkAccentColor: color }).catch(() => undefined)
-}
-
-async function setPluginTheme(event: Event): Promise<void> {
-  const value = (event.target as HTMLSelectElement).value
-  if (!value) {
-    await themeStore.setActive({ kind: 'builtin', id: 'builtin:twilight-echo-default' })
-    return
-  }
-  const contribution = themeContributions.value.find((theme) => getPluginThemeKey(theme) === value)
-  if (!contribution) return
-  await themeStore.setActive({
-    kind: 'plugin',
-    pluginId: contribution.pluginId,
-    themeId: contribution.id
-  })
 }
 </script>
 
@@ -96,28 +54,6 @@ async function setPluginTheme(event: Event): Promise<void> {
     </div>
   </div>
   <hr />
-  <div
-    v-if="!integrated"
-    data-setting-id="plugin-theme"
-    id="setting-plugin-theme"
-    class="setting-item"
-  >
-    <div class="setting-copy">
-      <strong>插件主题</strong>
-    </div>
-    <select
-      class="preview-select wide"
-      :value="selectedPluginThemeKey"
-      :disabled="pluginThemeOptions.length === 0"
-      @change="setPluginTheme"
-    >
-      <option value="">不使用插件主题</option>
-      <option v-for="option in pluginThemeOptions" :key="option.value" :value="option.value">
-        {{ option.label }}
-      </option>
-    </select>
-  </div>
-  <hr v-if="!paletteOnly" />
   <ExperienceSettings v-if="!paletteOnly" />
   <hr v-if="!paletteOnly" />
   <div v-if="!paletteOnly" data-setting-id="motion" id="setting-motion" class="setting-item">
@@ -151,40 +87,6 @@ async function setPluginTheme(event: Event): Promise<void> {
         settings.darkAccentColor)
     "
   >
-    <div
-      v-if="!integrated"
-      data-setting-id="theme-studio"
-      id="setting-theme-studio"
-      class="setting-item"
-    >
-      <div class="setting-copy">
-        <strong>主题创意工坊</strong>
-      </div>
-      <button type="button" class="soft-button" @click="emit('openThemeStudio')">
-        <i class="ph ph-swatches" aria-hidden="true"></i>
-        打开主题创意工坊
-      </button>
-    </div>
-    <div v-if="!integrated" data-setting-id="theme-workshop" class="setting-item">
-      <div class="setting-copy">
-        <strong class="workshop-setting-title"
-          >主题插件工坊<small class="workshop-beta-tag">BETA</small></strong
-        ><span>{{
-          workshopEnabled
-            ? '定制已加载的主题插件，管理素材并导出个人主题。'
-            : '在插件管理中启用「主题插件工坊」后使用。'
-        }}</span>
-      </div>
-      <button
-        type="button"
-        class="soft-button"
-        :disabled="!workshopEnabled"
-        @click="emit('openThemeWorkshop')"
-      >
-        <i class="ph ph-paint-brush" aria-hidden="true"></i>打开主题插件工坊
-      </button>
-    </div>
-    <hr v-if="!integrated" />
     <div data-setting-id="accent-light" id="setting-accent-light" class="setting-item">
       <div class="setting-copy">
         <strong>浅色强调色</strong>
@@ -239,21 +141,4 @@ async function setPluginTheme(event: Event): Promise<void> {
   </SettingsGroup>
 </template>
 
-<style scoped>
-.workshop-setting-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.workshop-setting-title .workshop-beta-tag {
-  flex-shrink: 0;
-  padding: 3px 6px;
-  border-radius: 5px;
-  background: var(--te-settings-search-bg);
-  color: var(--te-settings-text);
-  font-size: var(--te-type-caption);
-  font-weight: var(--te-type-weight-strong);
-  line-height: 1.2;
-  letter-spacing: 0.5px;
-}
-</style>
+<style scoped></style>

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import WorkshopLayersPanel from '@renderer/components/theme-workshop/WorkshopLayersPanel.vue'
+import AppearanceLayerSettings from '../AppearanceLayerSettings.vue'
+import { appearanceLayerScope } from '../../../../shared/appearanceLayers.ts'
+import { cloneAppearance, type AppearanceDraft } from '../../../../shared/appAppearance.ts'
 import WorkshopAssetsPanel from '@renderer/components/theme-workshop/WorkshopAssetsPanel.vue'
 import WorkshopModesPanel from '@renderer/components/theme-workshop/WorkshopModesPanel.vue'
 import WorkshopPreview from '@renderer/components/theme-workshop/WorkshopPreview.vue'
@@ -118,11 +121,36 @@ let contextFrame = 0
 let contextResizeObserver: ResizeObserver | undefined
 let contextOpenRevision = 0
 let pendingCreate = false
-let initializing = true
+const initializing = ref(true)
 const controlsBusy = computed(() => busy.value || (contextualMode.value && checking.value))
+const appearanceDraft = computed(() => {
+  const structured = draft.value?.base.structured
+  return structured?.schemaVersion === 3 && structured.appearance
+    ? cloneAppearance({
+        ...structured.appearance,
+        appearanceLayers: structured.appearanceLayers ?? structured.appearance.appearanceLayers
+      })
+    : undefined
+})
+const appearanceImporting = ref(false)
+function updateAppearance(value: AppearanceDraft): void {
+  change((project) => {
+    const source = project.base.structured
+    project.base.structured = {
+      ...source,
+      schemaVersion: 3,
+      variants: source?.variants ?? {},
+      appearance: value,
+      appearanceLayers: value.appearanceLayers
+    }
+  })
+}
 const contextGroup = computed(
   () =>
     ({
+      'inner-panel': '背景',
+      'outer-panel': '背景',
+      controls: '导航',
       background: '背景',
       navigation: '导航',
       material: '导航',
@@ -146,7 +174,7 @@ const contextTitle = computed(
         diagnostics: '检查与发布',
         preview: '预览选项',
         create: '新建项目',
-        more: '其他调整'
+        more: group.value === '高级 CSS' ? '自定义 CSS' : group.value
       }) as Record<string, string>
     )[contextTool.value] ?? group.value
 )
@@ -204,11 +232,15 @@ async function openTools(tool = 'more'): Promise<void> {
     项目: 'project',
     素材库: 'assets',
     图层与蒙版: 'layers',
-    配色: 'color'
+    配色: 'color',
+    参数设计器: 'more',
+    布局与模式: 'more',
+    '高级 CSS': 'more',
+    背景皮肤: 'more'
   }
   const requestedTool = aliases[tool] ?? tool
   if (requestedTool === 'create') pendingCreate = true
-  if (!props.active || busy.value || initializing) return
+  if (!props.active || busy.value || initializing.value) return
   if (checking.value && requestedTool !== 'diagnostics' && requestedTool !== 'more') return
   if (
     requestedTool === 'create' &&
@@ -226,7 +258,11 @@ async function openTools(tool = 'more'): Promise<void> {
   )[contextTool.value]
   if (target) selectGroup(target)
   else if (!['diagnostics', 'preview', 'create'].includes(contextTool.value))
-    selectGroup(contextGroup.value)
+    selectGroup(
+      ['参数设计器', '高级 CSS', '背景皮肤', '布局与模式'].includes(tool)
+        ? tool
+        : contextGroup.value
+    )
   if (contextTool.value === 'create') startProjectGuide()
   contextAnchor =
     contextTool.value === 'color'
@@ -397,6 +433,7 @@ const groups = computed(() =>
           '标准外观',
           ...new Set(workshopEditor(draft.value!)?.controls.map((control) => control.group) ?? []),
           '参数设计器',
+          '背景皮肤',
           '高级 CSS'
         ]
       : [])
@@ -580,7 +617,6 @@ const saveLabel = computed(() =>
     ? '输入尚未保存'
     : { saved: '已保存', pending: '待保存', saving: '保存中…', failed: '保存失败' }[saveState.value]
 )
-let releaseSession: (() => void) | undefined
 
 function gesture(action: 'begin' | 'end' | 'cancel'): void {
   if (action === 'begin') {
@@ -796,7 +832,7 @@ async function apply(): Promise<void> {
   projects.value = await api.list()
   adopt(result.project)
   appliedProjectSignature.value = projectSignature.value
-  notice.value = '主题已应用，停用工坊后仍可使用'
+  notice.value = '主题已应用，可直接导出 .TEP 分享'
 }
 async function exportProject(format: 'project' | 'tep'): Promise<void> {
   if (format === 'tep') await preflight()
@@ -903,7 +939,7 @@ onMounted(() => {
       ? 'professional'
       : 'simple'
   guide.value = !props.unified && localStorage.getItem('twilight:workshop:guide') !== 'hidden'
-  releaseSession = editor.bindLifecycle(trialRuntime.stop, () => !bufferProblems.value.length)
+  editor.bindLifecycle(trialRuntime.stop, () => !bufferProblems.value.length)
   window.addEventListener('keydown', keydown, true)
   void run(async () => {
     await editor.initialize()
@@ -919,7 +955,7 @@ onMounted(() => {
     }
     if (!disposed && props.startCreating) startProjectGuide()
   }).then(async () => {
-    initializing = false
+    initializing.value = false
     if (disposed || error.value) {
       cancelCreateRequest()
       return
@@ -950,7 +986,6 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   cancelCreateRequest()
-  releaseSession?.()
   window.removeEventListener('keydown', keydown, true)
   window.removeEventListener('resize', scheduleContextPosition)
   document.removeEventListener('visibilitychange', syncDiagnosticsActivity)
@@ -959,7 +994,7 @@ onBeforeUnmount(() => {
   trialRuntime.stop()
 })
 async function prepareLeave(): Promise<boolean> {
-  if (busy.value) return false
+  if (busy.value || appearanceImporting.value) return false
   busy.value = true
   try {
     editor.endGesture()
@@ -997,7 +1032,7 @@ async function importProject(): Promise<void> {
 const state = computed<AppearanceEditorState>(() => ({
   key: draft.value ? `workshop:${draft.value.id}` : 'workshop:new',
   tone: tone.value,
-  busy: busy.value || checking.value,
+  busy: busy.value || checking.value || appearanceImporting.value || initializing.value,
   canUndo: cursor.value > 0,
   canRedo: cursor.value < historyLength.value - 1,
   canReset:
@@ -1071,6 +1106,7 @@ defineExpose({
   selectKey,
   setTone,
   previewModel,
+  appearanceDraft,
   chooseLayer,
   editLayer,
   gesture,
@@ -1101,7 +1137,7 @@ watch(() => [props.initialProjectId, props.initialSourceKey], cancelCreateReques
 watch(
   [() => props.active, busy, checking],
   () => {
-    if (pendingCreate && !initializing) void openTools('create')
+    if (pendingCreate && !initializing.value) void openTools('create')
   },
   { flush: 'post' }
 )
@@ -1215,7 +1251,7 @@ watch(
     <header v-if="!unified && !contextualMode" class="workshop-header">
       <div v-if="!embedded">
         <small>THEME PLUGIN WORKSHOP</small>
-        <h1>主题插件工坊</h1>
+        <h1>自定义主题高级工具</h1>
       </div>
       <div class="workshop-mode-switch" aria-label="编辑模式">
         <button :aria-pressed="mode === 'simple'" @click="mode = 'simple'">简单模式</button
@@ -1626,14 +1662,20 @@ watch(
             @import="run(() => importAsset($event))"
             @replace="run(() => replaceAsset($event))"
           />
-          <p v-else-if="contextualMode && group === '布局与模式'" class="workshop-hint">
-            结构调整暂时收起；现有布局和模式仍保存在项目中。
-          </p>
           <WorkshopModesPanel
             v-else-if="group === '布局与模式'"
             :project="draft"
             :busy="controlsBusy"
             @change="replace"
+          />
+          <AppearanceLayerSettings
+            v-else-if="group === '背景皮肤' && appearanceDraft"
+            :draft="appearanceDraft"
+            :scope="appearanceLayerScope(part ?? 'inner-panel') ?? 'inner-panel'"
+            :tone="tone === 'dark' ? 'dark' : 'light'"
+            :busy="controlsBusy"
+            @update:draft="updateAppearance"
+            @importing-change="appearanceImporting = $event"
           />
           <template v-else-if="group === '高级 CSS'"
             ><p class="workshop-hint">

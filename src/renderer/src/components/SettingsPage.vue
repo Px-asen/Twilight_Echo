@@ -7,6 +7,7 @@ import AppearanceSettingsSection from './settings-page/AppearanceSettingsSection
 import { openAppearanceEditor } from '../composables/appearanceEditorState.ts'
 import PlaybackSettingsSection from './settings-page/PlaybackSettingsSection.vue'
 import DspSettingsSection from './settings-page/DspSettingsSection.vue'
+import BridgeOutputPanel from './settings-page/BridgeOutputPanel.vue'
 import LibrarySettingsSection from './settings-page/LibrarySettingsSection.vue'
 import { libraryScanStatusText } from '../utils/libraryScanPresentation.ts'
 import ConnectionsSettingsSection from './settings-page/ConnectionsSettingsSection.vue'
@@ -29,7 +30,7 @@ import {
   type BooleanSettingKey,
   type SettingsSearchEntry,
   sections,
-  startupHomePageOptions,
+  homePageModeOptions,
   trackActivationModeOptions,
   streamingAudioCachePolicyOptions,
   SETTINGS_SEARCH_INDEX,
@@ -51,7 +52,7 @@ import type {
   MusicCachePolicySettings,
   PlayerShortcutStatus,
   GlobalShortcutSettings,
-  StartupHomePage,
+  HomePageMode,
   TrackActivationMode,
   StreamingAudioCachePolicy
 } from '../types/settings'
@@ -73,8 +74,6 @@ const emit = defineEmits<{
   sectionChange: [section: SectionKey]
   openEqualizer: []
   openDspRack: []
-  openThemeStudio: []
-  openThemeWorkshop: []
   openAppearance: [entry?: SettingsSearchEntry]
   reopenOnboarding: []
 }>()
@@ -657,9 +656,9 @@ function updateDesktopLyrics(patch: Partial<DesktopLyricsSettings>): void {
   void updateSettings({ desktopLyrics: dl })
 }
 
-function setStartupHomePage(startupHomePage: StartupHomePage): void {
-  if (settings.value.startupHomePage === startupHomePage) return
-  void updateSettings({ startupHomePage })
+function setHomePageMode(homePageMode: HomePageMode): void {
+  if (settings.value.homePageMode === homePageMode) return
+  void updateSettings({ homePageMode })
 }
 
 function setTrackActivationMode(trackActivationMode: TrackActivationMode): void {
@@ -1296,17 +1295,15 @@ onBeforeUnmount(() => {
         <GeneralSettingsSection
           v-show="activeSection === 'general'"
           :track-activation-mode-options="trackActivationModeOptions"
-          :startup-home-page-options="startupHomePageOptions"
+          :home-page-mode-options="homePageModeOptions"
           :toggle-setting="toggleSetting"
           :set-track-activation-mode="setTrackActivationMode"
-          :set-startup-home-page="setStartupHomePage"
+          :set-home-page-mode="setHomePageMode"
           :set-close-behavior="setCloseBehavior"
           @reopen-onboarding="emit('reopenOnboarding')"
         />
         <AppearanceSettingsSection
           v-show="activeSection === 'appearance'"
-          @open-theme-studio="emit('openThemeStudio')"
-          @open-theme-workshop="emit('openThemeWorkshop')"
           @open-appearance="emit('openAppearance')"
         />
         <section
@@ -1327,6 +1324,7 @@ onBeforeUnmount(() => {
             @open-equalizer="emit('openEqualizer')"
             @open-dsp-rack="emit('openDspRack')"
           />
+          <BridgeOutputPanel manage />
         </section>
         <section v-show="activeSection === 'lyrics'" id="lyrics" class="glass-card preview-section">
           <div class="section-title-row">

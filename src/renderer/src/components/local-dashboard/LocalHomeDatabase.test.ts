@@ -74,10 +74,14 @@ test('production home routing reads Core metadata and exposes retry without rend
     epoch: 'epoch-1',
     libraryRevision: 1
   })
+  const settings = ref<{ homePageMode?: 'auto' | 'local' | 'streaming' }>({ homePageMode: 'auto' })
   const entry = runInNewContext(
-    ts.transpileModule(script + '\n;({home,homeState,emptyLibrary,homePending})', {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
-    }).outputText,
+    ts.transpileModule(
+      script + '\n;({home,homeState,emptyLibrary,showOnlineDashboard,homePending})',
+      {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+      }
+    ).outputText,
     {
       computed,
       watch,
@@ -87,6 +91,7 @@ test('production home routing reads Core metadata and exposes retry without rend
       defineProps: () => ({}),
       defineEmits: () => () => {},
       useThemeStore: () => ({ presetLayout: ref('default') }),
+      useSettingsStore: () => ({ settings }),
       useCoreConnection: () => ({
         state: coreState,
         query: async () => {
@@ -101,6 +106,7 @@ test('production home routing reads Core metadata and exposes retry without rend
     home: ReturnType<typeof createLibraryHomeStatus>
     homeState: { value: { error: string } }
     emptyLibrary: { value: boolean }
+    showOnlineDashboard: { value: boolean }
     homePending: { value: boolean }
   }
   assert.equal(entry.homePending.value, true)
@@ -113,6 +119,14 @@ test('production home routing reads Core metadata and exposes retry without rend
   await tick()
   assert.equal(entry.homeState.value.error, '')
   assert.equal(entry.emptyLibrary.value, false)
+  assert.equal(entry.showOnlineDashboard.value, false)
+  settings.value = { homePageMode: 'streaming' }
+  assert.equal(
+    entry.showOnlineDashboard.value,
+    true,
+    'Explicit streaming homePageMode selects online home even when local library has tracks'
+  )
+  settings.value = { homePageMode: 'auto' }
   metadataCount = 0
   coreState.value = { ...coreState.value, libraryRevision: 2 }
   await tick()
@@ -121,12 +135,19 @@ test('production home routing reads Core metadata and exposes retry without rend
     true,
     'Core metadata selects online home for an empty library'
   )
+  assert.equal(entry.showOnlineDashboard.value, true)
+  settings.value = { homePageMode: 'local' }
+  assert.equal(
+    entry.showOnlineDashboard.value,
+    false,
+    'Explicit local homePageMode keeps local home even when library is empty'
+  )
   assert.equal(entry.homePending.value, false)
   for (const unmount of unmounts) unmount()
   const previous = reads
   coreState.value = { ...coreState.value, libraryRevision: 3 }
   await tick()
   assert.equal(reads, previous)
-  assert.match(source, /v-else-if="!preview && emptyLibrary"/)
+  assert.match(source, /v-else-if="showOnlineDashboard"/)
   assert.doesNotMatch(source, /window\.api\.library/)
 })

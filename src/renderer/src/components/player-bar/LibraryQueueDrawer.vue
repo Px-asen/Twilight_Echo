@@ -324,6 +324,7 @@ function drop(event: DragEvent, row: LibraryQueueRow): void {
                 :cover="item.cover"
                 :core-track-id="resolveCoreArtwork && !item.cover ? item.id || undefined : undefined"
                 :identity="item.id"
+                size="sm"
                 class="playlist-cover"
                 alt=""
               />

@@ -1,206 +1,156 @@
-// Source: phosphor-icons/core assets (fill set), MIT license.
-// Generates Windows .ico files consumed by the main-process SMTC thumbar
-// integration (src/main/integrations/smtc.ts).
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
-import { createRequire } from 'module'
+// Self-contained artwork for the Windows taskbar thumbnail toolbar. Run with:
+// node scripts/generate-smtc-icons.mjs
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
-const { PNG } = require('pngjs')
+const { PNG } = createRequire(import.meta.url)('pngjs')
+const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'build', 'smtc')
+const SIZES = [16, 24, 32]
+const SAMPLES = 4
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT_DIR = join(ROOT, 'build', 'smtc')
-
-const VIEWBOX = 256
-// Windows taskbar thumbnail toolbar expects small icons; 24px is the standard density.
-const SIZE = 24
-const SCALE = SIZE / VIEWBOX
-
-const ICONS = [
-  { name: 'play', file: 'play.svg' },
-  { name: 'pause', file: 'pause.svg' },
-  { name: 'previous', file: 'skip-back.svg' },
-  { name: 'next', file: 'skip-forward.svg' }
-]
-
-function parsePath(d) {
-  const tokens = d.replace(/,/g, ' ').match(/[MmLlHhVvCcSsQqTtAaZz]|-?\d+(?:\.\d+)?/g) ?? []
-  const paths = []
-  let current = null
-  let cursor = { x: 0, y: 0 }
-  let startX = 0
-  let startY = 0
-  let i = 0
-
-  function read() {
-    return Number(tokens[i++])
-  }
-
-  while (i < tokens.length) {
-    const cmd = tokens[i++]
-    const isRel = cmd === cmd.toLowerCase()
-    if (cmd === 'M' || cmd === 'm') {
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current = [point]
-      paths.push(current)
-      cursor = point
-      startX = point.x
-      startY = point.y
-      continue
-    }
-    if (!current) continue
-    if (cmd === 'L' || cmd === 'l') {
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'H' || cmd === 'h') {
-      const x = read()
-      const point = { x: isRel ? cursor.x + x : x, y: cursor.y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'V' || cmd === 'v') {
-      const y = read()
-      const point = { x: cursor.x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    // Curves / arcs: approximate by the segment to the final control point. The
-    // Phosphor fill icons only use curves for small corners (rounded button
-    // edges), the overall silhouette is governed by straight segments.
-    if (cmd === 'C' || cmd === 'c') {
-      const _x1 = read()
-      const _y1 = read()
-      const _x2 = read()
-      const _y2 = read()
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') {
-      const _x1 = read()
-      const _y1 = read()
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'T' || cmd === 't') {
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'A' || cmd === 'a') {
-      const _rx = read()
-      const _ry = read()
-      const _rot = read()
-      const _large = read()
-      const _sweep = read()
-      const x = read()
-      const y = read()
-      const point = { x: isRel ? cursor.x + x : x, y: isRel ? cursor.y + y : y }
-      current.push(point)
-      cursor = point
-      continue
-    }
-    if (cmd === 'Z' || cmd === 'z') {
-      current.push({ x: startX, y: startY })
-      cursor = { x: startX, y: startY }
-      current = null
-      continue
-    }
-    i -= 1 // unknown number token: bail out of this path
-    break
-  }
-  return paths
+function rectangle(x, y, width, height) {
+  return [
+    [x, y],
+    [x + width, y],
+    [x + width, y + height],
+    [x, y + height]
+  ]
 }
 
-function pointInPolygon(x, y, polygon) {
-  let inside = false
+function heartOutline() {
+  const points = [[12, 20.2]]
+  const curves = [
+    [10.7, 19.2, 3, 13.8, 3, 8.7],
+    [3, 3.7, 9.2, 2.5, 12, 7],
+    [14.8, 2.5, 21, 3.7, 21, 8.7],
+    [21, 13.8, 13.3, 19.2, 12, 20.2]
+  ]
+  for (const [x1, y1, x2, y2, x3, y3] of curves) {
+    const [x0, y0] = points.at(-1)
+    for (let i = 1; i <= 32; i++) {
+      const t = i / 32
+      const u = 1 - t
+      points.push([
+        u ** 3 * x0 + 3 * u ** 2 * t * x1 + 3 * u * t ** 2 * x2 + t ** 3 * x3,
+        u ** 3 * y0 + 3 * u ** 2 * t * y1 + 3 * u * t ** 2 * y2 + t ** 3 * y3
+      ])
+    }
+  }
+  return points
+}
+
+const heart = heartOutline()
+const ICONS = {
+  play: {
+    polygons: [
+      [
+        [7, 4],
+        [20, 12],
+        [7, 20]
+      ]
+    ]
+  },
+  pause: { polygons: [rectangle(5.5, 4, 4.5, 16), rectangle(14, 4, 4.5, 16)] },
+  previous: {
+    polygons: [
+      rectangle(4, 4, 3, 16),
+      [
+        [19, 4],
+        [7, 12],
+        [19, 20]
+      ]
+    ]
+  },
+  next: {
+    polygons: [
+      rectangle(17, 4, 3, 16),
+      [
+        [5, 4],
+        [17, 12],
+        [5, 20]
+      ]
+    ]
+  },
+  heart: { stroke: heart },
+  'heart-filled': { polygons: [heart], liked: true }
+}
+
+function inside(x, y, polygon) {
+  let covered = false
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x
-    const yi = polygon[i].y
-    const xj = polygon[j].x
-    const yj = polygon[j].y
-    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
-    if (intersect) inside = !inside
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) covered = !covered
   }
-  return inside
+  return covered
 }
 
-function rasterize(svg, size) {
-  const pathMatch = svg.match(/<path[^>]*d="([^"]+)"/)
-  if (!pathMatch) throw new Error('No path found in SVG')
-  const polygons = parsePath(pathMatch[1])
-  const png = new PNG({ width: size, height: size, colorType: 6, inputColorType: 6 })
-  const center = 0.5
+function nearStroke(x, y, points) {
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1]
+    const [bx, by] = points[i]
+    const dx = bx - ax
+    const dy = by - ay
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+    if ((x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2 <= 0.9 ** 2) return true
+  }
+  return false
+}
+
+function rasterize(icon, size, color) {
+  const png = new PNG({ width: size, height: size })
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
-      const wx = (px + center) / SCALE
-      const wy = (py + center) / SCALE
-      let covered = false
-      for (const polygon of polygons) {
-        if (pointInPolygon(wx, wy, polygon)) {
-          covered = true
-          break
+      let covered = 0
+      for (let sy = 0; sy < SAMPLES; sy++) {
+        for (let sx = 0; sx < SAMPLES; sx++) {
+          const x = ((px + (sx + 0.5) / SAMPLES) * 24) / size
+          const y = ((py + (sy + 0.5) / SAMPLES) * 24) / size
+          if (
+            icon.stroke ? nearStroke(x, y, icon.stroke) : icon.polygons.some((p) => inside(x, y, p))
+          )
+            covered++
         }
       }
-      const idx = (py * size + px) << 2
-      png.data[idx] = 255
-      png.data[idx + 1] = 255
-      png.data[idx + 2] = 255
-      png.data[idx + 3] = covered ? 255 : 0
+      const offset = (py * size + px) * 4
+      png.data.set([...color, Math.round((covered * 255) / SAMPLES ** 2)], offset)
     }
   }
   return PNG.sync.write(png)
 }
 
-function createIco(pngBuffer, size) {
-  // ICO: 6-byte header, 16-byte entry, then PNG payload.
-  const header = Buffer.alloc(6)
-  header.writeUInt16LE(0, 0) // reserved
-  header.writeUInt16LE(1, 2) // type = icon
-  header.writeUInt16LE(1, 4) // count
-
-  const entry = Buffer.alloc(16)
-  entry.writeUInt8(size === 256 ? 0 : size, 0) // width
-  entry.writeUInt8(size === 256 ? 0 : size, 1) // height
-  entry.writeUInt8(0, 2) // color palette
-  entry.writeUInt8(0, 3) // reserved
-  entry.writeUInt16LE(1, 4) // color planes
-  entry.writeUInt16LE(32, 6) // bits per pixel
-  entry.writeUInt32LE(pngBuffer.length, 8)
-  entry.writeUInt32LE(6 + 16, 12)
-
-  return Buffer.concat([header, entry, pngBuffer])
+function createIco(icon, color) {
+  const images = SIZES.map((size) => rasterize(icon, size, color))
+  const directory = Buffer.alloc(6 + SIZES.length * 16)
+  directory.writeUInt16LE(1, 2)
+  directory.writeUInt16LE(SIZES.length, 4)
+  let offset = directory.length
+  for (const [i, size] of SIZES.entries()) {
+    const entry = 6 + i * 16
+    directory[entry] = directory[entry + 1] = size
+    directory.writeUInt16LE(1, entry + 4)
+    directory.writeUInt16LE(32, entry + 6)
+    directory.writeUInt32LE(images[i].length, entry + 8)
+    directory.writeUInt32LE(offset, entry + 12)
+    offset += images[i].length
+  }
+  return Buffer.concat([directory, ...images])
 }
 
-function main() {
-  mkdirSync(OUT_DIR, { recursive: true })
-  for (const icon of ICONS) {
-    const svg = readFileSync(join(ROOT, 'build', 'smtc-src', icon.file), 'utf8')
-    const png = rasterize(svg, SIZE)
-    const ico = createIco(png, SIZE)
-    writeFileSync(join(OUT_DIR, `${icon.name}.ico`), ico)
-    console.log(`[smtc] wrote build/smtc/${icon.name}.ico (${png.length} bytes)`)
+mkdirSync(OUT_DIR, { recursive: true })
+for (const [name, icon] of Object.entries(ICONS)) {
+  for (const darkGlyph of [false, true]) {
+    const color = icon.liked
+      ? darkGlyph
+        ? [197, 45, 68]
+        : [255, 126, 148]
+      : darkGlyph
+        ? [40, 44, 52]
+        : [245, 246, 248]
+    const file = `${name}${darkGlyph ? '-dark' : ''}.ico`
+    writeFileSync(join(OUT_DIR, file), createIco(icon, color))
+    console.log(`[taskbar] wrote build/smtc/${file}`)
   }
 }
-
-main()

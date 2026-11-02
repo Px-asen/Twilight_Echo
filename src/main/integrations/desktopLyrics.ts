@@ -505,7 +505,8 @@ function createDesktopLyricsWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false
+      allowRunningInsecureContent: false,
+      spellcheck: false
     }
   })
   runtime.desktopLyricsWindow = win

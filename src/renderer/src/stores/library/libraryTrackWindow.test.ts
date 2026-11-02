@@ -117,12 +117,15 @@ test('replaced queries, invalidations and disposal fence late windows without re
   pending[2].resolve(page(pending[2].query, 5))
   await settled(source)
   const selection = source.selectionEpoch.value
+  const displayed = source.trackAt(4000)
   source.invalidate(6)
   assert.ok(source.selectionEpoch.value > selection)
-  assert.equal(source.pages.value.length, 0)
+  assert.equal(source.trackAt(4000), displayed, 'keep the displayed row while refreshing')
+  assert.equal(source.cacheState.cachedTracks, 0, 'displayed rows do not validate the new revision')
   pending[3].resolve(page(pending[3].query, 5))
   await settled(source)
   assert.match(source.state.value.error, /读取期间发生变化/)
+  assert.equal(source.pages.value.length, 0, 'an unsuccessful refresh must expose its read error')
   source.retry()
   const current = source.state.value
   source.dispose()
@@ -131,6 +134,97 @@ test('replaced queries, invalidations and disposal fence late windows without re
   assert.equal(source.state.value, current)
   assert.equal(source.pages.value.length, 0)
   assert.equal(source.cacheState.cachedTracks, 0)
+})
+
+test('background metadata commits keep rows visible while fencing superseded refreshes and old versions', async (t) => {
+  const pending: { query: LibraryQuery; resolve(value: LibraryPage): void }[] = []
+  const source = createLibraryTrackWindow({
+    queryTracks: (query) => new Promise((resolve) => pending.push({ query: query!, resolve }))
+  })
+  t.after(() => source.dispose())
+  source.setQuery({ sort: 'title' })
+  pending[0].resolve(page(pending[0].query))
+  await settled(source)
+  source.setRange(10, 30)
+  const row = source.trackAt(10)!
+  const displayedPage = source.pageForTrack(row)!
+  const selection = source.selectionEpoch.value
+  source.invalidate(2)
+  source.setRange(11, 31)
+  assert.equal(source.trackAt(11)?.id, 'song:11')
+  assert.equal(source.trackAt(10), row)
+  assert.equal(source.state.value.page, displayedPage)
+  assert.equal(source.state.value.loading, true)
+  assert.equal(source.state.value.total, 300_000)
+  assert.ok(source.selectionEpoch.value > selection, 'old selections still clear immediately')
+  assert.equal(
+    source.pageForTrack(row)?.revision,
+    1,
+    'presentation keeps its original version fence'
+  )
+  assert.equal(source.cacheState.revision, null)
+  source.invalidate(3)
+  assert.equal(source.trackAt(10), row, 'successive commits must not clear the retained viewport')
+  const retainedSelection = source.selectionEpoch.value
+  pending[1].resolve(page(pending[1].query, 2))
+  await tick()
+  assert.equal(source.trackAt(10), row, 'an obsolete response must not replace the presentation')
+  const updated = page(pending[2].query, 3)
+  updated.tracks[10] = { ...updated.tracks[10], album: 'Enriched album' }
+  pending[2].resolve(updated)
+  await settled(source)
+  assert.equal(source.trackAt(10)?.album, 'Enriched album')
+  assert.equal(source.pageForTrack(source.trackAt(10)!)?.revision, 3)
+  assert.equal(source.pageForTrack(row), undefined)
+  assert.ok(
+    source.selectionEpoch.value > retainedSelection,
+    'selections on retained rows must clear before they can inherit newer versions'
+  )
+  assert.equal(source.state.value.loading, false)
+  source.setQuery({ search: 'different' })
+  assert.equal(source.trackAt(10), undefined, 'a different query must not inherit old rows')
+  pending[3].resolve(page(pending[3].query, 3))
+  await settled(source)
+})
+
+test('a partial viewport refresh preserves the other page without leaking rows into a new scroll range', async (t) => {
+  const pending: { query: LibraryQuery; resolve(value: LibraryPage): void }[] = []
+  const source = createLibraryTrackWindow({
+    queryTracks: (query) => new Promise((resolve) => pending.push({ query: query!, resolve }))
+  })
+  t.after(() => source.dispose())
+  source.setQuery({})
+  pending[0].resolve(page(pending[0].query))
+  await settled(source)
+  source.setRange(194, 216)
+  pending[1].resolve(page(pending[1].query))
+  await settled(source)
+  const secondPageRow = source.trackAt(200)!
+  source.invalidate(2)
+  pending[2].resolve(page(pending[2].query, 2))
+  await tick()
+  assert.equal(source.trackAt(199)?.id, 'song:199')
+  assert.equal(source.trackAt(200), secondPageRow, 'the slower page must not turn into skeletons')
+  assert.deepEqual(
+    source.pages.value.map((page) => page.revision),
+    [1, 1],
+    'displayed row positions and action fences must belong to the same revision'
+  )
+  assert.equal(source.state.value.loading, true)
+  pending[3].resolve(page(pending[3].query, 2))
+  await settled(source)
+  assert.notEqual(source.trackAt(200), secondPageRow)
+  source.invalidate(3)
+  source.setRange(4000, 4020)
+  assert.equal(source.trackAt(200), undefined)
+  assert.equal(source.trackAt(4000), undefined)
+  pending[4].resolve(page(pending[4].query, 3))
+  pending[5].resolve(page(pending[5].query, 3))
+  await tick()
+  pending[6].resolve(page(pending[6].query, 3))
+  await settled(source)
+  assert.equal(source.trackAt(4000)?.id, 'song:4000')
+  assert.equal(source.pages.value.length, 1)
 })
 
 test('failed windows preserve scroll extent, require explicit retry and do not present an empty library', async (t) => {

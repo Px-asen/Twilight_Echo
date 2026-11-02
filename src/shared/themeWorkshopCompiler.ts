@@ -172,7 +172,7 @@ export function compileWorkshopTheme(project: WorkshopProject): WorkshopCompiled
     const asset = project.assets?.find((a) => a.id === assetId && a.type === 'font')
     if (asset)
       blocks.push(
-        `@font-face{font-family:'workshop-${family}';src:url('${asset.dataUrl}') format('woff2');font-display:swap}html{--te-font-${family}:'workshop-${family}',sans-serif}`
+        `@font-face{font-family:'workshop-${family}';src:url('${asset.dataUrl}') format('woff2');font-display:swap}html:root[data-theme]{--te-font-${family}:'workshop-${family}',sans-serif!important}`
       )
   }
   blocks.push(compileWorkshopLayers(project), project.css)

@@ -80,8 +80,20 @@ function fixtureHtml(template: string, css: string): string {
   currentTrack.value = { id: '0', cover: covers[0] }
   createApp({
     __scopeId: 'data-v-backdrop-test',
-    components: { CoverImg: { props: ['cover', 'coverSource', 'identity'], template: '<img :src="cover">' } },
+    components: {
+      CoverImg: { props: ['cover', 'coverSource', 'identity'], template: '<img :src="cover">' },
+      PlayingFluidBackdrop: {
+        props: ['coverUrl', 'fallbackColor', 'playing', 'motionMode', 'speed', 'audioReactive'],
+        template: '<canvas class="playing-fluid-canvas"></canvas>'
+      }
+    },
     setup: () => ({ mode, currentTrack, visualizerMounted, hasSwitchedPlaybackView: true,
+      themeCoverUrl: computed(() => currentTrack.value?.cover ?? null),
+      dominantColor: ref('#168864'),
+      isPlaying: ref(false),
+      lyricMotionLevel: ref('off'),
+      fluidSpeed: ref(1),
+      fluidAudioReactive: ref(true),
       isBlurBackground: computed(() => mode.value === 'blur'),
       isFluidBackground: computed(() => mode.value === 'fluid'),
       isSolidBackground: computed(() => mode.value === 'solid'),

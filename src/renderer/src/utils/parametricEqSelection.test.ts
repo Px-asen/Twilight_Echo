@@ -55,10 +55,10 @@ test('group drag preserves frequency and gain ratios without touching gainless f
 })
 
 test('group movement stops together at frequency, Q and gain limits', () => {
-  const changes = groupEqBandPatches(bands, [0, 1, 2], 0, { frequency: 20000, gain: 30, q: 20 })
+  const changes = groupEqBandPatches(bands, [0, 1, 2], 0, { frequency: 96000, gain: 30, q: 20 })
   assert.deepEqual(
     changes.map((change) => change.patch.frequency),
-    [4000, 400, 20000]
+    [19200, 1920, 96000]
   )
   assert.deepEqual(
     changes.map((change) => change.patch.gain),
@@ -69,8 +69,8 @@ test('group movement stops together at frequency, Q and gain limits', () => {
     [10, 20, 5]
   )
   assert.deepEqual(
-    groupEqBandPatches(bands, [0, 1], 0, { frequency: 20 }).map((change) => change.patch.frequency),
-    [200, 20]
+    groupEqBandPatches(bands, [0, 1], 0, { frequency: 10 }).map((change) => change.patch.frequency),
+    [100, 10]
   )
 })
 

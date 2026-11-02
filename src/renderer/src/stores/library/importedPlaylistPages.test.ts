@@ -142,7 +142,7 @@ test('imported append stages 10005 compact occurrences in 51 pages and clones on
     10_005
   )
   assert.equal(pages, 51)
-  assert.equal(clones.mock.callCount(), 2)
+  assert.equal(clones.mock.callCount(), 0)
   const data = get('imported').imported!
   assert.equal(data.entries[0].manualBinding!.title, 'Song 0')
   assert.equal(data.entries[0].manualBinding!.lyrics, null)

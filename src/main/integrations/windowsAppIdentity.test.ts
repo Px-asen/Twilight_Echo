@@ -20,3 +20,16 @@ test('Windows Shell identity preserves an unrelated production shortcut', async 
     /current\.appUserModelId === WINDOWS_APP_USER_MODEL_ID &&[\s\S]*samePath\(current\.target, process\.execPath\)/
   )
 })
+
+test('development and packaged startup use the same explicit identity as SMTC before window creation', async () => {
+  const source = await readFile(new URL('../app/lifecycle.ts', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /if \(process\.platform === 'win32'\) app\.setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/
+  )
+  assert.doesNotMatch(source, /electronApp\.setAppUserModelId/)
+  assert.ok(
+    source.indexOf('app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)') <
+      source.indexOf('app.whenReady()')
+  )
+})

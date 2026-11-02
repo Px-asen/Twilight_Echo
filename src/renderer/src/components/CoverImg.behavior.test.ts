@@ -18,6 +18,18 @@ test('missing, broken and expired artwork uses a packaged fallback without retry
   try {
     await writeFile(join(directory, 'entry.ts'), runtime)
     await writeFile(
+      join(directory, 'core.ts'),
+      `import {shallowRef} from 'vue'
+export const coreState=shallowRef({phase:'ready',epoch:'covers',libraryRevision:1,sequence:0})
+export const artwork={calls:0,hold:false,pending:[],cover:'cover://same.jpg'}
+export const useCoreConnection=()=>({state:coreState,attach:async()=>coreState.value,query:async(name,input)=>{
+ if(name!=='library.artwork')throw Error('Unexpected query '+name)
+ artwork.calls++
+ if(artwork.hold)await new Promise(resolve=>artwork.pending.push(resolve))
+ return {revision:coreState.value.libraryRevision,items:input.ids.map(id=>({id,cover:artwork.cover}))}
+}})`
+    )
+    await writeFile(
       join(directory, 'ArtworkFrame.vue'),
       `<script setup>import CoverImg from '@renderer/components/CoverImg.vue';defineOptions({inheritAttrs:false})</script>
 <template><div class="artwork-frame"><CoverImg v-bind="$attrs"><template v-if="$slots.placeholder" #placeholder><slot name="placeholder"/></template></CoverImg></div></template>
@@ -28,18 +40,20 @@ test('missing, broken and expired artwork uses a packaged fallback without retry
       `
 export const state={mode:'broken',calls:0,invalidations:0,pending:[]}
 const good='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#456"/></svg>')
+const updated='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#b86"/></svg>')
 export function clearLocalCoverDataCache(){}
 export function invalidateRemoteCoverGrant(){state.invalidations++}
 export function readCachedCover(){return null}
 export async function resolveCover(cover,source){
  state.calls++
+ if(state.mode==='core')return cover===null?null:cover==='cover://updated.jpg'?updated:good
  if(state.mode==='reject')throw Error('Grant failed')
  if(state.mode==='pending')return new Promise(resolve=>state.pending.push(resolve))
  if(state.mode==='same')return 'data:image/png;base64,AAAA'
  if(state.mode==='good'||state.mode==='recover'&&state.calls===2)return good
  return 'data:image/png;base64,AAAA#'+state.calls
 }
-export const validCover=good`
+export const validCover=good,updatedCover=updated`
     )
     await build({
       configFile: false,
@@ -51,6 +65,7 @@ export const validCover=good`
       resolve: {
         alias: [
           { find: '../utils/coverLoader.ts', replacement: join(directory, 'loader.ts') },
+          { find: /^.*\/coreConnection(?:\.ts)?$/, replacement: join(directory, 'core.ts') },
           { find: '@renderer', replacement: join(workspace, 'src/renderer/src') }
         ]
       },
@@ -93,7 +108,8 @@ export const validCover=good`
 
 const runtime = `import {createApp,h,reactive,ref,nextTick} from 'vue'
 import CoverImg from './ArtworkFrame.vue'
-import {state,validCover} from './loader'
+import {state,validCover,updatedCover} from './loader'
+import {coreState,artwork} from './core'
 const diagnostics=[];window.api={diagnostics:{record:events=>diagnostics.push(...events)}}
 const props=reactive({cover:null,coverSource:null,identity:'empty',loading:'lazy'}),errors=[],custom=ref(false)
 createApp({render:()=>h(CoverImg,{...props,onError:event=>errors.push(event)},custom.value?{placeholder:()=>h('span',{'data-custom-placeholder':''},'Custom')}:undefined)}).mount('#app')
@@ -137,4 +153,28 @@ window.runArtworkTests=async()=>{
  custom.value=false;props.fallback='';await settle();expect(!document.querySelector('img'),'explicit empty fallback was lost')
  props.fallback=validCover;await settle();document.documentElement.dataset.theme='dark';await settle()
  expect((await loaded()).src===validCover&&!document.querySelector('img').classList.contains('default-track-cover'),'theme replaces an explicit fallback')
+ props.fallback=undefined;props.identity='core-song';props.coreTrackId='core-song';state.mode='core';await settle()
+ const coreImage=await loaded(),coreCalls=artwork.calls,resolves=state.calls
+ expect(coreImage.src===validCover&&coreCalls===1,'Core artwork fixture did not load')
+ for(let i=0;i<6;i++){
+  coreState.value={...coreState.value,sequence:i+1};await settle()
+  expect(document.querySelector('img')===coreImage&&coreImage.src===validCover,'a progress-only snapshot remounted the cover')
+ }
+ expect(artwork.calls===coreCalls&&state.calls===resolves,'progress-only updates re-resolved unchanged artwork')
+ artwork.hold=true;coreState.value={...coreState.value,libraryRevision:2};await settle()
+ expect(artwork.pending.length===1,'background revision did not revalidate artwork')
+ expect(document.querySelector('img')===coreImage&&coreImage.src===validCover,'revalidation flashed the fallback')
+ coreState.value={...coreState.value,libraryRevision:3};await settle();artwork.pending.shift()();await settle()
+ expect(document.querySelector('img')===coreImage&&coreImage.src===validCover,'a superseded artwork read cleared the image')
+ expect(artwork.pending.length===1,'latest revision was not requested after the obsolete read')
+ artwork.cover='cover://updated.jpg';artwork.pending.shift()();await settle()
+ expect(document.querySelector('img')===coreImage&&coreImage.src===updatedCover,'new artwork was not updated in place')
+ props.identity='other-song';props.coreTrackId='other-song';await settle()
+ expect(document.querySelector('img').src===fallback,'another track temporarily displayed the previous artwork')
+ artwork.pending.shift()();await settle()
+ const otherImage=await loaded();coreState.value={...coreState.value,epoch:'restarted'};await settle()
+ expect(document.querySelector('img')!==otherImage&&document.querySelector('img').src===fallback,'a Core epoch change retained an old display grant')
+ artwork.pending.shift()();await settle()
+ coreState.value={...coreState.value,libraryRevision:4};await settle();artwork.cover=null;artwork.pending.shift()();await settle()
+ expect(document.querySelector('img').src===fallback,'removed Core artwork never cleared the retained bitmap')
 }`

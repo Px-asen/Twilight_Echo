@@ -46,9 +46,25 @@ const {
   sectionTitle,
   playlistTitle
 } = home
-const hero = computed(() => recent.value.find((track) => track.id === player.currentTrack.value?.id)
-  ?? tracks.value.find((track) => track.id === player.currentTrack.value?.id)
-  ?? recent.value[0] ?? tracks.value[0] ?? player.currentTrack.value ?? null)
+const hero = computed(() => {
+  const current = player.currentTrack.value
+  if (current) {
+    const matched =
+      recent.value.find((track) => track.id === current.id) ??
+      tracks.value.find((track) => track.id === current.id)
+    return matched
+      ? {
+          ...matched,
+          ...current,
+          cover: current.cover ?? matched.cover,
+          coverSource: current.coverSource ?? matched.coverSource
+        }
+      : current
+  }
+  return recent.value[0] ?? tracks.value[0] ?? null
+})
+
+
 const actionError = ref('')
 const pendingPlaylist = ref<string | null>(null)
 let actionRevision = 0

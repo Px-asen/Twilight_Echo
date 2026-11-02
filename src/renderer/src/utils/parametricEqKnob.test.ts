@@ -10,12 +10,12 @@ import {
 } from './parametricEqKnob.ts'
 
 test('knob mapping uses logarithmic frequency and Q, and linear gain', () => {
-  assert.equal(eqParameterAtPosition('frequency', 0), 20)
-  assert.equal(eqParameterAtPosition('frequency', 1), 20000)
-  assert.equal(eqParameterAtPosition('frequency', 0.5), 632)
+  assert.equal(eqParameterAtPosition('frequency', 0), 10)
+  assert.equal(eqParameterAtPosition('frequency', 1), 96000)
+  assert.equal(eqParameterAtPosition('frequency', 0.5), 980)
   assert.equal(eqParameterAtPosition('q', 0.5), 1.41)
   assert.equal(eqParameterAtPosition('gain', 0.5), 0)
-  assert.ok(Math.abs(eqParameterPosition('frequency', 200) - 1 / 3) < 1e-12)
+  assert.ok(Math.abs(eqParameterPosition('frequency', 200) - Math.log(20) / Math.log(9600)) < 1e-12)
   assert.equal(eqParameterPosition('gain', 12), 0.75)
   assert.equal(eqParameterAtPosition('gain', -2), -24)
   assert.equal(eqParameterAtPosition('q', 4), 20)

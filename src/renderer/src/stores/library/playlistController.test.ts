@@ -387,7 +387,7 @@ test('large batches build one library index and clone only the transaction endpo
   assert.equal(results.length, 100)
   assert.ok(results.every((result) => result.importedCount === 1000))
   assert.equal(pathReads, 1)
-  assert.equal(clones.mock.callCount(), 2)
+  assert.equal(clones.mock.callCount(), 0)
   await controller.flushPlaylists()
 })
 
@@ -473,7 +473,7 @@ test('streamed playlist stages compact pages and publishes/clones only the trans
     }
   })
   assert.equal(pageSizes.length, 51)
-  assert.equal(clones.mock.callCount(), 2)
+  assert.equal(clones.mock.callCount(), 0)
   const playlist = playlists.value[0]
   assert.equal(playlist.id, id)
   assert.equal(playlist.trackIds.length, 10_005)
@@ -511,7 +511,7 @@ test('aggregate creation streams one compact document without an empty shell or 
   })
   const aggregate = playlists.value.find((playlist) => playlist.id === id)!
   assert.equal(pages, 51)
-  assert.equal(clones.mock.callCount(), 2)
+  assert.equal(clones.mock.callCount(), 0)
   assert.equal(aggregate.kind, 'aggregate')
   assert.equal(aggregate.trackIds.length, 10_005)
   assert.equal(aggregate.trackSnapshots!['0'].title, 'Song 0')
@@ -805,7 +805,7 @@ test('favorite pages stage 10005 compact tracks with no shell, growing clones or
     10_005
   )
   assert.equal(pages, 51)
-  assert.equal(clones.mock.callCount(), 2)
+  assert.equal(clones.mock.callCount(), 0)
   assert.equal(playlists.value[0].isDefault, true)
   assert.equal(playlists.value[0].trackIds.length, 10_005)
   assert.equal(playlists.value[0].trackSnapshots!['0'].title, 'Song 0')

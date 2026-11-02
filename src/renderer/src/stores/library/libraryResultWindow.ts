@@ -33,6 +33,7 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
   let query: LibraryQuery | null = null
   let epoch = 0
   let minimumRevision = 0
+  let presentationRevision: number | null = null
   let range = { start: 0, end: LIBRARY_PAGE_SIZE }
   let disposed = false
   let anchor: string | undefined
@@ -48,18 +49,42 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
   }
   function publish(located?: P): void {
     if (disposed || !query) return
-    const next = needed().flatMap((index) => {
-      const page = cache.peek(index)
+    const indexes = needed()
+    const cached = cache.state
+    const missing = indexes.filter((index) => !cache.peek(index))
+    // Keep the viewport until its replacement is ready, with row positions and
+    // action fences on one revision. Failed pages still expose their read error.
+    const retained = pages.value.filter(
+      (page) =>
+        indexes.includes(page.offset / LIBRARY_PAGE_SIZE) &&
+        !failures.has(page.offset / LIBRARY_PAGE_SIZE)
+    )
+    const retainRevision =
+      missing.length > 0 && retained.some((page) => page.revision !== cached.revision)
+    const next = indexes.flatMap((index) => {
+      const before = retained.find((page) => page.offset === index * LIBRARY_PAGE_SIZE)
+      const page = retainRevision ? before : (cache.peek(index) ?? before)
       return page ? [page] : []
     })
+    const nextRevision = next[0]?.revision
+    if (nextRevision !== undefined && nextRevision !== presentationRevision) {
+      // A selection made on the retained rows must not acquire the replacement
+      // page's newer revision when the display catches up.
+      if (presentationRevision !== null) selectionEpoch.value++
+      presentationRevision = nextRevision
+    }
     if (pages.value.length !== next.length || next.some((page, i) => pages.value[i] !== page))
       pages.value = next
     const first = Math.floor(range.start / LIBRARY_PAGE_SIZE)
-    const missing = needed().filter((index) => !cache.peek(index))
     const value = {
       ...state.value,
-      page: located ?? anchorResult ?? cache.peek(first) ?? next[0] ?? null,
-      total: cache.state.revision === null ? state.value.total : cache.state.total,
+      page:
+        located ??
+        anchorResult ??
+        next.find((page) => page.offset === first * LIBRARY_PAGE_SIZE) ??
+        next[0] ??
+        null,
+      total: cached.revision === null ? state.value.total : cached.total,
       requestedPage: first,
       loading: !!anchor || missing.some((index) => !failures.has(index)),
       error: anchorError || missing.map((index) => failures.get(index)).find(Boolean) || ''
@@ -140,17 +165,20 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
       if (anchor !== undefined) break
     }
   }
-  function reset(preservePosition: boolean): void {
+  function reset(preservePosition: boolean, preservePresentation = false): void {
     epoch++
     selectionEpoch.value++
     anchor = undefined
     anchorError = ''
     anchorResult = undefined
     failures.clear()
-    pages.value = []
+    if (!preservePresentation) {
+      pages.value = []
+      presentationRevision = null
+    }
     if (!preservePosition) range = { start: 0, end: LIBRARY_PAGE_SIZE }
     state.value = {
-      page: null,
+      page: preservePresentation ? state.value.page : null,
       total: preservePosition ? state.value.total : null,
       requestedPage: Math.floor(range.start / LIBRARY_PAGE_SIZE),
       loading: !!query,
@@ -232,7 +260,7 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
         minimumRevision = revision
         cache.invalidate(revision)
       } else cache.setQuery(query ?? {})
-      reset(true)
+      reset(true, true)
     },
     get cacheState() {
       return cache.state

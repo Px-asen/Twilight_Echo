@@ -11,7 +11,6 @@ import { projectCoreSettings } from '../coreProcess/settingsProjection.ts'
 import { installCoreSystemPlayer } from '../integrations/coreSystemPlayer.ts'
 import { isTrustedIpcSenderUrl } from '../security/electronSecurity.ts'
 import { resolvePluginIndexUrl } from '../plugins/indexService.ts'
-import { THEME_WORKSHOP_ID } from '../../shared/themeWorkshop.ts'
 import { TWILIGHT_AUTOMIX_AVAILABLE } from '../../shared/twilightAutoMix.ts'
 import { CoreApplicationRuntime, installCoreApplication } from './coreApplication.ts'
 import { getCoreAfterglowMode } from './coreAfterglowRuntime.ts'
@@ -48,11 +47,6 @@ export function createCoreApplication(): CoreApplicationRuntime {
           id: 'com.twilightecho.provider.ncm',
           sourcePath: join(bundledRoot, 'plugins', 'ncm-provider'),
           defaultEnabled: true
-        },
-        {
-          id: THEME_WORKSHOP_ID,
-          sourcePath: join(bundledRoot, 'plugins', 'theme-workshop'),
-          defaultEnabled: false
         }
       ]
     }

@@ -42,7 +42,7 @@ import {
   type PlayerBarRegionName
 } from '../../../shared/playerBarLayout.ts'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
-import { appearanceChromePreview } from '../composables/appearanceEditorState.ts'
+import { appearanceChromePreview, themeAppearance } from '../composables/appearanceEditorState.ts'
 import type { AppearanceDraft } from '../../../shared/appAppearance.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
@@ -276,6 +276,7 @@ const previewPlayerSettings = computed(
   () =>
     props.previewAppearance?.playerBar ??
     appearanceChromePreview.value?.playerBar ??
+    themeAppearance.value?.playerBar ??
     settings.value.playerBar
 )
 const { effectiveSurfaceMaterial, effectiveLiquidGlass } = useThemeStore()
@@ -1450,19 +1451,26 @@ watch(
   { flush: 'post' }
 )
 
+// Surfacing a track change or play/pause confirmation briefly is useful outside
+// the lyrics-page compact strip, whereas the lyrics page already shows both on
+// screen and its compact bar must stay tucked regardless of visualizer toggle.
+const suppressAutoHideFeedbackReveal = computed(() => isCompact.value && Boolean(props.glass))
+
 const {
   revealed: playbarRevealed,
-  flashReveal,
   onBarPointerEnter,
   onBarPointerLeave,
   onBarFocusIn,
   onBarFocusOut
 } = usePlaybarAutoHide({
   autoHide: autoHideActive,
-  revealThresholdPx: computed(() => settings.value.playerBar.revealThresholdPx),
-  hideDelayMs: computed(() => settings.value.playerBar.hideDelayMs),
+  revealThresholdPx: computed(() => previewPlayerSettings.value.revealThresholdPx),
+  hideDelayMs: computed(() => previewPlayerSettings.value.hideDelayMs),
   keepOpen: floatingPanelOpen,
-  barRef: playerBarRef
+  barRef: playerBarRef,
+  trackId: () => currentTrack.value?.id,
+  isPlaying,
+  suppressFeedbackReveal: suppressAutoHideFeedbackReveal
 })
 
 /**
@@ -1494,15 +1502,6 @@ const shellDataAttrs = computed(() => ({
   'data-te-playbar-hidden': playbarHidden.value ? 'true' : 'false',
   'data-te-playbar-visibility': fullyHidden.value ? 'hidden' : 'auto'
 }))
-
-// A track change or play/pause is feedback the user asked for; surface it briefly
-// even when the pointer is nowhere near the bottom edge.
-watch(
-  () => [currentTrack.value?.id, isPlaying.value],
-  () => {
-    if (!showCompactVisualizer.value) flashReveal()
-  }
-)
 
 onMounted(() => {
   if (!props.preview) void syncExtensions()
@@ -1671,7 +1670,13 @@ onBeforeUnmount(() => {
                   </span>
                   <span v-else class="playlist-index-num">{{ item.index + 1 }}</span>
                 </span>
-                <CoverImg :cover="item.cover" :identity="item.id" class="playlist-cover" alt="" />
+                <CoverImg
+                  :cover="item.cover"
+                  :identity="item.id"
+                  size="sm"
+                  class="playlist-cover"
+                  alt=""
+                />
 
                 <div class="playlist-info">
                   <div class="playlist-title">{{ item.title }}</div>
@@ -1829,6 +1834,7 @@ onBeforeUnmount(() => {
               :cover="currentTrack.cover"
               :cover-source="currentTrack.coverSource"
               :identity="currentTrack.id"
+              size="sm"
               class="player-cover"
               alt=""
             />
