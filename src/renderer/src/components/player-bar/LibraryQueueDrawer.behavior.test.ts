@@ -13,7 +13,7 @@ import { build } from 'vite'
 const require = createRequire(import.meta.url)
 const workspace = fileURLToPath(new URL('../../../../../', import.meta.url))
 
-test('database drawer renders 300k/million-entry windows, identity commands, keyboard/drag and failure retry in sandboxed Electron', async () => {
+test('database drawer renders stable progress snapshots, 300k/million-entry windows and queue actions in real Electron', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-library-drawer-'))
   try {
     await writeFile(join(directory, 'entry.ts'), runtime)
@@ -57,7 +57,8 @@ test('database drawer renders 300k/million-entry windows, identity commands, key
     )
     const result = await promisify(execFile)(
       require('electron'),
-      [join(directory, 'runner.cjs'), join(directory, 'index.html')],
+      // Match the other Windows renderer gates: its Electron sandbox can stall at startup.
+      [...(process.platform === 'win32' ? ['--no-sandbox'] : []), join(directory, 'runner.cjs'), join(directory, 'index.html')],
       { windowsHide: true, timeout: 60_000 }
     )
     assert.match(result.stdout, /LIBRARY_DRAWER_OK/)
@@ -106,6 +107,22 @@ window.runLibraryDrawerTests=async()=>{
   expect(row(299999).getBoundingClientRect().bottom<=document.querySelector('.playlist-list').getBoundingClientRect().bottom+1,'tail outside viewport '+JSON.stringify(geometry()))
   const list=document.querySelector('.playlist-list');list.scrollTop=0;list.dispatchEvent(new Event('scroll'));await pause(80)
   expect(row(0),'top not reachable')
+  // Progress snapshots are new objects even when the queue has not changed.
+  // They must not replace rows/images, expose loading placeholders or pull the scroll position.
+  const stableRows=rows(),stableCovers=stableRows.map(item=>item.querySelector('.playlist-cover'))
+  const readsBeforeProgress=reads,scrollBeforeProgress=list.scrollTop
+  const rowMutations=[]
+  const mutationObserver=new MutationObserver(records=>rowMutations.push(...records))
+  mutationObserver.observe(document.querySelector('.playlist-virtual-window'),{childList:true,subtree:true})
+  for(let tick=0;tick<20;tick++){
+    snapshot.value={...snapshot.value};await nextTick();await pause(10)
+    expect(reads===readsBeforeProgress,'progress re-read the queue page')
+    expect(list.scrollTop===scrollBeforeProgress,'progress reset the manual scroll position')
+    expect(!list.textContent.includes('正在读取歌曲'),'progress flashed loading rows')
+    expect(stableRows.every((item,index)=>rows()[index]===item&&item.querySelector('.playlist-cover')===stableCovers[index]),'progress replaced a row or cover')
+  }
+  mutationObserver.disconnect()
+  expect(rowMutations.length===0,'progress mutated queue row contents')
   fail=true;content.value++;await pause(80)
   expect(document.querySelector('[role="alert"]').textContent.includes('数据库暂时离线'),'read error hidden')
   expect(!document.querySelector('.playlist-empty'),'read error mistaken for empty queue')
@@ -116,7 +133,7 @@ window.runLibraryDrawerTests=async()=>{
   expect(plays[0]==='entry:1'&&snapshot.value.index===1,'duplicate identity lost')
   row(1).querySelector('button').focus();row(1).querySelector('button').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',altKey:true,bubbles:true,cancelable:true}));await pause(80)
   expect(small[2].queueEntryId==='entry:1'&&edits.at(-1).beforeEntryId==='entry:3','keyboard reorder wrong')
-  const transfer=new DataTransfer();row(2).dispatchEvent(new DragEvent('dragstart',{dataTransfer:transfer,bubbles:true}));row(0).dispatchEvent(new DragEvent('dragover',{dataTransfer:transfer,bubbles:true,cancelable:true}));row(0).dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));await pause(80)
+  const transfer=new DataTransfer();row(2).dispatchEvent(new DragEvent('dragstart',{dataTransfer:transfer,bubbles:true}));snapshot.value={...snapshot.value};await nextTick();expect(row(2).classList.contains('dragging'),'progress cancelled a queue drag');row(0).dispatchEvent(new DragEvent('dragover',{dataTransfer:transfer,bubbles:true,cancelable:true}));row(0).dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));await pause(80)
   expect(small[0].queueEntryId==='entry:1','drag reorder lost occurrence')
   await click(row(0).querySelector('[title="下一首播放"]'));expect(small[1].track.id==='track:0'&&small.length===6,'next insert failed')
   await click(row(0).querySelector('[title="添加到队尾"]'));expect(small.at(-1).track.id==='track:0'&&small.length===7,'append failed')

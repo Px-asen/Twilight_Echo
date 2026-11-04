@@ -126,6 +126,59 @@ test('300k deep scrolling holds only visible lightweight pages and preserves dup
   assert.ok(f.reads.length < 12)
 })
 
+test('unchanged playback snapshots preserve loaded rows, page reads and the manual scroll position', async (t) => {
+  const f = fixture(t)
+  await settle()
+  f.scroll(30_000)
+  await settle()
+  const rows = f.view.visibleItems.value
+  const reads = f.reads.length
+  const scrollTop = f.view.containerRef.value!.scrollTop
+  for (let tick = 0; tick < 12; tick++) {
+    // Each Core progress event arrives as a fresh snapshot object.
+    f.snapshot.value = { ...f.snapshot.value! }
+    assert.ok(f.view.visibleItems.value.every((row) => row.state === 'ready'))
+    await settle()
+    assert.equal(f.reads.length, reads)
+    assert.equal(f.view.containerRef.value!.scrollTop, scrollTop)
+    assert.equal(f.view.visibleItems.value[0], rows[0])
+  }
+})
+
+test('cursor-only changes locate the new track without invalidating its already loaded page', async (t) => {
+  const f = fixture(t, undefined, 1057)
+  await settle()
+  const rows = f.view.visibleItems.value
+  const reads = f.reads.length
+  f.snapshot.value = { ...f.snapshot.value!, index: 3, selectedEntryId: 'entry:3' }
+  await settle()
+  assert.equal(f.reads.length, reads)
+  assert.ok(f.view.visibleItems.value.includes(rows[3]))
+  assert.ok(f.view.visibleItems.value.every((row) => row.state === 'ready'))
+})
+
+test('progress snapshots do not cancel pending page reads or retry failed requests', async (t) => {
+  let reject!: (error: Error) => void
+  const f = fixture(
+    t,
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = fail
+      })
+  )
+  for (let tick = 0; tick < 12; tick++) {
+    f.snapshot.value = { ...f.snapshot.value! }
+    await nextTick()
+  }
+  assert.equal(f.reads.length, 1)
+  reject(new Error('database unavailable'))
+  await settle()
+  f.snapshot.value = { ...f.snapshot.value! }
+  await settle()
+  assert.equal(f.reads.length, 1)
+  assert.equal(f.view.error.value, 'database unavailable')
+})
+
 test('rapid scroll applies backpressure instead of enqueueing every intermediate page', async (t) => {
   const releases: Array<() => void> = []
   const f = fixture(

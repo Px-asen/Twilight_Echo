@@ -208,17 +208,19 @@ export function useLibraryQueueViewport(options: {
   }
 
   watch(
-    () => [
-      options.snapshot.value?.id,
-      options.snapshot.value?.revision,
-      options.contentRevision.value
+    // Core publishes fresh snapshot objects for progress ticks. Compare the
+    // individual versions so unchanged rows and their decoded covers stay mounted.
+    [
+      () => options.snapshot.value?.id,
+      () => options.snapshot.value?.revision,
+      () => options.contentRevision.value
     ],
     reset,
     { immediate: true, flush: 'sync' }
   )
   watch(desiredPages, pump)
   watch(
-    () => [options.snapshot.value?.id, options.snapshot.value?.index],
+    [() => options.snapshot.value?.id, () => options.snapshot.value?.index],
     () => {
       void nextTick(scrollToCurrent)
     }

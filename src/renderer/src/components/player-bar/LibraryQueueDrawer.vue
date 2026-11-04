@@ -57,7 +57,7 @@ onScopeDispose(() => {
   disposed = true
 })
 watch(
-  () => [props.snapshot?.id, props.snapshot?.revision],
+  [() => props.snapshot?.id, () => props.snapshot?.revision],
   () => {
     dragged.value = null
   }
