@@ -179,8 +179,12 @@ history-session/
 /audio-engine/automix-native/validation.json
 /audio-engine/automix-native/stems/MEMORY-*.md
 /orig-labels.json
+/.service-exe-label-helper.ps1
+/.service-exe-label-original.json
 
 # Temporary files / local scratch
+/.remote-library-editor-package-path.txt
+/.server-upgrade-extracted.json
 tmp/
 temp/
 /work/
