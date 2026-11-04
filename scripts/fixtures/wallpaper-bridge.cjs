@@ -14,6 +14,7 @@ let ready = false,
   state = { active: false },
   video,
   videoMode = 'ready',
+  controlFailure = '',
   propsReads = 0
 const writes = [],
   messages = [],
@@ -86,6 +87,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/apply') {
     const item = items.find((item) => item.id === data.id)
     state = {
+      ...state,
       ...data,
       active: true,
       paused: false,
@@ -93,7 +95,7 @@ const server = http.createServer(async (req, res) => {
       scene: item.type === 'scene',
       url:
         item.type === 'scene'
-          ? '/scene-live/index.html'
+          ? '/scene-live/index.html?sceneFps=60&theme=night'
           : item.type === 'video'
             ? '/media/' + item.id
             : '/web/' + item.id + '/index.html'
@@ -101,7 +103,12 @@ const server = http.createServer(async (req, res) => {
     return json({ ok: true, state })
   }
   if (url.pathname === '/api/control') {
-    if (data.action === 'stop') state = { active: false }
+    writes.push(data)
+    if (['mini-cover', 'playback-bg'].includes(data.action)) {
+      if (controlFailure === 'network') return req.socket.destroy()
+      if (controlFailure) return json({ ok: false, error: '设置未保存' })
+      state[data.action === 'mini-cover' ? 'miniCover' : 'playbackBg'] = data.value
+    } else if (data.action === 'stop') state = { ...state, active: false }
     else if (data.action === 'interact') state.interactive = !state.interactive
     else state.paused = data.action === 'pause'
     return json({ ok: true, state })
@@ -141,11 +148,15 @@ async function fixtureRequest(request) {
   const url = new URL(request.url)
   if (url.origin !== 'http://127.0.0.1:3100') return Response.error()
   url.port = String(server.address().port)
-  return fetch(url, {
-    method: request.method,
-    headers: request.headers,
-    body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
-  })
+  try {
+    return await fetch(url, {
+      method: request.method,
+      headers: request.headers,
+      body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
+    })
+  } catch {
+    return Response.error()
+  }
 }
 
 app.whenReady().then(async () => {
@@ -195,6 +206,25 @@ app.whenReady().then(async () => {
       'legacy-background'
     )
     assert.equal(propsReads, 0, 'unapplied candidates load properties')
+    assert.deepEqual(
+      await run(
+        "['te-we-mini-cover','te-we-playback-bg'].map(id=>document.getElementById(id).checked)"
+      ),
+      [true, true],
+      'legacy states without coverage flags must keep the v5 defaults'
+    )
+    await run("document.querySelector('#te-we-mini-cover').click()")
+    await until(
+      "!document.querySelector('#te-we-mini-cover').disabled",
+      'inactive coverage change did not finish'
+    )
+    assert.equal(state.miniCover, false)
+    assert.equal(await run("document.querySelector('#te-we-mini-cover').checked"), false)
+    await run("document.querySelector('#te-we-mini-cover').click()")
+    await until(
+      "!document.querySelector('#te-we-mini-cover').disabled",
+      'inactive coverage could not be restored'
+    )
     // Read the real editor surface and shared material inputs before the
     // wallpaper activates. The bridge must clear painters, not these tokens.
     const appearanceState = `(() => {
@@ -213,6 +243,7 @@ app.whenReady().then(async () => {
       const editor = document.createElement('section');
       editor.className = 'appearance-editor';
       editor.hidden = true;
+      editor.style.display = 'none';
       document.querySelector('#app').append(editor);
       document.documentElement.style.setProperty('--te-app-bg-image', 'linear-gradient(#123456, #654321)');
     })()`)
@@ -291,7 +322,91 @@ app.whenReady().then(async () => {
         (await win.webContents.capturePage()).toPNG()
       )
     }
-    await run("document.querySelector('.appearance-editor').hidden=true")
+    await run("document.querySelector('.appearance-editor').style.display='none'")
+    await run(`(() => {
+      const player = document.createElement('section');
+      player.id = 'fixture-player';
+      player.className = 'playing-music bg-blur';
+      player.hidden = true;
+      player.style.cssText = '--te-player-bg:rgb(34,51,68);--te-player-bg-image:linear-gradient(#234567,#765432)';
+      player.innerHTML = '<div class="backdrop"><div class="backdrop-cover-wrap"><div class="backdrop-cover"></div></div><div class="backdrop-fluid"></div><div class="backdrop-solid"></div><div class="backdrop-scrim"></div><div class="backdrop-accent"></div></div>';
+      for (const el of [player, ...player.querySelectorAll('*')]) el.setAttribute('data-v-wallpaper-fixture', '');
+      document.querySelector('#app').append(player);
+    })()`)
+    const playerAppearance = `(() => {
+      const style = selector => getComputedStyle(document.querySelector('#fixture-player' + selector));
+      return {
+        background: style('').backgroundColor,
+        image: style('').backgroundImage,
+        backdrop: style(' .backdrop').backgroundColor,
+        filter: style(' .backdrop').filter,
+        cover: style(' .backdrop-cover-wrap').display,
+        fluid: style(' .backdrop-fluid').display,
+        solid: style(' .backdrop-solid').display,
+        accent: style(' .backdrop-accent').display,
+        scrimFilter: style(' .backdrop-scrim').backdropFilter
+      };
+    })()`
+    assert.deepEqual(await run(playerAppearance), {
+      background: 'rgba(0, 0, 0, 0)',
+      image: 'none',
+      backdrop: 'rgba(0, 0, 0, 0)',
+      filter: 'none',
+      cover: 'none',
+      fluid: 'none',
+      solid: 'none',
+      accent: 'none',
+      scrimFilter: 'none'
+    })
+    assert.equal(
+      await run(
+        "document.querySelector('#te-we-playback-bg').click();document.documentElement.dataset.tePlaybackBg || 'off'"
+      ),
+      'off',
+      'playback toggle must take effect before the service responds'
+    )
+    await until(
+      "!document.querySelector('#te-we-playback-bg').disabled",
+      'playback toggle stayed pending'
+    )
+    assert.equal(state.playbackBg, false)
+    const nativePlayer = await run(playerAppearance)
+    assert.equal(nativePlayer.background, 'rgb(34, 51, 68)')
+    assert.match(nativePlayer.image, /linear-gradient/)
+    assert.notEqual(nativePlayer.cover, 'none')
+    assert.equal(nativePlayer.scrimFilter, 'blur(10px)')
+    await run("document.querySelector('#te-we-playback-bg').click()")
+    await until(
+      "!document.querySelector('#te-we-playback-bg').disabled",
+      'playback coverage did not return'
+    )
+    for (const failure of ['reject', 'network']) {
+      controlFailure = failure
+      await run("document.querySelector('#te-we-playback-bg').click()")
+      await until(
+        "!document.querySelector('#te-we-playback-bg').disabled && document.querySelector('#te-we-picker-status').textContent.includes('设置失败')",
+        failure + ' did not report the coverage failure'
+      )
+      assert.equal(await run("document.querySelector('#te-we-playback-bg').checked"), true)
+      assert.equal(await run('document.documentElement.dataset.tePlaybackBg'), 'on')
+      assert.equal(state.playbackBg, true, 'failed coverage request changed the saved state')
+    }
+    controlFailure = ''
+    state.playbackBg = false
+    await until(
+      "!document.querySelector('#te-we-playback-bg').checked",
+      'polled coverage did not update the control'
+    )
+    assert.deepEqual(
+      await run(playerAppearance),
+      nativePlayer,
+      'native player background was not restored'
+    )
+    state.playbackBg = true
+    await until(
+      "document.querySelector('#te-we-playback-bg').checked",
+      'polled coverage could not be restored'
+    )
     await sleep(150)
     assert.equal(
       await run(
@@ -485,6 +600,180 @@ app.whenReady().then(async () => {
       'scene iframe is blocked'
     )
     assert.deepEqual(await run('window.cspViolations'), [], 'loopback resources violate CSP')
+    const sceneGeometry = `(() => {
+      const layer = document.querySelector('#te-we-bg').getBoundingClientRect();
+      const frame = document.querySelector('#te-we-bg iframe').getBoundingClientRect();
+      return Math.abs(frame.width / frame.height - 16 / 9) < .001 &&
+        frame.width >= layer.width && frame.height >= layer.height &&
+        Math.abs((frame.left + frame.right) / 2 - (layer.left + layer.right) / 2) < 1 &&
+        Math.abs((frame.top + frame.bottom) / 2 - (layer.top + layer.bottom) / 2) < 1;
+    })()`
+    assert.equal(
+      await run(sceneGeometry),
+      true,
+      'scene cover must fill the window without stretching'
+    )
+    assert.equal(
+      await run(
+        "new URL(document.querySelector('#te-we-bg iframe').src).searchParams.get('sceneFps')"
+      ),
+      '60',
+      'mini player frame-rate limit leaked into the main window'
+    )
+    state.interactive = true
+    const mini = new BrowserWindow({
+      show: false,
+      width: 640,
+      height: 240,
+      useContentSize: true,
+      transparent: true,
+      frame: false,
+      webPreferences: { offscreen: true, backgroundThrottling: false }
+    })
+    const miniRun = (code) => mini.webContents.executeJavaScript(code)
+    const miniUntil = (code, label) => until(() => miniRun(code), label)
+    await mini.loadFile(path.join(__dirname, 'renderer/index.html'), {
+      query: { window: 'mini-player' }
+    })
+    await miniUntil(
+      "!!document.querySelector('#te-we-bg iframe')",
+      'mini player did not start the scene'
+    )
+    await miniRun(`(() => {
+      document.body.className = '';
+      document.documentElement.style.cssText = 'width:100%;height:100%';
+      document.body.style.cssText = 'width:100%;height:100%';
+      document.querySelector('#app').style.cssText = 'width:100%;height:100%';
+      document.querySelector('#app').innerHTML = '<main class="mini-player-root is-ready" data-layout="wide" style="--mini-window-radius:24px;--mini-text:#fff;--mini-background-fallback:#20242c;--mini-track-accent:#a377bd;--mini-surface-opacity:.6;--mini-background-overlay:rgba(5,7,11,.25)"><div class="mini-window-fill"></div><section class="mini-player-surface"><div class="mini-background-source"></div><div class="mini-background-overlay"></div><div class="mini-grain"></div><div class="mini-artwork-wrap" style="background:linear-gradient(135deg,#b98089,#394c7b)"></div><div class="mini-info"><div class="mini-kicker">TWILIGHT ECHO</div><h1 class="mini-title">暮色回声</h1><p class="mini-artist">Wallpaper Engine</p></div><div class="mini-controls"><button class="mini-play-button">▶</button></div></section></main>';
+      window.originalWallpaperFrame = document.querySelector('#te-we-bg iframe');
+    })()`)
+    await miniUntil(
+      "document.querySelector('#te-we-bg').parentElement === document.querySelector('.mini-player-root')",
+      'mini wallpaper did not follow the asynchronously mounted Vue root'
+    )
+    assert.equal(await miniRun(sceneGeometry), true)
+    assert.deepEqual(
+      await miniRun("[...new URL(document.querySelector('#te-we-bg iframe').src).searchParams]"),
+      [
+        ['sceneFps', '30'],
+        ['theme', 'night']
+      ]
+    )
+    assert.equal(await miniRun("!!document.querySelector('#te-we-picker, #te-we-exit')"), false)
+    const miniFill = "getComputedStyle(document.querySelector('.mini-window-fill')).display"
+    assert.equal(await miniRun(miniFill), 'none')
+    assert.equal(
+      await miniRun("getComputedStyle(document.querySelector('.mini-player-root')).overflow"),
+      'hidden'
+    )
+    assert.equal(
+      await miniRun("getComputedStyle(document.querySelector('.mini-player-root')).borderRadius"),
+      '24px'
+    )
+    await miniRun("document.querySelector('.mini-player-root').classList.add('is-customizing')")
+    assert.notEqual(await miniRun(miniFill), 'none', 'mini customizer lost its own background')
+    await miniRun("document.querySelector('.mini-player-root').classList.remove('is-customizing')")
+    await miniRun(`(() => {
+      const root = document.querySelector('.mini-player-root');
+      const replacement = root.cloneNode(false);
+      replacement.innerHTML = root.querySelector('.mini-window-fill').outerHTML + root.querySelector('.mini-player-surface').outerHTML;
+      window.pendingMiniRoot = replacement;
+      root.remove();
+    })()`)
+    // A polling tick while Vue has no root must retain the detached media,
+    // rather than creating an empty replacement with the same signature.
+    await sleep(2200)
+    assert.equal(await miniRun("!!document.querySelector('#te-we-bg')"), false)
+    await miniRun("document.querySelector('#app').append(window.pendingMiniRoot)")
+    await miniUntil(
+      "document.querySelector('.mini-player-root #te-we-bg iframe') === window.originalWallpaperFrame",
+      'mini root remount recreated or lost the wallpaper'
+    )
+    mini.setContentSize(360, 420)
+    await miniUntil(
+      'innerWidth === 360 && innerHeight === 420',
+      'mini resize did not reach the viewport'
+    )
+    await miniUntil(sceneGeometry, 'scene cover did not update on mini window resize')
+    state.fit = 'contain'
+    await miniUntil(
+      "document.querySelector('#te-we-bg iframe').style.width === '100%'",
+      'scene fit change did not reset cropped dimensions'
+    )
+    state.fit = 'cover'
+    await miniUntil(sceneGeometry, 'scene cover could not be restored')
+    await run("document.querySelector('#te-we-mini-cover').click()")
+    await miniUntil(
+      "document.documentElement.dataset.teWeBg === 'off' && !document.querySelector('#te-we-bg')",
+      'mini coverage switch did not stop and release its media'
+    )
+    assert.notEqual(
+      await miniRun(miniFill),
+      'none',
+      'mini coverage switch did not restore the native fill'
+    )
+    await run("document.querySelector('#te-we-mini-cover').click()")
+    await miniUntil(
+      "!!document.querySelector('#te-we-bg.te-we-visible iframe')",
+      'mini coverage could not restart'
+    )
+    state = {
+      active: true,
+      id: '2222222222222222',
+      type: 'video',
+      url: '/media/2222222222222222',
+      quality: 'original',
+      paused: true
+    }
+    await miniUntil(
+      "document.documentElement.dataset.teWeBg === 'on' && document.querySelector('#te-we-bg canvas')?.height === 720 && document.querySelector('#te-we-bg video').paused",
+      'mini player did not display the first frame of a paused original-quality video at 720P'
+    )
+    assert.equal(state.quality, 'original', 'mini player changed the shared quality setting')
+    await until(
+      "!!document.querySelector('#te-we-bg.te-we-visible > video')",
+      'main window was also limited to a scaled canvas'
+    )
+    state.fit = 'contain'
+    await miniUntil(
+      "document.querySelector('#te-we-bg canvas').style.objectFit === 'contain'",
+      'scaled canvas ignored live fit'
+    )
+    assert.equal(
+      await miniRun("document.querySelector('#te-we-bg').firstElementChild.style.transform"),
+      '',
+      'identity layout still forces a compositor transform'
+    )
+    if (process.env.TWILIGHT_WALLPAPER_EVIDENCE_DIR) {
+      let resizedImage
+      const onPaint = (_event, _dirty, image) => {
+        const { width, height } = image.getSize()
+        if (width === 640 && height === 240) resizedImage = image
+      }
+      mini.webContents.on('paint', onPaint)
+      mini.setContentSize(640, 240)
+      await until(() => !!resizedImage, 'mini evidence did not paint the resized surface')
+      mini.webContents.removeListener('paint', onPaint)
+      fs.writeFileSync(
+        path.join(process.env.TWILIGHT_WALLPAPER_EVIDENCE_DIR, 'mini-player.png'),
+        resizedImage.toPNG()
+      )
+    }
+    state.quality = '1080'
+    await miniUntil(
+      "document.querySelector('#te-we-bg canvas')?.height === 1080",
+      'mini player ignored an explicit quality selection'
+    )
+    assert.deepEqual(await miniRun('window.cspViolations'), [], 'mini media violates CSP')
+    videoMode = 'broken'
+    state.url = '/media/missing-mini-video'
+    await miniUntil(
+      "document.documentElement.dataset.teWeBg === 'off' && !!document.querySelector('#te-we-bg video')?.dataset.teWeError",
+      'mini media failure did not restore its native background'
+    )
+    assert.notEqual(await miniRun(miniFill), 'none')
+    videoMode = 'ready'
+    mini.destroy()
     // Reproduce the user's failure: updated meta CSP, but an old main-process
     // response header still rejects the media origin. Reloading only the
     // renderer cannot replace the main process's policy.
@@ -541,18 +830,20 @@ app.whenReady().then(async () => {
       'updated policy does not restore a decoded first frame for paused, scaled video'
     )
     blocked.destroy()
-    const satellite = new BrowserWindow({ show: false, webPreferences: { offscreen: true } })
-    await satellite.loadFile(path.join(__dirname, 'renderer/index.html'), {
-      query: { window: 'desktop-lyrics' }
-    })
-    assert.equal(
-      await satellite.webContents.executeJavaScript(
-        "!!window.__TE_WE_BG__ || !!document.querySelector('#te-we-bg-style')"
-      ),
-      false,
-      'bridge runs in satellite window'
-    )
-    satellite.destroy()
+    for (const kind of ['desktop-lyrics', 'tray-player', 'dynamic-island']) {
+      const satellite = new BrowserWindow({ show: false, webPreferences: { offscreen: true } })
+      await satellite.loadFile(path.join(__dirname, 'renderer/index.html'), {
+        query: { window: kind }
+      })
+      assert.equal(
+        await satellite.webContents.executeJavaScript(
+          "!!window.__TE_WE_BG__ || !!document.querySelector('#te-we-bg-style')"
+        ),
+        false,
+        'bridge runs in ' + kind + ' window'
+      )
+      satellite.destroy()
+    }
     await run("fetch('http://127.0.0.1:3101/preview/test').catch(()=>{})")
     await until(
       "window.cspViolations.some(v=>v.directive==='connect-src')",

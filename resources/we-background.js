@@ -1,21 +1,25 @@
 /* Twilight Echo × Wallpaper Engine — renderer bridge.
  *
- * Vendored from the Wallpaper Engine 2.1.0 TEP, with host integration fixes.
+ * Vendored from the Wallpaper Engine 2.2.0 TEP, with host integration fixes.
+ * BRIDGE_VERSION 5: playback-page backdrop + mini-player layer + quality clamp.
  * Vite copies this public asset into app.asar (out/renderer/).
- * It owns a single fixed layer at the very bottom of the window, below #app,
- * and asks the plugin's loopback server (127.0.0.1:3100) what to play.
+ * The main window uses a fixed layer below #app; the mini player keeps its
+ * layer inside its rounded root. The plugin's loopback server (127.0.0.1:3100)
+ * supplies playback state.
  * Video files are streamed as-is: no transcode, no re-encode.
  */
 ;(function () {
   'use strict'
 
   var windowKind = new URLSearchParams(window.location.search).get('window')
-  if (['mini-player', 'tray-player', 'desktop-lyrics', 'dynamic-island'].includes(windowKind))
-    return
+  if (['tray-player', 'desktop-lyrics', 'dynamic-island'].includes(windowKind)) return
+  var MINI = windowKind === 'mini-player'
+  if (MINI) document.documentElement.setAttribute('data-te-window', 'mini-player')
 
   var API = 'http://127.0.0.1:3100'
   var STYLE_ID = 'te-we-bg-style'
   var POLL_MS = 2000
+  var BRIDGE_VERSION = 5
 
   if (window.__TE_WE_BG__) return
   window.__TE_WE_BG__ = true
@@ -23,7 +27,16 @@
   var layer = null
   var media = null
   var scrim = null
-  var current = { signature: '', paused: false, fit: 'cover', scrim: 0, quality: 'original' }
+  var current = {
+    signature: '',
+    paused: false,
+    fit: 'cover',
+    scrim: 0,
+    quality: 'original',
+    scene: false,
+    miniCover: true,
+    playbackBg: true
+  }
   var failures = 0
   var lastActive = false
   var pollCount = 0
@@ -97,6 +110,8 @@
         covers.push({ error: String(error && error.message) })
       }
       var data = {
+        bridgeVersion: BRIDGE_VERSION,
+        windowKind: windowKind || 'main',
         covers: covers,
         attr: document.documentElement.getAttribute('data-te-we-bg'),
         layer: !!layerEl,
@@ -182,7 +197,7 @@
     '  .main-content, .dashboard-wrapper, .song-list, .settings-page,',
     '  .settings-preview-layout, .streaming-page, .login-page, .eq-page,',
     '  .plugin-page, .plugin-page .main-content, .plugin-page .topbar,',
-    '  .playing-music, .title-bar, .title-bar-glass',
+    '  .title-bar, .title-bar-glass',
     ') {',
     '  background: transparent !important;',
     '  background-color: transparent !important;',
@@ -230,6 +245,42 @@
     '  inset: 0;',
     '  background: rgba(0, 0, 0, var(--te-we-scrim, 0));',
     '  pointer-events: none;',
+    '}',
+    'html[data-te-window="mini-player"][data-te-we-bg="on"] .mini-player-root {',
+    '  background: transparent !important;',
+    '}',
+    'html[data-te-window="mini-player"] #te-we-bg.te-we-mini-bg {',
+    '  position: absolute !important;',
+    '  inset: 0 !important;',
+    '  z-index: 0 !important;',
+    '}',
+    'html[data-te-window="mini-player"]:has(#te-we-bg.te-we-visible)',
+    '  .mini-player-root:not(.is-customizing) :is(',
+    '    .mini-window-fill,',
+    '    .mini-background-source,',
+    '    .mini-grain',
+    '  ) {',
+    '  display: none !important;',
+    '}',
+    'html[data-te-window="mini-player"][data-te-we-bg="on"]',
+    '  .mini-player-root:not(.is-customizing) .mini-background-overlay {',
+    '  opacity: 0.55 !important;',
+    '}',
+    'html[data-te-we-bg="on"][data-te-playback-bg="on"] .playing-music,',
+    'html[data-te-we-bg="on"][data-te-playback-bg="on"] .playing-music .backdrop {',
+    '  background: transparent !important;',
+    '  background-image: none !important;',
+    '  filter: none !important;',
+    '}',
+    'html[data-te-we-bg="on"][data-te-playback-bg="on"] .playing-music :is(',
+    '  .backdrop-cover-wrap, .backdrop-cover, .backdrop-fluid, .backdrop-solid, .backdrop-accent',
+    ') {',
+    '  display: none !important;',
+    '}',
+    'html[data-te-we-bg="on"][data-te-playback-bg="on"] .playing-music .backdrop-scrim {',
+    '  background: rgba(5, 7, 11, 0.28) !important;',
+    '  backdrop-filter: none !important;',
+    '  -webkit-backdrop-filter: none !important;',
     '}'
   ].join('\n')
 
@@ -241,12 +292,52 @@
     ;(document.head || document.documentElement).appendChild(style)
   }
 
+  function miniRoot() {
+    return MINI ? document.querySelector('.mini-player-root') : null
+  }
+
+  function attachMiniLayer(el) {
+    if (!MINI || !el) return false
+    var root = miniRoot()
+    if (!root) return false
+    if (el.parentNode !== root) {
+      root.insertBefore(el, root.firstChild)
+      layoutSceneFrame()
+    }
+    el.classList.add('te-we-mini-bg')
+    return true
+  }
+
+  var miniObserver = null
+  var miniAttachQueued = false
+
+  function watchMiniRoot() {
+    if (!MINI || miniObserver || !document.documentElement) return
+    miniObserver = new MutationObserver(function () {
+      if (!layer || miniAttachQueued) return
+      miniAttachQueued = true
+      requestAnimationFrame(function () {
+        miniAttachQueued = false
+        if (layer) attachMiniLayer(layer)
+      })
+    })
+    miniObserver.observe(document.documentElement, { childList: true, subtree: true })
+  }
+
   function ensureLayer() {
-    if (layer && document.documentElement.contains(layer)) return layer
+    if (layer) {
+      if (MINI) {
+        attachMiniLayer(layer)
+        return layer
+      }
+      if (document.documentElement.contains(layer)) return layer
+    }
     if (!document.body) return null
     layer = document.createElement('div')
     layer.id = 'te-we-bg'
-    document.body.insertBefore(layer, document.body.firstChild)
+    if (MINI) layer.classList.add('te-we-mini-bg')
+    if (!attachMiniLayer(layer)) document.body.insertBefore(layer, document.body.firstChild)
+    watchMiniRoot()
     return layer
   }
 
@@ -277,6 +368,7 @@
     current.mediaError = ''
     clearMedia()
     document.documentElement.setAttribute('data-te-we-bg', 'off')
+    document.documentElement.removeAttribute('data-te-playback-bg')
     var exit = document.getElementById('te-we-exit')
     if (exit) exit.remove()
     if (layer) {
@@ -308,6 +400,32 @@
     }
   }
 
+  function layoutSceneFrame() {
+    if (!media || !layer || media.tagName !== 'IFRAME' || !current.scene) return
+    if (current.fit === 'cover') {
+      var width = layer.clientWidth || window.innerWidth || 1
+      var height = layer.clientHeight || window.innerHeight || 1
+      var aspect = 16 / 9
+      var frameWidth = width
+      var frameHeight = height
+      if (width / height > aspect) frameHeight = width / aspect
+      else frameWidth = height * aspect
+      media.style.width = frameWidth + 'px'
+      media.style.height = frameHeight + 'px'
+      media.style.left = (width - frameWidth) / 2 + 'px'
+      media.style.top = (height - frameHeight) / 2 + 'px'
+      media.style.right = 'auto'
+      media.style.bottom = 'auto'
+    } else {
+      media.style.width = '100%'
+      media.style.height = '100%'
+      media.style.left = '0'
+      media.style.top = '0'
+      media.style.right = ''
+      media.style.bottom = ''
+    }
+  }
+
   function applyLayout(state) {
     current.fit = state.fit === 'contain' || state.fit === 'fill' ? state.fit : 'cover'
     current.scrim = Math.max(0, Math.min(80, Number(state.scrim) || 0))
@@ -323,10 +441,18 @@
     })
     if (media) {
       media.style.objectFit = current.fit
+      var canvas = media.querySelector('canvas')
+      if (canvas) canvas.style.objectFit = current.fit
       media.style.transformOrigin = 'center center'
-      media.style.willChange = 'transform'
-      media.style.transform =
-        'translate3d(' + offsetX + '%, ' + offsetY + '%, ' + offsetZ + 'px) scale(' + zoom + ')'
+      if (offsetX !== 0 || offsetY !== 0 || offsetZ !== 0 || zoom !== 1) {
+        media.style.willChange = 'transform'
+        media.style.transform =
+          'translate3d(' + offsetX + '%, ' + offsetY + '%, ' + offsetZ + 'px) scale(' + zoom + ')'
+      } else {
+        media.style.willChange = 'auto'
+        media.style.transform = ''
+      }
+      layoutSceneFrame()
     }
     if (scrim) scrim.style.setProperty('--te-we-scrim', String(current.scrim / 100))
   }
@@ -423,6 +549,10 @@
   function updatePresentation() {
     var ready = lastActive && current.mediaStatus === 'ready'
     document.documentElement.setAttribute('data-te-we-bg', ready ? 'on' : 'off')
+    if (ready && current.playbackBg !== false)
+      document.documentElement.setAttribute('data-te-playback-bg', 'on')
+    else document.documentElement.removeAttribute('data-te-playback-bg')
+    syncCoverageControls()
     if (layer) layer.classList.toggle('te-we-visible', ready)
     var interactive = ready && current.interactive
     if (layer) layer.classList.toggle('te-we-interactive', interactive)
@@ -457,20 +587,44 @@
 
   function render(state) {
     installStyle()
+    if (state) {
+      current.miniCover = state.miniCover !== false
+      current.playbackBg = state.playbackBg !== false
+      syncCoverageControls()
+    }
     if (!state || !state.active) {
+      cleanup()
+      return
+    }
+    if (MINI && state.miniCover === false) {
       cleanup()
       return
     }
     lastActive = true
     var el = ensureLayer()
     if (!el) return
-    current.interactive = state.type === 'web' && state.interactive === true
+    current.interactive = !MINI && state.type === 'web' && state.interactive === true
 
     var fit = state.fit === 'contain' || state.fit === 'fill' ? state.fit : 'cover'
     var quality = state.quality === '1080' || state.quality === '720' ? state.quality : 'original'
+    // Only the mini player's display raster is reduced; video decoding still
+    // uses the original file. Scene frame rate is limited independently.
+    if (MINI && quality === 'original') quality = '720'
+    if (
+      MINI &&
+      state.type === 'web' &&
+      typeof state.url === 'string' &&
+      state.url.indexOf('/scene-live/') === 0
+    ) {
+      var sceneUrl = new URL(state.url, API)
+      var sceneFps = Number(sceneUrl.searchParams.get('sceneFps'))
+      if (!sceneFps || sceneFps > 30) sceneUrl.searchParams.set('sceneFps', '30')
+      state = Object.assign({}, state, { url: sceneUrl.pathname + sceneUrl.search + sceneUrl.hash })
+    }
     var signature = [state.type || '', state.url || '', state.preview || '', quality].join('|')
     current.id = state.id || ''
     current.preview = state.preview || ''
+    current.scene = state.scene === true
 
     if (signature !== current.signature) {
       current.signature = signature
@@ -545,7 +699,15 @@
   function boot() {
     beacon('/api/bridge-boot')
     installStyle()
+    window.addEventListener('resize', layoutSceneFrame)
     poll()
+  }
+
+  function syncCoverageControls() {
+    var miniCover = document.getElementById('te-we-mini-cover')
+    var playbackBg = document.getElementById('te-we-playback-bg')
+    if (miniCover && !miniCover.disabled) miniCover.checked = current.miniCover
+    if (playbackBg && !playbackBg.disabled) playbackBg.checked = current.playbackBg
   }
 
   function appearanceOpen() {
@@ -617,6 +779,18 @@
       '<option value="720">720P</option>',
       '</select></div>',
       '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid rgba(127,127,127,.15)">',
+      '<div style="width:110px;flex:none">迷你播放器</div>',
+      '<label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">',
+      '<input id="te-we-mini-cover" type="checkbox" checked>',
+      '<span>使用当前壁纸覆盖迷你播放器背景</span>',
+      '</label></div>',
+      '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid rgba(127,127,127,.15)">',
+      '<div style="width:110px;flex:none">播放页</div>',
+      '<label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer">',
+      '<input id="te-we-playback-bg" type="checkbox" checked>',
+      '<span>使用当前壁纸作为播放页背景</span>',
+      '</label></div>',
+      '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid rgba(127,127,127,.15)">',
       '<div style="width:110px;flex:none">填充 / 暗化</div>',
       '<div style="flex:1;display:flex;gap:6px">',
       '<select id="te-we-picker-fit" style="flex:1;padding:5px 7px;border-radius:8px;border:1px solid rgba(127,127,127,.35);background:rgba(127,127,127,.10);color:inherit;font:inherit">',
@@ -652,6 +826,8 @@
     var quality = card.querySelector('#te-we-picker-quality')
     var fit = card.querySelector('#te-we-picker-fit')
     var scrim = card.querySelector('#te-we-picker-scrim')
+    var miniCover = card.querySelector('#te-we-mini-cover')
+    var playbackBg = card.querySelector('#te-we-playback-bg')
     var status = card.querySelector('#te-we-picker-status')
     var pause = card.querySelector('#te-we-picker-pause')
     var xInput = card.querySelector('#te-we-x')
@@ -701,6 +877,8 @@
           if (data.state.fit) fit.value = data.state.fit
           if (data.state.scrim != null) scrim.value = String(data.state.scrim)
           if (data.state.quality) quality.value = data.state.quality
+          miniCover.checked = data.state.miniCover !== false
+          playbackBg.checked = data.state.playbackBg !== false
           if (data.state.offsetX != null) xInput.value = String(data.state.offsetX)
           if (data.state.offsetY != null) yInput.value = String(data.state.offsetY)
           if (data.state.offsetZ != null) zInput.value = String(data.state.offsetZ)
@@ -716,6 +894,30 @@
       })
 
     filter.addEventListener('input', renderOptions)
+    function bindCoverage(control, action, property) {
+      control.addEventListener('change', function () {
+        var previous = current[property]
+        current[property] = control.checked
+        control.disabled = true
+        updatePresentation()
+        request('/api/control', { action: action, value: control.checked })
+          .then(function (result) {
+            if (!result.ok) throw new Error(result.error || '插件未接受设置')
+            status.textContent = playbackStatus()
+          })
+          .catch(function (error) {
+            current[property] = previous
+            updatePresentation()
+            status.textContent = '设置失败：' + error.message
+          })
+          .finally(function () {
+            control.disabled = false
+            syncCoverageControls()
+          })
+      })
+    }
+    bindCoverage(miniCover, 'mini-cover', 'miniCover')
+    bindCoverage(playbackBg, 'playback-bg', 'playbackBg')
 
     var layoutTimer = 0
     function pushLayout() {
@@ -1301,7 +1503,7 @@
 
   var pickerTimer = null
   function startPickerWatcher() {
-    if (pickerTimer) return
+    if (MINI || pickerTimer) return
     pickerTimer = window.setInterval(function () {
       var open = appearanceOpen()
       var card = document.getElementById('te-we-picker')

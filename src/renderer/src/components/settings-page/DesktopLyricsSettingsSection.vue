@@ -25,7 +25,7 @@ let pendingPatch: Partial<DesktopLyricsSettings> = {}
 
 watch(
   () => props.desktopLyrics,
-  (value) => Object.assign(draft, value),
+  (value) => Object.assign(draft, value, pendingPatch),
   { deep: true }
 )
 
