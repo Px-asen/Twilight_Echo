@@ -1,4 +1,5 @@
 import { openNcmOfficialLogin } from '../ncm/api.ts'
+import { openQqMusicOfficialLogin } from '../plugins/qqmusicOfficialLogin.ts'
 import {
   validateThemeProfileAssets,
   deleteThemeAssets,
@@ -260,6 +261,7 @@ export function createElectronCoreSupervisor(
         return path
       },
       'ncm.officialLogin': (_payload, signal) => openNcmOfficialLogin(signal),
+      'qqmusic.officialLogin': (_payload, signal) => openQqMusicOfficialLogin(signal),
       'overlay.show': async ({ pluginId }) => showDynamicIsland(pluginId),
       'overlay.hide': async ({ pluginId }) => hideDynamicIsland(pluginId),
       'overlay.configure': async ({ pluginId, config }) => configureDynamicIsland(pluginId, config),

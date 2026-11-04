@@ -302,6 +302,8 @@ export interface TwilightProviderUiMetadata {
     icon: string
     /** provider 方法名 */
     method: string
+    /** 进入账号登录页时优先执行此操作；未声明时仍使用二维码流程 */
+    primary?: boolean
   }>
   /** 流媒体首页推荐区块声明 */
   streamingHome?: import('./providerHome').ProviderHomePresentation
@@ -382,6 +384,7 @@ export type PluginHostRequest =
       mainPath: string
       dataDir: string
       apiVersion: number
+      browserLoginProviders?: Array<'ncm' | 'qqmusic'>
     }
   | {
       kind: 'deactivate'
@@ -493,6 +496,7 @@ export type PluginHostResponse =
         | 'ncmCacheSong'
         | 'ncmPrepareAutoMixSong'
         | 'qishuiGetQrLogin'
+        | 'qqmusicOfficialLogin'
         | 'qishuiCheckQrLogin'
         | 'qishuiClear'
         | 'show'

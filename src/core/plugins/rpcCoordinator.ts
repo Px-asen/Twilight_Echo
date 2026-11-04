@@ -3,6 +3,7 @@ import type { TwilightMediaProviderMethod } from './types.ts'
 
 export const PLUGIN_RPC_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const IDEMPOTENT_PROVIDER_WRITE_METHODS = new Set<TwilightMediaProviderMethod>([
+  'reportListening',
   'likeTrack',
   'followArtist',
   'followUser',

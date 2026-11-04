@@ -9,6 +9,7 @@ const noop = () => {
   // The serial mobile ABI has no plugin logging channel.
 }
 const api = {
+  officialLoginAvailable: false,
   request(path, cookie) {
     const q = path.indexOf('?'), route = q < 0 ? path : path.slice(0, q)
     const query = { cookie: cookie || '' }
@@ -43,7 +44,7 @@ const context = {
 }
 globalThis.__TWILIGHT_PLUGIN__ = {
   activate() { return activate(context).then(() => ({ id: provider.id, name: provider.name, capabilities: provider.capabilities,
-    methods: Object.keys(provider).filter(k => typeof provider[k] === 'function' && !['openOfficialLogin', 'prepareCloudUpload', 'completeCloudUpload'].includes(k)) })) },
+    methods: Object.keys(provider).filter(k => typeof provider[k] === 'function' && !['openOfficialLogin', 'prepareCloudUpload', 'completeCloudUpload', 'reportListening'].includes(k)) })) },
   call(input) {
     if (!provider || typeof provider[input.method] !== 'function' || input.method === 'openOfficialLogin') throw new Error('Provider 方法不可用')
     if (input.method === 'getPlaybackUrl') return context.settings.get('cookie').then(cookie => {

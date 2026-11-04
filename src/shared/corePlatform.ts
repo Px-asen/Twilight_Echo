@@ -1,4 +1,5 @@
 import type { DynamicIslandConfig } from './dynamicIsland.ts'
+import type { QqMusicOfficialCredential } from './qqmusicLogin.ts'
 import type { ThemeAssetReference, ThemeAssetType, ThemeProfileV2 } from './theme.ts'
 import { normalizeThemeProfile } from './theme.ts'
 import type { CoreModelPackPlatformOperations } from './coreModelPack.ts'
@@ -59,6 +60,7 @@ export interface CorePlatformOperations extends CoreModelPackPlatformOperations 
       platform: CorePlatformId
       temporaryDirectory: string
       searchPaths: string[]
+      fixedSearchPaths?: boolean
       helpers: Vst3HelpersAvailability
     }
   }
@@ -100,6 +102,7 @@ export interface CorePlatformOperations extends CoreModelPackPlatformOperations 
   'paths.areAudioFilesAuthorized': { input: { paths: string[] }; output: boolean[] }
   'playlists.chooseImportFile': { input: Record<string, never>; output: string | null }
   'ncm.officialLogin': { input: Record<string, never>; output: string }
+  'qqmusic.officialLogin': { input: Record<string, never>; output: QqMusicOfficialCredential }
   'overlay.show': { input: { pluginId: string }; output: void }
   'overlay.hide': { input: { pluginId: string }; output: void }
   'overlay.isOwner': { input: { pluginId: string }; output: boolean }
@@ -480,6 +483,7 @@ export function validCorePlatformPayload(request: CorePlatformRequest): boolean 
       )
     }
     case 'ncm.officialLogin':
+    case 'qqmusic.officialLogin':
     case 'playlists.chooseImportFile':
     case 'lyrics.chooseImportFile':
     case 'lyrics.chooseExportFile':

@@ -3,7 +3,12 @@
 // fallback policy so those security decisions stay explicit and testable.
 
 import { connect as netConnect } from 'net'
-import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
+import {
+  ProxyAgent,
+  WebSocket as UndiciWebSocket,
+  fetch as undiciFetch,
+  type RequestInit as UndiciRequestInit
+} from 'undici'
 
 const COMMON_PROXY_PORTS = [7897, 7890, 7891, 1080, 10809, 8080, 2080, 7898]
 const DEFAULT_MAX_REDIRECTS = 5
@@ -58,6 +63,7 @@ export interface SecureProxyFetchOptions {
 
 export interface InstalledProxyFetch {
   fetch: typeof fetch
+  WebSocket: typeof globalThis.WebSocket
   close: () => Promise<void>
 }
 
@@ -494,6 +500,19 @@ export function installProxyFetch(
     return (await undiciFetch(url, undiciInit)) as unknown as Response
   }
 
+  // QR creation and its MQTT status channel must use the same network route.
+  // Replacing fetch alone leaves native WebSocket connections going direct.
+  class PluginWebSocket extends UndiciWebSocket {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      const target = new URL(url)
+      if (target.protocol === 'wss:') target.protocol = 'https:'
+      super(url, {
+        protocols,
+        ...(shouldProxyUrl(target, noProxy) ? { dispatcher } : {})
+      })
+    }
+  }
+
   return {
     fetch: createSecureProxyFetch({
       proxyRequest,
@@ -502,6 +521,7 @@ export function installProxyFetch(
       allowDirectFallback,
       noProxy
     }),
+    WebSocket: PluginWebSocket as unknown as typeof globalThis.WebSocket,
     close: () => dispatcher.close()
   }
 }
@@ -532,9 +552,10 @@ export async function initProxy(): Promise<void> {
     process.env.no_proxy ?? process.env.NO_PROXY ?? ''
   )
   globalThis.fetch = installed.fetch
+  globalThis.WebSocket = installed.WebSocket
 
   console.log(
-    `[proxy] External HTTPS fetch uses ${proxyLabel(proxy.url)}; direct fallback ${
+    `[proxy] External HTTPS fetch and WSS use ${proxyLabel(proxy.url)}; direct fallback ${
       allowDirectFallback ? 'enabled' : 'disabled'
     }`
   )

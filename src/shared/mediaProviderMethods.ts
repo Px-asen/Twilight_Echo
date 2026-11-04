@@ -58,6 +58,7 @@ export type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'fetchPlayRecords'
   | 'fetchRecentSongs'
+  | 'reportListening'
   | 'fetchIntelligenceList'
   | 'followArtist'
   | 'followUser'
@@ -128,6 +129,7 @@ export const TWILIGHT_MEDIA_PROVIDER_METHODS = [
   'fetchUserFolloweds',
   'fetchPlayRecords',
   'fetchRecentSongs',
+  'reportListening',
   'fetchIntelligenceList',
   'followArtist',
   'followUser',

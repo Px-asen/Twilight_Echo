@@ -6,6 +6,7 @@ import { PluginSettingsRepository } from '../../core/plugins/settingsRepository.
 import { protectJsonValue, unprotectJsonValue } from '../security/secureStorage.ts'
 import { providerPlaybackIdentities } from '../audio/providerPlaybackIdentity.ts'
 import { createPluginManagerPlatform } from './platform.ts'
+import { openQqMusicOfficialLogin } from './qqmusicOfficialLogin.ts'
 export type { TwilightProviderCallOptions } from '../../core/plugins/manager.ts'
 export interface TwilightPluginManagerOptions extends Omit<
   CorePluginManagerOptions,
@@ -20,6 +21,7 @@ export class TwilightPluginManager extends CorePluginManager {
   constructor(options: TwilightPluginManagerOptions) {
     super({
       ...options,
+      qqmusicOfficialLogin: options.qqmusicOfficialLogin ?? openQqMusicOfficialLogin,
       recordPlaybackIdentity: (...args) => providerPlaybackIdentities.record(...args),
       settings: new PluginSettingsRepository({
         protect: protectJsonValue,

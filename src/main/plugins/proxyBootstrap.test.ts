@@ -174,6 +174,32 @@ test('rejects a self-signed target certificate through the production proxy disp
   }
 })
 
+test('WSS uses the configured CONNECT proxy and fails closed', async () => {
+  const sockets = new Set<Socket>()
+  const targets: string[] = []
+  const proxy = createHttpServer()
+  trackConnections(proxy, sockets)
+  proxy.on('connect', (request, client) => {
+    targets.push(request.url || '')
+    client.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n')
+  })
+  const port = await listen(proxy)
+  const installed = installProxyFetch(`http://127.0.0.1:${port}`, fetch)
+  try {
+    const socket = new installed.WebSocket('wss://mqtt.invalid/ws/handshake', 'mqtt')
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('WSS did not use the configured proxy')), 2000)
+      socket.addEventListener('error', () => { clearTimeout(timer); resolve() }, { once: true })
+      socket.addEventListener('open', () => { clearTimeout(timer); reject(new Error('Unexpected WSS connection')) }, { once: true })
+    })
+    assert.deepEqual(targets, ['mqtt.invalid:443'])
+  } finally {
+    for (const socket of sockets) socket.destroy()
+    await installed.close()
+    await closeServer(proxy)
+  }
+})
+
 test('blocks HTTPS to remote HTTP redirect downgrade before a second request', async () => {
   let proxyRequests = 0
   let directRequests = 0

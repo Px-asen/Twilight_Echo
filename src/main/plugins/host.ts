@@ -6,6 +6,7 @@ import { createServicePort } from '../services/servicePort.ts'
 import { initProxy } from './proxyBootstrap'
 import { redactSensitiveText } from '../../shared/errors/redactSensitiveText.ts'
 import { QISHUI_PLUGIN_ID } from './qishuiAuthBridge.ts'
+import { QQMUSIC_PLUGIN_ID } from '../../shared/qqmusicLogin.ts'
 import { createNcmApiRuntime } from '../ncm/runtimeAdapter.ts'
 import { normalizeInternalNcmRequestOptions } from '../../core/plugins/rpcCoordinator.ts'
 import type {
@@ -171,14 +172,18 @@ interface TwilightPluginContext {
       checkQrLogin: (key: string) => Promise<unknown>
       clear: () => Promise<void>
     }
+    qqmusicAuth?: {
+      officialLogin: (options?: { signal?: AbortSignal }) => Promise<unknown>
+    }
     internal?: {
       ncm?: {
+        officialLoginAvailable: boolean
         request: (
           path: string,
           cookie?: string,
           options?: { signal?: AbortSignal; idempotencyKey?: string }
         ) => Promise<unknown>
-        officialLogin: () => Promise<string>
+        officialLogin: (options?: { signal?: AbortSignal }) => Promise<string>
         getCachedSong: (songId: number) => Promise<string | null>
         cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
         prepareAutoMixSong: (
@@ -254,6 +259,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'fetchUserFolloweds',
   'fetchPlayRecords',
   'fetchRecentSongs',
+  'reportListening',
   'fetchIntelligenceList',
   'followArtist',
   'followUser',
@@ -322,7 +328,8 @@ async function activatePlugin(
         message.pluginId,
         message.apiVersion,
         message.dataDir,
-        message.manifest.permissions
+        message.manifest.permissions,
+        message.browserLoginProviders ?? []
       )
     )
     post({ kind: 'activated', pluginId: message.pluginId })
@@ -359,7 +366,8 @@ function createContext(
   pluginId: string,
   apiVersion: number,
   storagePath: string,
-  permissions: TwilightPluginPermission[]
+  permissions: TwilightPluginPermission[],
+  browserLoginProviders: Array<'ncm' | 'qqmusic'>
 ): TwilightPluginContext {
   const twilight: TwilightPluginContext['twilight'] = {
     events: {
@@ -475,6 +483,7 @@ function createContext(
   if (pluginId === INTERNAL_NCM_PLUGIN_ID) {
     twilight.internal = {
       ncm: {
+        officialLoginAvailable: browserLoginProviders.includes('ncm'),
         request: async (path, cookie, options) => {
           if (typeof path !== 'string') throw new Error('ncmRequest path 必须是字符串')
           const normalized = normalizeInternalNcmRequestOptions(
@@ -487,7 +496,7 @@ function createContext(
             { ...normalized, signal: options?.signal }
           )
         },
-        officialLogin: () => callInternalNcmApi('ncmOfficialLogin', []) as Promise<string>,
+        officialLogin: options => callInternalNcmApi('ncmOfficialLogin', [], options?.signal) as Promise<string>,
         getCachedSong: (songId) =>
           callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,
         cacheSong: (songId, url, fileName) =>
@@ -507,6 +516,12 @@ function createContext(
       getQrLogin: () => callQishuiAuthApi('qishuiGetQrLogin', []),
       checkQrLogin: (key) => callQishuiAuthApi('qishuiCheckQrLogin', [key]),
       clear: () => callQishuiAuthApi('qishuiClear', []).then(() => undefined)
+    }
+  }
+
+  if (pluginId === QQMUSIC_PLUGIN_ID && browserLoginProviders.includes('qqmusic')) {
+    twilight.qqmusicAuth = {
+      officialLogin: options => callApi('auth', 'qqmusicOfficialLogin', [], options?.signal)
     }
   }
 

@@ -136,7 +136,10 @@ export class NcmApiService<TServer extends Server = Server> {
     if (idempotencyKey && NCM_IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
       headers['X-Twilight-Idempotency-Key'] = idempotencyKey
     }
-    const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
+    // NCBL submits two uploads, each with a 15-second upstream deadline.
+    const timeout = normalizedPath.split('?')[0] === '/scrobble/v1'
+      ? 40_000 : NCM_API_REQUEST_TIMEOUT_MS
+    const timer = setTimeout(() => controller.abort(), timeout)
     try {
       const res = await (this.options.fetch ?? fetch)(url, {
         signal: controller.signal,

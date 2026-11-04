@@ -12,6 +12,8 @@ const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS = 30000
 const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS = 120000
 
 export function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
+  if (method === 'openOfficialLogin') return 240_000
+  if (method === 'reportListening') return 45_000
   if (
     [
       'fetchPlaylistTracks',
@@ -200,7 +202,8 @@ export function normalizeProviderUi(raw: unknown): TwilightMediaProviderRegistra
           .map((item) => ({
             label: typeof item.label === 'string' ? item.label : '',
             icon: typeof item.icon === 'string' ? item.icon : 'pi pi-external-link',
-            method: typeof item.method === 'string' ? item.method : ''
+            method: typeof item.method === 'string' ? item.method : '',
+            ...(item.primary === true ? { primary: true } : {})
           }))
           .filter((action) => action.label && action.method)
       : undefined,
@@ -310,6 +313,7 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   fetchUserFolloweds: 'library',
   fetchPlayRecords: 'library',
   fetchRecentSongs: 'library',
+  reportListening: 'library',
   fetchIntelligenceList: 'playlist',
   followArtist: 'library',
   followUser: 'library',

@@ -162,7 +162,7 @@
   "dependencies": {
     "@borewit/text-codec": "0.2.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@neteasecloudmusicapienhanced/api": "^4.35.1",
+    "@neteasecloudmusicapienhanced/api": "4.36.1",
     "@tokenizer/inflate": "0.4.1",
     "@tokenizer/token": "0.3.0",
     "@xmldom/xmldom": "^0.9.12",

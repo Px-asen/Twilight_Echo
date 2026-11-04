@@ -30,6 +30,33 @@ const unionCoversRegistration: AssertNever<MethodsMissingFromUnion> = true
 
 const managerSource = readFileSync(new URL('../../core/plugins/manager.ts', import.meta.url), 'utf8')
 
+test('official QQ login is restricted to its provider, uses host-owned URLs and propagates cancellation', async () => {
+  const ast = ts.createSourceFile('manager.ts', managerSource, ts.ScriptTarget.Latest, true)
+  const declaration = ast.statements.find((node): node is ts.ClassDeclaration =>
+    ts.isClassDeclaration(node) && node.name?.text === 'TwilightPluginManager')!
+  const method = declaration.members.find(node =>
+    ts.isMethodDeclaration(node) && node.name.getText(ast) === 'handleApiCall')!
+  const code = ts.transpileModule(`class Manager {${method.getText(ast)}}`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  const id = 'com.twilightecho.provider.qqmusic'
+  const Manager = runInNewContext(`${code}\nManager`, { Error, QQMUSIC_PLUGIN_ID: id }) as new () => {
+    handleApiCall(id: string, message: unknown, signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown }>
+  }
+  const controller = new AbortController()
+  let calls = 0
+  const manager = Object.assign(new Manager(), {
+    requirePermission: (_id: string, permission: string) => assert.equal(permission, 'network'),
+    qqmusicOfficialLogin: async (signal: AbortSignal) => { calls++; assert.equal(signal, controller.signal); return { loginType: 2 } }
+  })
+  const message = { requestId: 'official', namespace: 'auth', method: 'qqmusicOfficialLogin', args: [] }
+  assert.equal((await manager.handleApiCall('other', message)).ok, false)
+  assert.equal((await manager.handleApiCall(id, { ...message, args: ['https://evil.test'] })).ok, false)
+  assert.equal(calls, 0)
+  assert.equal((await manager.handleApiCall(id, message, controller.signal)).ok, true)
+  assert.equal(calls, 1)
+})
+
 test('Core acknowledges plugin imports after persistence and emits one combined result notice', async () => {
   const ast = ts.createSourceFile('manager.ts', managerSource, ts.ScriptTarget.Latest, true)
   const declaration = ast.statements.find((node): node is ts.ClassDeclaration =>

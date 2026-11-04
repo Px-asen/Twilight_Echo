@@ -109,6 +109,7 @@ export class CorePlatformClient {
         name === 'audio.confirmWindowsRestart' ||
           name === 'remote.confirmDevice' ||
           name === 'ncm.officialLogin' ||
+          name === 'qqmusic.officialLogin' ||
           name === 'ncm.chooseUploadFiles' ||
           name === 'ncm.chooseDownloadFile' ||
           name === 'automix.chooseArchive' ||
