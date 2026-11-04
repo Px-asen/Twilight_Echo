@@ -12,6 +12,7 @@ import { createHash } from '../../shared/portableCrypto.ts'
 import { basename, extname, join, resolve } from '../../shared/portablePath.ts'
 import { hashFile } from '../persistence/fileHash.ts'
 import { coreFs, coreFsPromises } from '../ports/index.ts'
+import { isCanonicalPathInside } from '../persistence/pathGrants.ts'
 
 const { existsSync } = coreFs
 const { lstat, mkdir, readFile, rename, readdir, stat, writeFile } = coreFsPromises
@@ -59,6 +60,7 @@ export class Vst3CatalogService {
   }
 
   async initialize(): Promise<void> {
+    if (this.initialized) return
     await this.runExclusive(async () => {
       if (this.initialized) return
       await mkdir(this.root, { recursive: true })
@@ -96,10 +98,17 @@ export class Vst3CatalogService {
     })
   }
 
-  async setSearchPaths(paths: string[]): Promise<Vst3CatalogState> {
+  async setSearchPaths(paths: string[], retireOutsideRoots = false): Promise<Vst3CatalogState> {
     await this.initialize()
     return await this.runExclusive(async () => {
       this.state.searchPaths = uniquePaths(paths, this.environment.platform)
+      if (retireOutsideRoots) {
+        const allowed = await Promise.all(this.state.entries.map(async entry => {
+          const path = await coreFsPromises.realpath(entry.modulePath).catch(() => null)
+          return path !== null && this.state.searchPaths.some(root => isCanonicalPathInside(root, path))
+        }))
+        this.state.entries = this.state.entries.filter((_entry, index) => allowed[index])
+      }
       await this.writeState()
       return cloneState(this.state, this.environment.helpers)
     })

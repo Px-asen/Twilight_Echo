@@ -102,18 +102,19 @@ export async function exportDspProfileArchive(
 export async function importDspProfileArchive(
   archivePath: string,
   assets: DspAssetLibrary,
-  temporaryDirectory: string
+  temporaryDirectory: string,
+  maxBytes = MAX_PROFILE_ARCHIVE_BYTES
 ): Promise<ImportedDspProfile> {
   const source = resolve(archivePath)
   const archiveInfo = await stat(source)
   if (
     !archiveInfo.isFile() ||
     archiveInfo.size <= 0 ||
-    archiveInfo.size > MAX_PROFILE_ARCHIVE_BYTES
+    archiveInfo.size > maxBytes
   ) {
     throw new Error('DSP 配置包大小不在允许范围内')
   }
-  await inspectProfileArchive(source)
+  await inspectProfileArchive(source, maxBytes)
   const temporaryRoot = await mkdtemp(join(temporaryDirectory, 'twilight-dsp-profile-'))
   try {
     await extractZip(source, { dir: temporaryRoot })
@@ -135,6 +136,7 @@ export async function importDspProfileArchive(
       const imported = await assets.importFile({
         kind: entry.asset.kind,
         sourcePath,
+        fileName: entry.asset.fileName,
         name: entry.asset.name
       })
       if (imported.sha256 !== entry.asset.sha256) throw new Error('DSP 配置包资料校验失败')
@@ -223,7 +225,7 @@ function isArchiveAsset(value: unknown): value is ProfileArchiveManifest['assets
   )
 }
 
-async function inspectProfileArchive(source: string): Promise<void> {
+async function inspectProfileArchive(source: string, maxBytes = MAX_PROFILE_ARCHIVE_BYTES): Promise<void> {
   await new Promise<void>((resolveInspect, rejectInspect) => {
     yauzl.open(
       source,
@@ -236,6 +238,7 @@ async function inspectProfileArchive(source: string): Promise<void> {
         let count = 0
         let total = 0
         let settled = false
+        const paths = new Set<string>()
         const fail = (reason: Error): void => {
           if (settled) return
           settled = true
@@ -245,10 +248,13 @@ async function inspectProfileArchive(source: string): Promise<void> {
         zipFile.on('entry', (entry: ZipEntry) => {
           try {
             assertSafeArchiveEntry(entry)
+            const key = entry.fileName.toLowerCase()
+            if (paths.has(key)) throw new Error('DSP 配置包包含重复文件')
+            paths.add(key)
             if (!entry.fileName.endsWith('/')) {
               count += 1
               total += entry.uncompressedSize
-              if (count > MAX_PROFILE_FILES || total > MAX_PROFILE_ARCHIVE_BYTES) {
+              if (count > MAX_PROFILE_FILES || total > maxBytes) {
                 throw new Error('DSP 配置包解压后过大')
               }
             }
@@ -274,7 +280,7 @@ function assertSafeArchiveEntry(entry: ZipEntry): void {
   if (!entry.fileName || entry.fileName.length > 4096 || entry.fileName.includes('\\')) {
     throw new Error('DSP 配置包包含非法路径')
   }
-  if (entry.fileName.startsWith('/') || entry.fileName.split('/').includes('..')) {
+  if (entry.fileName.startsWith('/') || entry.fileName.includes(':') || entry.fileName.includes('\0') || entry.fileName.split('/').some(part => part === '..' || part === '.')) {
     throw new Error('DSP 配置包包含越界路径')
   }
   if (entry.uncompressedSize < 0 || !Number.isFinite(entry.uncompressedSize)) {

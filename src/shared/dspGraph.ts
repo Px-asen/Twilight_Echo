@@ -187,6 +187,8 @@ export interface DspGraphStatus {
   applyError?: string
   activeSceneId: string | null
   totalLatencyFrames: number
+  /** Sample rate of the processing frame domain used by latency/tail counts. */
+  latencySampleRate?: number
   totalTailFrames: number
   nodes: DspGraphNodeStatus[]
   compileState?: 'ready' | 'compiling' | 'failed' | 'bypassed'

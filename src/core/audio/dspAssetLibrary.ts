@@ -43,6 +43,7 @@ const MEDIA_TYPES: Record<string, string> = {
 export interface DspAssetImportOptions {
   kind: DspAssetKind
   sourcePath: string
+  fileName?: string
   name?: string
 }
 
@@ -115,7 +116,7 @@ export class DspAssetLibrary {
       return await this.storeFile({
         kind: options.kind,
         sourcePath,
-        fileName: basename(sourcePath),
+        fileName: options.fileName ? sanitizeFileName(options.fileName) : basename(sourcePath),
         name: options.name,
         sha256,
         byteSize: sourceInfo.size,

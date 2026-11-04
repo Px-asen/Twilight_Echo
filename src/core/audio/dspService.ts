@@ -27,7 +27,8 @@ import type {
   DspOutputStageConfig,
   DspStereoImageConfig
 } from '../../shared/dspGraph.ts'
-import { normalizeDspScenes } from '../../shared/dspGraph.ts'
+import { authorizeDspScenes, authorizeDspSettings } from './dspSettingsAuthorization.ts'
+import { lexicalPathKey } from '../persistence/pathGrants.ts'
 import {
   normalizeAudioProcessingSettings,
   resolveProcessingMasterState
@@ -48,6 +49,11 @@ import {
 } from './dspProfileArchive.ts'
 import { importCorrectionProfileFile, parseCorrectionProfileFile } from './correctionProfile.ts'
 import { importFrequencyResponseFromDialog } from './importFrequencyResponse.ts'
+import { createDspFactoryScene, type DspGraphNode } from '../../shared/dspGraph.ts'
+import { DSP_UPLOAD_MAX_BYTES, type DspLibraryEdit, type DspLibraryPage, type DspUploadBegin, type DspParameterPage } from '../../shared/dspLibrary.ts'
+import { DspUploads } from './dspUploads.ts'
+import { DspProfiles } from './dspProfiles.ts'
+import { join } from '../../shared/portablePath.ts'
 
 export interface CoreDspEngine {
   configureDsp<T>(operation: (configuration: CoreDspConfiguration) => Promise<T>): Promise<T>
@@ -84,6 +90,10 @@ export interface CoreDspPlatform {
 
 /** Owns DSP configuration and repositories; native retains graph compilation/rendering. */
 export class CoreDspService {
+  private readonly uploads: DspUploads
+  private readonly profiles: DspProfiles
+  private scanning = false
+  private scanFailed = false
   private readonly background = new Set<Promise<void>>()
   private active = false
   private sampleRate = EQ_RESPONSE_DEFAULT_SAMPLE_RATE
@@ -99,16 +109,27 @@ export class CoreDspService {
     catalog: Vst3CatalogService
     platform: CoreDspPlatform
     temporaryDirectory: string
+    uploadDirectory?: string
+    hostSearchPaths?: string[]
     now(): number
     newId(): string
     failed(error: unknown): void
   }
   constructor(options: CoreDspService['options']) {
     this.options = options
+    const staging = options.uploadDirectory ?? join(options.temporaryDirectory, `twilight-dsp-upload-${options.newId()}`)
+    this.uploads = new DspUploads(staging, options.now, options.newId)
+    this.profiles = new DspProfiles({ root: join(staging, 'profiles'), now: options.now, newId: options.newId, catalog: options.catalog })
   }
   async initialize(): Promise<void> {
+    await this.uploads.initialize()
+    await this.profiles.initialize()
     await this.options.assets.initialize()
     await this.options.catalog.initialize()
+    if (this.options.hostSearchPaths) {
+      const paths = await this.options.platform.call('dsp.authorizeVst3Paths', { paths: this.options.hostSearchPaths })
+      await this.options.catalog.setSearchPaths(paths, true)
+    }
     await this.options.platform.call('dsp.registerVst3Paths', {
       paths: (await this.options.catalog.getState()).searchPaths
     })
@@ -161,8 +182,20 @@ export class CoreDspService {
       .catch((error) => this.options.failed(error))
       .finally(() => this.background.delete(task))
   }
-  private reconcile(scenes = this.options.settings.read().dspScenes): Promise<void> {
-    return this.options.assets.reconcileReferences(collectDspAssetIds(scenes))
+  private async reconcile(
+    scenes = this.options.settings.read().dspScenes,
+    processing = this.options.settings.read().audioProcessing
+  ): Promise<void> {
+    const ids = new Set(collectDspAssetIds(scenes))
+    if (processing.convolverIrPath) {
+      const path = lexicalPathKey(processing.convolverIrPath)
+      for (const asset of await this.options.assets.list()) {
+        const owned = this.options.assets.getKnownPath(asset.id)
+        if (asset.kind === 'impulseResponse' && owned && lexicalPathKey(owned) === path)
+          ids.add(asset.id)
+      }
+    }
+    await this.options.assets.reconcileReferences(ids)
   }
   state(): Promise<CoreDspState> {
     return this.options.configuration.serialize(async () =>
@@ -180,37 +213,28 @@ export class CoreDspService {
     return this.options.engine.getDspGraphStatus()
   }
   private async authorizeScenes(scenes: DspScene[], signal?: AbortSignal): Promise<DspScene[]> {
-    const result = normalizeDspScenes(scenes, this.options.settings.read().audioProcessing)
-    for (const scene of result)
-      for (const node of scene.graph.nodes) {
-        const path = node.params.impulseResponsePath
-        if (node.params.impulseResponseAssetId) {
-          const asset = await this.options.assets.get(String(node.params.impulseResponseAssetId))
-          if (asset?.kind !== 'impulseResponse')
-            throw new Error('Managed impulse response not found')
-          await this.options.assets.getPath(asset.id)
-          delete node.params.impulseResponsePath
-        } else if (typeof path === 'string' && path)
-          node.params.impulseResponsePath = await this.options.platform.call(
-            'dsp.authorizeImpulse',
-            { path },
-            signal
-          )
-      }
-    return result
+    return authorizeDspScenes(
+      scenes,
+      this.options.settings.read().audioProcessing,
+      this.options.assets,
+      (path) => this.authorizeImpulse(path, signal)
+    )
+  }
+  private async authorizeImpulse(path: string, signal?: AbortSignal): Promise<string> {
+    for (const asset of await this.options.assets.list()) {
+      const owned = this.options.assets.getKnownPath(asset.id)
+      if (asset.kind === 'impulseResponse' && owned && lexicalPathKey(owned) === lexicalPathKey(path))
+        return this.options.assets.getPath(asset.id)
+    }
+    return this.options.platform.call('dsp.authorizeImpulse', { path }, signal)
   }
   /** Settings import shares the output lane; authorization precedes every native mutation. */
   async prepareSettingsRestore(next: AppSettings, signal: AbortSignal): Promise<AppSettings> {
-    const audioProcessing = { ...next.audioProcessing }
-    if (audioProcessing.convolverIrPath)
-      audioProcessing.convolverIrPath = await this.options.platform.call(
-        'dsp.authorizeImpulse',
-        { path: audioProcessing.convolverIrPath },
-        signal
-      )
-    const dspScenes = await this.authorizeScenes(next.dspScenes, signal)
+    const authorized = await authorizeDspSettings(next, this.options.assets, (path) =>
+      this.authorizeImpulse(path, signal)
+    )
     signal.throwIfAborted()
-    return { ...next, audioProcessing, dspScenes }
+    return authorized
   }
   async restoreSettings(next: AppSettings): Promise<Partial<AppSettings>> {
     const previous = this.options.settings.read()
@@ -248,7 +272,10 @@ export class CoreDspService {
       try {
         const patch = await action(engine)
         if (!Object.keys(patch).length) return
-        await this.reconcile(patch.dspScenes ?? this.options.settings.read().dspScenes)
+        await this.reconcile(
+          patch.dspScenes ?? this.options.settings.read().dspScenes,
+          patch.audioProcessing ?? this.options.settings.read().audioProcessing
+        )
         this.options.settings.update(patch)
       } catch (error) {
         try {
@@ -342,9 +369,7 @@ export class CoreDspService {
           ...edit.settings
         })
         impulsePath = processing.convolverIrPath
-          ? await this.options.platform.call('dsp.authorizeImpulse', {
-              path: processing.convolverIrPath
-            })
+          ? await this.authorizeImpulse(processing.convolverIrPath, signal)
           : ''
       }
       return this.commit(async (engine) => {
@@ -431,6 +456,208 @@ export class CoreDspService {
         total: all.length,
         items: all.slice(offset, offset + limit)
       }
+    })
+  }
+  library(assetOffset = 0, pluginOffset = 0, revision?: number): Promise<DspLibraryPage> {
+    return this.options.configuration.serialize(async () => {
+      if (revision !== undefined && revision !== this.options.configuration.getRevision())
+        throw Object.assign(new Error('DSP library changed'), { code: 'STALE_REVISION' })
+      const assets = await this.options.assets.list()
+      const catalog = await this.options.catalog.getState()
+      const state = this.options.engine.getDspSceneState()
+      return {
+        revision: this.options.configuration.getRevision(),
+        assets: { total: assets.length, offset: assetOffset, items: assets.slice(assetOffset, assetOffset + 100) },
+        plugins: { total: catalog.entries.length, offset: pluginOffset, items: catalog.entries.slice(pluginOffset, pluginOffset + 100)
+          .map(({ id, name, vendor, version, status, parameters }) => ({ id, name, vendor, version, status, parameterCount: parameters.length })) },
+        scenes: state.scenes.map(scene => ({ id: scene.id, name: scene.name, active: scene.id === state.activeSceneId,
+          pinned: scene.id === state.pinnedSceneId, nodes: scene.graph.nodes.map(node => ({
+            id: node.id, type: node.type, enabled: node.enabled,
+            assetId: typeof node.params.impulseResponseAssetId === 'string' && node.params.impulseResponseAssetId
+              ? node.params.impulseResponseAssetId : typeof node.params.correctionAssetId === 'string' && node.params.correctionAssetId
+                ? node.params.correctionAssetId : node.vst3?.stateAssetId ?? null,
+            catalogId: node.vst3?.catalogId ?? null })) })),
+        vst3Enabled: catalog.enabled, scanning: this.scanning, scanFailed: this.scanFailed,
+        searchRootCount: catalog.searchPaths.length, helpers: this.options.catalog.getHelpersAvailability(),
+        maxUploadBytes: DSP_UPLOAD_MAX_BYTES
+      }
+    })
+  }
+  beginUpload(owner: string, input: DspUploadBegin) { return this.uploads.begin(owner, input) }
+  uploadChunk(owner: string, id: string, offset: number, data: string) { return this.uploads.chunk(owner, id, offset, data) }
+  async cancelUpload(owner: string, id: string) {
+    await this.options.configuration.serialize(() => this.profiles.cancel(owner, id))
+    return this.uploads.cancel(owner, id)
+  }
+  async disconnectUploads(owner: string) {
+    await this.uploads.disconnect(owner)
+    return this.options.configuration.serialize(() => this.profiles.disconnect(owner))
+  }
+  isPluginScanActive() { return this.scanning }
+  commitUpload(owner: string, id: string, revision: number, signal: AbortSignal) {
+    return this.uploads.consume(owner, id, (path, input) => this.options.configuration.run(revision, signal, async () => {
+      if (input.kind === 'profile') throw new Error('请先预览配置包，再确认导入')
+      if (input.kind === 'correctionProfile') await parseCorrectionProfileFile(path)
+      signal.throwIfAborted()
+      return this.options.assets.importFile({ kind: input.kind, sourcePath: path, fileName: input.fileName, name: input.fileName })
+    }))
+  }
+  private requireRevision(revision: number, signal: AbortSignal) {
+    signal.throwIfAborted()
+    if (revision !== this.options.configuration.getRevision()) throw Object.assign(new Error('音频设置已改变，请刷新'), { code: 'STALE_REVISION' })
+  }
+  previewProfile(owner: string, uploadId: string, revision: number, signal: AbortSignal) {
+    return this.uploads.inspect(owner, uploadId, (path, input) => this.options.configuration.serialize(async () => {
+      this.requireRevision(revision, signal)
+      if (input.kind !== 'profile') throw new Error('请选择 .tedsp 配置包')
+      return this.profiles.preview(owner, uploadId, path, revision, signal)
+    }))
+  }
+  importProfile(owner: string, uploadId: string, previewId: string, revision: number, signal: AbortSignal) {
+    return this.uploads.consume(owner, uploadId, (_path, input) => this.options.configuration.run(revision, signal, async () => {
+      if (input.kind !== 'profile') throw new Error('请选择 .tedsp 配置包')
+      if (this.scanning) throw Object.assign(new Error('插件扫描正在进行'), { code: 'BUSY' })
+      return this.profiles.import(owner, uploadId, previewId, revision, this.options.assets, async scenes => {
+        const current = this.options.engine.getDspSceneState()
+        if (current.scenes.length + scenes.length > 64) throw new Error('导入后场景超过 64 个，请先整理现有场景')
+        signal.throwIfAborted()
+        await this.commit(async engine => {
+          const next = await engine.setDspScenes(await this.authorizeScenes([...current.scenes, ...scenes], signal), current.pinnedSceneId)
+          return { dspScenes: next.scenes, dspPinnedSceneId: next.pinnedSceneId }
+        })
+        return { sceneIds: scenes.map(scene => scene.id) }
+      })
+    }))
+  }
+  exportProfile(owner: string, revision: number, name: string, signal: AbortSignal) {
+    return this.options.configuration.serialize(async () => {
+      this.requireRevision(revision, signal)
+      const state = this.options.engine.getDspSceneState()
+      return this.profiles.export(owner, name, state.scenes, state.pinnedSceneId, this.options.assets,
+        path => this.authorizeImpulse(path, signal), signal)
+    })
+  }
+  profileChunk(owner: string, id: string, offset: number) {
+    return this.options.configuration.serialize(() => this.profiles.chunk(owner, id, offset))
+  }
+  releaseProfile(owner: string, id: string) {
+    return this.options.configuration.serialize(() => this.profiles.release(owner, id))
+  }
+  nodeParameters(revision: number, sceneId: string, nodeId: string, offset = 0): Promise<DspParameterPage> {
+    return this.options.configuration.serialize(async () => {
+      this.requireRevision(revision, new AbortController().signal)
+      const node = this.options.engine.getDspSceneState().scenes.find(scene => scene.id === sceneId)?.graph.nodes.find(node => node.id === nodeId)
+      const entry = node?.type === 'vst3Plugin' && node.vst3 ? await this.options.catalog.find(node.vst3.catalogId) : null
+      if (!node || !entry || entry.classId !== node.vst3?.classId || entry.status !== 'available') throw new Error('场景插件不可用，请重新扫描或选择节点')
+      const parameters = node.params.parameters as Record<string, unknown> | undefined
+      return { revision, sceneId, nodeId, name: entry.name, total: entry.parameters.length, offset,
+        items: entry.parameters.slice(offset, offset + 100).map(parameter => {
+          const override = parameters?.[String(parameter.id)]
+          return { ...parameter, overridden: typeof override === 'number', value: typeof override === 'number' ? override : node.vst3?.stateAssetId ? null : parameter.defaultNormalizedValue }
+        }) }
+    })
+  }
+  async editLibrary(revision: number, edit: DspLibraryEdit, signal: AbortSignal): Promise<void> {
+    if (this.scanning) throw Object.assign(new Error('Plugin scan is running'), { code: 'BUSY' })
+    if (edit.kind === 'vst3Enabled') return this.editVst3({ revision, edit: { kind: 'enabled', enabled: edit.enabled } }, signal)
+    if (edit.kind === 'scan' || edit.kind === 'clearQuarantine') {
+      await this.options.configuration.run(revision, signal, async () => {
+        // Reauthorize the persisted paths on every scan; a remote request cannot widen host grants.
+        const catalog = this.options.catalog
+        await this.options.platform.call('dsp.authorizeVst3Paths', { paths: (await catalog.getState()).searchPaths }, signal)
+        signal.throwIfAborted()
+        this.scanning = true; this.scanFailed = false
+        const task = (async () => {
+          try {
+            if (edit.kind === 'clearQuarantine') await catalog.clearQuarantine(edit.id)
+            const state = await catalog.scan()
+            if (edit.kind === 'clearQuarantine' && state.entries.find(row => row.id === edit.id)?.status === 'available')
+              this.options.engine.clearVst3RecoveryBypass(edit.id)
+          } catch (error) { this.scanFailed = true; this.options.failed(error) }
+          finally {
+            await this.options.configuration.serialize(async () => {
+              this.scanning = false; this.options.engine.refreshDspGraph(); this.options.configuration.changed()
+            })
+          }
+        })()
+        this.background.add(task)
+        void task.finally(() => this.background.delete(task)).catch(() => {})
+      })
+      return
+    }
+    if (edit.kind === 'removeAsset') return this.removeAsset(revision, edit.id, signal)
+    return this.options.configuration.run(revision, signal, async () => {
+      const state = structuredClone(this.options.engine.getDspSceneState())
+      if (edit.kind === 'createScene') {
+        if (state.scenes.length >= 64) throw new Error('最多保存 64 个场景')
+        const scene = createDspFactoryScene('transparent', `managed-${this.options.newId()}`)
+        scene.name = edit.name.trim(); scene.enabled = false
+        state.scenes.push(scene)
+      } else {
+        const scene = state.scenes.find(row => row.id === edit.sceneId)
+        if (!scene || scene.id === 'default' && edit.kind !== 'parameter') throw new Error('请先新建或选择自定义场景')
+        if (edit.kind === 'applyScene') {
+          scene.enabled = true
+        } else if (edit.kind === 'removeScene') {
+          state.scenes = state.scenes.filter(row => row !== scene)
+          if (state.pinnedSceneId === scene.id) state.pinnedSceneId = null
+        } else if (edit.kind === 'parameter') {
+          const node = scene.graph.nodes.find(node => node.id === edit.nodeId && node.type === 'vst3Plugin')
+          const entry = node?.vst3 ? await this.options.catalog.find(node.vst3.catalogId) : null
+          const parameter = entry?.parameters.find(parameter => parameter.id === edit.parameterId)
+          if (!node || entry?.status !== 'available' || entry.classId !== node.vst3?.classId || !parameter || (parameter.flags & (2 | 16)) !== 0)
+            throw new Error('此参数不可编辑')
+          const parameters = { ...(node.params.parameters as Record<string, unknown> ?? {}) }
+          if (edit.value === null) delete parameters[String(edit.parameterId)]
+          else parameters[String(edit.parameterId)] = parameter.stepCount > 0 ? Math.round(edit.value * parameter.stepCount) / parameter.stepCount : edit.value
+          node.params = { ...node.params, parameters }
+        } else if (edit.kind === 'removeNode') {
+          if (!scene.graph.nodes.some(node => node.id === edit.nodeId)) throw new Error('节点不存在')
+          scene.graph.nodes = scene.graph.nodes.filter(node => node.id !== edit.nodeId)
+        } else {
+          let node: DspGraphNode
+          if (edit.kind === 'bindImpulse') {
+            const asset = await this.options.assets.get(edit.assetId)
+            if (asset?.kind !== 'impulseResponse') throw new Error('请选择当前声区的 IR 资料')
+            await this.options.assets.getPath(asset.id)
+            node = { id: `ir-${this.options.newId()}`, type: 'convolver', enabled: true,
+              params: { impulseResponseAssetId: asset.id, wet: 1, dry: 0, gainDb: 0, routingMode: 'diagonal', layout: 'stereo', matrix: [] } }
+          } else if (edit.kind === 'bindCorrection') {
+            const asset = await this.options.assets.get(edit.assetId)
+            if (asset?.kind !== 'correctionProfile') throw new Error('请选择当前声区的校正资料')
+            const profile = await parseCorrectionProfileFile(await this.options.assets.getPath(asset.id))
+            node = { id: `eq-${this.options.newId()}`, type: 'equalizer', enabled: true,
+              params: { correctionAssetId: asset.id, mode: 'parametric', preampDb: profile.preampDb, bands: profile.bands } }
+          } else {
+            const plugin = await this.options.catalog.find(edit.catalogId)
+            if (!plugin || plugin.status !== 'available') throw new Error('插件未通过扫描')
+            if (edit.stateAssetId && !this.options.assets.resolveVst3State(edit.stateAssetId).path) throw new Error('插件状态资料不可用')
+            node = { id: `vst3-${this.options.newId()}`, type: 'vst3Plugin', enabled: true,
+              vst3: { catalogId: plugin.id, classId: plugin.classId, ...(edit.stateAssetId ? { stateAssetId: edit.stateAssetId } : {}) },
+              params: { parameters: {} } }
+          }
+          if (node.type !== 'vst3Plugin') scene.graph.nodes = scene.graph.nodes.filter(row => row.type !== node.type)
+          if (scene.graph.nodes.length >= 64) throw new Error('场景节点过多')
+          const tail = scene.graph.nodes.findIndex(row => row.type === 'meter' || row.type === 'nativePlugin' && row.pluginAbiVersion === 1)
+          scene.graph.nodes.splice(tail < 0 ? scene.graph.nodes.length : tail, 0, node)
+          // A newly prepared scene stays out of automatic matching until explicitly applied.
+        }
+      }
+      signal.throwIfAborted()
+      await this.commit(async engine => {
+        let processing: AudioProcessingSettings | undefined
+        if (edit.kind === 'applyScene') {
+          const graph = state.scenes.find(row => row.id === edit.sceneId)!.graph
+          processing = { ...this.options.settings.read().audioProcessing,
+            ...(graph.nodes.some(node => node.enabled && node.type === 'convolver') ? { convolverEnabled: true } : {}),
+            ...(graph.nodes.some(node => node.enabled && node.type === 'equalizer') ? { eqEnabled: true } : {}) }
+          await engine.setAudioProcessing(buildEffectiveAudioProcessingSettings(processing, this.options.settings.read().headphoneCompensation))
+        }
+        let next = await engine.setDspScenes(await this.authorizeScenes(state.scenes), state.pinnedSceneId)
+        if (edit.kind === 'applyScene') next = await engine.applyDspScene(edit.sceneId, edit.confirmDsdPcmFallback)
+        const compensated = this.options.settings.read().audioEqAutoPreamp?.enabled ? await this.compensate(engine) : {}
+        return { ...(processing ? { audioProcessing: processing } : {}), dspScenes: next.scenes, dspPinnedSceneId: next.pinnedSceneId, ...compensated }
+      })
     })
   }
   correction(id: string) {
@@ -569,6 +796,7 @@ export class CoreDspService {
   async shutdown(): Promise<void> {
     this.active = false
     await this.flush()
+    await this.uploads.close()
   }
   private async quarantine(reason: string): Promise<void> {
     const ids = new Set(
