@@ -144,7 +144,8 @@ export class CoreMusicFocusService {
     input: MusicFocusPlay,
     signal: AbortSignal,
     restore?: Restore,
-    identity?: RequestIdentity
+    identity?: RequestIdentity,
+    playback = this.options.playback
   ): Promise<MusicFocusPlayResult> {
     if (!validMusicFocusPayload('focus.play', input)) throw new Error('无效的 Focus 播放请求')
     const key = identity ? receiptKey(identity) : null
@@ -194,7 +195,7 @@ export class CoreMusicFocusService {
     let committed = false
     // Capture playback intent before the first await (including history hydration).
     try {
-      await this.options.playback.fromPages(
+      await playback.fromPages(
         async (append) => {
           await check()
           let offset = 0

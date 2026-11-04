@@ -3,7 +3,7 @@ import { fork, type ChildProcess } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync, statSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
@@ -18,6 +18,7 @@ import { versionSourceKey } from '../../shared/trackSourceIdentity.ts'
 import { PlatformIdentificationProvider } from '../../core/library/musicIdentificationProvider.ts'
 import type { MusicAlbum } from '../../shared/rhineMusic.ts'
 import { listeningSourceIdentity } from '../../shared/listeningSourceIdentity.ts'
+import { CoreMetadataService } from '../../core/library/metadataService.ts'
 
 class ManualProcess extends EventEmitter {
   messages: LibraryDatabaseWorkerRequest[] = []
@@ -498,6 +499,66 @@ function workerClient(json: string, children: ChildProcess[], changed?: (revisio
     }
   })
 }
+
+test('track completion batches real worker writes while playback queue reads keep making progress', { timeout: 10000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'metadata-listening-worker-'))
+  const json = join(root, 'library.json')
+  const tracks = Array.from({ length: 200 }, (_, i) => ({
+    id: `local:${i}`, source: 'local', filePath: join(root, `${i}.flac`),
+    fileName: `${i}.flac`, title: 'Moon River', artist: 'Audrey', album: '',
+    duration: 181, size: 100, cover: null, lyrics: null
+  }))
+  writeFileSync(json, JSON.stringify(tracks))
+  const children: ChildProcess[] = [], revisions: number[] = [], batches: number[] = []
+  const client = workerClient(json, children, revision => revisions.push(revision))
+  let service: CoreMetadataService | undefined = undefined
+  t.after(async () => {
+    await service?.shutdown()
+    client.destroy()
+    for (const child of children)
+      if (child.exitCode === null && child.signalCode === null) await once(child, 'exit')
+    assert.equal(dirname(root), resolve(tmpdir()))
+    assert.ok(basename(root).startsWith('metadata-listening-worker-'))
+    rmSync(root, { recursive: true, force: true })
+  })
+  await client.getMetadata()
+  while ((await client.catalogStatus()).localPending) await client.catalogAdvance()
+  const queue = await client.createLibraryQueue({ sort: 'insertion' }, 'local:0')
+  await tick()
+  revisions.length = 0
+  const errors: unknown[] = []
+  service = new CoreMetadataService({
+    database: {
+      queryTracks: query => client.queryTracks(query),
+      getTracksByIds: ids => client.getTracksByIds(ids),
+      patchTracks: patches => { batches.push(patches.length); return client.patchTracks(patches) }
+    },
+    provider: { searchSongs: async () => ({ items: [{ ...tracks[0], id: 'ncm:one', source: 'ncm', album: 'Online Album', genre: 'Jazz' }], total: 1 }) },
+    available: () => true, policy: () => ({ cover: false, lyrics: false, metadata: true }),
+    now: Date.now, newId: () => 'manual-token', changed: () => {}, libraryChanged: () => {},
+    failed: error => errors.push(error)
+  })
+  service.activate()
+  const latencies: number[] = []
+  const deadline = Date.now() + 5000
+  do {
+    const started = performance.now()
+    const page = await client.readLibraryQueue(queue.id, 0, 1)
+    latencies.push(performance.now() - started)
+    assert.equal(page.items[0].track?.id, 'local:0')
+    assert.equal(page.revision, queue.revision, 'completion does not rebuild the playing queue')
+    await new Promise<void>(done => setTimeout(done, 5))
+  } while (service.snapshot().state === 'enriching' && Date.now() < deadline)
+  assert.equal(service.snapshot().state, 'completed')
+  assert.equal(service.snapshot().completed, 200)
+  assert.deepEqual(batches, Array(8).fill(25))
+  assert.equal(new Set(revisions).size, 8)
+  assert.equal((await client.getTracksByIds(['local:199'])).tracks[0].album, 'Online Album')
+  assert.ok(latencies.length > 3)
+  assert.ok(Math.max(...latencies) < 500, 'queue reads must interleave with background writes')
+  assert.deepEqual(errors, [])
+  t.diagnostic(`${latencies.length} queue reads during completion; max ${Math.max(...latencies).toFixed(1)} ms; ${batches.length} commits for 200 tracks`)
+})
 
 test('legacy query publication, input fences, results and cancellation survive real database worker replacement', async t => {
   const root = mkdtempSync(join(tmpdir(), 'legacy-query-worker-')), json = join(root, 'library.json')

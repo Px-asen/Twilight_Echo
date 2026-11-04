@@ -40,6 +40,33 @@ function replacement(
   }
 }
 
+test('Zone SQL clone retains duplicate selection, shuffled/original orders, mode and snapshots without sharing cursor or undo', () => {
+  const db = new LibraryDatabase(':memory:')
+  try {
+    let source = restore(db, 'handoff', 'Source')
+    source = db.editLibraryQueue(source.id, source.revision, { kind: 'move', entryId: 'other', beforeEntryId: 'same:first' }).queue
+    const reference = { id: source.id, revision: source.revision, index: source.index, entryId: source.selectedEntryId! }
+    const sourceRows = db.readLibraryQueue(source.id).items
+    const copy = db.clonePlaybackQueue(reference)
+    assert.notEqual(copy.id, source.id)
+    assert.equal(copy.revision, 0)
+    assert.equal(copy.canUndo, false)
+    assert.equal(copy.selectedEntryId, source.selectedEntryId)
+    assert.equal(copy.playMode, source.playMode)
+    assert.equal(copy.order, source.order)
+    assert.deepEqual(db.readLibraryQueue(copy.id).items, sourceRows)
+    const positions = (id: string) => db.sql.prepare('SELECT position,entry_id,original_position FROM queue_entries WHERE queue_id=? ORDER BY position').all(id)
+    assert.deepEqual(positions(copy.id), positions(source.id))
+    db.editLibraryQueue(copy.id, copy.revision, { kind: 'select', entryId: 'same:first' })
+    assert.deepEqual(db.getLibraryQueue(source.id), source)
+    assert.throws(() => db.clonePlaybackQueue({ ...reference, entryId: 'other' }), /selection changed/)
+    db.editLibraryQueue(source.id, source.revision, { kind: 'remove', entryIds: ['other'] })
+    assert.throws(() => db.clonePlaybackQueue(reference), /changed concurrently/)
+    assert.equal(db.readLibraryQueue(copy.id).items.length, 3)
+    assert.deepEqual(db.sql.prepare('PRAGMA foreign_key_check').all(), [])
+  } finally { db.close() }
+})
+
 test('private source replacement retains the occurrence, duplicates, original order and queue-scoped snapshots', () => {
   const db = new LibraryDatabase(':memory:')
   try {

@@ -47,7 +47,7 @@ export class CoreMusicTagsService {
   async rename(input: MusicTagsRename) { const result = await this.options.database.tagsRename(input, this.options.now()); this.observe(result.token); return result }
   async delete(input: MusicTagsDelete) { const result = await this.options.database.tagsDelete(input); this.observe(result.token); return result }
   async memberSet(input: MusicTagsMemberSet) { const result = await this.options.database.tagsMemberSet(input, this.options.now()); this.observe(result.token); return result }
-  async play(request: MusicTagsPlay, signal: AbortSignal, restore?: Restore): Promise<MusicTagsPlayResult> {
+  async play(request: MusicTagsPlay, signal: AbortSignal, restore?: Restore, playback = this.options.playback): Promise<MusicTagsPlayResult> {
     if (!validMusicTagsPayload('tags.play', request)) throw new Error('无效的标签播放请求')
     const frozen = { ...request.token }
     const guard = () => {
@@ -63,7 +63,7 @@ export class CoreMusicTagsService {
       guard()
     }
     let total = 0, selectedIndex = 0, found = request.sourceId === undefined
-    await this.options.playback.fromPages(async append => {
+    await playback.fromPages(async append => {
       // Capture the playback intent before any database await, so a slower tag
       // read cannot supersede a newer explicit play command.
       await check()

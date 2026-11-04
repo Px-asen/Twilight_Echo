@@ -18,3 +18,10 @@ export type CoreQueueImportReply = LibraryQueueBuildReply | { kind: 'retiring'; 
 export interface CoreQueueImportApi {
   importLegacyPlaybackQueue(command: CoreQueueImportCommand): Promise<CoreQueueImportReply>
 }
+
+/** The primary legacy identity stays compatible; additional sessions own separate import leases. */
+export function legacyQueueImportOwner(id: string): string {
+  const match = /^core-session-(?:(zone-[a-f0-9-]{36}|group-[a-f0-9-]{36})-)?[0-9]+$/.exec(id)
+  if (!match) throw new Error('Invalid Core legacy queue import identity')
+  return match[1] ? `core:legacy-import:${match[1]}` : 'core:legacy-import'
+}

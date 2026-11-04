@@ -33,6 +33,45 @@ import type { CastDevice, CastLoadRequest, CastSample } from '../cast/castBacken
 import { CoreSleepTimer } from './sleepService.ts'
 import { createPlaybackSourceRecovery } from './sourceRecovery.ts'
 import { createLogicalTrackModel } from '../../shared/logicalTrackModel.ts'
+import { zoneQueueFence } from '../../shared/coreZones.ts'
+import { CoreNcmListeningSync } from '../listening/ncmSync.ts'
+import type { NcmListeningReport } from '../../shared/listeningSync.ts'
+
+test('NetEase listening follows the authoritative session through seek, pause, resume and next', async t => {
+  let now = 0, id = 0
+  const reports: NcmListeningReport[] = []
+  const observations: unknown[] = []
+  const sync = new CoreNcmListeningSync({ enabled: true, available: () => true,
+    context: () => 'account', account: async () => 7,
+    submit: async report => { reports.push(report) }, now: () => now,
+    newId: () => `attempt-${++id}`, changed() {} })
+  const f = await fixture(t, undefined, undefined, (track, info) => {
+    observations.push({ now, track: track?.id, state: info.state, position: info.position })
+    sync.observe('local', track ? { ...track, ncmSongId: track.id === 'a' ? 123 : 124 } : null, info)
+  }, undefined, undefined, undefined, undefined, undefined, undefined, {
+    playbackSeeked: info => sync.seeked('local', info),
+    playbackStarted: () => sync.closeSession('local')
+  })
+  await f.session.fromQuery({}, 'a', true)
+  now = 10_000
+  f.engine.info.position = 10
+  f.engine.emit('playback-info', f.engine.info)
+  await tick(); await f.session.flush()
+  await f.session.seek(50)
+  now += 5_000
+  f.engine.info.position = 55
+  await f.session.pause()
+  now += 60_000
+  await f.session.play()
+  now += 3_000
+  f.engine.info.position = 58
+  await f.session.navigate(1)
+  await sync.flush()
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0].id, 123)
+  assert.equal(reports[0].time, 18, JSON.stringify(observations))
+  await sync.shutdown()
+})
 
 test('Focus paged source owner receives one adoption receipt before native acknowledgement and none on preparation failure', async t => {
   const f = await fixture(t)
@@ -2576,7 +2615,7 @@ async function fixture(
   extra?: Partial<
     Pick<
       CorePlaybackSessionOptions,
-      'sleepTimer' | 'setNativeSleepGain' | 'naturalBoundary' | 'schedule' | 'automaticPlaybackAllowed'
+      'sleepTimer' | 'setNativeSleepGain' | 'naturalBoundary' | 'schedule' | 'automaticPlaybackAllowed' | 'playbackStarted' | 'playbackSeeked'
     >
   >
 ) {
@@ -2609,6 +2648,7 @@ async function fixture(
     importLegacyPlaybackQueue: async (command) => db.importLegacyPlaybackQueue(command),
     restoreNamedPlaybackQueue: async (command) => db.restoreNamedPlaybackQueue(command),
     restoreHeartBaseQueue: async (...args) => db.restoreHeartBaseQueue(...args),
+    clonePlaybackQueue: async reference => db.clonePlaybackQueue(reference),
     extendQueue: async (...args) => db.extendPlaybackQueue(...args),
     replaceSource: async (command) => db.replacePlaybackQueueSource(command),
     createQueue: async (...args) => db.createLibraryQueue(...args),
@@ -2681,6 +2721,112 @@ async function fixture(
     }
   }
 }
+
+test('handoff persists a separate paused cursor and position before resume, retaining target volume', async t => {
+  const f = await fixture(t)
+  const engine = new Engine()
+  let saved: PlaybackSessionData<TrackData> | null = null
+  let failResolve = false, resolutions = 0
+  const receiver = new CorePlaybackSession({ engine, queues: f.queues,
+    repository: { load: async () => null, clear: async revision => ({ revision: revision + 1 }),
+      save: async (data, revision) => { saved = data; return { revision: revision + 1 } } },
+    resolver: { resolve: async track => {
+      resolutions++
+      if (failResolve) throw new Error('target source unavailable')
+      return { source: (track as TrackData).filePath, expiresAt: null }
+    } },
+    authorize: async source => source, resumeMode: () => 'trackAndPosition', now: () => 1000,
+    schedule: () => () => {}, changed: () => {}, fatal: error => assert.fail(error.message) })
+  await receiver.initialize()
+  try {
+    await receiver.setVolume(0.3)
+    await f.session.fromQuery({}, 'b', true, undefined, { position: 21, playMode: 'shuffle' })
+    const source = zoneQueueFence(f.session.snapshot().queue)!
+    const sourceQueue = f.session.snapshot().queue!
+    await receiver.receiveHandoff(null, () => f.session.captureHandoff(source, new AbortController().signal), false, new AbortController().signal)
+    assert.equal(f.session.snapshot().playback?.state, 'paused')
+    assert.equal(receiver.snapshot().playback?.state, 'paused')
+    assert.equal(receiver.snapshot().playback?.position, 21)
+    assert.equal(receiver.snapshot().playback?.volume, 0.3)
+    assert.notEqual(receiver.snapshot().queue?.id, sourceQueue.id)
+    assert.equal(receiver.snapshot().queue?.occurrenceId, sourceQueue.occurrenceId)
+    assert.equal(receiver.snapshot().playback?.playMode, 'shuffle')
+    assert.equal((saved as PlaybackSessionData<TrackData> | null)?.position, 21)
+    assert.equal(engine.items.length, 0, 'adoption alone never decodes or loads native audio')
+    await receiver.play()
+    assert.equal(receiver.snapshot().playback?.state, 'playing')
+    assert.equal(f.session.snapshot().playback?.state, 'paused')
+    await receiver.navigate(-1)
+    assert.deepEqual(f.session.snapshot().queue, sourceQueue)
+    const attempts = resolutions
+    failResolve = true
+    await assert.rejects(receiver.receiveHandoff(zoneQueueFence(receiver.snapshot().queue),
+      () => f.session.captureHandoff(source, new AbortController().signal), true, new AbortController().signal), /target source unavailable/)
+    assert.equal(resolutions, attempts + 1, 'failed resume is never retried')
+    assert.equal(receiver.snapshot().playback?.state, 'paused')
+    assert.equal(receiver.snapshot().playback?.position, 21)
+    assert.equal(f.session.snapshot().playback?.state, 'paused')
+    assert.deepEqual(f.session.snapshot().queue, sourceQueue)
+  } finally { await receiver.shutdown() }
+})
+
+test('a target Stop during slow handoff cancels adoption and resume without replay or changing its old queue', async t => {
+  const f = await fixture(t)
+  await f.session.fromQuery({}, 'a', false, undefined, { prepareOnly: true })
+  const before = f.session.snapshot().queue!
+  let finish!: () => void
+  const gate = new Promise<void>(resolve => { finish = resolve })
+  const pending = f.session.receiveHandoff(zoneQueueFence(before), async () => {
+    await gate
+    return { reference: { id: before.id, revision: before.revision, index: before.index, entryId: before.occurrenceId! },
+      position: 11, mode: 'sequential', signal: new AbortController().signal, validate: () => {} }
+  }, true, new AbortController().signal)
+  const rejected = assert.rejects(pending, { code: 'CANCELLED' })
+  await tick()
+  await f.session.stop()
+  finish(); await rejected
+  assert.deepEqual(f.session.snapshot().queue, before)
+  assert.equal(f.session.snapshot().playback?.state, 'stopped')
+  assert.equal(f.engine.items.length, 0)
+})
+
+test('handoff refuses active recommendations/live radio but ordinary queues remain usable after a recommendation session', async t => {
+  const f = await fixture(t, undefined, undefined, undefined, {
+    supportedMethods: () => ['fetchPersonalFm'], call: async () => [recommended(1), recommended(2)]
+  })
+  const signal = new AbortController().signal
+  await f.session.startPersonalized({ providerId: 'ncm', key: 'fm', play: false })
+  await assert.rejects(f.session.captureHandoff(zoneQueueFence(f.session.snapshot().queue)!, signal), /动态推荐/)
+  await f.session.fromQuery({}, 'a', false, undefined, { prepareOnly: true })
+  const capture = await f.session.captureHandoff(zoneQueueFence(f.session.snapshot().queue)!, signal)
+  capture.validate()
+  await f.session.fromTrack({ ...recommended(3), id: 'radio:fixture', source: 'radio', duration: 0 }, 0, false)
+  await assert.rejects(f.session.captureHandoff(zoneQueueFence(f.session.snapshot().queue)!, signal), /直播电台/)
+})
+
+test('confirmed fatal audio exit permits session disposal without querying or restarting the dead engine', async t => {
+  const f = await fixture(t)
+  await f.session.fromQuery({}, 'a', false, undefined, { prepareOnly: true })
+  const queueId = f.session.snapshot().queue!.id
+  f.engine.getPlaybackInfo = async () => assert.fail('No query after confirmed process exit')
+  f.engine.stop = async () => assert.fail('No restart or native Stop after confirmed process exit')
+  await f.session.shutdown({ audioTerminated: true })
+  await f.session.shutdown()
+  assert.equal(f.saved?.data?.libraryQueue?.id, queueId)
+  assert.equal(f.session.snapshot().queue, null)
+})
+
+test('source handoff capture is invalidated by a subsequent source intent and rejects stale occurrence fences', async t => {
+  const f = await fixture(t)
+  await f.session.fromQuery({}, 'a', false, undefined, { prepareOnly: true })
+  const fence = zoneQueueFence(f.session.snapshot().queue)!
+  await assert.rejects(f.session.captureHandoff({ ...fence, occurrenceId: 'stale' }, new AbortController().signal), { code: 'STALE_REVISION' })
+  const capture = await f.session.captureHandoff(fence, new AbortController().signal)
+  capture.validate()
+  await f.session.stop()
+  assert.equal(capture.signal.aborted, true)
+  assert.throws(capture.validate, { code: 'CANCELLED' })
+})
 
 test('a disconnected Zone prepares an independent paused SQL queue without resolving or loading audio', async t => {
   let resolutions = 0

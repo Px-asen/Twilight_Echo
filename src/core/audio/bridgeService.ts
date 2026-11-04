@@ -6,7 +6,7 @@ import type { CoreCastService } from '../cast/service.ts'
 import type { RemoteTlsIdentity } from '../cast/tlsIdentity.ts'
 import type { AudioOutputState } from '../../shared/audioEngineTypes.ts'
 
-type Method = 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown'
+type Method = 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown' | 'BridgeCancelTimed'
 export class CoreBridgeService {
   private revision = 0
   private peer: BridgePeer | null = null
@@ -16,12 +16,15 @@ export class CoreBridgeService {
     call(method: Method, args?: unknown[]): Promise<unknown>
     output: Pick<CoreAudioOutputService, 'serialize'>
     outputState(): Promise<AudioOutputState>
-    playback: Pick<CorePlaybackSession, 'stop'>
+    playback: Pick<CorePlaybackSession, 'stop'> & Partial<Pick<CorePlaybackSession, 'assertIndependent'>>
     cast: Pick<CoreCastService, 'active'>
     identity(): RemoteTlsIdentity
     name: string
     address(): string
     changed(): void
+    coordinateConnection?(action: (grouped: boolean) => Promise<void>): Promise<void>
+    groupId?(): string | null
+    localOutputAllowed?: boolean
   }
   constructor(options: CoreBridgeService['options']) { this.options = options }
   async state(): Promise<CoreZoneState> {
@@ -29,22 +32,26 @@ export class CoreBridgeService {
     if (runtime.peerName && runtime.receiver?.deviceName)
       this.outputName = `${runtime.peerName} · ${runtime.receiver.deviceName}`
     else if (runtime.peerName && this.outputName === '输出桥') this.outputName = runtime.peerName
-    return { ...runtime, revision: this.revision, zoneId: 'local', selectedOutputId: runtime.selected ? 'bridge' : 'local',
-      outputs: [{ id: 'local', name: '此电脑', available: !runtime.hosting },
+    return { ...runtime, revision: this.revision, zoneId: 'local', groupId: this.options.groupId?.() ?? null, selectedOutputId: runtime.selected ? 'bridge' : 'local',
+      outputs: [{ id: 'local', name: '此电脑', available: this.options.localOutputAllowed !== false && !runtime.hosting },
         ...(this.peer ? [{ id: 'bridge' as const, name: this.outputName, available: !runtime.hosting }] : [])] }
   }
   invite(): { invitation: string | null } { return { invitation: this.invitation } }
-  private edit(revision: number, action: () => Promise<void>): Promise<void> {
+  private edit(revision: number, action: () => Promise<void>, coordinated = false): Promise<void> {
+    if (!coordinated) this.options.playback.assertIndependent?.()
     return this.options.output.serialize(async () => {
+      if (!coordinated) this.options.playback.assertIndependent?.()
       if (revision !== this.revision) throw Object.assign(new Error('输出已变化，请刷新'), { code: 'STALE_REVISION' })
       try { await action() } finally { ++this.revision; this.options.changed() }
     })
   }
   async assertLocal(): Promise<void> {
+    if (this.options.localOutputAllowed === false) throw new Error('此 Server 仅向输出桥发送音频；本机 DAC 请在交互式 Bridge 中使用')
     const state = await this.state()
     if (state.selected || state.hosting) throw new Error('请先退出输出桥模式并选择此电脑输出')
   }
   host(revision: number, enabled: boolean, sampleRate: number): Promise<void> {
+    if (enabled && this.options.localOutputAllowed === false) return Promise.reject(new Error('Windows Service 不承载本机 DAC，请在交互式电脑上运行输出桥'))
     return this.edit(revision, async () => {
       if (!enabled) { await this.options.call('BridgeHostStop'); this.invitation = null; return }
       if (this.options.cast.active()) throw new Error('请先结束投屏')
@@ -61,14 +68,22 @@ export class CoreBridgeService {
     })
   }
   connect(revision: number, peer: BridgePeer): Promise<void> {
-    return this.edit(revision, async () => {
+    if (revision !== this.revision) return Promise.reject(Object.assign(new Error('输出已变化，请刷新'), { code: 'STALE_REVISION' }))
+    const action = (grouped: boolean) => this.edit(revision, async () => {
       if (this.options.cast.active()) throw new Error('请先结束投屏')
-      await this.options.playback.stop()
+      if (!grouped) await this.options.playback.stop()
       this.peer = { ...peer }
       await this.options.call('BridgeConnect', [peer])
-    })
+      if (grouped) await this.options.call('BridgeCancelTimed')
+    }, grouped)
+    return this.options.coordinateConnection ? this.options.coordinateConnection(action) : action(false)
   }
   select(revision: number, outputId: 'local' | 'bridge'): Promise<void> {
+    if (outputId === 'local' && this.options.localOutputAllowed === false) return Promise.reject(new Error('此 Server 只能选择输出桥'))
+    if (outputId === 'bridge' && this.options.coordinateConnection) {
+      if (!this.peer) return Promise.reject(new Error('请先在电脑上添加已授权的输出桥'))
+      return this.connect(revision, this.peer)
+    }
     return this.edit(revision, async () => {
       if (this.options.cast.active()) throw new Error('请先结束投屏')
       await this.options.playback.stop()

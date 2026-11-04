@@ -3,6 +3,7 @@ import type { LibraryDatabaseApi } from '../../shared/libraryDatabase.ts'
 import type { PlaybackSessionStoreBundle } from './playbackSessionRepository.ts'
 import { libraryTrack } from '../../core/playback/libraryTrack.ts'
 import type { TrackData } from '../../shared/track.ts'
+import { legacyQueueImportOwner } from '../../shared/coreQueueImport.ts'
 
 function savedTrack(value: unknown): TrackData {
   if (
@@ -25,7 +26,8 @@ function savedTrack(value: unknown): TrackData {
 export function createCorePlaybackRepository(
   bundle: PlaybackSessionStoreBundle,
   queues: Pick<LibraryDatabaseApi, 'syncLibraryQueueReferences'>,
-  owner = 'core:persisted-playback'
+  owner = 'core:persisted-playback',
+  legacyImportScope?: string
 ): CoreSessionRepository {
   async function references(): Promise<void> {
     const [current, backup] = await Promise.all([
@@ -39,8 +41,11 @@ export function createCorePlaybackRepository(
       backup?.data?.heart?.baseQueue?.id
     ].filter((id): id is string => !!id)
     await queues.syncLibraryQueueReferences(owner, [...new Set(ids)])
-    if (owner === 'core:persisted-playback' && current?.data?.libraryQueue)
-      await queues.syncLibraryQueueReferences('core:legacy-import', [])
+    if ((owner === 'core:persisted-playback' || legacyImportScope) && current?.data?.libraryQueue)
+      await queues.syncLibraryQueueReferences(
+        legacyQueueImportOwner(`core-session-${legacyImportScope ? `${legacyImportScope}-` : ''}0`),
+        []
+      )
   }
   return {
     async load() {

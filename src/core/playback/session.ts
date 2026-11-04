@@ -52,6 +52,7 @@ import type { CorePersonalizedStart, CorePersonalizedState } from '../../shared/
 import { shuffleArray } from '../../shared/shuffleArray.ts'
 import { HeartQueue, type HeartProviders } from './heartQueue.ts'
 import { automaticPlaybackMask, type AutomaticPlaybackAllowed } from './automaticPlayback.ts'
+import type { ZoneQueueFence } from '../../shared/coreZones.ts'
 import type { PreparedPlaybackSource, PlaybackSourceRecovery } from './sourceRecovery.ts'
 import type { SourceResources } from './sourceResources.ts'
 import type {
@@ -79,6 +80,9 @@ interface LoadContext {
 }
 
 export interface CorePlaybackEngine extends LibraryNativeQueueEngine {
+  /** An opt-in coordinated engine can revoke pending output deadlines now,
+   * before this session's serialized mutation lane becomes available. */
+  interrupt?(preparingOnly?: boolean): void
   start(): Promise<void>
   play(source: string, position?: number, requested?: () => boolean): Promise<AudioEnginePlayResult>
   pause(): Promise<void>
@@ -108,6 +112,8 @@ export interface CorePlaybackSessionOptions {
     CoreQueueImportApi &
     CoreHeartQueueApi & {
       restoreNamedPlaybackQueue: CoreQueueRestoreApi['restoreNamedPlaybackQueue']
+      /** Desktop-only capability; embedded and legacy callers need not provide it. */
+      clonePlaybackQueue?(reference: LibraryPlaybackQueueReference): Promise<LibraryQueuePlaybackWindow['queue']>
       libraryRevision(): Promise<number>
       readNeighbor(
         id: string,
@@ -123,11 +129,13 @@ export interface CorePlaybackSessionOptions {
   authorize(source: string): Promise<string>
   repository: CoreSessionRepository
   resumeMode(): PlaybackResumeMode
+  legacyImportScope?: string
   now(): number
   schedule(callback: () => void, delayMs: number): () => void
   changed(): void
   observePlayback?(track: TrackData | null, info: PlaybackInfo): void
   playbackStarted?(): void
+  playbackSeeked?(info: PlaybackInfo): void
   runTransport?<T>(action: () => Promise<T>): Promise<T>
   sleepTimer?: Pick<CoreSleepTimer, 'persisted' | 'restore' | 'interrupt' | 'triggered'>
   setNativeSleepGain?(gain: number): Promise<void>
@@ -191,6 +199,7 @@ export class CorePlaybackSession {
   private heartTransition = false
   private automaticEnd: string | null = null
   private readonly listen = (info: PlaybackInfo) => {
+    if (this.outputClaim) return
     if (this.options.cast?.active()) return
     this.observed = { info, token: info.queueToken ?? this.options.engine.getQueueToken() }
     this.drainObservation()
@@ -207,6 +216,27 @@ export class CorePlaybackSession {
     this.publish()
   }
   private readonly options: CorePlaybackSessionOptions
+  private outputClaim: { id: string; silence(): Promise<void> } | null = null
+  assertIndependent(): void {
+    if (this.outputClaim) throw Object.assign(new Error('此输出已加入同步组；请使用组控制或先解除编组'), { code: 'BUSY' })
+  }
+  /** The registry owns the lease. Pause drains the independent session's pending
+   * work before physical audio may be driven by the single shared session. */
+  async claimOutput(id: string, silence: () => Promise<void>): Promise<void> {
+    if (this.outputClaim?.id === id) { this.outputClaim.silence = silence; return }
+    this.assertIndependent()
+    const pausing = this.pause()
+    this.outputClaim = { id, silence }
+    await pausing // An unconfirmed stop retains the lease until explicit recovery.
+    this.restored = true; this.observed = null
+    this.publish()
+  }
+  releaseOutput(id: string): void {
+    if (this.outputClaim?.id !== id) return
+    this.outputClaim = null; this.restored = true; this.observed = null
+    if (this.info) this.info = { ...this.info, state: 'paused', nativePlaybackActive: false }
+    this.publish()
+  }
   constructor(options: CorePlaybackSessionOptions) {
     this.options = options
     this.controller = createLibraryPlaybackController(options.queues)
@@ -625,7 +655,8 @@ export class CorePlaybackSession {
           api: this.options.queues,
           session,
           sessionRevision: this.revision,
-          libraryRevision: await this.options.queues.libraryRevision()
+          libraryRevision: await this.options.queues.libraryRevision(),
+          scope: this.options.legacyImportScope
         })
         position = imported.position
         const queue = imported.queue
@@ -857,6 +888,7 @@ export class CorePlaybackSession {
   private revoke(interruptSleep = true): number {
     if (interruptSleep) this.interruptSleep()
     this.intent++
+    this.options.engine.interrupt?.(true)
     const wasLoading = this.loadingIntent !== null
     this.loadingIntent = null
     this.requestedState = null
@@ -903,6 +935,7 @@ export class CorePlaybackSession {
       throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
   }
   private transport<T>(action: () => Promise<T>): Promise<T> {
+    this.assertIndependent()
     if (this.recoveringAudio) return Promise.reject(audioRecoveryInProgress())
     return this.commit(() =>
       this.options.runTransport ? this.options.runTransport(action) : action()
@@ -1195,6 +1228,7 @@ export class CorePlaybackSession {
     }
   }
   private startMaintenance(): void {
+    if (this.outputClaim) return
     if (this.options.sleepTimer?.triggered()) return
     if (this.options.cast?.active()) {
       this.options.cast.resumeSampling()
@@ -1717,6 +1751,7 @@ export class CorePlaybackSession {
     else if (previous?.source === 'podcast') await this.options.engine.setPlaybackRate(1)
   }
   async setRate(rate: number): Promise<void> {
+    this.assertIndependent()
     if (this.options.cast?.active()) {
       if (rate !== 1) throw new Error('Cast does not support changing playback speed')
       return
@@ -1932,6 +1967,8 @@ export class CorePlaybackSession {
     this.publish()
   }
   async pause(): Promise<void> {
+    if (this.outputClaim) return this.outputClaim.silence()
+    this.options.engine.interrupt?.()
     const intent = this.revoke()
     this.requestedState = 'paused'
     try {
@@ -1967,6 +2004,8 @@ export class CorePlaybackSession {
     await this.flush()
   }
   async stop(): Promise<void> {
+    if (this.outputClaim) return this.outputClaim.silence()
+    this.options.engine.interrupt?.()
     const intent = this.revoke()
     this.requestedState = 'stopped'
     try {
@@ -1976,6 +2015,7 @@ export class CorePlaybackSession {
     }
   }
   private assertAudioAvailable(): void {
+    this.assertIndependent()
     if (this.recoveringAudio) throw audioRecoveryInProgress()
   }
 
@@ -2042,12 +2082,14 @@ export class CorePlaybackSession {
     return this.mutation.then(() => {})
   }
   stopForSleep(current: () => boolean): Promise<void> {
+    if (this.outputClaim) return current() ? this.outputClaim.silence() : Promise.resolve()
     return this.stopTransport(current)
   }
   resumeAfterSleep(): void {
     this.startMaintenance()
   }
   async setSleepTimerGain(gain: number): Promise<void> {
+    if (this.outputClaim) { if (gain < 1) await this.outputClaim.silence(); return }
     if (this.options.cast?.active()) {
       if (this.options.cast.state().phase === 'ready') {
         this.castSleepVolume ??= this.info?.volume ?? 1
@@ -2060,6 +2102,8 @@ export class CorePlaybackSession {
     }
   }
   async seek(position: number): Promise<void> {
+    this.assertIndependent()
+    this.options.engine.interrupt?.()
     const intent = this.revoke()
     await this.commit(async () => {
       this.guard(intent)
@@ -2067,6 +2111,11 @@ export class CorePlaybackSession {
       else if (this.options.cast?.active()) {
         if (this.currentTrack?.source === 'radio') throw new Error('Live radio cannot seek')
         try {
+          if (this.options.playbackSeeked) {
+            this.acceptCast(await this.options.cast.read())
+            this.guard(intent)
+            if (this.info) this.options.observePlayback?.(this.currentTrack, { ...this.info, playMode: this.mode })
+          }
           this.acceptCast(await this.options.cast.control('seek', position))
         } catch (error) {
           await this.failStopped(error)
@@ -2074,9 +2123,14 @@ export class CorePlaybackSession {
           throw error
         }
       } else {
+        if (this.options.playbackSeeked) {
+          await this.nativeSelection()
+          this.guard(intent)
+        }
         await this.options.engine.seek(position)
         this.info = await this.options.engine.getPlaybackInfo()
       }
+      if (this.info) this.options.playbackSeeked?.(this.info)
     })
     this.startMaintenance()
     this.publish()
@@ -2224,6 +2278,21 @@ export class CorePlaybackSession {
       if (intent === this.intent) this.startMaintenance()
     }
   }
+  /** Read only this session's current SQL queue, including an emptied queue. */
+  async queuePage(id: string, revision: number, offset: number, limit = 100) {
+    const assert = () => {
+      const queue = this.snapshot().queue
+      if (queue?.id !== id || queue.revision !== revision)
+        throw Object.assign(new Error('Playback queue changed; refresh its revision'), { code: 'STALE_REVISION' })
+    }
+    assert()
+    const page = await this.options.queues.readQueue(id, offset, limit, { expectedRevision: revision })
+    assert()
+    return { ...page, items: page.items.map(item => ({
+      position: item.position, queueEntryId: item.queueEntryId, logicalQueueEnd: item.logicalQueueEnd,
+      track: item.track ? projectCoreTrack(item.track, item.queueEntryId) : null
+    })) }
+  }
   private assertReference(expected: { id: string; revision: number }): void {
     const reference = this.controller.reference()
     if (!reference || reference.id !== expected.id || reference.revision !== expected.revision)
@@ -2269,6 +2338,7 @@ export class CorePlaybackSession {
       this.options.observePlayback?.(current, { ...this.info, playMode: this.mode })
   }
   private async nativeSelection(): Promise<NativeQueueSelection | null> {
+    if (this.outputClaim) return null
     if (
       this.options.cast?.active() ||
       this.restored ||
@@ -2335,6 +2405,7 @@ export class CorePlaybackSession {
     edit: LibraryQueueEdit,
     nextMode = this.mode
   ): Promise<void> {
+    this.assertIndependent()
     // Empty queues still own their revision and undo history, without a selected occurrence.
     const assertQueue = () => {
       const queue = this.controller.active.value ? this.controller.snapshot.value : null
@@ -2419,6 +2490,7 @@ export class CorePlaybackSession {
   /** Explicit read recovery after an unknown SQL/native result. It never
    * replays the failed edit or resumes audio. */
   async refresh(): Promise<void> {
+    this.assertIndependent()
     this.revoke()
     await this.transport(async () => {
       await this.clearAbLoop()
@@ -2451,6 +2523,7 @@ export class CorePlaybackSession {
     await this.flush()
   }
   async setVolume(volume: number): Promise<void> {
+    this.assertIndependent()
     this.interruptSleep()
     await this.transport(async () => {
       await this.setUserVolume(volume)
@@ -2518,6 +2591,7 @@ export class CorePlaybackSession {
     this.publish()
   }
   async configureMute(muted?: boolean): Promise<void> {
+    this.assertIndependent()
     this.interruptSleep()
     await this.transport(async () => {
       const volume = this.info?.volume ?? 0
@@ -2927,6 +3001,7 @@ export class CorePlaybackSession {
   /** Invalidate prepared sources and pin every acknowledged native resource.
    * Filesystem IO stays outside the transport lane, so Pause/Stop remain usable. */
   async maintainSources<T>(action: (sources: readonly string[]) => Promise<T>): Promise<T> {
+    if (this.outputClaim) return action([]) // Shared owner supplies the active physical sources.
     const resume = this.maintainer?.isActive()
     const intent = this.revoke()
     let release!: () => void
@@ -2977,6 +3052,94 @@ export class CorePlaybackSession {
       }
     })
   }
+  private assertHandoffQueue(expected: ZoneQueueFence | null): void {
+    const actual = this.controller.snapshot.value
+    if (actual?.id !== expected?.id || actual?.revision !== expected?.revision || actual?.selectedEntryId !== expected?.occurrenceId)
+      throw Object.assign(new Error('会话队列已变化，请刷新后重新接力'), { code: 'STALE_REVISION' })
+  }
+  /** Pause and capture one finite session. A later user intent cancels its use by
+   * the receiver, including during slow SQL/provider IO. No rollback autoplay. */
+  async captureHandoff(expected: ZoneQueueFence, signal: AbortSignal, claim?: { id: string; silence(): Promise<void> }) {
+    signal.throwIfAborted()
+    this.assertIndependent()
+    this.assertHandoffQueue(expected)
+    if (this.options.cast?.active() || this.mode === 'heart' || this.personalized?.state())
+      throw new Error('请先结束投放或动态推荐，普通曲库队列才可接力')
+    if (this.currentTrack?.source === 'radio') throw new Error('直播电台不支持位置接力')
+    const paused = this.pause()
+    // Reserve the output before SQL IO; Pause/Stop now revoke the group creation.
+    if (claim) this.outputClaim = claim
+    const intent = this.intent, sourceSignal = this.preview.signal
+    await paused
+    this.guard(intent, signal)
+    const capture = await this.captureWorkspace()
+    const validate = () => { this.guard(intent, signal); this.assertHandoffQueue(expected) }
+    validate()
+    return { ...capture, signal: sourceSignal, validate }
+  }
+  /** Adopt a separate SQL cursor while paused and persist before optional Play.
+   * Existing target DSP/volume stay attached to its own output. */
+  async receiveHandoff(
+    expected: ZoneQueueFence | null,
+    source: () => ReturnType<CorePlaybackSession['captureHandoff']>,
+    resume: boolean,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (!this.options.queues.clonePlaybackQueue) throw new Error('此 Core 不支持会话接力')
+    if (this.options.cast?.active()) throw new Error('请先结束目标会话的投放')
+    this.assertHandoffQueue(expected)
+    const intent = this.beginPreparation(false)
+    const candidate = createLibraryPlaybackController(this.options.queues)
+    let adopted = false
+    let cloned: LibraryQueuePlaybackWindow['queue'] | undefined
+    try {
+      await this.commit(async () => {
+        this.guard(intent, signal)
+        await this.nativeSelection()
+        this.assertHandoffQueue(expected)
+      })
+      this.guard(intent, signal)
+      const capture = await source()
+      const combined = AbortSignal.any([signal, capture.signal])
+      const current = () => { this.guard(intent, combined); capture.validate() }
+      current()
+      cloned = await this.options.queues.clonePlaybackQueue(capture.reference)
+      current()
+      const window = await candidate.adoptStopped({ id: cloned.id, revision: cloned.revision,
+        index: cloned.index, entryId: cloned.selectedEntryId! }, capture.mode, () => { current(); return true })
+      current()
+      if (!window || !candidate.track(window)) throw new Error('接力队列的当前曲目不可用')
+      await this.transport(async () => {
+        current(); this.assertHandoffQueue(expected)
+        let info: PlaybackInfo
+        try {
+          await this.options.engine.pause()
+          info = await this.options.engine.getPlaybackInfo()
+          if (info.state === 'playing') throw new Error('Native Pause was not acknowledged')
+        } catch (error) { await this.failStopped(error); throw error }
+        await this.observeDepartingTrack(candidate.track(window))
+        await this.clearAbLoop()
+        current()
+        const previous = this.controller
+        this.controller = candidate; adopted = true; previous.dispose()
+        this.clearHeart(); this.personalized?.stop(); this.mode = capture.mode
+        await this.updateTrack(candidate.track(window))
+        this.restored = true; this.uncertain = false; this.error = null
+        this.info = { ...info, state: 'paused', position: capture.position, duration: this.currentTrack?.duration ?? 0 }
+        this.publish()
+      })
+      await this.flush()
+      current()
+      if (resume) await this.load(window, intent, true, capture.position, combined)
+    } finally {
+      if (!adopted) {
+        candidate.dispose()
+        if (cloned) await this.options.queues.deleteQueue(cloned.id, cloned.revision).catch(() => {})
+      }
+      this.finishPreparation(intent)
+      if (intent === this.intent) this.startMaintenance()
+    }
+  }
   flush(): Promise<void> {
     const capture = this.commit(async () => {
       if (!this.initialized || this.stopped || !this.info || this.uncertain) return undefined
@@ -3017,7 +3180,9 @@ export class CorePlaybackSession {
     this.persistence = save.catch(() => {})
     return save
   }
-  async shutdown(): Promise<void> {
+  /** audioTerminated is internal: the owner must first confirm physical process
+   * exit. It permits durable cleanup after a fatal engine stop, not a mute shortcut. */
+  async shutdown(options: { audioTerminated?: boolean } = {}): Promise<void> {
     if (this.stopped) return
     await this.personalized?.shutdown()
     this.options.engine.off('playback-info', this.listen)
@@ -3027,16 +3192,17 @@ export class CorePlaybackSession {
     this.revoke()
     await this.mutation
     await this.observing
-    if (!this.restored && !this.uncertain) {
+    if (!options.audioTerminated && !this.restored && !this.uncertain) {
       if (this.options.cast?.active()) this.acceptCast(await this.options.cast.read())
       else this.info = await this.options.engine.getPlaybackInfo()
     }
     this.publish()
     await this.flush()
-    await this.clearAbLoop()
+    if (options.audioTerminated) this.resetAbLoopState()
+    else await this.clearAbLoop()
     this.stopped = true
     await this.options.cast?.shutdown()
-    await this.options.engine.stop()
+    if (!options.audioTerminated) await this.options.engine.stop()
     this.resetStreamBuffering()
     this.controller.dispose()
     this.heartBase?.dispose()

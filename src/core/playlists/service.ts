@@ -579,6 +579,11 @@ export class CorePlaylistService {
       throw Object.assign(new Error('录音版本偏好已变化，请重新导出'), { code: 'STALE_REVISION' })
     return { revision, contents: writer.finish() }
   }
+  /** Private bounded rows for an explicitly targeted session, sharing the
+   * existing playlist/version/content lease rather than projecting wire tracks back. */
+  playbackPage(query: CorePlaylistViewQuery, signal: AbortSignal) {
+    return this.views.records(query, signal)
+  }
   importDocument(
     id: string,
     revision: number,

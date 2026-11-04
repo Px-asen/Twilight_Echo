@@ -500,6 +500,11 @@ export class LibraryDatabaseServiceClient implements LibraryDatabaseWorkerApi {
   insertCorePlaybackQueue(...args: Parameters<LibraryDatabaseWorkerApi['insertCorePlaybackQueue']>): ReturnType<LibraryDatabaseWorkerApi['insertCorePlaybackQueue']> {
     return this.call('insertCorePlaybackQueue', ...args)
   }
+  clonePlaybackQueue(
+    ...args: Parameters<LibraryDatabaseWorkerApi['clonePlaybackQueue']>
+  ): ReturnType<LibraryDatabaseWorkerApi['clonePlaybackQueue']> {
+    return this.call('clonePlaybackQueue', ...args)
+  }
   restoreHeartBaseQueue(
     ...args: Parameters<LibraryDatabaseWorkerApi['restoreHeartBaseQueue']>
   ): ReturnType<LibraryDatabaseWorkerApi['restoreHeartBaseQueue']> {
