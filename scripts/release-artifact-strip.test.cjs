@@ -106,6 +106,21 @@ test('release strip rejects a package without the VST3 helper pair', () => {
   )
 })
 
+test('existing desktop playback packages do not require the Server image addon', () => {
+  const packagedDir = path.resolve('C:/release/desktop-playback/resources/audio-engine')
+  const result = stripNativeArtifacts(packagedDir, {
+    stripCommand: 'strip',
+    exists: (file) => !file.endsWith('twilight_image_node.node'),
+    run: () => ({ status: 0 }),
+    copy: () => {},
+    remove: () => {},
+    clearDebugDirectory: () => {},
+    clearSymbolTablePointer: () => {}
+  })
+  assert.deepEqual(result.missing, [path.join(packagedDir, 'twilight_image_node.node')])
+  assert.equal(result.stripped.length, NATIVE_RUNTIME_FILES.length - 1)
+})
+
 test('release strip clears PE debug directory records and referenced data', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-clear-pe-debug-'))
   try {

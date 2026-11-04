@@ -10,13 +10,17 @@ const NATIVE_RUNTIME_FILES = Object.freeze([
   'twilight-asio-helper.exe',
   'twilight-vst3-host.exe',
   'twilight-vst3-scanner.exe',
-  'twilight-asio-helper-x86.exe'
+  'twilight-asio-helper-x86.exe',
+  'twilight_image_node.node'
 ])
 
 // The core playback runtime and isolated VST3 helper pair are required in a
 // Windows package. Packaging prepares the pair before electron-builder runs and
 // strips every shipped product binary from the copied package payload.
-const REQUIRED_NATIVE_RUNTIME_FILES = Object.freeze([...NATIVE_RUNTIME_FILES])
+// Image decoding is required by Server packaging, not by existing desktop playback packages.
+const REQUIRED_NATIVE_RUNTIME_FILES = Object.freeze(
+  NATIVE_RUNTIME_FILES.filter((name) => name !== 'twilight_image_node.node')
+)
 
 function executableCandidates(environment = process.env) {
   const candidates = []
