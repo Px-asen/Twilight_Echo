@@ -8,6 +8,7 @@ const appearanceTests = require('./run-appearance-tests.cjs')
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const workflow = readFileSync(join(root, '.github', 'workflows', 'audio-engine.yml'), 'utf8')
+const serverWorkflow = readFileSync(join(root, '.github', 'workflows', 'server-linux.yml'), 'utf8')
 const finalIntegratedGate = readFileSync(
   join(root, 'scripts', 'run-final-integrated-gate.ps1'),
   'utf8'
@@ -153,8 +154,12 @@ test('library database gate retains narrow date publication, ordinary scan cance
     'src/main/library/libraryDatabaseReleaseDate.test.ts',
     'src/main/library/libraryDatabaseScan.test.ts',
     'src/main/library/libraryDatabaseScanCoordinator.test.ts'
-  ]) assert.ok(command.includes(file), `${file} must run in the library database gate`)
-  assert.match(packageJson.scripts['test:no-real-device'], /pnpm run test:library-database(?: &&|$)/)
+  ])
+    assert.ok(command.includes(file), `${file} must run in the library database gate`)
+  assert.match(
+    packageJson.scripts['test:no-real-device'],
+    /pnpm run test:library-database(?: &&|$)/
+  )
 })
 
 test('network source gate owns profile, path, cache, metadata, and adapter tests', () => {
@@ -310,7 +315,10 @@ test('Windows no-device and release gates cannot omit product suites or the live
   assert.match(noDevice, /pnpm run test:tag-duplicate-management/)
   assert.match(noDevice, /pnpm run test:themes/)
   assert.match(noDevice, /pnpm run test:core &&/)
-  assert.match(noDevice, /pnpm run build && pnpm run test:core:electron$/)
+  assert.match(
+    noDevice,
+    /pnpm run build && pnpm run test:audio-bridge:native && pnpm run test:audio-sync-groups:native && pnpm run test:server && pnpm run test:server-service && pnpm run test:server-package && pnpm run test:server-upgrade && pnpm run test:core:electron$/
+  )
   assert.match(noDevice, /pnpm run test:appearance-workspace(?: &&|$)/)
   assert.match(noDevice, /pnpm run test:duplicate-detection-benchmark/)
   assert.match(noDevice, /pnpm run benchmark:duplicate-detection:ci/)
@@ -344,6 +352,17 @@ test('every repository test file is explicitly owned by a package script or its 
       .flatMap(([, command]) => command.split(/\s+/))
   )
   for (const file of delegated) owned.add(file)
+  // This test needs the final Linux image and is owned by its container runner.
+  assert.ok(
+    serverWorkflow.includes(
+      'src="$PWD/scripts/server-container.test.cjs",dst=/tests/server-container.test.cjs,readonly'
+    )
+  )
+  assert.match(
+    serverWorkflow,
+    /--entrypoint node twilight-echo-server:local --test \/tests\/server-container\.test\.cjs/
+  )
+  owned.add('scripts/server-container.test.cjs')
   const missing = recursivelyOwnedTestFiles.filter((file) => !owned.has(file))
   assert.deepEqual(missing, [], `Unowned test files: ${missing.join(', ')}`)
 })

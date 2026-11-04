@@ -8,8 +8,8 @@ const REQUIRED_OVERRIDES = Object.freeze({
   'form-data': '4.0.6',
   qs: '6.16.0'
 })
-const NCM_PATCH = '@neteasecloudmusicapienhanced/api@4.35.1'
-const NCM_PATCH_PATH = 'patches/@neteasecloudmusicapienhanced__api@4.35.1.patch'
+const NCM_PATCH = '@neteasecloudmusicapienhanced/api@4.36.1'
+const NCM_PATCH_PATH = 'patches/@neteasecloudmusicapienhanced__api@4.36.1.patch'
 const FORGE_PATCH_PATH = 'patches/node-forge@1.4.0.patch'
 const DISALLOWED_LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lockb']
 

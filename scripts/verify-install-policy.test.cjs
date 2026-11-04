@@ -82,7 +82,7 @@ function makeCandidate(options = {}) {
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-lock.yaml'),
-    `lockfileVersion: '9.0'\npatchedDependencies:\n  node-forge@1.4.0: ${forgeHash}\npackages:\n  '@neteasecloudmusicapienhanced/api@4.35.1(patch_hash=abc)': {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.0(patch_hash=${forgeHash})\n`
+    `lockfileVersion: '9.0'\npatchedDependencies:\n  node-forge@1.4.0: ${forgeHash}\npackages:\n  '@neteasecloudmusicapienhanced/api@4.36.1(patch_hash=abc)': {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.0(patch_hash=${forgeHash})\n`
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-workspace.yaml'),
@@ -92,12 +92,12 @@ function makeCandidate(options = {}) {
       '  form-data: 4.0.6',
       '  qs: 6.16.0',
       'patchedDependencies:',
-      "  '@neteasecloudmusicapienhanced/api@4.35.1': patches/@neteasecloudmusicapienhanced__api@4.35.1.patch",
+      "  '@neteasecloudmusicapienhanced/api@4.36.1': patches/@neteasecloudmusicapienhanced__api@4.36.1.patch",
       '  node-forge@1.4.0: patches/node-forge@1.4.0.patch'
     ].join('\n')
   )
   fs.writeFileSync(
-    path.join(root, 'patches', '@neteasecloudmusicapienhanced__api@4.35.1.patch'),
+    path.join(root, 'patches', '@neteasecloudmusicapienhanced__api@4.36.1.patch'),
     'patch'
   )
   const store = options.externalStore || path.join(root, 'node_modules', '.pnpm')

@@ -29,6 +29,8 @@
 
 - [插件开发导读](./PLUGIN_README.md)
 - [插件系统权威规范](./twilight-echo-plugin-spec.md)
+- [完整界面开发指南与可运行示例](./plugin-full-interface.md)
+- [Experience 页面、面板与桥接协议](./plugin-experiences.md)
 - [主题插件开发](./theme-plugin-authoring.md)
 - [灵动岛](./dynamic-island.md)
 
@@ -40,6 +42,7 @@
 - [本地库排序与筛选](./local-library-sorting-and-filters.md)
 - [搜索与跨来源歌曲身份](./search-and-library-identity.md)
 - [播放模式](./playback-modes.md)
+- [网易云听歌记录同步](./netease-listening-sync.md)
 - [余晖模式（Afterglow）](./afterglow-mode.md)
 - [播放队列虚拟化](./playback-queue-virtualization.md)
 - [播放列表生命周期](./playlist-lifecycle.md)
