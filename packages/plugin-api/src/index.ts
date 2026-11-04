@@ -803,6 +803,11 @@ export interface TwilightMediaProviderRegistration {
   ): Promise<UserSummary[]>
   fetchPlayRecords?(type?: number, context?: TwilightProviderRequestContext): Promise<Track[]>
   fetchRecentSongs?(limit?: number, context?: TwilightProviderRequestContext): Promise<Track[]>
+  /** Submit one actual listening attempt; callers must not retry ambiguous upload failures. */
+  reportListening?(report: {
+    id: number; accountId: number; time: number; total: number; name: string; artist: string
+    sourceid?: string; level?: string; bitrate?: number
+  }, context?: TwilightProviderRequestContext): Promise<{ submitted: true } | void>
   fetchIntelligenceList?(
     options: {
       songId: string | number
@@ -1370,6 +1375,15 @@ export interface TwilightApi {
   overlay?: TwilightOverlayApi
   /** Optional host-owned secure QR flow for the Qishui provider. */
   qishuiAuth?: TwilightQishuiAuthApi
+  /** Desktop-only official QQ Music browser login; provided only to the QQ Music plugin. */
+  qqmusicAuth?: {
+    officialLogin(options?: { signal?: AbortSignal }): Promise<{
+      musicid: string
+      str_musicid: string
+      musickey: string
+      loginType: 1 | 2
+    }>
+  }
   /** Local library read/write and playlist import. */
   library?: TwilightLibraryApi
   /** Application settings read/write (requires `app:settings`). */

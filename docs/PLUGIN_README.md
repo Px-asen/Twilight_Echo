@@ -5,6 +5,8 @@
 
 ## 1. 简介
 
+开发「设置 → 外观 → 完整界面」中可切换的独立页面，请从[完整界面开发指南与示例](./plugin-full-interface.md)开始，使用 API v4 experience；普通主题和传统命令型 UI 扩展不进入该选择器。
+
 Android 的可选入口和宿主边界见 [Android 插件入口](./android-plugin-runtime.md)。下面的进程与权限说明针对桌面宿主。
 
 Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句柄访问宿主能力的代码包。它能做很多事：新增一个音源、在侧边栏加一个页面、换一套主题、甚至往音频链路里挂一个原生 DSP 节点。插件让播放器不必把所有功能都塞进主程序。
@@ -29,9 +31,9 @@ Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句�
 
 一个插件包要么是一个目录，要么是一个扩展名为 `.tep` 的 zip 归档。无论哪种形式，根目录都必须有一个 `plugin.json`。
 
-`.tep` 本质就是 zip，`pack` 命令会校验 manifest、确认存在 JS `main`、DSP `binary` 或纯 theme 的 `contributes.themes`、剔除 `node_modules` 和缓存目录，最后产出根目录带 `plugin.json` 的 zip。解包后宿主按目录结构加载。
+`.tep` 本质就是 zip，`pack` 命令会校验 manifest、确认存在 JS `main`、DSP `binary`、纯 theme 的 `contributes.themes` 或 API v4 的 `contributes.experiences` 入口、剔除 `node_modules` 和缓存目录，最后产出根目录带 `plugin.json` 的 zip。解包后宿主按目录结构加载。
 
-JS 插件运行在 Electron 的 `utilityProcess` 里。这是一个独立进程，插件死循环、内存泄漏、崩溃都不会拖垮主进程和音频链路。UI 插件的渲染部分注入到 renderer，但业务逻辑仍在宿主进程，渲染入口只拿到一个受限桥接对象，没有任意 DOM 权限。
+带 `main` 的 JS 插件运行在 Electron 的独立 `utilityProcess` 里，用于隔离插件进程故障。传统 UI 扩展由宿主渲染；API v4 experience 在跨源 iframe 中运行自己的包内 HTML，通过受限 MessagePort 调用宿主，没有宿主 DOM、Node 或 preload 权限。纯界面 experience 不需要后台进程。
 
 ## 4. Manifest 字段
 
@@ -54,7 +56,7 @@ JS 插件运行在 Electron 的 `utilityProcess` 里。这是一个独立进程�
 | `apiVersion`           | number   | 使用的插件 API 主版本号                                                                            |
 | `permissions`          | string[] | 权限声明，安装时展示给用户                                                                         |
 
-JS 插件填写 `main`，DSP 插件填写 `binary`，纯 theme 插件可用 `contributes.themes` 声明 CSS 变量/样式表并省略二者。`type` 包含 `dsp` 时 `binary` 必填。
+JS 进程插件填写 `main`，DSP 插件填写 `binary`；纯 theme 插件可用 `contributes.themes` 声明 CSS 变量/样式表，API v4 纯界面插件可用 `contributes.experiences` 声明包内 HTML，二者均可省略 main/binary。`type` 包含 `dsp` 时 `binary` 必填。
 
 ### 4.2 可选字段
 
@@ -432,6 +434,12 @@ export async function deactivate() {}
 - provider 前缀：`ncm`
 - 随应用分发，默认启用
 - 用户可以停用（隔离故障或隐藏在线音源），但**不可像第三方插件一样卸载**
+
+桌面登录默认打开网易云官方网页，扫码确认后将会话交回内置插件，再读取账号信息。
+QQ 音乐音源 `0.4.4` 也使用宿主提供的官方登录窗口；需要包含 `qqmusicAuth.officialLogin` 的桌面构建，单独更新插件不足以启用此流程。
+Android、无界面服务端与旧宿主保留原二维码接口。支持官方窗口的宿主会通过
+`ui.loginExtraActions[].primary: true` 选择默认登录方式；对应方法还必须出现在 `supportedMethods` 中。
+取消、超时或账号校验失败不会作为登录成功返回。
 
 它是应用仓库里唯一的内置 provider 例外。第三方音源插件（如 Bilibili 收藏夹音频）走外部仓库分发，使用同一 Provider API，但不享受内置待遇。详见 [spec §4.5](./twilight-echo-plugin-spec.md#45-多音源数据模型)。
 

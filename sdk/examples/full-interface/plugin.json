@@ -1,0 +1,30 @@
+{
+  "id": "com.example.full-interface",
+  "name": "完整界面开发示例",
+  "version": "1.0.0",
+  "description": "使用宿主真实曲库和播放器的完整界面入门示例。",
+  "author": "Twilight Echo",
+  "license": "Apache-2.0",
+  "type": ["ui"],
+  "apiVersion": 4,
+  "engines": { "twilightEcho": ">=1.4.0-0" },
+  "permissions": [
+    "ui:inject",
+    "library:read",
+    "player:observe",
+    "player:control",
+    "settings",
+    "app:settings"
+  ],
+  "contributes": {
+    "experiences": [
+      {
+        "id": "main",
+        "name": "完整界面开发示例",
+        "entry": "ui/index.html",
+        "bridgeVersion": 2,
+        "launch": "page"
+      }
+    ]
+  }
+}

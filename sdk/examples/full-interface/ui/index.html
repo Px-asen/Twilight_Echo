@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>完整界面开发示例</title>
+    <link rel="stylesheet" href="app.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <!-- Bridge v2 host chrome overlays the first 30 CSS px. Keep this area empty. -->
+    <div class="window-space" aria-hidden="true"></div>
+    <header class="masthead">
+      <div>
+        <span class="eyebrow">TWILIGHT ECHO / EXPERIENCE</span>
+        <h1>音乐，自成一境。</h1>
+      </div>
+      <div class="header-actions">
+        <button id="theme" disabled>切换明暗</button>
+        <button id="settings" disabled>宿主设置</button>
+        <button id="exit" disabled>返回默认界面</button>
+      </div>
+    </header>
+    <main>
+      <section class="library" aria-labelledby="library-title">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">YOUR COLLECTION</span>
+            <h2 id="library-title">专辑库</h2>
+          </div>
+          <div class="search-controls">
+            <label class="sr-only" for="query">搜索本地歌曲或专辑</label>
+            <input
+              id="query"
+              type="search"
+              placeholder="搜索本地歌曲或专辑"
+              maxlength="200"
+              disabled
+            />
+            <button id="search" disabled>搜索</button>
+            <button id="refresh" disabled>全部专辑</button>
+          </div>
+        </div>
+        <p id="status" role="status">正在连接 Twilight Echo…</p>
+        <div id="error" role="alert" hidden></div>
+        <div id="albums" class="albums"></div>
+        <button id="more" hidden>加载更多专辑</button>
+        <section id="detail" class="detail" aria-labelledby="detail-title" hidden>
+          <h3 id="detail-title">曲目</h3>
+          <ol id="tracks" class="tracks"></ol>
+        </section>
+      </section>
+      <aside class="queue" aria-labelledby="queue-title">
+        <span class="eyebrow">UP NEXT</span>
+        <h2 id="queue-title">播放队列</h2>
+        <p id="queue-empty">暂无队列</p>
+        <ol id="queue" class="tracks"></ol>
+      </aside>
+    </main>
+    <footer class="player" aria-label="播放器">
+      <div class="now-playing">
+        <strong id="now-title">尚未播放</strong><span id="now-artist">从专辑中选择一首歌曲</span>
+      </div>
+      <div class="transport">
+        <div class="transport-buttons">
+          <button id="previous" disabled>上一首</button
+          ><button id="toggle" class="primary" disabled>播放</button
+          ><button id="next" disabled>下一首</button>
+        </div>
+        <div class="seek-row">
+          <span id="elapsed">0:00</span
+          ><input
+            id="seek"
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            value="0"
+            aria-label="播放进度"
+            disabled
+          /><span id="duration">0:00</span>
+        </div>
+      </div>
+      <div class="volume-control">
+        <label for="volume">音量 <output id="volume-value">—</output></label
+        ><input id="volume" type="range" min="0" max="1" step="0.01" value="0" disabled />
+      </div>
+    </footer>
+  </body>
+</html>
