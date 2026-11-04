@@ -30,7 +30,6 @@ import {
 const coreAudio = createCoreAudioUi(useCoreConnection())
 const emit = defineEmits<{
   openEqualizer: []
-  openDspRack: []
 }>()
 
 const audioOutputDspStore = useAudioOutputDspStore()
@@ -255,10 +254,6 @@ function openEqualizerFromDsp(): void {
   emit('openEqualizer')
 }
 
-function openDspRackFromDsp(): void {
-  emit('openDspRack')
-}
-
 // VST3 宿主设置（目录状态持久化在主进程 Vst3CatalogService，不新增设置字段）
 const vst3Catalog = ref<Vst3CatalogState | null>(null)
 const vst3Busy = ref(false)
@@ -394,11 +389,7 @@ onMounted(() => {
       ></button>
     </div>
 
-    <div id="setting-dsp-workbench" data-setting-id="dsp-workbench" class="dsp-actions">
-      <button class="brand-soft-button" type="button" @click="openDspRackFromDsp">
-        <i class="pi pi-th-large"></i>
-        打开 DSP 工作台
-      </button>
+    <div class="dsp-actions">
       <button class="brand-soft-button" type="button" @click="openEqualizerFromDsp">
         <i class="pi pi-sliders-h"></i>
         打开均衡器

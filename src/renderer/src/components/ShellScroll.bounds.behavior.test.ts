@@ -41,6 +41,8 @@ test('page scrollports paint under the caption while window controls retain inpu
           .join('\n')
       )
     )
+    // ZonesPage.vue loads its styles through <style src>, so read the sheet itself.
+    rootCss.push(await readFile(new URL('./zones/ZonesPage.css', import.meta.url), 'utf8'))
     await writeFile(
       join(directory, 'index.html'),
       `<!doctype html><html><head><style>
@@ -76,7 +78,7 @@ app.whenReady().then(async()=>{
   await win.loadFile(__dirname+'/index.html')
   for(const [width,height] of [[1366,768],[760,692]]){
    win.setContentSize(width,height);await new Promise(r=>setTimeout(r,120))
-   for(const tone of ['dark','pureWhite'])for(const root of ['streaming','home','analytics-page','radio-podcast-page','network-sources-page','recent-playback-page'])for(const menu of [false,true]){
+   for(const tone of ['dark','pureWhite'])for(const root of ['streaming','home','analytics-page','radio-podcast-page','network-sources-page','zones-page','recent-playback-page'])for(const menu of [false,true]){
     const result=await win.webContents.executeJavaScript('(()=>{try{return {point:('+setup.toString()+')('+JSON.stringify(root)+','+menu+','+JSON.stringify(tone)+')}}catch(e){return {error:e.message}}})()')
     if(result.error)throw Error(result.error)
     const point=result.point

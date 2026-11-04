@@ -10,6 +10,7 @@ export type NavigationPageTarget =
   | { kind: 'recent'; scope?: 'device' | 'platform'; providerId?: string }
   | { kind: 'radio' }
   | { kind: 'network' }
+  | { kind: 'zones' }
   | { kind: 'plugin'; page: UiContribution }
 
 export interface NavigationPageDefinition {

@@ -23,6 +23,7 @@ import type { PersonalizedStreamKey } from '../../../../shared/corePersonalized.
 import { formatTime } from '../../utils/playerTime.ts'
 import { extractDominantColor } from '../../utils/colorExtractor.ts'
 import { resolveCover } from '../../utils/coverLoader.ts'
+import { isDeepStrictEqual } from '../../../../shared/portableAsync.ts'
 
 export interface CorePlayerStoreOptions extends CorePlayerClockOptions {
   visible?: Readonly<Ref<boolean>>
@@ -86,7 +87,7 @@ export function createCorePlayerStore(
       const playback = core.state.value?.playback
       return playback ? Object.freeze({ ...audio.outputInfo.value, ...playback, outputInfo: audio.outputInfo.value }) : null
     })
-    const currentTrack = computed<CorePlayerTrack | null>(() => {
+    const currentTrack = computed<CorePlayerTrack | null>((previous) => {
       const track = core.state.value?.track
       if (!track) return null
       const content = personal.lyricsContent.value
@@ -98,7 +99,7 @@ export function createCorePlayerStore(
       const display = presentation.value.value
       const artwork = display?.current?.trackId === track.id &&
         display.current.occurrenceId === (core.state.value?.queue?.occurrenceId ?? null) ? display : null
-      return Object.freeze({
+      const next = {
         ...track,
         cover: artwork?.cover ?? null,
         coverSource: artwork?.coverSource,
@@ -108,7 +109,10 @@ export function createCorePlayerStore(
         lyricsSource: lyrics?.originalSource as LyricSource | null,
         translatedLyricsSource: lyrics?.translationSource as LyricSource | null,
         romanizedLyricsSource: lyrics?.romanizationSource as LyricSource | null
-      })
+      }
+      // Full Core snapshots also carry background progress. Keep the unchanged
+      // display track stable so lyrics, covers and track consumers stay idle.
+      return previous && isDeepStrictEqual(previous, next) ? previous : Object.freeze(next)
     })
     const isPlaying = computed(() => playbackInfo.value?.state === 'playing')
     const playMode = computed<PlayMode>(() => playbackInfo.value?.playMode ?? 'sequential')
@@ -118,7 +122,7 @@ export function createCorePlayerStore(
     const themeCoverIdentity = computed(
       () => `${currentTrack.value?.id ?? ''}:${themeCoverUrl.value}`
     )
-    watch(() => [currentTrack.value?.cover, currentTrack.value?.coverSource] as const, async ([handle, source], _old, cleanup) => {
+    watch([() => currentTrack.value?.cover, () => currentTrack.value?.coverSource], async ([handle, source], _old, cleanup) => {
       let active = true
       cleanup(() => {
         active = false

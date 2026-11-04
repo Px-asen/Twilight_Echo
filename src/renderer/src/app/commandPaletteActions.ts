@@ -39,6 +39,14 @@ export function createCommandPaletteActions(controls: {
       : undefined
   return [
     {
+      id: 'page:zones',
+      title: '打开声区',
+      description: '多个声区的播放、同步组与输出桥',
+      terms: '声区 zones 播放 同步组 输出桥',
+      group: '操作',
+      run: () => navigation.navigate({ kind: 'zones' })
+    },
+    {
       id: 'now-playing',
       title: '定位正在播放',
       description: controls.currentTrack?.title ?? '打开播放页',

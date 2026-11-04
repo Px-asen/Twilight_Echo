@@ -57,6 +57,7 @@ const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusi
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
 const NetworkSourcesPage = defineAsyncComponent(() => import('./components/NetworkSourcesPage.vue'))
+const ZonesPage = defineAsyncComponent(() => import('./components/zones/ZonesPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const AppearancePage = defineAsyncComponent(() => import('./components/AppearancePage.vue'))
@@ -171,6 +172,7 @@ const {
   pageTarget,
   showRadioPodcastPage,
   showNetworkSourcesPage,
+  showZonesPage,
   showLoginPage,
   loginPageMode,
   loginInitialProviderId,
@@ -990,7 +992,11 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
               ? 'plugins'
               : showSettingsPage
                 ? 'settings'
-                : null
+                : showDspRackPage || showEqualizerPage
+                  ? 'dsp'
+                  : showZonesPage
+                    ? 'zones'
+                    : null
         "
         :page-dock-actions="pageDock.actions.value"
         :menu-open="titleMenuOpen"
@@ -999,6 +1005,14 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @back="handleTitleBack"
         @login="handleTitleLogin"
         @settings="toggleSettingsPage"
+        @zones="selectSidebarPage({ kind: 'zones' })"
+        @dsp="
+          showDspRackPage
+            ? closeDspRackPage()
+            : showEqualizerPage
+              ? closeEqualizerPage()
+              : openDspRackPage()
+        "
         @appearance="
           showAppearancePage ? appearancePageRef?.requestClose?.() : openAppearancePage()
         "
@@ -1117,6 +1131,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         />
         <RadioPodcastPage v-if="showRadioPodcastPage" />
         <NetworkSourcesPage v-if="showNetworkSourcesPage" />
+        <ZonesPage v-if="showZonesPage" />
         <Transition name="login-page">
           <LoginPage
             v-if="showLoginPage"
@@ -1202,7 +1217,6 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         :navigation-target="settingsNavigationTarget"
         @section-change="navigation.rememberSettingsSection"
         @open-equalizer="openEqualizerPage"
-        @open-dsp-rack="openDspRackPage"
         @open-appearance="openAppearancePage"
         @reopen-onboarding="handleReopenOnboarding"
       />

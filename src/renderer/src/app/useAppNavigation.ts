@@ -184,6 +184,9 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
   const showNetworkSourcesPage = computed(
     () => pageTarget.value.kind === 'network' && pageContentVisible.value
   )
+  const showZonesPage = computed(
+    () => pageTarget.value.kind === 'zones' && pageContentVisible.value
+  )
   const showRecentPage = computed(
     () => pageTarget.value.kind === 'recent' && pageContentVisible.value
   )
@@ -282,6 +285,9 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
   }
   function closeNetworkSourcesPage(): void {
     goBackPage()
+  }
+  function enterZonesMode(): void {
+    navigate({ kind: 'zones' })
   }
   function collapseMenu(): void {
     menuOpen.value = false
@@ -440,6 +446,7 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
     showStreamingSurface,
     showRadioPodcastPage,
     showNetworkSourcesPage,
+    showZonesPage,
     showRecentPage,
     showLoginPage,
     loginPageMode,
@@ -472,6 +479,7 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
     closeRadioPodcastPage,
     enterNetworkSourcesMode,
     closeNetworkSourcesPage,
+    enterZonesMode,
     openLoginPage,
     closeLoginPage,
     openSettingsPage,

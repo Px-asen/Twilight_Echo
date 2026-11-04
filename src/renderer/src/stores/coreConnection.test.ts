@@ -248,3 +248,66 @@ test('page readers are admitted within Core capacity, queued cancellation and di
   await Promise.all([...readers, queued])
   assert.equal(f.requests.length, 13)
 })
+
+test('metadata reads leave capacity for playback controls, even with readers already waiting', async () => {
+  const f = fixture(), connection = new CoreWindowConnection(f.api)
+  await connection.connect()
+  const releases = new Map<string, () => void>()
+  f.api.request = async (_id, request) => {
+    f.requests.push(request)
+    await new Promise<void>(resolve => releases.set(request.requestId, resolve))
+    return { ok: true, value: null }
+  }
+  const readers = Array.from({ length: 15 }, (_, i) => connection.request({
+    kind: 'query', name: 'metadata.entity.tasks', epoch: 'first',
+    requestId: `read:${i}`, payload: { limit: 10 }
+  }))
+  const controls = Array.from({ length: 5 }, (_, i) => connection.request({
+    kind: 'command', name: 'playback.pause', epoch: 'first',
+    requestId: `control:${i}`, payload: {}
+  }))
+  try {
+    assert.equal(f.requests.filter(r => r.kind === 'query').length, 12)
+    assert.equal(f.requests.filter(r => r.kind === 'command').length, 4,
+      'pause must dispatch without waiting for metadata responses')
+    assert.equal(releases.size, 16, 'never exceed Core\'s per-client capacity')
+    releases.get('control:0')!()
+    await tick()
+    assert.equal(f.requests.at(-1)?.requestId, 'control:4')
+    assert.equal(f.requests.some(r => r.requestId === 'read:12'), false)
+  } finally {
+    const settled = Promise.allSettled([...readers, ...controls])
+    connection.dispose()
+    for (const release of releases.values()) release()
+    await settled
+  }
+})
+
+test('starting a song and locating a queued occurrence also bypass saturated metadata readers', async () => {
+  const f = fixture(), connection = new CoreWindowConnection(f.api)
+  await connection.connect()
+  const releases: Array<() => void> = []
+  f.api.request = async (_id, request) => {
+    f.requests.push(request)
+    await new Promise<void>(resolve => releases.push(resolve))
+    return { ok: true, value: null }
+  }
+  const readers = Array.from({ length: 12 }, (_, i) => connection.request({
+    kind: 'query', name: 'metadata.entity.tasks', epoch: 'first', requestId: `read:${i}`, payload: {}
+  }))
+  const requests: CoreRequestEnvelope[] = [
+    { kind: 'query', name: 'queue.locate', payload: { id: 'queue', revision: 1, occurrenceId: 'one' }, requestId: 'locate', epoch: 'first' },
+    { kind: 'command', name: 'queue.fromQuery', payload: { query: {}, selectedId: 'one' }, requestId: 'library-play', epoch: 'first' },
+    { kind: 'command', name: 'queue.submit', payload: { kind: 'begin', selectedIndex: 0, play: true }, requestId: 'submit', epoch: 'first' },
+    { kind: 'command', name: 'catalog.play', payload: { sourceId: 'one', revision: 1 }, requestId: 'catalog-play', epoch: 'first' }
+  ]
+  const playing = requests.map(request => connection.request(request))
+  try {
+    assert.deepEqual(f.requests.slice(12), requests)
+  } finally {
+    const settled = Promise.allSettled([...readers, ...playing])
+    connection.dispose()
+    for (const release of releases) release()
+    await settled
+  }
+})

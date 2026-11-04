@@ -1,0 +1,1188 @@
+/*
+ * 声区 dialogs: one shell (ZonesDialogFrame) plus the rows, chips and controls
+ * the six dialogs share. Theme tokens only — no colour literals, no gradients —
+ * so light, dark and custom themes carry over unchanged. Never put a transition
+ * on .zones-dialog itself: NativeDialogTransition animates that element.
+ */
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+
+.zones-dialog {
+  /* Rows and thumbnails follow the theme's 对话框圆角 instead of fighting it. */
+  --zones-dialog-radius-row: clamp(4px, var(--te-dialog-radius), 14px);
+  --zones-dialog-radius-thumb: clamp(4px, calc(var(--te-dialog-radius) - 2px), 10px);
+  --zones-dialog-radius-thumb-sm: clamp(3px, calc(var(--te-dialog-radius) - 3px), 8px);
+
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 64px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--te-material-border, var(--te-card-border));
+  border-radius: var(--te-dialog-radius);
+  background: var(--te-material-background, var(--te-card-bg));
+  color: var(--te-material-ink, var(--te-neutral-900));
+  box-shadow: var(--te-material-shadow, none);
+  -webkit-app-region: no-drag;
+}
+
+.zones-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Self-contained wherever the page mounts it: sizes include padding and borders. */
+.zones-dialog *,
+.zones-dialog *::before,
+.zones-dialog *::after {
+  box-sizing: border-box;
+}
+
+.zones-dialog--wide {
+  width: min(640px, calc(100vw - 40px));
+}
+
+.zones-dialog::backdrop {
+  background: var(--te-dialog-backdrop);
+}
+
+.zones-dialog-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+}
+
+.zones-dialog-header {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 16px;
+  padding: 24px 24px 8px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-form.is-scrolled .zones-dialog-header {
+  border-bottom-color: var(--te-card-border);
+}
+
+/* The close button shares only the title's row; the description runs the full width. */
+.zones-dialog-heading {
+  display: contents;
+}
+
+.zones-dialog-title {
+  grid-area: 1 / 1;
+  margin: 0;
+  color: var(--te-neutral-900);
+  font-family: var(--te-font-display);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.zones-dialog-description {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  color: var(--te-neutral-500);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.zones-dialog-close {
+  display: inline-grid;
+  grid-area: 1 / 2;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -4px -8px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-500);
+  font-size: 16px;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-close:hover:not(:disabled) {
+  background: var(--te-hover-bg);
+  color: var(--te-neutral-900);
+}
+
+.zones-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 24px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.zones-dialog-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.zones-dialog-content {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+/* Scoped under the dialog so a page reset of <p> margins (.zones-page p) cannot flatten it. */
+.zones-dialog .zones-dialog-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 24px 4px;
+  padding: 10px 12px;
+  border-radius: var(--zones-dialog-radius-row);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.zones-dialog-alert > i {
+  flex: none;
+  margin-top: 2px;
+  font-size: 15px;
+}
+
+.zones-dialog-footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 24px;
+  border-top: 1px solid transparent;
+  transition: border-color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-form.is-clipped .zones-dialog-footer {
+  border-top-color: var(--te-card-border);
+}
+
+.zones-dialog .zones-dialog-footer-note {
+  flex: 1 1 180px;
+  min-width: 0;
+  margin: 0 auto 0 0;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+
+.zones-dialog-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-900);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    border-color 160ms var(--te-ease-soft),
+    opacity 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-button > i {
+  font-size: 15px;
+}
+
+.zones-dialog-button:hover:not(:disabled) {
+  background: var(--te-hover-bg);
+}
+
+.zones-dialog-button--primary {
+  border-color: var(--te-neutral-900);
+  background: var(--te-neutral-900);
+  color: var(--te-material-background, var(--te-card-bg));
+}
+
+.zones-dialog-button--danger {
+  border-color: var(--te-control-danger);
+  background: var(--te-control-danger);
+  color: var(--te-control-on-danger);
+}
+
+.zones-dialog-button--primary:hover:not(:disabled) {
+  background: var(--te-neutral-900);
+  opacity: 0.88;
+}
+
+.zones-dialog-button--danger:hover:not(:disabled) {
+  background: var(--te-control-danger);
+  opacity: 0.88;
+}
+
+.zones-dialog .zones-dialog-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* A running command keeps its button legible; the spinner says it is working. */
+.zones-dialog.is-busy :is(.zones-dialog-button--primary, .zones-dialog-button--danger):disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+.zones-dialog :is(.zones-dialog-button, .zones-dialog-close, .zones-dialog-field-action, .zones-dialog-suggestion):focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 2px;
+}
+
+.zones-dialog-spin {
+  display: inline-block;
+  animation: zones-dialog-spin 900ms linear infinite;
+}
+
+@keyframes zones-dialog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Progress is information: it keeps turning, gently, in the reduced tier. */
+html[data-te-motion='reduced'] .zones-dialog .zones-dialog-spin {
+  animation: zones-dialog-spin 1800ms linear infinite !important;
+}
+
+/* ── Sections ──────────────────────────────────────────────────────────── */
+
+.zones-dialog-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.zones-dialog-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.zones-dialog-label {
+  margin: 0;
+  color: var(--te-neutral-900);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.zones-dialog-label small,
+.zones-dialog-count {
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.zones-dialog-text {
+  margin: 0;
+  color: var(--te-neutral-700);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.zones-dialog-hints {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zones-dialog-hints > li {
+  display: flex;
+  gap: 8px;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.zones-dialog-hints > li > i {
+  flex: none;
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.zones-dialog-hints > li.is-warning {
+  color: var(--te-warning-soft-fg);
+}
+
+.zones-dialog-hints strong {
+  color: var(--te-neutral-700);
+  font-weight: 600;
+}
+
+.zones-dialog-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--zones-dialog-radius-row);
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-700);
+  font-size: 13px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.zones-dialog-notice > i {
+  flex: none;
+  margin-top: 2px;
+  color: var(--te-neutral-500);
+  font-size: 16px;
+}
+
+.zones-dialog-notice--warning {
+  background: var(--te-warning-soft-bg);
+  color: var(--te-warning-soft-fg);
+}
+
+.zones-dialog-notice--warning > i {
+  color: inherit;
+}
+
+.zones-dialog-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 22px 16px;
+  border: 1px dashed var(--te-card-border);
+  border-radius: var(--zones-dialog-radius-row);
+  color: var(--te-neutral-500);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.zones-dialog-empty > i {
+  font-size: 22px;
+}
+
+/* ── Zone thumbnails ───────────────────────────────────────────────────── */
+
+.zones-dialog-thumb {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: var(--zones-dialog-radius-thumb);
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-500);
+  font-size: 20px;
+}
+
+.zones-dialog-thumb--sm {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--zones-dialog-radius-thumb-sm);
+  font-size: 17px;
+}
+
+.zones-dialog-thumb--empty {
+  border: 1px dashed var(--te-neutral-300);
+  background: transparent;
+}
+
+.zones-dialog-thumb-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── Choice rows (radio / checkbox cards) ──────────────────────────────── */
+
+.zones-dialog-choices {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zones-dialog .zones-dialog-sr-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  opacity: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  appearance: none;
+  pointer-events: none;
+}
+
+.zones-dialog-choice,
+.zones-dialog-member,
+.zones-dialog-option {
+  position: relative;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--zones-dialog-radius-row);
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    border-color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-choice,
+.zones-dialog-member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.zones-dialog-choice:hover,
+.zones-dialog-option:hover,
+.zones-dialog-member:has(> .zones-dialog-member-row:hover) {
+  background: var(--te-hover-bg);
+}
+
+.zones-dialog-choice:has(.zones-dialog-sr-input:checked),
+.zones-dialog-member:has(.zones-dialog-sr-input:checked),
+.zones-dialog-option:has(.zones-dialog-sr-input:checked) {
+  border-color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
+}
+
+.zones-dialog-choice:has(.zones-dialog-sr-input:focus-visible),
+.zones-dialog-member:has(.zones-dialog-sr-input:focus-visible),
+.zones-dialog-option:has(.zones-dialog-sr-input:focus-visible) {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 2px;
+}
+
+.zones-dialog :is(.zones-dialog-choice, .zones-dialog-member-row, .zones-dialog-option):has(
+    .zones-dialog-sr-input:disabled
+  ) {
+  cursor: not-allowed;
+}
+
+.zones-dialog :is(.zones-dialog-choice, .zones-dialog-option).is-unavailable:hover,
+.zones-dialog .zones-dialog-member.is-unavailable:hover {
+  background: transparent;
+}
+
+/* An unavailable row fades, but the reason it gives stays readable. */
+:is(.zones-dialog-choice, .zones-dialog-member).is-unavailable
+  :is(.zones-dialog-thumb, .zones-dialog-choice-title, .zones-dialog-choice-meta, .zones-dialog-indicator) {
+  opacity: 0.5;
+}
+
+.zones-dialog-choice-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.zones-dialog-choice-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--te-neutral-900);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.zones-dialog-choice-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zones-dialog-choice-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zones-dialog-choice-reason {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.zones-dialog-choice-reason > i {
+  flex: none;
+  font-size: 13px;
+}
+
+/* Radio and checkbox indicators, drawn from the hidden native input's state. */
+.zones-dialog-indicator {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--te-neutral-300);
+  border-radius: 6px;
+  color: var(--te-on-accent);
+  font-size: 12px;
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    border-color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-indicator > i {
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 120ms var(--te-ease-soft),
+    transform 160ms var(--te-ease-out-strong);
+}
+
+.zones-dialog-indicator--radio {
+  border-radius: 50%;
+}
+
+.zones-dialog-indicator--radio::after {
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--te-primary-500);
+  content: '';
+  transform: scale(0);
+  transition: transform 160ms var(--te-ease-out-strong);
+}
+
+.zones-dialog-sr-input:checked ~ .zones-dialog-indicator {
+  border-color: var(--te-primary-500);
+}
+
+.zones-dialog-sr-input:checked ~ .zones-dialog-indicator--check {
+  background: var(--te-primary-500);
+}
+
+.zones-dialog-sr-input:checked ~ .zones-dialog-indicator > i {
+  opacity: 1;
+  transform: none;
+}
+
+.zones-dialog-sr-input:checked ~ .zones-dialog-indicator--radio::after {
+  transform: scale(1);
+}
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+
+.zones-dialog-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-500);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zones-dialog-chip > i {
+  flex: none;
+  font-size: 12px;
+}
+
+.zones-dialog-chip--success {
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
+}
+
+.zones-dialog-chip--warning {
+  background: var(--te-warning-soft-bg);
+  color: var(--te-warning-soft-fg);
+}
+
+.zones-dialog-chip--info {
+  background: var(--te-info-soft-bg);
+  color: var(--te-info-soft-fg);
+}
+
+.zones-dialog-chip--danger {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+
+/* ── Option rows: confirmations and switches ───────────────────────────── */
+
+.zones-dialog-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.zones-dialog-option--confirm {
+  align-items: flex-start;
+}
+
+.zones-dialog-option--confirm > .zones-dialog-indicator {
+  margin-top: 1px;
+}
+
+/* A switch is a setting, not a selection: it never washes its row. */
+.zones-dialog-option--switch:has(.zones-dialog-sr-input:checked) {
+  border-color: var(--te-card-border);
+  background: transparent;
+}
+
+.zones-dialog-option--switch:has(.zones-dialog-sr-input:checked):hover {
+  background: var(--te-hover-bg);
+}
+
+.zones-dialog-option-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.zones-dialog-option-title {
+  color: var(--te-neutral-900);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.zones-dialog-option-detail {
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.zones-dialog-option.is-unavailable :is(.zones-dialog-option-title, .zones-dialog-switch) {
+  opacity: 0.5;
+}
+
+.zones-dialog-switch {
+  position: relative;
+  flex: none;
+  width: var(--te-switch-width);
+  height: var(--te-switch-height);
+  border-radius: 999px;
+  background: var(--te-switch-track);
+  transition: background-color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-switch::after {
+  position: absolute;
+  top: var(--te-switch-inset);
+  left: var(--te-switch-inset);
+  width: var(--te-switch-thumb);
+  height: var(--te-switch-thumb);
+  border-radius: 50%;
+  background: var(--te-switch-thumb-bg);
+  box-shadow: var(--te-switch-thumb-shadow);
+  content: '';
+  transition: transform 180ms var(--te-ease-out-strong);
+}
+
+.zones-dialog-sr-input:checked + .zones-dialog-switch {
+  background: var(--te-switch-track-active);
+}
+
+.zones-dialog-sr-input:checked + .zones-dialog-switch::after {
+  transform: translateX(var(--te-switch-travel));
+}
+
+/* ── Handoff route ─────────────────────────────────────────────────────── */
+
+.zones-dialog-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--zones-dialog-radius-row);
+  background: var(--te-subtle-bg);
+}
+
+.zones-dialog-route-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.zones-dialog-route-end .zones-dialog-thumb {
+  background: var(--te-material-background, var(--te-card-bg));
+}
+
+.zones-dialog-route-end .zones-dialog-thumb--empty {
+  background: transparent;
+}
+
+.zones-dialog-route-arrow {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 50%;
+  background: var(--te-material-background, var(--te-card-bg));
+  color: var(--te-neutral-500);
+  font-size: 14px;
+}
+
+.zones-dialog-route-end.is-placeholder .zones-dialog-choice-title {
+  color: var(--te-neutral-500);
+  font-weight: 500;
+}
+
+@media (max-width: 480px) {
+  .zones-dialog-route {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zones-dialog-route-arrow {
+    margin-left: 8px;
+    transform: rotate(90deg);
+  }
+}
+
+/* ── Composer: members and downstream delay ────────────────────────────── */
+
+.zones-dialog-delay {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--te-card-border);
+}
+
+.zones-dialog-delay-label {
+  color: var(--te-neutral-700);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Drawn like the page's ranges: a hairline track, an accent fill, an ink thumb. */
+.zones-dialog-range {
+  position: relative;
+  display: block;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-neutral-900) 9%, transparent);
+}
+
+.zones-dialog-range::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--zones-dialog-range, 0%);
+  border-radius: inherit;
+  background: var(--te-primary-500);
+  content: '';
+  pointer-events: none;
+}
+
+.zones-dialog-range:has(> .zones-dialog-range-input:focus-visible) {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 7px;
+}
+
+/* The native range sits over the drawn track: keyboard, pointer and AT for free. */
+.zones-dialog .zones-dialog-range-input {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  outline: none;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.zones-dialog .zones-dialog-range-input:disabled {
+  cursor: default;
+}
+
+/* The drawn track carries the focus ring; the page's control ring must not double it. */
+.zones-dialog .zones-dialog-range-input:focus-visible {
+  outline: none;
+}
+
+.zones-dialog-range-input::-webkit-slider-runnable-track {
+  height: 20px;
+  background: transparent;
+}
+
+.zones-dialog-range-input::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--te-neutral-900);
+  box-shadow: 0 0 0 2px var(--te-material-background, var(--te-card-bg));
+  transition: transform 140ms var(--te-ease-soft);
+  -webkit-appearance: none;
+}
+
+.zones-dialog-range-input:not(:disabled):hover::-webkit-slider-thumb,
+.zones-dialog-range-input:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.zones-dialog-delay-value {
+  color: var(--te-neutral-900);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.zones-dialog-delay-value.is-uncalibrated {
+  color: var(--te-neutral-500);
+  font-weight: 500;
+}
+
+/* ── Fields ────────────────────────────────────────────────────────────── */
+
+.zones-dialog-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zones-dialog-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: var(--te-control-height-field);
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--te-control-border);
+  border-radius: var(--te-control-radius-md);
+  background: var(--te-control-bg);
+  transition: border-color 160ms var(--te-ease-soft);
+}
+
+/* A field without a trailing action keeps even padding on both sides. */
+.zones-dialog-input-wrap--plain {
+  padding-right: 12px;
+}
+
+.zones-dialog-input-wrap:hover {
+  border-color: var(--te-neutral-300);
+}
+
+.zones-dialog-input-wrap:has(.zones-dialog-input:focus-visible) {
+  outline: var(--te-control-focus-width) solid var(--te-control-focus-color);
+  outline-offset: var(--te-control-focus-offset);
+}
+
+.zones-dialog-input-wrap.is-invalid {
+  border-color: var(--te-control-danger);
+}
+
+.zones-dialog-input-wrap.is-unavailable {
+  opacity: 0.6;
+}
+
+.zones-dialog-input-wrap > i {
+  flex: none;
+  color: var(--te-neutral-500);
+  font-size: 16px;
+}
+
+.zones-dialog .zones-dialog-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--te-neutral-900);
+  font-size: 14px;
+}
+
+.zones-dialog-input::placeholder {
+  color: var(--te-neutral-500);
+  opacity: 0.75;
+}
+
+/* The field frame carries the focus ring; the page's control ring must not double it. */
+.zones-dialog .zones-dialog-input:focus-visible {
+  outline: none;
+}
+
+.zones-dialog-field-action {
+  flex: none;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-field-action:hover:not(:disabled) {
+  background: var(--te-hover-bg);
+  color: var(--te-neutral-900);
+}
+
+.zones-dialog-field-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.zones-dialog-field-message > i {
+  flex: none;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.zones-dialog-field-message.is-error {
+  color: var(--te-danger-soft-fg);
+}
+
+.zones-dialog-field-message.is-success {
+  color: var(--te-success-soft-fg);
+}
+
+.zones-dialog-field-message .is-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.zones-dialog-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.zones-dialog-suggestion {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--te-ease-soft),
+    border-color 160ms var(--te-ease-soft),
+    color 160ms var(--te-ease-soft);
+}
+
+.zones-dialog-suggestion:hover:not(:disabled) {
+  background: var(--te-hover-bg);
+  color: var(--te-neutral-900);
+}
+
+.zones-dialog-suggestion[aria-pressed='true'] {
+  border-color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
+  color: var(--te-neutral-900);
+}
+
+/* ── Zone capacity ─────────────────────────────────────────────────────── */
+
+.zones-dialog-capacity {
+  display: grid;
+  gap: 8px;
+}
+
+.zones-dialog-capacity-bar {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zones-dialog-capacity-bar > li {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--te-card-border);
+}
+
+.zones-dialog-capacity-bar > li.is-used {
+  background: var(--te-neutral-300);
+  box-shadow: none;
+}
+
+.zones-dialog-capacity-bar > li.is-new {
+  background: var(--te-primary-500);
+  box-shadow: none;
+}
+
+/* ── Lists and summaries ───────────────────────────────────────────────── */
+
+.zones-dialog-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--zones-dialog-radius-row);
+}
+
+.zones-dialog-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--zones-dialog-radius-row);
+  list-style: none;
+}
+
+.zones-dialog-list > li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.zones-dialog-list > li + li {
+  border-top: 1px solid var(--te-card-border);
+}
+
+.zones-dialog-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: zones-dialog-step;
+}
+
+.zones-dialog-steps > li {
+  display: flex;
+  gap: 10px;
+  color: var(--te-neutral-700);
+  font-size: 13px;
+  line-height: 1.6;
+  text-wrap: pretty;
+  counter-increment: zones-dialog-step;
+}
+
+.zones-dialog-steps > li::before {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 0;
+  border-radius: 50%;
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-500);
+  content: counter(zones-dialog-step);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.zones-dialog-steps strong {
+  color: var(--te-neutral-900);
+  font-weight: 600;
+}
+
+/* A quoted UI label the user has to find stays on one line. */
+.zones-dialog-keep {
+  white-space: nowrap;
+}
+
+/* Without a resolved app motion tier (first paint, tests) follow the system. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-te-motion]) .zones-dialog *,
+  html:not([data-te-motion]) .zones-dialog *::before,
+  html:not([data-te-motion]) .zones-dialog *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

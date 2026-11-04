@@ -51,7 +51,8 @@ test('page chrome, long plugin output and variable player clearance fit the shel
           ['songs', 'song-list/SongList.css', 'song-list'],
           ['analytics', 'ListeningAnalyticsPage.css', 'analytics-page'],
           ['radio', 'RadioPodcastPage.vue', 'radio-podcast-page'],
-          ['network', 'NetworkSourcesPage.vue', 'network-sources-page']
+          ['network', 'NetworkSourcesPage.vue', 'network-sources-page'],
+          ['zones', 'zones/ZonesPage.css', 'zones-page']
         ].map(async ([name, path, className]) => ({
           name,
           css: await extract(path),
@@ -81,7 +82,7 @@ test('page chrome, long plugin output and variable player clearance fit the shel
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron');app.setPath('userData',__dirname+'/profile');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1366,height:874,webPreferences:{offscreen:true,backgroundThrottling:false}});try{await win.loadFile(__dirname+'/index.html');let failures=[];for(const [w,h] of [[760,692],[960,720],[1366,874]]){win.setContentSize(w,h);await new Promise(r=>setTimeout(r,80));for(const font of [14,18])for(const clearance of [102,220])for(let i=0;i<7;i++){const errors=await win.webContents.executeJavaScript('inspectPage('+i+','+font+','+clearance+')');failures.push(...errors.map(e=>w+'x'+h+' font '+font+' player '+clearance+': '+e))}}if(failures.length)throw Error(failures.join(' | '));console.log('PAGE_LAYOUT_OK 84 cases');app.exit(0)}catch(e){console.error(e.stack);app.exit(1)}})`
+      `const {app,BrowserWindow}=require('electron');app.setPath('userData',__dirname+'/profile');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1366,height:874,webPreferences:{offscreen:true,backgroundThrottling:false}});try{await win.loadFile(__dirname+'/index.html');let failures=[];for(const [w,h] of [[760,692],[960,720],[1366,874]]){win.setContentSize(w,h);await new Promise(r=>setTimeout(r,80));for(const font of [14,18])for(const clearance of [102,220])for(let i=0;i<8;i++){const errors=await win.webContents.executeJavaScript('inspectPage('+i+','+font+','+clearance+')');failures.push(...errors.map(e=>w+'x'+h+' font '+font+' player '+clearance+': '+e))}}if(failures.length)throw Error(failures.join(' | '));console.log('PAGE_LAYOUT_OK 96 cases');app.exit(0)}catch(e){console.error(e.stack);app.exit(1)}})`
     )
     const result = await promisify(execFile)(
       require('electron'),

@@ -486,6 +486,12 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     terms: '连接 控制 快捷键 集成 网络 代理 网易云 ncm 登录 检查 启动 账号 启动时检查网易云登录'
   },
   {
+    id: 'ncm-listening-sync',
+    section: 'connections',
+    title: '同步听歌记录到网易云',
+    terms: '网易云 ncm 同步 听歌 记录 历史 时长 scrobble 打卡 最近播放 排行'
+  },
+  {
     id: 'system-media',
     section: 'connections',
     title: '原生媒体控制 (SMTC)',
@@ -713,12 +719,6 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     title: 'WASAPI 独占推送模式',
     terms: '播放 输出 引擎 DSP 音效 wasapi 独占 推送 模式 windows 输出 WASAPI 独占推送模式',
     disclosureId: 'advanced-engine-parameters'
-  },
-  {
-    id: 'dsp-workbench',
-    section: 'playback',
-    title: 'DSP 工作台',
-    terms: 'DSP 工作台 workbench rack 机架 均衡器 效果链 场景 校正 资料 插件 监测'
   },
   {
     id: 'dsp-master',
