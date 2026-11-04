@@ -17,6 +17,7 @@
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
 #include "WasapiCommon.h"
 #include "WasapiFormatNegotiator.h"
+#include "WasapiClock.h"
 
 #include <audiopolicy.h>
 #include <avrt.h>
@@ -258,6 +259,11 @@ struct WasapiExclusiveBackend::Impl {
   Microsoft::WRL::ComPtr<IMMDevice> device;
   Microsoft::WRL::ComPtr<IAudioClient> audioClient;
   Microsoft::WRL::ComPtr<IAudioRenderClient> renderClient;
+  wasapi::PresentationClock presentationClock;
+  ClockedRenderCallback clockedCallback;
+  ClockedCommitCallback clockedCommit;
+  ClockedRenderContext activeContext;
+  uint64_t releasedFrames = 0;
   wasapi::UniqueHandle samplesReadyEvent;
   std::thread renderThread;
   std::thread recoveryThread;
@@ -560,7 +566,10 @@ struct WasapiExclusiveBackend::Impl {
     renderBufferLatencyMs.store(outputInfo.latencyInfo.bufferLatencyMs);
 
     hr = audioClient->GetService(IID_PPV_ARGS(&renderClient));
-    if (SUCCEEDED(hr)) return true;
+    if (SUCCEEDED(hr)) {
+      presentationClock.attach(audioClient.Get(), outputFormat.sampleRate);
+      return true;
+    }
     return failHr(error, "WASAPI 独占 init failure：无法获取渲染客户端", hr);
   }
 
@@ -611,7 +620,9 @@ struct WasapiExclusiveBackend::Impl {
           outputFormat.channelCount,
           callback);
       hr = renderClient->ReleaseBuffer(frameCount, 0);
+      if (clockedCommit) clockedCommit(releasedFrames, frameCount, activeContext.epoch, SUCCEEDED(hr));
       if (FAILED(hr)) return hr;
+      if (clockedCallback) releasedFrames += frameCount;
       return S_OK;
     }
 
@@ -639,7 +650,9 @@ struct WasapiExclusiveBackend::Impl {
     }
 
     hr = renderClient->ReleaseBuffer(frameCount, 0);
+    if (clockedCommit) clockedCommit(releasedFrames, frameCount, activeContext.epoch, SUCCEEDED(hr));
     if (FAILED(hr)) return hr;
+    if (clockedCallback) releasedFrames += frameCount;
     return S_OK;
   }
 
@@ -783,6 +796,7 @@ struct WasapiExclusiveBackend::Impl {
       const UINT32 framesAvailable =
           wasapi::exclusiveRenderFrames(
               bufferFrameCount, padding, wasapiExclusivePushMode.load(std::memory_order_acquire));
+      presentationClock.sample();
       if (framesAvailable == 0) continue;
       const HRESULT renderHr = renderPacket(framesAvailable);
       if (FAILED(renderHr)) {
@@ -791,6 +805,7 @@ struct WasapiExclusiveBackend::Impl {
       }
     }
 
+    presentationClock.invalidate();
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
 
@@ -802,6 +817,8 @@ struct WasapiExclusiveBackend::Impl {
       publishQueuedRenderFailure(queuedHr, queuedMessage);
     }
 
+    // A timed stream cannot silently acquire a new device/frame epoch.
+    if (recoveryQueued.load() && clockedCallback) recoveryQueued = false;
     if (recoveryQueued.load() && !stopRequested.load()) {
       startQueuedRecoveryAfterRenderExit(queuedRecoveryReason);
       return;
@@ -832,7 +849,8 @@ struct WasapiExclusiveBackend::Impl {
       RenderCallback nextCallback,
       TypedRenderCallback nextTypedCallback,
       OutputEventCallback nextEventCallback,
-      std::string* error) {
+      std::string* error,
+      ClockedRenderCallback nextClockedCallback = {}, ClockedCommitCallback nextCommit = {}) {
     if (!audioClient || !renderClient) {
       recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
       return false;
@@ -842,10 +860,29 @@ struct WasapiExclusiveBackend::Impl {
       return false;
     }
 
-    callback = std::move(nextCallback);
+    clockedCallback = std::move(nextClockedCallback);
+    clockedCommit = std::move(nextCommit);
+    if (clockedCallback) {
+      if (!presentationClock.read().supported || outputFormat.dopEncoded ||
+          isDsdSampleFormat(outputFormat.sampleFormat)) {
+        if (error) *error = "Clocked output requires PCM and a device clock";
+        return false;
+      }
+      // Only the new route resets the device and its frame ledger.
+      if (FAILED(audioClient->Reset())) {
+        if (error) *error = "Unable to reset the clocked device stream";
+        return false;
+      }
+      releasedFrames = 0;
+      callback = [this](float* out, size_t frames) {
+        activeContext = clockedRenderContext(presentationClock.read(), releasedFrames, bufferFrameCount, outputMonotonicMs());
+        return clockedCallback(out, frames, activeContext);
+      };
+    } else callback = std::move(nextCallback);
     typedCallback = std::move(nextTypedCallback);
     eventCallback = std::move(nextEventCallback);
     stopRequested = false;
+    presentationClock.begin();
 
     // Prefill with silence (and still advance the decoder) so Start() after a device rebind
     // does not attack at full level.
@@ -868,7 +905,9 @@ struct WasapiExclusiveBackend::Impl {
           // DoP cannot use all-zero PCM silence: that removes the 0x05/0xFA marker
           // sequence and makes many DACs lose DSD lock. Let the typed callback emit
           // a valid carrier pre-roll and submit those bytes without the SILENT flag.
-          if (outputFormat.dopEncoded && typedCallback) {
+          if (clockedCallback) {
+            // Pure device silence: no callback, no media dequeue.
+          } else if (outputFormat.dopEncoded && typedCallback) {
             PcmBlock block;
             block.format = outputFormat;
             block.data = data;
@@ -900,6 +939,7 @@ struct WasapiExclusiveBackend::Impl {
           if (error) *error = "无法提交独占输出预填充缓冲区";
           return false;
         }
+        if (clockedCallback) releasedFrames += prefillFrames;
       }
     }
 
@@ -993,10 +1033,12 @@ struct WasapiExclusiveBackend::Impl {
       audioClient->Stop();
       audioClient->Reset();
     }
+    presentationClock.invalidate();
   }
 
   void close() {
     stop();
+    presentationClock.detach();
     renderClient.Reset();
     audioClient.Reset();
     device.Reset();
@@ -1017,6 +1059,7 @@ struct WasapiExclusiveBackend::Impl {
 
   // ── 自动恢复：重新打开设备 ──
   bool reopenDevice() {
+    presentationClock.detach();
     if (audioClient) {
       audioClient->Stop();
       audioClient->Reset();
@@ -1307,6 +1350,25 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
 #endif
 }
 
+bool WasapiExclusiveBackend::supportsClockedRendering() const {
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  return impl_->presentationClock.read().supported && !impl_->outputFormat.dopEncoded &&
+      !isDsdSampleFormat(impl_->outputFormat.sampleFormat);
+#else
+  return false;
+#endif
+}
+bool WasapiExclusiveBackend::startClocked(ClockedRenderCallback callback, ClockedCommitCallback commit, OutputEventCallback eventCallback, std::string* error) {
+  if (!callback || !commit) { if (error) *error = "Clocked render and commit callbacks are required"; return false; }
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  return impl_->startWithCallbacks({}, {}, std::move(eventCallback), error, std::move(callback), std::move(commit));
+#else
+  (void)callback; (void)commit; (void)eventCallback;
+  if (error) *error = "Clocked WASAPI output is unavailable";
+  return false;
+#endif
+}
+
 bool WasapiExclusiveBackend::startTyped(
     TypedRenderCallback callback,
     RenderCallback fallbackCallback,
@@ -1374,6 +1436,14 @@ DopRuntimeFacts WasapiExclusiveBackend::dopRuntimeFacts() const {
   return facts;
 #else
   return DopRuntimeFacts{};
+#endif
+}
+
+OutputClockSnapshot WasapiExclusiveBackend::outputClock() const {
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  return impl_->presentationClock.read();
+#else
+  return {};
 #endif
 }
 

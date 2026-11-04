@@ -43,6 +43,7 @@ test(
       })
       assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout)
       assert.match(result.stdout, /received processed audio/)
+      assert.match(result.stdout, /helper exited with its audio-service owner/)
     } finally {
       rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }

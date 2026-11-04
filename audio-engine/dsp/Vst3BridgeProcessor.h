@@ -63,6 +63,7 @@ class Vst3BridgeProcessor final : public IAudioProcessor {
   void* mappingHandle_ = nullptr;
   void* inputEventHandle_ = nullptr;
   void* hostProcessHandle_ = nullptr;
+  void* hostJobHandle_ = nullptr;
   void* sharedMemory_ = nullptr;
   std::atomic<bool> active_{false};
   std::atomic<uint64_t> processCalls_{0};

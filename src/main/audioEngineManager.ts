@@ -1353,6 +1353,12 @@ export class AudioEngineManager extends EventEmitter {
   async togglePause(): Promise<void> {
     return this.outputRouter.serializeConfiguration(() => this.playback.togglePause())
   }
+  /** Group-only lane; ordinary play retains its original preparation contract. */
+  async playTimedBridge(source: string, position: number, requested: () => boolean): Promise<AudioEnginePlayResult> {
+    if (!this.bridgeSelected) throw new Error('同步组成员必须明确选择输出桥')
+    this.autoMixCoordinator?.invalidate('group_playback')
+    return this.playback.play(source, position, requested, async () => { await this.callBridge('BridgePrepareTimed', [true]) })
+  }
 
   async pause(): Promise<void> {
     return this.outputRouter.serializeConfiguration(() => this.playback.pause())
@@ -1540,7 +1546,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   /** Keep selected-output intent across service restarts without persisting consent credentials. */
-  async callBridge(method: 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown', args: unknown[] = []): Promise<unknown> {
+  async callBridge(method: 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown' | 'BridgePrepareTimed' | 'BridgeArmTimed' | 'BridgeCancelTimed' | 'BridgeSetTimedCorrection', args: unknown[] = []): Promise<unknown> {
     if (!this.audioServiceBinding?.callAsync) throw new Error('输出桥需要隔离的原生音频服务')
     await this.audioServiceReadyRestore
     if (method === 'BridgeConnect') {

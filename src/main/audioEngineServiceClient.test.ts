@@ -68,12 +68,14 @@ test('Bridge driver/TLS lifecycle uses the topology deadline instead of the shor
     requestTimeoutMs: 15, topologyRequestTimeoutMs: 1000,
     electron: { utilityProcess: { fork: () => child } } })
   try {
-    const call = binding.callAsync('BridgeConnect', [])
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(child.killCount, 0)
-    const request = child.messages.find((m: any) => m.method === 'BridgeConnect') as any
-    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
-    await call
+    for (const method of ['BridgeConnect', 'BridgePrepareTimed', 'BridgeArmTimed', 'BridgeCancelTimed', 'BridgeSetTimedCorrection']) {
+      const call = binding.callAsync(method, [])
+      await new Promise(resolve => setTimeout(resolve, 40))
+      assert.equal(child.killCount, 0)
+      const request = child.messages.find((m: any) => m.method === method) as any
+      child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
+      await call
+    }
   } finally { binding.destroy() }
 })
 
@@ -135,7 +137,9 @@ test('crash listener calls cannot bypass the configured restart backoff', async 
   try {
     startAudioServiceForTest(binding)
     children[0].emit('exit', 1)
-    await assert.rejects(listenerCall!, /音频服务不可用/)
+    // The explicit restarting latch rejects before the missing-child branch;
+    // neither branch is allowed to fork from inside this crash listener.
+    await assert.rejects(listenerCall!, /Audio engine is restarting/)
     await new Promise((resolve) => setTimeout(resolve, 15))
     assert.equal(children.length, 1)
     await new Promise((resolve) => setTimeout(resolve, 60))

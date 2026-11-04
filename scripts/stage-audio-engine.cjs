@@ -85,6 +85,8 @@ if (!buildDir) {
   process.exit(1)
 }
 
+if (existsSync(join(buildDir, 'twilight_image_node.node'))) runtimeFiles.push('twilight_image_node.node')
+
 mkdirSync(outputDir, { recursive: true })
 
 if (process.platform === 'darwin') {

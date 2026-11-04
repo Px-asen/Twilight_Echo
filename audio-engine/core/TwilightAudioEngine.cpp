@@ -408,6 +408,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   std::ostringstream json;
   json << "{"
        << "\"state\":\"" << stateToString(info.state) << "\","
+       << "\"buffering\":" << (info.state == PlaybackState::Playing && info.buffering ? "true" : "false") << ","
        << "\"position\":" << json_utils::number(info.positionSeconds) << ","
        << "\"duration\":" << json_utils::number(info.durationSeconds) << ","
        << "\"volume\":" << info.volume << ","
@@ -2936,6 +2937,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
       break;
   }
 
+  info_.buffering = status.buffering;
   info_.positionSeconds = status.positionSeconds;
   info_.requestedConfigRevision = status.requestedConfigRevision;
   info_.appliedConfigRevision = status.appliedConfigRevision;

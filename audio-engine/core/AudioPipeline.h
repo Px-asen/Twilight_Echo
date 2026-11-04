@@ -51,6 +51,7 @@ enum class PipelineState {
 
 struct PipelineStatus {
   PipelineState state = PipelineState::Stopped;
+  bool buffering = false;
   double positionSeconds = 0.0;
   AudioStreamInfo stream;
   AudioFormat outputFormat;

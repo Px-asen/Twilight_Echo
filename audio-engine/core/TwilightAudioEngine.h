@@ -32,6 +32,7 @@ struct NaturalPlaybackBoundaries {
 
 struct PlaybackInfo {
   PlaybackState state = PlaybackState::Stopped;
+  bool buffering = false;
   double positionSeconds = 0.0;
   double durationSeconds = 0.0;
   double volume = 1.0;

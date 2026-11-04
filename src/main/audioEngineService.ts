@@ -89,6 +89,10 @@ const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
   BridgeHostStop: () => bridgeRuntime!.stopHost(),
   BridgeConnect: (peer: BridgePeer) => bridgeRuntime!.connectPeer(peer),
   BridgeDisconnect: () => bridgeRuntime!.disconnectPeer(),
+  BridgePrepareTimed: (adaptive = false) => bridgeRuntime!.prepareTimedPlayback(adaptive),
+  BridgeArmTimed: (startAtCoreMs: number, mediaFrame = 0, synchronize = false) => bridgeRuntime!.armTimedPlayback(startAtCoreMs, mediaFrame, synchronize),
+  BridgeCancelTimed: () => bridgeRuntime!.cancelTimedPlayback(),
+  BridgeSetTimedCorrection: (ppm: number) => bridgeRuntime!.setTimedCorrection(ppm),
   BridgeQuarantine: () => bridgeRuntime!.quarantine(),
   BridgeShutdown: () => bridgeRuntime!.close()
 }
@@ -169,6 +173,7 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
     const value = await (method as (...args: unknown[]) => unknown)(...args)
     post({ kind: 'response', requestId: message.requestId, ok: true, value })
   } catch (error) {
+    try { bridgeRuntime?.callFailed(message.method) } catch { /* The original native failure remains authoritative. */ }
     writeDiagnostic('audio.native', 'call.failed', { method: message.method, error }, 'error')
     post({
       kind: 'response',

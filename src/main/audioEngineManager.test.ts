@@ -7432,8 +7432,9 @@ test('getAudioOutputState can use injected device options without native enumera
   assert.equal(state.deviceOptions[2].capabilityVersion, 3)
 })
 
-test('native ASIO device names become labels and stale selected devices stay out of the list', async () => {
+test('native ASIO names become labels; an absent explicit CLSID stays selected until explicit recovery', async () => {
   const canonicalAsioId = 'asio:{6b3ba606-8664-4426-8994-0f1d9d12a345}'
+  const absentAsioId = 'asio:{11111111-1111-4111-8111-111111111111}'
   const nativeBinding = new FakeNativeBinding(undefined, [
     DEVICE_OPTIONS[0],
     {
@@ -7449,7 +7450,7 @@ test('native ASIO device names become labels and stale selected devices stay out
     {
       exclusiveMode: false,
       audioOutput: 'asio',
-      audioDevice: 'asio:{stale-device}'
+      audioDevice: absentAsioId
     },
     {
       nativeBinding,
@@ -7459,17 +7460,22 @@ test('native ASIO device names become labels and stale selected devices stay out
 
   const state = await manager.getAudioOutputState()
 
-  // A driver missing from a catalog we can read recovers onto a real driver id,
-  // not 'auto' — same endpoint as before, now visible in the picker.
-  assert.equal(state.device, canonicalAsioId)
+  // The dual-architecture contract preserves an explicit CLSID even when its
+  // driver is absent. An unrelated enumerated CLSID is not the same endpoint.
+  assert.equal(state.device, absentAsioId)
+  assert.notEqual(state.device, 'auto')
+  assert.equal(nativeBinding.routeCalls.some(call => call.method === 'SetOutputDevice' && call.value === canonicalAsioId), false)
   assert.equal(
     state.deviceOptions.find((device) => device.id === canonicalAsioId)?.label,
     'FiiO ASIO Driver'
   )
   assert.equal(
-    state.deviceOptions.some((device) => device.id === 'asio:{stale-device}'),
+    state.deviceOptions.some((device) => device.id === absentAsioId),
     false
   )
+  await manager.setAudioDevice(canonicalAsioId)
+  assert.equal((await manager.getAudioOutputState()).device, canonicalAsioId)
+  assert.equal(nativeBinding.playCalls.length, 0)
 })
 
 test('getAudioOutputState reuses native device options within the output state cache window', async () => {
@@ -9609,4 +9615,38 @@ test('failed service-mode queue load rolls the native queue back to the local mi
   assert.equal(loadQueueCalls, 2)
 
   manager.destroy()
+})
+
+test('group timed media prepares after source setup and never retries a failed Play through ASIO fallback', async () => {
+  const service = new FakeAudioServiceBinding(), order: string[] = []
+  const original = service.callAsync.bind(service)
+  let rejectPlay = false
+  service.callAsync = async (method, args) => {
+    order.push(method)
+    if (method === 'Play' && rejectPlay) throw new Error('timed native play failed')
+    return original(method, args)
+  }
+  const manager = new AudioEngineManager({ audioOutput: 'asio', exclusiveMode: true }, {
+    audioServiceFactory: () => service, initialBridgeSelected: true,
+    scheduler: TEST_SCHEDULER, deviceOptionsProvider: () => DEVICE_OPTIONS
+  })
+  const warn = console.warn; console.warn = () => {}
+  try {
+    await manager.loadQueue([{ id: 'a', source: 'tone.flac', queueEntryId: 'one' }], 0)
+    order.length = 0
+    assert.equal((await manager.playTimedBridge('tone.flac', 2, () => true)).nativeStarted, true)
+    assert.ok(order.indexOf('BridgePrepareTimed') >= 0)
+    assert.ok(order.indexOf('BridgePrepareTimed') < order.indexOf('Play'))
+    assert.equal(order.slice(order.indexOf('BridgePrepareTimed')+1).includes('LoadQueue'), false)
+    await manager.stop()
+    rejectPlay = true; order.length = 0
+    await assert.rejects(manager.playTimedBridge('tone.flac', 0, () => true), /timed native play failed/)
+    assert.equal(order.filter(m => m === 'Play').length, 1)
+    assert.equal(order.filter(m => m === 'BridgePrepareTimed').length, 1)
+    assert.equal(order.slice(order.indexOf('Play')+1).includes('SetOutputBackend'), false)
+    order.length = 0
+    assert.equal((await manager.playTimedBridge('tone.flac', 0, () => false)).superseded, true)
+    assert.equal(order.includes('BridgePrepareTimed'), false)
+    assert.equal(order.includes('Play'), false)
+  } finally { console.warn = warn; manager.destroy() }
 })

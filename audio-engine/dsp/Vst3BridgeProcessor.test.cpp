@@ -55,6 +55,7 @@ int serve(int argc, wchar_t* argv[]) {
   assert(shared->version == kProtocolVersion);
   assert(shared->parameterJsonLength == expected.size());
   assert(std::memcmp(shared->parameterJson, expected.data(), expected.size()) == 0);
+  shared->reservedAtomic = static_cast<int32_t>(GetCurrentProcessId());
   writeState(&shared->hostState, static_cast<LONG>(HostState::Ready));
   while (readState(&shared->hostState) == static_cast<LONG>(HostState::Ready)) {
     const HANDLE waits[] = {parent, event};
@@ -80,6 +81,21 @@ int serve(int argc, wchar_t* argv[]) {
 
 int wmain(int argc, wchar_t* argv[]) {
   if (argc > 1 && std::wstring(argv[1]) == L"--serve") return serve(argc, argv);
+  if (argc == 3 && std::wstring(argv[1]) == L"--abandon-owner") {
+    const std::wstring name(argv[2]);
+    const std::string completionName(name.begin(), name.end());
+    auto bridge = std::make_unique<Vst3BridgeProcessor>(Vst3BridgeConfig{
+        "owner-exit", completionName, "0123456789ABCDEF0123456789ABCDEF", largeParameters(), "", ""});
+    bridge->prepare({48000, 2, 32});
+    if (!bridge->isActive()) return 1;
+    HANDLE ready = OpenEventW(EVENT_MODIFY_STATE, FALSE, (name + L"_ready").c_str());
+    HANDLE exit = OpenEventW(SYNCHRONIZE, FALSE, (name + L"_exit").c_str());
+    assert(ready && exit);
+    SetEvent(ready);
+    if (WaitForSingleObject(exit, 5000) != WAIT_OBJECT_0) return 1;
+    // Match an abrupt audio-service exit: no bridge destructor runs.
+    ExitProcess(0);
+  }
   const std::string parameters = largeParameters();
   assert(parameters.size() > 8192);
   const std::string completionName = "Local\\TwilightVst3Regression_" + std::to_string(GetCurrentProcessId());
@@ -130,6 +146,39 @@ int wmain(int argc, wchar_t* argv[]) {
   oversized->prepare({48000, 2, 32});
   assert(!oversized->isActive());
   assert(oversized->bypassReason().find("parameter payload exceeds") != std::string::npos);
+  {
+    const std::wstring name = L"Local\\TwilightVst3OwnerRegression_" + std::to_wstring(GetCurrentProcessId());
+    HANDLE completion = CreateEventW(nullptr, FALSE, FALSE, name.c_str());
+    HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, (name + L"_ready").c_str());
+    HANDLE exit = CreateEventW(nullptr, FALSE, FALSE, (name + L"_exit").c_str());
+    assert(completion && ready && exit);
+    wchar_t executable[32768]{};
+    assert(GetModuleFileNameW(nullptr, executable, 32768));
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" --abandon-owner " + name;
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    PROCESS_INFORMATION owner{};
+    assert(CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+        nullptr, nullptr, &startup, &owner));
+    CloseHandle(owner.hThread);
+    const HANDLE waits[] = {ready, owner.hProcess};
+    assert(WaitForMultipleObjects(2, waits, FALSE, 5000) == WAIT_OBJECT_0);
+    const std::wstring mappingName = L"Local\\TwilightEchoVst3Map_" + std::to_wstring(owner.dwProcessId) + L"_1";
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName.c_str());
+    assert(mapping);
+    const auto* shared = static_cast<const SharedMemory*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedMemory)));
+    assert(shared);
+    HANDLE host = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(shared->reservedAtomic));
+    assert(host);
+    UnmapViewOfFile(shared); CloseHandle(mapping);
+    SetEvent(exit);
+    assert(WaitForSingleObject(owner.hProcess, 5000) == WAIT_OBJECT_0);
+    const DWORD hostExit = WaitForSingleObject(host, 3000);
+    if (hostExit != WAIT_OBJECT_0) { TerminateProcess(host, 1); WaitForSingleObject(host, 1000); }
+    CloseHandle(host); CloseHandle(owner.hProcess);
+    CloseHandle(completion); CloseHandle(ready); CloseHandle(exit);
+    assert(hostExit == WAIT_OBJECT_0);
+  }
   std::cout << "Transferred " << parameters.size() << " parameter bytes and received processed audio\n";
+  std::cout << "VST3 helper exited with its audio-service owner\n";
   return 0;
 }

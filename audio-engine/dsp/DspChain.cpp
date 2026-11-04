@@ -964,6 +964,7 @@ std::string DspChain::graphStatusJson() const {
   for (const GraphNodeRuntime& node : graphNodes_) {
     if (!node.enabled || !node.processor || !node.bypassReason.empty() || !node.processor->isActive()) continue;
     if (node.type == "convolver") {
+      if (convolverInfo.bypassed) continue;
       totalLatency += convolverInfo.latencyFrames;
       totalTail += convolverInfo.tailFrames;
     } else if (node.type == "truepeaklimiter") {
@@ -973,10 +974,18 @@ std::string DspChain::graphStatusJson() const {
       totalTail += node.vst3Bridge->tailFrames();
     }
   }
+  if (!graphConfigured_ && config_.enabled) {
+    if (convolverInfo.active && !convolverInfo.bypassed) {
+      totalLatency += convolverInfo.latencyFrames;
+      totalTail += convolverInfo.tailFrames;
+    }
+    totalLatency += limiterLatency;
+  }
   json << "{\"revision\":" << graphRevision_ << ",\"activeSceneId\":"
        << (graphSceneId_.empty() ? "null" : "\"" + json_utils::escape(graphSceneId_) + "\"")
        << ",\"totalLatencyFrames\":"
-       << totalLatency << ",\"totalTailFrames\":" << totalTail << ",\"nodes\":[";
+       << totalLatency << ",\"latencySampleRate\":" << format_.sampleRate
+       << ",\"totalTailFrames\":" << totalTail << ",\"nodes\":[";
   for (size_t index = 0; index < graphNodes_.size(); ++index) {
     const GraphNodeRuntime& node = graphNodes_[index];
     // A convolver bypassed on the render thread still reports isActive() here -- this chain

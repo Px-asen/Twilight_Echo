@@ -3,6 +3,7 @@
 #include "AudioPipelineRenderUtils.h"
 #include "PcmSampleRatePolicy.h"
 #include "CrossfadePolicy.h"
+#include "StreamBufferGate.h"
 #include "DiagnosticLog.h"
 #include "../dsp/ChannelRouter.h"
 #include "../dsp/DsdDownrateProcessor.h"
@@ -850,6 +851,7 @@ struct AudioPipeline::DecodeStream {
   int targetDsdRate = 0;
   int actualDsdSampleRate = 0;
   AudioBuffer buffer;
+  StreamBufferGate bufferGate;
   std::vector<uint8_t> floatReadScratch;
   std::atomic<bool> running{false};
   // Independent from running: open/probe happens before the worker starts.
@@ -1097,7 +1099,18 @@ struct AudioPipeline::DecodeStream {
     }
 
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
-    buffer.reset(decodeFormat, adaptiveDecodeBufferFrames(decodeFormat.sampleRate));
+    const bool network = item.source.rfind("provider://", 0) == 0 ||
+        item.source.rfind("desktop-stream:", 0) == 0 ||
+        item.source.rfind("http://", 0) == 0 || item.source.rfind("https://", 0) == 0;
+    constexpr size_t networkPcmBudgetBytes = 16 * 1024 * 1024;
+    const size_t memoryBound = std::max<size_t>(8192,
+        networkPcmBudgetBytes / std::max<size_t>(1, audioFormatBytesPerFrame(decodeFormat)));
+    const size_t capacity = network
+        ? std::min(memoryBound, static_cast<size_t>(std::max(1, decodeFormat.sampleRate)) *
+            (decodeFormat.sampleRate <= 96000 ? 8 : 4))
+        : adaptiveDecodeBufferFrames(decodeFormat.sampleRate);
+    bufferGate.configure(decodeFormat.sampleRate, network, capacity);
+    buffer.reset(decodeFormat, capacity);
     return true;
   }
 
@@ -1159,6 +1172,7 @@ struct AudioPipeline::DecodeStream {
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     // DoP is a raw 24-bit carrier. Preserve marker and payload bytes end-to-end;
     // any Float32 conversion, volume, DSP, dither, or requantization can make the DAC lose lock.
+    bufferGate.configure(decodeFormat.sampleRate, false);
     buffer.reset(decodeFormat, adaptiveDecodeBufferFrames(decodeFormat.sampleRate));
     return true;
   }
@@ -1207,6 +1221,7 @@ struct AudioPipeline::DecodeStream {
       remainingVirtualPregapFrames = 0;
     }
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
+    bufferGate.configure(decodeFormat.sampleRate, false);
     buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / 8, 8192)));
     return true;
   }
@@ -1289,6 +1304,7 @@ struct AudioPipeline::DecodeStream {
     if (mode == Mode::Dop) dopPacker.reset();
     if (dsdDownrateActive) dsdDownrateProcessor.reset();
     buffer.clear();
+    bufferGate.reset();
     nextSourceFrame = static_cast<uint64_t>(std::llround(sourceSeconds * decodeFormat.sampleRate));
     recoveryAttempts = 0;
     healthyFramesSinceReconnect = 0;
@@ -1315,6 +1331,10 @@ struct AudioPipeline::DecodeStream {
   }
 
   size_t read(float* output, size_t frameCount) {
+    if (!bufferGate.allow(buffer.availableFrames(), frameCount, eof.load() || readFailed.load())) {
+      std::fill(output, output + frameCount * static_cast<size_t>(std::max(1, decodeFormat.channelCount)), 0.0f);
+      return 0;
+    }
     return buffer.read(output, frameCount);
   }
 
@@ -1336,7 +1356,7 @@ struct AudioPipeline::DecodeStream {
     if (!output || frameCount == 0) return 0;
     const AudioFormat bufferFormat = buffer.format();
     if (bufferFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
-      return buffer.read(output, frameCount);
+      return read(output, frameCount);
     }
 
     const size_t bytesPerFrame = audioFormatBytesPerFrame(bufferFormat);
@@ -1355,13 +1375,17 @@ struct AudioPipeline::DecodeStream {
     block.data = floatReadScratch.data();
     block.frames = readableFrames;
     block.byteSize = requiredBytes;
-    const size_t read = buffer.read(block);
-    block.frames = read;
+    const size_t framesRead = read(block);
+    block.frames = framesRead;
     typedPcmToFloat(block, output, frameCount);
-    return read;
+    return framesRead;
   }
 
   size_t read(PcmBlock& output) {
+    if (!bufferGate.allow(buffer.availableFrames(), output.frames, eof.load() || readFailed.load())) {
+      if (output.data && output.byteSize) std::memset(output.data, 0, output.byteSize);
+      return 0;
+    }
     return buffer.read(output);
   }
 
@@ -1374,11 +1398,11 @@ struct AudioPipeline::DecodeStream {
   }
 
   bool readyForRender() const {
-    return buffer.availableFrames() > 0 || eof.load();
+    return bufferGate.ready(buffer.availableFrames(), eof.load() || readFailed.load());
   }
 
   bool waitForPreroll(size_t targetFrames, std::chrono::milliseconds timeout) const {
-    return buffer.waitForAvailableFrames(targetFrames, timeout, running, eof) > 0 || eof.load();
+    return buffer.waitForAvailableFrames(bufferGate.prerollFrames(targetFrames), timeout, running, eof) > 0 || eof.load();
   }
 
   bool hasVirtualPregap() const {
@@ -5124,6 +5148,10 @@ void AudioPipeline::applyPauseFadeStatus(PipelineStatus& status) const {
 PipelineStatus AudioPipeline::buildStatusLocked() {
   PipelineStatus status;
   status.state = state_;
+  const DecodeStream* rendering = renderActiveStream_.load(std::memory_order_acquire);
+  const DecodeStream* owner = rendering == activeStream_.get() ? activeStream_.get()
+      : rendering == preloadStream_.get() ? preloadStream_.get() : nullptr;
+  status.buffering = state_ == PipelineState::Playing && owner && owner->bufferGate.waiting();
   const int positionSampleRate = positionSampleRateForStream(stream_, outputFormat_);
   status.positionSeconds =
       positionSampleRate > 0

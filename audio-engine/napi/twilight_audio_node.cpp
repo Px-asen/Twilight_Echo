@@ -1108,6 +1108,42 @@ napi_value WriteBridgePcm(napi_env env, napi_callback_info info) {
 napi_value StartBridgeReceiver(napi_env env, napi_callback_info) {
   return throwOnError(env, TAE_StartBridgeReceiver(g_bridgeReceiver));
 }
+napi_value PrepareBridgeTimedReceiver(napi_env env, napi_callback_info) {
+  return throwOnError(env, TAE_PrepareBridgeTimedReceiver(g_bridgeReceiver));
+}
+napi_value PrepareBridgeAdaptiveReceiver(napi_env env, napi_callback_info) {
+  return throwOnError(env, TAE_PrepareBridgeAdaptiveReceiver(g_bridgeReceiver));
+}
+napi_value SetBridgeTimedCorrection(napi_env env, napi_callback_info info) {
+  size_t argc = 2; napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double ppm = argc > 0 ? getNumberArg(env, argv[0], NAN) : NAN;
+  const double generation = argc > 1 ? getNumberArg(env, argv[1], -1) : -1;
+  if (argc != 2 || !std::isfinite(ppm) || std::abs(ppm) > 1000 || !std::isfinite(generation) ||
+      generation < 1 || std::floor(generation) != generation || generation > 9007199254740991.0) {
+    napi_throw_range_error(env, nullptr, "Clock correction requires +/-1000 ppm and the current stream generation");
+    return makeUndefined(env);
+  }
+  return throwOnError(env, TAE_SetBridgeTimedCorrection(g_bridgeReceiver, ppm, static_cast<uint64_t>(generation)));
+}
+napi_value ArmBridgeTimedReceiver(napi_env env, napi_callback_info info) {
+  size_t argc = 3; napi_value argv[3];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double time = argc > 0 ? getNumberArg(env, argv[0], -1) : -1;
+  const double generation = argc > 1 ? getNumberArg(env, argv[1], -1) : -1;
+  const double frame = argc > 2 ? getNumberArg(env, argv[2], -1) : -1;
+  if (argc != 3 || !std::isfinite(time) || time <= 0 || !std::isfinite(generation) || generation < 1 ||
+      std::floor(generation) != generation || generation > 9007199254740991.0 || !std::isfinite(frame) ||
+      frame < 0 || std::floor(frame) != frame || frame > 9007199254740991.0) {
+    napi_throw_range_error(env, nullptr, "Timed arm requires a timestamp, stream generation and media frame");
+    return makeUndefined(env);
+  }
+  return throwOnError(env, TAE_ArmBridgeTimedReceiver(g_bridgeReceiver, time,
+      static_cast<uint64_t>(generation), static_cast<uint64_t>(frame)));
+}
+napi_value EndBridgeTimedReceiver(napi_env env, napi_callback_info) {
+  return throwOnError(env, TAE_EndBridgeTimedReceiver(g_bridgeReceiver));
+}
 napi_value GetBridgeReceiverInfo(napi_env env, napi_callback_info) {
   std::array<char, 16384> json{}; size_t required = 0;
   const auto result = TAE_GetBridgeReceiverInfo(g_bridgeReceiver, json.data(), json.size(), &required);
@@ -1137,6 +1173,11 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "CloseBridgeReceiver", CloseBridgeReceiver);
   define(env, exports, "WriteBridgePcm", WriteBridgePcm);
   define(env, exports, "StartBridgeReceiver", StartBridgeReceiver);
+  define(env, exports, "PrepareBridgeTimedReceiver", PrepareBridgeTimedReceiver);
+  define(env, exports, "PrepareBridgeAdaptiveReceiver", PrepareBridgeAdaptiveReceiver);
+  define(env, exports, "SetBridgeTimedCorrection", SetBridgeTimedCorrection);
+  define(env, exports, "ArmBridgeTimedReceiver", ArmBridgeTimedReceiver);
+  define(env, exports, "EndBridgeTimedReceiver", EndBridgeTimedReceiver);
   define(env, exports, "GetBridgeReceiverInfo", GetBridgeReceiverInfo);
   define(env, exports, "Pause", Pause);
   define(env, exports, "Stop", Stop);

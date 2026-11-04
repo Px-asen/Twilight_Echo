@@ -55,11 +55,29 @@ test('a missing packaged addon does not fall through to the launch directory', (
   assert.deepEqual(result.attempts, [])
 })
 
+test('the Server image addon shares package anchoring without changing the playback addon default', () => {
+  const root = join(process.cwd(), 'server-package')
+  const modulePath = join(root, 'out', 'server', 'platform.cjs')
+  assert.equal(
+    getNativeAddonCandidates({
+      modulePath,
+      resourcesPath: '',
+      binary: 'twilight_image_node.node'
+    })[0],
+    join(root, 'resources', 'audio-engine', 'twilight_image_node.node')
+  )
+  assert.equal(
+    getNativeAddonCandidates({ modulePath, resourcesPath: '' })[0],
+    join(root, 'resources', 'audio-engine', 'twilight_audio_node.node')
+  )
+})
+
 test('development workers without an app singleton anchor to their source tree', () => {
   const root = join(process.cwd(), 'dev-fixture')
   for (const entry of [
     join('src', 'main', 'audio', 'nativeBinding.ts'),
-    join('out', 'main', 'chunks', 'nativeBinding-hash.js')
+    join('out', 'main', 'chunks', 'nativeBinding-hash.js'),
+    join('out', 'server', 'audioEngineService.cjs')
   ]) {
     const candidates = getNativeAddonCandidates({
       modulePath: join(root, entry),

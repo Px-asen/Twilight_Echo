@@ -103,6 +103,7 @@ const SLOW_NATIVE_METHODS = new Set<string>([
   // Bridge lifecycle opens/closes explicit drivers or waits for a bounded TLS
   // handshake. It must not trip the short control-RPC watchdog.
   'BridgeHostStart', 'BridgeHostStop', 'BridgeConnect', 'BridgeDisconnect', 'BridgeShutdown',
+  'BridgePrepareTimed', 'BridgeArmTimed', 'BridgeCancelTimed', 'BridgeSetTimedCorrection',
   'Play',
   // Pause includes a PCM fade and may close/reopen an exclusive device.
   'Pause',

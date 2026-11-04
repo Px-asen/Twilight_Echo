@@ -1,5 +1,6 @@
 #include "../core/AudioBuffer.h"
 #include "../core/AudioBufferResetUtils.h"
+#include "../core/StreamBufferGate.h"
 
 #include <array>
 #include <atomic>
@@ -17,6 +18,50 @@
 using namespace twilight::audio;
 
 namespace {
+
+void testNetworkBufferHysteresisAndShortTail() {
+  StreamBufferGate gate;
+  gate.configure(48000, true);
+  assert(gate.waiting());
+  assert(!gate.allow(47999, 480, false));
+  assert(gate.allow(48000, 480, false));
+  assert(!gate.waiting());
+  assert(gate.allow(480, 480, false));
+  assert(!gate.allow(479, 480, false));
+  assert(gate.waiting());
+  // A single new packet/callback must not produce another short audible burst.
+  assert(!gate.allow(48000, 480, false));
+  assert(!gate.allow(143999, 480, false));
+  assert(gate.allow(144000, 480, false));
+  assert(!gate.waiting());
+  assert(!gate.allow(0, 480, false));
+  assert(gate.allow(123, 480, true));
+  assert(!gate.waiting());
+  gate.reset();
+  assert(!gate.allow(47999, 480, false));
+  assert(gate.allow(48000, 480, false));
+  for (int rate : {8000, 44100, 96000, 192000, 768000}) {
+    gate.configure(rate, true);
+    assert(gate.prerollFrames(480) == static_cast<size_t>(rate));
+    assert(gate.ready(rate, false));
+    assert(!gate.ready(rate - 1, false));
+    assert(gate.ready(1, true));
+    assert(gate.allow(1, 480, true));
+  }
+  gate.configure(48000, false);
+  assert(!gate.waiting());
+  assert(gate.prerollFrames(480) == 480);
+  assert(gate.ready(1, false));
+  assert(gate.allow(1, 480, false));
+  // High-rate/multichannel streams hit the PCM memory bound before three seconds.
+  // Both thresholds must fit that bound, including oversized consumer requests.
+  gate.configure(768000, true, 524288);
+  assert(gate.prerollFrames(480) == 524288);
+  assert(!gate.allow(524287, 480, false));
+  assert(gate.allow(524288, 480, false));
+  assert(!gate.allow(0, 480, false));
+  assert(gate.allow(524288, 600000, false));
+}
 
 std::string readTextFile(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
@@ -247,6 +292,7 @@ void testPcmSpeakerLayoutSurvivesTheRingBuffer() {
 }  // namespace
 
 int main() {
+  testNetworkBufferHysteresisAndShortTail();
   testAudioBufferRenderReadsUseSpscAtomicsWithoutMutexFallback();
   testProducerWaitUsesAtomicEpochWithoutLostWake();
   testControlResetGateAtomicallyExcludesNewReaders();

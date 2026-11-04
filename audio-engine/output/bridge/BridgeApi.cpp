@@ -32,6 +32,26 @@ TAE_Result TAE_StartBridgeReceiver(TAE_BridgeReceiverHandle receiver) {
   if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
   return static_cast<BridgeReceiver*>(receiver)->start(nullptr) ? TAE_RESULT_OK : TAE_RESULT_BACKEND_UNAVAILABLE;
 }
+TAE_Result TAE_PrepareBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->prepareTimed(nullptr) ? TAE_RESULT_OK : TAE_RESULT_BACKEND_UNAVAILABLE;
+}
+TAE_Result TAE_PrepareBridgeAdaptiveReceiver(TAE_BridgeReceiverHandle receiver) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->prepareAdaptiveTimed(nullptr) ? TAE_RESULT_OK : TAE_RESULT_BACKEND_UNAVAILABLE;
+}
+TAE_Result TAE_SetBridgeTimedCorrection(TAE_BridgeReceiverHandle receiver, double ppm, uint64_t generation) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->setTimedCorrection(ppm, generation, nullptr) ? TAE_RESULT_OK : TAE_RESULT_INVALID_ARGUMENT;
+}
+TAE_Result TAE_ArmBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver, double time, uint64_t generation, uint64_t frame) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->armTimed(time, generation, frame, nullptr) ? TAE_RESULT_OK : TAE_RESULT_INVALID_ARGUMENT;
+}
+TAE_Result TAE_EndBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver) {
+  if (!receiver) return TAE_RESULT_NOT_INITIALIZED;
+  return static_cast<BridgeReceiver*>(receiver)->endTimed(nullptr) ? TAE_RESULT_OK : TAE_RESULT_INVALID_ARGUMENT;
+}
 TAE_Result TAE_GetBridgeReceiverInfo(TAE_BridgeReceiverHandle receiver, char* buffer, size_t capacity, size_t* required) {
   if (!receiver || !required) return TAE_RESULT_INVALID_ARGUMENT;
   const auto json = static_cast<BridgeReceiver*>(receiver)->status();

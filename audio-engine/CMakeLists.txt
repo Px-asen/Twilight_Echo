@@ -131,6 +131,8 @@ set(TAE_ENGINE_SOURCES
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
   output/bridge/BridgeReceiver.cpp
+  output/bridge/BridgeResampler.cpp
+  output/OutputClock.cpp
   output/bridge/BridgeApi.cpp
   playlist/QueueManager.cpp
   plugins/PluginRegistry.cpp
@@ -374,6 +376,27 @@ if(TAE_BUILD_NAPI)
     target_include_directories(twilight_audio_node PRIVATE ${TAE_NODE_INCLUDE_DIR})
   else()
     message(FATAL_ERROR "TAE_NODE_INCLUDE_DIR is not set and node_modules/node-api-headers/include was not found.")
+  endif()
+
+  # The headless Server shares FFmpeg codecs, without loading the audio engine or Electron.
+  if(FFMPEG_FOUND)
+    find_library(TAE_SWSCALE_LIBRARY NAMES swscale libswscale HINTS ${FFMPEG_LIBRARY_DIRS})
+    if(TAE_SWSCALE_LIBRARY)
+      add_library(twilight_image_node MODULE napi/twilight_image_node.cpp)
+      target_include_directories(twilight_image_node PRIVATE ${TAE_NODE_INCLUDE_DIR} ${FFMPEG_INCLUDE_DIRS})
+      target_link_libraries(twilight_image_node PRIVATE ${TAE_SWSCALE_LIBRARY} ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+      target_compile_definitions(twilight_image_node PRIVATE NAPI_VERSION=10)
+      set_target_properties(twilight_image_node PROPERTIES PREFIX "" SUFFIX ".node"
+        BUILD_RPATH "${TAE_NAPI_RPATH}" INSTALL_RPATH "${TAE_NAPI_RPATH}")
+      if(WIN32)
+        target_sources(twilight_image_node PRIVATE napi/node_api_dynamic_win32.cpp)
+      endif()
+      if(APPLE)
+        target_link_options(twilight_image_node PRIVATE "-undefined" "dynamic_lookup")
+      elseif(MINGW)
+        target_link_options(twilight_image_node PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-Wl,--strip-debug>")
+      endif()
+    endif()
   endif()
 endif()
 
@@ -723,9 +746,36 @@ if(TAE_BUILD_TESTS)
     output/OutputBackendFactory.cpp
   )
   add_executable(twilight_bridge_receiver_tests tests/bridge_receiver_tests.cpp
-    output/bridge/BridgeReceiver.cpp core/AudioTypes.cpp)
+    output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
   target_include_directories(twilight_bridge_receiver_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_bridge_receiver_unit COMMAND twilight_bridge_receiver_tests)
+  add_executable(twilight_bridge_timed_tests tests/bridge_timed_tests.cpp
+    output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
+  target_include_directories(twilight_bridge_timed_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_bridge_timed_unit COMMAND twilight_bridge_timed_tests)
+  if(FFMPEG_FOUND)
+    add_executable(twilight_bridge_resampler_tests tests/bridge_resampler_tests.cpp output/bridge/BridgeResampler.cpp)
+    target_compile_definitions(twilight_bridge_resampler_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_bridge_resampler_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_bridge_resampler_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_bridge_resampler_unit COMMAND twilight_bridge_resampler_tests)
+    add_executable(twilight_bridge_adaptive_tests tests/bridge_adaptive_tests.cpp
+      output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_bridge_adaptive_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_bridge_adaptive_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_bridge_adaptive_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_test(NAME twilight_bridge_adaptive_unit COMMAND twilight_bridge_adaptive_tests)
+    add_executable(twilight_bridge_sync_fixture tests/bridge_sync_fixture.cpp
+      output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_bridge_sync_fixture PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_bridge_sync_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_bridge_sync_fixture PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+    add_executable(twilight_bridge_group_fixture tests/bridge_group_fixture.cpp
+      output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
+    target_compile_definitions(twilight_bridge_group_fixture PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_bridge_group_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_bridge_group_fixture PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+  endif()
   target_include_directories(twilight_backend_factory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(
     twilight_backend_factory_tests
@@ -760,7 +810,13 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_platform_backend_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(twilight_platform_backend_smoke PRIVATE twilight_audio_engine)
   if(TAE_WASAPI_AVAILABLE)
+    add_executable(twilight_wasapi_clock_tests tests/wasapi_clock_tests.cpp)
+    target_include_directories(twilight_wasapi_clock_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(twilight_wasapi_clock_tests PRIVATE TAE_ENABLE_WASAPI=1)
+    target_link_libraries(twilight_wasapi_clock_tests PRIVATE ole32 uuid)
+    add_test(NAME twilight_wasapi_clock_unit COMMAND twilight_wasapi_clock_tests)
     target_sources(twilight_platform_backend_smoke PRIVATE
+      output/OutputClock.cpp
       output/wasapi/WasapiFormatNegotiator.cpp
       output/wasapi/WasapiSharedBackend.cpp
       output/wasapi/WasapiExclusiveBackend.cpp
@@ -800,6 +856,7 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_miniaudio_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   if(TAE_MINIAUDIO_AVAILABLE)
     target_sources(twilight_miniaudio_backend_tests PRIVATE
+      output/OutputClock.cpp
       output/miniaudio/MiniaudioImplementation.cpp
       output/OutputBackendFactory.cpp
       output/wasapi/WasapiFormatNegotiator.cpp
@@ -1192,6 +1249,11 @@ if(TAE_BUILD_TESTS)
   # Keep assertions live on every test target regardless of configuration.
   set(TAE_TEST_TARGETS
     twilight_bridge_receiver_tests
+    twilight_bridge_timed_tests
+    twilight_bridge_resampler_tests
+    twilight_bridge_adaptive_tests
+    twilight_bridge_sync_fixture
+    twilight_bridge_group_fixture
     twilight_usb_transport_tests
     twilight_audio_tests
     twilight_dsp_tests
@@ -1226,6 +1288,7 @@ if(TAE_BUILD_TESTS)
     twilight_backend_factory_tests
     twilight_miniaudio_backend_tests
     twilight_platform_backend_smoke
+    twilight_wasapi_clock_tests
     twilight_wasapi_format_negotiator_tests
     twilight_asio_backend_tests
     twilight_asio_driver_compatibility_tests

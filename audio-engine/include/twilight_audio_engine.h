@@ -51,12 +51,25 @@ typedef void (*TAE_EventCallback)(const char* event_type, const char* payload_js
 TAE_API TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine);
 TAE_API void TAE_DestroyEngine(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_PullBridgePcm(TAE_EngineHandle engine, float* data, size_t frames, TAE_BridgePcmInfo* info);
-/** Receiver bypasses decoder, DSP and saved local routing. Explicit device
+/** Receiver bypasses decoder, user DSP and saved local routing. Explicit device
  * required; it never retries another backend or default speakers. */
 TAE_API TAE_Result TAE_OpenBridgeReceiver(const char* backend, const char* device, int rate, int channels,
     TAE_BridgeReceiverHandle* receiver, char* error, size_t error_size);
 TAE_API TAE_Result TAE_WriteBridgePcm(TAE_BridgeReceiverHandle receiver, const float* data, size_t frames);
 TAE_API TAE_Result TAE_StartBridgeReceiver(TAE_BridgeReceiverHandle receiver);
+/** Opt-in timed PCM. Prepare a fresh receiver (silent device preroll), write
+ * media, then arm using this host's native monotonic milliseconds and the
+ * streamGeneration from GetInfo. Close cancels and joins; no automatic replay. */
+TAE_API TAE_Result TAE_PrepareBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver);
+/** Separate opt-in lane: band-limited clock-adaptive PCM. Positive ppm expands
+ * output for a fast device. Corrections require the current stream generation;
+ * already buffered output keeps its original source-media coordinates. */
+TAE_API TAE_Result TAE_PrepareBridgeAdaptiveReceiver(TAE_BridgeReceiverHandle receiver);
+TAE_API TAE_Result TAE_SetBridgeTimedCorrection(TAE_BridgeReceiverHandle receiver, double output_rate_ppm,
+    uint64_t expected_generation);
+TAE_API TAE_Result TAE_ArmBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver, double start_at_ms,
+    uint64_t expected_generation, uint64_t media_frame);
+TAE_API TAE_Result TAE_EndBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver);
 TAE_API TAE_Result TAE_GetBridgeReceiverInfo(TAE_BridgeReceiverHandle receiver, char* buffer, size_t capacity, size_t* required);
 TAE_API void TAE_CloseBridgeReceiver(TAE_BridgeReceiverHandle receiver);
 TAE_API TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callback, void* user_data);
