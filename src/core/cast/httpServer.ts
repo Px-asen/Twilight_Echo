@@ -11,7 +11,7 @@ import {
 import { PortableBuffer } from '../../shared/portableBytes.ts'
 import { join, extname } from '../../shared/portablePath.ts'
 import { parseByteRange } from './byteRange.ts'
-import { RemoteAuthSession } from './auth.ts'
+import { RemoteAuthSession, SlidingWindowRateLimiter } from './auth.ts'
 import { RemoteDevicePairing } from './devicePairing.ts'
 import { MediaStreamGrantStore, guessAudioContentType } from './mediaTokens.ts'
 import { remotePairingCode, type RemoteTlsIdentity } from './tlsIdentity.ts'
@@ -30,6 +30,7 @@ import { REMOTE_SSE_HEARTBEAT_MS } from '../../shared/remoteControl.ts'
 import { parseJsonWithNestingLimit } from '../../shared/jsonSafety.ts'
 import { mediaSourceVersion } from '../remote/media.ts'
 import { REMOTE_STREAM_RANGE_BYTES } from '../../shared/remoteMedia.ts'
+import { PERSONAL_MUSIC_ARTWORK_MAX_BYTES } from '../../shared/personalMusicArtwork.ts'
 import {
   REMOTE_CORE_BRIDGE_VERSION,
   REMOTE_CORE_LOCAL_ZONE,
@@ -40,6 +41,8 @@ import {
 } from '../../shared/remoteCoreBridge.ts'
 
 export type RemoteServerMode = 'full' | 'mediaOnly'
+// A bounded personal bitmap, base64 encoded, plus its RPC envelope. Other POST routes stay at 64 KiB.
+const CORE_RPC_BODY_BYTES = Math.ceil(PERSONAL_MUSIC_ARTWORK_MAX_BYTES / 3) * 4 + 64 * 1024
 
 export type RemoteCommandHandler = (command: PlayerRemoteCommand) => Promise<void> | void
 export type RemoteBrowseHandler = (request: RemoteBrowseRequest) => Promise<RemoteBrowseResult>
@@ -107,6 +110,7 @@ export class RemoteHttpServer {
   /** S3: SSE 长连接上限，防止局域网内开大量 /api/events 耗尽资源。 */
   private readonly sseMaxClients = 8
   private readonly sseMaxBufferedBytes = 1024 * 1024
+  private readonly dspUploadLimiter = new SlidingWindowRateLimiter(240, 60_000)
   private browseInFlight = 0
   private readonly maxBrowseInFlight = 2
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -627,13 +631,14 @@ export class RemoteHttpServer {
           this.sendJson(res, 401, { error: 'unauthorized' })
           return
         }
-        if (!this.auth.tryConsumeCommand()) {
-          this.sendJson(res, 429, { error: 'rate_limited' })
-          return
-        }
-        const body = await readJsonBody(req)
+        const body = await readJsonBody(req, CORE_RPC_BODY_BYTES)
         if (!body || typeof body.requestId !== 'string' || typeof body.name !== 'string') {
           this.sendJson(res, 400, { error: 'invalid_core_envelope' })
+          return
+        }
+        const uploadChunk = ['zones.dsp.upload.chunk', 'zones.dsp.profile.chunk', 'plugins.management.upload.chunk'].includes(body.name) && req.socket.encrypted === true && !!this.mediaPrincipal(req)
+        if (!(uploadChunk ? this.dspUploadLimiter.tryConsume() : this.auth.tryConsumeCommand())) {
+          this.sendJson(res, 429, { error: 'rate_limited' })
           return
         }
         if (!this.onCoreRpc) {
@@ -1074,14 +1079,14 @@ function corsHeaders(origin?: string | null): Record<string, string> {
   }
 }
 
-function readJsonBody(req: PortableIncomingMessage): Promise<Record<string, unknown> | null> {
+function readJsonBody(req: PortableIncomingMessage, maxBytes = 64 * 1024): Promise<Record<string, unknown> | null> {
   return new Promise((resolve, reject) => {
     const chunks: PortableBuffer[] = []
     let size = 0
     req.on('data', (chunk: Uint8Array) => {
       const buf = PortableBuffer.from(chunk)
       size += buf.length
-      if (size > 64 * 1024) {
+      if (size > maxBytes) {
         reject(new Error('body_too_large'))
         req.destroy()
         return

@@ -1,7 +1,11 @@
 import type { CoreCastStart, CoreCastState, CoreCastDevice } from './coreCast.ts'
+import type { ListeningSyncStatus } from './listeningSync.ts'
 import type { BridgePeer, CoreZoneState } from './audioBridge.ts'
-import type { ZonesView, ZoneTransport } from './coreZones.ts'
+import type { ZonesView, ZoneTransport, ZoneHandoff } from './coreZones.ts'
+import type { SyncGroupCreate, SyncGroupTransport, SyncGroupsView } from './coreSyncGroups.ts'
 import type { CoreSignalPath } from './remoteDsp.ts'
+import type { PluginManagementEdit, PluginManagementPage, PluginUpload } from './pluginManagement.ts'
+import type { ZoneQueueTarget, ZoneQueueKey, ZoneQueueEdit, ZoneQueueLoad } from './zoneQueue.ts'
 import type { CoreAbLoopCommand, CoreAbLoopState } from './coreAbLoop.ts'
 import type { CoreLibraryQueries } from './coreLibrary.ts'
 import type { CoreAudioDiagnosticsQuery, AudioDiagnosticReport } from './coreAudioDiagnostics.ts'
@@ -9,6 +13,7 @@ import type { AudioRecoveryKind, AudioRecoveryState } from './audioRecovery.ts'
 import type { CorePlaylistQueries, CorePlaylistCommands } from './corePlaylists.ts'
 import type { CoreRemoteCommands, CoreRemoteQueries } from './coreRemote.ts'
 import type { CoreQueueSubmitCommand, CoreQueueInsert, CoreQueueTrackInput } from './coreQueueSubmission.ts'
+import type { DspLibraryEdit, DspLibraryPage, DspUploadBegin, DspUploadKey, DspParameterPage } from './dspLibrary.ts'
 import type {
   CoreSystemPlaybackAction,
   CorePlayerPresentation,
@@ -190,7 +195,12 @@ export const CORE_PROTOCOL_VERSION = 1
 export type CoreEpoch = string
 export type CoreServiceKind = 'audio' | 'audio-test' | 'zone-audio' | 'database' | 'scan' | 'analysis' | 'plugin'
 export type CorePhase = 'starting' | 'ready' | 'recovering' | 'failed' | 'stopped'
-export type CoreClientRole = 'desktop' | 'mini-player' | 'system' | 'remote' | 'plugin'
+export type CoreClientRole = 'desktop' | 'server-admin' | 'mini-player' | 'system' | 'remote' | 'plugin'
+
+/** Assigned by a trusted local host, never by the remote RPC payload. */
+export function isCoreHostAdministrator(identity: CoreClientIdentity): boolean {
+  return identity.role === 'desktop' || identity.role === 'server-admin'
+}
 
 /** Main assigns identity/permissions; no renderer-supplied identity is trusted. */
 export interface CoreClientIdentity {
@@ -284,6 +294,7 @@ export interface CoreSnapshot {
 }
 
 export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
+  'playlists.addSources': import('./remoteLibrary.ts').PlaylistSourceAppend
   'ratings.set': import('./musicRatings.ts').MusicRatingsSet
   'preferences.set': import('./musicPreferences.ts').MusicPreferencesSet
   'tags.create': import('./musicTags.ts').MusicTagsCreate
@@ -367,9 +378,29 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
   'zones.create': { revision: number; name: string }
   'zones.remove': { revision: number; zoneId: string }
   'zones.connect': { revision: number; zoneId: string; peer: BridgePeer }
-  'zones.transport': { revision: number; zoneId: string; action: ZoneTransport }
+  'zones.transport': { zoneId: string } & (
+    | { revision: number; action: ZoneTransport }
+    | { revision: null; action: { kind: 'pause' | 'stop' } }
+  )
+  'zones.handoff': ZoneHandoff
+  'zones.queue.load': ZoneQueueLoad
+  'zones.queue.edit': { target: ZoneQueueTarget; queue: ZoneQueueKey; edit: ZoneQueueEdit }
+  'zones.queue.select': { target: ZoneQueueTarget; queue: ZoneQueueKey; index: number; occurrenceId: string }
   'zones.queueFromQuery': { revision: number; zoneId: string; query: LibraryQuery; selectedId?: string }
   'zones.dsp.edit': { zoneId: string; revision: number; edit: CoreDspEdit['edit'] }
+  'zones.dsp.library.edit': { zoneId: string; revision: number; edit: DspLibraryEdit }
+  'zones.dsp.upload.begin': DspUploadBegin
+  'zones.dsp.upload.chunk': DspUploadKey & { offset: number; data: string }
+  'zones.dsp.upload.commit': DspUploadKey & { revision: number }
+  'zones.dsp.upload.cancel': DspUploadKey
+  'zones.dsp.profile.preview': DspUploadKey & { revision: number }
+  'zones.dsp.profile.import': DspUploadKey & { previewId: string; revision: number }
+  'zones.dsp.profile.export': { zoneId: string; revision: number; name: string }
+  'zones.dsp.profile.release': { zoneId: string; downloadId: string }
+  'groups.create': SyncGroupCreate
+  'groups.remove': { groupId: string; revision: number }
+  'groups.transport': SyncGroupTransport
+  'groups.queueFromQuery': { groupId: string; revision: number; query: LibraryQuery; selectedId?: string }
   'cast.start': CoreCastStart
   'cast.end': { revision: number }
   'audio.outputTest.play': { revision: number; exclusive: boolean }
@@ -437,6 +468,13 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
   'playlists.edit': CorePlaylistMutation
   'providers.call': CoreProviderCall
   'plugins.enable': { id: string }
+  'plugins.management.edit': PluginManagementEdit
+  'plugins.management.upload.begin': PluginUpload
+  'plugins.management.upload.chunk': { uploadId: string; offset: number; data: string }
+  'plugins.management.upload.cancel': { uploadId: string }
+  'plugins.management.preview': { uploadId: string }
+  'plugins.management.install': { previewId: string }
+  'plugins.management.cancel': { previewId: string }
   'plugins.disable': { id: string }
   'plugins.uninstall': { id: string; removeData?: boolean }
   'plugins.install': { kind: 'package' | 'directory' }
@@ -588,6 +626,8 @@ export interface CoreQueries
   'cast.state': { input: Record<string, never>; output: CoreCastState }
   'zones.state': { input: Record<string, never>; output: CoreZoneState }
   'zones.list': { input: Record<string, never>; output: ZonesView }
+  'groups.list': { input: Record<string, never>; output: SyncGroupsView }
+  'groups.signalPath': { input: { groupId: string; zoneId: string }; output: CoreSignalPath }
   'zones.dsp': { input: { zoneId: string }; output: CoreDspState }
   'zones.signalPath': { input: { zoneId: string }; output: CoreSignalPath }
   'audio.signalPath': { input: Record<string, never>; output: CoreSignalPath }
@@ -601,6 +641,9 @@ export interface CoreQueries
   'audio.audition': { input: Record<string, never>; output: CoreAuditionState }
   'audio.dsp': { input: Record<string, never>; output: CoreDspState }
   'audio.dsp.status': { input: Record<string, never>; output: DspGraphStatus }
+  'zones.dsp.library': { input: { zoneId: string; assetOffset?: number; pluginOffset?: number; revision?: number }; output: DspLibraryPage }
+  'zones.dsp.parameters': { input: { zoneId: string; revision: number; sceneId: string; nodeId: string; offset?: number }; output: DspParameterPage }
+  'zones.dsp.profile.chunk': { input: { zoneId: string; downloadId: string; offset: number }; output: { offset: number; nextOffset: number; data: string } }
   'audio.dsp.assets': {
     input: { offset?: number; limit?: number }
     output: { revision: number; total: number; items: DspAsset[] }
@@ -707,6 +750,7 @@ export interface CoreQueries
     output: CorePlaylistEntries
   }
   'plugins.list': { input: Record<string, never>; output: TwilightPluginDescriptor[] }
+  'plugins.management.list': { input: { offset?: number }; output: PluginManagementPage }
   'plugins.index.list': { input: Record<string, never>; output: TwilightPluginIndexEntry[] }
   'plugins.index.status': { input: Record<string, never>; output: TwilightPluginIndexStatus }
   'plugins.log': { input: { id: string }; output: string }
@@ -718,6 +762,7 @@ export interface CoreQueries
   'extensions.preferences': { input: { id: string }; output: unknown }
   'extensions.document': { input: { id: string }; output: CoreExperienceDocument }
   'statistics.summary': { input: Record<string, never>; output: CoreStatisticsSummary }
+  'listeningSync.status': { input: Record<string, never>; output: ListeningSyncStatus }
   'statistics.overview': { input: Record<string, never>; output: CoreStatisticsOverview }
   'statistics.previewClear': { input: CoreStatisticsPreviewQuery; output: CoreStatisticsClearPreview }
   'statistics.tracks': { input: CoreStatisticsQuery; output: CoreStatisticsPage }
@@ -737,6 +782,10 @@ export interface CoreQueries
   'library.tracks': { input: LibraryQuery; output: CoreLibraryPage }
   'queue.page': {
     input: { id: string; revision: number; offset: number; limit?: number; search?: string }
+    output: CoreQueuePage
+  }
+  'zones.queue.page': {
+    input: { target: ZoneQueueTarget; queue: ZoneQueueKey; offset: number; limit?: number }
     output: CoreQueuePage
   }
   'migration.status': { input: Record<string, never>; output: CoreMigrationStatus }
@@ -804,6 +853,7 @@ const OPERATIONS: Record<
   'queue.insert': { kind: 'command', permission: 'playback:write' },
   'playlists.saveQueue': { kind: 'command', permission: 'library:write' },
   'playlists.addQueueEntries': { kind: 'command', permission: 'library:write' },
+  'playlists.addSources': { kind: 'command', permission: 'library:write' },
   'themes.list': { kind: 'query', permission: 'settings:read' },
   'themes.bootstrap': { kind: 'query', permission: 'settings:read' },
   'themes.edit': { kind: 'command', permission: 'settings:write' },
@@ -875,14 +925,37 @@ const OPERATIONS: Record<
   'cast.state': { kind: 'query', permission: 'playback:read' },
   'zones.state': { kind: 'query', permission: 'playback:read' },
   'zones.list': { kind: 'query', permission: 'playback:read' },
+  'groups.list': { kind: 'query', permission: 'playback:read' },
+  'groups.signalPath': { kind: 'query', permission: 'playback:read' },
+  'groups.create': { kind: 'command', permission: 'playback:write' },
+  'groups.remove': { kind: 'command', permission: 'playback:write' },
+  'groups.transport': { kind: 'command', permission: 'playback:write' },
+  'groups.queueFromQuery': { kind: 'command', permission: 'playback:write' },
   'zones.dsp': { kind: 'query', permission: 'settings:read' },
   'zones.signalPath': { kind: 'query', permission: 'playback:read' },
   'zones.create': { kind: 'command', permission: 'settings:write' },
   'zones.remove': { kind: 'command', permission: 'settings:write' },
   'zones.connect': { kind: 'command', permission: 'settings:write' },
   'zones.transport': { kind: 'command', permission: 'playback:write' },
+  'zones.handoff': { kind: 'command', permission: 'playback:write' },
   'zones.queueFromQuery': { kind: 'command', permission: 'playback:write' },
+  'zones.queue.load': { kind: 'command', permission: 'playback:write' },
+  'zones.queue.edit': { kind: 'command', permission: 'playback:write' },
+  'zones.queue.select': { kind: 'command', permission: 'playback:write' },
+  'zones.queue.page': { kind: 'query', permission: 'playback:read' },
   'zones.dsp.edit': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.library': { kind: 'query', permission: 'settings:read' },
+  'zones.dsp.library.edit': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.upload.begin': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.upload.chunk': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.upload.commit': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.upload.cancel': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.parameters': { kind: 'query', permission: 'settings:read' },
+  'zones.dsp.profile.preview': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.profile.import': { kind: 'command', permission: 'settings:write' },
+  'zones.dsp.profile.export': { kind: 'command', permission: 'settings:read' },
+  'zones.dsp.profile.chunk': { kind: 'query', permission: 'settings:read' },
+  'zones.dsp.profile.release': { kind: 'command', permission: 'settings:read' },
   'audio.signalPath': { kind: 'query', permission: 'playback:read' },
   'bridge.invitation': { kind: 'query', permission: 'settings:read' },
   'bridge.host': { kind: 'command', permission: 'settings:write' },
@@ -1085,6 +1158,14 @@ const OPERATIONS: Record<
   'playlists.view': { kind: 'query', permission: 'library:read' },
   'providers.call': { kind: 'command', permission: 'providers:call' },
   'plugins.list': { kind: 'query', permission: 'plugins:read' },
+  'plugins.management.list': { kind: 'query', permission: 'plugins:read' },
+  'plugins.management.edit': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.upload.begin': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.upload.chunk': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.upload.cancel': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.preview': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.install': { kind: 'command', permission: 'plugins:manage' },
+  'plugins.management.cancel': { kind: 'command', permission: 'plugins:manage' },
   'plugins.index.list': { kind: 'query', permission: 'plugins:read' },
   'plugins.index.status': { kind: 'query', permission: 'plugins:read' },
   'plugins.index.refresh': { kind: 'command', permission: 'plugins:manage' },
@@ -1111,6 +1192,7 @@ const OPERATIONS: Record<
   'plugins.dspParameters': { kind: 'command', permission: 'plugins:manage' },
   'extensions.execute': { kind: 'command', permission: 'extensions:execute' },
   'statistics.summary': { kind: 'query', permission: 'statistics:read' },
+  'listeningSync.status': { kind: 'query', permission: 'statistics:read' },
   'statistics.overview': { kind: 'query', permission: 'statistics:read' },
   'statistics.previewClear': { kind: 'query', permission: 'statistics:read' },
   'statistics.tracks': { kind: 'query', permission: 'statistics:read' },

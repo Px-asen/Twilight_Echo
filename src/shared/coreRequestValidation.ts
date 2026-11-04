@@ -1,6 +1,7 @@
 import { validCoreDspPayload } from './coreDsp.ts'
 import { validBridgePeer } from './audioBridge.ts'
-import { validZoneId } from './coreZones.ts'
+import { validZoneId, MAX_CORE_ZONES } from './coreZones.ts'
+import { validSyncGroupId } from './coreSyncGroups.ts'
 import { validRemoteDspEdit } from './remoteDsp.ts'
 import { EXPERIENCE_MUSIC_OPERATIONS } from './pluginExperience.ts'
 import { validCatalogPayload } from './musicCatalog.ts'
@@ -402,6 +403,8 @@ function edit(v: unknown): boolean {
   }
 }
 
+import { validDspLibraryPayload } from './dspLibrary.ts'
+import { validPluginManagementPayload } from './pluginManagement.ts'
 export function validCorePayload(name: CoreOperation, payload: unknown): boolean {
   const budget =
     name === 'providers.call' || name === 'extensions.execute' || name === 'settings.edit'
@@ -418,8 +421,31 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
   if (!isBoundedCoreJson(payload, budget) || !record(payload)) return false
   const p = payload
   switch (name) {
+    case 'plugins.management.list':
+    case 'plugins.management.edit':
+    case 'plugins.management.upload.begin':
+    case 'plugins.management.upload.chunk':
+    case 'plugins.management.upload.cancel':
+    case 'plugins.management.preview':
+    case 'plugins.management.install':
+    case 'plugins.management.cancel':
+      return validPluginManagementPayload(name, p)
+    case 'zones.dsp.library':
+    case 'zones.dsp.library.edit':
+    case 'zones.dsp.upload.begin':
+    case 'zones.dsp.upload.chunk':
+    case 'zones.dsp.upload.commit':
+    case 'zones.dsp.upload.cancel':
+    case 'zones.dsp.parameters':
+    case 'zones.dsp.profile.preview':
+    case 'zones.dsp.profile.import':
+    case 'zones.dsp.profile.export':
+    case 'zones.dsp.profile.chunk':
+    case 'zones.dsp.profile.release':
+      return validDspLibraryPayload(name, p)
     case 'zones.state':
     case 'zones.list':
+    case 'groups.list':
     case 'audio.signalPath':
     case 'bridge.invitation':
       return keys(p, [])
@@ -432,6 +458,30 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       return keys(p, ['revision', 'outputId']) && uint(p.revision) && ['local', 'bridge'].includes(String(p.outputId))
     case 'zones.create':
       return keys(p, ['revision', 'name']) && uint(p.revision) && text(p.name, 80) && p.name.trim().length > 0
+    case 'groups.create': {
+      if (!keys(p, ['revision', 'name', 'members', 'source']) || !uint(p.revision) || !text(p.name, 80) || !p.name.trim() ||
+          !Array.isArray(p.members) || p.members.length < 2 || p.members.length > MAX_CORE_ZONES || !record(p.source) ||
+          !keys(p.source, ['zoneId', 'queue']) || !validZoneId(p.source.zoneId)) return false
+      const ids = new Set<string>()
+      if (!p.members.every(m => {
+        if (!record(m) || !keys(m, ['zoneId', 'revision', 'downstreamDelayMs']) || !validZoneId(m.zoneId) || ids.has(m.zoneId) ||
+            !uint(m.revision) || !positive(m.downstreamDelayMs) || m.downstreamDelayMs > 250) return false
+        ids.add(m.zoneId); return true
+      })) return false
+      const queue = p.source.queue
+      return ids.has(p.source.zoneId) && record(queue) && keys(queue, ['id', 'revision', 'occurrenceId']) &&
+        text(queue.id, 128) && uint(queue.revision) && text(queue.occurrenceId, MAX_QUEUE_OCCURRENCE_ID_LENGTH)
+    }
+    case 'groups.remove':
+      return keys(p, ['groupId', 'revision']) && validSyncGroupId(p.groupId) && uint(p.revision)
+    case 'groups.signalPath':
+      return keys(p, ['groupId', 'zoneId']) && validSyncGroupId(p.groupId) && validZoneId(p.zoneId)
+    case 'groups.queueFromQuery':
+      return keys(p, ['groupId', 'revision', 'query', 'selectedId']) && validSyncGroupId(p.groupId) && uint(p.revision) &&
+        validCorePayload('queue.fromQuery', { query: p.query, selectedId: p.selectedId, play: false })
+    case 'groups.transport':
+      return keys(p, ['groupId', 'revision', 'action']) && validSyncGroupId(p.groupId) &&
+        validCorePayload('zones.transport', { zoneId: 'local', revision: p.revision, action: p.action })
     case 'zones.remove':
       return keys(p, ['revision', 'zoneId']) && uint(p.revision) && validZoneId(p.zoneId)
     case 'zones.connect':
@@ -444,12 +494,54 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
     case 'zones.queueFromQuery':
       return keys(p, ['zoneId', 'revision', 'query', 'selectedId']) && validZoneId(p.zoneId) && uint(p.revision) &&
         validCorePayload('queue.fromQuery', { query: p.query, selectedId: p.selectedId, play: false })
+    case 'zones.queue.page':
+    case 'zones.queue.edit':
+    case 'zones.queue.select':
+    case 'zones.queue.load': {
+      const target = p.target, queue = p.queue
+      if (!record(target) || !keys(target, ['kind', 'id', 'revision']) || !uint(target.revision) ||
+          !(target.kind === 'zone' ? validZoneId(target.id) : target.kind === 'group' && validSyncGroupId(target.id))) return false
+      if (name === 'zones.queue.load') {
+        if (!keys(p, ['target', 'queue', 'selection', 'play']) || typeof p.play !== 'boolean' ||
+            !(queue === null || record(queue) && keys(queue, ['id', 'revision', 'occurrenceId']) &&
+              text(queue.id, 128) && uint(queue.revision) && (queue.occurrenceId === null || text(queue.occurrenceId, MAX_QUEUE_OCCURRENCE_ID_LENGTH)))) return false
+        const s = p.selection
+        if (!record(s)) return false
+        if (s.kind === 'catalog') return keys(s, ['kind', 'revision', 'sourceIds', 'selectedIndex']) && uint(s.revision) &&
+          Array.isArray(s.sourceIds) && s.sourceIds.length >= 1 && s.sourceIds.length <= 200 && s.sourceIds.every(id => text(id, 512)) &&
+          (s.selectedIndex === undefined || uint(s.selectedIndex) && s.selectedIndex < s.sourceIds.length)
+        if (s.kind === 'focus') return keys(s, ['kind', 'input']) && validMusicFocusPayload('focus.play', s.input)
+        if (s.kind === 'tag') return keys(s, ['kind', 'input']) && validMusicTagsPayload('tags.play', s.input)
+        return s.kind === 'playlist' && keys(s, ['kind', 'id', 'revision', 'versionsRevision']) &&
+          text(s.id, 128) && uint(s.revision) && uint(s.versionsRevision)
+      }
+      if (!record(queue) || !keys(queue, ['id', 'revision']) || !text(queue.id, 128) || !uint(queue.revision)) return false
+      if (name === 'zones.queue.page') return keys(p, ['target', 'queue', 'offset', 'limit']) && uint(p.offset) &&
+        optional(p.limit, n => uint(n) && n >= 1 && n <= 200)
+      if (name === 'zones.queue.select') return keys(p, ['target', 'queue', 'index', 'occurrenceId']) && uint(p.index) && text(p.occurrenceId, MAX_QUEUE_OCCURRENCE_ID_LENGTH)
+      if (!keys(p, ['target', 'queue', 'edit']) || !record(p.edit) || !['remove', 'move', 'order', 'clear'].includes(String(p.edit.kind))) return false
+      return edit(p.edit)
+    }
     case 'zones.transport': {
-      if (!keys(p, ['zoneId', 'revision', 'action']) || !validZoneId(p.zoneId) || !uint(p.revision) || !record(p.action)) return false
+      if (!keys(p, ['zoneId', 'revision', 'action']) || !validZoneId(p.zoneId) || !record(p.action)) return false
       const a = p.action
+      if (p.revision === null) return ['pause', 'stop'].includes(String(a.kind)) && keys(a, ['kind'])
+      if (!uint(p.revision)) return false
       if (['play', 'pause', 'stop', 'next', 'previous'].includes(String(a.kind))) return keys(a, ['kind'])
       if (a.kind === 'seek') return keys(a, ['kind', 'position']) && positive(a.position)
       return a.kind === 'volume' && keys(a, ['kind', 'volume']) && positive(a.volume) && Number(a.volume) <= 1
+    }
+    case 'zones.handoff': {
+      const endpoint = (value: unknown, nullable: boolean) => {
+        if (!record(value) || !keys(value, ['zoneId', 'revision', 'queue']) || !validZoneId(value.zoneId) || !uint(value.revision)) return false
+        const queue = value.queue
+        return (nullable && queue === null) || (record(queue) && keys(queue, ['id', 'revision', 'occurrenceId']) &&
+          text(queue.id, 128) && uint(queue.revision) &&
+          ((nullable && queue.occurrenceId === null) || text(queue.occurrenceId, MAX_QUEUE_OCCURRENCE_ID_LENGTH)))
+      }
+      return keys(p, ['source', 'target', 'replace', 'resume']) && endpoint(p.source, false) && endpoint(p.target, true) &&
+        typeof p.replace === 'boolean' && typeof p.resume === 'boolean' &&
+        (p.source as Record<string, unknown>).zoneId !== (p.target as Record<string, unknown>).zoneId
     }
     case 'opra.search':
       return keys(p, ['query']) && typeof p.query === 'string' && p.query.length <= 256 && !p.query.includes('\0')
@@ -1556,6 +1648,10 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       )
     case 'playlists.edit':
       return keys(p, ['revision', 'edit']) && uint(p.revision) && validPlaylistEdit(p.edit)
+    case 'playlists.addSources':
+      return keys(p, ['id', 'revision', 'catalogRevision', 'sourceIds']) && text(p.id, 128) &&
+        uint(p.revision) && uint(p.catalogRevision) && Array.isArray(p.sourceIds) &&
+        p.sourceIds.length > 0 && p.sourceIds.length <= 200 && p.sourceIds.every(id => text(id, 128))
     case 'search.collections':
       return (
         keys(p, [
@@ -1677,6 +1773,7 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
     case 'state.snapshot':
     case 'imports.previewFile':
     case 'statistics.summary':
+    case 'listeningSync.status':
     case 'statistics.overview':
     case 'library.metadata':
     case 'migration.status':

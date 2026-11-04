@@ -121,6 +121,8 @@ import { CoreAudioOutputService } from '../../core/audio/outputService.ts'
 import { CoreBridgeService } from '../../core/audio/bridgeService.ts'
 import { CoreZoneRegistry } from '../../core/playback/zoneRegistry.ts'
 import { zoneCatalog, createZoneRuntime, playbackQueueApi } from './zoneRuntime.ts'
+import { syncGroupCatalog, createSyncGroupRuntime } from './syncGroupRuntime.ts'
+import { zoneGroupOutput } from './zoneGroupOutput.ts'
 import { bridgeSelectionStore } from '../audio/bridgeSelectionStore.ts'
 import { CoreDspService } from '../../core/audio/dspService.ts'
 import { DspAssetLibrary } from '../../core/audio/dspAssetLibrary.ts'
@@ -135,7 +137,7 @@ import { CoreInboxService } from '../../core/library/inboxService.ts'
 import { CoreLibraryHealthService } from '../../core/library/libraryHealthService.ts'
 import { CoreAnalysisService } from '../../core/audio/analysisService.ts'
 import { CoreLibraryLoudnessService } from '../../core/audio/libraryLoudnessService.ts'
-import { CorePlaybackSession, type CoreSessionRepository } from '../../core/playback/session.ts'
+import { CorePlaybackSession, type CoreSessionRepository, type CorePlaybackSessionOptions } from '../../core/playback/session.ts'
 import { CoreQueueSubmission } from '../../core/playback/queueSubmission.ts'
 import { CoreCatalogService } from '../../core/catalog/service.ts'
 import { CoreAlbumBrowseService } from '../../core/library/albumBrowseService.ts'
@@ -169,6 +171,7 @@ import { PlatformMetadataProvider } from '../../core/library/platformMetadataPro
 import { ncmMetadataIdentity } from '../../core/library/ncmMetadataIdentity.ts'
 import { PublicArtworkProvider } from '../../core/library/publicArtworkProvider.ts'
 import { CoreStatisticsService } from '../../core/listening/service.ts'
+import { CoreNcmListeningSync } from '../../core/listening/ncmSync.ts'
 import { CoreStatisticsRepository } from '../../core/listening/repository.ts'
 import { createLibraryListeningProjection } from '../../core/listening/libraryProjection.ts'
 import { LibraryDatabaseScanCoordinator } from '../../core/library/scanCoordinator.ts'
@@ -195,6 +198,7 @@ import type { CorePlatformOperations } from '../../shared/corePlatform.ts'
 import { CorePluginExperiences } from '../../core/plugins/experiences.ts'
 import { createLegacyMusicLookupProvider } from '../../core/plugins/legacyMusicLookupProvider.ts'
 import { CorePluginMarketplace } from '../../core/plugins/marketplace.ts'
+import { CorePluginManagement } from '../../core/plugins/management.ts'
 import { TwilightPluginManager } from '../../core/plugins/manager.ts'
 import { providerPlaybackIdentities } from '../../core/audio/providerPlaybackIdentity.ts'
 import { PluginSettingsRepository } from '../../core/plugins/settingsRepository.ts'
@@ -207,7 +211,7 @@ import {
 } from '../../core/plugins/events.ts'
 
 const parent = (process as unknown as { parentPort?: ServiceMessagePort }).parentPort
-if (!parent) throw new Error('Music Core must run in an Electron utility process')
+if (!parent) throw new Error('Music Core requires a supervised parent port')
 const parentPort = parent
 initializeUtilityDiagnostics('twilight-core')
 let configuration: CoreProcessConfiguration | null = null
@@ -219,6 +223,7 @@ let audio: AudioEngineManager | null = null
 let analysis: AudioAnalysisServiceClient | null = null
 let plugins: TwilightPluginManager | undefined
 let pluginMarketplace: CorePluginMarketplace | undefined
+let pluginManagement: CorePluginManagement | undefined
 let pluginExperiences: CorePluginExperiences | undefined
 let imports: CorePlaylistImportJobs | undefined
 let ncm: ReturnType<typeof createNcmApiRuntime> | undefined
@@ -350,6 +355,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       publishSettings()
       if (Object.hasOwn(patch, 'musicIdentification') || Object.hasOwn(patch, 'language')) metadata?.entities?.refreshIdentification(true)
       if (Object.hasOwn(patch, 'genreSeparators')) genres?.invalidate()
+      if (Object.hasOwn(patch, 'ncmListeningSyncEnabled'))
+        listeningSync?.setEnabled(settings.read().ncmListeningSyncEnabled)
       if (Object.hasOwn(patch, 'playbackResumeMode'))
         void playback?.flush().catch((error) => console.error('[core.playback]', error))
     }
@@ -384,7 +391,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   )
   const bridgeSelection = await bridgeSelectionStore(config.root)
   audio = new AudioEngineManager(coreAudioConfiguration(settings.read()), {
-    initialBridgeSelected: bridgeSelection.selected,
+    initialBridgeSelected: config.bridgeOnly === true || bridgeSelection.selected,
     persistBridgeSelection: selected => bridgeSelection.save(selected),
     platform: process.platform,
     persistDeviceProfiles: persistAudio.profile,
@@ -416,6 +423,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     catalog: vst3,
     platform,
     temporaryDirectory: dspEnvironment.temporaryDirectory,
+    uploadDirectory: join(config.root, 'dsp-upload-staging'),
+    hostSearchPaths: dspEnvironment.fixedSearchPaths ? dspEnvironment.searchPaths : undefined,
     now: Date.now,
     newId: randomUUID,
     failed: (error) => console.error('[core.equalizer]', error)
@@ -510,6 +519,26 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       return []
     return provider.supportedMethods ?? []
   }
+  const listeningSync = new CoreNcmListeningSync({
+    enabled: settings.read().ncmListeningSyncEnabled,
+    available: () => {
+      const provider = plugins?.listProviders().find(item => item.id === 'ncm')
+      return !!provider && isPluginProviderEnabled(provider.health) &&
+        !!provider.supportedMethods?.includes('reportListening')
+    },
+    context: () => plugins?.providerAccountContext('ncm') ?? 'unavailable',
+    account: async signal => {
+      const profile = await plugins?.callProvider('ncm', 'getProfile', [], { signal }) as { userId?: number } | null
+      return Number.isSafeInteger(profile?.userId) && profile!.userId! > 0 ? profile!.userId! : null
+    },
+    submit: async (report, idempotencyKey, signal) => {
+      if (!plugins) throw new Error('网易云音源尚未启用')
+      await plugins.callProvider('ncm', 'reportListening', [report], { signal, idempotencyKey })
+    },
+    now: Date.now,
+    newId: randomUUID,
+    changed: () => application?.changed()
+  })
   const statistics = new CoreStatisticsService({
     repository: new CoreStatisticsRepository({ database, newId: randomUUID }),
     history,
@@ -957,6 +986,15 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   audio.on('sleep-timer-boundary', ({ boundary, occurredAt }) =>
     sleepTimer.boundary(boundary, occurredAt)
   )
+  const automaticPlaybackAllowed: NonNullable<CorePlaybackSessionOptions['automaticPlaybackAllowed']> = async (tracks, signal) => {
+    const allowed: boolean[] = []
+    for (let offset = 0; offset < tracks.length; offset += 200) {
+      signal?.throwIfAborted()
+      allowed.push(...await database!.preferencesAutomaticEligibility(tracks.slice(offset, offset + 200)))
+    }
+    signal?.throwIfAborted()
+    return allowed
+  }
   const playback = new CorePlaybackSession({
     schedule: (callback, delay) => {
       const timer = setTimeout(callback, delay)
@@ -971,15 +1009,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     resources: sourceResources,
     queues: playbackQueueApi(database),
     resolver,
-    automaticPlaybackAllowed: async (tracks, signal) => {
-      const allowed: boolean[] = []
-      for (let offset = 0; offset < tracks.length; offset += 200) {
-        signal?.throwIfAborted()
-        allowed.push(...await database!.preferencesAutomaticEligibility(tracks.slice(offset, offset + 200)))
-      }
-      signal?.throwIfAborted()
-      return allowed
-    },
+    automaticPlaybackAllowed,
     sources: createPlaybackSourceRecovery({
       resolver,
       authorize: (source) => platform!.call('paths.prepareAudio', { source }),
@@ -1005,13 +1035,15 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       workspace.observe(track, info)
       streams.observe(track, info)
       statistics.observe(track, info)
+      listeningSync.observe('local', track, info)
       if (plugins) {
         for (const event of derivePlaybackEvents(previousPluginPlayback, info))
           void plugins.broadcastEvent(event.name, event.payload)
         previousPluginPlayback = { ...info }
       }
     },
-    playbackStarted: () => workspace.beginAttempt(),
+    playbackStarted: () => { workspace.beginAttempt(); listeningSync.closeSession('local') },
+    playbackSeeked: info => listeningSync.seeked('local', info),
     occurrenceRebound: (previous, current) => workspace.rebindOccurrence(previous, current),
     podcastPlaybackRate: () => streams.defaultPlaybackRate(),
     personalized: {
@@ -1031,6 +1063,9 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     fatal: (error) => send({ kind: 'core:fatal', epoch: config.epoch, error: errorText(error) })
   })
   const bridge = new CoreBridgeService({
+    localOutputAllowed: config.bridgeOnly !== true,
+    coordinateConnection: action => zones.coordinatePrimaryConnection(action),
+    groupId: () => zones.membership('local'),
     call: (method, args) => audio!.callBridge(method, args),
     output, outputState: () => audio!.getAudioOutputState(), playback, cast,
     identity: () => loadRemoteTlsIdentity(config.root), name: hostname(),
@@ -1041,20 +1076,25 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const catalogStore = zoneCatalog(config.root)
   const zones = new CoreZoneRegistry({
     ...catalogStore, newId: randomUUID, changed: () => application?.changed(),
-    local: { playback, dsp, output: () => bridge.state(),
+    local: { playback, dsp, output: () => bridge.state(), groupOutput: zoneGroupOutput('local', audio),
       connect: async () => { throw new Error('Use the existing primary output connection') },
       sources: () => audio!.getQueueSnapshot().map(item => item.source), close: async () => {} },
-    create: descriptor => createZoneRuntime({ root: config.root, zone: descriptor, database: database!, launcher: launcher!, platform: platform!,
+    groups: { ...syncGroupCatalog(config.root), create: (descriptor, outputs) => createSyncGroupRuntime({
+      root: config.root, descriptor, outputs, database: database!, changed: () => application?.changed(),
+      closed: () => listeningSync.closeSession(descriptor.id),
       playback: { queues: playbackQueueApi(database!), resolver, resources: sourceResources,
+        observePlayback: (track, info) => listeningSync.observe(descriptor.id, track, info),
+        playbackStarted: () => listeningSync.closeSession(descriptor.id),
+        playbackSeeked: info => listeningSync.seeked(descriptor.id, info),
+        authorize: source => platform!.call('paths.authorizeAudio', { source }), automaticPlaybackAllowed } }) },
+    create: descriptor => createZoneRuntime({ root: config.root, zone: descriptor, database: database!, launcher: launcher!, platform: platform!,
+      closed: () => listeningSync.closeSession(descriptor.id),
+      playback: { queues: playbackQueueApi(database!), resolver, resources: sourceResources,
+        observePlayback: (track, info) => listeningSync.observe(descriptor.id, track, info),
+        playbackStarted: () => listeningSync.closeSession(descriptor.id),
+        playbackSeeked: info => listeningSync.seeked(descriptor.id, info),
         authorize: source => platform!.call('paths.authorizeAudio', { source }),
-        automaticPlaybackAllowed: async (tracks, signal) => {
-          const allowed: boolean[] = []
-          for (let offset = 0; offset < tracks.length; offset += 200) {
-            signal?.throwIfAborted()
-            allowed.push(...await database!.preferencesAutomaticEligibility(tracks.slice(offset, offset + 200)))
-          }
-          return allowed
-        } }, changed: () => application?.changed() })
+        automaticPlaybackAllowed }, changed: () => application?.changed() })
   })
   analysis = new AudioAnalysisServiceClient({
     serviceEntry: 'analysis',
@@ -1322,8 +1362,9 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         }
       },
       ncm: {
+        officialLoginAvailable: !config.plugins.headless,
         request: (...args) => ncm!.request(...args),
-        officialLogin: () => platform!.call('ncm.officialLogin', {}),
+        officialLogin: signal => platform!.call('ncm.officialLogin', {}, signal),
         getCachedSong: async (id) =>
           settings.read().cachePolicy.streamingAudio === 'provider'
             ? ncmCache!.getCachedSong(id)
@@ -1339,7 +1380,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
             : Promise.resolve(null)
       },
       autoMixEnabled: () => effectiveAutoMixMode(settings.read().autoMixMode) !== 'off',
-      dynamicIsland: {
+      qqmusicOfficialLogin: config.plugins.headless
+        ? undefined
+        : signal => platform!.call('qqmusic.officialLogin', {}, signal),
+      dynamicIsland: config.plugins.headless ? undefined : {
         show: (pluginId) => platform!.call('overlay.show', { pluginId }),
         hide: (pluginId) => platform!.call('overlay.hide', { pluginId }),
         configure: (pluginId, config) => platform!.call('overlay.configure', { pluginId, config }),
@@ -1592,6 +1636,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       bundledPluginIds: config.plugins.bundledPlugins?.map((plugin) => plugin.id)
     }, plugins)
   }
+  if (plugins && config.plugins) {
+    pluginManagement = new CorePluginManagement({ manager: plugins, uploadRoot: join(config.root, 'plugin-upload-staging'),
+      appVersion: config.plugins.appVersion, remoteEnabled: config.plugins.remoteManagement === true, headless: config.plugins.headless === true })
+    await pluginManagement.initialize()
+  }
   const downloads = plugins
     ? new CoreDownloadsService({
         pluginManager: plugins,
@@ -1681,6 +1730,9 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   plugins?.on('provider-context', (id: string) => {
     identificationResponses.invalidate(`platform.${id}`)
     metadata.entities?.refreshIdentification(false, `platform.${id}`)
+  })
+  plugins?.on('provider-account', (id: string) => {
+    if (id === 'ncm') listeningSync.accountChanged()
   })
   const musicbrainzIdentification = new MusicBrainzIdentificationProvider(() => entityMetadataPolicy)
   const publicMusicProviders = publicMetadataSources.map(id => new PublicMusicSource(id, () => publicMusicPolicy))
@@ -2075,8 +2127,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     libraryBackground,
     metadata,
     statistics,
+    listeningSync,
     plugins,
     pluginMarketplace,
+    pluginManagement,
     pluginExperiences,
     playlists,
     recordingVersions,

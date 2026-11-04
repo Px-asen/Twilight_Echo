@@ -564,7 +564,7 @@ function toPlaybackInfo(rt: Runtime, raw: Json): PlaybackInfo {
   const info = createDefaultPlaybackInfo('alsa', '', false, normalizeOutputConfig())
   const state = str(raw.state)
   info.state =
-    state === 'playing' ? 'playing' : state === 'paused' || state === 'loading' ? 'paused' : 'stopped'
+    state === 'playing' || state === 'buffering' ? 'playing' : state === 'paused' || state === 'loading' ? 'paused' : 'stopped'
   info.position = Math.max(0, num(raw.positionMs, 0)) / 1000
   info.duration = Math.max(0, num(raw.durationMs, 0)) / 1000
   info.volume = num(raw.volume, 1)
@@ -572,7 +572,7 @@ function toPlaybackInfo(rt: Runtime, raw: Json): PlaybackInfo {
   info.queueIndex = int(raw.queueIndex, -1)
   info.source = itemsForGeneration(rt, raw.queueGeneration)[info.queueIndex]?.source ?? ''
   info.playMode = WIRE_TO_APP_MODE[str(raw.playMode)] ?? 'sequential'
-  info.nativePlaybackActive = state === 'playing' || state === 'paused' || state === 'loading'
+  info.nativePlaybackActive = state === 'playing' || state === 'buffering' || state === 'paused' || state === 'loading'
   info.codec = str(raw.codec)
   info.sourceSampleRate = Math.max(0, num(raw.sampleRate, 0))
   info.sourceBitDepth = Math.max(0, num(raw.bitDepth, 0))
@@ -1013,6 +1013,7 @@ function currentLyrics(rt: Runtime, core: CoreSnapshot): Json | undefined {
 
 function wireState(coreState: unknown, raw: Json | null): string {
   const rawState = str(raw?.state)
+  if (coreState === 'playing' && rawState === 'buffering') return 'buffering'
   if (coreState !== 'stopped' && (rawState === 'loading' || rawState === 'error')) return rawState
   return coreState === 'playing' || coreState === 'paused' ? coreState : 'stopped'
 }

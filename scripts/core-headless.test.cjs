@@ -319,9 +319,10 @@ async function main() {
     edit: { kind: 'processing', settings: { eqPreamp: -6 } } })
   assert.equal((await request('query', 'zones.dsp', { zoneId: zoneA })).processing.eqPreamp, -6)
   assert.notEqual((await request('query', 'zones.dsp', { zoneId: zoneB })).processing.eqPreamp, -6)
+  await zoneCommand('zones.transport', { zoneId: zoneB, revision: null, action: { kind: 'pause' } })
   const independentZones = (await request('query', 'zones.list')).zones
   const aQueue = independentZones.find(z => z.id === zoneA).queue.id
-  const bQueue = independentZones.find(z => z.id === zoneB).queue.id
+  let bQueue = independentZones.find(z => z.id === zoneB).queue.id
   assert.notEqual(aQueue, bQueue)
   assert.equal(independentZones.find(z => z.id === zoneA).track.id, 'one')
   assert.equal(independentZones.find(z => z.id === zoneB).track.id, 'two')
@@ -329,6 +330,38 @@ async function main() {
   await assert.rejects(zoneCommand('zones.transport', { zoneId: zoneA, revision: 1, action: { kind: 'play' } }), /未连接/)
   assert.equal((await request('query', 'zones.list')).zones.find(z => z.id === zoneB).queue.id, bQueue)
   assert.equal((await request('query', 'state.snapshot')).queue, null)
+  const transferZones = (await request('query', 'zones.list')).zones
+  const endpoint = id => {
+    const zone = transferZones.find(z => z.id === id), q = zone.queue
+    return { zoneId: id, revision: zone.revision, queue: q ? { id: q.id, revision: q.revision, occurrenceId: q.occurrenceId } : null }
+  }
+  const transfer = { source: endpoint(zoneA), target: endpoint(zoneB), replace: false, resume: false }
+  await assert.rejects(zoneCommand('zones.handoff', transfer), /确认替换/)
+  await zoneCommand('zones.handoff', { ...transfer, replace: true })
+  const handed = (await request('query', 'zones.list')).zones
+  const targetZone = handed.find(z => z.id === zoneB)
+  assert.notEqual(targetZone.queue.id, bQueue)
+  bQueue = targetZone.queue.id
+  assert.notEqual(bQueue, aQueue)
+  assert.equal(targetZone.track.id, 'one')
+  assert.equal(targetZone.playback.state, 'paused')
+  assert.equal(handed.find(z => z.id === zoneA).queue.id, aQueue)
+  assert.equal(handed.find(z => z.id === zoneA).playback.state, 'paused')
+  assert.notEqual((await request('query', 'zones.dsp', { zoneId: zoneB })).processing.eqPreamp, -6)
+  const grouping = await request('query', 'zones.list')
+  const sourceZone = grouping.zones.find(z => z.id === zoneA)
+  const groupId = (await zoneCommand('groups.create', { revision: grouping.revision, name: 'Headless group',
+    members: grouping.zones.filter(z => z.id !== 'local').map(z => ({ zoneId: z.id, revision: z.revision, downstreamDelayMs: z.id === zoneB ? 3 : 0 })),
+    source: { zoneId: zoneA, queue: { id: sourceZone.queue.id, revision: sourceZone.queue.revision, occurrenceId: sourceZone.queue.occurrenceId } }
+  })).id
+  const shared = (await request('query', 'groups.list')).groups[0]
+  const sharedQueue = shared.queue.id
+  assert.equal(shared.playback.state, 'paused')
+  assert.notEqual(sharedQueue, aQueue); assert.notEqual(sharedQueue, bQueue)
+  await assert.rejects(zoneCommand('zones.transport', { zoneId: zoneA, revision: null, action: { kind: 'play' } }))
+  const member = (await request('query', 'zones.list')).zones.find(z => z.id === zoneA)
+  await assert.rejects(zoneCommand('zones.transport', { zoneId: zoneA, revision: member.revision, action: { kind: 'play' } }), /同步组/)
+  await zoneCommand('groups.transport', { groupId, revision: null, action: { kind: 'pause' } })
   supervisor.disconnect(zoneDesktop.id)
   assert.equal((await request('query', 'state.snapshot')).playback.state, 'stopped')
   const audioProfiles = await request('query', 'audio.profiles')
@@ -467,6 +500,17 @@ async function main() {
   assert.equal(recoveredZones.find(z => z.id === zoneB).queue.id, bQueue)
   assert.equal(recoveredZones.find(z => z.id === zoneB).playback.state, 'paused')
   assert.equal((await request('query', 'zones.dsp', { zoneId: zoneA })).processing.eqPreamp, -6)
+  const restoredGroup = (await request('query', 'groups.list')).groups[0]
+  assert.equal(restoredGroup.id, groupId); assert.equal(restoredGroup.queue.id, sharedQueue)
+  assert.equal(restoredGroup.playback.state, 'paused')
+  assert.ok(recoveredZones.filter(z => z.id !== 'local').every(z => z.groupId === groupId))
+  supervisor.connect(zoneDesktop)
+  await zoneCommand('groups.remove', { groupId, revision: restoredGroup.revision })
+  assert.equal((await request('query', 'groups.list')).groups.length, 0)
+  const ungrouped = (await request('query', 'zones.list')).zones.filter(z => z.id !== 'local')
+  assert.deepEqual(ungrouped.map(z => z.queue.id), [aQueue, bQueue])
+  assert.ok(ungrouped.every(z => !z.groupId && z.playback.state === 'paused'))
+  supervisor.disconnect(zoneDesktop.id)
   const recoveredMetadata = await request('query', 'metadata.entity.detail', { entityId: metadataArtist, language: 'en' })
   assert.equal(recoveredMetadata.introduction.value, 'Headless user introduction')
   assert.equal((await request('query', 'metadata.entity.jobs', { jobId: metadataJob.id })).items[0].state, 'blocked')

@@ -241,6 +241,7 @@ const BASE_SETTINGS: AppSettings = {
   previousButtonAction: 'restart',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
+  ncmListeningSyncEnabled: true,
   playMode: 'sequential',
   softwareVolume: DEFAULT_SOFTWARE_VOLUME,
   audioOutput: 'wasapi',
@@ -292,6 +293,8 @@ const BASE_SETTINGS: AppSettings = {
 export function createDefaultSettings(platform: CorePlatformId): AppSettings {
   return structuredClone({
     ...BASE_SETTINGS,
+    closeWindowBehavior: platform === 'darwin' ? 'tray' : 'quit',
+    closeToTray: platform === 'darwin',
     audioOutput: normalizeAudioOutput(undefined, platform)
   })
 }
@@ -687,7 +690,7 @@ export function normalizeAppSettings(
       ? settings.closeToTray
       : typeof settings.minimizeToTray === 'boolean'
         ? settings.minimizeToTray
-        : DEFAULT_SETTINGS.closeToTray
+        : environment.platform === 'darwin'
   const closeWindowBehavior: CloseWindowBehavior =
     settings.closeWindowBehavior === 'quit' ||
     settings.closeWindowBehavior === 'tray' ||
@@ -783,6 +786,7 @@ export function normalizeAppSettings(
     previousButtonAction: normalizePreviousButtonAction(settings.previousButtonAction),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
+    ncmListeningSyncEnabled: settings.ncmListeningSyncEnabled !== false,
     playMode: normalizePlayMode(settings.playMode),
     softwareVolume: clampNumber(
       settings.softwareVolume,

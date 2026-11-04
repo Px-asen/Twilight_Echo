@@ -4,6 +4,41 @@ const { PortError, createEmbeddedHarness, createFakePlatform, wireTrack } = requ
 
 const TRACKS = ['a', 'b', 'c'].map((id) => wireTrack(id))
 
+test('native buffering preserves the playing intent, occurrence and position through pause and recovery', async () => {
+  const platform = createFakePlatform()
+  const h = createEmbeddedHarness({ platform })
+  await h.boot({ epoch: 'buffering' })
+  await h.value('playback.replaceQueue', { tracks: TRACKS, startIndex: 0, play: true })
+  const occurrence = (await h.snapshot()).queue.occurrenceId
+  const plays = () => platform.calls.filter(({ key }) => key === 'audioEngine.play').length
+  const started = plays()
+  platform.audio.state = 'buffering'
+  platform.audio.positionMs = 12500
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  let snapshot = await h.snapshot()
+  assert.equal(snapshot.playback.state, 'buffering')
+  assert.equal(snapshot.playback.nativePlaybackActive, true)
+  assert.equal(snapshot.playback.position, 12.5)
+  assert.equal(snapshot.queue.occurrenceId, occurrence)
+  assert.equal(plays(), started)
+  // Reading metadata while the connection is stalled must not turn the queue into stopped.
+  await h.value('playback.getQueueWindow', { offset: 0, limit: 10 }, 'query')
+  assert.equal((await h.snapshot()).playback.state, 'buffering')
+  platform.audio.state = 'playing'
+  platform.audio.positionMs = 12600
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  assert.equal((await h.snapshot()).playback.state, 'playing')
+  assert.equal(plays(), started)
+  platform.audio.state = 'buffering'
+  await h.audioEvent({ type: 'snapshot', snapshot: { ...platform.audio } })
+  await h.value('playback.pause')
+  snapshot = await h.snapshot()
+  assert.equal(snapshot.playback.state, 'paused')
+  assert.equal(snapshot.playback.position, 12.6)
+  assert.equal(snapshot.queue.occurrenceId, occurrence)
+  await h.shutdown()
+})
+
 test('SAF identity migration preserves CUE/SACD, favorites, playlists, lyrics, bookmarks and a paused session through rescan and restart', async () => {
   const platform = createFakePlatform()
   const authority = 'alpha.documents'
