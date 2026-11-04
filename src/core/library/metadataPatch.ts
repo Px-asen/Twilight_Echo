@@ -24,39 +24,49 @@ export async function patchLibraryMetadata(
   update: LibraryMetadataEnrichmentTrackUpdate,
   isCurrent: () => boolean
 ) {
+  return patchLibraryMetadataBatch(api, [update], isCurrent)
+}
+
+/** Read and compare each source independently, then use the existing atomic CAS writer. */
+export async function patchLibraryMetadataBatch(
+  api: Pick<LibraryDatabaseApi, 'getTracksByIds' | 'patchTracks'>,
+  updates: LibraryMetadataEnrichmentTrackUpdate[],
+  isCurrent: () => boolean
+) {
   if (!isCurrent()) return null
-  const patch: Record<string, unknown> = {}
-  for (const field of fields) {
-    if (!equal(update.source[field], update.track[field]) && update.track[field] !== undefined)
-      patch[field] = update.track[field]
-  }
-  if (!Object.keys(patch).length) return null
-  const page = await api.getTracksByIds([update.source.id])
-  const current = page.tracks[0]
-  if (!isCurrent() || !current || current.id !== update.source.id) return null
-  const normalized = libraryTrack(current)
-  for (const field of [
-    'filePath',
-    'title',
-    'artist',
-    'album',
-    'duration',
-    'cueRange',
-    ...Object.keys(patch)
-  ]) {
-    if (
-      !equal(
-        normalized[field as keyof typeof normalized],
-        update.source[field as keyof typeof update.source]
-      )
-    )
-      return null
-  }
-  return api.patchTracks([
-    {
-      id: current.id,
-      expectedVersion: page.versions[current.id],
-      patch
+  const changes = updates.flatMap((update) => {
+    const patch: Record<string, unknown> = {}
+    for (const field of fields) {
+      if (!equal(update.source[field], update.track[field]) && update.track[field] !== undefined)
+        patch[field] = update.track[field]
     }
-  ])
+    return Object.keys(patch).length ? [{ update, patch }] : []
+  })
+  if (!changes.length) return null
+  const page = await api.getTracksByIds(changes.map(({ update }) => update.source.id))
+  if (!isCurrent()) return null
+  const currentById = new Map(page.tracks.map((track) => [track.id, libraryTrack(track)]))
+  const patches = changes.flatMap(({ update, patch }) => {
+    const current = currentById.get(update.source.id)
+    if (!current) return []
+    for (const field of [
+      'filePath',
+      'title',
+      'artist',
+      'album',
+      'duration',
+      'cueRange',
+      ...Object.keys(patch)
+    ]) {
+      if (
+        !equal(
+          current[field as keyof typeof current],
+          update.source[field as keyof typeof update.source]
+        )
+      )
+        return []
+    }
+    return [{ id: current.id, expectedVersion: page.versions[current.id], patch }]
+  })
+  return patches.length ? api.patchTracks(patches) : null
 }

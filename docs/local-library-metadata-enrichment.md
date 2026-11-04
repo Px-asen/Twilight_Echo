@@ -66,6 +66,17 @@ field counts. Use **资料覆盖明细** for actual missing fields.
 
 ### Keep Listening And Editing During Completion
 
+Track completion uses two concurrent search groups and coalesces ready writes for up to
+100 ms. Each commit contains at most 25 tracks, with an event-loop yield between batches;
+copies sharing a match no longer cause a separate database commit and library refresh each.
+Progress reaches completion only after those writes settle. Cancellation drops pending writes,
+and shutdown joins writes already accepted by the database. Source and version checks still
+protect manual edits and removed tracks independently within a batch.
+
+Metadata readers cannot occupy the four request slots reserved for playback controls within
+the existing 16-request client limit. Background snapshots retain an unchanged playing-track
+projection and do not re-resolve its cover or restart theme-color work.
+
 Automatic completion stays in Core's durable background queue. Task progress updates the
 task center, not the artist's portrait placeholder, biography or open identity review.
 Artist pages keep their current content and source-choice buttons usable during a background

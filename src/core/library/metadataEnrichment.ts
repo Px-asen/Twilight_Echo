@@ -47,6 +47,8 @@ export interface LibraryMetadataEnrichmentQueueOptions {
   now?: () => number
   onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   onTrackEnriched?: MetadataEnrichmentSink
+  /** Batch-capable owners can commit grouped matches without one write per copy. */
+  onTracksEnriched?: (updates: LibraryMetadataEnrichmentTrackUpdate[]) => Promise<void>
 }
 
 export interface LibraryMetadataEnrichmentBenchmarkResult {
@@ -69,7 +71,7 @@ type FailureBackoff = {
 }
 
 const DEFAULT_CONCURRENCY = 6
-const MIN_CONCURRENCY = 4
+const MIN_CONCURRENCY = 1
 const MAX_CONCURRENCY = 8
 const DEFAULT_RETRY_BASE_MS = 15_000
 const DEFAULT_RETRY_MAX_MS = 5 * 60_000
@@ -82,6 +84,7 @@ export class LibraryMetadataEnrichmentQueue {
   private readonly now: () => number
   private readonly onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   private readonly onTrackEnriched?: MetadataEnrichmentSink
+  private readonly onTracksEnriched?: LibraryMetadataEnrichmentQueueOptions['onTracksEnriched']
   private readonly entries = new Map<string, QueueEntry>()
   private readonly activeEntries = new Map<string, QueueEntry>()
   private readonly failures = new Map<string, FailureBackoff>()
@@ -100,6 +103,7 @@ export class LibraryMetadataEnrichmentQueue {
     this.now = options.now ?? Date.now
     this.onStatus = options.onStatus
     this.onTrackEnriched = options.onTrackEnriched
+    this.onTracksEnriched = options.onTracksEnriched
   }
 
   getStatus(): LibraryMetadataEnrichmentStatus {
@@ -236,17 +240,31 @@ export class LibraryMetadataEnrichmentQueue {
       )
       if (generation !== this.generation) return
       this.failures.delete(entry.queryKey)
-      for (const { track, policy } of entry.tracks.values()) {
-        if (generation !== this.generation) return
-        const match = findBestMetadataMatch(track, candidates)
-        const enriched = enrichLocalTrackMetadata(track, match, policy)
-        if (enriched !== track) {
+      const processed = new Set<string>()
+      do {
+        const updates: LibraryMetadataEnrichmentTrackUpdate[] = []
+        for (const { track, policy } of entry.tracks.values()) {
+          if (generation !== this.generation) return
+          if (processed.has(track.id)) continue
+          processed.add(track.id)
+          const match = findBestMetadataMatch(track, candidates)
+          const enriched = enrichLocalTrackMetadata(track, match, policy)
+          if (enriched === track) continue
+          if (this.onTracksEnriched) updates.push({ source: track, track: enriched })
+          else {
+            acceptingUpdate = true
+            const accepted = this.onTrackEnriched?.({ source: track, track: enriched })
+            if (accepted && typeof accepted.then === 'function') await accepted
+            acceptingUpdate = false
+          }
+        }
+        if (updates.length) {
           acceptingUpdate = true
-          const accepted = this.onTrackEnriched?.({ source: track, track: enriched })
-          if (accepted && typeof accepted.then === 'function') await accepted
+          await this.onTracksEnriched!(updates)
           acceptingUpdate = false
         }
-      }
+        // Copies can join an active query while its owner is saving a batch.
+      } while (processed.size < entry.tracks.size)
       if (generation !== this.generation) return
       this.status.completed += entry.tracks.size
     } catch {

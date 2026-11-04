@@ -25,6 +25,8 @@ import { RemoteCommandError, type RemoteHttpServer } from '../cast/httpServer.ts
 import { RemoteCoreBridge } from './coreBridge.ts'
 import type { RemoteMediaResolver } from './media.ts'
 import type { RemoteCoreRpcContext, RemoteProviderSession } from '../../shared/remoteCoreBridge.ts'
+import { isDspLibraryOperation } from '../../shared/dspLibrary.ts'
+import { isPluginManagementOperation } from '../../shared/pluginManagement.ts'
 
 export interface CoreRemoteOptions {
   server: RemoteHttpServer
@@ -67,6 +69,9 @@ export class CoreRemoteService {
   private readonly options: CoreRemoteOptions
   private application: Pick<CoreApplication, 'connect' | 'disconnect' | 'request'> | null = null
   private readonly clientId = `remote:${randomUUID()}`
+  private readonly libraryClients = new Map<string, string>()
+  private readonly dspClients = new Map<string, string>()
+  private readonly pluginClients = new Map<string, string>()
   private current: CoreSnapshot | null = null
   private readonly pending = new Map<
     string,
@@ -87,6 +92,7 @@ export class CoreRemoteService {
     this.bridge = new RemoteCoreBridge({
       snapshot: () => this.current,
       request: this.request.bind(this),
+      libraryRequest: (principal, request) => this.requestLibrary(principal, request),
       playback: options.playback,
       resolveCover: options.resolveCover,
       signal: this.controller.signal,
@@ -113,11 +119,12 @@ export class CoreRemoteService {
       (message) => this.receive(message)
     )
   }
-  private receive(message: CoreClientMessage): void {
+  private receive(message: CoreClientMessage, clientId = this.clientId): void {
     if (message.kind === 'response') {
-      const pending = this.pending.get(message.requestId)
+      const key = JSON.stringify([clientId, message.requestId])
+      const pending = this.pending.get(key)
       if (!pending) return
-      this.pending.delete(message.requestId)
+      this.pending.delete(key)
       if (message.ok) pending.resolve(message.value)
       else
         pending.reject(
@@ -125,7 +132,7 @@ export class CoreRemoteService {
         )
       return
     }
-    if (message.kind !== 'state') return
+    if (message.kind !== 'state' || clientId !== this.clientId) return
     this.current = message.snapshot
     this.publish()
     if (message.snapshot.phase === 'ready') {
@@ -162,19 +169,35 @@ export class CoreRemoteService {
     payload: unknown,
     epoch?: string
   ): Promise<never> {
+    const requestId = randomUUID()
+    return this.send(this.clientId, { kind, name, payload, requestId,
+      epoch: epoch ?? this.current?.epoch } as CoreRequestEnvelope)
+  }
+  private requestLibrary(principal: string, request: CoreRequestEnvelope): Promise<unknown> {
+    if (!this.application || this.stopped) return Promise.reject(new RemoteCommandError('core_not_ready'))
+    const dsp = isDspLibraryOperation(request.name)
+    const plugin = isPluginManagementOperation(request.name)
+    const clients = plugin ? this.pluginClients : dsp ? this.dspClients : this.libraryClients
+    let id = clients.get(principal)
+    if (!id) {
+      id = `${plugin ? 'remote-plugins' : dsp ? 'remote-dsp' : 'remote-library'}:${randomUUID()}`
+      clients.set(principal, id)
+      const clientId = id
+      this.application.connect({ id, role: 'remote', permissions: plugin ? ['plugins:read', 'plugins:manage'] : dsp ? ['settings:read', 'settings:write'] : [
+        'library:read', 'library:write', 'playback:read', 'playback:write', 'providers:call'
+      ] }, message => this.receive(message, clientId))
+    }
+    return this.send(id, request)
+  }
+  private send(clientId: string, request: CoreRequestEnvelope): Promise<never> {
     if (!this.application || !this.current || this.stopped)
       return Promise.reject(new RemoteCommandError('core_not_ready'))
-    const requestId = randomUUID()
+    const key = JSON.stringify([clientId, request.requestId])
+    if (this.pending.has(key)) return Promise.reject(Object.assign(new Error('请求仍在执行，请读取结果'), { code: 'OUTCOME_UNKNOWN' }))
     return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject })
-      void this.application!.request(this.clientId, {
-        kind,
-        name,
-        payload,
-        requestId,
-        epoch: epoch ?? this.current!.epoch
-      } as CoreRequestEnvelope).catch((error) => {
-        this.pending.delete(requestId)
+      this.pending.set(key, { resolve: resolve as (value: unknown) => void, reject })
+      void this.application!.request(clientId, request).catch((error) => {
+        this.pending.delete(key)
         reject(error)
       })
     })
@@ -570,6 +593,12 @@ export class CoreRemoteService {
     this.options.server.setBrowseHandler(null)
     this.options.server.setCoreRpcHandler?.(null)
     this.application?.disconnect(this.clientId)
+    for (const id of this.libraryClients.values()) this.application?.disconnect(id)
+    this.libraryClients.clear()
+    for (const id of this.dspClients.values()) this.application?.disconnect(id)
+    this.dspClients.clear()
+    for (const id of this.pluginClients.values()) this.application?.disconnect(id)
+    this.pluginClients.clear()
     for (const pending of this.pending.values())
       pending.reject(new RemoteCommandError('core_not_ready'))
     this.pending.clear()

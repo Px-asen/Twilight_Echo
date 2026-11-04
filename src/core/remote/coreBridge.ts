@@ -26,6 +26,10 @@ import { projectRemoteDsp, projectRemoteDspStatus, validRemoteDspEdit } from '..
 import type { TrackData } from '../../shared/track.ts'
 import type { CorePlaybackSession } from '../playback/session.ts'
 import type { RemoteMediaResolver } from './media.ts'
+import { RemoteLibraryBridge } from './libraryBridge.ts'
+import { isDspLibraryOperation } from '../../shared/dspLibrary.ts'
+import { isPluginManagementOperation } from '../../shared/pluginManagement.ts'
+import { isRemoteLibraryOperation, type RemoteLibraryRequest } from '../../shared/remoteLibrary.ts'
 
 interface CoreRequest {
   <K extends keyof CoreQueries>(
@@ -44,6 +48,7 @@ interface CoreRequest {
 interface Options {
   snapshot(): CoreSnapshot | null
   request: CoreRequest
+  libraryRequest?: RemoteLibraryRequest
   playback: Pick<CorePlaybackSession, 'fromPages'>
   resolveCover(handle: string | null): Promise<string | null>
   signal: AbortSignal
@@ -152,15 +157,19 @@ export class RemoteCoreBridge {
   private readonly referenceIds = new Map<string, string>()
   private readonly seenCommands = new Set<string>()
   private active = 0
+  private readonly library: RemoteLibraryBridge | null
 
   constructor(options: Options) {
     this.options = options
+    this.library = options.libraryRequest ? new RemoteLibraryBridge({ request: options.libraryRequest,
+      track: track => this.track(track), cover: options.resolveCover }) : null
   }
 
   clear(): void {
     this.references.clear()
     this.referenceIds.clear()
     this.seenCommands.clear()
+    this.library?.clear()
   }
 
   private observe(state: CoreSnapshot): void {
@@ -285,6 +294,13 @@ export class RemoteCoreBridge {
       libraryRevision: state.libraryRevision,
       catalogRevision: state.catalogRevision,
       entityMetadataRevision: state.entityMetadataRevision,
+      entityMetadataContentRevision: state.entityMetadataContentRevision,
+      ratingsRevision: state.ratingsRevision,
+      preferencesRevision: state.preferencesRevision,
+      tagsRevision: state.tagsRevision,
+      tagsLinkRevision: state.tagsLinkRevision,
+      focusRevision: state.focusRevision,
+      focusHistoryRevision: state.focusHistoryRevision,
       presentationRevision: state.presentationRevision,
       playlistsRevision: state.playlistsRevision,
       versionsRevision: state.versionsRevision,
@@ -340,7 +356,10 @@ export class RemoteCoreBridge {
       const names: readonly string[] =
         env.kind === 'query' ? REMOTE_CORE_QUERIES : REMOTE_CORE_COMMANDS
       if (!names.includes(env.name)) throw error('FORBIDDEN', messages.FORBIDDEN)
-      if ((env.name.startsWith('zones.') || ['audio.dsp', 'audio.dsp.status', 'audio.dsp.edit', 'audio.signalPath'].includes(env.name)) &&
+      const libraryOperation = isRemoteLibraryOperation(env.name)
+      const dspLibraryOperation = isDspLibraryOperation(env.name) || isPluginManagementOperation(env.name)
+      const scopedOperation = libraryOperation || dspLibraryOperation || env.name === 'zones.queue.load'
+      if ((libraryOperation || dspLibraryOperation || env.name.startsWith('zones.') || env.name.startsWith('groups.') || ['audio.dsp', 'audio.dsp.status', 'audio.dsp.edit', 'audio.signalPath'].includes(env.name)) &&
           (!principal || context?.encrypted !== true)) throw error('FORBIDDEN', messages.FORBIDDEN)
       const bootstrap =
         env.kind === 'query' && ['core.getSnapshot', 'state.snapshot'].includes(env.name)
@@ -349,22 +368,22 @@ export class RemoteCoreBridge {
       this.active++
       entered = true
       if (env.kind === 'command') {
-        const key = env.commandId ?? env.requestId
+        const key = JSON.stringify([principal ?? 'legacy', env.commandId ?? env.requestId])
         if (this.seenCommands.has(key)) throw error('OUTCOME_UNKNOWN', messages.OUTCOME_UNKNOWN)
         // Reserve before awaiting: simultaneous retries must never execute a mutation twice.
         this.seenCommands.add(key)
         if (this.seenCommands.size > 1024)
           this.seenCommands.delete(this.seenCommands.values().next().value!)
-        await this.command(env)
+        const result = scopedOperation ? await this.libraryOperation(env, principal!) : await this.command(env)
         return {
           kind: 'response',
           requestId,
           epoch: this.ready(env.epoch).epoch,
           ok: true,
-          value: { snapshot: this.projectSnapshot(this.ready(env.epoch)) }
+          value: { ...(libraryOperation || dspLibraryOperation ? { result: result ?? null } : env.name === 'groups.create' ? result as { id: string } : {}), snapshot: this.projectSnapshot(this.ready(env.epoch)) }
         }
       }
-      const value = await this.query(env, principal, context)
+      const value = libraryOperation || dspLibraryOperation ? await this.libraryOperation(env, principal!) : await this.query(env, principal, context)
       const state = this.ready(bootstrap ? undefined : env.epoch)
       return { kind: 'response', requestId, epoch: state.epoch, ok: true, value }
     } catch (cause) {
@@ -381,6 +400,11 @@ export class RemoteCoreBridge {
     } finally {
       if (entered) this.active--
     }
+  }
+
+  private libraryOperation(env: Envelope, principal: string) {
+    if (!this.library) throw error('UNSUPPORTED_CAPABILITY', messages.UNSUPPORTED_CAPABILITY)
+    return this.library.handle(env, principal)
   }
 
   private page(
@@ -434,6 +458,11 @@ export class RemoteCoreBridge {
     const p = env.payload,
       epoch = this.ready().epoch
     switch (env.name) {
+      case 'zones.queue.page': {
+        this.validate('zones.queue.page', p, epoch)
+        const page = await this.options.request('query', 'zones.queue.page', p, epoch)
+        return { ...page, items: page.items.map(item => ({ ...item, track: item.track ? this.track(item.track) : null })) }
+      }
       case 'zones.list': {
         this.validate('zones.list', p, epoch)
         const list = await this.options.request('query', 'zones.list', {}, epoch)
@@ -445,6 +474,17 @@ export class RemoteCoreBridge {
       case 'zones.dsp':
         this.validate('zones.dsp', p, epoch)
         return projectRemoteDsp(await this.options.request('query', 'zones.dsp', p, epoch))
+      case 'groups.list': {
+        this.validate('groups.list', p, epoch)
+        const list = await this.options.request('query', 'groups.list', {}, epoch)
+        return { ...list, groups: list.groups.map(group => ({ ...group,
+          track: group.track ? this.track(group.track) : null,
+          playback: group.playback ? { ...group.playback,
+            upcomingTrack: group.playback.upcomingTrack ? this.track(group.playback.upcomingTrack as CoreTrackView) : null } : null })) }
+      }
+      case 'groups.signalPath':
+        this.validate('groups.signalPath', p, epoch)
+        return this.options.request('query', 'groups.signalPath', p, epoch)
       case 'zones.signalPath':
         this.validate('zones.signalPath', p, epoch)
         return this.options.request('query', 'zones.signalPath', p, epoch)
@@ -780,10 +820,11 @@ export class RemoteCoreBridge {
       })),
       artwork: images,
       artworkOverride: detail.artworkOverride
+      , override: detail.override, sourcePreference: detail.sourcePreference, sourceOptions: detail.sourceOptions
     }
   }
 
-  private async command(env: Envelope): Promise<void> {
+  private async command(env: Envelope): Promise<unknown> {
     const p = env.payload
     if (env.name === 'playback.replaceQueue') return this.replaceQueue(env)
     if (env.name === 'playback.selectQueueIndex') {
@@ -821,7 +862,7 @@ export class RemoteCoreBridge {
     const raw = { kind: 'command', name, payload, requestId: env.requestId, epoch: env.epoch }
     if (name === 'audio.dsp.edit' && !validRemoteDspEdit(payload)) throw invalid()
     if (!isCoreRequest(raw) || raw.kind !== 'command') throw invalid()
-    await this.options.request('command', raw.name, raw.payload, env.epoch)
+    return this.options.request('command', raw.name, raw.payload, env.epoch)
   }
 
   private async replaceQueue(env: Envelope): Promise<void> {

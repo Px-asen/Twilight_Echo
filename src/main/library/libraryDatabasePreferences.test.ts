@@ -289,6 +289,36 @@ test('unfavorite only clears favorite and cannot erase another source ban', t =>
   assert.deepEqual(pref.trackStates(tracks.slice(0, 3)), ['none', 'ban', null])
 })
 
+test('a catalog favorite uses the exact private local row before the next ordinary playlist save, never the path-free display snapshot', t => {
+  const { db, pref, tracks, rec, set } = fixture(t)
+  pref.playlistsMigrate({ version: 2, revision: 0, savedAt: 'old', data: [playlist('favorites', [], { isDefault: true })] }, 1)
+  set(rec(0), 'favorite')
+  const doc = pref.playlistsLoad()!, favorite = doc.data.find(p => p.isDefault)!
+  assert.equal(favorite.trackSnapshots![tracks[0].id].filePath, tracks[0].filePath)
+  doc.data.push(playlist('ordinary-new', []))
+  const saved = pref.playlistsSave(doc.data, doc.revision, 2)
+  assert.ok(saved.data.some(p => p.id === 'ordinary-new'))
+  assert.equal(pref.detail(rec(0)).value!.state, 'favorite')
+  assert.equal(JSON.parse(String(db.sql.prepare('SELECT payload FROM catalog_sources WHERE track_id=?').get(tracks[0].id)!.payload)).filePath, '', 'public catalog snapshots stay path-free')
+})
+
+test('an offline or path-replaced local favorite is not rebound to a different source when projecting the default list', t => {
+  const { db, pref, tracks, rec, set } = fixture(t)
+  pref.playlistsMigrate({ version: 2, revision: 0, savedAt: 'old', data: [playlist('favorites', [], { isDefault: true })] }, 1)
+  const id = rec(0)
+  set(id, 'favorite')
+  db.sql.prepare('UPDATE tracks SET payload=? WHERE id=?').run(JSON.stringify({ ...tracks[0], filePath: 'D:/replacement/song.flac' }), tracks[0].id)
+  const offline = pref.playlistsLoad()!.data.find(p => p.isDefault)!
+  assert.deepEqual(offline.trackIds, [tracks[0].id])
+  assert.equal(offline.trackSnapshots![tracks[0].id].filePath, tracks[0].filePath!.replaceAll('\\', '/').toLowerCase())
+  assert.equal(pref.detail(id).value!.state, 'favorite', 'the original offline identity keeps its preference')
+  db.sql.prepare('DELETE FROM tracks WHERE id=?').run(tracks[0].id)
+  const doc = pref.playlistsLoad()!
+  assert.deepEqual(doc.data.find(p => p.isDefault)!.trackIds, [tracks[0].id])
+  doc.data.push(playlist('ordinary', []))
+  assert.ok(pref.playlistsSave(doc.data, doc.revision, 3).data.some(p => p.id === 'ordinary'))
+})
+
 test('preference identity conflicts require independent choice, stale previews fail, detach restores original values', t => {
   const { pref, identity, rec, set, publish, review, confirm } = fixture(t), a = rec(0), b = rec(1)
   set(a, 'ban'); confirm(publish(a)); set(b, 'favorite')

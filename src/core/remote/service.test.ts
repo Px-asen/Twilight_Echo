@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {
   CoreClientIdentity,
+  CoreErrorCode,
   CoreClientMessage,
   CoreRequestEnvelope,
   CoreSnapshot
@@ -53,12 +54,14 @@ function fixture(t: test.TestContext, enabled = false) {
     mode = 'full',
     pin = '111111'
   let receive!: (message: CoreClientMessage) => void
+  const receivers = new Map<string, typeof receive>()
   let snapshot: unknown,
     disconnected = false
   let prepareAdoption = () => {}
   let resolveCover = async (_handle: string | null): Promise<string | null> => null
   let providerSession = async (): Promise<RemoteProviderSession> => ({ providerId: 'ncm', loggedIn: false })
   const coreEvents: Record<string, unknown>[] = []
+  const requestClients: string[] = []
   let query = async (request: CoreRequestEnvelope): Promise<unknown> => {
     if (request.name === 'player.presentation') return { cover: null }
     if (request.name === 'library.tracks')
@@ -137,16 +140,19 @@ function fixture(t: test.TestContext, enabled = false) {
   const application = {
     connect: (identity: CoreClientIdentity, send: typeof receive) => {
       identities.push(identity)
-      receive = send
+      receivers.set(identity.id, send)
+      if (!receive) receive = send
       send({ kind: 'state', epoch: 'test', sequence: 0, snapshot: state })
     },
     disconnect: () => {
       disconnected = true
     },
-    request: async (_id: string, request: CoreRequestEnvelope) => {
+    request: async (id: string, request: CoreRequestEnvelope) => {
       requests.push(request)
+      requestClients.push(id)
+      const reply = receivers.get(id)!
       try {
-        receive({
+        reply({
           kind: 'response',
           requestId: request.requestId,
           epoch: request.epoch,
@@ -154,12 +160,12 @@ function fixture(t: test.TestContext, enabled = false) {
           value: await query(request)
         })
       } catch (error) {
-        receive({
+        reply({
           kind: 'response',
           requestId: request.requestId,
           epoch: request.epoch,
           ok: false,
-          error: { code: 'FAILED', message: String(error) }
+          error: { code: (error as { code?: CoreErrorCode }).code ?? 'FAILED', message: String(error) }
         })
       }
     }
@@ -204,6 +210,7 @@ function fixture(t: test.TestContext, enabled = false) {
     service,
     starts,
     requests,
+    requestClients,
     identities,
     rows,
     edits,
@@ -238,6 +245,70 @@ function fixture(t: test.TestContext, enabled = false) {
   }
 }
 
+test('explicit session queues require TLS, redact paths and fence every mutation without granting file or topology operations', async t => {
+  const f = fixture(t, true)
+  const target = { kind: 'zone', id: 'local', revision: 3 }, queue = { id: 'queue', revision: 7 }
+  const rpc = (name: string, payload: unknown, command = false) => ({ requestId: crypto.randomUUID(), epoch: 'test', kind: command ? 'command' : 'query', name, payload })
+  const payload = { target, queue, offset: 0, limit: 100 }
+  f.query(async request => request.name === 'zones.queue.page' ? { total: 2, offset: 0, revision: 7, libraryRevision: 1,
+    items: [{ position: 0, queueEntryId: 'first', track: { ...track('C:/private.flac'), filePath: 'C:/private.flac' } },
+      { position: 1, queueEntryId: 'second', track: { ...track('C:/private.flac'), filePath: 'C:/private.flac' } }] } : {})
+  assert.equal(code(await f.service.handleCoreRpc(rpc('zones.queue.page', payload), 'phone')), 'FORBIDDEN')
+  const result = await f.service.handleCoreRpc(rpc('zones.queue.page', payload), 'phone', { encrypted: true })
+  assert.equal(result.ok, true)
+  assert.doesNotMatch(JSON.stringify(result), /C:|filePath|private.flac/)
+  const page = result.value as { items: { track: { id: string }; queueEntryId: string }[] }
+  assert.equal(page.items[0].track.id, page.items[1].track.id)
+  assert.notEqual(page.items[0].queueEntryId, page.items[1].queueEntryId)
+  const mutation = rpc('zones.queue.edit', { target, queue, edit: { kind: 'remove', entryIds: ['second'] } }, true)
+  assert.equal((await f.service.handleCoreRpc(mutation, 'phone', { encrypted: true })).ok, true)
+  assert.equal(code(await f.service.handleCoreRpc(mutation, 'phone', { encrypted: true })), 'OUTCOME_UNKNOWN')
+  for (const edit of [{ kind: 'insert', items: [{ id: 'evil', snapshot: { filePath: 'C:/evil.flac' } }] }, { kind: 'mode', mode: 'heart' }])
+    assert.equal(code(await f.service.handleCoreRpc(rpc('zones.queue.edit', { target, queue, edit }, true), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  for (const value of [
+    { target: { ...target, id: 'other-pc' }, queue, offset: 0 },
+    { ...payload, limit: 201 }, { ...payload, filePath: 'C:/evil' }
+  ]) assert.equal(code(await f.service.handleCoreRpc(rpc('zones.queue.page', value), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  const load = { target, queue: null, play: false, selection: { kind: 'catalog', revision: 4, sourceIds: ['source-one', 'source-one'] } }
+  assert.equal((await f.service.handleCoreRpc(rpc('zones.queue.load', load, true), 'phone', { encrypted: true })).ok, true)
+  assert.deepEqual(f.requests.at(-1)!.payload, load)
+  assert.equal(code(await f.service.handleCoreRpc(rpc('zones.queue.load', { ...load, selection: { ...load.selection, sourceIds: Array(201).fill('one') } }, true), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+})
+
+test('DSP library uses separate paired-device owners, keeps upload receipts and rejects host paths before dispatch', async t => {
+  const f = fixture(t, true)
+  await turn()
+  f.query(async request => request.name === 'zones.dsp.upload.begin' ? { uploadId: 'upload', chunkBytes: 1024 } : {})
+  const begin = () => command('zones.dsp.upload.begin', { zoneId: 'local', kind: 'impulseResponse', fileName: 'room.wav', byteSize: 128 })
+  assert.equal(code(await f.service.handleCoreRpc(begin())), 'FORBIDDEN')
+  assert.equal(code(await f.service.handleCoreRpc(begin(), 'phone', { encrypted: false })), 'FORBIDDEN')
+  const response = await f.service.handleCoreRpc(begin(), 'phone', { encrypted: true })
+  assert.deepEqual((response.value as { result: unknown }).result, { uploadId: 'upload', chunkBytes: 1024 })
+  const phone = f.requestClients.at(-1)
+  await f.service.handleCoreRpc(begin(), 'tablet', { encrypted: true })
+  assert.notEqual(phone, f.requestClients.at(-1))
+  assert.deepEqual(f.identities.at(-1)?.permissions, ['settings:read', 'settings:write'])
+  const count = f.requests.length
+  assert.equal(code(await f.service.handleCoreRpc(command('zones.dsp.library.edit', {
+    zoneId: 'local', revision: 1, edit: { kind: 'scan', paths: ['C:/private'] }
+  }), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  assert.equal(f.requests.length, count)
+})
+
+test('profile transfer and parameter operations require TLS and bounded identities, never host paths', async t => {
+  const f = fixture(t, true); await turn()
+  f.query(async () => ({}))
+  for (const name of ['zones.dsp.profile.preview', 'zones.dsp.profile.import', 'zones.dsp.profile.export', 'zones.dsp.profile.release'])
+    assert.equal(code(await f.service.handleCoreRpc(command(name, { zoneId: 'local' }), 'phone', { encrypted: false })), 'FORBIDDEN')
+  const parameter = { zoneId: 'local', revision: 1, edit: { kind: 'parameter', sceneId: 'scene', nodeId: 'node', parameterId: 1, value: 0.5 } }
+  assert.equal((await f.service.handleCoreRpc(command('zones.dsp.library.edit', parameter), 'phone', { encrypted: true })).ok, true)
+  for (const value of [-0.1, 1.1, '0.5']) assert.equal(code(await f.service.handleCoreRpc(command('zones.dsp.library.edit', {
+    ...parameter, edit: { ...parameter.edit, value }
+  }), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  assert.equal(code(await f.service.handleCoreRpc(rpc('zones.dsp.profile.chunk', { zoneId: 'local', downloadId: 'download', offset: 0, path: 'C:/secret' }), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  assert.equal(code(await f.service.handleCoreRpc(rpc('zones.dsp.parameters', { zoneId: 'local', revision: 1, sceneId: 'scene', nodeId: 'node', offset: -1 }), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+})
+
 test('authorized DSP control is encrypted, bounded, path-free and cannot enable a Bridge host', async t => {
   const f = fixture(t, true)
   f.query(async request => {
@@ -257,6 +328,63 @@ test('authorized DSP control is encrypted, bounded, path-free and cannot enable 
   assert.equal(code(await f.service.handleCoreRpc(injected, 'phone', secure)), 'INVALID_REQUEST')
   assert.equal(code(await f.service.handleCoreRpc(command('bridge.host', { revision: 0, enabled: true, sampleRate: 48000 }), 'phone', secure)), 'FORBIDDEN')
   assert.equal((await f.service.handleCoreRpc(command('zones.select', { revision: 2, outputId: 'bridge' }), 'phone', secure)).ok, true)
+})
+
+test('named Zones require authenticated TLS, redact track paths and cannot grant desktop lifecycle consent', async t => {
+  const f = fixture(t, true), zoneId = 'zone-11111111-1111-4111-8111-111111111111'
+  f.query(async request => {
+    if (request.name === 'zones.list') return { revision: 0, limit: 4, error: null, zones: [{ id: zoneId, name: 'Study', revision: 3,
+      track: { ...track('D:/secret.flac'), filePath: 'D:/secret.flac' }, queue: null, output: null, error: null,
+      playback: { state: 'paused', upcomingTrack: { ...track('D:/next.flac'), filePath: 'D:/next.flac' } } }] }
+    if (request.name === 'zones.dsp') return { revision: 2, processing: { eqPreamp: -6, convolverIrPath: 'D:/private.wav' },
+      scenes: { scenes: [], activeSceneId: null, pinnedSceneId: null } }
+    return {}
+  })
+  const secure = { encrypted: true }
+  for (const [principal, context] of [[undefined, secure], ['phone', undefined], ['phone', { encrypted: false }]] as const)
+    assert.equal(code(await f.service.handleCoreRpc(rpc('zones.list'), principal, context)), 'FORBIDDEN')
+  const list = await f.service.handleCoreRpc(rpc('zones.list'), 'phone', secure)
+  assert.equal(list.ok, true); assert.doesNotMatch(JSON.stringify(list), /D:|secret.flac|next.flac|filePath/)
+  const dsp = await f.service.handleCoreRpc(rpc('zones.dsp', { zoneId }), 'phone', secure)
+  assert.equal(dsp.ok, true); assert.doesNotMatch(JSON.stringify(dsp), /private.wav/)
+  assert.equal((await f.service.handleCoreRpc(command('zones.transport', { zoneId, revision: 3, action: { kind: 'pause' } }), 'phone', secure)).ok, true)
+  assert.deepEqual(f.requests.at(-1)?.payload, { zoneId, revision: 3, action: { kind: 'pause' } })
+  assert.equal((await f.service.handleCoreRpc(command('zones.transport', { zoneId, revision: null, action: { kind: 'stop' } }), 'phone', secure)).ok, true)
+  const handoff = { source: { zoneId: 'local', revision: 0, queue: { id: 'source-q', revision: 2, occurrenceId: 'second' } },
+    target: { zoneId, revision: 4, queue: null }, replace: false, resume: false }
+  assert.equal(code(await f.service.handleCoreRpc(command('zones.handoff', handoff), 'phone')), 'FORBIDDEN')
+  assert.equal((await f.service.handleCoreRpc(command('zones.handoff', handoff), 'phone', secure)).ok, true)
+  assert.deepEqual(f.requests.at(-1)?.payload, handoff)
+  for (const name of ['zones.create', 'zones.connect', 'zones.remove'])
+    assert.equal(code(await f.service.handleCoreRpc(command(name, { zoneId, revision: 3 }), 'phone', secure)), 'FORBIDDEN')
+  assert.equal(code(await f.service.handleCoreRpc(command('zones.dsp.edit', { zoneId, revision: 2,
+    edit: { kind: 'processing', settings: { convolverIrPath: 'D:/inject.wav' } } }), 'phone', secure)), 'INVALID_REQUEST')
+})
+
+test('groups require authenticated TLS and project shared media without private paths', async t => {
+  const f = fixture(t, true), groupId = 'group-11111111-1111-4111-8111-111111111111'
+  const zoneId = 'zone-22222222-2222-4222-8222-222222222222'
+  f.query(async request => {
+    if (request.name === 'groups.list') return { revision: 2, error: null, groups: [{ id: groupId, name: 'Music', revision: 0,
+      members: [{ zoneId: 'local', downstreamDelayMs: 0 }, { zoneId, downstreamDelayMs: 3 }],
+      track: { ...track('D:/private.flac'), filePath: 'D:/private.flac' }, playback: { state: 'paused',
+        upcomingTrack: { ...track('D:/next.flac'), filePath: 'D:/next.flac' } }, queue: null, coordination: null, error: null }] }
+    if (request.name === 'groups.create') return { id: groupId }
+    return {}
+  })
+  for (const context of [undefined, { encrypted: false }]) {
+    assert.equal(code(await f.service.handleCoreRpc(rpc('groups.list'), 'phone', context)), 'FORBIDDEN')
+    assert.equal(code(await f.service.handleCoreRpc(command('groups.transport', { groupId, revision: null, action: { kind: 'pause' } }), 'phone', context)), 'FORBIDDEN')
+  }
+  assert.equal(code(await f.service.handleCoreRpc(rpc('groups.list'), undefined, { encrypted: true })), 'FORBIDDEN')
+  const list = await f.service.handleCoreRpc(rpc('groups.list'), 'phone', { encrypted: true })
+  assert.equal(list.ok, true); assert.doesNotMatch(JSON.stringify(list), /D:|private.flac|next.flac|filePath/)
+  const payload = { revision: 2, name: 'Music', members: [{ zoneId: 'local', revision: 0, downstreamDelayMs: 0 },
+    { zoneId, revision: 1, downstreamDelayMs: 3 }], source: { zoneId, queue: { id: 'queue', revision: 0, occurrenceId: 'a:2' } } }
+  const created = await f.service.handleCoreRpc(command('groups.create', payload), 'phone', { encrypted: true })
+  assert.equal(created.ok, true); assert.equal((created.value as { id: string }).id, groupId)
+  assert.equal(code(await f.service.handleCoreRpc(command('groups.create', { ...payload, filePath: 'injected' }), 'phone', { encrypted: true })), 'INVALID_REQUEST')
+  assert.equal((await f.service.handleCoreRpc(command('groups.transport', { groupId, revision: null, action: { kind: 'stop' } }), 'phone', { encrypted: true })).ok, true)
 })
 
 test('LAN stays disabled by default and remote toggles share the Cast media server', async (t) => {
@@ -1019,4 +1147,129 @@ test('remote lyrics.current projects bilingual synced lines with opaque track re
     { timeMs: 10500, text: 'Line 1', translation: '第一行' },
     { timeMs: 16000, text: 'Line 2', translation: '第二行' }
   ])
+})
+
+test('daily library RPC requires a paired TLS principal and preserves legacy permissions, revision fences and mutation receipts', async t => {
+  const f = fixture(t, true)
+  await turn()
+  f.query(async request => {
+    if (request.name === 'tags.list') return { token: { tagsRevision: 3, catalogRevision: 4, contentRevision: 5, linkRevision: 6 }, offset: 0, total: 0, items: [] }
+    if (request.name === 'tags.create') return { token: { tagsRevision: 4 }, tag: { id: 'tag-night', name: '夜航' } }
+    return {}
+  })
+  const secure = { encrypted: true }
+  const before = f.requests.length
+  for (const [principal, context] of [[undefined, secure], ['phone', { encrypted: false }], ['phone', undefined]] as const) {
+    assert.equal(code(await f.service.handleCoreRpc(rpc('tags.list'), principal, context)), 'FORBIDDEN')
+    assert.equal(code(await f.service.handleCoreRpc(command('tags.create', { name: '夜航', tagsRevision: 3 }), principal, context)), 'FORBIDDEN')
+  }
+  assert.equal(f.requests.length, before)
+  assert.equal(f.identities.length, 1)
+  assert.equal(f.identities[0].permissions.includes('library:write'), false)
+  const listed = await f.service.handleCoreRpc(rpc('tags.list'), 'phone', secure)
+  assert.equal(listed.ok, true)
+  const create = command('tags.create', { name: '夜航', tagsRevision: 3 }, { commandId: 'create-once' })
+  const result = await f.service.handleCoreRpc(create, 'phone', secure)
+  assert.deepEqual((result.value as { result: unknown }).result, { token: { tagsRevision: 4 }, tag: { id: 'tag-night', name: '夜航' } })
+  assert.equal(f.requests.at(-1)?.requestId, 'create-once')
+  assert.equal(f.identities[1].role, 'remote')
+  assert.equal(f.identities[1].permissions.includes('library:write'), true)
+  assert.equal(f.identities[1].permissions.includes('settings:write'), false)
+  assert.equal(code(await f.service.handleCoreRpc(create, 'phone', secure)), 'OUTCOME_UNKNOWN')
+  // Another paired device owns a different Core identity and may use its own same command ID.
+  assert.equal((await f.service.handleCoreRpc(create, 'tablet', secure)).ok, true)
+  assert.notEqual(f.requestClients.at(-1), f.requestClients.at(-2))
+  assert.equal(code(await f.service.handleCoreRpc(command('settings.edit', { patch: {} }), 'phone', secure)), 'FORBIDDEN')
+  assert.equal(code(await f.service.handleCoreRpc(command('library.remove', { selectionId: 'x', mode: 'trash' }), 'phone', secure)), 'FORBIDDEN')
+  const count = f.requests.length
+  assert.equal(code(await f.service.handleCoreRpc(command('tags.create', { name: '夜航', tagsRevision: 3, filePath: 'D:/inject' }), 'phone', secure)), 'INVALID_REQUEST')
+  assert.equal(f.requests.length, count)
+})
+
+test('Focus playback receipts retain the caller command ID and are queried through the same paired-device Core identity', async t => {
+  const f = fixture(t, true)
+  await turn()
+  const token = { savedRevision: 0, catalogRevision: 1, contentRevision: 1, genresRevision: 0, metadataRevision: 0,
+    ratingsRevision: 0, preferencesRevision: 0, tagsRevision: 0, linkRevision: 0, historyRevision: 0,
+    queryKey: '{}', contextKey: '{}', asOf: 123, expiresAt: null }
+  f.query(async request => request.name === 'focus.play' ? { total: 240, selectedIndex: 205 } : { status: 'committed', result: { total: 240, selectedIndex: 205 }, playback: 'confirmed' })
+  const secure = { encrypted: true }, query = { version: 1, entity: 'recording', scope: 'library' }
+  const result = await f.service.handleCoreRpc(command('focus.play', { query, token }, { commandId: 'focus-play-1' }), 'phone', secure)
+  assert.equal(result.ok, true)
+  assert.equal(f.requests.at(-1)?.requestId, 'focus-play-1')
+  const owner = f.requestClients.at(-1)
+  const receipt = await f.service.handleCoreRpc(rpc('focus.play.status', { requestId: 'focus-play-1', epoch: 'test' }), 'phone', secure)
+  assert.equal((receipt.value as { status: string }).status, 'committed')
+  assert.equal(f.requestClients.at(-1), owner)
+  await f.service.handleCoreRpc(rpc('focus.play.status', { requestId: 'focus-play-1', epoch: 'test' }), 'tablet', secure)
+  assert.notEqual(f.requestClients.at(-1), owner)
+})
+
+test('playlist membership stays opaque and device-scoped; edits resolve only issued members and never export full snapshots', async t => {
+  const f = fixture(t, true)
+  await turn()
+  f.query(async request => {
+    if (request.name === 'playlists.catalog') return { revision: 2, total: 1, offset: 0,
+      items: [{ id: 'mix', name: 'Mix', kind: 'normal', count: 1, cover: null, hiddenSources: ['D:/secret'], imported: { sourcePath: 'D:/private.m3u' } }] }
+    if (request.name === 'playlists.members') return { revision: 2, total: 1, offset: 0,
+      items: [{ id: 'D:/private-song.flac', position: 0, track: track('D:/private-song.flac') }] }
+    if (request.name === 'playlists.edit') return { revision: 3, result: { filePath: 'D:/private', trackSnapshots: { secret: true } } }
+    return {}
+  })
+  const secure = { encrypted: true }
+  const catalog = await f.service.handleCoreRpc(rpc('playlists.catalog'), 'phone', secure)
+  assert.doesNotMatch(JSON.stringify(catalog), /D:|hiddenSources|sourcePath/)
+  const members = await f.service.handleCoreRpc(rpc('playlists.members', { id: 'mix', revision: 2 }), 'phone', secure)
+  assert.doesNotMatch(JSON.stringify(members), /D:|private-song/)
+  const member = (members.value as { items: Array<{ id: string }> }).items[0].id
+  assert.match(member, /^remote-member:/)
+  const edit = () => command('playlists.edit', { revision: 2, edit: { kind: 'remove', id: 'mix', ids: [member] } })
+  assert.equal(code(await f.service.handleCoreRpc(edit(), 'tablet', secure)), 'STALE_REVISION')
+  assert.equal((await f.service.handleCoreRpc(edit(), 'phone', secure)).ok, true)
+  assert.deepEqual(f.requests.at(-1)?.payload, { revision: 2, edit: { kind: 'remove', id: 'mix', ids: ['D:/private-song.flac'] } })
+  const result = await f.service.handleCoreRpc(command('playlists.edit', { revision: 2, edit: { kind: 'pin', id: 'mix', pinned: true } }), 'phone', secure)
+  assert.deepEqual((result.value as { result: unknown }).result, { revision: 3 })
+  assert.doesNotMatch(JSON.stringify(result), /trackSnapshots|filePath|D:/)
+  const before = f.requests.length
+  for (const payload of [
+    { revision: 2, edit: { kind: 'remove', id: 'mix', ids: ['D:/private-song.flac'] } },
+    { revision: 2, edit: { kind: 'add', id: 'mix', tracks: [track('D:/inject')] } },
+    { revision: 2, edit: { kind: 'cover', id: 'mix', cover: 'https://injected.test/image.png' } }
+  ]) assert.equal((await f.service.handleCoreRpc(command('playlists.edit', payload), 'phone', secure)).ok, false)
+  assert.equal(f.requests.length, before)
+  // An epoch change invalidates session membership references.
+  f.state({ ...f.current(), epoch: 'restarted' })
+  assert.equal(code(await f.service.handleCoreRpc({ ...edit(), epoch: 'restarted' }, 'phone', secure)), 'STALE_REVISION')
+})
+
+test('library DTOs retain semantic revisions while rejecting host Track contexts and oversized pages', async t => {
+  const f = fixture(t, true)
+  await turn()
+  const secure = { encrypted: true }, before = f.requests.length
+  for (const request of [rpc('ratings.targets', { entityId: 'recording', trackContext: { provider: 'local', id: 'D:/private' } }),
+    rpc('preferences.targets', { entityId: 'recording', trackContext: { provider: 'local', id: 'D:/private' } }),
+    rpc('focus.query', { query: { version: 1, entity: 'recording' }, limit: 201 }),
+    rpc('tags.list', { limit: 101 })])
+    assert.equal(code(await f.service.handleCoreRpc(request, 'phone', secure)), 'INVALID_REQUEST')
+  assert.equal(f.requests.length, before)
+  f.query(async request => { throw Object.assign(new Error('actual stale token'), { code: request.name === 'ratings.set' ? 'STALE_REVISION' : 'FAILED' }) })
+  assert.equal(code(await f.service.handleCoreRpc(command('ratings.set', { entityId: 'recording', token: { ratingsRevision: 0, linkRevision: 0, targetKey: 'entity:recording' }, steps: 8 }), 'phone', secure)), 'STALE_REVISION')
+  f.state({ ...f.current(), ratingsRevision: 11, preferencesRevision: 12, tagsRevision: 13, focusRevision: 14 })
+  const snapshot = await f.service.handleCoreRpc(rpc('state.snapshot'))
+  assert.equal((snapshot.value as { tagsRevision: number }).tagsRevision, 13)
+  assert.equal((snapshot.value as { focusRevision: number }).focusRevision, 14)
+})
+
+test('overlapping library reads with the same wire request ID never replace the first pending response owner', async t => {
+  const f = fixture(t, true)
+  await turn()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.query(async () => { await gate; return { offset: 0, total: 0, items: [], token: {} } })
+  const request = rpc('tags.list'), secure = { encrypted: true }
+  const first = f.service.handleCoreRpc(request, 'phone', secure)
+  assert.equal(code(await f.service.handleCoreRpc(request, 'phone', secure)), 'OUTCOME_UNKNOWN')
+  release()
+  assert.equal((await first).ok, true)
+  assert.equal(f.requests.filter(r => r.name === 'tags.list').length, 1)
 })
