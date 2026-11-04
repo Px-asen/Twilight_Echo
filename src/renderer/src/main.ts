@@ -91,7 +91,7 @@ async function mountApp(): Promise<void> {
   const iconsPromise = import('./assets/icon-fonts')
   const startupSnapshot = isSatelliteWindow ? null : beginStartupSnapshot()
   if (!isSatelliteWindow) {
-    let loadingOverlay: HTMLDivElement | null = null
+    let loadingOverlay = null as HTMLDivElement | null
     const loadingTimer = setTimeout(() => {
       loadingOverlay = createFallbackLoadingOverlay()
       document.getElementById('app')?.append(loadingOverlay)

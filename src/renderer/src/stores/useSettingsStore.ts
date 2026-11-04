@@ -52,6 +52,8 @@ function getFallbackAudioOutput(): AudioOutputId {
   return 'wasapi'
 }
 
+const fallbackCloseToTray = navigator.platform.toLowerCase().includes('mac')
+
 const fallbackAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   directMode: false,
@@ -132,8 +134,8 @@ const fallbackSettings: AppSettings = {
     streamingAudio: 'provider'
   },
   autoAnalyzeBpm: true,
-  closeWindowBehavior: 'quit',
-  closeToTray: false,
+  closeWindowBehavior: fallbackCloseToTray ? 'tray' : 'quit',
+  closeToTray: fallbackCloseToTray,
   taskbarThumbarButtonsEnabled: true,
   afterglowAutoEntry: 'off',
   unloadHiddenMainWindow: true,
@@ -238,6 +240,7 @@ const fallbackSettings: AppSettings = {
   autoMixStemCacheMiB: 512,
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
+  ncmListeningSyncEnabled: true,
   playMode: 'sequential',
   softwareVolume: 0.7,
   audioOutput: getFallbackAudioOutput(),

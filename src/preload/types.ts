@@ -439,6 +439,7 @@ export interface TwilightProviderUiMetadata {
     label: string
     icon: string
     method: string
+    primary?: boolean
   }>
   streamingHome?: import('../shared/providerHome').ProviderHomePresentation
   streamingDiscovery?: import('../shared/providerHome').ProviderDiscoveryPresentation

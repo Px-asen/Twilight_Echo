@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { stripTypeScriptTypes } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import type { BrowserWindow } from 'electron'
 import { installWindowCloseShortcut } from './windowShortcuts.ts'
 import test from 'node:test'
-import { restoreWindowSize } from './windowState.ts'
+import { readWindowState, restoreWindowSize, saveWindowState } from './windowState.ts'
 import { getWindowBackgroundColor, syncWindowFrameAppearance } from './windowAppearance.ts'
 import { closePersistenceDialogOptions } from './closePersistence.ts'
 import { resolveLocale } from '../../shared/i18n/locale.ts'
@@ -104,6 +106,34 @@ test('Ctrl/Cmd+W obeys live preferences while suppressing the default menu close
   assert.equal(closes, 2)
 })
 
+test('macOS Cmd+W uses the window close policy and leaves Cmd+Q to the application menu', async () => {
+  const source = await readFile(new URL('./windowShortcuts.ts', import.meta.url), 'utf8')
+  const calls: string[] = []
+  const webContents = new EventEmitter()
+  const context = {
+    process: { platform: 'darwin' },
+    installWindowCloseShortcut: undefined as typeof installWindowCloseShortcut | undefined
+  }
+  runInNewContext(
+    stripTypeScriptTypes(source.slice(source.indexOf('export function')).replace(/^export /, '')),
+    context
+  )
+  const win = { webContents, close: () => calls.push('close') } as unknown as BrowserWindow
+  context.installWindowCloseShortcut!(win, () => true)
+  const press = (key: string, meta = true, control = false) =>
+    webContents.emit(
+      'before-input-event',
+      { preventDefault: () => calls.push('prevent') },
+      { type: 'keyDown', key, meta, control, alt: false, shift: false }
+    )
+  press('w')
+  assert.deepEqual(calls, ['prevent', 'close'])
+  calls.length = 0
+  press('q')
+  press('w', false, true)
+  assert.deepEqual(calls, [])
+})
+
 test('main-process startup creates the window before deferred runtime work', async () => {
   const source = await readFile(new URL('./lifecycle.ts', import.meta.url), 'utf8')
   const createWindowCall = source.indexOf('createMainWindowAndScheduleDeferredStartup()')
@@ -145,6 +175,55 @@ test('main window keeps the responsive layout minimum size', async () => {
   )
   assert.match(source, /minWidth:\s*Math\.min\(760, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
   assert.match(source, /minHeight:\s*Math\.min\(692, screen\.getPrimaryDisplay\(\)\.workAreaSize\./)
+})
+
+test('window state preserves fullscreen separately from maximization and accepts older saved bounds', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-fullscreen-state-'))
+  t.after(async () => {
+    assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep))
+    await rm(directory, { recursive: true, force: true })
+  })
+  const file = join(directory, 'window-state.json')
+  await writeFile(file, JSON.stringify({ width: 1000, height: 750, maximized: true }))
+  assert.deepEqual(readWindowState(file), {
+    width: 1000,
+    height: 750,
+    maximized: true,
+    fullScreen: false
+  })
+  const state = { width: 1000, height: 750, maximized: false, fullScreen: true }
+  saveWindowState(file, state)
+  assert.deepEqual(readWindowState(file), state)
+  assert.deepEqual(restoreWindowSize(readWindowState(file), { width: 1920, height: 1080 }), {
+    width: 1000,
+    height: 750
+  })
+})
+
+test('recreated windows show before restoring native fullscreen and retain their normal window size', async () => {
+  const source = await readFile(new URL('./window.ts', import.meta.url), 'utf8')
+  const start = source.indexOf("  runtime.mainWindow.on('ready-to-show'")
+  const handler = source.slice(start, source.indexOf('  clearHiddenMainWindowUnloadTimer()', start))
+  for (const fullScreen of [false, true]) {
+    const calls: unknown[] = []
+    const win = Object.assign(new EventEmitter(), {
+      maximize: () => calls.push('maximize'),
+      show: () => calls.push('show'),
+      setFullScreen: (value: boolean) => calls.push(['fullscreen', value])
+    })
+    const context = {
+      runtime: { mainWindow: win },
+      awaitingAfterglowHandoff: true,
+      windowState: { width: 1000, height: 750, maximized: true, fullScreen }
+    }
+    runInNewContext(stripTypeScriptTypes(handler), context)
+    win.emit('ready-to-show')
+    assert.deepEqual(
+      calls,
+      fullScreen ? ['maximize', 'show', ['fullscreen', true]] : ['maximize', 'show']
+    )
+    assert.equal(context.awaitingAfterglowHandoff, false)
+  }
 })
 
 test('windows main window wires taskbar thumbnail buttons separately from native SMTC', async () => {

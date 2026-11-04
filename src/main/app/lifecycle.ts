@@ -242,6 +242,7 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
 
     // Focus-only: no OS protocol client / argv deep links (see AGENTS.md).
     app.on('second-instance', () => {
+      if (runtime.forceQuit) return
       if (isAfterglowModeActive()) {
         void restoreAfterglowMode()
         return
@@ -251,7 +252,11 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
         return
       }
       const win =
-        runtime.mainWindow ?? (getCoreApplication() && app.isReady() ? createWindow() : null)
+        runtime.mainWindow && !runtime.mainWindow.isDestroyed()
+          ? runtime.mainWindow
+          : getCoreApplication() && app.isReady()
+            ? createWindow()
+            : null
       if (!win || win.isDestroyed()) return
       if (win.isMinimized()) win.restore()
       win.show()
@@ -546,12 +551,18 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       }
 
       app.on('activate', function () {
+        if (runtime.forceQuit) return
         if (isAfterglowModeActive()) {
           void restoreAfterglowMode()
           return
         }
         if (runtime.miniPlayerWindow && !runtime.miniPlayerWindow.isDestroyed()) {
           restoreMainWindowFromMiniPlayer()
+        } else if (runtime.mainWindow && !runtime.mainWindow.isDestroyed()) {
+          const win = runtime.mainWindow
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
         } else if (
           (getCoreApplication() && (!runtime.mainWindow || runtime.mainWindow.isDestroyed())) ||
           BrowserWindow.getAllWindows().length === 0

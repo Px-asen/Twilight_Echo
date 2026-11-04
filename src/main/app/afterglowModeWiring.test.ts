@@ -26,7 +26,7 @@ test('window teardown marks Afterglow unloads and the recreated window carries t
   const source = await read('./window.ts')
   assert.match(
     source,
-    /if \(afterglowUnloading\) \{[\s\S]*?afterglowUnloading = false[\s\S]*?\} else \{[\s\S]*?destroyWindowsSmtc\(\)/
+    /if \(afterglowUnloading \|\| awaitingAfterglowHandoff\) \{[\s\S]*?afterglowUnloading = false[\s\S]*?\} else \{[\s\S]*?destroyWindowsSmtc\(\)/
   )
   assert.match(source, /export function setMainWindowAfterglowUnloading/)
   assert.match(source, /afterglowRendererRestoreQueryKey/)

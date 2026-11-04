@@ -19,7 +19,7 @@ const props = withDefaults(
     liquidMaterial?: boolean
     streaming?: boolean
     titleSurface?: 'default' | 'settings' | 'streaming'
-    activeTool?: 'settings' | 'plugins' | 'appearance' | null
+    activeTool?: 'settings' | 'plugins' | 'appearance' | 'zones' | 'dsp' | null
     pageDockActions?: readonly PageDockAction[]
     preview?: boolean
     closeOnly?: boolean
@@ -37,6 +37,8 @@ defineEmits<{
   login: [providerId?: string | null]
   settings: []
   appearance: []
+  zones: []
+  dsp: []
   plugins: []
   library: []
   notifications: [event: MouseEvent]
@@ -61,10 +63,19 @@ const loginLabel = computed(() =>
 )
 const { canGoBack, backHint } = useBackStack()
 const { unreadCount, activeTaskCount, doNotDisturb } = useAppNoticeStore()
-const { maximized } = useWindowChrome(() => props.preview === true)
+const { maximized, fullScreen, maximizeBehavior } = useWindowChrome(() => props.preview === true)
+const maximizeLabel = computed(() =>
+  fullScreen.value
+    ? '退出全屏'
+    : maximizeBehavior.value === 'fullscreen'
+      ? '进入全屏'
+      : maximized.value
+        ? '还原窗口'
+        : '最大化窗口'
+)
 const { uiContributions } = useExtensionRegistry({ listen: !props.preview })
 const pluginFlyout = usePluginFlyout()
-/** Plugin-provided titlebar entries sit between the page dock and appearance. */
+/** Plugin-provided titlebar entries sit between the page dock and built-in tools. */
 const pluginTitleButtons = computed(() =>
   (uiContributions.value ?? []).filter(
     (contribution) => contribution.kind === 'titleBarButton' && !props.preview
@@ -210,6 +221,26 @@ function close(): void {
         </button>
         <button
           type="button"
+          aria-label="DSP 工作台"
+          :aria-pressed="activeTool === 'dsp'"
+          class="settings-btn dsp-btn"
+          title="DSP 工作台"
+          @click="$emit('dsp')"
+        >
+          <TitleBarIcon name="dsp" />
+        </button>
+        <button
+          type="button"
+          aria-label="声区"
+          :aria-pressed="activeTool === 'zones'"
+          class="settings-btn zones-btn"
+          title="声区"
+          @click="$emit('zones')"
+        >
+          <TitleBarIcon name="zones" />
+        </button>
+        <button
+          type="button"
           aria-label="外观"
           :aria-pressed="activeTool === 'appearance'"
           class="settings-btn appearance-btn"
@@ -282,14 +313,22 @@ function close(): void {
         <button
           v-if="!closeOnly"
           type="button"
-          :aria-label="maximized ? '还原窗口' : '最大化窗口'"
+          :aria-label="maximizeLabel"
           class="control-btn maximize"
-          :title="maximized ? '还原窗口' : '最大化窗口'"
+          :title="maximizeLabel"
           :disabled="preview"
           @click="toggleMaximize"
         >
           <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true">
-            <path v-if="maximized" d="M4.5 4.5v-2h9v9h-2M2.5 4.5h9v9h-9Z" />
+            <path
+              v-if="fullScreen"
+              d="M2.5 6H6V2.5M10 2.5V6h3.5M6 13.5V10H2.5m11 0H10v3.5"
+            />
+            <path
+              v-else-if="maximizeBehavior === 'fullscreen'"
+              d="M6 2.5H2.5V6m7.5-3.5h3.5V6M2.5 10v3.5H6m7.5-3.5v3.5H10"
+            />
+            <path v-else-if="maximized" d="M4.5 4.5v-2h9v9h-2M2.5 4.5h9v9h-9Z" />
             <rect v-else x="2.5" y="2.5" width="11" height="11" />
           </svg>
         </button>

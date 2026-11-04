@@ -15,9 +15,11 @@ import {
 import {
   createAfterglowAnchorWindow,
   getAfterglowAnchorHandle,
-  destroyAfterglowAnchorWindow
+  destroyAfterglowAnchorWindow,
+  minimizeAfterglowAnchorWindow
 } from './afterglowAnchorWindow.ts'
 import { rebindWindowsSmtc } from '../integrations/windowsSmtc.ts'
+import { createTaskbarThumbarButtons } from '../integrations/taskbarThumbar.ts'
 import { destroyDesktopLyrics, showDesktopLyrics } from '../integrations/desktopLyrics.ts'
 import { destroyDynamicIsland } from '../integrations/dynamicIsland.ts'
 import { destroyTrayPlayerWindow } from '../integrations/trayPlayer.ts'
@@ -30,7 +32,8 @@ export function getCoreAfterglowMode(): CoreAfterglow | null {
   if (service) return service
   const owned = new Set<string>()
   let miniWasOpen = false,
-    lyricsWereOpen = false
+    lyricsWereOpen = false,
+    anchorInTaskbar = false
   service = new CoreAfterglow({
     ready: () => getCoreApplication()?.snapshot()?.phase === 'ready',
     persistView: requestApplicationPersistence,
@@ -81,11 +84,13 @@ export function getCoreAfterglowMode(): CoreAfterglow | null {
         saveWindowState(join(app.getPath('userData'), 'window-state.json'), {
           width: bounds.width,
           height: bounds.height,
-          maximized: window.isMaximized()
+          maximized: window.isMaximized(),
+          fullScreen: window.isFullScreen()
         })
       }
+      anchorInTaskbar = mode === 'minimize'
       createAfterglowAnchorWindow({
-        showInTaskbar: mode === 'minimize',
+        showInTaskbar: anchorInTaskbar,
         onRestore: () => {
           void service!.restore()
         }
@@ -103,20 +108,27 @@ export function getCoreAfterglowMode(): CoreAfterglow | null {
     async restoreWindow() {
       let window = runtime.mainWindow
       if (!window || window.isDestroyed()) {
-        window = createWindow()
         try {
+          window = createWindow({ deferAfterglowAnchorHandoff: true })
           await windowReady(window)
         } catch (error) {
-          setMainWindowAfterglowUnloading(true)
-          if (!window.isDestroyed()) window.destroy()
-          createAfterglowAnchorWindow({
-            showInTaskbar: false,
-            onRestore: () => {
-              void service!.restore()
-            }
-          })
-          rebindWindowsSmtc(getAfterglowAnchorHandle())
+          if (window && !window.isDestroyed()) {
+            setMainWindowAfterglowUnloading(true)
+            window.destroy()
+          }
+          if (anchorInTaskbar) minimizeAfterglowAnchorWindow()
           throw error
+        }
+        if (runtime.forceQuit) return
+        try {
+          rebindWindowsSmtc(window.getNativeWindowHandle())
+        } catch (error) {
+          console.warn('[smtc] unable to initialize Windows media session:', error)
+        }
+        try {
+          createTaskbarThumbarButtons()
+        } catch (error) {
+          console.warn('[thumbar] unable to initialize taskbar buttons:', error)
         }
       }
       if (runtime.forceQuit) return
