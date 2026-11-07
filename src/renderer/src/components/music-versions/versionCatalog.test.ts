@@ -15,7 +15,7 @@ import type { Track as ViewTrack } from '@renderer/types/music'
 test('projected provider albums work without a private file path', () => {
   const projected: ViewTrack = {
     id: 'ncm:1', source: 'ncm', title: 'Song', artist: 'Artist', album: 'Album', duration: 180,
-    cover: null, lyrics: null
+    cover: null, lyrics: null, size: 0
   }
   const [album] = buildVersionCatalog([projected], 'albums')
   assert.equal(album.key, JSON.stringify(['album', 'ncm', 'name:artist\u001falbum']))
