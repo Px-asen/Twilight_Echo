@@ -1,6 +1,7 @@
 import { computed, nextTick, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { filterLocalGridItems } from '../../utils/localLibrarySearch.ts'
 import type { GridItem, LocalTransitionName } from './types'
+import type { PageMotionName } from '../../app/motion/policy'
 import {
   estimateGridColumns,
   estimateGridRowStride,
@@ -13,7 +14,7 @@ import {
 type UseSongListGridRenderingOptions<T extends GridItem> = {
   category: () => string
   filter: () => string | null
-  transitionName: () => 'page-down' | 'page-up'
+  transitionName: () => PageMotionName
   debouncedSearchQuery: ComputedRef<string> | { value: string }
   currentGridItems: ComputedRef<T[]>
   itemCount?: ComputedRef<number>
@@ -92,9 +93,7 @@ export function useSongListGridRendering<T extends GridItem = GridItem>({
     serverFiltered?.value && itemCount ? itemCount.value : filteredGridItems.value.length
   )
   const virtualItemCount = computed(() => gridTotalCount.value + leadingSlotCount.value)
-  const localTransitionName = computed<LocalTransitionName>(() =>
-    transitionName() === 'page-up' ? 'local-page-up' : 'local-page-down'
-  )
+  const localTransitionName = computed<LocalTransitionName>(() => `local-${transitionName()}`)
   const viewKey = computed(() =>
     showGrid.value ? `grid-${category()}` : `table-${category()}-${filter() ?? 'root'}`
   )
@@ -176,7 +175,9 @@ export function useSongListGridRendering<T extends GridItem = GridItem>({
       estimateFromContainer()
       return
     }
-    const grid = container.querySelector<HTMLElement>('.card-grid')
+    const grid = container.querySelector<HTMLElement>(
+      ':scope > :not([data-motion-snapshot]) .card-grid'
+    )
     if (!grid) {
       estimateFromContainer()
       return

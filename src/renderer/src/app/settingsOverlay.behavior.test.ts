@@ -24,10 +24,13 @@ test('settings wallpaper preserves home and control contrast across pointer, foc
       overlayStart,
       template.indexOf('  <CommandPalette', overlayStart)
     )
-    const lifecycle = app.slice(
-      app.indexOf('const settingsOverlayLeaves ='),
-      app.indexOf('const { pushNotice }')
+    const lifecycleStart = app.indexOf('const settingsOverlayLeaves =')
+    const lifecycleEnd = app.indexOf('const { pushNotice', lifecycleStart)
+    assert.ok(
+      lifecycleStart >= 0 && lifecycleEnd > lifecycleStart,
+      'settings overlay lifecycle boundary is missing'
     )
+    const lifecycle = app.slice(lifecycleStart, lifecycleEnd)
     const surfaceContextStart = app.indexOf(
       '[showSettingsPage, showPluginPage, showAppearancePage, appearanceFullWindowPreview]'
     )
@@ -42,6 +45,7 @@ test('settings wallpaper preserves home and control contrast across pointer, foc
       `
 <script setup lang="ts">
 import {computed,ref,watch,defineComponent,h} from 'vue'
+import MotionTransition from '@renderer/components/MotionTransition.vue'
 import BackgroundAppearanceCustomizer from '@renderer/components/BackgroundAppearanceCustomizer.vue'
 import AppBackgroundLayer from '@renderer/components/AppBackgroundLayer.vue'
 import BackgroundEditorSettings from '@renderer/components/settings-page/BackgroundEditorSettings.vue'

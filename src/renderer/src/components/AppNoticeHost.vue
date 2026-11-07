@@ -11,6 +11,8 @@ import {
 import { useAppNoticeStore, type AppNoticeKind } from '../stores/useAppNoticeStore'
 import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer'
 import { useDownloadTasks } from '../stores/useDownloadTasks'
+import MotionTransition from './MotionTransition.vue'
+import MotionList from './MotionList.vue'
 const TaskCenter = defineAsyncComponent(() => import('./TaskCenter.vue'))
 const DownloadResultActions = defineAsyncComponent(
   () => import('./streaming-page/DownloadResultActions.vue')
@@ -97,11 +99,13 @@ async function toggleHistory(event?: MouseEvent): Promise<void> {
   markHistoryRead(history.value.map((notice) => notice.id))
   await nextTick()
   if (historyPanel.value && historyTrigger) {
-    const panel = historyPanel.value.getBoundingClientRect()
+    const panel = historyPanel.value
     const trigger = historyTrigger.getBoundingClientRect()
     panelOrigin.value =
-      Math.max(16, Math.min(panel.width - 16, trigger.left + trigger.width / 2 - panel.left)) +
-      'px top'
+      Math.max(
+        16,
+        Math.min(panel.offsetWidth - 16, trigger.left + trigger.width / 2 - panel.offsetLeft)
+      ) + 'px top'
   }
   historyPanel.value?.focus()
 }
@@ -153,10 +157,9 @@ defineExpose({ historyOpen, toggleHistory })
 </script>
 
 <template>
-  <TransitionGroup
+  <MotionList
+    :items="notices"
     v-show="!historyOpen && !doNotDisturb"
-    tag="div"
-    name="app-notice"
     class="app-notice-host"
     aria-relevant="additions text"
   >
@@ -196,8 +199,8 @@ defineExpose({ historyOpen, toggleHistory })
         <i class="pi pi-times" aria-hidden="true"></i>
       </button>
     </div>
-  </TransitionGroup>
-  <Transition name="notice-panel" :css="pointerOpened">
+  </MotionList>
+  <MotionTransition name="popover" :disabled="!pointerOpened">
     <section
       v-show="historyOpen"
       id="app-notice-history"
@@ -259,13 +262,13 @@ defineExpose({ historyOpen, toggleHistory })
           @visible-count="visibleTaskCount = $event"
           @library="openLibrary"
         />
-        <Transition name="notice-empty">
+        <MotionTransition name="disclosure">
           <div v-if="!history.length && !visibleTaskCount" class="notice-empty">
             <span class="notice-empty-symbol"><i class="pi pi-bell" aria-hidden="true"></i></span>
             <h3>{{ emptyLabel }}</h3>
             <p v-if="filter === 'all'">新的通知会出现在这里</p>
           </div>
-        </Transition>
+        </MotionTransition>
         <h3 v-if="history.length && visibleTaskCount" class="notice-group-title">通知记录</h3>
         <TransitionGroup tag="div" name="notice-record" class="notice-records">
           <article
@@ -314,7 +317,7 @@ defineExpose({ historyOpen, toggleHistory })
         </button>
       </footer>
     </section>
-  </Transition>
+  </MotionTransition>
 </template>
 
 <style scoped>
@@ -339,6 +342,7 @@ defineExpose({ historyOpen, toggleHistory })
   gap: 10px;
   pointer-events: none;
   max-height: calc(100dvh - var(--te-titlebar-inset, 35px) - 32px);
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 4px;
   right: 12px;
@@ -580,44 +584,6 @@ button:focus-visible {
   color: var(--notice-muted);
   font-size: 12px;
 }
-.app-notice-enter-active,
-.app-notice-move {
-  transition:
-    opacity var(--te-toast-motion-duration, 300ms) ease,
-    transform var(--te-toast-motion-duration, 300ms) cubic-bezier(0.22, 1, 0.36, 1);
-}
-.app-notice-leave-active {
-  position: absolute;
-  right: 4px;
-  width: calc(100% - 8px);
-  transition:
-    opacity 160ms ease,
-    transform 180ms ease;
-}
-.app-notice-enter-from {
-  opacity: 0;
-  transform: translateY(-12px) scale(0.97);
-}
-.app-notice-leave-to {
-  opacity: 0;
-  transform: translateX(18px) scale(0.98);
-}
-.notice-panel-enter-active {
-  transition:
-    opacity 200ms ease,
-    transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.notice-panel-leave-active {
-  transition:
-    opacity 140ms ease,
-    transform 180ms cubic-bezier(0.4, 0, 1, 1);
-  pointer-events: none;
-}
-.notice-panel-enter-from,
-.notice-panel-leave-to {
-  opacity: 0;
-  transform: translateY(-10px) scale(0.96);
-}
 .notice-record-enter-active,
 .notice-record-move {
   transition:
@@ -635,15 +601,6 @@ button:focus-visible {
 }
 .notice-record-leave-to {
   opacity: 0;
-}
-.notice-empty-enter-active {
-  transition:
-    opacity 240ms ease 100ms,
-    transform 300ms ease 100ms;
-}
-.notice-empty-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
 }
 :global(html[data-te-motion='reduced'] .notice-history),
 :global(html[data-te-motion='reduced'] .app-notice),
@@ -719,11 +676,16 @@ button:focus-visible {
   transition: none !important;
   transform: none !important;
 }
+:global(html[data-te-motion-input='keyboard'] .notice-record),
+:global(html[data-te-visibility='hidden'] .notice-record) {
+  transition: none !important;
+  transform: none !important;
+}
 @media (prefers-reduced-motion: reduce) {
-  .notice-history,
-  .app-notice,
-  .notice-record,
-  .notice-empty {
+  :global(html:not([data-te-motion='full'], [data-te-motion='off']) .notice-history),
+  :global(html:not([data-te-motion='full'], [data-te-motion='off']) .app-notice),
+  :global(html:not([data-te-motion='full'], [data-te-motion='off']) .notice-record),
+  :global(html:not([data-te-motion='full'], [data-te-motion='off']) .notice-empty) {
     transition-property: opacity !important;
     transition-duration: 120ms !important;
     transform: none !important;

@@ -214,10 +214,15 @@ app.whenReady().then(async()=>{try{
  await main('window.widgets.preview(true)');await until('!document.querySelector("iframe")','theme preview isolation');
  await main('window.widgets.preview(false)');await connected();
  await main('document.documentElement.dataset.teNavigationStyle="rail"');await until('!document.querySelector("iframe")','rail unmount');
- await main('document.querySelector(".sidebar-widget-toggle").focus();document.querySelector(".sidebar-widget-toggle").click()');await connected();
+ await main('document.documentElement.dataset.teMotion="full";document.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}));document.querySelector(".sidebar-widget-toggle").focus();document.querySelector(".sidebar-widget-toggle").click()');
+ await until('!!document.querySelector(".experience-flyout-panel")','flyout mount');
+ assert.deepEqual(await main('(()=>{const overlay=document.querySelector(".experience-flyout");return [overlay.getBoundingClientRect().left,overlay.getBoundingClientRect().width===innerWidth,getComputedStyle(overlay).transform]})()'),[0,true,'none'],'flyout backdrop must stay pinned while its panel moves');
+ await connected();
  assert.equal(await main('document.querySelector(".experience-flyout-title").textContent'),'设备电量');await capture('rail-flyout');
  await main('document.querySelector(".experience-flyout-close").focus()');await press('Escape',27);
  await until('!document.querySelector("iframe")','flyout Escape');
+ assert.equal(await main('document.getAnimations().length'),0,'keyboard close retained panel motion');
+ await main('document.documentElement.dataset.teMotion="off"');
  await main('document.querySelector(".sidebar-widget-toggle").click()');await connected();
  await main('window.widgets.set([])');await until('!document.querySelector(".experience-flyout")','disabled rail widget');assert.equal(await main('window.widgets.subscribers()'),1);
  await main('window.widgets.set([window.widgets.sample])');await until('!!document.querySelector(".sidebar-widget-toggle")','re-enabled rail widget');

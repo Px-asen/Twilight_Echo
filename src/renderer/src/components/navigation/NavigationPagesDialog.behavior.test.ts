@@ -157,6 +157,33 @@ window.runNavigationTests=async()=>{
   const menu=document.querySelector('.side-menu'),footer=menu.querySelector('.menu-bottom')
   expect(Math.abs(menu.getBoundingClientRect().bottom-footer.getBoundingClientRect().bottom)<=1,'collapsed navigation leaves empty space below tools')
   expect(button('流媒体音乐').getAttribute('aria-expanded')==='false'&&button('音乐库').getAttribute('aria-expanded')==='false','groups should start tucked away on home')
+  const previousMotion=document.documentElement.dataset.teMotion
+  document.documentElement.dataset.teMotion='full';button('音乐库').click();await pause(100)
+  const marker=menu.querySelector('.navigation-indicator'),startTop=marker.getBoundingClientRect().top,songs=button('所有歌曲'),songRect=songs.getBoundingClientRect()
+  songs.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,isPrimary:true,button:0,clientX:songRect.left+20,clientY:songRect.top+15}));songs.click();await nextTick();await pause(45)
+  const midTop=marker.getBoundingClientRect().top
+  expect(midTop>startTop+1&&midTop<songRect.top-1,'sidebar press effects snapped its moving selection')
+  await pause(550);expect(Math.abs(marker.getBoundingClientRect().top-songRect.top)<1,'sidebar marker did not land on the selected row')
+  document.documentElement.style.setProperty('--te-radius-global','13px');await pause()
+  expect(Math.abs(parseFloat(getComputedStyle(marker).borderTopLeftRadius)*new DOMMatrix(getComputedStyle(marker).transform).a-13)<.1,'marker ignored the live corner-radius token')
+  document.documentElement.style.removeProperty('--te-radius-global');menu.style.setProperty('--te-lg-context-rim','#fff');menu.classList.add('side-menu-liquid')
+  expect(getComputedStyle(songs).backgroundColor==='rgba(0, 0, 0, 0)'&&getComputedStyle(marker).backgroundColor!=='rgba(0, 0, 0, 0)','liquid selected row obscures the shared marker: '+JSON.stringify({button:getComputedStyle(songs).backgroundColor,marker:getComputedStyle(marker).backgroundColor}))
+  const albums=button('专辑'),albumRect=albums.getBoundingClientRect()
+  const press=albums.animate([{transform:'scale(.97)'},{transform:'scale(.97)'}],{duration:1000,fill:'both'});press.pause();press.currentTime=100
+  albums.click();await nextTick();await pause(550)
+  expect(Math.abs(marker.getBoundingClientRect().width-albumRect.width)<1&&Math.abs(marker.getBoundingClientRect().left-albumRect.left)<1,'pressed button left the marker shrunk or displaced')
+  press.cancel();songs.click();await nextTick();await pause(550)
+  menu.classList.remove('side-menu-liquid');menu.style.removeProperty('--te-lg-context-rim')
+  for(const layout of ['aurora-reference','paper-light','obsidian-glass','neon-gradient','studio-split','zen-minimal']){
+    document.documentElement.dataset.tePresetLayout=layout
+    await until(()=>Math.abs(marker.getBoundingClientRect().top-songs.getBoundingClientRect().top)<1&&Math.abs(marker.getBoundingClientRect().width-songs.getBoundingClientRect().width)<1,'preset marker did not follow the updated geometry: '+layout)
+    expect(getComputedStyle(songs).backgroundColor==='rgba(0, 0, 0, 0)'&&getComputedStyle(songs).backgroundImage==='none','preset selected row obscures the shared marker: '+layout)
+    expect(Math.abs(marker.getBoundingClientRect().top-songs.getBoundingClientRect().top)<1,'preset border or disclosure offset the shared marker: '+layout+' '+JSON.stringify({marker:marker.getBoundingClientRect().toJSON(),target:songs.getBoundingClientRect().toJSON(),root:marker.parentElement.getBoundingClientRect().toJSON(),scroll:marker.parentElement.scrollTop,clientTop:marker.parentElement.clientTop,transform:getComputedStyle(marker).transform,offset:marker.offsetTop,position:getComputedStyle(marker).position}))
+    if(layout==='zen-minimal')expect(getComputedStyle(marker).backgroundColor==='rgba(0, 0, 0, 0)','minimal navigation acquired an unwanted selection fill')
+    if(layout==='neon-gradient')expect(getComputedStyle(marker).backgroundImage.includes('linear-gradient'),'neon navigation lost its selected gradient')
+  }
+  delete document.documentElement.dataset.tePresetLayout;active.value='local-home';selected='';button('音乐库').click();await pause(550)
+  if(previousMotion===undefined)delete document.documentElement.dataset.teMotion;else document.documentElement.dataset.teMotion=previousMotion
   button('流媒体音乐').click();await nextTick();expect(button('音乐云盘').getBoundingClientRect().height>0&&selected==='','expanding streaming navigated or omitted cloud')
   button('发现歌单').click();await nextTick();expect(selected==='discover'&&open.value&&button('流媒体音乐').getAttribute('aria-expanded')==='true','child navigation closed the menu')
   button('流媒体音乐').click();await nextTick();expect(selected==='discover'&&button('流媒体音乐').classList.contains('active'),'collapsed branch loses selected page')

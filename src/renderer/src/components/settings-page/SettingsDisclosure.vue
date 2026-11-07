@@ -1,12 +1,20 @@
 <script lang="ts">
-// Several disclosures can relocate the same later section. A new projection
-// replaces the old one from its visible position, including across instances.
-const siblingMotion = new WeakMap<HTMLElement, Animation>()
+import type { MotionSample } from '@renderer/app/motion/trajectory'
+interface Projection {
+  animation: Animation
+  sample(): MotionSample
+  release(): void
+}
+// Adjacent disclosures can move the same section. Ownership transfers with
+// its visible position and velocity, so they never fight over the transform.
+const siblingMotion = new WeakMap<HTMLElement, Projection>()
 </script>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { documentMotionMode } from '@renderer/app/scrollMotion'
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { motionDuration, observeMotionPolicy, surfaceMotionMode } from '@renderer/app/motion/policy'
+import { createMotionTrajectory, restingMotion } from '@renderer/app/motion/trajectory'
+import MotionTransition from '../MotionTransition.vue'
 
 defineOptions({ inheritAttrs: false })
 const props = withDefaults(
@@ -21,16 +29,8 @@ const props = withDefaults(
 )
 const root = ref<HTMLElement | null>(null)
 const rendered = ref(props.open || props.keepMounted)
-let contentAnimation: Animation | undefined
-const movements = new Map<HTMLElement, Animation>()
-let before = new Map<HTMLElement, DOMRect>()
-let disposed = false
-let observer: MutationObserver | undefined
-let media: MediaQueryList | undefined
-let motionMode = documentMotionMode()
-const curve = (): string =>
-  getComputedStyle(document.documentElement).getPropertyValue('--te-ease-out-strong').trim() ||
-  'cubic-bezier(0.23, 1, 0.32, 1)'
+const movements = new Map<HTMLElement, Projection>()
+let before = new Map<HTMLElement, { rect: DOMRect; velocity: number[] }>()
 
 function capture(): void {
   before = new Map()
@@ -40,37 +40,67 @@ function capture(): void {
     let sibling = branch.nextElementSibling
     while (sibling) {
       if (sibling instanceof HTMLElement && sibling.getClientRects().length) {
-        before.set(sibling, sibling.getBoundingClientRect())
+        before.set(sibling, {
+          rect: sibling.getBoundingClientRect(),
+          velocity: siblingMotion.get(sibling)?.sample().velocity ?? [0, 0]
+        })
       }
       sibling = sibling.nextElementSibling
     }
     branch = branch.parentElement
   }
-  // Capture visual positions before cancelling an interrupted projection.
-  for (const element of before.keys()) siblingMotion.get(element)?.cancel()
-  for (const animation of movements.values()) animation.cancel()
-  movements.clear()
+  for (const element of before.keys()) siblingMotion.get(element)?.release()
+  for (const movement of [...movements.values()]) movement.release()
 }
 
-function relocate(duration: number): void {
-  if (disposed || documentMotionMode() !== 'full') return
+function relocate(opening: boolean): void {
+  const panel = root.value
+  if (!panel || surfaceMotionMode(document) !== 'full') {
+    before.clear()
+    return
+  }
+  const duration = motionDuration(
+    panel,
+    opening ? '--te-motion-surface-enter' : '--te-motion-surface-exit',
+    opening ? 200 : 140
+  )
+  if (!duration) {
+    before.clear()
+    return
+  }
   for (const [element, previous] of before) {
     if (!element.isConnected) continue
-    const distance = previous.top - element.getBoundingClientRect().top
-    if (Math.abs(distance) < 0.5) continue
-    const base = getComputedStyle(element).transform
-    const transform = base === 'none' ? '' : base
-    const animation = element.animate(
-      [{ transform: `translateY(${distance}px) ${transform}` }, { transform: base }],
-      { duration, easing: curve() }
+    const rect = element.getBoundingClientRect()
+    const offset = [previous.rect.left - rect.left, previous.rect.top - rect.top]
+    if (
+      offset.every((value) => Math.abs(value) < 0.5) &&
+      previous.velocity.every((v) => Math.abs(v) < 1)
     )
-    movements.set(element, animation)
-    siblingMotion.set(element, animation)
-    const release = (): void => {
-      if (movements.get(element) === animation) movements.delete(element)
-      if (siblingMotion.get(element) === animation) siblingMotion.delete(element)
+      continue
+    const base = getComputedStyle(element).transform
+    const trajectory = createMotionTrajectory(
+      { ...restingMotion(offset), velocity: previous.velocity },
+      [0, 0],
+      duration
+    )
+    const animation = element.animate(
+      trajectory.keyframes(([x, y]) => ({
+        transform: `translate3d(${x}px,${y}px,0) ${base === 'none' ? '' : base}`.trim()
+      })),
+      { duration, easing: 'linear', fill: 'both' }
+    )
+    const projection: Projection = {
+      animation,
+      sample: () => trajectory.sample(Number(animation.currentTime ?? 0)),
+      release() {
+        animation.cancel()
+        if (movements.get(element) === projection) movements.delete(element)
+        if (siblingMotion.get(element) === projection) siblingMotion.delete(element)
+      }
     }
-    void animation.finished.then(release, release)
+    movements.set(element, projection)
+    siblingMotion.set(element, projection)
+    void animation.finished.then(projection.release, projection.release)
   }
   before.clear()
 }
@@ -89,100 +119,42 @@ function restoreTriggerFocus(): void {
 watch(
   () => props.open,
   (open) => {
-    capture()
-    if (open) rendered.value = true
-    else if (root.value?.contains(document.activeElement)) {
-      restoreTriggerFocus()
-    }
+    if (open) {
+      capture()
+      rendered.value = true
+    } else if (root.value?.contains(document.activeElement)) restoreTriggerFocus()
   },
   { flush: 'sync' }
 )
-
-function animate(element: Element, opening: boolean, done: () => void): void {
-  const panel = element as HTMLElement
-  const mode = documentMotionMode()
-  const interrupted = !!contentAnimation
-  const style = getComputedStyle(panel)
-  const from = {
-    opacity: interrupted || !opening ? style.opacity : '0',
-    transform:
-      mode !== 'full' ? 'none' : interrupted || !opening ? style.transform : 'translateY(6px)'
-  }
-  contentAnimation?.cancel()
-  contentAnimation = undefined
-  if (!opening && panel.contains(document.activeElement)) {
-    restoreTriggerFocus()
-  }
-  panel.inert = !opening
-  if (mode === 'off') {
-    done()
-    return
-  }
-  const animation = panel.animate(
-    [
-      from,
-      {
-        opacity: opening ? '1' : '0',
-        transform: opening || mode !== 'full' ? 'none' : 'translateY(6px)'
-      }
-    ],
-    { duration: mode === 'reduced' ? 120 : opening ? 200 : 160, easing: curve(), fill: 'both' }
-  )
-  contentAnimation = animation
-  void animation.finished.then(
-    () => {
-      if (contentAnimation !== animation) return
-      contentAnimation = undefined
-      done()
-      animation.cancel()
-    },
-    () => undefined
-  )
-}
-function enter(element: Element, done: () => void): void {
-  animate(element, true, done)
-  relocate(200)
-}
-function leave(element: Element, done: () => void): void {
-  animate(element, false, done)
-}
 function afterLeave(): void {
-  if (props.open) return
-  if (!props.keepMounted) rendered.value = false
-  // v-show applies display:none before this tick. Layout changes once; only
-  // following content is translated, never the disclosure's height or text.
-  void nextTick(() => relocate(120))
+  relocate(false)
+  if (!props.open && !props.keepMounted) rendered.value = false
 }
-function settle(): void {
-  const next = documentMotionMode()
-  if (next === motionMode) return
-  motionMode = next
-  contentAnimation?.finish()
-  for (const animation of movements.values()) animation.cancel()
-  movements.clear()
+function beforeFinish(_element: HTMLElement, entering: boolean): void {
+  // Keep content inside its original card while it fades. Capture immediately
+  // before v-show removes its space, then project the following rows together.
+  if (!entering) capture()
 }
-onMounted(() => {
-  observer = new MutationObserver(settle)
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['data-te-motion']
-  })
-  media = window.matchMedia('(prefers-reduced-motion: reduce)')
-  media.addEventListener('change', settle)
+const stopPolicy = observeMotionPolicy(document, () => {
+  for (const movement of [...movements.values()]) movement.release()
+  before.clear()
 })
 onBeforeUnmount(() => {
-  disposed = true
-  contentAnimation?.cancel()
-  for (const animation of movements.values()) animation.cancel()
-  observer?.disconnect()
-  media?.removeEventListener('change', settle)
+  stopPolicy()
+  for (const movement of [...movements.values()]) movement.release()
 })
 </script>
 
 <template>
-  <Transition :css="false" @enter="enter" @leave="leave" @after-leave="afterLeave">
+  <MotionTransition
+    name="disclosure"
+    :pin="false"
+    @enter="relocate(true)"
+    @before-finish="beforeFinish"
+    @after-leave="afterLeave"
+  >
     <component :is="tag" v-show="open" ref="root" v-bind="$attrs" :inert="!open">
       <slot v-if="rendered" />
     </component>
-  </Transition>
+  </MotionTransition>
 </template>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
+import MotionTransition from '@renderer/components/MotionTransition.vue'
+import { useSharedArtwork } from './app/motion/useSharedArtwork'
 import { mountWorkshopDecorations } from '@renderer/components/theme-workshop/workshopDecorations'
 import {
   ref,
@@ -33,9 +35,12 @@ const BackgroundAppearanceCustomizer = defineAsyncComponent(
 const SideMenu = defineAsyncComponent(() => import('@renderer/components/SideMenu.vue'))
 import {
   buildNavigationPages,
+  orderNavigationPages,
+  isNavigationPageVisible,
   type NavigationPageTarget,
   type StreamingPageTab
 } from '@renderer/app/navigationPages.ts'
+import { buildSidebarEntries } from './app/sidebarNavigation'
 import { useProviderStore } from '@renderer/stores/useProviderStore'
 import {
   getNavigationLibraryProviders,
@@ -136,7 +141,20 @@ const audioWorkspaceRef = ref<DspWorkspace | null>(null)
 const navigation = guardDspNavigation(
   guardAppearanceNavigation(
     useAppNavigation({
-      appearancePreviewActive: () => appearanceFullWindowPreview.value
+      appearancePreviewActive: () => appearanceFullWindowPreview.value,
+      pageOrder: () => {
+        const preferences =
+          appearanceChromePreview.value?.navigationPages ??
+          themeAppearance.value?.navigationPages ??
+          settings.value.navigationPages
+        return buildSidebarEntries(
+          orderNavigationPages(navigationPages.value, preferences).filter((page) =>
+            isNavigationPageVisible(page, preferences)
+          )
+        ).flatMap((entry) =>
+          entry.kind === 'page' ? [entry.page.id] : entry.pages.map((page) => page.id)
+        )
+      }
     }),
     () => appearancePageRef.value
   ),
@@ -230,7 +248,25 @@ function retainSettingsOverlay(): void {
 function releaseSettingsOverlay(): void {
   settingsOverlayLeaves.value = Math.max(0, settingsOverlayLeaves.value - 1)
 }
-const { pushNotice } = useAppNoticeStore()
+const { pushNotice, dismissNotice } = useAppNoticeStore()
+const audioRecoveryCore = useCoreConnection()
+let audioFailureNotice: number | undefined
+let audioFailureNoticeRevision = 0
+watch(() => audioRecoveryCore.state.value?.audioRecovery?.error, error => {
+  if (!error) {
+    if (audioFailureNotice !== undefined) dismissNotice(audioFailureNotice)
+    if (audioFailureNotice !== undefined) audioFailureNoticeRevision++
+    audioFailureNotice = undefined
+    return
+  }
+  audioFailureNotice = pushNotice({
+    kind: 'warning',
+    message: '音频暂不可用，曲库和设置仍可使用。',
+    sticky: true,
+    dedupeKey: `audio-unavailable:${audioRecoveryCore.state.value?.epoch}:${audioFailureNoticeRevision}`,
+    action: { label: '处理音频故障', run: () => openSettingsPage('playback', { anchor: 'audio-troubleshooting' }) }
+  })
+}, { immediate: true })
 const playlistRecoveryStore = useMusicStore()
 const stopPlaylistPersistenceNotifications = startPlaylistPersistenceNotifications(
   playlistRecoveryStore.playlistPersistenceStatus,
@@ -281,7 +317,6 @@ const toggleMenu = navigation.createToggleMenuHandler()
 const toggleSettingsPage = navigation.createToggleSettingsHandler()
 const togglePluginPage = navigation.createTogglePluginHandler()
 
-const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingMetadataRequest = ref<StreamingMetadataNavigationRequest | null>(null)
 let streamingMetadataRequestKey = 0
 const streamingMetadataTab = ref<StreamingPageTab>('home')
@@ -379,8 +414,8 @@ function onGlobalBackKeydown(event: KeyboardEvent): void {
   }
 }
 
-function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
-  coverOrigin.value = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h }
+function openPlayingPage(_rect: { x: number; y: number; w: number; h: number }): void {
+  artworkMotion.capture()
   showPlaying()
 }
 
@@ -545,7 +580,10 @@ async function handlePlayingAlbumClick(): Promise<void> {
       }
       onSelectView('albums', `album:${album.id}`)
     } catch (error) {
-      pushNotice({ kind: 'warning', message: error instanceof Error ? error.message : String(error) })
+      pushNotice({
+        kind: 'warning',
+        message: error instanceof Error ? error.message : String(error)
+      })
     }
     return
   }
@@ -588,7 +626,7 @@ function handleAnalyticsArtistOpen(request: { name: string; providerId: string }
 const favoriteButtonVisible = computed(() => currentFavorite.value?.available ?? false)
 const favoriteButtonLiked = computed(() => currentFavorite.value?.liked ?? false)
 const favoriteButtonLoading = computed(() => currentFavorite.value?.loading ?? false)
-const favoriteButtonTitle = computed(() => favoriteButtonLiked.value ? '取消收藏' : '收藏歌曲')
+const favoriteButtonTitle = computed(() => (favoriteButtonLiked.value ? '取消收藏' : '收藏歌曲'))
 
 watch(
   [themeCoverIdentity, coverThemeColor, themeCoverUrl],
@@ -610,10 +648,16 @@ const localSidebarItems = computed(() =>
 )
 const soundFieldSidebarVisible = ref(false)
 const playerBarRef = ref<{
+  getArtworkElement: () => HTMLElement | null
   openQueue: () => void
   openAudio: () => void
   openMiniPlayer: () => void
 } | null>(null)
+const artworkMotion = useSharedArtwork(() => playerBarRef.value?.getArtworkElement() ?? null)
+watch(
+  () => [currentTrack.value?.id, currentTrack.value?.cover, currentTrack.value?.coverSource],
+  artworkMotion.finish
+)
 const soundFieldSidebarActive = computed(() =>
   usesSoundFieldSidebar(
     soundFieldSidebarVisible.value,
@@ -904,7 +948,6 @@ onBeforeUnmount(() => {
   document.body.classList.remove('te-local-surface')
 })
 
-const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
 const titleSurface = computed<TitleSurface>(() => {
   if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value && !appearanceFullWindowPreview.value) return 'settings'
@@ -1049,9 +1092,10 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         }"
         :style="{ minHeight: mainContentMinHeight }"
       >
-        <Transition
-          :name="activeCategory === 'dashboard' ? 'home-page' : songlistTransitionName"
-          mode="out-in"
+        <MotionTransition
+          :name="songlistTransitionName"
+          snapshot
+          :wait-for-enter="localViewVisible"
         >
           <LocalDashboard
             v-if="localViewVisible && activeCategory === 'dashboard'"
@@ -1093,16 +1137,20 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             @select-view="onSelectView"
             @customize-appearance="openThemeStudioPage('library')"
           />
-        </Transition>
-        <Transition name="playing-page">
+        </MotionTransition>
+        <MotionTransition
+          name="playing-page"
+          :pin="false"
+          @enter="artworkMotion.enter"
+          @before-leave="artworkMotion.leave"
+        >
           <PlayingMusic
             v-if="showPlayingPage"
-            :style="{ transformOrigin: coverTransformOrigin }"
             @customize-appearance="openThemeStudioPage('player')"
             @open-artist="handlePlayerBarArtistClick"
             @open-album="handlePlayingAlbumClick"
           />
-        </Transition>
+        </MotionTransition>
         <StreamingPage
           v-for="tab in streamingPageTabs"
           :key="tab"
@@ -1110,6 +1158,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           :menu-open="menuOpen && showLocalSidebar"
           :has-player="hasPlayerBar"
           :initial-tab="tab"
+          :page-transition-name="songlistTransitionName"
           :root-navigation-revision="streamingRootNavigationRevisions[tab] ?? 0"
           :metadata-navigation-request="
             showStreamingSurface && tab === streamingMetadataTab && streamingTab === tab
@@ -1121,18 +1170,20 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           @recent="navigation.navigate({ kind: 'recent', scope: 'platform', providerId: $event })"
           @login="handleStreamingLogin"
         />
-        <RecentPlaybackPage
-          v-if="pageTarget.kind === 'recent'"
-          v-show="showRecentPage"
-          :active="showRecentPage"
-          :target="pageTarget.kind === 'recent' ? pageTarget : undefined"
-          :has-player="hasPlayerBar"
-          @select-view="onSelectView"
-        />
-        <RadioPodcastPage v-if="showRadioPodcastPage" />
-        <NetworkSourcesPage v-if="showNetworkSourcesPage" />
-        <ZonesPage v-if="showZonesPage" />
-        <Transition name="login-page">
+        <MotionTransition :name="songlistTransitionName">
+          <RecentPlaybackPage
+            v-if="pageTarget.kind === 'recent'"
+            v-show="showRecentPage"
+            :active="showRecentPage"
+            :target="pageTarget.kind === 'recent' ? pageTarget : undefined"
+            :has-player="hasPlayerBar"
+            @select-view="onSelectView"
+          />
+          <RadioPodcastPage v-else-if="showRadioPodcastPage" />
+          <NetworkSourcesPage v-else-if="showNetworkSourcesPage" />
+          <ZonesPage v-else-if="showZonesPage" />
+        </MotionTransition>
+        <MotionTransition name="login-page">
           <LoginPage
             v-if="showLoginPage"
             :force-profile="loginPageMode === 'profile'"
@@ -1140,20 +1191,20 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             @login-success="handleLoginSuccess"
             @configure="handleLoginConfigure"
           />
-        </Transition>
+        </MotionTransition>
         <AudioWorkspace
           v-if="audioWorkspaceRetained"
           ref="audioWorkspaceRef"
           :active="showDspRackPage || showEqualizerPage"
           :initial-tab="audioWorkspaceInitialTab"
         />
-        <Transition name="login-page">
+        <MotionTransition :name="songlistTransitionName">
           <PluginExtensionPage
             v-if="activePluginPage && !activePluginPage.experience"
             :key="activePageId"
             :page="activePluginPage"
           />
-        </Transition>
+        </MotionTransition>
       </div>
     </div>
     <div class="app-shell-player">
@@ -1186,7 +1237,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       embedded
       :reading="!appearanceFullWindowPreview"
     />
-    <Transition
+    <MotionTransition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
       @after-leave="releaseSettingsOverlay"
@@ -1204,8 +1255,8 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @domain-change="navigation.rememberThemeStudioDomain"
         @back="closeAppearancePage"
       />
-    </Transition>
-    <Transition
+    </MotionTransition>
+    <MotionTransition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
       @after-leave="releaseSettingsOverlay"
@@ -1220,15 +1271,15 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
         @open-appearance="openAppearancePage"
         @reopen-onboarding="handleReopenOnboarding"
       />
-    </Transition>
-    <Transition
+    </MotionTransition>
+    <MotionTransition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
       @after-leave="releaseSettingsOverlay"
       @leave-cancelled="releaseSettingsOverlay"
     >
       <PluginPage v-if="showPluginPage" />
-    </Transition>
+    </MotionTransition>
   </div>
   <ExperienceView
     v-if="activePluginPage?.experience"
@@ -1484,17 +1535,7 @@ html[data-te-shell-layout='custom']
 }
 
 body.te-no-blur .main-content::before,
-body.te-no-blur .main-content::after,
-body.te-no-blur .page-down-leave-to,
-body.te-no-blur .page-down-enter-from,
-body.te-no-blur .page-up-leave-to,
-body.te-no-blur .page-up-enter-from,
-body.te-no-blur .playing-page-enter-from,
-body.te-no-blur .playing-page-leave-to,
-body.te-no-blur .settings-page-enter-from,
-body.te-no-blur .settings-page-leave-to,
-body.te-no-blur .login-page-enter-from,
-body.te-no-blur .login-page-leave-to {
+body.te-no-blur .main-content::after {
   filter: none !important;
 }
 
@@ -1531,195 +1572,17 @@ body.te-no-blur .login-page-leave-to {
   min-height: 0;
 }
 
-/* Home returns to its resting geometry immediately; only its opacity changes. */
-.main-content:has(> .local-home-layout.home-page-enter-active) {
-  /* Restoring a sidebar hidden by an overlay is navigation, not a menu toggle.
-     Set its clearance before home becomes visible to avoid resizing its cards. */
+/* Returning from an overlay restores sidebar clearance before home is painted. */
+.main-content:has(> .local-home-layout[data-motion-phase='enter']) {
   transition: none;
 }
-.home-page-enter-active {
-  transition: opacity 180ms ease;
-}
-.home-page-leave-active {
-  pointer-events: none;
-  transition: opacity 140ms ease;
-}
-.home-page-enter-from,
-.home-page-leave-to {
-  opacity: 0;
-}
 
-/* Local list view transitions mirror the streaming sidebar. */
-.main-content > .page-down-enter-active,
-.main-content > .page-down-leave-active,
-.main-content > .page-up-enter-active,
-.main-content > .page-up-leave-active,
-.page-down-enter-active,
-.page-down-leave-active,
-.page-up-enter-active,
-.page-up-leave-active {
-  will-change: transform, opacity;
-}
-.main-content > .page-down-enter-active,
-.main-content > .page-up-enter-active,
-.page-down-enter-active,
-.page-up-enter-active {
-  z-index: 1;
-  transition:
-    opacity 0.18s ease,
-    transform 0.24s var(--te-ease-out-strong) !important;
-}
-.main-content > .page-down-leave-active,
-.main-content > .page-up-leave-active,
-.page-down-leave-active,
-.page-up-leave-active {
-  z-index: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.14s ease,
-    transform 0.18s var(--te-ease-enter) !important;
-}
-
-/* page-down: selected page is lower in the sidebar, new view rises from below */
-.main-content > .page-down-enter-from,
-.page-down-enter-from {
-  opacity: 0;
-  transform: translate3d(0, 16px, 0);
-}
-.main-content > .page-down-leave-to,
-.page-down-leave-to {
-  opacity: 0;
-  transform: translate3d(0, -12px, 0);
-}
-
-/* page-up: selected page is higher in the sidebar, new view drops from above */
-.main-content > .page-up-enter-from,
-.page-up-enter-from {
-  opacity: 0;
-  transform: translate3d(0, -16px, 0);
-}
-.main-content > .page-up-leave-to,
-.page-up-leave-to {
-  opacity: 0;
-  transform: translate3d(0, 12px, 0);
-}
-
-/* Explicit application preferences take precedence over the system setting.
-   The direct-child page rules above use !important, so match their specificity. */
-html[data-te-motion='reduced']
-  .main-content
-  :is(
-    .page-down-enter-active,
-    .page-down-leave-active,
-    .page-up-enter-active,
-    .page-up-leave-active
-  ) {
-  transition: opacity 120ms var(--te-ease-out-strong) !important;
-}
-html[data-te-motion='reduced']
-  .main-content
-  :is(
-    .page-down-enter-active,
-    .page-down-leave-active,
-    .page-up-enter-active,
-    .page-up-leave-active,
-    .page-down-enter-from,
-    .page-down-leave-to,
-    .page-up-enter-from,
-    .page-up-leave-to
-  ),
-html[data-te-motion='off']
-  .main-content
-  :is(
-    .page-down-enter-active,
-    .page-down-leave-active,
-    .page-up-enter-active,
-    .page-up-leave-active,
-    .page-down-enter-from,
-    .page-down-leave-to,
-    .page-up-enter-from,
-    .page-up-leave-to
-  ) {
-  transform: none !important;
-  filter: none !important;
-}
-html[data-te-motion='off']
-  .main-content
-  :is(
-    .page-down-enter-active,
-    .page-down-leave-active,
-    .page-up-enter-active,
-    .page-up-leave-active
-  ) {
-  transition: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-te-motion='full'], [data-te-motion='off'])
-    .main-content
-    :is(
-      .page-down-enter-active,
-      .page-down-leave-active,
-      .page-up-enter-active,
-      .page-up-leave-active
-    ) {
-    transition: opacity 120ms var(--te-ease-out-strong) !important;
-  }
-
-  html:not([data-te-motion='full'], [data-te-motion='off'])
-    .main-content
-    :is(.page-down-enter-from, .page-down-leave-to, .page-up-enter-from, .page-up-leave-to) {
-    transform: none !important;
-    filter: none !important;
-  }
-}
-
-/* PlayingMusic open/close — expands from / shrinks to cover position */
-.playing-page-enter-active {
-  transition:
-    transform var(--te-motion-page) var(--te-ease-out-expo),
-    opacity var(--te-motion-panel) ease,
-    border-radius var(--te-motion-page) var(--te-ease-out-expo);
-}
-.playing-page-leave-active {
-  transition:
-    transform var(--te-motion-panel) var(--te-ease-enter),
-    opacity var(--te-motion-hover) ease,
-    border-radius var(--te-motion-panel) var(--te-ease-enter);
-}
-
-.playing-page-enter-from {
-  transform: scale(0.12) !important;
-  border-radius: 28px;
-  opacity: 0;
-}
-
-.playing-page-leave-to {
-  transform: scale(0.12) !important;
-  border-radius: 28px;
-  opacity: 0;
-}
-
-/* Settings and plugin pages: shared overlay transition */
-.settings-page-enter-active {
+/* Settings roots own fixed navigation; their painter only fades. */
+[data-motion-surface='settings-page'][data-motion-phase='enter'] {
   z-index: 2000;
-  transition: opacity var(--te-motion-panel) ease;
-  will-change: opacity;
 }
-
-.settings-page-leave-active {
+[data-motion-surface='settings-page'][data-motion-phase='leave'] {
   z-index: 1999;
-  pointer-events: none;
-  transition: opacity var(--te-motion-hover) ease;
-  will-change: opacity;
-}
-
-.settings-page-enter-from {
-  opacity: 0;
-}
-
-.settings-page-leave-to {
-  opacity: 0;
 }
 
 /* Onboarding wizard: fade in on first paint, dissolve away over the app */
@@ -1743,26 +1606,6 @@ html[data-te-motion='off']
 }
 body.te-no-blur .onboarding-page-leave-to {
   filter: none !important;
-}
-
-/* Login page transition */
-.login-page-enter-active {
-  transition:
-    opacity var(--te-motion-panel) ease,
-    transform var(--te-motion-page) var(--te-ease-out-quint);
-}
-.login-page-leave-active {
-  transition:
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-hover) var(--te-ease-enter);
-}
-.login-page-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-.login-page-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
 }
 </style>
 

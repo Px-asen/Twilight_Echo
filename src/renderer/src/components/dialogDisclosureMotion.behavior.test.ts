@@ -96,7 +96,8 @@ const app=createApp({render:()=>[
 ]});app.mount('#app')
 const opener=document.querySelector('#opener');opener.onclick=()=>{opener.focus();shown.value=true}
 const modal=()=>document.querySelector('dialog')
-const open=async()=>{opener.click();await nextTick();await until(()=>modal()?.matches(':modal'),'modal did not open')}
+const pointer=()=>document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))
+const open=async()=>{pointer();opener.click();await nextTick();await until(()=>modal()?.matches(':modal'),'modal did not open')}
 const close=()=>modal().dispatchEvent(new Event('cancel',{cancelable:true}))
 const sampleNativeLeave=(dialog)=>new Promise((resolve,reject)=>{
  let frame=0,done=false
@@ -106,7 +107,7 @@ const sampleNativeLeave=(dialog)=>new Promise((resolve,reject)=>{
  const sample=()=>{
   if(done)return
   cancelAnimationFrame(frame);frame=requestAnimationFrame(sample)
-  if(!dialog.classList.contains('native-dialog-leave-to'))return
+  if(dialog.dataset.motionPhase!=='leave')return
   try{
    getComputedStyle(dialog).opacity;getComputedStyle(dialog,'::backdrop').opacity
    const animations=dialog.getAnimations({subtree:true})
@@ -124,12 +125,12 @@ const sampleNativeLeave=(dialog)=>new Promise((resolve,reject)=>{
   }catch(error){cleanup();reject(error)}
  }
  const observer=new MutationObserver(()=>{stages.push(dialog.className);sample()})
- observer.observe(dialog,{attributes:true,attributeFilter:['class']})
+ observer.observe(dialog,{attributes:true,attributeFilter:['data-motion-phase']})
  frame=requestAnimationFrame(sample)
 })
 window.runMotionTests=async()=>{
  for(const mode of ['full','reduced','off']){
-  document.documentElement.dataset.teMotion=mode;await nextTick();await new Promise(requestAnimationFrame);await open();if(mode!=='off')await until(()=>!modal().classList.contains('native-dialog-enter-from'),'entry never advanced');await pause(mode==='off'?30:30)
+  document.documentElement.dataset.teMotion=mode;await nextTick();await new Promise(requestAnimationFrame);await open();await pause(30)
   const d=modal();if(mode!=='off')for(const a of d.getAnimations())a.currentTime=mode==='reduced'?45:70;const enter=getComputedStyle(d)
   if(mode==='full'){expect(Number(enter.opacity)>0&&Number(enter.opacity)<1,'full entry must have intermediate opacity: '+JSON.stringify({opacity:enter.opacity,transform:enter.transform,classes:d.className,animations:d.getAnimations().map(a=>({time:a.currentTime,state:a.playState,frames:a.effect.getKeyframes()}))}));expect(enter.transform!=='none','full entry has no scale')}
   if(mode==='reduced'){expect(enter.transform==='none','reduced modal moved');expect(Number(enter.opacity)>0&&Number(enter.opacity)<1,'reduced modal lost fade')}
@@ -137,14 +138,29 @@ window.runMotionTests=async()=>{
   const leaveSample=mode==='off'?null:sampleNativeLeave(d)
   const beforeCloses=closes;close();await nextTick();if(mode!=='off')close()
   if(mode!=='off'){
-   expect(d.classList.contains('native-dialog-leave-from')&&d.classList.contains('native-dialog-leave-active'),'regression injection missed the actual leave-from phase')
+   expect(d.dataset.motionPhase==='leave','regression injection missed the actual leave phase')
    d.dispatchEvent(new TransitionEvent('transitionend',{propertyName:'opacity',elapsedTime:.2,bubbles:true}))
    expect(d.isConnected&&d.matches(':modal'),'late enter opacity transitionend removed the leaving native modal: '+JSON.stringify({mode,classes:d.className}))
   }
   if(leaveSample){const animations=await leaveSample;for(const animation of animations)animation.play()}
   await until(()=>!modal(),'modal did not leave');expect(document.activeElement===opener,'focus not restored after leave');expect(closes===beforeCloses+1,'close emitted twice')
  }
- document.documentElement.dataset.teMotion='full';await open();await pause(70);close();await pause(40);shown.value=true;await nextTick();await pause(250);expect(document.querySelectorAll('dialog').length===1&&modal().matches(':modal'),'rapid reopen left stranded or duplicate modal');close();await until(()=>!modal(),'rapid reopened modal failed close')
+ document.documentElement.dataset.teMotion='full';await open();await pause(240);close();await nextTick();
+ const outgoing=modal(),effects=outgoing.getAnimations();for(const a of effects){a.pause();a.currentTime=29}
+ const opacityBefore=Number(getComputedStyle(outgoing).opacity),scaleBefore=new DOMMatrix(getComputedStyle(outgoing).transform).a;
+ for(const a of effects)a.currentTime=30;
+ const opacityAt=Number(getComputedStyle(outgoing).opacity),scaleAt=new DOMMatrix(getComputedStyle(outgoing).transform).a;
+ shown.value=true;await nextTick();const reopened=modal(),incoming=reopened.getAnimations();for(const a of incoming){a.pause();a.currentTime=0}
+ expect(Math.abs(Number(getComputedStyle(reopened).opacity)-opacityAt)<.01,'reopened native dialog restarted opacity');
+ expect(Math.abs(new DOMMatrix(getComputedStyle(reopened).transform).a-scaleAt)<.0001,'reopened native dialog restarted scale');
+ expect(Math.abs(Number(getComputedStyle(reopened,'::backdrop').opacity)-opacityAt)<.01,'reopened backdrop flashed: '+JSON.stringify({opacityAt,backdrop:getComputedStyle(reopened,'::backdrop').opacity,effects:incoming.map(a=>({pseudo:a.effect.pseudoElement,time:a.currentTime,frames:a.effect.getKeyframes().slice(0,1)}))}));
+ for(const a of incoming)a.currentTime=1;
+ const opacityVelocity=opacityAt-opacityBefore,nextOpacityVelocity=Number(getComputedStyle(reopened).opacity)-opacityAt;
+ const scaleVelocity=scaleAt-scaleBefore,nextScaleVelocity=new DOMMatrix(getComputedStyle(reopened).transform).a-scaleAt;
+ expect(opacityVelocity<0&&nextOpacityVelocity<0&&Math.abs(nextOpacityVelocity-opacityVelocity)<Math.abs(opacityVelocity)*.4,'native reversal lost opacity velocity');
+ expect(scaleVelocity<0&&nextScaleVelocity<0&&Math.abs(nextScaleVelocity-scaleVelocity)<Math.abs(scaleVelocity)*.4,'native reversal lost scale velocity');
+ for(const a of incoming)a.finish();await pause();expect(document.querySelectorAll('dialog').length===1&&modal().matches(':modal'),'rapid reopen left stranded or duplicate modal');close();await until(()=>!modal(),'rapid reopened modal failed close')
+ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));opener.click();await nextTick();expect(modal().matches(':modal')&&!modal().getAnimations({subtree:true}).length,'keyboard modal opening animated');close();await nextTick();expect(!modal()&&document.activeElement===opener,'keyboard modal closing waited or lost focus');
  await open();await pause(80);close();await nextTick();document.documentElement.dataset.teMotion='off';await pause(20);expect(!modal(),'live off preference retained native leave');document.documentElement.dataset.teMotion='full';await pause();await open();close();owner.value=false;await nextTick();expect(!modal()&&!document.querySelector(':modal'),'owner unmount stranded modal');expect(document.activeElement===opener,'owner teardown lost focus');owner.value=true
  const trigger=document.querySelector('#disclosure-trigger'),panel=document.querySelector('#disclosure'),following=document.querySelector('#following')
  const initial=following.getBoundingClientRect().top
@@ -156,12 +172,19 @@ window.runMotionTests=async()=>{
   document.querySelector('#disclosure-input').focus();expanded.value=false;await nextTick();expect(document.activeElement===trigger,'collapsing content lost keyboard focus');expect(panel.inert,'leaving disclosure remained interactive')
   await pause(350);expect(Math.abs(following.getBoundingClientRect().top-initial)<1,'collapsed disclosure retained a gap');expect(!document.querySelector('#disclosure-input'),'closed content did not unmount')
  }
- document.documentElement.dataset.teMotion='full';await pause();trigger.click();await pause(70);trigger.click();await pause(50);const opacity=Number(getComputedStyle(panel).opacity);trigger.click();await nextTick();expect(Math.abs(Number(getComputedStyle(panel).opacity)-opacity)<.12,'reversal jumped to animation start');await pause(250);expect(!panel.inert&&document.querySelector('#disclosure-input'),'reversal removed reopened content');trigger.click();await pause(30);document.documentElement.dataset.teMotion='off';await pause(40);expect(getComputedStyle(panel).display==='none','live off preference did not finish disclosure');expect(Math.abs(following.getBoundingClientRect().top-initial)<1,'live off preference left projected geometry')
+ document.documentElement.dataset.teMotion='full';await pause();pointer();trigger.click();await pause(240);trigger.click();await nextTick();
+ const visibleTop=following.getBoundingClientRect().top;const fading=panel.getAnimations()[0];fading.pause();fading.currentTime=50;expect(Math.abs(following.getBoundingClientRect().top-visibleTop)<.5,'folding content crossed the following text');fading.finish();await nextTick();await pause(5);const shifting=following.getAnimations()[0];expect(shifting,'folded disclosure did not move siblings');
+ shifting.pause();shifting.currentTime=29;const priorTop=following.getBoundingClientRect().top;shifting.currentTime=30;const currentTop=following.getBoundingClientRect().top;
+ trigger.click();await nextTick();
+ const returning=following.getAnimations()[0];expect(returning,'reopened disclosure lost sibling motion');returning.pause();returning.currentTime=0;expect(Math.abs(following.getBoundingClientRect().top-currentTop)<1,'reopened disclosure jumped sibling position');returning.currentTime=1;const nextTop=following.getBoundingClientRect().top;
+ expect(nextTop<currentTop&&Math.abs((nextTop-currentTop)-(currentTop-priorTop))<Math.abs(currentTop-priorTop)*.4,'disclosure sibling reversal lost velocity');returning.play();
+ await pause(250);expect(!panel.inert&&document.querySelector('#disclosure-input'),'reversal removed reopened content');trigger.click();await pause(30);document.documentElement.dataset.teMotion='off';await pause(40);expect(getComputedStyle(panel).display==='none','live off preference did not finish disclosure');expect(Math.abs(following.getBoundingClientRect().top-initial)<1,'live off preference left projected geometry');
+ document.documentElement.dataset.teMotion='full';pointer();await pause();trigger.click();await nextTick();document.documentElement.dataset.teVisibility='hidden';await pause();expect(!panel.getAnimations().length&&!following.getAnimations().length,'hidden disclosure left running motion');delete document.documentElement.dataset.teVisibility;
 }
 window.prepareMotionFrame=async(state)=>{
  for(const animation of document.getAnimations())animation.play();document.documentElement.dataset.teMotion='full';shown.value=false;expanded.value=false;await pause(380)
  if(state.startsWith('modal')){await open();await pause(state==='modal-enter'?55:260);if(state==='modal-leave'){close();await nextTick();await pause(45)}}
- else {expanded.value=true;await pause(270);if(state==='disclosure-leave'){expanded.value=false;await nextTick();await pause(65)}}
+ else {expanded.value=true;await pause(270);if(state==='disclosure-leave'){expanded.value=false;await nextTick();await pause(45)}}
  if(state.startsWith('modal')){await until(()=>modal()?.getAnimations().length,'frame has no modal animation');for(const animation of modal().getAnimations()){animation.pause();animation.currentTime=state==='modal-enter'?35:45}}else for(const animation of document.getAnimations())animation.pause();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
 }
 `

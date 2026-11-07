@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import MotionTransition from '@renderer/components/MotionTransition.vue'
+import type { PageMotionName } from '@renderer/app/motion/policy'
 import {
   computed,
   defineAsyncComponent,
@@ -25,10 +27,7 @@ import {
 } from '../stores/useNcmStore'
 import { useProviderStore } from '../stores/useProviderStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import {
-  usePlayerStore,
-  type PersonalizedStreamKey
-} from '../stores/usePlayerStore'
+import { usePlayerStore, type PersonalizedStreamKey } from '../stores/usePlayerStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useLibraryUnifiedSearch } from '../app/useLibraryUnifiedSearch.ts'
 import { useCoreConnection } from '../stores/coreConnection.ts'
@@ -40,7 +39,6 @@ import {
 } from '../providers/providerFavoriteChanges'
 
 import {
-
   supportsAlbumSearch,
   type AlbumSearchItem
 } from '@renderer/components/streaming-page/albumSearch.ts'
@@ -199,6 +197,7 @@ interface DetailStackEntry {
 }
 
 const props = defineProps<{
+  pageTransitionName?: PageMotionName
   menuOpen: boolean
   hasPlayer: boolean
   active?: boolean
@@ -417,7 +416,8 @@ const detailMetadataTarget = computed<EntityMetadataContext | null>(() => {
   const id = String(detail.type === 'artist' ? detail.artist.id : detail.album.id)
   if (detailProviderId.value === 'local')
     return collectionMetadataContext(
-      detail.type === 'artist' ? 'artists' : 'albums', `${detail.type}:${id}`
+      detail.type === 'artist' ? 'artists' : 'albums',
+      `${detail.type}:${id}`
     )
   return {
     context: { type: 'native', provider: detailProviderId.value, id },
@@ -644,7 +644,6 @@ async function loadMorePersonalizedStream(key: PersonalizedStreamKey): Promise<v
       replaceTopDetail({ type: 'rec', section: { ...detail.section, tracks: merged } })
       detailTracks.value = merged
     }
-
   } catch {
     personalizedStreamRetryAfter[key] = Date.now() + PERSONALIZED_STREAM_RETRY_COOLDOWN_MS
   } finally {
@@ -863,8 +862,14 @@ const collectionSearch = createCoreCollectionSearch({
   warning: (message) => pushNotice({ kind: 'warning', message: '部分音源搜索失败：' + message })
 })
 const albumSearch = {
-  searchAlbums: (query: string, limit?: number, offset?: number, call?: { signal?: AbortSignal }) => collectionSearch.albums('all', query, limit, offset, call),
-  searchLocalAlbums: (query: string, limit?: number, offset?: number, call?: { signal?: AbortSignal }) => collectionSearch.albums('local', query, limit, offset, call),
+  searchAlbums: (query: string, limit?: number, offset?: number, call?: { signal?: AbortSignal }) =>
+    collectionSearch.albums('all', query, limit, offset, call),
+  searchLocalAlbums: (
+    query: string,
+    limit?: number,
+    offset?: number,
+    call?: { signal?: AbortSignal }
+  ) => collectionSearch.albums('local', query, limit, offset, call),
   searchProviderAlbums: collectionSearch.albums,
   async loadAlbumTracks(album: { id: string | number; providerId: string }): Promise<Track[]> {
     const provider = mediaProviders.get(album.providerId)
@@ -873,11 +878,26 @@ const albumSearch = {
   }
 }
 const artistSearch = {
-  searchArtists: (query: string, limit?: number, offset?: number, call?: { signal?: AbortSignal }) => collectionSearch.artists('all', query, limit, offset, call),
-  searchLocalArtists: (query: string, limit?: number, offset?: number, call?: { signal?: AbortSignal }) => collectionSearch.artists('local', query, limit, offset, call),
+  searchArtists: (
+    query: string,
+    limit?: number,
+    offset?: number,
+    call?: { signal?: AbortSignal }
+  ) => collectionSearch.artists('all', query, limit, offset, call),
+  searchLocalArtists: (
+    query: string,
+    limit?: number,
+    offset?: number,
+    call?: { signal?: AbortSignal }
+  ) => collectionSearch.artists('local', query, limit, offset, call),
   searchProviderArtists: collectionSearch.artists
 }
-const searchLocalPlaylists = (query: string, limit?: number, offset?: number, call?: {signal?: AbortSignal}) => collectionSearch.playlists('local', query, limit, offset, call)
+const searchLocalPlaylists = (
+  query: string,
+  limit?: number,
+  offset?: number,
+  call?: { signal?: AbortSignal }
+) => collectionSearch.playlists('local', query, limit, offset, call)
 const searchSources = computed<SearchSourceOption[]>(() => {
   const sources: SearchSourceOption[] = [
     {
@@ -942,7 +962,8 @@ const {
   searchProviderAlbums: albumSearch.searchProviderAlbums,
   searchSongs,
   searchUnifiedSongs,
-  searchPlaylists: (query, limit, offset, options) => collectionSearch.playlists('all', query, limit, offset, options),
+  searchPlaylists: (query, limit, offset, options) =>
+    collectionSearch.playlists('all', query, limit, offset, options),
   searchArtists: artistSearch.searchArtists,
   searchProviderSongs,
   searchProviderPlaylists,
@@ -2283,7 +2304,9 @@ async function openRanking(): Promise<void> {
 
   try {
     await waitForListeningStatsReady()
-    let tracks: Track[] = getTopTracks().flatMap((stat) => stat.displayTrack ? [stat.displayTrack] : [])
+    let tracks: Track[] = getTopTracks().flatMap((stat) =>
+      stat.displayTrack ? [stat.displayTrack] : []
+    )
     if (tracks.length === 0) {
       tracks = await fetchPlayRecords(1)
     }
@@ -2414,14 +2437,18 @@ const multiSelect = useTrackMultiSelect({
 const { selectedIds, selectedCount, hasSelection, isSelected, clearSelection, getSelectedTracks } =
   multiSelect
 
-watch([streamingListTracks, musicStore.playlistsRevision], async ([tracks]) => {
-  try {
-    for (let offset = 0; offset < tracks.length; offset += 200)
-      await musicStore.getFavoriteTrackStates(tracks.slice(offset, offset + 200))
-  } catch (error) {
-    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '读取收藏状态失败') })
-  }
-}, { immediate: true })
+watch(
+  [streamingListTracks, musicStore.playlistsRevision],
+  async ([tracks]) => {
+    try {
+      for (let offset = 0; offset < tracks.length; offset += 200)
+        await musicStore.getFavoriteTrackStates(tracks.slice(offset, offset + 200))
+    } catch (error) {
+      pushNotice({ kind: 'error', message: friendlyStreamingError(error, '读取收藏状态失败') })
+    }
+  },
+  { immediate: true }
+)
 
 function isStreamingTrackFavorited(track: Track): boolean {
   if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
@@ -2488,12 +2515,12 @@ async function handleContextAddToAggregatePlaylist(playlistId: string): Promise<
   closeStreamingContextMenu()
   if (tracks.length === 0) return
   try {
-  const added = await musicStore.addTracksToPlaylistById(playlistId, tracks)
-  pushNotice({
-    kind: added > 0 ? 'success' : 'info',
-    message:
-      added > 0 ? `已加入「${playlistName}」${added} 首` : `「${playlistName}」里已经有这些歌了`
-  })
+    const added = await musicStore.addTracksToPlaylistById(playlistId, tracks)
+    pushNotice({
+      kind: added > 0 ? 'success' : 'info',
+      message:
+        added > 0 ? `已加入「${playlistName}」${added} 首` : `「${playlistName}」里已经有这些歌了`
+    })
   } catch (error) {
     pushNotice({ kind: 'error', message: friendlyStreamingError(error, '加入聚合歌单失败') })
   }
@@ -2966,7 +2993,7 @@ function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
 
 async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
   if (tracks.length === 0) return
-  const appTracks = tracks.filter(track => track.ncmSongId == null)
+  const appTracks = tracks.filter((track) => track.ncmSongId == null)
   try {
     for (let offset = 0; offset < appTracks.length; offset += 200)
       await musicStore.getFavoriteTrackStates(appTracks.slice(offset, offset + 200))
@@ -3001,7 +3028,9 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
         if (await musicStore.setFavoriteTracks([track], !allLiked)) succeeded++
         else unchanged++
         await musicStore.getFavoriteTrackStates([track])
-      } catch { failed++ }
+      } catch {
+        failed++
+      }
     }
   }
   if (failed > 0) {
@@ -3312,7 +3341,9 @@ async function removeStreamingTracks(selected: Track[]): Promise<void> {
         removeStreamingProviderFavorite(track, {
           providers: mediaProviders,
           removeNcmFavorite: (songId) => likeTrack(songId, false),
-          removeSnapshotFavorite: async track => { await musicStore.setFavoriteTracks([track], false) }
+          removeSnapshotFavorite: async (track) => {
+            await musicStore.setFavoriteTracks([track], false)
+          }
         })
     })
     const removed = new Set(result.removedTrackIds)
@@ -3730,296 +3761,368 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div
-    v-show="active !== false"
-    class="streaming-page"
-    :class="{ 'has-player': hasPlayer, 'menu-open': menuOpen }"
-  >
+  <MotionTransition :name="pageTransitionName ?? 'page-down'" :pin="false" immediate-leave appear>
     <div
-      ref="streamingContentRef"
-      class="streaming-content"
-      :class="{ 'without-header': !!currentDetail && !showUnifiedSearch }"
-      @scroll="onStreamingContentScroll"
+      v-show="active !== false"
+      class="streaming-page"
+      :class="{ 'has-player': hasPlayer, 'menu-open': menuOpen }"
     >
-      <StreamingContentHeader
-        :is-detail="!!currentDetail"
-        :is-searching="isSearching && !currentDetail"
-        :show-subtitle="
-          (activeTab === 'home' && !currentDetail && !isSearching) ||
-          (isExternalActive && !currentDetail && !isSearching)
-        "
-        :title="headerTitle"
-        :subtitle="headerSubtitle"
-        :show-unified-search="showUnifiedSearch"
-        :search-query="searchQuery"
-        :search-loading="searchLoading"
-        :provider-id="activeProvider"
-        :provider-options="headerProviderOptions"
-        @update:search-query="searchQuery = $event"
-        @clear-search="clearSearch"
-        @select-provider="selectProvider"
-      />
-
-      <!-- Search Type Tabs + Source Selector -->
-      <StreamingSearchControls
-        v-if="showUnifiedSearch && !currentDetail"
-        :search-type="searchType"
-        :available-search-types="availableSearchTypes"
-        :search-sources="searchSources"
-        :search-source="searchSource"
-        @update:search-type="searchType = $event"
-        @select-source="searchSource = $event"
-      />
-
-      <Transition
-        :name="streamingTransitionName"
-        mode="out-in"
-        @enter="restoreStreamingScrollPosition"
+      <div
+        ref="streamingContentRef"
+        class="streaming-content"
+        :class="{ 'without-header': !!currentDetail && !showUnifiedSearch }"
+        @scroll="onStreamingContentScroll"
       >
-        <div
+        <StreamingContentHeader
+          :is-detail="!!currentDetail"
+          :is-searching="isSearching && !currentDetail"
+          :show-subtitle="
+            (activeTab === 'home' && !currentDetail && !isSearching) ||
+            (isExternalActive && !currentDetail && !isSearching)
+          "
+          :title="headerTitle"
+          :subtitle="headerSubtitle"
+          :show-unified-search="showUnifiedSearch"
+          :search-query="searchQuery"
+          :search-loading="searchLoading"
+          :provider-id="activeProvider"
+          :provider-options="headerProviderOptions"
+          @update:search-query="searchQuery = $event"
+          @clear-search="clearSearch"
+          @select-provider="selectProvider"
+        />
+
+        <!-- Search Type Tabs + Source Selector -->
+        <StreamingSearchControls
           v-if="showUnifiedSearch && !currentDetail"
-          key="search-results"
-          class="streaming-content-body stream-view-panel"
-          :class="{ 'has-search-tabs': isSearching }"
+          :search-type="searchType"
+          :available-search-types="availableSearchTypes"
+          :search-sources="searchSources"
+          :search-source="searchSource"
+          @update:search-type="searchType = $event"
+          @select-source="searchSource = $event"
+        />
+
+        <MotionTransition
+          :name="streamingTransitionName"
+          snapshot
+          wait-for-enter
+          @enter="restoreStreamingScrollPosition"
         >
-          <StreamingPlaceholder
-            v-if="!isSearching"
-            title="搜索歌曲、专辑、歌单和歌手"
-            hint="输入关键词，可搜索全部来源、本地或指定平台。"
-            icon="pi pi-search"
-          />
-          <StreamingSearch
-            v-else
-            :search-type="searchType"
-            :search-results="searchResults"
-            :search-albums-results="searchAlbumsResults"
-            :search-playlists-results="searchPlaylistsResults"
-            :search-artists-results="searchArtistsResults"
-            :search-total="searchTotal"
-            :search-offset="searchOffset"
-            :search-loading="searchLoading"
-            :search-error="searchError"
-            :current-track="currentTrack"
-            :track-activation-mode="settingsStore.settings.value.trackActivationMode"
-            :liking-tracks="likingTracks"
-            :is-track-liked="isTrackLiked"
-            :format-time="formatTime"
-            :selected-ids="selectedIds"
-            :has-selection="hasSelection"
-            :selected-count="selectedCount"
-            :selection-all-favorited="selectionAllFavorited"
-            :favorite-label="selectionFavoriteLabel"
-            :is-track-favorited="isStreamingTrackFavorited"
-            :can-add-to-playlist="canManageNcmPlaylists"
-            :can-open-track-artist="canOpenTrackArtist"
-            :can-open-track-album="canOpenTrackAlbum"
-            @search-track-click="onSearchTrackClickWithSelect"
-            @search-track-activate="
-              (track) => {
-                clearSelection()
-                onSearchTrackClick(track)
-              }
-            "
-            @like-track="onLikeTrack"
-            @open-playlist="openPlaylist"
-            @open-album="openSearchAlbum"
-            @open-artist="openSearchArtist"
-            @open-track-artist="openTrackArtist"
-            @open-track-album="openTrackAlbum"
-            @page-change="onPageChange"
-            @retry="performSearch(searchQuery)"
-            @batch-favorite="handleStreamingBatchFavorite"
-            @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
-            @batch-delete="handleStreamingBatchDelete"
-            @clear-selection="clearSelection"
-            @track-context-menu="onStreamingTrackContextMenu"
-          />
-        </div>
-        <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
-          <StreamingPlaceholder
-            v-if="
-              hasOnlineNavigationEntries &&
-              activeTab === 'library' &&
-              !surfaceAvailable &&
-              !currentDetail
-            "
-            title="暂无可用的在线音乐库"
-            hint="已启用的音源暂不支持音乐库，可使用在线搜索，或启用支持音乐库的音源插件。"
-            icon="pi pi-folder-open"
-          />
-
-          <StreamingPlaceholder
-            v-else-if="(!hasOnlineNavigationEntries || !surfaceAvailable) && !currentDetail"
-            title="未启用可用的在线音源"
-            hint="请在设置的插件页启用网易云音乐或其它音源插件。"
-            icon="pi pi-plug"
-          />
-
-          <StreamingHome
-            v-else-if="
-              activeTab === 'home' &&
-              !currentDetail &&
-              activeProviderAvailable &&
-              providerSupportsHome(activeProvider)
-            "
-            :provider-label="activeProviderLabel"
-            :presentation="activeProviderInfo?.ui?.streamingHome"
-            :provider-color="activeProviderInfo?.ui?.color"
-            :supports-discovery="providerSupportsDiscovery(activeProvider)"
-            :is-logged-in="activeLoggedIn"
-            :recs-loading="recsLoading"
-            :recs-error="recsError"
-            :rec-sections="recSections"
-            :recommend-playlists="recommendPlaylists"
-            :current-track-id="currentTrack?.id ?? null"
-            @load-recommendations="loadRecommendations(true)"
-            @open-rec-section="openRecSection"
-            @open-playlist="openPlaylist"
-            @play-track="playHomeTrack"
-            @open-artist="openTrackArtist"
-            @request-login="emit('login', activeProvider)"
-            @open-discovery="selectTab('discover')"
+          <div
+            v-if="showUnifiedSearch && !currentDetail"
+            key="search-results"
+            class="streaming-content-body stream-view-panel"
+            :class="{ 'has-search-tabs': isSearching }"
           >
-            <template v-if="activeProvider === 'ncm'" #rankings>
-              <NcmToplists @login="emit('login', 'ncm')" />
-            </template>
-          </StreamingHome>
+            <StreamingPlaceholder
+              v-if="!isSearching"
+              title="搜索歌曲、专辑、歌单和歌手"
+              hint="输入关键词，可搜索全部来源、本地或指定平台。"
+              icon="pi pi-search"
+            />
+            <StreamingSearch
+              v-else
+              :search-type="searchType"
+              :search-results="searchResults"
+              :search-albums-results="searchAlbumsResults"
+              :search-playlists-results="searchPlaylistsResults"
+              :search-artists-results="searchArtistsResults"
+              :search-total="searchTotal"
+              :search-offset="searchOffset"
+              :search-loading="searchLoading"
+              :search-error="searchError"
+              :current-track="currentTrack"
+              :track-activation-mode="settingsStore.settings.value.trackActivationMode"
+              :liking-tracks="likingTracks"
+              :is-track-liked="isTrackLiked"
+              :format-time="formatTime"
+              :selected-ids="selectedIds"
+              :has-selection="hasSelection"
+              :selected-count="selectedCount"
+              :selection-all-favorited="selectionAllFavorited"
+              :favorite-label="selectionFavoriteLabel"
+              :is-track-favorited="isStreamingTrackFavorited"
+              :can-add-to-playlist="canManageNcmPlaylists"
+              :can-open-track-artist="canOpenTrackArtist"
+              :can-open-track-album="canOpenTrackAlbum"
+              @search-track-click="onSearchTrackClickWithSelect"
+              @search-track-activate="
+                (track) => {
+                  clearSelection()
+                  onSearchTrackClick(track)
+                }
+              "
+              @like-track="onLikeTrack"
+              @open-playlist="openPlaylist"
+              @open-album="openSearchAlbum"
+              @open-artist="openSearchArtist"
+              @open-track-artist="openTrackArtist"
+              @open-track-album="openTrackAlbum"
+              @page-change="onPageChange"
+              @retry="performSearch(searchQuery)"
+              @batch-favorite="handleStreamingBatchFavorite"
+              @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
+              @batch-delete="handleStreamingBatchDelete"
+              @clear-selection="clearSelection"
+              @track-context-menu="onStreamingTrackContextMenu"
+            />
+          </div>
+          <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
+            <StreamingPlaceholder
+              v-if="
+                hasOnlineNavigationEntries &&
+                activeTab === 'library' &&
+                !surfaceAvailable &&
+                !currentDetail
+              "
+              title="暂无可用的在线音乐库"
+              hint="已启用的音源暂不支持音乐库，可使用在线搜索，或启用支持音乐库的音源插件。"
+              icon="pi pi-folder-open"
+            />
 
-          <StreamingDiscovery
-            v-else-if="
-              activeTab === 'discover' &&
-              !currentDetail &&
-              activeProviderAvailable &&
-              providerSupportsDiscovery(activeProvider)
-            "
-            :provider-label="activeProviderLabel"
-            :supports-categories="activeProviderSupportsCategories"
-            :supports-sort="activeProviderInfo?.ui?.streamingDiscovery?.supportsSort"
-            :supports-high-quality="activeProviderSupportsHighQuality"
-            :catalogue="discovery.catalogue.value"
-            :catalogue-loading="discovery.catalogueLoading.value"
-            :catalogue-error="discovery.catalogueError.value"
-            :selected-tag="discovery.selectedTag.value"
-            :order="discovery.order.value"
-            :high-quality="discovery.highQuality.value"
-            :panel-expanded="discovery.panelExpanded.value"
-            :playlists="discovery.playlists.value"
-            :total="discovery.total.value"
-            :offset="discovery.offset.value"
-            :has-more="discovery.hasMore.value"
-            :list-loading="discovery.listLoading.value"
-            :list-error="discovery.listError.value"
-            :loading-more="discovery.loadingMore.value"
-            @select-tag="discovery.selectTag"
-            @set-order="discovery.setOrder"
-            @toggle-high-quality="discovery.toggleHighQuality"
-            @toggle-panel="discovery.togglePanel"
-            @page-change="discovery.onPageChange"
-            @load-more="discovery.loadMore"
-            @open-playlist="openPlaylist"
-            @retry="discovery.retry"
-          />
+            <StreamingPlaceholder
+              v-else-if="(!hasOnlineNavigationEntries || !surfaceAvailable) && !currentDetail"
+              title="未启用可用的在线音源"
+              hint="请在设置的插件页启用网易云音乐或其它音源插件。"
+              icon="pi pi-plug"
+            />
 
-          <StreamingPlaceholder
-            v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
-            :title="isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用'"
-            :hint="
-              activeProviderError ||
-              (isExternalActive
-                ? `请在设置的插件页重新启用 ${activeProviderLabel}。`
-                : '请在设置的插件页重新启用 NetEase Cloud Music。')
-            "
-            icon="pi pi-ban"
-          />
+            <StreamingHome
+              v-else-if="
+                activeTab === 'home' &&
+                !currentDetail &&
+                activeProviderAvailable &&
+                providerSupportsHome(activeProvider)
+              "
+              :provider-label="activeProviderLabel"
+              :presentation="activeProviderInfo?.ui?.streamingHome"
+              :provider-color="activeProviderInfo?.ui?.color"
+              :supports-discovery="providerSupportsDiscovery(activeProvider)"
+              :is-logged-in="activeLoggedIn"
+              :recs-loading="recsLoading"
+              :recs-error="recsError"
+              :rec-sections="recSections"
+              :recommend-playlists="recommendPlaylists"
+              :current-track-id="currentTrack?.id ?? null"
+              @load-recommendations="loadRecommendations(true)"
+              @open-rec-section="openRecSection"
+              @open-playlist="openPlaylist"
+              @play-track="playHomeTrack"
+              @open-artist="openTrackArtist"
+              @request-login="emit('login', activeProvider)"
+              @open-discovery="selectTab('discover')"
+            >
+              <template v-if="activeProvider === 'ncm'" #rankings>
+                <NcmToplists @login="emit('login', 'ncm')" />
+              </template>
+            </StreamingHome>
 
-          <StreamingPlaceholder
-            v-else-if="activeTab === 'library' && !currentDetail && activeLibraryError"
-            title="加载失败"
-            :hint="activeLibraryError"
-            icon="pi pi-exclamation-triangle"
-            danger
-            action-label="重试"
-            @action="retryCurrentView"
-          />
+            <StreamingDiscovery
+              v-else-if="
+                activeTab === 'discover' &&
+                !currentDetail &&
+                activeProviderAvailable &&
+                providerSupportsDiscovery(activeProvider)
+              "
+              :provider-label="activeProviderLabel"
+              :supports-categories="activeProviderSupportsCategories"
+              :supports-sort="activeProviderInfo?.ui?.streamingDiscovery?.supportsSort"
+              :supports-high-quality="activeProviderSupportsHighQuality"
+              :catalogue="discovery.catalogue.value"
+              :catalogue-loading="discovery.catalogueLoading.value"
+              :catalogue-error="discovery.catalogueError.value"
+              :selected-tag="discovery.selectedTag.value"
+              :order="discovery.order.value"
+              :high-quality="discovery.highQuality.value"
+              :panel-expanded="discovery.panelExpanded.value"
+              :playlists="discovery.playlists.value"
+              :total="discovery.total.value"
+              :offset="discovery.offset.value"
+              :has-more="discovery.hasMore.value"
+              :list-loading="discovery.listLoading.value"
+              :list-error="discovery.listError.value"
+              :loading-more="discovery.loadingMore.value"
+              @select-tag="discovery.selectTag"
+              @set-order="discovery.setOrder"
+              @toggle-high-quality="discovery.toggleHighQuality"
+              @toggle-panel="discovery.togglePanel"
+              @page-change="discovery.onPageChange"
+              @load-more="discovery.loadMore"
+              @open-playlist="openPlaylist"
+              @retry="discovery.retry"
+            />
 
-          <StreamingPlaceholder
-            v-else-if="!activeLoggedIn && !currentDetail"
-            :title="isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐'"
-            :hint="
-              isExternalActive
-                ? '登录后即可加载全部音乐库'
-                : activeTab === 'cloud'
-                  ? '登录后即可管理音乐云盘中的歌曲和传输任务'
-                  : '登录后即可加载我收藏的歌曲和在线歌单'
-            "
-            icon="pi pi-user"
-            action-label="账号登录"
-            action-icon="pi pi-user"
-            @action="emit('login', activeProvider)"
-          />
+            <StreamingPlaceholder
+              v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
+              :title="
+                isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用'
+              "
+              :hint="
+                activeProviderError ||
+                (isExternalActive
+                  ? `请在设置的插件页重新启用 ${activeProviderLabel}。`
+                  : '请在设置的插件页重新启用 NetEase Cloud Music。')
+              "
+              icon="pi pi-ban"
+            />
 
-          <StreamingLoadingStage
-            v-else-if="rootLoading && !currentDetail"
-            :provider-label="activeProviderLabel"
-          />
+            <StreamingPlaceholder
+              v-else-if="activeTab === 'library' && !currentDetail && activeLibraryError"
+              title="加载失败"
+              :hint="activeLibraryError"
+              icon="pi pi-exclamation-triangle"
+              danger
+              action-label="重试"
+              @action="retryCurrentView"
+            />
 
-          <div v-else-if="currentDetail" class="detail-view">
-            <div v-if="showDetailOverlayLoading" class="detail-loading-overlay" aria-live="polite">
-              <i class="pi pi-spin pi-spinner"></i>
-              <span>正在加载</span>
-            </div>
+            <StreamingPlaceholder
+              v-else-if="!activeLoggedIn && !currentDetail"
+              :title="isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐'"
+              :hint="
+                isExternalActive
+                  ? '登录后即可加载全部音乐库'
+                  : activeTab === 'cloud'
+                    ? '登录后即可管理音乐云盘中的歌曲和传输任务'
+                    : '登录后即可加载我收藏的歌曲和在线歌单'
+              "
+              icon="pi pi-user"
+              action-label="账号登录"
+              action-icon="pi pi-user"
+              @action="emit('login', activeProvider)"
+            />
 
-            <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
-            <template v-if="showTrackDetailStage">
-              <StreamingPlaceholder
-                v-if="detailError"
-                title="加载失败"
-                :hint="detailError"
-                icon="pi pi-exclamation-triangle"
-                danger
-                detail
-                action-label="重试"
-                @action="retryCurrentView"
-              />
+            <StreamingLoadingStage
+              v-else-if="rootLoading && !currentDetail"
+              :provider-label="activeProviderLabel"
+            />
 
-              <StreamingDetailStage
+            <div v-else-if="currentDetail" class="detail-view">
+              <div
+                v-if="showDetailOverlayLoading"
+                class="detail-loading-overlay"
+                aria-live="polite"
+              >
+                <i class="pi pi-spin pi-spinner"></i>
+                <span>正在加载</span>
+              </div>
+
+              <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
+              <template v-if="showTrackDetailStage">
+                <StreamingPlaceholder
+                  v-if="detailError"
+                  title="加载失败"
+                  :hint="detailError"
+                  icon="pi pi-exclamation-triangle"
+                  danger
+                  detail
+                  action-label="重试"
+                  @action="retryCurrentView"
+                />
+
+                <StreamingDetailStage
+                  v-else-if="detailHeaderInfo"
+                  :kind="currentDetail.type"
+                  :title="detailHeaderInfo.title"
+                  :is-explicit="detailHeaderInfo.isExplicit"
+                  :cover="detailHeaderInfo.cover"
+                  :cover-source="detailHeaderInfo.coverSource"
+                  :description="detailHeaderInfo.desc"
+                  :intro="detailHeaderInfo.intro"
+                  :metadata-target="detailMetadataTarget"
+                  :icon="detailHeaderInfo.icon"
+                  :track-count-label="detailTrackCountLabel"
+                  :tracks="visibleDetailTracks"
+                  v-model:query="detailQuery"
+                  v-model:sort="detailSort"
+                  v-model:direction="detailSortDirection"
+                  :total-tracks="detailTracks.length"
+                  :refreshing="detailLoading"
+                  @refresh="retryCurrentView"
+                  :current-track-id="currentTrack?.id ?? null"
+                  :track-activation-mode="settingsStore.settings.value.trackActivationMode"
+                  :is-external="detailProviderId !== NCM_PROVIDER_ID"
+                  :show-track-likes="showBilibiliTrackLikes"
+                  :favorite-provider-label="showBilibiliTrackLikes ? 'Bilibili' : '网易云'"
+                  :loading="detailLoading && detailTracks.length === 0"
+                  :has-selection="hasSelection"
+                  :selected-count="selectedCount"
+                  :selection-all-favorited="selectionAllFavorited"
+                  :favorite-label="selectionFavoriteLabel"
+                  :can-add-to-playlist="canManageNcmPlaylists"
+                  :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
+                  :is-selected="isSelected"
+                  :is-track-liked="isDetailRowLiked"
+                  :is-liking="isDetailRowLiking"
+                  :format-time="formatTime"
+                  :liked-footer="detailLikedFooter"
+                  @open-artist="openTrackArtist"
+                  @open-album="openTrackAlbum"
+                  @play-all="playAllDetailTracks"
+                  @shuffle-play="shufflePlayDetailTracks"
+                  @play-track="playDetailTrack"
+                  @track-click="onTrackClick"
+                  @like-track="onLikeTrack"
+                  @batch-favorite="handleStreamingBatchFavorite"
+                  @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
+                  @batch-delete="handleStreamingBatchDelete"
+                  @clear-selection="clearSelection"
+                  @load-all-liked="resolveDetailPlaybackQueue"
+                  @load-more-liked="loadMoreDetailTracks"
+                  @track-context-menu="onStreamingTrackContextMenu"
+                />
+              </template>
+
+              <!-- Artist / social / user playlists: editorial social stage -->
+              <StreamingSocialStage
                 v-else-if="detailHeaderInfo"
-                :kind="currentDetail.type"
+                :kind="socialStageKind"
                 :title="detailHeaderInfo.title"
-                :is-explicit="detailHeaderInfo.isExplicit"
                 :cover="detailHeaderInfo.cover"
                 :cover-source="detailHeaderInfo.coverSource"
                 :description="detailHeaderInfo.desc"
                 :intro="detailHeaderInfo.intro"
                 :metadata-target="detailMetadataTarget"
                 :icon="detailHeaderInfo.icon"
-                :track-count-label="detailTrackCountLabel"
-                :tracks="visibleDetailTracks"
-                v-model:query="detailQuery"
-                v-model:sort="detailSort"
-                v-model:direction="detailSortDirection"
-                :total-tracks="detailTracks.length"
-                :refreshing="detailLoading"
-                @refresh="retryCurrentView"
+                :loading="socialStageLoading"
+                :error="detailError"
+                :show-follow="showDetailFollowButton"
+                :follow-label="detailFollowButtonLabel"
+                :follow-icon="detailFollowButtonIcon"
+                :follow-active="detailFollowState"
+                :follow-loading="followActionLoading"
+                :follow-error="followActionError"
+                :people="socialPeople"
+                :collections="socialCollections"
+                :collection-empty-title="
+                  showNcmAlbumFilters && artistAlbumReleaseType
+                    ? '没有符合筛选条件的专辑'
+                    : undefined
+                "
+                :collection-empty-hint="socialCollectionEmptyHint"
+                :tabs="socialStageKind === 'artist' ? artistDetailTabs : []"
+                :active-tab="socialStageKind === 'artist' ? activeArtistTab : ''"
+                :tracks="detailTracks"
                 :current-track-id="currentTrack?.id ?? null"
                 :track-activation-mode="settingsStore.settings.value.trackActivationMode"
-                :is-external="detailProviderId !== NCM_PROVIDER_ID"
-                :show-track-likes="showBilibiliTrackLikes"
-                :favorite-provider-label="showBilibiliTrackLikes ? 'Bilibili' : '网易云'"
-                :loading="detailLoading && detailTracks.length === 0"
+                :is-external="isExternalActive"
                 :has-selection="hasSelection"
                 :selected-count="selectedCount"
                 :selection-all-favorited="selectionAllFavorited"
-                :favorite-label="selectionFavoriteLabel"
                 :can-add-to-playlist="canManageNcmPlaylists"
-                :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
                 :is-selected="isSelected"
-                :is-track-liked="isDetailRowLiked"
-                :is-liking="isDetailRowLiking"
+                :is-track-liked="isDetailTrackLiked"
+                :is-liking="isDetailTrackLiking"
                 :format-time="formatTime"
-                :liked-footer="detailLikedFooter"
+                :track-count-label="detailTrackCountLabel"
+                @follow="toggleCurrentDetailFollow"
+                @retry="retryCurrentView"
                 @open-artist="openTrackArtist"
                 @open-album="openTrackAlbum"
+                @person-click="onSocialPersonClick"
+                @collection-click="onSocialCollectionClick"
+                @tab-change="onArtistTabChange"
                 @play-all="playAllDetailTracks"
                 @shuffle-play="shufflePlayDetailTracks"
                 @play-track="playDetailTrack"
@@ -4029,210 +4132,149 @@ onMounted(async () => {
                 @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
                 @batch-delete="handleStreamingBatchDelete"
                 @clear-selection="clearSelection"
-                @load-all-liked="resolveDetailPlaybackQueue"
-                @load-more-liked="loadMoreDetailTracks"
                 @track-context-menu="onStreamingTrackContextMenu"
-              />
-            </template>
+              >
+                <template #collection-tools>
+                  <NcmAlbumFilters
+                    v-if="showNcmAlbumFilters && currentArtistAlbums.length"
+                    :albums="currentArtistAlbums"
+                    v-model:release-type="artistAlbumReleaseType"
+                  />
+                </template>
+              </StreamingSocialStage>
+            </div>
 
-            <!-- Artist / social / user playlists: editorial social stage -->
-            <StreamingSocialStage
-              v-else-if="detailHeaderInfo"
-              :kind="socialStageKind"
-              :title="detailHeaderInfo.title"
-              :cover="detailHeaderInfo.cover"
-              :cover-source="detailHeaderInfo.coverSource"
-              :description="detailHeaderInfo.desc"
-              :intro="detailHeaderInfo.intro"
-              :metadata-target="detailMetadataTarget"
-              :icon="detailHeaderInfo.icon"
-              :loading="socialStageLoading"
-              :error="detailError"
-              :show-follow="showDetailFollowButton"
-              :follow-label="detailFollowButtonLabel"
-              :follow-icon="detailFollowButtonIcon"
-              :follow-active="detailFollowState"
-              :follow-loading="followActionLoading"
-              :follow-error="followActionError"
-              :people="socialPeople"
-              :collections="socialCollections"
-              :collection-empty-title="
-                showNcmAlbumFilters && artistAlbumReleaseType ? '没有符合筛选条件的专辑' : undefined
-              "
-              :collection-empty-hint="socialCollectionEmptyHint"
-              :tabs="socialStageKind === 'artist' ? artistDetailTabs : []"
-              :active-tab="socialStageKind === 'artist' ? activeArtistTab : ''"
-              :tracks="detailTracks"
+            <NcmCloudPanel
+              v-else-if="activeTab === 'cloud' && !currentDetail && !isExternalActive"
+              :songs="cloudSongs"
+              :total="cloudTotal"
+              :loading="cloudLoading"
+              :loading-more="cloudLoadingMore"
+              :has-more="cloudHasMore"
+              :error="cloudError"
+              :selected-files="cloudSelectedFiles"
+              :transfer-tasks="cloudTransferTasks"
               :current-track-id="currentTrack?.id ?? null"
-              :track-activation-mode="settingsStore.settings.value.trackActivationMode"
-              :is-external="isExternalActive"
-              :has-selection="hasSelection"
-              :selected-count="selectedCount"
-              :selection-all-favorited="selectionAllFavorited"
-              :can-add-to-playlist="canManageNcmPlaylists"
-              :is-selected="isSelected"
-              :is-track-liked="isDetailTrackLiked"
-              :is-liking="isDetailTrackLiking"
-              :format-time="formatTime"
-              :track-count-label="detailTrackCountLabel"
-              @follow="toggleCurrentDetailFollow"
-              @retry="retryCurrentView"
-              @open-artist="openTrackArtist"
-              @open-album="openTrackAlbum"
-              @person-click="onSocialPersonClick"
-              @collection-click="onSocialCollectionClick"
-              @tab-change="onArtistTabChange"
-              @play-all="playAllDetailTracks"
-              @shuffle-play="shufflePlayDetailTracks"
-              @play-track="playDetailTrack"
-              @track-click="onTrackClick"
-              @like-track="onLikeTrack"
-              @batch-favorite="handleStreamingBatchFavorite"
-              @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
-              @batch-delete="handleStreamingBatchDelete"
-              @clear-selection="clearSelection"
-              @track-context-menu="onStreamingTrackContextMenu"
-            >
-              <template #collection-tools>
-                <NcmAlbumFilters
-                  v-if="showNcmAlbumFilters && currentArtistAlbums.length"
-                  :albums="currentArtistAlbums"
-                  v-model:release-type="artistAlbumReleaseType"
-                />
-              </template>
-            </StreamingSocialStage>
+              @refresh="refreshCloudSongs"
+              @load-more="loadMoreCloudSongs"
+              @choose-files="chooseCloudFiles"
+              @upload="startCloudUpload"
+              @remove-selected="removeCloudSelectedFile"
+              @play="playCloudSong"
+              @play-all="playAllCloudSongs"
+              @download="startCloudDownload"
+              @cancel="cancelCloudTask"
+            />
+
+            <StreamingLibrary
+              v-else-if="activeTab === 'library' && !currentDetail"
+              :is-logged-in="activeLoggedIn"
+              :provider-label="activeProviderLabel"
+              :profile="activeProfile"
+              :profile-signature="profileSignature"
+              :liked-summary="likedSummary"
+              :liked-playlist-options="libraryFavoriteOptions"
+              :selected-liked-playlist-id="libraryFavoritePlaylist?.id ?? null"
+              :liked-selection-error="isExternalActive ? libraryFavoriteError : ''"
+              :library-loaded="activeLibraryLoaded"
+              :user-playlist-entries="userPlaylistEntries"
+              :show-liked-panel="showActiveLikedPanel"
+              :show-social-stats="!isExternalActive"
+              :show-feature-cards="!isExternalActive"
+              :allow-pin-playlists="false"
+              :allow-playlist-mutations="canManageNcmPlaylists"
+              :deleting-playlist-id="deletingNcmPlaylistId"
+              :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
+              :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
+              :available-providers="libraryProviderOptions"
+              :active-provider="activeProvider"
+              @switch-provider="selectProvider"
+              @open-user-list="openUserList"
+              @open-liked-tracks="openLikedTracks"
+              @play-liked-songs="playLikedSongs"
+              @select-liked-playlist="selectLibraryFavoritePlaylist"
+              @open-playlist="openPlaylist"
+              @create-playlist="openCreateNcmPlaylistDialog()"
+              @open-album="openAlbum"
+              @open-artist="openArtist"
+              @delete-playlist="handleDeleteNcmPlaylist"
+              @open-recent="openRecent"
+              @open-ranking="openRanking"
+            />
           </div>
+        </MotionTransition>
+      </div>
 
-          <NcmCloudPanel
-            v-else-if="activeTab === 'cloud' && !currentDetail && !isExternalActive"
-            :songs="cloudSongs"
-            :total="cloudTotal"
-            :loading="cloudLoading"
-            :loading-more="cloudLoadingMore"
-            :has-more="cloudHasMore"
-            :error="cloudError"
-            :selected-files="cloudSelectedFiles"
-            :transfer-tasks="cloudTransferTasks"
-            :current-track-id="currentTrack?.id ?? null"
-            @refresh="refreshCloudSongs"
-            @load-more="loadMoreCloudSongs"
-            @choose-files="chooseCloudFiles"
-            @upload="startCloudUpload"
-            @remove-selected="removeCloudSelectedFile"
-            @play="playCloudSong"
-            @play-all="playAllCloudSongs"
-            @download="startCloudDownload"
-            @cancel="cancelCloudTask"
-          />
+      <StreamingContextMenu
+        :show="showStreamingContextMenu"
+        :x="streamingContextMenuX"
+        :y="streamingContextMenuY"
+        :all-favorited="streamingContextAllFavorited"
+        :favorite-label="contextFavoriteLabel"
+        :action-label="streamingContextActionLabel"
+        :can-like="contextMenuCanLike"
+        :single-liked="contextMenuSingleLiked"
+        :can-manage-playlists="canManageNcmPlaylists"
+        :owned-user-playlists="ownedUserPlaylists"
+        :show-playlist-submenu="showStreamingPlaylistSubmenu"
+        :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
+        :can-download="contextMenuCanDownload"
+        :show-download-quality-menu="downloadQualityMenuOpen"
+        :aggregate-playlists="aggregatePlaylistOptions"
+        :show-aggregate-submenu="showStreamingAggregateSubmenu"
+        @play="handleContextPlayTrack"
+        @play-next="handleContextPlayNext"
+        @copy-track-names="handleContextCopyTrackNames"
+        @favorite="handleContextFavorite"
+        @like="handleContextLikeTrack"
+        @create-playlist="handleContextCreatePlaylist"
+        @add-to-owned-playlist="handleContextAddToOwnedPlaylist"
+        @add-to-playlist="handleContextAddToPlaylist"
+        @remove-from-playlist="handleContextRemoveFromPlaylist"
+        @download="handleContextDownload"
+        @close="closeStreamingContextMenu"
+        @toggle-playlist-submenu="showStreamingPlaylistSubmenu = $event"
+        @toggle-download-quality-menu="downloadQualityMenuOpen = $event"
+        @add-to-aggregate-playlist="handleContextAddToAggregatePlaylist"
+        @create-aggregate-playlist="handleContextCreateAggregatePlaylist"
+        @toggle-aggregate-submenu="showStreamingAggregateSubmenu = $event"
+      />
 
-          <StreamingLibrary
-            v-else-if="activeTab === 'library' && !currentDetail"
-            :is-logged-in="activeLoggedIn"
-            :provider-label="activeProviderLabel"
-            :profile="activeProfile"
-            :profile-signature="profileSignature"
-            :liked-summary="likedSummary"
-            :liked-playlist-options="libraryFavoriteOptions"
-            :selected-liked-playlist-id="libraryFavoritePlaylist?.id ?? null"
-            :liked-selection-error="isExternalActive ? libraryFavoriteError : ''"
-            :library-loaded="activeLibraryLoaded"
-            :user-playlist-entries="userPlaylistEntries"
-            :show-liked-panel="showActiveLikedPanel"
-            :show-social-stats="!isExternalActive"
-            :show-feature-cards="!isExternalActive"
-            :allow-pin-playlists="false"
-            :allow-playlist-mutations="canManageNcmPlaylists"
-            :deleting-playlist-id="deletingNcmPlaylistId"
-            :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
-            :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
-            :available-providers="libraryProviderOptions"
-            :active-provider="activeProvider"
-            @switch-provider="selectProvider"
-            @open-user-list="openUserList"
-            @open-liked-tracks="openLikedTracks"
-            @play-liked-songs="playLikedSongs"
-            @select-liked-playlist="selectLibraryFavoritePlaylist"
-            @open-playlist="openPlaylist"
-            @create-playlist="openCreateNcmPlaylistDialog()"
-            @open-album="openAlbum"
-            @open-artist="openArtist"
-            @delete-playlist="handleDeleteNcmPlaylist"
-            @open-recent="openRecent"
-            @open-ranking="openRanking"
-          />
-        </div>
-      </Transition>
+      <CreateAggregatePlaylistDialog
+        :show="showCreateAggregateDialog"
+        :tracks="createAggregateTracks"
+        @close="showCreateAggregateDialog = false"
+        @created="onAggregatePlaylistCreated"
+      />
+
+      <NcmPlaylistDialogs
+        :show-create="showCreateNcmPlaylistDialog"
+        :show-add="showAddToNcmPlaylistDialog"
+        v-model:new-name="newNcmPlaylistName"
+        :create-busy="createNcmPlaylistBusy"
+        :create-completed="createNcmPlaylistCompleted"
+        :create-error="createNcmPlaylistError"
+        :add-busy="addToNcmPlaylistBusy"
+        :add-error="addToNcmPlaylistError"
+        :add-tracks="addToNcmPlaylistTracks"
+        :owned-user-playlists="ownedUserPlaylists"
+        @close-create="closeCreateNcmPlaylistDialog"
+        @confirm-create="confirmCreateNcmPlaylist"
+        @close-add="closeAddToNcmPlaylistDialog"
+        @convert-add-to-create="convertAddToCreatePlaylist"
+        @confirm-add="confirmAddTracksToNcmPlaylist"
+      />
+
+      <ProviderDownloadsPanel
+        :show="showDownloadPanel"
+        :tasks="downloadTasks"
+        @close="showDownloadPanel = false"
+        @open="showDownloadPanel = true"
+        @retry="handleRetryDownload"
+        @cancel="handleCancelDownload"
+      />
     </div>
-
-    <StreamingContextMenu
-      :show="showStreamingContextMenu"
-      :x="streamingContextMenuX"
-      :y="streamingContextMenuY"
-      :all-favorited="streamingContextAllFavorited"
-      :favorite-label="contextFavoriteLabel"
-      :action-label="streamingContextActionLabel"
-      :can-like="contextMenuCanLike"
-      :single-liked="contextMenuSingleLiked"
-      :can-manage-playlists="canManageNcmPlaylists"
-      :owned-user-playlists="ownedUserPlaylists"
-      :show-playlist-submenu="showStreamingPlaylistSubmenu"
-      :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
-      :can-download="contextMenuCanDownload"
-      :show-download-quality-menu="downloadQualityMenuOpen"
-      :aggregate-playlists="aggregatePlaylistOptions"
-      :show-aggregate-submenu="showStreamingAggregateSubmenu"
-      @play="handleContextPlayTrack"
-      @play-next="handleContextPlayNext"
-      @copy-track-names="handleContextCopyTrackNames"
-      @favorite="handleContextFavorite"
-      @like="handleContextLikeTrack"
-      @create-playlist="handleContextCreatePlaylist"
-      @add-to-owned-playlist="handleContextAddToOwnedPlaylist"
-      @add-to-playlist="handleContextAddToPlaylist"
-      @remove-from-playlist="handleContextRemoveFromPlaylist"
-      @download="handleContextDownload"
-      @close="closeStreamingContextMenu"
-      @toggle-playlist-submenu="showStreamingPlaylistSubmenu = $event"
-      @toggle-download-quality-menu="downloadQualityMenuOpen = $event"
-      @add-to-aggregate-playlist="handleContextAddToAggregatePlaylist"
-      @create-aggregate-playlist="handleContextCreateAggregatePlaylist"
-      @toggle-aggregate-submenu="showStreamingAggregateSubmenu = $event"
-    />
-
-    <CreateAggregatePlaylistDialog
-      :show="showCreateAggregateDialog"
-      :tracks="createAggregateTracks"
-      @close="showCreateAggregateDialog = false"
-      @created="onAggregatePlaylistCreated"
-    />
-
-    <NcmPlaylistDialogs
-      :show-create="showCreateNcmPlaylistDialog"
-      :show-add="showAddToNcmPlaylistDialog"
-      v-model:new-name="newNcmPlaylistName"
-      :create-busy="createNcmPlaylistBusy"
-      :create-completed="createNcmPlaylistCompleted"
-      :create-error="createNcmPlaylistError"
-      :add-busy="addToNcmPlaylistBusy"
-      :add-error="addToNcmPlaylistError"
-      :add-tracks="addToNcmPlaylistTracks"
-      :owned-user-playlists="ownedUserPlaylists"
-      @close-create="closeCreateNcmPlaylistDialog"
-      @confirm-create="confirmCreateNcmPlaylist"
-      @close-add="closeAddToNcmPlaylistDialog"
-      @convert-add-to-create="convertAddToCreatePlaylist"
-      @confirm-add="confirmAddTracksToNcmPlaylist"
-    />
-
-    <ProviderDownloadsPanel
-      :show="showDownloadPanel"
-      :tasks="downloadTasks"
-      @close="showDownloadPanel = false"
-      @open="showDownloadPanel = true"
-      @retry="handleRetryDownload"
-      @cancel="handleCancelDownload"
-    />
-  </div>
+  </MotionTransition>
 </template>
 
 <style scoped src="./streaming-page/StreamingPage.css"></style>

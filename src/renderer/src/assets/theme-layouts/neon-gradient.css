@@ -79,7 +79,8 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item:h
 }
 
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item.active,
-html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.active {
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.active,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .navigation-indicator {
   background:
     linear-gradient(
       150deg,
@@ -87,10 +88,19 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.a
       color-mix(in srgb, var(--te-accent-cyan) 14%, transparent)
     ),
     color-mix(in srgb, var(--te-card-bg) 40%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item.active,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.active {
   box-shadow:
     inset 0 0 0 1px var(--ng-line),
     inset 0 0 22px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
   filter: drop-shadow(0 0 12px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .navigation-indicator {
+  --te-navigation-motion-radius: 0px;
+  clip-path: var(--ng-clip-tile);
 }
 
 /* 选中指示器 → 粗竖光条 */

@@ -98,7 +98,9 @@ function beginMetadataSelection(event: PointerEvent): void {
 
 function trackMetadataSelection(event: PointerEvent): void {
   if (!metadataPointerStart || !(event.buttons & 1)) return
-  if (Math.hypot(event.clientX - metadataPointerStart.x, event.clientY - metadataPointerStart.y) > 4) {
+  if (
+    Math.hypot(event.clientX - metadataPointerStart.x, event.clientY - metadataPointerStart.y) > 4
+  ) {
     metadataDragged = true
   }
 }
@@ -155,7 +157,9 @@ function copyMetadataText(): void {
   if (!text) return
   const selection = window.getSelection()
   const ranges = selection
-    ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange())
+    ? Array.from({ length: selection.rangeCount }, (_, index) =>
+        selection.getRangeAt(index).cloneRange()
+      )
     : []
   const activeElement = document.activeElement as HTMLElement | null
   const input = document.createElement('textarea')
@@ -1473,8 +1477,12 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
 }
 
-:global(html[data-te-motion='full'] .cover-frame) {
-  animation: te-playing-artwork-arrive var(--te-motion-page) var(--te-ease-spring) both;
+:global(html[data-te-motion='full']:not([data-te-motion-input='keyboard']) .cover-frame) {
+  animation: te-playing-artwork-arrive var(--te-motion-page-enter) var(--te-ease-out-strong) both;
+}
+
+.cover-frame[data-shared-artwork='true'] {
+  animation: none !important;
 }
 
 @keyframes te-playing-artwork-arrive {
@@ -1514,7 +1522,9 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   -webkit-backdrop-filter: blur(18px) saturate(135%);
 }
 
-:global(html[data-te-artwork-frame='glass-frame'] .playing-music .cover-frame :deep(img.cover-image)),
+:global(
+  html[data-te-artwork-frame='glass-frame'] .playing-music .cover-frame :deep(img.cover-image)
+),
 :global(html[data-te-artwork-frame='glass-frame'] .playing-music .cover-image) {
   border-radius: calc(max(0px, var(--te-playback-cover-radius, 26px) - 8px));
 }
@@ -1610,7 +1620,7 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   -webkit-user-select: text;
 }
 
-:global(html[data-te-motion='full'] .cover-meta) {
+:global(html[data-te-motion='full']:not([data-te-motion-input='keyboard']) .cover-meta) {
   animation: te-playing-meta-arrive var(--te-motion-panel) var(--te-ease-spring) 36ms both;
 }
 

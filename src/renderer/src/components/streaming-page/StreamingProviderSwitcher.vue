@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { observeMotionPolicy } from '../../app/motion/policy'
 import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { StreamingProviderOption } from '../../utils/streamingNavigation'
 
@@ -91,10 +92,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopMotionPolicy()
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   window.removeEventListener('scroll', onViewportChange, true)
   window.removeEventListener('resize', onViewportChange)
 })
+const stopMotionPolicy = observeMotionPolicy(document, () => {})
 </script>
 
 <template>
@@ -192,12 +195,17 @@ onBeforeUnmount(() => {
     box-shadow 0.18s;
 }
 
-.provider-switcher-trigger:hover,
 .provider-switcher.open .provider-switcher-trigger {
-  transform: translateY(-2px);
   background: var(--te-subtle-bg);
   border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
   box-shadow: 0 16px 36px color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .provider-switcher-trigger:hover {
+    transform: translateY(-2px);
+    background: var(--te-subtle-bg);
+    border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
+  }
 }
 
 .provider-switcher-trigger:disabled {
@@ -229,16 +237,17 @@ onBeforeUnmount(() => {
   transform: scale(0.97);
   pointer-events: none;
   transition:
-    opacity 160ms var(--te-ease-out-strong),
-    transform 160ms var(--te-ease-out-strong),
-    display 160ms allow-discrete,
-    overlay 160ms allow-discrete;
+    opacity 120ms var(--te-ease-out-strong),
+    transform 120ms var(--te-ease-out-strong),
+    display 120ms allow-discrete,
+    overlay 120ms allow-discrete;
 }
 
 .provider-switcher-menu:popover-open {
   opacity: 1;
   transform: none;
   pointer-events: auto;
+  transition-duration: 180ms;
   @starting-style {
     opacity: 0;
     transform: scale(0.97);
@@ -256,9 +265,25 @@ onBeforeUnmount(() => {
   }
 }
 
-:global(html[data-te-motion='off'] .provider-switcher-menu) {
+:global(html[data-te-motion='off'] .provider-switcher-menu),
+:global(html[data-te-motion-input='keyboard'] .provider-switcher-menu),
+:global(html[data-te-visibility='hidden'] .provider-switcher-menu) {
   transform: none;
   transition: none !important;
+}
+:global(html[data-te-motion-input='keyboard'] .provider-switcher-trigger) {
+  transform: none;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :global(html:not([data-te-motion='full'], [data-te-motion='off']) .provider-switcher-menu) {
+    transform: none;
+    transition-property: opacity, display, overlay;
+    transition-duration: 100ms;
+    @starting-style {
+      transform: none;
+    }
+  }
 }
 
 .provider-switcher-option {

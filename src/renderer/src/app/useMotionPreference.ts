@@ -1,4 +1,5 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue'
+import { observeMotionPolicy } from './motion/policy.ts'
 import {
   resolveMotionMode,
   type MotionPreference,
@@ -18,6 +19,8 @@ export function resolveDocumentMotionMode(
 }
 
 export function useMotionPreference(preference: Ref<MotionPreference>): void {
+  const stopInput =
+    typeof document === 'undefined' ? () => {} : observeMotionPolicy(document, () => {})
   const mediaQuery = getSystemMotionPreference()
 
   const apply = (): void => {
@@ -33,6 +36,7 @@ export function useMotionPreference(preference: Ref<MotionPreference>): void {
   watch(preference, apply, { immediate: true })
 
   onBeforeUnmount(() => {
+    stopInput()
     mediaQuery?.removeEventListener('change', onChange)
   })
 }

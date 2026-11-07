@@ -30,6 +30,10 @@ html[data-te-preset-layout='aurora-reference'] body .side-menu .menu-item.active
   background: var(--te-navigation-active);
   color: var(--te-navigation-active-text);
 }
+html[data-te-preset-layout='aurora-reference'] body .side-menu .navigation-indicator {
+  --te-navigation-motion-radius: var(--te-navigation-radius, 0px);
+  background: var(--te-navigation-active);
+}
 html[data-te-preset-layout='aurora-reference'] body .side-menu .menu-item.active::before {
   display: none;
 }

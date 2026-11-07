@@ -948,7 +948,9 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'plugin-theme',
     section: 'appearance',
     title: '插件主题',
-    terms: '外观 主题 界面 插件 主题 plugin theme 扩展 插件主题'
+    terms: '外观 主题 界面 插件 主题 plugin theme 扩展 插件主题',
+    fallbackId: 'appearance-workspace',
+    fallbackReason: '请打开自定义主题，在主题预设中选择或管理插件主题。'
   },
   {
     id: 'startup-experience',

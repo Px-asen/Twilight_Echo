@@ -93,6 +93,7 @@ const runtime = `import {createApp,h,nextTick,ref} from 'vue'
 import '@renderer/assets/base.css'
 import CreateAggregatePlaylistDialog from '@renderer/components/aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
+import MotionTransition from '@renderer/components/MotionTransition.vue'
 import WorkshopDeleteDialog from '@renderer/components/theme-workshop/WorkshopDeleteDialog.vue'
 import StreamingDiscovery from '@renderer/components/StreamingDiscovery.vue'
 import StreamingProviderSwitcher from '@renderer/components/streaming-page/StreamingProviderSwitcher.vue'
@@ -122,11 +123,14 @@ window.runMotionCoverage=async()=>{
     await ipc.invoke('motion-system',reduced);await sleep(30)
     for(const mode of ['full','reduced','off']){
       await setMode(mode)
-      await mount(()=>h('div',{class:'main-content'},[h('article',{class:'page-down-enter-active page-down-enter-from'},'页面内容')]))
+      const shown=ref(false)
+      await mount(()=>h('div',{class:'main-content'},[h(MotionTransition,{name:'page-down'},()=>shown.value?h('article',null,'页面内容'):null)]))
+      shown.value=true;await flush()
       const page=document.querySelector('article'),style=getComputedStyle(page)
       expect(mode==='full'?style.transform!=='none':style.transform==='none','page mode moved incorrectly: '+mode)
-      expect(style.transitionDuration===(mode==='full'?'0.18s, 0.24s':mode==='reduced'?'0.12s':'0s'),'page duration ignored mode: '+mode+' '+style.transitionDuration)
+      expect(mode==='off'?page.getAnimations().length===0:page.getAnimations()[0]?.effect.getTiming().duration===(mode==='full'?240:100),'page duration ignored mode: '+mode)
       expect(style.filter==='none'&&!style.willChange.includes('filter'),'page transition reintroduced a raster blur: '+mode)
+      page.getAnimations().forEach(animation=>animation.finish());await flush()
       root.classList.add('te-theme-tone-transition');page.className='glass-card';await nextTick()
       expect(getComputedStyle(page).transitionDuration===(mode==='full'?'0.2s, 0.2s, 0.2s':mode==='reduced'?'0.12s':'0s'),'theme transition ignored mode '+mode+' '+getComputedStyle(page).transitionDuration)
       root.classList.remove('te-theme-tone-transition')

@@ -506,6 +506,7 @@ function applied(trackIds: string[]): void {
                     v-for="issue in visible"
                     :key="issue.key"
                     class="inbox-row"
+                    data-te-interactive
                     :class="{ 'is-inspected': inspectedIssue?.key === issue.key }"
                     @click="inspectedKey = issue.key"
                   >

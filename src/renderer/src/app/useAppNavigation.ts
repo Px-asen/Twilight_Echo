@@ -8,6 +8,7 @@ import {
   type SettingsSearchEntry
 } from '@renderer/components/settings-page/types.ts'
 import {
+  BUILTIN_NAVIGATION_PAGES,
   navigationTargetId,
   type NavigationPageTarget,
   type StreamingPageTab
@@ -19,6 +20,8 @@ import {
   type NavigationSession,
   type NavigationOverlay
 } from './navigationSession.ts'
+import { buildSidebarEntries } from './sidebarNavigation.ts'
+import type { PageMotionName } from './motion/policy.ts'
 
 export type SettingsSection = SectionKey
 export type AppearanceWorkspaceTab = 'adjust' | 'studio' | 'workshop'
@@ -41,20 +44,16 @@ export type ThemeStudioDomain =
   | 'advanced'
 type Overlay = NavigationOverlay
 const localHome = navigationHome
-const songlistOrder = [
-  'dashboard',
-  'allSongs',
-  'artists',
-  'albums',
-  'genres',
-  'playlists',
-  'aggregate',
-  'folders',
-  'recent',
-  'analytics'
-]
+const defaultPageOrder = buildSidebarEntries(BUILTIN_NAVIGATION_PAGES).flatMap((entry) =>
+  entry.kind === 'page' ? [entry.page.id] : entry.pages.map((page) => page.id)
+)
 
-export function useAppNavigation(options: { appearancePreviewActive?: () => boolean } = {}) {
+export function useAppNavigation(
+  options: {
+    appearancePreviewActive?: () => boolean
+    pageOrder?: () => string[]
+  } = {}
+) {
   const menuOpen = ref(false)
   const pageTarget = shallowRef<NavigationPageTarget>(localHome())
   const overlay = ref<Overlay | null>(null)
@@ -74,7 +73,7 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
   const appearanceTab = ref<AppearanceWorkspaceTab>('adjust')
   const appearanceNavigationTarget = shallowRef<SettingsNavigationTarget>({ revision: 0 })
   const settingsNavigationTarget = shallowRef<SettingsNavigationTarget>({ revision: 0 })
-  const songlistTransitionName = ref<'page-down' | 'page-up'>('page-down')
+  const songlistTransitionName = ref<PageMotionName>('page-down')
 
   const session = computed<NavigationSession>(() => ({
     version: 1,
@@ -209,7 +208,35 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
     pageTarget.value.kind === 'streaming' ? pageTarget.value.tab : 'home'
   )
 
+  function preparePageMotion(
+    target: NavigationPageTarget,
+    historyDirection?: 'forward' | 'back'
+  ): void {
+    if (historyDirection) {
+      songlistTransitionName.value = `page-${historyDirection}`
+      return
+    }
+    const from = pageTarget.value
+    if (target.kind === 'local' && target.filter) {
+      songlistTransitionName.value = 'page-forward'
+    } else if (
+      from.kind === 'local' &&
+      from.filter &&
+      target.kind === 'local' &&
+      (target.category === from.category ||
+        (from.category === 'aggregate' && target.category === 'playlists'))
+    ) {
+      songlistTransitionName.value = 'page-back'
+    } else {
+      const order = options.pageOrder?.() ?? defaultPageOrder
+      const before = order.indexOf(navigationTargetId(from))
+      const after = order.indexOf(navigationTargetId(target))
+      songlistTransitionName.value =
+        before >= 0 && after >= 0 && after < before ? 'page-up' : 'page-down'
+    }
+  }
   function navigate(target: NavigationPageTarget, options?: { resetHistory?: boolean }): void {
+    preparePageMotion(target)
     if (pageTarget.value.kind === 'local') lastLocal.value = pageTarget.value
     forwardHistory.value = []
     if (options?.resetHistory) {
@@ -231,6 +258,7 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
   function goBackPage(): void {
     const previous = history.value.at(-1)
     if (!previous) return
+    preparePageMotion(previous, 'back')
     history.value = history.value.slice(0, -1)
     forwardHistory.value = [...forwardHistory.value.slice(-49), pageTarget.value]
     pageTarget.value = previous
@@ -241,6 +269,7 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
     if (overlay.value) return false
     const next = forwardHistory.value.at(-1)
     if (!next) return false
+    preparePageMotion(next, 'forward')
     forwardHistory.value = forwardHistory.value.slice(0, -1)
     history.value = [...history.value.slice(-49), pageTarget.value]
     pageTarget.value = next
@@ -251,10 +280,6 @@ export function useAppNavigation(options: { appearancePreviewActive?: () => bool
       navigate({ kind: 'recent', scope: 'device' })
       return
     }
-    const current = songlistOrder.indexOf(activeCategory.value)
-    const next = songlistOrder.indexOf(category)
-    if (current !== -1 && next !== -1)
-      songlistTransitionName.value = next > current ? 'page-down' : 'page-up'
     navigate({ kind: 'local', category, filter })
   }
   function enterStreamingMode(tab: StreamingPageTab = 'home'): void {

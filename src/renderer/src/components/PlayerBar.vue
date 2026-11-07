@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MotionTransition from '@renderer/components/MotionTransition.vue'
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import { executeCoreExtension } from '../extensions/corePlugins.ts'
 import PlaybackModeIcon from '@renderer/components/icons/PlaybackModeIcon.vue'
@@ -383,7 +384,7 @@ function setCoverRef(element: Element | ComponentPublicInstance | null): void {
   coverRef.value = element instanceof HTMLElement ? element : null
 }
 
-/** The now-playing page zooms out of whatever was clicked, so pass its rect. */
+/** Keep the existing click-cover payload for other hosts and custom layouts. */
 function emitOpenPlayingPage(origin: HTMLElement | null): void {
   if (origin) {
     const r = origin.getBoundingClientRect()
@@ -832,6 +833,7 @@ function dismissAllFloatingPanels(): void {
 useEscapeToClose(floatingPanelOpen, dismissAllFloatingPanels)
 
 defineExpose({
+  getArtworkElement: () => coverRef.value,
   openMiniPlayer,
   openQueue: () => {
     dismissFloatingPanels()
@@ -1537,7 +1539,7 @@ onBeforeUnmount(() => {
       @click.prevent.stop
     ></button>
 
-    <Transition name="drawer-up">
+    <MotionTransition name="drawer-up" :pin="false">
       <LibraryQueueDrawer
         v-if="playlistOpen && libraryQueueActive"
         :snapshot="libraryQueueSnapshot"
@@ -1722,7 +1724,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-    </Transition>
+    </MotionTransition>
 
     <QueueSavePlaylistDialog
       v-if="queueSavePlaylistOpen"
@@ -1965,7 +1967,7 @@ onBeforeUnmount(() => {
             class="volume-anchor player-misc-icon"
             @wheel="onVolumeWheel"
           >
-            <Transition name="volume-drawer">
+            <MotionTransition name="volume-drawer" :pin="false">
               <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
                 <div class="volume-drawer-slider-wrap">
                   <input
@@ -1994,7 +1996,7 @@ onBeforeUnmount(() => {
                   {{ HIFI_STATUS_COPY.unityButtonShort }}
                 </button>
               </div>
-            </Transition>
+            </MotionTransition>
             <button
               type="button"
               class="volume-control-button icon-btn"
@@ -2135,7 +2137,7 @@ onBeforeUnmount(() => {
 
     <!-- HiFi 右侧覆盖面板 -->
     <Teleport to="body">
-      <Transition name="hifi-overlay">
+      <MotionTransition name="drawer-right" :pin="false">
         <div
           v-if="moreOpen"
           :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
@@ -2256,7 +2258,7 @@ onBeforeUnmount(() => {
             @lyrics-customizing="lyricsCustomizerActive = $event"
           />
         </div>
-      </Transition>
+      </MotionTransition>
     </Teleport>
   </div>
   <div v-else ref="playerBarShellRef" class="player-bar-shell" v-bind="shellDataAttrs">

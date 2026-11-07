@@ -26,6 +26,26 @@ function memoryStorage(): NavigationSessionStorage {
   }
 }
 
+test('all navigation entrances resolve spatial direction from the rendered sidebar order', () => {
+  const order = ['local-home', 'allSongs', 'albums', 'artists', 'playlists']
+  const navigation = useAppNavigation({ pageOrder: () => order })
+  navigation.selectSidebarPage({ kind: 'local', category: 'artists', filter: null })
+  assert.equal(navigation.songlistTransitionName.value, 'page-down')
+  navigation.selectSidebarPage({ kind: 'local', category: 'albums', filter: null })
+  assert.equal(navigation.songlistTransitionName.value, 'page-up')
+  order.splice(2, 2, 'artists', 'albums')
+  navigation.onSelectView('artists', null)
+  assert.equal(navigation.songlistTransitionName.value, 'page-up')
+  navigation.onSelectView('artists', 'artist:one')
+  assert.equal(navigation.songlistTransitionName.value, 'page-forward')
+  navigation.goBackPage()
+  assert.equal(navigation.songlistTransitionName.value, 'page-back')
+  navigation.goForwardPage()
+  assert.equal(navigation.songlistTransitionName.value, 'page-forward')
+  navigation.onSelectView('artists', null)
+  assert.equal(navigation.songlistTransitionName.value, 'page-back')
+})
+
 test('appearance resumes retained drafts without adding duplicate overlay history', () => {
   const navigation = useAppNavigation()
   navigation.openSettingsPage('library')

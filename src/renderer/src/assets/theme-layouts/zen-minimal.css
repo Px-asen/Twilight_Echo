@@ -48,7 +48,8 @@ html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item:hover .item-icon
   color: var(--te-neutral-900);
 }
 
-html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item.active {
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item.active,
+html[data-te-preset-layout='zen-minimal'] .side-menu .navigation-indicator {
   background: transparent;
   font-weight: 500;
 }

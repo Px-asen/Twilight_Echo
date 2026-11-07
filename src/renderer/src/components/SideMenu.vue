@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
+import { useNavigationIndicator } from '@renderer/app/motion/useNavigationIndicator'
 import {
   computed,
   defineAsyncComponent,
@@ -75,6 +76,9 @@ const visible = computed(() =>
 )
 const entries = computed(() => buildSidebarEntries(visible.value))
 const sideMenu = ref<HTMLElement | null>(null)
+const navigationRoot = ref<HTMLElement | null>(null)
+const navigationIndicator = ref<HTMLElement | null>(null)
+useNavigationIndicator(navigationRoot, navigationIndicator, () => props.activeKey)
 const expanded = ref(new Set<SidebarGroupId>())
 watch(
   visible,
@@ -176,7 +180,13 @@ function setPressOrigin(event: PointerEvent): void {
       <img src="/icon.png" alt="" /><span>Twilight Echo</span>
     </div>
     <nav class="menu-items" aria-label="页面">
-      <div class="menu-nav">
+      <div ref="navigationRoot" class="menu-nav">
+        <span
+          ref="navigationIndicator"
+          class="navigation-indicator"
+          aria-hidden="true"
+          hidden
+        ></span>
         <template v-for="entry in entries" :key="entry.kind === 'page' ? entry.page.id : entry.id">
           <div
             v-if="entry.kind === 'group'"
@@ -418,6 +428,7 @@ function setPressOrigin(event: PointerEvent): void {
 }
 
 .menu-nav {
+  position: relative;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -426,6 +437,31 @@ function setPressOrigin(event: PointerEvent): void {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.navigation-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  background: var(--te-navigation-active);
+  pointer-events: none;
+  z-index: 0;
+}
+.navigation-indicator[hidden] {
+  display: none;
+}
+.menu-nav .menu-item {
+  z-index: 1;
+}
+.menu-nav .menu-item.active {
+  /* The moving surface owns the fill, including under preset layout rules. */
+  background: transparent !important;
+}
+.menu-nav .menu-item.active::before {
+  display: none;
 }
 
 .menu-group {
@@ -564,17 +600,6 @@ function setPressOrigin(event: PointerEvent): void {
   border-radius: 2px;
   background: var(--te-navigation-indicator);
   opacity: 0.8;
-}
-
-:global(html[data-te-motion='full'] .menu-item.active::before) {
-  animation: side-menu-indicator-in var(--te-motion-press) var(--te-ease-spring) both;
-}
-
-@keyframes side-menu-indicator-in {
-  from {
-    opacity: 0;
-    scale: 1 0.45;
-  }
 }
 
 .item-icon {
@@ -761,13 +786,12 @@ function setPressOrigin(event: PointerEvent): void {
   color: var(--te-lg-context-label);
 }
 
-.side-menu-liquid .menu-item:hover {
+.side-menu-liquid .menu-item:not(.active):hover {
   background: color-mix(in srgb, var(--te-lg-context-rim) 28%, transparent);
 }
 
-.side-menu-liquid .menu-item.active {
+.side-menu-liquid .menu-nav .navigation-indicator {
   background: color-mix(in srgb, var(--te-lg-context-rim) 40%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--te-lg-context-rim) 30%, transparent);
 }
 
 .side-menu-liquid .menu-item {

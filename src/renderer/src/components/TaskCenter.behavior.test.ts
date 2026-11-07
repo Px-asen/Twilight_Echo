@@ -69,7 +69,7 @@ test('notification dropdown retains tasks, actions and keyboard focus in light a
     )
     await writeFile(
       join(directory, 'runner.cjs'),
-      `const {app,BrowserWindow}=require('electron');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:960,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));for(const dark of [false,true]) {await win.webContents.executeJavaScript('window.runTaskCenterTests('+dark+')');for(const [width,height] of [[1360,900],[640,600],[360,320]]) {win.setSize(width,height);await win.webContents.executeJavaScript('window.checkTaskViewport('+width+','+height+')');if(process.env.TASK_CENTER_CAPTURE_DIR&&height>320){await win.webContents.executeJavaScript('new Promise(r=>setTimeout(r,80))');const image=await win.webContents.capturePage();require('node:fs').writeFileSync(require('node:path').join(process.env.TASK_CENTER_CAPTURE_DIR,'任务通知-'+(dark?'深色':'浅色')+'-'+width+'.png'),image.toPNG())}}await win.webContents.executeJavaScript('window.disposeTaskFixture()')}console.log('TASK_CENTER_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
+      `const {app,BrowserWindow}=require('electron');app.setPath('userData',require('node:path').join(__dirname,'profile'));app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:960,height:900,webPreferences:{contextIsolation:false,backgroundThrottling:false,offscreen:true}});try{await win.loadFile(process.argv.at(-1));for(const dark of [false,true]) {await win.webContents.executeJavaScript('window.runTaskCenterTests('+dark+')');await win.webContents.executeJavaScript('window.checkTaskMotion()');for(const [width,height] of [[1360,900],[640,600],[360,320]]) {win.setSize(width,height);await win.webContents.executeJavaScript('window.checkTaskViewport('+width+','+height+')');if(process.env.TASK_CENTER_CAPTURE_DIR&&height>320){await win.webContents.executeJavaScript('new Promise(r=>setTimeout(r,80))');const image=await win.webContents.capturePage();require('node:fs').writeFileSync(require('node:path').join(process.env.TASK_CENTER_CAPTURE_DIR,'任务通知-'+(dark?'深色':'浅色')+'-'+width+'.png'),image.toPNG())}}await win.webContents.executeJavaScript('window.disposeTaskFixture()')}console.log('TASK_CENTER_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
     )
     const result = await promisify(execFile)(
       require('electron'),
@@ -123,6 +123,34 @@ window.checkTaskViewport=async(width,height)=>{
   body.scrollTop=0;await tick();
   const live=document.querySelector('.task-record');expect(live.getBoundingClientRect().top<body.getBoundingClientRect().bottom,'live task is not visible after scrolling');
 }
+window.checkTaskMotion=async()=>{
+  const store=useAppNoticeStore(),panel=document.querySelector('.notice-history'),bell=document.querySelector('.notification-btn');
+  const pointer=()=>bell.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+  const toggle=async()=>{pointer();bell.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));await nextTick()};
+  const finish=async()=>{await nextTick();for(const a of document.getAnimations())a.finish();await tick()};
+  const freeze=(element,time)=>{const animations=element.getAnimations();expect(animations.length,'missing notification motion: '+element.className+' / '+element.textContent.slice(0,70)+' / '+time+' / '+JSON.stringify({connected:element.isConnected,style:element.getAttribute('style'),parent:element.parentElement?.getAttribute('style'),input:document.documentElement.dataset.teMotionInput}));for(const a of animations){a.pause();a.currentTime=time}return animations};
+  await toggle();document.documentElement.dataset.teMotion='full';await tick();await toggle();
+  expect(panel.getAnimations().length,'pointer notification panel did not animate');await finish();
+  await toggle();freeze(panel,29);const previous=new DOMMatrix(getComputedStyle(panel).transform).a;freeze(panel,30);const current=new DOMMatrix(getComputedStyle(panel).transform).a,alpha=Number(getComputedStyle(panel).opacity);
+  await toggle();freeze(panel,0);expect(Math.abs(new DOMMatrix(getComputedStyle(panel).transform).a-current)<.0001&&Math.abs(Number(getComputedStyle(panel).opacity)-alpha)<.01,'notification panel reversal snapped');freeze(panel,1);
+  const velocity=new DOMMatrix(getComputedStyle(panel).transform).a-current;
+  expect(velocity<0&&Math.abs(velocity-(current-previous))<Math.abs(current-previous)*.4,'notification panel lost reversal velocity');await finish();
+  await toggle();await finish();
+  for(const notice of store.notices.value)store.dismissNotice(notice.id);await finish();
+  const ids=[];
+  for(const message of ['正在恢复播放设备','曲库更新已完成','下载任务可以继续'])ids.push(store.pushNotice({kind:'error',message,presentation:'toast',sticky:true}));
+  await nextTick();await finish();
+  const cards=[...document.querySelectorAll('.app-notice')],host=document.querySelector('.app-notice-host');
+  const last=cards[2],originalTop=last.getBoundingClientRect().top;
+  store.dismissNotice(ids[0]);await nextTick();expect(cards[0].inert&&cards[0].getAnimations().length,'leaving notice disappeared or stayed interactive');freeze(last,29);const before=last.getBoundingClientRect().top;freeze(last,30);const at=last.getBoundingClientRect().top;
+  expect(at<originalTop&&last.getAnimations().length,'notice stack did not close the gap');store.dismissNotice(ids[1]);await nextTick();freeze(last,0);expect(Math.abs(last.getBoundingClientRect().top-at)<.5,'second dismissal jumped the moving notification');freeze(last,1);
+  const after=last.getBoundingClientRect().top;expect(after<at&&Math.abs((after-at)-(at-before))<Math.abs(at-before)*.4,'notification stack lost incoming velocity');await finish();
+  store.dismissNotice(ids[2]);await nextTick();freeze(last,30);expect(host.clientHeight>=last.offsetHeight,'last toast was clipped by collapsing scroll viewport: '+JSON.stringify({height:host.clientHeight,row:last.offsetHeight,host:host.getAttribute('style'),card:last.getAttribute('style'),box:getComputedStyle(host).boxSizing}));await finish();expect(!document.querySelector('.app-notice')&&!host.style.minHeight,'toast stack retained exit geometry');
+  const quick=store.pushNotice({kind:'error',message:'快速完成的通知',presentation:'toast',sticky:true});await nextTick();const card=document.querySelector('.app-notice');freeze(card,35);const startAlpha=Number(getComputedStyle(card).opacity);store.dismissNotice(quick);await nextTick();freeze(card,0);expect(Math.abs(Number(getComputedStyle(card).opacity)-startAlpha)<.01,'toast dismissed during entry restarted');document.documentElement.dataset.teVisibility='hidden';await tick();expect(!document.querySelector('.app-notice'),'hidden window retained toast exit');delete document.documentElement.dataset.teVisibility;
+  document.documentElement.dataset.teMotion='reduced';await tick();await toggle();freeze(panel,35);expect(getComputedStyle(panel).transform==='none','reduced notification panel scaled');await finish();await toggle();await finish();
+  document.documentElement.dataset.teMotion='full';document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));bell.click();await tick();expect(opened()&&!panel.getAnimations().length,'keyboard notification opening animated');bell.click();await tick();expect(!opened(),'keyboard notification close waited');
+  document.documentElement.dataset.teMotion='off';await tick();bell.click();await tick();
+};
 window.runTaskCenterTests=async dark=>{
   document.documentElement.dataset.theme=dark?'dark':'pureWhite';document.documentElement.dataset.teMotion='off';
   const store=useAppNoticeStore();store.clearNotices();store.setDoNotDisturb(false);store.setCenterOpen(false);scan.value={state:'idle',current:0,total:10,error:''};metadata.value={state:'idle',total:0,completed:0,failed:0,skipped:0};calls.length=0;
