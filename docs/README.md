@@ -9,6 +9,8 @@
 - [音频引擎架构](./twilight-audio-engine-architecture.md)
 - [音频引擎 API](./audio-engine-api.md)
 - [安全加固边界](./security-hardening.md)
+- [桌面进程按需加载](./desktop-runtime-dependencies.md)
+- [Electron 43.8.1 裁剪评估](./electron-kernel-trimming.md)
 
 ## 音频、设备与发布
 
@@ -51,6 +53,7 @@
 - [标签与重复歌曲检测](./duplicate-detection.md)
 - [睡眠定时器与静音](./sleep-timer-and-mute.md)
 - [持久化基准](./persistence-benchmark.md)
+- [桌面内存基准](./memory-benchmark.md)
 - [多协议网络音乐源架构与接口](./network-music-sources.md)
 - [网络音乐源真机验证清单](./network-music-sources-verification.md)
 

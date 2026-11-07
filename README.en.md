@@ -131,7 +131,7 @@ Dynamic cover-art ambient lighting blends seamlessly with bilingual synchronized
   <tr>
     <td valign="top">
       <h3>🎧 Audiophile HiFi Engine & DSP Workstation</h3>
-      <p>Native audio engine supporting WASAPI Shared & Exclusive modes, ASIO drivers, precision resampling, and DSD playback. Equipped with a <strong>32-band Parametric Equalizer (Twilight EQ)</strong>, OPRA / AutoEQ headphone compensation, modular DSP rack, loudness-matched A/B snapshots, and 2000-point waveform analysis.</p>
+      <p>Native audio engine with WASAPI Shared & Exclusive output, PCM sample-rate conversion (PCM SRC), and DSD playback. ASIO and experimental PCM-to-DSD64/128/256 output still need real-device validation. Equipped with a <strong>32-band Parametric Equalizer (Twilight EQ)</strong>, OPRA / AutoEQ headphone compensation, modular DSP rack, loudness-matched A/B snapshots, and 2000-point waveform analysis.</p>
     </td>
     <td valign="top">
       <h3>🎚️ Twilight AutoMix & Afterglow Mode</h3>
@@ -161,6 +161,8 @@ Dynamic cover-art ambient lighting blends seamlessly with bilingual synchronized
 | **Windows 10 / 11** | `*-setup.exe` | Run the installer and follow the setup wizard to choose your installation directory. |
 | **macOS** | `*-mac-arm64.dmg` (Apple Silicon)<br />`*-mac-x64.dmg` (Intel) | Drag into Applications. On first launch, right-click the app and select **Open**, or run:<br />`xattr -dr com.apple.quarantine /Applications/TwilightEcho.app` |
 | **Linux (x64)** | `*.AppImage` / `*.deb` / `*.rpm` / `*.tar.gz` | Make `.AppImage` executable (`chmod +x`) to run directly, or install `.deb` / `.rpm` via your package manager. |
+
+> macOS (CoreAudio) and Linux (ALSA) backends and packages are available, but have not received the same release and real-device validation as Windows.
 
 > [!TIP]
 > Every release asset includes a matching `.sha256` checksum file. When you launch Twilight Echo for the first time, the onboarding wizard will guide you through importing your music folders, choosing a theme, and configuring your audio output in under a minute.

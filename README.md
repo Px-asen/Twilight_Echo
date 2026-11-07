@@ -131,7 +131,7 @@
   <tr>
     <td valign="top">
       <h3>🎧 专业 HiFi 音频引擎与调音台</h3>
-      <p>支持 WASAPI 共享与独占输出、ASIO 驱动、高精度重采样与 DSD 播放。内置最高 <strong>32 频段参数均衡器（Twilight EQ）</strong>、OPRA / AutoEQ 耳机频响数据库、模块化 DSP 效果链、等响度 A/B 快照对比与 2000 点高精度分析波形。</p>
+      <p>支持 WASAPI 共享与独占输出、PCM SRC 与 DSD 播放。ASIO 及实验性 PCM→DSD64/128/256 尚未完成真实设备验证。内置最高 <strong>32 频段参数均衡器（Twilight EQ）</strong>、OPRA / AutoEQ 耳机频响数据库、模块化 DSP 效果链、等响度 A/B 快照对比与 2000 点高精度分析波形。</p>
     </td>
     <td valign="top">
       <h3>🎚️ Twilight AutoMix 与余晖模式</h3>
@@ -161,6 +161,8 @@
 | **Windows 10 / 11** | `*-setup.exe` | 下载后直接运行安装向导，选择安装目录即可完成安装与桌面快捷方式创建。 |
 | **macOS** | `*-mac-arm64.dmg` (Apple 芯片)<br />`*-mac-x64.dmg` (Intel 芯片) | 拖入 Applications 即可。首次打开如遇系统提示，可右键应用选择「打开」，或在终端运行 `xattr -dr com.apple.quarantine /Applications/TwilightEcho.app`。 |
 | **Linux (x64)** | `*.AppImage` / `*.deb` / `*.rpm` / `*.tar.gz` | `.AppImage` 赋予执行权限后可直接运行；Debian/Ubuntu 推荐使用 `.deb`，Fedora/RHEL 推荐使用 `.rpm`。 |
+
+> macOS（CoreAudio）与 Linux（ALSA）已有实现和安装包，但尚未经过与 Windows 同等级别的发布和真实设备验证。
 
 > [!TIP]
 > 每个发布版本均附带同名的 `.sha256` 校验文件。首次启动 Twilight Echo 时，跟随引导向导即可在 1 分钟内完成音乐目录导入、外观风格与输出设备配置。

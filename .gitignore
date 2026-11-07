@@ -63,6 +63,8 @@ output/
 !audio-engine/output/asio/windows/
 
 # Caches / typecheck incremental
+__pycache__/
+*.py[cod]
 .cache/
 .vite/
 .turbo/
