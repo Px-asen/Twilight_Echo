@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { CoreSupervisor, type CoreSupervisorOptions } from '../coreProcess/supervisor.ts'
-import { audioServiceEnv } from '../audioEngineServiceClient.ts'
+import { audioServiceEnv } from '../audio/audioServiceEnvironment.ts'
 import { createNodeServiceChannel, NodeSupervisedProcess } from './nodeHost.ts'
 
 export function createNodeCoreSupervisor(options: {

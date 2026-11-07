@@ -316,6 +316,7 @@ export class CoreMetadataService {
       Promise.allSettled([...this.requests])
     ])
     this.candidates.clear()
+    this.queue.dispose()
   }
 }
 

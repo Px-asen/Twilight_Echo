@@ -3,12 +3,10 @@
 // fallback policy so those security decisions stay explicit and testable.
 
 import { connect as netConnect } from 'net'
-import {
-  ProxyAgent,
-  WebSocket as UndiciWebSocket,
-  fetch as undiciFetch,
-  type RequestInit as UndiciRequestInit
-} from 'undici'
+import { createRequire } from 'node:module'
+import type { RequestInit as UndiciRequestInit } from 'undici'
+
+const nodeRequire = createRequire(import.meta.url)
 
 const COMMON_PROXY_PORTS = [7897, 7890, 7891, 1080, 10809, 8080, 2080, 7898]
 const DEFAULT_MAX_REDIRECTS = 5
@@ -473,6 +471,12 @@ export function installProxyFetch(
   allowDirectFallback = false,
   noProxy = ''
 ): InstalledProxyFetch {
+  // Keep this public factory synchronous; no transport is loaded during proxy detection.
+  const {
+    ProxyAgent,
+    WebSocket: UndiciWebSocket,
+    fetch: undiciFetch
+  } = nodeRequire('undici') as typeof import('undici')
   const dispatcher = new ProxyAgent({
     uri: normalizeProxyUrl(proxyUrl),
     connectTimeout: PROXY_CONNECT_TIMEOUT_MS,
@@ -526,12 +530,20 @@ export function installProxyFetch(
   }
 }
 
-let initialized = false
+let initialization: Promise<void> | null = null
 
-export async function initProxy(): Promise<void> {
-  if (initialized) return
-  initialized = true
+export function initProxy(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason)
+  if (!initialization) {
+    initialization = initializeProxy(signal).catch((error) => {
+      initialization = null
+      throw error
+    })
+  }
+  return initialization
+}
 
+async function initializeProxy(signal?: AbortSignal): Promise<void> {
   const mode = parseProxyMode(process.env.TWILIGHT_PLUGIN_PROXY_MODE)
   if (mode === 'off') {
     console.log('[proxy] Plugin proxy is disabled by application settings')
@@ -539,6 +551,7 @@ export async function initProxy(): Promise<void> {
   }
 
   const proxy = await detectProxy(mode)
+  signal?.throwIfAborted()
   if (!proxy) return
 
   const allowDirectFallback = parseExplicitBoolean(

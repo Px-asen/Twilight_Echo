@@ -88,6 +88,8 @@ export class LibraryMetadataEnrichmentQueue {
   private readonly entries = new Map<string, QueueEntry>()
   private readonly activeEntries = new Map<string, QueueEntry>()
   private readonly failures = new Map<string, FailureBackoff>()
+  private failureCleanupTimer: ReturnType<typeof setTimeout> | null = null
+  private nextFailureCleanupAt = Infinity
   private readonly waiters = new Map<number, Array<() => void>>()
   private readonly activeAbortControllers = new Map<number, Set<AbortController>>()
   private generation = 0
@@ -114,6 +116,7 @@ export class LibraryMetadataEnrichmentQueue {
     tracks: Track[],
     cachePolicy: Partial<MetadataEnrichmentPolicy> | undefined = undefined
   ): Promise<void> {
+    if (this.now() >= this.nextFailureCleanupAt) this.pruneFailures()
     const policy = normalizeMetadataEnrichmentPolicy(cachePolicy)
     if (!policy.cover && !policy.lyrics && !policy.metadata) return Promise.resolve()
 
@@ -204,6 +207,40 @@ export class LibraryMetadataEnrichmentQueue {
     await Promise.all([...this.workers])
   }
 
+  /** The owning service calls this after cancellation has joined its workers. */
+  dispose(): void {
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.failureCleanupTimer = null
+    this.nextFailureCleanupAt = Infinity
+    this.failures.clear()
+  }
+
+  private scheduleFailureCleanup(at: number): void {
+    if (this.failureCleanupTimer !== null && at >= this.nextFailureCleanupAt) return
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.nextFailureCleanupAt = at
+    this.failureCleanupTimer = setTimeout(() => this.pruneFailures(), Math.max(1, at - this.now()))
+    // Node timers must not extend an owner's lifetime; the portable Core also runs in browsers.
+    ;(this.failureCleanupTimer as unknown as { unref?: () => void }).unref?.()
+  }
+
+  private pruneFailures(): void {
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.failureCleanupTimer = null
+    this.nextFailureCleanupAt = Infinity
+    const now = this.now()
+    let next = Infinity
+    for (const [key, failure] of this.failures) {
+      const expires = failure.retryAt + this.retryMaxMs
+      if (expires <= now && !this.entries.has(key) && !this.activeEntries.has(key)) {
+        this.failures.delete(key)
+      } else {
+        next = Math.min(next, expires <= now ? now + this.retryMaxMs : expires)
+      }
+    }
+    if (next !== Infinity) this.scheduleFailureCleanup(next)
+  }
+
   private startNewRun(): void {
     this.generation += 1
     this.status = createIdleStatus()
@@ -272,7 +309,9 @@ export class LibraryMetadataEnrichmentQueue {
       const previous = this.failures.get(entry.queryKey)
       const attempts = (previous?.attempts ?? 0) + 1
       const retryMs = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** (attempts - 1))
-      this.failures.set(entry.queryKey, { attempts, retryAt: this.now() + retryMs })
+      const retryAt = this.now() + retryMs
+      this.failures.set(entry.queryKey, { attempts, retryAt })
+      this.scheduleFailureCleanup(retryAt + this.retryMaxMs)
       this.status.failed += entry.tracks.size
       this.status.error = acceptingUpdate
         ? '元数据保存失败，请稍后重试'

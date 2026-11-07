@@ -1,4 +1,4 @@
-import { openNcmOfficialLogin } from '../ncm/api.ts'
+import { openNcmOfficialLogin } from '../ncm/officialLogin.ts'
 import { openQqMusicOfficialLogin } from '../plugins/qqmusicOfficialLogin.ts'
 import {
   validateThemeProfileAssets,
@@ -39,7 +39,7 @@ import { release } from 'node:os'
 import { CoreSupervisor, type CoreSupervisorOptions, type SupervisedProcess } from './supervisor.ts'
 import type { ServiceMessagePort } from '../services/servicePort.ts'
 import { observeUtilityProcess } from '../diagnostics/utilityObservation.ts'
-import { audioServiceEnv } from '../audioEngineServiceClient.ts'
+import { audioServiceEnv } from '../audio/audioServiceEnvironment.ts'
 import {
   resolveAuthorizedAudioSource,
   resolveAuthorizedLibraryDirectory,

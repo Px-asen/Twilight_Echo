@@ -12,14 +12,16 @@ import {
   loadNativeBindingWithDiagnostics
 } from './audio/nativeBinding.ts'
 import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
-import { prepareDownloadedMetadata } from '../core/downloads/downloadMetadata.ts'
 import type { DownloadMetadataRequest } from '../shared/coreDownloadMetadata.ts'
-import { runLibraryTagWorker } from '../core/library/tagWorker.ts'
 import type { LibraryTagWorkerRequest } from '../shared/coreLibraryMaintenance.ts'
-import { contentHash } from './library/duplicateDetection.ts'
 import type { CastPcmSegmentRequest } from '../shared/castPcmSegment.ts'
 
-const servicePort = createServicePort<AudioAnalysisWorkerRequest, AudioAnalysisWorkerMessage>()
+let closed = false
+const servicePort = createServicePort<AudioAnalysisWorkerRequest, AudioAnalysisWorkerMessage>({
+  onClose: () => {
+    closed = true
+  }
+})
 initializeUtilityDiagnostics('twilight-audio-analysis')
 const nativeLoad = loadNativeBindingWithDiagnostics()
 const native = nativeLoad.binding
@@ -62,13 +64,18 @@ servicePort.on('message', (message) => {
 })
 
 async function handleRequest(message: AudioAnalysisWorkerRequest): Promise<void> {
+  if (closed) return
   try {
     if (message.analysis === 'content-hash') {
+      const { contentHash } = await import('./library/duplicateDetection.ts')
+      if (closed) return
       const value = await contentHash(message.source)
       servicePort.postMessage({ kind: 'response', requestId: message.requestId, ok: true, value })
       return
     }
     if (message.analysis === 'library-tags') {
+      const { runLibraryTagWorker } = await import('../core/library/tagWorker.ts')
+      if (closed) return
       const value = await runLibraryTagWorker(
         message.source,
         JSON.parse(message.optionsJson) as LibraryTagWorkerRequest
@@ -77,6 +84,8 @@ async function handleRequest(message: AudioAnalysisWorkerRequest): Promise<void>
       return
     }
     if (message.analysis === 'download-metadata') {
+      const { prepareDownloadedMetadata } = await import('../core/downloads/downloadMetadata.ts')
+      if (closed) return
       const request = JSON.parse(message.optionsJson) as DownloadMetadataRequest
       const value = await prepareDownloadedMetadata({
         partPath: message.source,
@@ -106,8 +115,13 @@ async function handleRequest(message: AudioAnalysisWorkerRequest): Promise<void>
     if (message.analysis === 'cast-pcm-segment') {
       if (!native.RenderPcmSegment) throw new Error('Native CUE Cast renderer unavailable')
       const request = JSON.parse(message.optionsJson) as CastPcmSegmentRequest
-      native.RenderPcmSegment(message.source, request.outputPath, request.startSeconds,
-        request.endSeconds, request.virtualPregapSeconds)
+      native.RenderPcmSegment(
+        message.source,
+        request.outputPath,
+        request.startSeconds,
+        request.endSeconds,
+        request.virtualPregapSeconds
+      )
       servicePort.postMessage({ kind: 'response', requestId: message.requestId, ok: true })
       return
     }
@@ -133,6 +147,7 @@ async function handleRequest(message: AudioAnalysisWorkerRequest): Promise<void>
       { error, analysis: message.analysis },
       'error'
     )
+    if (closed) return
     servicePort.postMessage({
       kind: 'response',
       requestId: message.requestId,
