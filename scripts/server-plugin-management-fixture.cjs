@@ -5,7 +5,7 @@ const { readFile, writeFile, access } = require('node:fs/promises')
 const { join } = require('node:path')
 const { ZipFile } = require('yazl')
 
-async function checkPluginManagement({ secure, token, epoch, cli, rpc, temporary, root, remoteEnabled }) {
+async function checkPluginManagement({ secure, token, epoch, cli, rpc, temporary, remoteEnabled }) {
   const samples = {}
   async function call(name, payload = {}, command = false, expected = true) {
     const response = await secure('/api/core/rpc', { requestId: randomUUID(), epoch,

@@ -1,4 +1,5 @@
 import '../../adapters-node/index.ts'
+import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -171,7 +172,7 @@ export async function migratePersonalBackup(options: {
     await unlock?.()
     if (!options.apply || !completed) {
       const parent = options.apply ? dirname(target) : resolve(tmpdir())
-      if (dirname(resolve(root)) !== parent) throw new Error('迁移临时目录不在预期位置，未清理')
+      assert.equal(dirname(resolve(root)), parent, '迁移临时目录不在预期位置，未清理')
       await rm(root, { recursive: true, force: true })
     }
   }

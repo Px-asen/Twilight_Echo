@@ -24,6 +24,8 @@ export default defineConfig(
       '**/output/**',
       '**/outputs/**',
       'work/**',
+      'tmp/**',
+      'temp/**',
       '**/coverage/**',
       '**/.qoder/**',
       '**/audio-engine/build/**',
@@ -185,6 +187,8 @@ export default defineConfig(
     files: [
       'src/renderer/src/utils/autoHideScrollbars.ts',
       'src/renderer/src/utils/animationFrameFallback.ts',
+      'src/renderer/src/utils/appleMusicFluidRenderer.ts',
+      'src/renderer/src/utils/fluidCoverMastering.ts',
       'src/renderer/src/utils/liquidGlassDisplacement.ts',
       'src/renderer/src/utils/liquidGlassSpecular.ts',
       'src/renderer/src/utils/lyricViewportController.ts',
