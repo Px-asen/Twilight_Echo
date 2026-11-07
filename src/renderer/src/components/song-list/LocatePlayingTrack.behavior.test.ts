@@ -109,7 +109,7 @@ app.whenReady().then(async()=>{
  win.webContents.on('console-message',(_event,_level,message)=>console.error(message));
  try {
   await win.loadFile(path.join(directory,'index.html'));
-  console.log(await win.webContents.executeJavaScript('window.runLocateChecks()'));
+  console.log(await win.webContents.executeJavaScript('window.locateReady.then(() => window.runLocateChecks())'));
   for(const theme of ['pureWhite','dark'])for(const width of [1280,520]){
    win.setContentSize(width,900);
    await win.webContents.executeJavaScript('window.locateAppearance('+JSON.stringify(theme)+')');

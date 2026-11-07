@@ -66,7 +66,7 @@ class Timers {
 }
 async function fixture(
   t: test.TestContext,
-  extra: Partial<Pick<CoreStatisticsOptions, 'artwork' | 'recoverArtwork'>> = {}
+  extra: Partial<Pick<CoreStatisticsOptions, 'artwork' | 'recoverArtwork' | 'resolveLocalTracks'>> = {}
 ) {
   const db = new CoreStateDatabase(':memory:')
   db.begin('upgrade', { version: 1, counts: emptyCoreStateCounts() })
@@ -130,6 +130,20 @@ async function fixture(
     }
   }
 }
+
+test('ranking projection keeps missing local history but removes its playback target', async t => {
+  const batches: string[][] = []
+  const f = await fixture(t, { resolveLocalTracks: async ids => { batches.push(ids); return [] } })
+  f.observe(local, 'playing')
+  f.timers.advance(5_000)
+  f.observe({ ...provider, title: 'Remote recording' }, 'playing')
+  f.timers.advance(5_000)
+  const page = await f.service.projectPage({ sort: 'recent', limit: 10 })
+  assert.equal(page.total, 2)
+  assert.equal(page.items.find(row => row.sourceIds.some(source => source.source === 'local'))?.track, null)
+  assert.equal(page.items.find(row => row.track?.source === 'provider')?.track?.id, provider.id)
+  assert.deepEqual(batches, [[local.id]])
+})
 
 test('Focus history projection distinguishes equal raw provider IDs and keeps original raw sorting keys', async t => {
   const f = await fixture(t)

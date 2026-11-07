@@ -25,6 +25,13 @@ export function useNavigationIndicator(
     const container = root.value,
       element = indicator.value
     if (!container || !element) return
+    if (document.hidden || container.ownerDocument.hidden ||
+        container.ownerDocument.documentElement.dataset.teVisibility === 'hidden') {
+      cancelAnimationFrame(frame)
+      frame = 0
+      spring.finish()
+      return
+    }
     const active = [...container.querySelectorAll<HTMLElement>('.menu-item.active')].find(
       (item) => item.getClientRects().length && getComputedStyle(item).display !== 'none'
     )
@@ -65,6 +72,9 @@ export function useNavigationIndicator(
   }
   function schedule(): void {
     cancelAnimationFrame(frame)
+    frame = 0
+    if (document.hidden || root.value?.ownerDocument.hidden ||
+        root.value?.ownerDocument.documentElement.dataset.teVisibility === 'hidden') return
     frame = requestAnimationFrame(() => {
       frame = 0
       update(false)

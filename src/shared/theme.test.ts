@@ -364,7 +364,7 @@ test('icon bindings reference declared image assets and never accept paths, font
 })
 
 test('every controlled icon slot has a user label and a matching workshop image selector', () => {
-  assert.equal(THEME_ICON_SLOTS.length, 61)
+  assert.equal(THEME_ICON_SLOTS.length, 62)
   assert.deepEqual(Object.keys(THEME_ICON_SLOT_LABELS).sort(), [...THEME_ICON_SLOTS].sort())
   const controls = THEME_ICON_SLOTS.map((slot, index) => ({
     id: `icon-${index}`,

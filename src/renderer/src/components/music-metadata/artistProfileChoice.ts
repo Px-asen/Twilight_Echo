@@ -24,11 +24,19 @@ function read(): Record<string, ArtistProfileChoice> {
   }
 }
 // This is a display choice, never an identity confirmation or a copied override.
-export const artistProfileChoices = shallowRef(read())
+export const artistProfileChoices = shallowRef<Record<string, ArtistProfileChoice>>({})
+let loaded = false
+function ensureLoaded(): void {
+  if (loaded) return
+  artistProfileChoices.value = read()
+  loaded = true
+}
 export function artistProfileChoice(name: string): ArtistProfileChoice | null {
+  ensureLoaded()
   return Object.hasOwn(artistProfileChoices.value, name) ? artistProfileChoices.value[name] : null
 }
 export function saveArtistProfileChoice(name: string, choice: ArtistProfileChoice | null): void {
+  ensureLoaded()
   const entries = Object.entries(artistProfileChoices.value).filter(([n]) => n !== name)
   if (choice) entries.push([name, choice])
   // Publish only after the durable write succeeds; quota errors remain actionable.

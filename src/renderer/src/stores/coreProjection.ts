@@ -49,7 +49,7 @@ export class CoreProjection {
       this.unsubscribe = this.connection.subscribe((message) => this.receive(message))
     return this.refresh()
   }
-  private publish(state: CoreSnapshot): void {
+  private publish(state: CoreSnapshot, synchronized = this.synchronized): void {
     if (
       state.protocolVersion !== CORE_PROTOCOL_VERSION ||
       !state.epoch ||
@@ -67,6 +67,7 @@ export class CoreProjection {
         this.retiredEpochs.delete(this.retiredEpochs.values().next().value!)
     }
     this.current = freeze(structuredClone(state))
+    this.synchronized = synchronized
     this.changed(this.current)
   }
   private receive(message: CoreClientMessage): void {
@@ -106,11 +107,11 @@ export class CoreProjection {
       .then((state) => {
         if (this.disposed || generation !== this.generation)
           throw new Error('Core projection detached')
-        this.publish(state)
-        this.synchronized = true
+        this.publish(state, true)
         return state
       })
       .catch((error) => {
+        this.synchronized = false
         this.queued = []
         this.failed(error instanceof Error ? error : new Error(String(error)))
         throw error
@@ -141,7 +142,7 @@ export class CoreProjection {
     >
   }
   private async request(operation: CoreRequestEnvelope, signal?: AbortSignal, requestId = this.newId()): Promise<unknown> {
-    if (!this.current || this.disposed || !this.synchronized || this.refreshing)
+    if (!this.current || this.disposed || !this.synchronized)
       throw new Error('Core state is not attached')
     const epoch = this.current.epoch
     let value: unknown

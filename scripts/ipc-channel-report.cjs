@@ -40,6 +40,7 @@ function walk(dir) {
       if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
       out.push(...walk(full))
     } else if (/\.(?:ts|vue|cjs|mjs)$/.test(entry.name)) {
+      if (/\.(?:test|fixture)\./.test(entry.name)) continue
       out.push(full)
     }
   }

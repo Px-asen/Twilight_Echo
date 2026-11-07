@@ -10,6 +10,17 @@ import {
 } from './versionCatalog.ts'
 import { emptyMusicVersions, editMusicVersions } from '@renderer/utils/musicVersions.ts'
 import type { LibraryDatabaseApi, LibraryTrackRecord } from '../../../../shared/libraryDatabase.ts'
+import type { Track as ViewTrack } from '@renderer/types/music'
+
+test('projected provider albums work without a private file path', () => {
+  const projected: ViewTrack = {
+    id: 'ncm:1', source: 'ncm', title: 'Song', artist: 'Artist', album: 'Album', duration: 180,
+    cover: null, lyrics: null
+  }
+  const [album] = buildVersionCatalog([projected], 'albums')
+  assert.equal(album.key, JSON.stringify(['album', 'ncm', 'name:artist\u001falbum']))
+  assert.equal(album.tracks[0], projected)
+})
 
 function track(id: string, album: string, disc = 1, index = 1): Track {
   return {

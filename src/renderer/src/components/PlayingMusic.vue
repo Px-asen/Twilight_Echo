@@ -58,6 +58,7 @@ const {
   themeCoverUrl,
   lyricsLoadState,
   isPlaying,
+  currentTime,
   playbackClockSnapshot,
   estimatePlaybackClockPosition
 } = playbackStore
@@ -642,6 +643,9 @@ watch(
   },
   { immediate: true }
 )
+
+// Use the existing presentation clock between Core samples for line transitions.
+watch(currentTime, time => syncActiveLyricIndex(time))
 
 watch(
   activeLyricIndex,

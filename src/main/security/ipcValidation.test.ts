@@ -200,7 +200,7 @@ test('data IPC applies path and storage limits before touching local files', () 
   assert.match(source, /reportPersistentDataFailure\('播放会话'/)
   assert.match(source, /reportPersistentDataFailure\('歌单'/)
   */
-  assert.match(source, /normalizeCoverDataUrl\(handle\)/)
+  assert.match(source, /normalizeCoverDataUrl\(handle, size\)/)
   assert.match(
     source,
     /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'lyrics audio file path'\)\s*\)/

@@ -19,10 +19,14 @@ import {
   type ComponentMaterialMode
 } from '../../../shared/appearanceLayers'
 import type { NavigationPageDefinition } from '../app/navigationPages'
-import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS } from '../../../shared/appSettings.ts'
-import { useSettingsStore } from '../stores/useSettingsStore'
+import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS, type AppSettings } from '../../../shared/appSettings.ts'
+import { DEFAULT_LYRICS_APPEARANCE } from '../../../shared/lyricsAppearance.ts'
 
-const { settings, updateSettings } = useSettingsStore()
+const settings = computed(() => props.playerSettings ?? {
+  nowPlayingFluid: DEFAULT_NOW_PLAYING_FLUID_SETTINGS,
+  lyricsAppearance: DEFAULT_LYRICS_APPEARANCE
+})
+const updateSettings = (patch: Partial<AppSettings>) => emit('player-settings', patch)
 const fluidSpeed = computed(
   () => settings.value.nowPlayingFluid?.speed ?? DEFAULT_NOW_PLAYING_FLUID_SETTINGS.speed
 )
@@ -33,21 +37,21 @@ const fluidAudioReactive = computed(
 )
 function updateFluidSpeed(value: number): void {
   if (props.busy || !Number.isFinite(value)) return
-  void updateSettings({
+  updateSettings({
     nowPlayingFluid: {
       speed: value,
       audioReactive: fluidAudioReactive.value
     }
-  }).catch(() => undefined)
+  })
 }
 function updateFluidReactive(enabled: boolean): void {
   if (props.busy) return
-  void updateSettings({
+  updateSettings({
     nowPlayingFluid: {
       speed: fluidSpeed.value,
       audioReactive: enabled
     }
-  }).catch(() => undefined)
+  })
 }
 function updatePlayerLayoutField(
   key:
@@ -61,24 +65,25 @@ function updatePlayerLayoutField(
   value: number
 ): void {
   if (props.busy || !Number.isFinite(value)) return
-  void updateSettings({
+  updateSettings({
     lyricsAppearance: {
       ...settings.value.lyricsAppearance,
       [key]: value
     }
-  }).catch(() => undefined)
+  })
 }
 function updatePlayerLyricsAlign(value: string): void {
   if (props.busy || !['left', 'center', 'right'].includes(value)) return
-  void updateSettings({
+  updateSettings({
     lyricsAppearance: {
       ...settings.value.lyricsAppearance,
       align: value as 'left' | 'center' | 'right'
     }
-  }).catch(() => undefined)
+  })
 }
 
 const props = defineProps<{
+  playerSettings?: Pick<AppSettings, 'lyricsAppearance' | 'nowPlayingFluid'>
   draft: AppearanceDraft
   tone: AppearanceTone
   glassTone?: AppearanceTone
@@ -93,6 +98,7 @@ const props = defineProps<{
   pages?: NavigationPageDefinition[]
 }>()
 const emit = defineEmits<{
+  'player-settings': [patch: Partial<AppSettings>]
   'update:draft': [draft: AppearanceDraft]
   'update:playerTarget': [target: 'stage' | 'cover' | 'lyrics']
   image: []

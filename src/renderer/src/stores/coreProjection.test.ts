@@ -151,6 +151,24 @@ test('duplicates are ignored, sequence gaps re-read once, and retired epoch even
   assert.deepEqual(f.requests, [])
 })
 
+test('synchronous consumers can query the newly attached snapshot during publication', async () => {
+  const requests: CoreRequestEnvelope[] = []
+  let snapshot = state()
+  let read: Promise<unknown> | undefined
+  const projection = new CoreProjection({
+    connect: async () => snapshot,
+    subscribe: () => () => {},
+    request: async request => { requests.push(request); return {} }
+  }, () => { read = projection.query('statistics.overview', {}) })
+  await projection.attach()
+  await read
+  snapshot = state('restarted')
+  await projection.refresh()
+  await read
+  assert.deepEqual(requests.map(request => request.epoch), ['first', 'restarted'])
+  projection.dispose()
+})
+
 test('failed reconnect reports its error and blocks all commands until an explicit successful attachment', async () => {
   const f = fixture()
   await f.projection.attach()

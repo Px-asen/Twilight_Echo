@@ -1997,7 +1997,7 @@ const QUICK_GENRE_SUGGESTIONS: readonly string[] = [
 ]
 
 function readStoredCustomGenres(): string[] {
-  if (typeof window === 'undefined') return []
+  if (props.previewTracks || typeof window === 'undefined') return []
   try {
     const raw = window.localStorage.getItem(CUSTOM_GENRES_STORAGE_KEY)
     if (!raw) return []
@@ -2012,7 +2012,7 @@ function readStoredCustomGenres(): string[] {
 }
 
 function writeStoredCustomGenres(names: readonly string[]): void {
-  if (typeof window === 'undefined') return
+  if (props.previewTracks || typeof window === 'undefined') return
   try {
     window.localStorage.setItem(CUSTOM_GENRES_STORAGE_KEY, JSON.stringify(names))
   } catch {
@@ -3187,7 +3187,7 @@ useLocatePlayingTrack({
         (!!currentTrack.value && getLogicalTrackSource(currentTrack.value) === 'local'))
   ),
   rowHeight,
-  database: { enabled: databaseTableEnabled, locate: locateCurrentTrack }
+  database: { enabled: databaseTableEnabled, query: databaseQuery, read: libraryApi.queryTracks, locate: locateCurrentTrack }
 })
 
 function collectionLetterDisabled(letter: string): boolean {
@@ -3304,7 +3304,9 @@ function finishViewSwitchAndRestoreScroll(): void {
   restoreScrollAndMeasure()
 }
 
-function locateCurrentTrack(): void {
+let locateViewport: import('../utils/scrollToTopButton').ScrollViewport | undefined
+function locateCurrentTrack(_id?: string, viewport?: import('../utils/scrollToTopButton').ScrollViewport): void {
+  locateViewport = viewport
   if (databaseTableEnabled.value && currentTrack.value) {
     databasePages.locate(currentTrack.value.id)
     return
@@ -3317,7 +3319,7 @@ watch(
   () => databasePageState.value.page,
   (page) => {
     if (!page || page.anchorIndex === undefined || page.anchorIndex < 0) return
-    void nextTick(() => scrollToTrack(page.anchorIndex!))
+    void nextTick(() => { scrollToTrack(page.anchorIndex!, locateViewport); locateViewport = undefined })
   },
   { flush: 'post' }
 )

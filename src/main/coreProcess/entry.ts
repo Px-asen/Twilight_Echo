@@ -542,6 +542,12 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const statistics = new CoreStatisticsService({
     repository: new CoreStatisticsRepository({ database, newId: randomUUID }),
     history,
+    resolveLocalTracks: async (ids, signal) => {
+      signal?.throwIfAborted()
+      const page = await database!.getTracksByIds(ids)
+      signal?.throwIfAborted()
+      return page.tracks.map(libraryTrack)
+    },
     now: Date.now,
     timers: {
       setTimeout: (callback, delay) => setTimeout(callback, delay),

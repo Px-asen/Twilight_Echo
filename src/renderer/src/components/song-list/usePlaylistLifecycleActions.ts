@@ -187,8 +187,9 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
       if (request.kind === 'rename') {
         const changed = await renamePlaylist(playlist.id, value)
         if (changed) {
-          options.repairMessage.value = '歌单已重命名'
-          options.selectPlaylist(playlist.name)
+          options.repairMessage.value = playlistPersistenceNotice.value?.message ?? '歌单已重命名'
+          const renamed = playlists.value.find((item) => item.id === playlist.id)
+          if (renamed) options.selectPlaylist(renamed.name)
         }
       } else if (request.kind === 'copy') {
         const copyId = await copyPlaylist(playlist.id, value)

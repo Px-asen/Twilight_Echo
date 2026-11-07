@@ -93,10 +93,15 @@ test('real Vue and Electron DOM drive aggregate playlist grouping, filtering and
 
 function playerStubSource(): string {
   return `import { ref } from 'vue'
+import { useCoreLibraryApi } from '@renderer/stores/library/coreLibraryApi.ts'
 
 export function usePlayerStore() {
   return {
     currentTrack: ref(null),
+    playLibraryQuery: async (query, id) => {
+      const page = await useCoreLibraryApi().queryTracks(query)
+      window.__aggregateFixture.playCalls.push({ id: id ?? page.tracks[0]?.id, queue: page.tracks.map(track => track.id) })
+    },
     playTrack: (track, queue) => {
       window.__aggregateFixture.playCalls.push({
         id: track.id,
@@ -122,6 +127,7 @@ function runtimeEntrySource(): string {
   return `import { createApp, h, nextTick, ref } from 'vue'
 import AggregatePlaylistPage from ${JSON.stringify(pagePath)}
 import { useMusicStore } from ${JSON.stringify(storePath)}
+import { installMusicCoreFixture } from '@renderer/components/musicCore.fixture.mjs'
 import { goBack } from '@renderer/app/useBackStack.ts'
 
 function expect(condition, message) {
@@ -130,8 +136,13 @@ function expect(condition, message) {
 
 const tick = async () => {
   await nextTick()
+  await new Promise(resolve => requestAnimationFrame(resolve))
   await new Promise((resolve) => setTimeout(resolve, 0))
   await nextTick()
+  for (let i = 0; i < 100 && document.querySelector('.aggregate-notice[role="status"]'); i++) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await nextTick()
+  }
 }
 
 const all = (selector) => Array.from(document.querySelectorAll(selector))
@@ -142,14 +153,15 @@ const click = async (element, label) => {
   await tick()
 }
 
-const music = useMusicStore()
+let music
 
 window.runAggregateRuntime = async () => {
+  await installMusicCoreFixture(window.__aggregateFixture)
+  music = useMusicStore()
   await music.loadPlaylists()
   // 本地音源只有在本地库里真的有这个文件时才算可用（resolvePlaylistTrack 会把
   // 找不到的本地快照丢掉），所以夹具必须把本地库也装上。
-  music.tracks.value = window.__aggregateFixture.localTracks
-  music.refreshLibraryIndex()
+
 
   const mount = document.createElement('div')
   document.body.appendChild(mount)
@@ -334,7 +346,7 @@ function electronRunnerSource(): string {
 const path = require('node:path')
 const target = process.argv.at(-1)
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: false } })
+  const window = new BrowserWindow({ show: false, width: 1100, height: 800, webPreferences: { contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, offscreen: true } })
   window.webContents.on('console-message', (_event, _level, message, line, sourceId) => console.error('RENDERER', sourceId + ':' + line, message))
   try {
     await window.loadFile(path.resolve(target))

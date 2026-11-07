@@ -506,6 +506,8 @@ import PlayingMusic from ${JSON.stringify(componentPath)}
 import LyricsManagerPanel from ${JSON.stringify(panelPath)}
 import { usePlayerStore } from ${JSON.stringify(playerStorePath)}
 import { useSettingsStore } from ${JSON.stringify(settingsStorePath)}
+import { installPlayingMusicCoreFixture } from '@renderer/components/playingMusicCore.fixture.mjs'
+import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 
 function expect(condition, message) {
   if (!condition) throw new Error(message)
@@ -535,17 +537,11 @@ const input = (element, value) => {
 window.runPlayingMusicLyricsRuntime = async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
+  await installPlayingMusicCoreFixture()
+  await useCoreConnection().attach()
+  const host = window.__coreFixture
   const player = usePlayerStore()
   const settingsStore = useSettingsStore()
-  expect(
-    'compatibility store created a second playback factory'
-  )
-  expect(
-    'compatibility store retained a second playback clock'
-  )
-  expect(
-    'compatibility store retained a second current track'
-  )
   const track = {
     id: 'fixture-provider:no-lyrics', title: 'No lyrics yet', artist: 'Twilight', album: 'Echo',
     filePath: '', fileName: '', duration: 180, size: 0, cover: null,
@@ -553,8 +549,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     lyricsSource: null, translatedLyricsSource: null, romanizedLyricsSource: null,
     source: 'fixture-provider'
   }
-  player.currentTrack.value = structuredClone(track)
-  player.queue.value = [structuredClone(track)]
+  host.select(track)
 
   createApp({
     render: () => h('div', [
@@ -563,8 +558,8 @@ window.runPlayingMusicLyricsRuntime = async () => {
     ])
   }).use(pinia).mount('#app')
   await tick()
-  const beforeCurrent = JSON.stringify(player.currentTrack.value)
-  const beforeQueue = JSON.stringify(player.queue.value)
+  const beforeCurrent = JSON.stringify(host.snapshot().track)
+  const beforeQueue = JSON.stringify(host.snapshot().queue)
 
   expect(document.querySelector('.layout--single'), 'provider track without lyrics should use the single-column layout')
   expect(!document.querySelector('.lyric-manage-button'), 'now-playing must not surface a Lyrics entry button')
@@ -590,7 +585,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   window.__lyricsFixture.rejectNextSave = true
   button('原文').click()
   await waitFor(
-    () => document.querySelector('.lyric-manager-error')?.textContent.includes('fixture CAS conflict'),
+    () => document.querySelector('.lyric-manager-error')?.textContent.includes('Lyrics changed'),
     'CAS conflict was not surfaced in the actual manager UI'
   )
   expect(button('原文').getAttribute('aria-pressed') === 'true', 'CAS authority was not restored in the UI')
@@ -677,9 +672,9 @@ window.runPlayingMusicLyricsRuntime = async () => {
   )
   expect(document.querySelector('.lyric-text')?.textContent.includes('Imported original'), 'manual original was not rendered')
   expect(document.querySelector('.lyric-translation')?.textContent.includes('Imported translation'), 'manual translation was not rendered')
-  expect(JSON.stringify(player.currentTrack.value) === beforeCurrent, 'manual UI projection mutated currentTrack')
+  expect(JSON.stringify(host.snapshot().track) === beforeCurrent, 'manual UI projection mutated Core track identity')
   expect(
-    JSON.stringify(player.queue.value) === beforeQueue,
+    JSON.stringify(host.snapshot().queue) === beforeQueue,
     'manual UI projection mutated queue; before=' + beforeQueue + '; after=' + JSON.stringify(player.queue.value)
   )
 
@@ -707,8 +702,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
       '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div><p begin="00:01.00" end="00:03.00"><span begin="00:01.00" end="00:02.00">AMLL original</span><span ttm:role="x-translation">AMLL translation</span><span ttm:role="x-bg" begin="00:02.00" end="00:03.00"><span begin="00:02.00" end="00:03.00">I&amp;apos;ll see you again</span><span ttm:role="x-translation">你我必将重逢</span></span></p></div></body></tt>',
     lyricsSource: 'amll'
   }
-  player.currentTrack.value = structuredClone(amllTrack)
-  player.queue.value = [structuredClone(amllTrack)]
+  host.select(amllTrack)
   await tick()
   expect(
     !buttons().some((item) => item.textContent.trim() === '右对齐'),
@@ -726,7 +720,6 @@ window.runPlayingMusicLyricsRuntime = async () => {
       Number.parseFloat(getComputedStyle(defaultVoiceText).fontSize),
     'AMLL auxiliary text was not smaller than its original lyric'
   )
-  player.currentTime.value = 1.5
   player.seek(1.5)
   await tick()
   const supportingVoice = document.querySelector('.lyric-voice--supporting')
@@ -735,13 +728,11 @@ window.runPlayingMusicLyricsRuntime = async () => {
     !supportingVoice.classList.contains('lyric-voice--supporting-visible'),
     'a later background voice appeared before its own start time'
   )
-  player.currentTime.value = 2.2
   player.seek(2.2)
   await waitFor(
     () => document.querySelector('.lyric-voice--supporting-visible') != null,
     'background voice did not fade in at its own start time'
   )
-  player.currentTime.value = 3.1
   player.seek(3.1)
   await waitFor(
     () => !document.querySelector('.lyric-voice--supporting-visible'),
@@ -780,7 +771,6 @@ window.runPlayingMusicLyricsRuntime = async () => {
     getComputedStyle(document.querySelector('.lyric-lane--center')).alignItems === 'flex-start',
     'left alignment did not move the centered compatibility lane to a stable left edge'
   )
-  player.currentTime.value = 1.5
   player.seek(1.5)
   await waitFor(
     () => document.querySelector('.lyric-row.active .lyric-row-content') != null,
@@ -805,7 +795,6 @@ window.runPlayingMusicLyricsRuntime = async () => {
     activeAlignedContent && getComputedStyle(activeAlignedContent).transformOrigin.startsWith('0px'),
     'the highlighted left-aligned row still scaled around its centre'
   )
-  player.currentTime.value = 3.1
   player.seek(3.1)
   await tick()
 
@@ -949,18 +938,14 @@ window.runPlayingMusicLyricsRuntime = async () => {
     lyrics: '[00:00.00]Start line\\n[00:01.00]Moving line\\n[00:03.00]Seek line',
     lyricsSource: 'embedded'
   }
-  player.currentTrack.value = structuredClone(playbackTrack)
-  player.queue.value = [structuredClone(playbackTrack)]
-  player.queueIndex.value = 0
-  player.currentTime.value = 0
-  player.duration.value = 180
-  player.isPlaying.value = true
+  host.select(playbackTrack)
+  host.playing(true)
   player.seek(0)
   await tick()
-  player.isLoading.value = true
-  window.__audioFixture.emitProperty('time-pos', 0.25)
+  host.loading(true)
+  host.sample(0.25)
   const stalledNextSamples = window.setInterval(
-    () => window.__audioFixture.emitProperty('time-pos', 0.25),
+    () => host.sample(0.25),
     100
   )
   await new Promise((resolve) => setTimeout(resolve, 1400))
@@ -994,9 +979,9 @@ window.runPlayingMusicLyricsRuntime = async () => {
     document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'),
     'a progress seek forward left the new target lyric dimmed'
   )
-  window.__audioFixture.emitProperty('time-pos', 3)
+  host.sample(3)
   const stalledSeekSamples = window.setInterval(
-    () => window.__audioFixture.emitProperty('time-pos', 3),
+    () => host.sample(3),
     100
   )
   await new Promise((resolve) => setTimeout(resolve, 900))
@@ -1004,7 +989,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   await tick()
   expect(player.currentTime.value > 3.4, 'lyric seek froze after repeated confirmation samples')
   expect(document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'), 'clicked lyric did not stay active while time advanced')
-  player.isLoading.value = false
+  host.loading(false)
 
   const singleLineAppearance = JSON.parse(
     JSON.stringify(settingsStore.settings.value.lyricsAppearance)
@@ -1021,10 +1006,8 @@ window.runPlayingMusicLyricsRuntime = async () => {
     title: 'Rapid lyrics',
     lyrics: '[00:20.00]Start line\\n[00:20.10]Brief line\\n[00:20.42]Following line'
   }
-  player.currentTrack.value = structuredClone(rapidLyricsTrack)
-  player.queue.value = [structuredClone(rapidLyricsTrack)]
-  player.currentTime.value = 20
-  player.isPlaying.value = true
+  host.select(rapidLyricsTrack)
+  host.playing(true)
   player.seek(20)
   await tick()
   const observedActiveLines = new Set()
@@ -1067,21 +1050,17 @@ window.runPlayingMusicLyricsRuntime = async () => {
     id: 'fixture-provider:alternate-scroll-track',
     title: 'Alternate scroll track'
   }
-  player.currentTrack.value = structuredClone(automaticScrollTrack)
-  player.queue.value = [structuredClone(automaticScrollTrack)]
-  player.currentTime.value = 20
+  host.select(automaticScrollTrack)
   player.seek(20)
   await tick()
   expect(
     document.querySelectorAll('.lyric-row').length === 3,
     'automatic lyric scrolling did not retain the full lyric timeline'
   )
-  player.currentTrack.value = structuredClone(alternateScrollTrack)
-  player.queue.value = [structuredClone(alternateScrollTrack)]
+  host.select(alternateScrollTrack)
   player.seek(20)
   await tick()
-  player.currentTrack.value = structuredClone(automaticScrollTrack)
-  player.queue.value = [structuredClone(automaticScrollTrack)]
+  host.select(automaticScrollTrack)
   player.seek(20)
   await tick()
   expect(
@@ -1139,9 +1118,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const rowTop = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-top'))
   const rowScale = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-scale'))
 
-  player.currentTrack.value = structuredClone(yrcTrackA)
-  player.queue.value = [structuredClone(yrcTrackA)]
-  player.currentTime.value = 5
+  host.select(yrcTrackA)
   player.seek(5)
   await tick()
   installStageGeometry()
@@ -1207,16 +1184,12 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'the retired depth variable is still being written'
   )
 
-  player.currentTrack.value = structuredClone(yrcTrackB)
-  player.queue.value = [structuredClone(yrcTrackB)]
-  player.currentTime.value = 0
+  host.select(yrcTrackB)
   player.seek(0)
   await tick()
   installStageGeometry()
 
-  player.currentTrack.value = structuredClone(yrcTrackA)
-  player.queue.value = [structuredClone(yrcTrackA)]
-  player.currentTime.value = 5
+  host.select(yrcTrackA)
   player.seek(5)
   await tick()
   installStageGeometry()
@@ -1244,9 +1217,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     ].join('\\n'),
     lyricsSource: 'embedded'
   }
-  player.currentTrack.value = structuredClone(alternatingTrack)
-  player.queue.value = [structuredClone(alternatingTrack)]
-  player.currentTime.value = 1.5
+  host.select(alternatingTrack)
   player.seek(1.5)
   await tick()
   installStageGeometry()
@@ -1303,9 +1274,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     translatedLyrics: '[00:01.00]组合翻译',
     lyricsSource: 'embedded'
   }
-  player.currentTrack.value = structuredClone(duetTrack)
-  player.queue.value = [structuredClone(duetTrack)]
-  player.currentTime.value = 1.5
+  host.select(duetTrack)
   player.seek(1.5)
   await tick()
   installStageGeometry()
@@ -1392,13 +1361,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     }
     throw new Error(message)
   }
-  let samples = 0
-  window.api.audioEngine.getVisualizationData = async () => {
-    samples++
-    return { tapStatus: 'synthetic-fallback' }
-  }
-  player.audioEngineReady.value = true
-  player.isPlaying.value = true
+  host.playing(true)
   const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden')
   Object.defineProperty(document, 'hidden', { configurable: true, value: false })
   for (const mode of ['full', 'reduced', 'off']) {
@@ -1411,15 +1374,15 @@ window.runPlayingMusicLyricsRuntime = async () => {
     expect(document.querySelector('.cover-frame') === coverFrame, 'view switch remounted the cover')
     expect([...document.querySelectorAll('.lyric-row-content')].every(node => !node.__vueParentComponent.props.singing), 'memoized hidden lyric retained singing work')
     const iframe = document.querySelector('.visualizer-iframe')
-    const samplesBeforeReady = samples
+    const samplesBeforeReady = host.samples
     window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow, data: { kind: 'ready' } }))
     document.dispatchEvent(new Event('visibilitychange'))
-    await waitMotion(() => samples > samplesBeforeReady, 'active visualizer never polled')
+    await waitMotion(() => host.samples > samplesBeforeReady, 'active visualizer never polled')
     toggleView()
     await tick()
-    const stoppedAt = samples
+    const stoppedAt = host.samples
     await new Promise(resolve => setTimeout(resolve, 70))
-    expect(samples === stoppedAt, 'outgoing visualizer continued polling')
+    expect(host.samples === stoppedAt, 'outgoing visualizer continued polling')
     await waitMotion(() => !visualizer() && getComputedStyle(coverView).opacity === '1' && getComputedStyle(coverView).display !== 'none', mode + ' cover did not return')
     expect(document.querySelector('.cover-frame') === coverFrame, 'returning remounted artwork')
     expect(!coverFrame.getAnimations().length, 'returning replayed artwork entrance')
@@ -1438,7 +1401,6 @@ window.runPlayingMusicLyricsRuntime = async () => {
   let hiddenMeasurements = 0
   Object.defineProperty(hiddenStage, 'clientHeight', { configurable: true, get() { hiddenMeasurements++; return stageHeight } })
   const hiddenTops = [...document.querySelectorAll('.lyric-row')].map(row => row.style.getPropertyValue('--lyric-line-top'))
-  player.currentTime.value = 4.2
   player.seek(4.2)
   window.dispatchEvent(new Event('resize'))
   document.dispatchEvent(new Event('visibilitychange'))
@@ -1478,7 +1440,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     document.documentElement.dataset.teMotion = 'off'
     document.documentElement.dataset.tePlayerLayout = 'standard'
     settingsStore.settings.value.lyricsAppearance = { ...originalAppearance, ...appearance }
-    player.currentTrack.value = {
+    host.select({
       ...duetTrack,
       id: 'fixture-provider:responsive-layout',
       title: 'When the Bird Meets the Sky',
@@ -1486,7 +1448,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
       album: '夜想録',
       lyrics: hasLyrics ? duetTrack.lyrics : '',
       translatedLyrics: hasLyrics ? duetTrack.translatedLyrics : null
-    }
+    })
     await tick()
     window.dispatchEvent(new Event('resize'))
   }

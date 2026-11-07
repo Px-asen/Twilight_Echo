@@ -596,13 +596,22 @@ export class CorePlaylistService {
       this.fence(revision)
       const playlist = this.committed.find((playlist) => playlist.id === id)
       if (!playlist) throw new Error('歌单已不存在')
-      const result = await this.controller.importPlaylistDocumentAsync(
-        playlist.name,
-        fileName,
-        contents
-      )
-      await this.flush()
-      return { revision: this.revision, result }
+      if (this.options.loadJsonLibrary) {
+        this.tracks.value = (await this.options.loadJsonLibrary()).tracks
+        for (const track of this.tracks.value) this.trackById.set(track.id, track)
+      }
+      try {
+        const result = await this.controller.importPlaylistDocumentAsync(
+          playlist.name,
+          fileName,
+          contents
+        )
+        await this.flush()
+        return { revision: this.revision, result }
+      } finally {
+        this.tracks.value = []
+        this.trackById.clear()
+      }
     })
   }
   searchLocal(query: string, limit: number, offset: number) {

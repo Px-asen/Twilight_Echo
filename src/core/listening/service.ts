@@ -72,6 +72,7 @@ export interface CoreStatisticsOptions {
   }
   history?: ReturnType<typeof createLibraryListeningProjection>
   artwork?(track: TrackData, signal: AbortSignal): Promise<{ cover: string | null }>
+  resolveLocalTracks?(ids: string[], signal?: AbortSignal): Promise<TrackData[]>
   recoverArtwork?: {
     canRecover(track: TrackData): boolean
     recover(
@@ -289,6 +290,15 @@ export class CoreStatisticsService {
   async projectPage(query: CoreStatisticsQuery, signal?: AbortSignal): Promise<CoreStatisticsPage> {
     signal?.throwIfAborted()
     const { revision, total, offset, slice } = this.selectPageEntries(query)
+    const localIds = slice.flatMap(stat => stat.track && (!stat.track.source || stat.track.source === 'local') ? [stat.track.id] : [])
+    const localTracks = this.options.resolveLocalTracks && localIds.length
+      ? new Map((await this.options.resolveLocalTracks([...new Set(localIds)], signal)).map(track => [track.id, track]))
+      : null
+    const projectedTrack = (track: TrackData | undefined) => {
+      if (!track) return null
+      const current = localTracks && (!track.source || track.source === 'local') ? localTracks.get(track.id) : track
+      return current ? projectCoreTrack(current) : null
+    }
     this.enqueueArtworkRecovery(slice)
     const items = await Promise.all(
       slice.map(async (stat) => ({
@@ -307,7 +317,7 @@ export class CoreStatisticsService {
         lastPlayed: stat.lastPlayed,
         title: stat.title,
         artist: stat.artist,
-        track: stat.track ? projectCoreTrack(stat.track) : null
+        track: projectedTrack(stat.track)
       }))
     )
     signal?.throwIfAborted()

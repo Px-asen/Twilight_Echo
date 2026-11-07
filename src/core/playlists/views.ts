@@ -79,7 +79,13 @@ export class CorePlaylistViews {
           const library = await this.options.loadJsonLibrary()
           if (query.contentRevision !== undefined && query.contentRevision !== library.revision)
             throw Object.assign(new Error('曲库已变化，请重新读取'), { code: 'STALE_REVISION' })
-          page = this.jsonPage(playlist, query, library)
+          page = this.jsonPage(playlist, {
+            ...query,
+            search: query.search ?? query.query?.search,
+            offset: query.offset ?? query.query?.offset,
+            limit: query.limit ?? query.query?.limit,
+            anchorId: query.anchorId ?? query.query?.anchorId
+          }, library)
         } else {
           await owner.setPlaylist(playlist, {
             revision,
@@ -120,7 +126,7 @@ export class CorePlaylistViews {
         }
         fence()
         return {
-          viewId: owner.state.value.id ?? '',
+          viewId: owner.state.value.id ?? `json:${query.id}`,
           revision: query.revision,
           versionsRevision: query.versionsRevision,
           page
@@ -194,6 +200,7 @@ export class CorePlaylistViews {
         const sources = aggregate.collectAggregateSources(tracks, playlist.hiddenSources)
         return {
           tracks: [],
+          entryIds: [],
           total: sources.length,
           offset: query.offset ?? 0,
           revision: library.revision,

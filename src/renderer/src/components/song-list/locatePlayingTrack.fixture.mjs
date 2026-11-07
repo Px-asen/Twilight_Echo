@@ -3,12 +3,13 @@ import { createPinia } from 'pinia'
 import SongList from '@renderer/components/SongList.vue'
 import AggregatePlaylistPage from '@renderer/components/aggregate-playlist/AggregatePlaylistPage.vue'
 import { useMusicStore } from '@renderer/stores/useMusicStore.ts'
-import { recordListeningForTest } from '@renderer/stores/useListeningStatsStore.ts'
+import { installMusicCoreFixture } from '@renderer/components/musicCore.fixture.mjs'
 import { installScrollToTopButton } from '@renderer/utils/scrollToTopButton.ts'
 import '@renderer/assets/base.css'
 import '@renderer/assets/primeicons.css'
 import '@renderer/assets/icon-fonts.ts'
 
+window.locateReady = (async () => {
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const expect = (value, message) => {
   if (!value) throw new Error(message)
@@ -33,7 +34,7 @@ async function waitFor(predicate, message) {
         rows: document.querySelectorAll('.track-row').length,
         playing: playingRow()?.getBoundingClientRect().toJSON(),
         errors,
-        folders: music.folders.value.map((f) => f.path)
+        folders: [{path:'C:/Music'}].map((f) => f.path)
       })
   )
 }
@@ -61,7 +62,6 @@ window.locatePlayer = {
     throw new Error('locating must not change the queue')
   }
 }
-const music = useMusicStore()
 const library = Array.from({ length: 1000 }, (_, i) => ({
   id: 'track-' + i,
   title: 'Song ' + String(i).padStart(4, '0'),
@@ -79,9 +79,7 @@ const library = Array.from({ length: 1000 }, (_, i) => ({
   format: i % 2 ? 'dsf' : 'flac',
   sampleRate: i % 2 ? 192000 : 48000
 }))
-music.tracks.value = library
-music.refreshLibraryIndex()
-music.playlists.value = [
+const initialPlaylists = [
   {
     id: 'playlist',
     name: 'Playlist',
@@ -90,6 +88,10 @@ music.playlists.value = [
   },
   { id: 'other', name: 'Other', trackIds: [library[0].id], createdAt: '' }
 ]
+const fixture = { revision: 1, authoritative: initialPlaylists, localTracks: library }
+const host = await installMusicCoreFixture(fixture)
+const music = useMusicStore()
+await music.loadPlaylists()
 window.locatePlayer.currentTrack.value = library[700]
 window.locatePlayer.queue = [library[700], library[701]]
 
@@ -129,6 +131,10 @@ async function switchView(nextCategory, nextFilter = null) {
   filter.value = nextFilter
   await nextTick()
   await pause(600)
+  if (nextCategory === 'artists' && nextFilter) {
+    document.querySelector('#artist-tab-songs')?.click()
+    await settle()
+  }
   await scroll(0)
   expect(errors.length === 0, errors.join(';'))
 }
@@ -279,7 +285,7 @@ window.runLocateChecks = async () => {
     ['playlists', 'playlist:Playlist'],
     ['albums', 'album:id:album'],
     ['artists', 'artist:Artist'],
-    ['folders', 'folder:' + music.folders.value[0].path]
+    ['folders', 'folder:' + [{path:'C:/Music'}][0].path]
   ]) {
     await switchView(nextCategory, nextFilter)
     await locateAndCheck()
@@ -306,8 +312,8 @@ window.runLocateChecks = async () => {
     source: 'ncm',
     ncmSongId: index + 1
   }))
-  music.playlists.value = [
-    ...music.playlists.value,
+  await host.replacePlaylists([
+    ...fixture.authoritative,
     {
       id: 'online-snapshots',
       name: 'Online snapshots',
@@ -315,12 +321,12 @@ window.runLocateChecks = async () => {
       trackSnapshots: Object.fromEntries(snapshots.map((track) => [track.id, track])),
       createdAt: ''
     }
-  ]
+  ])
+  await music.loadPlaylists()
   window.locatePlayer.currentTrack.value = snapshots[80]
   await switchView('playlists', 'playlist:Online snapshots')
   await locateAndCheck()
-  const timestamp = Date.now()
-  snapshots.forEach((track, index) => recordListeningForTest(track, 10, timestamp + index))
+  host.setRecent([...snapshots].reverse())
   window.locatePlayer.currentTrack.value = snapshots[10]
   await switchView('recent')
   await locateAndCheck()
@@ -363,7 +369,7 @@ window.runAggregateLocateChecks = async () => {
     source: 'ncm',
     ncmSongId: index + 1
   }))
-  music.playlists.value = [
+  await host.replacePlaylists([
     {
       id: 'aggregate-locator',
       name: 'Aggregate locator',
@@ -372,7 +378,8 @@ window.runAggregateLocateChecks = async () => {
       trackSnapshots: Object.fromEntries(online.map((track) => [track.id, track])),
       createdAt: ''
     }
-  ]
+  ])
+  await music.loadPlaylists()
   window.locatePlayer.currentTrack.value = online[400]
   const stop = installScrollToTopButton()
   const aggregateApp = createApp({
@@ -447,3 +454,5 @@ window.runAggregateLocateChecks = async () => {
   stop()
   return 'AGGREGATE_LOCATE_OK'
 }
+
+})()

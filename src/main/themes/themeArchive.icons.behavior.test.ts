@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { THEME_ICON_SLOTS } from '../../shared/theme.ts'
@@ -36,6 +37,7 @@ ${probe}`,
       bundle: true,
       platform: 'node',
       format: 'cjs',
+      define: { 'import.meta.url': JSON.stringify(pathToFileURL(resolve('src/main/themes/themeArchive.ts')).href) },
       external: ['electron'],
       outfile: join(directory, 'runner.cjs')
     })

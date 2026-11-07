@@ -25,11 +25,11 @@ test('development and packaged startup use the same explicit identity as SMTC be
   const source = await readFile(new URL('../app/lifecycle.ts', import.meta.url), 'utf8')
   assert.match(
     source,
-    /if \(process\.platform === 'win32'\) app\.setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/
+    /if \(process\.platform === 'win32'\) app\.setAppUserModelId\?\.\(WINDOWS_APP_USER_MODEL_ID\)/
   )
   assert.doesNotMatch(source, /electronApp\.setAppUserModelId/)
   assert.ok(
-    source.indexOf('app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)') <
+    source.indexOf('app.setAppUserModelId?.(WINDOWS_APP_USER_MODEL_ID)') <
       source.indexOf('app.whenReady()')
   )
 })

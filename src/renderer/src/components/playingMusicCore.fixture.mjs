@@ -13,7 +13,8 @@ export async function installPlayingMusicCoreFixture() {
   let ready = false
   let snapshot = {
     protocolVersion: 1, epoch: 'lyrics-fixture', sequence: 0, phase: 'ready', track: null, queue: null,
-    playback: { state: 'paused', position: 0, duration: 180, playbackRate: 1, volume: 1, playMode: 'sequential', nativePlaybackActive: true },
+    playback: { state: 'paused', position: 0, duration: 180, playbackRate: 1, volume: 1, playMode: 'sequential', nativePlaybackActive: true,
+      codec: '', bitrate: 0, sourceSampleRate: 44100, sourceChannels: 2, sourceBitDepth: 16 },
     loading: false, migrationRequired: false, error: null, isStreamBuffering: false,
     ...Object.fromEntries(['presentationRevision','pluginsRevision','libraryRevision','abLoop','mute','modelPack','cloudTransfers','inbox','libraryLoudness','loudness','scan','statisticsRevision','playlistsRevision','versionsRevision','audioRevision','settingsRevision','sleepTimer','bookmarksRevision','workspaceRevision','workspaceContentRevision','streams','cast','network','downloads','personalized','heart'].map((key) => [key, null])),
     lyricsRevision: fixture.revision, lyricsContentRevision: 0
@@ -42,7 +43,7 @@ export async function installPlayingMusicCoreFixture() {
       }
     },
     now: Date.now, changed: publish, failed: (error) => { throw error },
-    timers: { setTimeout, clearTimeout },
+    timers: { setTimeout: (callback, delay) => setTimeout(callback, delay), clearTimeout: handle => clearTimeout(handle) },
     sources: { getAppSettings: () => ({ value: { onlineLyricsFallback: false } }), loadLocalLyrics: async () => null,
       resolveProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }), loadAmlTtml: async () => null, loadOnlineLyrics: async () => null },
     search: async (track) => ({ query: { title: track.title, artist: track.artist }, candidates: [], best: null }),

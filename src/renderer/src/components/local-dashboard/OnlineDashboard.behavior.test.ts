@@ -35,6 +35,7 @@ test('online home preserves source/playback behavior and refresh geometry; disco
       ],
       resolve: {
         alias: [
+          { find: /^.*\/coreConnection(?:\.ts)?$/, replacement: join(directory, 'fixtures.ts') },
           {
             find: /^@renderer\/(stores\/use(?:Provider|Settings|Player|Music|ListeningStats|Theme)Store|utils\/(unifiedRecentTracks|logicalTrackModel)|composables\/useLibraryRecentTracks\.ts)$/,
             replacement: join(directory, 'fixtures.ts')
@@ -116,10 +117,12 @@ app.whenReady().then(async()=>{
  }catch(error){console.error(error.stack);app.exit(1)}
 })`
 
-const fixtures = `import {computed,ref,shallowRef} from 'vue'
+const fixtures = `import {computed,ref,shallowRef,watch} from 'vue'
 export const song=(id,title='晚风经过你的窗')=>({id,source:id.split(':')[0],title,artist:'测试艺术家',album:'暮色回响',duration:180,cover:null,lyrics:null,filePath:'',fileName:'',size:0})
 export const source=id=>({id,name:id==='ncm'?'网易云音乐':'独立音乐',capabilities:['playbackUrl','login','library'],supportedMethods:['daily','fetchRecommendPlaylists','fetchDiscoveryPlaylists','fetchPlaylistTracks','searchSongs','fetchUserLibrary'],ui:{icon:'pi pi-cloud',authType:'qr',streamingSections:[{id:'daily',title:'每日推荐',icon:'pi pi-music',method:'daily'}]}})
 export const providers=ref([source('ncm'),source('other')]),tracks=shallowRef([]),recent=shallowRef([]),authenticated=ref(false),settings=ref({streamingActiveProvider:'ncm'}),currentTrack=shallowRef(null),isPlaying=ref(false),preview=ref(false),layout=ref('default')
+const revision=ref(1)
+watch(tracks,()=>revision.value++,{flush:'sync'})
 export const played=[],requests=[]
 export let pending=null,failPlaylist=false,homePending=null
 export const setPending=value=>{pending=value},setFailure=value=>{failPlaylist=value},setHomePending=value=>{homePending=value}
@@ -127,6 +130,7 @@ const playlists=()=>['适合一个人散步的旋律','在城市里，听见晚�
 export const useProviderStore=()=>({providers,getProvider:id=>providers.value.find(item=>item.id===id),checkLogin:async()=>({loggedIn:authenticated.value,profile:null}),callProvider:async(id,method)=>{requests.push([id,method]);if(homePending)await homePending;return method==='daily'?Array.from({length:8},(_,index)=>song(id+':'+index,['晚风经过你的窗','日落之前','沿着海岸线','写给明天的歌','缓慢降落','再听一遍'][index%6])):method==='fetchDiscoveryPlaylists'?{items:playlists()}:playlists()},fetchPlaylistTracks:async(id,playlistId)=>{if(failPlaylist)throw new Error('歌单加载失败');if(pending)return pending;return [song(id+':playlist:'+playlistId),song(id+':playlist:next')]}})
 export const useSettingsStore=()=>({settings,updateSettings:async patch=>{settings.value={...settings.value,...patch}}})
 export const useMusicStore=()=>({tracks})
+export const useCoreConnection=()=>({state:computed(()=>({phase:'ready',epoch:'online-home',libraryRevision:revision.value})),query:async name=>{if(name==='library.metadata')return {revision:revision.value,trackCount:tracks.value.length,folders:[],exclusions:[]};throw Error('Unexpected home query '+name)}})
 export const usePlayerStore=()=>({currentTrack,isPlaying,playTrack:(track,queue)=>{played.push({track,queue});currentTrack.value=track;isPlaying.value=true},togglePlay:()=>{isPlaying.value=!isPlaying.value}})
 export const getRecentTracks=()=>recent.value
 export const resolveUnifiedRecentTracks=()=>recent.value
@@ -168,7 +172,7 @@ window.runOnlineHomeTests=async()=>{
  expect(document.querySelector('.online-playlist .pi-spinner.pi-spin'),'Pending playlist indicator is static')
  const count=state.played.length;const select=document.querySelector('select');select.value='other';select.dispatchEvent(new Event('change',{bubbles:true}));await pause()
  release([state.song('ncm:stale')]);state.setPending(null);await pause();expect(state.played.length===count,'Old provider request started playback');expect(state.settings.value.streamingActiveProvider==='other','Source preference not persisted')
- state.tracks.value=[state.song('local:import')];await pause();expect(document.querySelector('[data-local-home]')&&!document.querySelector('.online-home'),'Import did not restore local dashboard')
+ state.tracks.value=[state.song('local:import')];for(let i=0;i<30&&!document.querySelector('[data-local-home]');i++)await pause();expect(document.querySelector('[data-local-home]')&&!document.querySelector('.online-home'),'Import did not restore local dashboard')
  state.tracks.value=[];state.preview.value=true;await pause();expect(document.querySelector('[data-local-home]'),'Theme preview uses online home')
  state.preview.value=false;state.providers.value=[];state.currentTrack.value=null;await pause();click('接入在线音源');expect(events.at(-1)==='plugins','No-provider setup failed');click('电台与播客');expect(events.at(-1)==='radio','Radio navigation failed')
 }

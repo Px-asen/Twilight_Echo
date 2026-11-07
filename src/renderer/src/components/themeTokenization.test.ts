@@ -8,6 +8,7 @@ import {
 } from '../../../shared/theme.ts'
 
 const playingMusic = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+const fluidBackdrop = readFileSync(new URL('./PlayingFluidBackdrop.vue', import.meta.url), 'utf8')
 // Lyric layer colours are resolved in a shared helper so the page and the
 // customizer preview cannot drift; it is as much a playback surface as the page.
 const lyricStyleVars = readFileSync(new URL('../utils/lyricsStyleVars.ts', import.meta.url), 'utf8')
@@ -119,7 +120,7 @@ const pluginThemeRuntime = readFileSync(
   new URL('../extensions/pluginThemeRuntime.ts', import.meta.url),
   'utf8'
 )
-const playerStore = readFileSync(new URL('../stores/usePlayerStore.ts', import.meta.url), 'utf8')
+const playerStore = readFileSync(new URL('../stores/player/corePlayerStore.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
 const themesApi = readFileSync(
   new URL('../../../preload/domains/themesApi.ts', import.meta.url),
@@ -141,7 +142,7 @@ const settingsBackup = readFileSync(
 )
 const pluginIpc = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
 const pluginThemeContribution = readFileSync(
-  new URL('../../../main/plugins/themeContribution.ts', import.meta.url),
+  new URL('../../../core/plugins/themeContribution.ts', import.meta.url),
   'utf8'
 )
 const pluginApi = readFileSync(
@@ -183,6 +184,7 @@ test('every registered playback token is wired into a real playback or DSP surfa
   ).map((definition) => definition.cssVariable)
   const playbackSurfaces = [
     playingMusic,
+    fluidBackdrop,
     lyricStyleVars,
     playerBar,
     playbackQueueDrawer,
@@ -252,7 +254,7 @@ test('phase one semantic tokens are wired into shell, settings, navigation, and 
 })
 
 test('phase two runtime reuses cached cover media and supports native and timed tone scheduling', () => {
-  assert.match(playerStore, /extractDominantColor\(displayCover\)/)
+  assert.match(playerStore, /\(options\.extractColor \?\? extractDominantColor\)\(url\)/)
   assert.match(playerStore, /themeCoverIdentity/)
   assert.match(app, /setAdaptiveMedia\(\{ identity, accentColor, coverUrl \}\)/)
   assert.match(themeStore, /createThemeAccentTokenOverrides/)
@@ -401,7 +403,7 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(equalizerSurfaces, /data-te-equalizer-panel='glass'/)
   assert.match(equalizerSurfaces, /data-te-equalizer-spectrum='bars'/)
   assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
-  assert.match(dspRack, /data-te-equalizer-button='solid'/)
+  assert.match(equalizerSurfaces, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
 })
 
@@ -427,8 +429,8 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
 })
 
-test('phase six plugin shell layouts are API v3, host-owned, and compatibility-reporting', () => {
-  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 3/)
+test('phase six plugin shell layouts retain API v3 compatibility on the API v4 host', () => {
+  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 4/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV2/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV3/)
   assert.match(pluginThemeTemplate, /"apiVersion": 3/)
@@ -447,7 +449,7 @@ test('phase six plugin shell layouts are API v3, host-owned, and compatibility-r
   assert.match(app, /grid-template-areas: var\(--te-shell-template-areas\)/)
   assert.match(studioEditor, /profile\.modes = normalizeThemeModes/)
   assert.match(studioSurfaces, /selectedPluginTheme\?\.compatibilityNotes/)
-  assert.equal(pluginThemeContract.pluginApiVersion, 3)
+  assert.equal(pluginThemeContract.pluginApiVersion, 4)
   assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 3)
   assert.deepEqual(
     pluginThemeContract.tokens.map(({ id }) => id),

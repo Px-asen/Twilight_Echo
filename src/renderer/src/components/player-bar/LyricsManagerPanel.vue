@@ -321,7 +321,14 @@ function seedDraftFromTrack(): void {
 }
 
 watch(
-  [activeTrackId, activeOverrideUpdatedAt, lyricsManagement.revision],
+  [
+    activeTrackId,
+    activeOverrideUpdatedAt,
+    lyricsManagement.revision,
+    () => currentTrack.value?.lyrics,
+    () => currentTrack.value?.translatedLyrics,
+    () => currentTrack.value?.romanizedLyrics
+  ],
   () => {
     if (!draftDirty.value) seedDraftFromTrack()
   },
