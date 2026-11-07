@@ -230,7 +230,7 @@ test('Linux packaging fails closed when native engine artifacts are missing', ()
   const afterPack = read('scripts/after-pack-linux.cjs')
   assert.match(
     afterPack,
-    /const runtimeFiles = \['libtwilight-audio-engine\.so', 'twilight_audio_node\.node'\]/
+    /const runtimeFiles = \[\s*'libtwilight-audio-engine\.so',\s*'libtwilight-soxr\.so',\s*'twilight_audio_node\.node',\s*'twilight_image_node\.node'\s*\]/
   )
   assert.match(
     afterPack,

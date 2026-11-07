@@ -138,6 +138,12 @@ function bundleMacOSRuntimeDependencies(
 
   const inspected = new Set()
   const changes = new Map()
+  const originalSource = (loadPath, source, sourceRpaths) => {
+    const resolved = realpath(resolveDependencySource(loadPath, source, sourceRpaths, exists))
+    // An earlier traversal may already have copied this library into an rpath.
+    // Compare its recorded origin, while still rejecting genuinely different sources.
+    return realpath(sourceByTarget.get(resolved) ?? resolved)
+  }
   while (queue.length > 0) {
     const target = queue.shift()
     if (inspected.has(target)) continue
@@ -150,9 +156,7 @@ function bundleMacOSRuntimeDependencies(
       assert.ok(basename && basename !== '.', `Invalid Mach-O dependency in ${target}: ${loadPath}`)
       let dependencyTarget = targetByBasename.get(basename)
       if (!dependencyTarget) {
-        const dependencySource = realpath(
-          resolveDependencySource(loadPath, source, sourceRpaths, exists)
-        )
+        const dependencySource = originalSource(loadPath, source, sourceRpaths)
         dependencyTarget = path.join(outputDir, basename)
         const existingSource = sourceByTarget.get(dependencyTarget)
         if (existingSource && realpath(existingSource) !== dependencySource) {
@@ -163,9 +167,7 @@ function bundleMacOSRuntimeDependencies(
         sourceByTarget.set(dependencyTarget, dependencySource)
         queue.push(dependencyTarget)
       } else if (!entryTargets.has(dependencyTarget)) {
-        const dependencySource = realpath(
-          resolveDependencySource(loadPath, source, sourceRpaths, exists)
-        )
+        const dependencySource = originalSource(loadPath, source, sourceRpaths)
         const existingSource = realpath(sourceByTarget.get(dependencyTarget) ?? dependencyTarget)
         if (existingSource !== dependencySource) {
           throw new Error(`Mach-O dependency basename collision for ${basename}`)
@@ -196,7 +198,9 @@ function bundleMacOSRuntimeDependencies(
     run('codesign', ['--force', '--sign', '-', '--timestamp=none', binary])
   }
 
-  const verification = validateBundledMacOSRuntime(binaries)
+  const verification = validateBundledMacOSRuntime(binaries, {
+    inspectDependencies: dependencies, inspectRpaths: rpaths, exists
+  })
   return {
     files: binaries.sort(),
     copiedDependencies: binaries.filter((file) => !entryTargets.has(file)).length,
