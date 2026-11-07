@@ -63,7 +63,7 @@ const conciseIntroText = computed(() => {
 const ambientStyle = computed(() => (tint.value ? { '--album-tint': tint.value } : {}))
 let generation = 0
 watch(
-  () => [props.album.id, props.album.cover, props.album.coverSource] as const,
+  [() => props.album.id, () => props.album.cover, () => props.album.coverSource],
   async () => {
     const request = ++generation
     tint.value = null

@@ -4,6 +4,7 @@ const { join, relative } = require('node:path')
 const test = require('node:test')
 const { PRODUCT_SCRIPTS } = require('./run-product-quality-gate.cjs')
 const appearanceTests = require('./run-appearance-tests.cjs')
+const coreTests = require('./run-core-tests.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -135,9 +136,9 @@ test('lyrics management gate owns every core, persistence, source, and real UI b
   assert.equal(typeof command, 'string')
   assert.match(command, /^node --experimental-strip-types --test /)
   for (const file of lyricsTests) assert.match(command, new RegExp(escapeRegExp(file)))
-  assert.match(packageJson.scripts['test:core'], /src\/core\/lyrics\/service\.test\.ts/)
+  assert.match(coreTests.files.join(' '), /src\/core\/lyrics\/service\.test\.ts/)
   assert.match(
-    packageJson.scripts['test:core'],
+    coreTests.files.join(' '),
     /src\/main\/coreProcess\/systemPlayerBridge\.test\.ts/
   )
 })
@@ -337,11 +338,12 @@ test('every repository test file is explicitly owned by a package script or its 
     packageJson.scripts['test:appearance-workspace'],
     'node scripts/run-appearance-tests.cjs'
   )
-  const delegated = [...appearanceTests.unit, ...appearanceTests.ui]
+  assert.equal(packageJson.scripts['test:core'], 'node scripts/run-core-tests.cjs')
+  const delegated = [...appearanceTests.unit, ...appearanceTests.ui, ...coreTests.files]
   assert.equal(
     new Set(delegated).size,
     delegated.length,
-    'appearance runner cannot repeat a test file'
+    'registered runners cannot repeat a test file'
   )
   for (const file of delegated) {
     assert.ok(recursivelyOwnedTestFiles.includes(file), `${file} must exist in the repository`)

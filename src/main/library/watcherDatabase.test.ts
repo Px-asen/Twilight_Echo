@@ -29,7 +29,7 @@ function fixture(
     createLibraryWatchers?: typeof import('../../core/library/watcher.ts').createLibraryWatchers
   } = {}
   const dependencies: Record<string, unknown> = {
-    'node:fs': {
+    '../ports/index.ts': { coreFs: {
       watch: (
         folder: string,
         watchOptions: { recursive?: boolean },
@@ -41,8 +41,8 @@ function fixture(
         return watch
       },
       existsSync: () => true
-    },
-    'node:path': path,
+    } },
+    '../../shared/portablePath.ts': path,
     './watcherExtensions.ts': extensions,
     './watcherPolling.ts': { LibraryWatcherPoller }
   }

@@ -1088,7 +1088,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     id: 'fixture-provider:yrc-scroll-a',
     title: 'YRC scroll A',
     lyrics:
-      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,1000](5000,300,0)Line (5300,300,0)five'
+      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,10000](5000,300,0)Line (5300,300,0)five'
   }
   const yrcTrackB = {
     ...yrcTrackA,
@@ -1118,8 +1118,9 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const rowTop = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-top'))
   const rowScale = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-scale'))
 
+  host.playing(true)
   host.select(yrcTrackA)
-  player.seek(5)
+  await player.seek(5)
   await tick()
   installStageGeometry()
   window.dispatchEvent(new Event('resize'))

@@ -1,4 +1,5 @@
 #include "dsp/WsolaResampler.h"
+#include "PerformanceTestPriority.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,6 +9,7 @@
 
 // Component deadline gate; physical-device underruns still require the audio soak.
 int main() {
+  ScopedPerformanceTestThreadPriority performanceTestThreadPriority;
   using Clock = std::chrono::steady_clock;
   bool failed = false;
   for (int sr : {48000, 96000, 192000}) {

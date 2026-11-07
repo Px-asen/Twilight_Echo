@@ -1,5 +1,6 @@
 import { randomUUID } from '../../shared/portableCrypto.ts'
 import { ChunkUploads } from '../transfers/chunkUploads.ts'
+import type { UploadFileStorage } from '../transfers/fileStorage.ts'
 import { PLUGIN_TRANSFER_BYTES, PLUGIN_UPLOAD_BYTES, validPluginUpload, pluginManagementToken,
   type PluginUpload, type PluginPackagePreview, type PluginManagementPage, type PluginManagementEdit } from '../../shared/pluginManagement.ts'
 import type { TwilightPluginManifest, TwilightPluginInstallResult } from '../../shared/pluginTypes.ts'
@@ -22,11 +23,12 @@ export class CorePluginManagement {
     manager: Pick<TwilightPluginManager, 'list' | 'installFromPath' | 'editManaged'>
     uploadRoot: string; appVersion: string; remoteEnabled: boolean; headless: boolean
     now?: () => number; newId?: () => string
+    files: UploadFileStorage
   }
   constructor(options: CorePluginManagement['options']) {
     this.options = options
     this.uploads = new ChunkUploads(options.uploadRoot, options.now ?? Date.now, options.newId ?? randomUUID,
-      { chunkBytes: PLUGIN_TRANSFER_BYTES, maxBytes: PLUGIN_UPLOAD_BYTES, valid: validPluginUpload })
+      { chunkBytes: PLUGIN_TRANSFER_BYTES, maxBytes: PLUGIN_UPLOAD_BYTES, valid: validPluginUpload }, options.files)
   }
   initialize() { return this.uploads.initialize() }
   private issues(plugin: Pick<TwilightPluginManifest, 'type' | 'engines'>): string[] {

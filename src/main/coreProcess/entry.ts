@@ -12,6 +12,7 @@ import { CoreNcmCloudTransferService } from '../../core/ncm/cloudTransferService
 import { RemoteHttpServer } from '../../core/cast/httpServer.ts'
 import { createCastBackend } from '../../core/cast/backend.ts'
 import { stat, access, readFile } from 'node:fs/promises'
+import * as transferFiles from 'node:fs/promises'
 import { CoreLibraryMaintenance } from '../../core/library/maintenanceService.ts'
 import { CoreGenresService } from '../../core/library/genresService.ts'
 import { CoreMusicRatingsService } from '../../core/library/ratingsService.ts'
@@ -1636,7 +1637,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     }, plugins)
   }
   if (plugins && config.plugins) {
-    pluginManagement = new CorePluginManagement({ manager: plugins, uploadRoot: join(config.root, 'plugin-upload-staging'),
+    pluginManagement = new CorePluginManagement({ files: transferFiles, manager: plugins, uploadRoot: join(config.root, 'plugin-upload-staging'),
       appVersion: config.plugins.appVersion, remoteEnabled: config.plugins.remoteManagement === true, headless: config.plugins.headless === true })
     await pluginManagement.initialize()
   }

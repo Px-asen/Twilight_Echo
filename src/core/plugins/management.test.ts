@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import * as files from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CorePluginManagement } from './management.ts'
@@ -13,7 +14,7 @@ const manifest: TwilightPluginManifest = { id: 'com.example.fixture', name: 'Fix
 test('preview cancellation and disconnect retire the owning candidate without activation', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-plugin-management-'))
   let activations = 0, cancelled = 0
-  const management = new CorePluginManagement({ uploadRoot: join(directory, 'uploads'), appVersion: '1.4.0', remoteEnabled: true, headless: true,
+  const management = new CorePluginManagement({ files, uploadRoot: join(directory, 'uploads'), appVersion: '1.4.0', remoteEnabled: true, headless: true,
     manager: {
       list: async () => [], editManaged: async () => {},
       installFromPath: async (path, options) => {

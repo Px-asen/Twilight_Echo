@@ -118,8 +118,8 @@ export class CoreDspService {
   constructor(options: CoreDspService['options']) {
     this.options = options
     const staging = options.uploadDirectory ?? join(options.temporaryDirectory, `twilight-dsp-upload-${options.newId()}`)
-    this.uploads = new DspUploads(staging, options.now, options.newId)
-    this.profiles = new DspProfiles({ root: join(staging, 'profiles'), now: options.now, newId: options.newId, catalog: options.catalog })
+    this.uploads = new DspUploads(staging, options.now, options.newId, coreFsPromises)
+    this.profiles = new DspProfiles({ root: join(staging, 'profiles'), now: options.now, newId: options.newId, catalog: options.catalog, files: coreFsPromises })
   }
   async initialize(): Promise<void> {
     await this.uploads.initialize()

@@ -1,6 +1,6 @@
 import { join } from '../../shared/portablePath.ts'
 import { PortableBuffer } from '../../shared/portableBytes.ts'
-import { coreFsPromises } from '../ports/index.ts'
+import type { UploadFileStorage } from './fileStorage.ts'
 export interface ChunkUploadInput { fileName: string; byteSize: number }
 export interface ChunkUploadPolicy<T> { chunkBytes: number; maxBytes: number; valid(input: T): boolean }
 
@@ -15,11 +15,12 @@ export class ChunkUploads<T extends ChunkUploadInput> {
   private readonly now: () => number
   private readonly newId: () => string
   private readonly policy: ChunkUploadPolicy<T>
-  constructor(root: string, now: () => number, newId: () => string, policy: ChunkUploadPolicy<T>) { this.root = root; this.now = now; this.newId = newId; this.policy = policy }
+  private readonly files: UploadFileStorage
+  constructor(root: string, now: () => number, newId: () => string, policy: ChunkUploadPolicy<T>, files: UploadFileStorage) { this.root = root; this.now = now; this.newId = newId; this.policy = policy; this.files = files }
   async initialize() {
     // The dedicated staging directory contains no durable assets; retire crash leftovers.
-    await coreFsPromises.rm(this.root, { recursive: true, force: true })
-    await coreFsPromises.mkdir(this.root, { recursive: true })
+    await this.files.rm(this.root, { recursive: true, force: true })
+    await this.files.mkdir(this.root, { recursive: true })
   }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const work = this.pending.then(async () => {
@@ -36,7 +37,7 @@ export class ChunkUploads<T extends ChunkUploadInput> {
           input.byteSize <= 0 || input.byteSize > this.policy.maxBytes) throw fail('INVALID_REQUEST', 'Unsupported Upload')
       if (this.entries.size >= 2) throw fail('BUSY', 'Two Uploads are already pending')
       const uploadId = this.newId(), path = join(this.root, uploadId + input.fileName.slice(input.fileName.lastIndexOf('.')).toLowerCase())
-      await coreFsPromises.writeFile(path, new Uint8Array(), { flag: 'wx' })
+      await this.files.writeFile(path, new Uint8Array(), { flag: 'wx' })
       this.entries.set(uploadId, { owner, input, path, offset: 0, expires: this.now() + 10 * 60_000 })
       return { uploadId, chunkBytes: this.policy.chunkBytes }
     })
@@ -53,7 +54,7 @@ export class ChunkUploads<T extends ChunkUploadInput> {
       if (offset !== entry.offset || !bytes.length || bytes.length > this.policy.chunkBytes ||
           bytes.toString('base64') !== data || offset + bytes.length > entry.input.byteSize)
         throw fail('INVALID_REQUEST', 'Upload offset or size does not match')
-      try { await coreFsPromises.appendFile(entry.path, bytes) }
+      try { await this.files.appendFile(entry.path, bytes) }
       catch (error) { await this.remove(id); throw error }
       entry.offset += bytes.length
       entry.expires = this.now() + 10 * 60_000
@@ -82,13 +83,13 @@ export class ChunkUploads<T extends ChunkUploadInput> {
   }) }
   private async remove(id: string) {
     const entry = this.entries.get(id)
-    if (entry) await coreFsPromises.rm(entry.path, { force: true })
+    if (entry) await this.files.rm(entry.path, { force: true })
     this.entries.delete(id)
   }
   async close() {
     await this.pending
     this.closed = true
-    await coreFsPromises.rm(this.root, { recursive: true, force: true })
+    await this.files.rm(this.root, { recursive: true, force: true })
     this.entries.clear()
   }
 }

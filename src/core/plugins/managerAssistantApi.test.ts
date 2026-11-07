@@ -236,6 +236,7 @@ test('real host playTracks calls reach the manager with positional arguments and
     {
       INTERNAL_NCM_PLUGIN_ID: 'com.twilightecho.provider.ncm',
       QISHUI_PLUGIN_ID: 'com.twilightecho.provider.qishui',
+      QQMUSIC_PLUGIN_ID: 'com.twilightecho.provider.qqmusic',
       createSettingsApi: () => ({}),
       callApi: async (namespace: string, method: string, args: unknown[]) => {
         const result = await call(manager, namespace, method, args)

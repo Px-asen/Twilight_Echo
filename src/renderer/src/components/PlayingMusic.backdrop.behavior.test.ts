@@ -134,7 +134,10 @@ function runnerSource(): string {
     const js = code => win.webContents.executeJavaScript(code)
     const configure = options => js('window.configure(' + JSON.stringify(options) + ')')
     const capture = async () => {
-      const image = await win.webContents.capturePage()
+      const { data } = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+        fromSurface: true, captureBeyondViewport: false
+      })
+      const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'))
       return { image, pixels: image.toBitmap(), ...image.getSize() }
     }
     const stats = (before, after) => {
@@ -188,6 +191,11 @@ function runnerSource(): string {
     }
     try {
       await win.loadFile(join(__dirname, 'index.html'))
+      // CI desktops may be only 1024px wide; the rendering viewport is explicit.
+      win.webContents.debugger.attach('1.3')
+      await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+        width: 2560, height: 1440, deviceScaleFactor: 1, mobile: false
+      })
       const visualDir = process.env.TWILIGHT_BACKDROP_VISUAL_DIR
       if (visualDir) await mkdir(visualDir, { recursive: true })
       for (const track of [0, 1]) {
@@ -267,7 +275,6 @@ function runnerSource(): string {
 
       // Offscreen capturePage uses DPR 1 even with a fractional-scale switch.
       // Capture the actual compositor surface at 150%, matching the reported display.
-      win.webContents.debugger.attach('1.3')
       await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
         width: 1706, height: 1066, deviceScaleFactor: 1.5, mobile: false
       })

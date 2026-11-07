@@ -193,7 +193,7 @@ app.whenReady().then(async()=>{try{
  assert.deepEqual(await child().executeJavaScript('[...document.querySelectorAll("progress")].map(el=>el.value)'),[100,44,86]);
  assert.equal(await child().executeJavaScript('typeof require+":"+typeof window.api'),'undefined:undefined');
  assert.equal(await child().executeJavaScript('(()=>{try{parent.document.body;return false}catch{return true}})()'),true);
- await main('document.querySelector(".menu-nav").scrollTop=10000');await capture('expanded-dark');
+ await main('document.querySelector(".menu-nav").scrollTop=10000;new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await capture('expanded-dark');
  const point=await child().executeJavaScript('(()=>{const r=document.querySelector("#refresh").getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()');
  const offset=await main('(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return{x:r.x,y:r.y}})()');
  const position={x:Math.round(offset.x+point.x),y:Math.round(offset.y+point.y)};

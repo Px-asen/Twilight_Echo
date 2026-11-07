@@ -1,4 +1,4 @@
-import { coreFsPromises } from '../ports/index.ts'
+import type { TransferFileStorage } from '../transfers/fileStorage.ts'
 import { join } from '../../shared/portablePath.ts'
 import { PortableBuffer } from '../../shared/portableBytes.ts'
 import { DSP_UPLOAD_CHUNK_BYTES, DSP_UPLOAD_MAX_BYTES, type DspProfilePreview, type DspProfileDownload } from '../../shared/dspLibrary.ts'
@@ -16,28 +16,28 @@ interface Download { owner: string; path: string; view: DspProfileDownload; expi
 export class DspProfiles {
   private readonly previews = new Map<string, Preview>()
   private readonly downloads = new Map<string, Download>()
-  private readonly options: { root: string; now(): number; newId(): string; catalog: Vst3CatalogService }
+  private readonly options: { root: string; now(): number; newId(): string; catalog: Vst3CatalogService; files: TransferFileStorage }
   constructor(options: DspProfiles['options']) { this.options = options }
-  async initialize() { await coreFsPromises.mkdir(this.options.root, { recursive: true }) }
+  async initialize() { await this.options.files.mkdir(this.options.root, { recursive: true }) }
   private async expire() {
     for (const [key, entry] of this.previews) if (entry.expires <= this.options.now()) await this.dropPreview(key)
     for (const [key, entry] of this.downloads) if (entry.expires <= this.options.now()) await this.dropDownload(key)
   }
   private async dropPreview(key: string) {
     const entry = this.previews.get(key)
-    if (entry) await coreFsPromises.rm(entry.root, { recursive: true, force: true })
+    if (entry) await this.options.files.rm(entry.root, { recursive: true, force: true })
     this.previews.delete(key)
   }
   private async dropDownload(key: string) {
     const entry = this.downloads.get(key)
-    if (entry) await coreFsPromises.rm(entry.path, { force: true })
+    if (entry) await this.options.files.rm(entry.path, { force: true })
     this.downloads.delete(key)
   }
   async preview(owner: string, uploadId: string, path: string, revision: number, signal: AbortSignal): Promise<DspProfilePreview> {
     await this.expire()
     for (const [key, entry] of this.previews) if (entry.owner === owner && entry.uploadId === uploadId) await this.dropPreview(key)
     if (this.previews.size >= 2) throw fail('BUSY', '已有两个配置包等待确认')
-    const root = await coreFsPromises.mkdtemp(join(this.options.root, 'preview-'))
+    const root = await this.options.files.mkdtemp(join(this.options.root, 'preview-'))
     let retained = false
     try {
       const assets = new DspAssetLibrary(join(root, 'assets'), this.options)
@@ -72,7 +72,7 @@ export class DspProfiles {
       this.previews.set(view.previewId, { owner, uploadId, root, assets, profile, view, expires: this.options.now() + 600_000 })
       retained = true
       return view
-    } finally { if (!retained) await coreFsPromises.rm(root, { recursive: true, force: true }) }
+    } finally { if (!retained) await this.options.files.rm(root, { recursive: true, force: true }) }
   }
   async import<T>(owner: string, uploadId: string, previewId: string, revision: number, target: DspAssetLibrary,
     apply: (scenes: DspScene[]) => Promise<T>): Promise<T> {
@@ -103,7 +103,7 @@ export class DspProfiles {
     authorizeImpulse: (path: string) => Promise<string>, signal: AbortSignal): Promise<DspProfileDownload> {
     await this.expire()
     if (this.downloads.size >= 2) throw fail('BUSY', '已有两个配置包等待下载')
-    const root = await coreFsPromises.mkdtemp(join(this.options.root, 'export-'))
+    const root = await this.options.files.mkdtemp(join(this.options.root, 'export-'))
     const downloadId = this.options.newId(), path = join(this.options.root, `${downloadId}.tedsp`)
     let retained = false
     try {
@@ -113,7 +113,7 @@ export class DspProfiles {
       for (const scene of portable) for (const node of scene.graph.nodes) {
         if (typeof node.params.impulseResponsePath === 'string' && node.params.impulseResponsePath && !node.params.impulseResponseAssetId) {
           const sourcePath = await authorizeImpulse(node.params.impulseResponsePath)
-          bytes += (await coreFsPromises.stat(sourcePath)).size
+          bytes += (await this.options.files.stat(sourcePath)).size
           if (bytes > DSP_UPLOAD_MAX_BYTES) throw new Error('配置包资料超过 64 MiB')
           const asset = await assets.importFile({ kind: 'impulseResponse', sourcePath })
           node.params.impulseResponseAssetId = asset.id
@@ -133,7 +133,7 @@ export class DspProfiles {
         assetIds: collectDspAssetIds(portable), id: downloadId, now: new Date(this.options.now()) })
       signal.throwIfAborted()
       await exportDspProfileArchive({ outputPath: path, profile }, assets)
-      const byteSize = (await coreFsPromises.stat(path)).size
+      const byteSize = (await this.options.files.stat(path)).size
       if (byteSize > DSP_UPLOAD_MAX_BYTES) throw new Error('完整配置包超过 64 MiB')
       const fileName = `${name.replace(/[\\/:*?"<>|\r\n\0]/g, '_').replace(/[. ]+$/g, '') || 'DSP'}.tedsp`
       const view = { downloadId, fileName, byteSize, chunkBytes: DSP_UPLOAD_CHUNK_BYTES }
@@ -141,8 +141,8 @@ export class DspProfiles {
       this.downloads.set(downloadId, { owner, path, view, expires: this.options.now() + 600_000 }); retained = true
       return view
     } finally {
-      await coreFsPromises.rm(root, { recursive: true, force: true })
-      if (!retained) await coreFsPromises.rm(path, { force: true })
+      await this.options.files.rm(root, { recursive: true, force: true })
+      if (!retained) await this.options.files.rm(path, { force: true })
     }
   }
   async chunk(owner: string, id: string, offset: number) {
@@ -150,7 +150,7 @@ export class DspProfiles {
     const entry = this.downloads.get(id)
     if (!entry || entry.owner !== owner) throw fail('NOT_FOUND', '下载已失效')
     if (!Number.isSafeInteger(offset) || offset < 0 || offset >= entry.view.byteSize) throw fail('INVALID_REQUEST', '下载位置无效')
-    const file = await coreFsPromises.open(entry.path, 'r')
+    const file = await this.options.files.open(entry.path, 'r')
     try {
       const buffer = PortableBuffer.alloc(Math.min(DSP_UPLOAD_CHUNK_BYTES, entry.view.byteSize - offset))
       let read = 0

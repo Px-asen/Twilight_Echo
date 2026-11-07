@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import * as files from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CoreDspService, type CoreDspPlatform } from './dspService.ts'
@@ -236,7 +237,7 @@ test('upload lifetime, quotas, schema and CAS prevent abandoned or stale imports
   assert.equal((await f.dsp.library()).assets.total, 0)
   await assert.rejects(f.dsp.uploadChunk('phone', upload.uploadId, 0, 'AA=='), { code: 'NOT_FOUND' })
   let now = 0
-  const staging = new DspUploads(join(f.root, 'expiry'), () => now, randomUUID)
+  const staging = new DspUploads(join(f.root, 'expiry'), () => now, randomUUID, files)
   await staging.initialize()
   const first = await staging.begin('phone', input)
   await staging.begin('tablet', input)
