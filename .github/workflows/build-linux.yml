@@ -82,6 +82,8 @@ jobs:
           cmake --build audio-engine/build/default
           test -f audio-engine/build/default/libtwilight-audio-engine.so
           test -f audio-engine/build/default/twilight_audio_node.node
+          test -f audio-engine/build/default/twilight_image_node.node
+          node scripts/stage-audio-engine.cjs --build-dir audio-engine/build/default
 
       - name: Build renderer and package Linux targets
         run: |
@@ -93,6 +95,9 @@ jobs:
           ls -la dist/linux-unpacked/resources/audio-engine/
           test -f dist/linux-unpacked/resources/audio-engine/libtwilight-audio-engine.so
           test -f dist/linux-unpacked/resources/audio-engine/twilight_audio_node.node
+          test -f dist/linux-unpacked/resources/audio-engine/twilight_image_node.node
+          test -f dist/linux-unpacked/resources/audio-engine/libtwilight-soxr.so
+          node -e "require('./dist/linux-unpacked/resources/audio-engine/twilight_audio_node.node'); require('./dist/linux-unpacked/resources/audio-engine/twilight_image_node.node')"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
