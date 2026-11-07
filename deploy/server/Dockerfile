@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim-bookworm AS public-models
+FROM python:3.12-slim-bookworm AS public-model-tools
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
@@ -10,8 +10,11 @@ COPY scripts/test-build-public-automix-assets.py ./scripts/test-build-public-aut
 ENV TF_USE_LEGACY_KERAS=1 TF_ENABLE_ONEDNN_OPTS=0 OMP_NUM_THREADS=4 TF_NUM_INTRAOP_THREADS=4 TF_NUM_INTEROP_THREADS=1
 ENV PIP_DEFAULT_TIMEOUT=300 PIP_RETRIES=8 PIP_RESUME_RETRIES=12
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip==26.3
+RUN --mount=type=cache,target=/root/.cache/pip python -c "import json,runpy; builder=runpy.run_path('scripts/build-public-automix-assets.py'); builder['install_dependencies'](json.loads(builder['LOCK'].read_text()))"
+
+FROM public-model-tools AS public-models
 RUN --mount=type=cache,target=/root/.cache/pip python scripts/test-build-public-automix-assets.py \
-    && python scripts/build-public-automix-assets.py --install-dependencies --work /model-work --output /public-graphs
+    && python scripts/build-public-automix-assets.py --work /model-work --output /public-graphs
 
 FROM node:24-bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \

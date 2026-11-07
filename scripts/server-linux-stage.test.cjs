@@ -50,7 +50,8 @@ test('Linux inputs include locked public graphs, exact notices and all optional 
 test('container uses a public-only model build stage and gates the new network and recovery capabilities', () => {
   const root = path.resolve(__dirname, '..')
   const docker = fs.readFileSync(path.join(root, 'deploy/server/Dockerfile'), 'utf8')
-  assert.match(docker, /FROM python:3\.12-slim-bookworm AS public-models/)
+  assert.match(docker, /FROM python:3\.12-slim-bookworm AS public-model-tools/)
+  assert.match(docker, /FROM public-model-tools AS public-models/)
   assert.match(docker, /COPY --from=public-models \/public-graphs/)
   assert.match(docker, /stage-automix-native-assets\.cjs/)
   const runtime = docker.split('AS runtime')[1]

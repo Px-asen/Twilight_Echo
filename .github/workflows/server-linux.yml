@@ -36,7 +36,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build locked public models and verify Core, network formats, AutoMix, migration and extensions
+        id: verification
         run: docker build --target verification -f deploy/server/Dockerfile -t twilight-server-verified .
+      - name: Preserve a failed public model conversion
+        if: failure() && steps.verification.outcome == 'failure'
+        run: |
+          mkdir -p "$RUNNER_TEMP/public-model-diagnostics"
+          docker build --target public-model-tools -f deploy/server/Dockerfile -t twilight-public-model-tools .
+          docker run --rm --mount type=bind,src="$RUNNER_TEMP/public-model-diagnostics",dst=/diagnostics \
+            twilight-public-model-tools python scripts/build-public-automix-assets.py \
+            --work /diagnostics/work --output /diagnostics/graphs
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.verification.outcome == 'failure'
+        with:
+          name: public-model-conversion-diagnostics
+          path: ${{ runner.temp }}/public-model-diagnostics/work/exports/
+          if-no-files-found: ignore
       - name: Build runtime image
         run: docker build --target runtime -f deploy/server/Dockerfile -t twilight-echo-server:local .
       - name: Verify the final runtime as its non-root user
