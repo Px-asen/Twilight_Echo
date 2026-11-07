@@ -8,8 +8,10 @@ exports.default = async function afterPack(context) {
   const resourcesDir = join(context.appOutDir, 'resources', 'audio-engine')
   const buildDir = join(context.packager.projectDir, 'audio-engine', 'build', 'default')
 
-  const runtimeFiles = ['libtwilight-audio-engine.so', 'libtwilight-soxr.so',
-    'twilight_audio_node.node', 'twilight_image_node.node']
+  const runtimeFiles = [
+    'libtwilight-audio-engine.so', 'libtwilight-soxr.so',
+    'twilight_audio_node.node', 'twilight_image_node.node'
+  ]
   mkdirSync(resourcesDir, { recursive: true })
 
   for (const file of runtimeFiles) {

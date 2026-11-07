@@ -392,7 +392,7 @@ if(TAE_BUILD_NAPI)
       add_library(twilight_image_node MODULE napi/twilight_image_node.cpp)
       target_include_directories(twilight_image_node PRIVATE ${TAE_NODE_INCLUDE_DIR} ${FFMPEG_INCLUDE_DIRS})
       target_link_libraries(twilight_image_node PRIVATE ${TAE_SWSCALE_LIBRARY} ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
-    target_link_options(twilight_image_node PRIVATE ${TAE_FFMPEG_LINK_OPTIONS})
+      target_link_options(twilight_image_node PRIVATE ${TAE_FFMPEG_LINK_OPTIONS})
       target_compile_definitions(twilight_image_node PRIVATE NAPI_VERSION=10)
       set_target_properties(twilight_image_node PROPERTIES PREFIX "" SUFFIX ".node"
         BUILD_RPATH "${TAE_NAPI_RPATH}" INSTALL_RPATH "${TAE_NAPI_RPATH}")
