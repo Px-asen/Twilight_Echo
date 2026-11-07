@@ -6,14 +6,15 @@ settings:
 
 overrides:
   axios: 1.20.0
-  follow-redirects: 1.16.1
+  follow-redirects: 1.16.2
   basic-ftp: 6.2.1
   music-metadata: 11.16.0
   form-data: 4.0.6
   postcss: 8.5.26
   source-map-js: 1.2.2
   proxy-addr: 2.0.8
-  qs: 6.16.0
+  qs: 6.16.1
+  node-forge: 1.4.1
   uuid: 11.1.1
   nanoid: 3.3.18
   ip-address: 10.7.4
@@ -24,10 +25,9 @@ overrides:
   node-abi: 4.33.0
 
 patchedDependencies:
-  '@neteasecloudmusicapienhanced/api@4.35.1': 784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf
+  '@neteasecloudmusicapienhanced/api@4.36.1': 784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf
   '@phosphor-icons/web@2.1.2': d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb
   extract-zip@2.0.1: 59db17789d14064f3a4432efcf74b7a57de863db5b515354ef04aa411e6d7c73
-  node-forge@1.4.0: 7aa50d29a105c5fb9d206aadd58501d637901b4d5878feafb4c1d04b4cf8c6cf
 
 importers:
 
@@ -40,8 +40,8 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(electron@43.8.1)
       '@neteasecloudmusicapienhanced/api':
-        specifier: ^4.35.1
-        version: 4.35.1(patch_hash=784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf)
+        specifier: 4.36.1
+        version: 4.36.1(patch_hash=784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf)
       '@tokenizer/inflate':
         specifier: 0.4.1
         version: 0.4.1
@@ -118,8 +118,8 @@ importers:
         specifier: 21.3.4
         version: 21.3.4
       follow-redirects:
-        specifier: 1.16.1
-        version: 1.16.1
+        specifier: 1.16.2
+        version: 1.16.2
       form-data:
         specifier: 4.0.6
         version: 4.0.6
@@ -965,8 +965,8 @@ packages:
     resolution: {integrity: sha512-9QOtNffcOF/c1seMCDnjckb3R9WHcG34tky+FHpNKKCW0wc/scYLwMtO+ptyGUfMW0/b/n4qRiALlaFHc9Oj7Q==}
     engines: {node: '>= 10.0.0'}
 
-  '@neteasecloudmusicapienhanced/api@4.35.1':
-    resolution: {integrity: sha512-3VMg7mbSZdR8VIAOgBW92nIZUYBQkONKtaIjeLjLY9eBrrznFkRZv+AR7UMuwbm97VyieKklTz9FWhTovRg9LQ==}
+  '@neteasecloudmusicapienhanced/api@4.36.1':
+    resolution: {integrity: sha512-Do677SCn+I62Sk+CWxQVinG8LRhD1qejrsNjoTT9twfU+JzdjK1VsYGR7k3IsEfPkZudKLdQUJq63ohfxQ5WPg==}
     engines: {node: '>=12'}
     hasBin: true
 
@@ -2117,8 +2117,8 @@ packages:
   flatted@3.4.2:
     resolution: {integrity: sha512-PjDse7RzhcPkIJwy5t7KPWQSZ9cAbzQXcafsetQoD7sOJRQlGikNbx7yZp2OotDnJyrDcbyRq3Ttb18iYOqkxA==}
 
-  follow-redirects@1.16.1:
-    resolution: {integrity: sha512-FNvFGzoMLWmE6Yj9spb/zjd7yiNCHiAW9/Tg9CXrQ8wuu32HtlJOwWO11OJafl5FfY3DxTdQ0vj42zU1kvv5jg==}
+  follow-redirects@1.16.2:
+    resolution: {integrity: sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -2306,10 +2306,6 @@ packages:
 
   iconv-lite@0.6.3:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
-    engines: {node: '>=0.10.0'}
-
-  iconv-lite@0.7.2:
-    resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
     engines: {node: '>=0.10.0'}
 
   iconv-lite@0.7.3:
@@ -2654,8 +2650,8 @@ packages:
       encoding:
         optional: true
 
-  node-forge@1.4.0:
-    resolution: {integrity: sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==}
+  node-forge@1.4.1:
+    resolution: {integrity: sha512-w5/MfWaeMrpR/5ba6fZyAUTLSuE6aYz7H/3cYrqwZEmf5eQS3IaaLgJt4MBv7HglGFWmV22K8h4U18RJQmw/ow==}
     engines: {node: '>= 6.13.0'}
 
   node-gyp@12.3.0:
@@ -2894,8 +2890,8 @@ packages:
     engines: {node: '>=10.13.0'}
     hasBin: true
 
-  qs@6.16.0:
-    resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
+  qs@6.16.1:
+    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
     engines: {node: '>=0.6'}
 
   quick-format-unescaped@4.0.4:
@@ -3244,10 +3240,6 @@ packages:
 
   type-is@1.6.18:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
-    engines: {node: '>= 0.6'}
-
-  type-is@2.0.1:
-    resolution: {integrity: sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw==}
     engines: {node: '>= 0.6'}
 
   type-is@2.1.0:
@@ -4103,7 +4095,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@neteasecloudmusicapienhanced/api@4.35.1(patch_hash=784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf)':
+  '@neteasecloudmusicapienhanced/api@4.36.1(patch_hash=784a29b4344049d2a94eb0e698074e771cafe85a2a4d1eb41ae40e033e8bd2cf)':
     dependencies:
       '@neteasecloudmusicapienhanced/unblockmusic-utils': 0.3.3
       axios: 1.20.0
@@ -4113,7 +4105,7 @@ snapshots:
       express-fileupload: 1.5.2
       gzip: 0.1.0
       music-metadata: 11.16.0
-      node-forge: 1.4.0(patch_hash=7aa50d29a105c5fb9d206aadd58501d637901b4d5878feafb4c1d04b4cf8c6cf)
+      node-forge: 1.4.1
       pac-proxy-agent: 7.2.0
       qrcode: 1.5.4
       safe-decode-uri-component: 1.2.1
@@ -4630,7 +4622,7 @@ snapshots:
 
   axios@1.20.0:
     dependencies:
-      follow-redirects: 1.16.1
+      follow-redirects: 1.16.2
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -4660,7 +4652,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.4.24
       on-finished: 2.4.1
-      qs: 6.16.0
+      qs: 6.16.1
       raw-body: 2.5.3
       type-is: 1.6.18
       unpipe: 1.0.0
@@ -4675,7 +4667,7 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.3
       on-finished: 2.4.1
-      qs: 6.16.0
+      qs: 6.16.1
       raw-body: 3.0.2
       type-is: 2.1.0
     transitivePeerDependencies:
@@ -5368,7 +5360,7 @@ snapshots:
       parseurl: 1.3.3
       path-to-regexp: 0.1.13
       proxy-addr: 2.0.8
-      qs: 6.16.0
+      qs: 6.16.1
       range-parser: 1.2.1
       safe-buffer: 5.2.1
       send: 0.19.2
@@ -5403,13 +5395,13 @@ snapshots:
       once: 1.4.0
       parseurl: 1.3.3
       proxy-addr: 2.0.8
-      qs: 6.16.0
+      qs: 6.16.1
       range-parser: 1.2.1
       router: 2.2.0
       send: 1.2.1
       serve-static: 2.2.1
       statuses: 2.0.2
-      type-is: 2.0.1
+      type-is: 2.1.0
       vary: 1.1.2
     transitivePeerDependencies:
       - supports-color
@@ -5506,7 +5498,7 @@ snapshots:
 
   flatted@3.4.2: {}
 
-  follow-redirects@1.16.1: {}
+  follow-redirects@1.16.2: {}
 
   form-data@4.0.6:
     dependencies:
@@ -5723,10 +5715,6 @@ snapshots:
       safer-buffer: 2.1.2
 
   iconv-lite@0.6.3:
-    dependencies:
-      safer-buffer: 2.1.2
-
-  iconv-lite@0.7.2:
     dependencies:
       safer-buffer: 2.1.2
 
@@ -5996,7 +5984,7 @@ snapshots:
     optionalDependencies:
       encoding: 0.1.13
 
-  node-forge@1.4.0(patch_hash=7aa50d29a105c5fb9d206aadd58501d637901b4d5878feafb4c1d04b4cf8c6cf): {}
+  node-forge@1.4.1: {}
 
   node-gyp@12.3.0:
     dependencies:
@@ -6247,7 +6235,7 @@ snapshots:
       pngjs: 5.0.0
       yargs: 15.4.1
 
-  qs@6.16.0:
+  qs@6.16.1:
     dependencies:
       es-define-property: 1.0.1
       side-channel: 1.1.1
@@ -6269,7 +6257,7 @@ snapshots:
     dependencies:
       bytes: 3.1.2
       http-errors: 2.0.1
-      iconv-lite: 0.7.2
+      iconv-lite: 0.7.3
       unpipe: 1.0.0
 
   read-binary-file-arch@1.0.6:
@@ -6672,12 +6660,6 @@ snapshots:
     dependencies:
       media-typer: 0.3.0
       mime-types: 2.1.35
-
-  type-is@2.0.1:
-    dependencies:
-      content-type: 1.0.5
-      media-typer: 1.1.0
-      mime-types: 3.0.2
 
   type-is@2.1.0:
     dependencies:

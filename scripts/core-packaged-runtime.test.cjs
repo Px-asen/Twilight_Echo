@@ -23,7 +23,7 @@ test(
       await prepareProfile(profile)
       for (const phase of ['first', 'cold'])
         await runPackage(
-          join(root, 'dist', 'win-unpacked', 'TwilightEcho.exe'),
+          join(process.env.TWILIGHT_PACKAGED_APP_DIR || join(root, 'dist', 'win-unpacked'), 'TwilightEcho.exe'),
           directory,
           bootstrap.replace(
             '__TEST_CONFIGURATION__',

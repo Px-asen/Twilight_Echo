@@ -54,6 +54,8 @@ export interface AutoMixSelection {
   mode?: 'natural' | 'dj'
   nextGain?: number
   strategy?: string
+  /** Present only for group-owned native selections; never remote state. */
+  sharedPlan?: import('./bridgeAutoMix.ts').BridgeAutoMixPlan
   stemDirectory?: string
   inputs?: {
     path: string

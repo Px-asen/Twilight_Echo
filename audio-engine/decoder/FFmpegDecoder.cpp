@@ -931,6 +931,16 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   // Prefer WAV only after validating the local container signature; a renamed
   // non-WAV file and all network sources retain ordinary format discovery.
   const AVInputFormat* inputFormat = nullptr;
+  const auto grantedInput = std::atomic_load(&impl_->customInput);
+  if (!looksHttp && (grantedInput || extensionOf(source) == "wv")) {
+    const auto wavPack = readWavPackSource(source, grantedInput);
+    if (wavPack && wavPack->leadingTagBytes > 0) {
+      // Use the validated WavPack header after any leading ID3 tags, including
+      // host-granted sources whose opaque URI cannot identify the container.
+      inputFormat = av_find_input_format("wv");
+      av_dict_set_int(&openOptions, "skip_initial_bytes", wavPack->leadingTagBytes, 0);
+    }
+  }
   if (!looksHttp && (extensionOf(source) == "wav" || extensionOf(source) == "wave")) {
     std::array<char, 12> header{};
     SharedInputFile input(utf8Path(source), std::ios::binary);

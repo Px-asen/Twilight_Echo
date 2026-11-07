@@ -893,7 +893,8 @@ class AfterglowModeService {
       saveWindowState(join(app.getPath('userData'), 'window-state.json'), {
         width: bounds.width,
         height: bounds.height,
-        maximized: window.isMaximized()
+        maximized: window.isMaximized(),
+        fullScreen: window.isFullScreen()
       })
     } catch (error) {
       console.warn('[afterglow] unable to save window size:', error)

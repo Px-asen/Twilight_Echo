@@ -97,9 +97,13 @@ function streamingVisibilityEntrySource(): string {
     join(workspaceRoot, 'src/renderer/src/components/StreamingPage.vue'),
     'utf8'
   )
-  const streamingRoot = parse(streamingSource).descriptor.template!.ast!.children.find(
-    (node) => node.type === 1 && node.tag === 'div'
-  )!
+  const streamingTemplate = parse(streamingSource).descriptor.template!.ast!.children
+  const transitionRoot = streamingTemplate.find(
+    (node) => node.type === 1 && node.tag === 'MotionTransition'
+  )
+  const streamingRoot = (
+    transitionRoot?.type === 1 ? transitionRoot.children : streamingTemplate
+  ).find((node) => node.type === 1 && node.tag === 'div')!
   const rootSource = streamingRoot.loc.source
   // Compile the production root and its visibility binding; replace provider
   // content with a stateful detail so this test requires no account or network.

@@ -346,6 +346,7 @@ html[data-theme='dark'] .deck .deck-rate-num {
 
 /* ===== 内容区 ===== */
 .deck-content {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow-y: auto;
@@ -368,28 +369,6 @@ html[data-theme='dark'] .deck .deck-rate-num {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.deck-fade-enter-active {
-  transition:
-    opacity 0.22s ease,
-    transform 0.22s ease;
-}
-
-.deck-fade-leave-active {
-  transition:
-    opacity 0.14s ease,
-    transform 0.14s ease;
-}
-
-.deck-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-.deck-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
 }
 
 /* ===== 卡片 ===== */

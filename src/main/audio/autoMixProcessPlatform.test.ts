@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, mkdir, link, rm, writeFile, access } from 'node:fs/promises'
+import { mkdtemp, mkdir, copyFile, rm, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -13,7 +13,7 @@ test('main resolves fixed model/probe workers and joins their actual exit on Cor
     worker = join(root, 'worker')
   await mkdir(join(pack, 'runtime'), { recursive: true })
   await mkdir(worker)
-  await link(process.execPath, join(pack, 'runtime/python.exe'))
+  await copyFile(process.execPath, join(pack, 'runtime/python.exe'))
   await writeFile(
     join(worker, 'probe.py'),
     `console.log('TWILIGHT_STEM_CAPABILITIES='+JSON.stringify({cpu:true,gpu:false}))`

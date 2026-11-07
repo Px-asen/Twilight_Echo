@@ -187,6 +187,8 @@ export const buildLastPlayedByTrackId = (stats) => {
 }
 export const getMostListenedTracks = () => [{ id: privateTrack.id, track: privateTrack }]
 export const getRecentTracks = () => [{ id: privateTrack.id, track: privateTrack }]
+export const getTopTracks = getRecentTracks
+export const getTopArtists = () => []
 export const useNcmStore = () => ({
   isLoggedIn: ref(true),
   profile: ref({

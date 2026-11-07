@@ -101,6 +101,14 @@ const SPONSORS: readonly Sponsor[] = [
   {
     id: 'wan-zhong-kong-zou',
     name: '晚钟空奏'
+  },
+  {
+    id: 'hehe-htpo',
+    name: '呵呵htpo'
+  },
+  {
+    id: 'yang-chun-zui-you-yu-zhi-ren',
+    name: '阳春最忧郁之人'
   }
 ]
 

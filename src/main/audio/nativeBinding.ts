@@ -30,6 +30,7 @@ export function resolveElectronApp(
 const electronApp = resolveElectronApp()
 
 interface NativeAddonLocationContext {
+  binary?: string
   modulePath?: string
   resourcesPath?: string
   appPath?: string
@@ -37,7 +38,7 @@ interface NativeAddonLocationContext {
 }
 
 export function getNativeAddonCandidates(context: NativeAddonLocationContext = {}): string[] {
-  const binary = 'twilight_audio_node.node'
+  const binary = context.binary ?? 'twilight_audio_node.node'
   const modulePath = context.modulePath ?? fileURLToPath(import.meta.url)
   // Electron utility processes do not expose the main process's resourcesPath
   // or app singleton. Resolve their own archive first, without consulting the
@@ -46,7 +47,7 @@ export function getNativeAddonCandidates(context: NativeAddonLocationContext = {
   if (archive) return [join(dirname(archive), 'audio-engine', binary)]
 
   // The same anchoring supports built development workers and direct TS tools.
-  const moduleRoot = modulePath.match(/^(.*)[/\\](?:out|src)[/\\]main[/\\]/i)?.[1]
+  const moduleRoot = modulePath.match(/^(.*)[/\\](?:out[/\\](?:main|server)|src[/\\]main)[/\\]/i)?.[1]
   const appPath =
     context.appPath ?? electronApp?.getAppPath?.() ?? moduleRoot ?? context.cwd ?? process.cwd()
   const resourcesPath = context.resourcesPath ?? process.resourcesPath
@@ -80,12 +81,12 @@ export type NativeBindingLoadResult = {
   candidateCount: number
 }
 
-export function nativeRuntimeIdentity(candidate: string): Record<string, string> {
+export function nativeRuntimeIdentity(candidate: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
   const directory = dirname(candidate)
   const runtime: Record<string, string> = { addonPath: candidate }
   for (const name of [
     'twilight_audio_node.node',
-    'twilight-audio-engine.dll',
+    platform === 'win32' ? 'twilight-audio-engine.dll' : platform === 'darwin' ? 'libtwilight-audio-engine.dylib' : 'libtwilight-audio-engine.so',
     'automix-native/beat-this.tamg',
     'automix-native/yamnet.tamg'
   ]) {

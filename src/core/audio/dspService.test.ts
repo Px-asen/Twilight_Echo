@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import * as files from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CoreDspService, type CoreDspPlatform } from './dspService.ts'
@@ -20,6 +21,9 @@ import { computeAutoPreampDb } from '../../shared/eqResponse.ts'
 import { initialAudioSettings } from './settings.ts'
 import { CoreSettingsService } from '../settings/service.ts'
 import { createSettingsImportEffects } from '../settings/importEffects.ts'
+import { DspUploads } from './dspUploads.ts'
+import { validDspLibraryPayload } from '../../shared/dspLibrary.ts'
+import { createDspProfile, exportDspProfileArchive } from './dspProfileArchive.ts'
 
 const signal = () => new AbortController().signal
 function fixture(
@@ -147,6 +151,7 @@ function fixture(
     },
     platform,
     temporaryDirectory: root,
+    uploadDirectory: join(root, 'dsp-upload-staging'),
     now: Date.now,
     newId: randomUUID,
     failed: (error) => {
@@ -184,6 +189,246 @@ function fixture(
     }
   }
 }
+
+test('managed uploads bind to disabled scenes, explicitly apply, protect references and remain Zone isolated', async t => {
+  const f = fixture(t), other = fixture(t)
+  await f.dsp.initialize(); await other.dsp.initialize()
+  const data = Buffer.from('Preamp: -4 dB\nFilter 1: ON PK Fc 1000 Hz Gain -3 dB Q 1\n')
+  const upload = await f.dsp.beginUpload('phone', { zoneId: 'local', kind: 'correctionProfile', fileName: 'Room.apo', byteSize: data.length })
+  await assert.rejects(f.dsp.uploadChunk('tablet', upload.uploadId, 0, data.toString('base64')), { code: 'NOT_FOUND' })
+  await assert.rejects(f.dsp.commitUpload('phone', upload.uploadId, f.output.getRevision(), signal()), { code: 'INVALID_REQUEST' })
+  await f.dsp.uploadChunk('phone', upload.uploadId, 0, data.toString('base64'))
+  await assert.rejects(f.dsp.uploadChunk('phone', upload.uploadId, 0, data.toString('base64')), { code: 'INVALID_REQUEST' })
+  const asset = await f.dsp.commitUpload('phone', upload.uploadId, f.output.getRevision(), signal())
+  assert.equal(asset.fileName, 'Room.apo'); assert.equal(asset.name, 'Room.apo')
+  assert.equal((await other.dsp.library()).assets.total, 0)
+  const edit = (value: Parameters<CoreDspService['editLibrary']>[1]) => f.dsp.editLibrary(f.output.getRevision(), value, signal())
+  await edit({ kind: 'createScene', name: 'Room' })
+  const scene = (await f.dsp.state()).scenes.scenes.find(row => row.name === 'Room')!
+  assert.equal(scene.enabled, false)
+  await edit({ kind: 'bindCorrection', sceneId: scene.id, assetId: asset.id })
+  let view = await f.dsp.library()
+  assert.equal(view.assets.items[0].referenceCount, 1)
+  await assert.rejects(edit({ kind: 'removeAsset', id: asset.id }), /引用/)
+  assert.equal((await f.dsp.state()).scenes.activeSceneId, 'default')
+  await edit({ kind: 'applyScene', sceneId: scene.id, confirmDsdPcmFallback: false })
+  assert.equal((await f.dsp.state()).scenes.pinnedSceneId, scene.id)
+  assert.equal((await f.dsp.state()).processing.eqEnabled, true)
+  const saved = f.settings.read().dspScenes.find(row => row.id === scene.id)!
+  assert.equal(saved.graph.nodes.find(node => node.type === 'equalizer')?.params.preampDb, -4)
+  const before = f.output.getRevision()
+  await edit({ kind: 'removeScene', sceneId: scene.id })
+  await assert.rejects(f.dsp.library(100, 0, before), { code: 'STALE_REVISION' })
+  await edit({ kind: 'removeAsset', id: asset.id })
+  view = await f.dsp.library()
+  assert.equal(view.assets.total, 0)
+  assert.equal(JSON.stringify(view).includes(f.root.replaceAll('\\', '\\\\')), false)
+  await f.dsp.shutdown(); await other.dsp.shutdown()
+})
+
+test('upload lifetime, quotas, schema and CAS prevent abandoned or stale imports from becoming durable assets', async t => {
+  const f = fixture(t); await f.dsp.initialize()
+  const input = { zoneId: 'local', kind: 'vst3State' as const, fileName: 'state.bin', byteSize: 1 }
+  const upload = await f.dsp.beginUpload('phone', input)
+  await f.dsp.uploadChunk('phone', upload.uploadId, 0, 'AA==')
+  const revision = f.output.getRevision()
+  await f.dsp.editLibrary(revision, { kind: 'createScene', name: 'Changed' }, signal())
+  await assert.rejects(f.dsp.commitUpload('phone', upload.uploadId, revision, signal()), { code: 'STALE_REVISION' })
+  assert.equal((await f.dsp.library()).assets.total, 0)
+  await assert.rejects(f.dsp.uploadChunk('phone', upload.uploadId, 0, 'AA=='), { code: 'NOT_FOUND' })
+  let now = 0
+  const staging = new DspUploads(join(f.root, 'expiry'), () => now, randomUUID, files)
+  await staging.initialize()
+  const first = await staging.begin('phone', input)
+  await staging.begin('tablet', input)
+  await assert.rejects(staging.begin('third', input), { code: 'BUSY' })
+  now = 600_001
+  await assert.rejects(staging.chunk('phone', first.uploadId, 0, 'AA=='), { code: 'NOT_FOUND' })
+  const last = await staging.begin('phone', input)
+  await staging.disconnect('phone')
+  await assert.rejects(staging.chunk('phone', last.uploadId, 0, 'AA=='), { code: 'NOT_FOUND' })
+  assert.equal(validDspLibraryPayload('zones.dsp.upload.begin', { ...input, fileName: '../state.bin' }), false)
+  assert.equal(validDspLibraryPayload('zones.dsp.upload.begin', { ...input, kind: '__proto__' }), false)
+  assert.equal(validDspLibraryPayload('zones.dsp.library.edit', { zoneId: 'local', revision: 1, edit: { kind: 'scan', paths: ['C:/injected'] } }), false)
+  await staging.close(); await f.dsp.shutdown()
+})
+
+test('managed legacy impulse paths remain editable without granting arbitrary library paths', async t => {
+  const f = fixture(t); await f.dsp.initialize()
+  const asset = await f.assets.importBuffer({ kind: 'impulseResponse', fileName: 'managed.wav', data: new Uint8Array([1, 2]) })
+  const path = await f.assets.getPath(asset.id)
+  await f.dsp.edit({ revision: f.output.getRevision(), edit: { kind: 'processing', settings: { convolverIrPath: path } } }, signal())
+  await f.dsp.edit({ revision: f.output.getRevision(), edit: { kind: 'processing', settings: { dspEnabled: true } } }, signal())
+  assert.equal((await f.dsp.state()).processing.convolverIrPath, path)
+  await assert.rejects(f.dsp.edit({ revision: f.output.getRevision(), edit: { kind: 'processing', settings: { convolverIrPath: 'C:/untrusted.wav' } } }, signal()), /not authorized/)
+  await f.dsp.shutdown()
+})
+
+test('headless VST3 scan reports progress outside the playback lane and only publishes path-free catalog entries', async t => {
+  const f = fixture(t); await f.dsp.initialize()
+  mkdirSync(join(f.root, 'modules')); writeFileSync(join(f.root, 'modules', 'effect.vst3'), 'fixture')
+  let release!: () => void
+  f.blockScan(new Promise<void>(resolve => { release = resolve }))
+  await f.dsp.editLibrary(f.output.getRevision(), { kind: 'scan' }, signal())
+  assert.equal((await f.dsp.library()).scanning, true)
+  await assert.rejects(f.dsp.editLibrary(f.output.getRevision(), { kind: 'scan' }, signal()), { code: 'BUSY' })
+  release(); await f.dsp.flush()
+  const page = await f.dsp.library()
+  assert.equal(page.scanning, false); assert.equal(page.plugins.total, 1)
+  assert.equal(page.plugins.items[0].parameterCount, 201)
+  assert.equal('modulePath' in page.plugins.items[0], false)
+  assert.equal('searchPaths' in page, false)
+  await f.dsp.editLibrary(f.output.getRevision(), { kind: 'createScene', name: 'Plugin scene' }, signal())
+  const sceneId = (await f.dsp.library()).scenes.find(row => row.name === 'Plugin scene')!.id
+  await f.dsp.editLibrary(f.output.getRevision(), { kind: 'addVst3', sceneId, catalogId: page.plugins.items[0].id, stateAssetId: null }, signal())
+  assert.ok((await f.dsp.state()).scenes.scenes.find(row => row.id === sceneId)!.graph.nodes.some(node => node.vst3?.catalogId === page.plugins.items[0].id))
+  await f.dsp.shutdown()
+})
+
+async function profileUpload(f: ReturnType<typeof fixture>, data: Buffer) {
+  const upload = await f.dsp.beginUpload('phone', { zoneId: 'local', kind: 'profile', fileName: 'scene.tedsp', byteSize: data.length })
+  for (let offset = 0; offset < data.length; offset += upload.chunkBytes)
+    await f.dsp.uploadChunk('phone', upload.uploadId, offset, data.subarray(offset, offset + upload.chunkBytes).toString('base64'))
+  return upload
+}
+async function downloadProfile(f: ReturnType<typeof fixture>) {
+  const download = await f.dsp.exportProfile('phone', f.output.getRevision(), 'Room', signal())
+  const parts: Buffer[] = []
+  for (let offset = 0; offset < download.byteSize;) {
+    const chunk = await f.dsp.profileChunk('phone', download.downloadId, offset)
+    parts.push(Buffer.from(chunk.data, 'base64')); offset = chunk.nextOffset
+  }
+  await f.dsp.releaseProfile('phone', download.downloadId)
+  return Buffer.concat(parts)
+}
+
+test('profile preview is isolated, import appends disabled scenes, export embeds legacy IR and roundtrip preserves graph assets', async t => {
+  const f = fixture(t), target = fixture(t)
+  await f.dsp.initialize(); await target.dsp.initialize()
+  const asset = await f.assets.importBuffer({ kind: 'impulseResponse', fileName: 'Room.wav', data: new Uint8Array([1, 2]) })
+  const edit = (value: Parameters<CoreDspService['editLibrary']>[1]) => f.dsp.editLibrary(f.output.getRevision(), value, signal())
+  await edit({ kind: 'createScene', name: 'Room' })
+  const sceneId = (await f.dsp.library()).scenes.find(scene => scene.name === 'Room')!.id
+  await edit({ kind: 'bindImpulse', sceneId, assetId: asset.id })
+  const data = await downloadProfile(f)
+  const before = await target.dsp.state()
+  const upload = await profileUpload(target, data)
+  const preview = await target.dsp.previewProfile('phone', upload.uploadId, target.output.getRevision(), signal())
+  assert.equal(preview.assetCount, 1); assert.deepEqual(preview.issues, [])
+  assert.equal((await target.dsp.library()).assets.total, 0)
+  assert.deepEqual(await target.dsp.state(), before)
+  await assert.rejects(target.dsp.importProfile('tablet', upload.uploadId, preview.previewId, preview.revision, signal()), { code: 'NOT_FOUND' })
+  const imported = await target.dsp.importProfile('phone', upload.uploadId, preview.previewId, preview.revision, signal())
+  const after = await target.dsp.state()
+  assert.equal(after.scenes.pinnedSceneId, before.scenes.pinnedSceneId)
+  assert.equal(after.scenes.activeSceneId, before.scenes.activeSceneId)
+  assert.equal(imported.sceneIds.length, preview.scenes.length)
+  assert.ok(after.scenes.scenes.filter(scene => imported.sceneIds.includes(scene.id)).every(scene => !scene.enabled && !scene.allowDsdPcmFallback))
+  assert.equal((await target.dsp.library()).assets.items[0].fileName, 'Room.wav')
+  const repeat = await profileUpload(target, data)
+  const stale = await target.dsp.previewProfile('phone', repeat.uploadId, target.output.getRevision(), signal())
+  await target.dsp.editLibrary(stale.revision, { kind: 'createScene', name: 'other-controller' }, signal())
+  await assert.rejects(target.dsp.importProfile('phone', repeat.uploadId, stale.previewId, stale.revision, signal()), { code: 'STALE_REVISION' })
+  await target.dsp.cancelUpload('phone', repeat.uploadId).catch(() => {})
+  // Legacy path conversion is local to the downloaded package, not a saved-settings mutation.
+  await f.dsp.edit({ revision: f.output.getRevision(), edit: { kind: 'processing', settings: { convolverIrPath: await f.assets.getPath(asset.id) } } }, signal())
+  const source = await f.dsp.state()
+  await downloadProfile(f)
+  assert.deepEqual(await f.dsp.state(), source)
+  await f.dsp.shutdown(); await target.dsp.shutdown()
+})
+
+test('profile native/save failure rolls back newly imported assets; external paths and absent assets cannot be applied', async t => {
+  const f = fixture(t), source = fixture(t)
+  await f.dsp.initialize(); await source.dsp.initialize()
+  const asset = await source.assets.importBuffer({ kind: 'impulseResponse', fileName: 'Room.wav', data: new Uint8Array([1, 3]) })
+  await source.dsp.editLibrary(source.output.getRevision(), { kind: 'createScene', name: 'Room' }, signal())
+  const sceneId = (await source.dsp.library()).scenes.find(scene => scene.name === 'Room')!.id
+  await source.dsp.editLibrary(source.output.getRevision(), { kind: 'bindImpulse', sceneId, assetId: asset.id }, signal())
+  const data = await downloadProfile(source), upload = await profileUpload(f, data)
+  const preview = await f.dsp.previewProfile('phone', upload.uploadId, f.output.getRevision(), signal())
+  const before = await f.dsp.state(); f.failWrite()
+  await assert.rejects(f.dsp.importProfile('phone', upload.uploadId, preview.previewId, preview.revision, signal()), /disk full/)
+  assert.deepEqual((await f.dsp.state()).scenes, before.scenes)
+  assert.equal((await f.dsp.library()).assets.total, 0)
+  const scenes = structuredClone((await source.dsp.state()).scenes.scenes)
+  const file = join(source.root, 'external.tedsp')
+  scenes[0].graph.nodes.push({ id: 'bad', type: 'convolver', enabled: true, params: { impulseResponsePath: 'C:/private.wav' } })
+  await exportDspProfileArchive({ outputPath: file, profile: createDspProfile({ name: 'External', scenes, pinnedSceneId: null, assetIds: [] }) }, source.assets)
+  const bad = await profileUpload(f, readFileSync(file))
+  await assert.rejects(f.dsp.previewProfile('phone', bad.uploadId, f.output.getRevision(), signal()), /外部路径/)
+  await f.dsp.cancelUpload('phone', bad.uploadId)
+  delete scenes[0].graph.nodes.at(-1)!.params.impulseResponsePath
+  scenes[0].graph.nodes.at(-1)!.params.impulseResponseAssetId = `impulseResponse:${'f'.repeat(64)}`
+  await exportDspProfileArchive({ outputPath: file, profile: createDspProfile({ name: 'Missing', scenes, pinnedSceneId: null, assetIds: [] }) }, source.assets)
+  const missing = await profileUpload(f, readFileSync(file))
+  const blocked = await f.dsp.previewProfile('phone', missing.uploadId, f.output.getRevision(), signal())
+  assert.ok(blocked.issues.length > 0)
+  await assert.rejects(f.dsp.importProfile('phone', missing.uploadId, blocked.previewId, blocked.revision, signal()), { code: 'INVALID_REQUEST' })
+  await f.dsp.shutdown(); await source.dsp.shutdown()
+})
+
+test('VST3 parameters preserve preset state, reject readonly fields, quantize steps, fence pages and rollback failed saves', async t => {
+  const f = fixture(t); await f.dsp.initialize()
+  mkdirSync(join(f.root, 'modules')); writeFileSync(join(f.root, 'modules', 'effect.vst3'), 'fixture')
+  await f.catalog.scan()
+  const plugin = (await f.catalog.getState()).entries[0]
+  const state = await f.assets.importBuffer({ kind: 'vst3State', fileName: 'state.bin', data: new Uint8Array([1]) })
+  const edit = (value: Parameters<CoreDspService['editLibrary']>[1]) => f.dsp.editLibrary(f.output.getRevision(), value, signal())
+  await edit({ kind: 'createScene', name: 'Plugin' })
+  const sceneId = (await f.dsp.library()).scenes.find(scene => scene.name === 'Plugin')!.id
+  await edit({ kind: 'addVst3', sceneId, catalogId: plugin.id, stateAssetId: state.id })
+  const nodeId = (await f.dsp.library()).scenes.find(scene => scene.id === sceneId)!.nodes.find(node => node.type === 'vst3Plugin')!.id
+  let page = await f.dsp.nodeParameters(f.output.getRevision(), sceneId, nodeId)
+  assert.equal(page.items[0].value, null); assert.equal(page.items[0].overridden, false)
+  const originalFind = f.catalog.find.bind(f.catalog)
+  f.catalog.find = async id => {
+    const entry = await originalFind(id)
+    if (entry) entry.parameters = entry.parameters.map(parameter => ({ ...parameter, stepCount: parameter.id === 0 ? 4 : 0, flags: parameter.id === 1 ? 2 : 0 }))
+    return entry
+  }
+  await edit({ kind: 'parameter', sceneId, nodeId, parameterId: 0, value: 0.39 })
+  const previous = page.revision
+  page = await f.dsp.nodeParameters(f.output.getRevision(), sceneId, nodeId)
+  assert.equal(page.items[0].value, 0.5)
+  assert.equal((await f.dsp.nodeParameters(page.revision, sceneId, nodeId, 200)).items.length, 1)
+  await assert.rejects(f.dsp.nodeParameters(previous, sceneId, nodeId), { code: 'STALE_REVISION' })
+  await assert.rejects(edit({ kind: 'parameter', sceneId, nodeId, parameterId: 1, value: 0.7 }), /不可编辑/)
+  f.failWrite(); await assert.rejects(edit({ kind: 'parameter', sceneId, nodeId, parameterId: 0, value: 1 }), /disk full/)
+  assert.equal((await f.dsp.nodeParameters(f.output.getRevision(), sceneId, nodeId)).items[0].value, 0.5)
+  await edit({ kind: 'parameter', sceneId, nodeId, parameterId: 0, value: null })
+  assert.equal((await f.dsp.nodeParameters(f.output.getRevision(), sceneId, nodeId)).items[0].value, null)
+  await f.dsp.shutdown()
+})
+
+test('profile preview rebinds installed VST3 by class identity and reports missing plugins without publishing assets', async t => {
+  const source = fixture(t), target = fixture(t), missing = fixture(t)
+  for (const f of [source, target, missing]) await f.dsp.initialize()
+  for (const f of [source, target]) {
+    mkdirSync(join(f.root, 'modules')); writeFileSync(join(f.root, 'modules', 'effect.vst3'), 'fixture')
+    await f.catalog.scan()
+  }
+  const plugin = (await source.catalog.getState()).entries[0]
+  await source.dsp.editLibrary(source.output.getRevision(), { kind: 'createScene', name: 'Plugin' }, signal())
+  const sceneId = (await source.dsp.library()).scenes.find(scene => scene.name === 'Plugin')!.id
+  await source.dsp.editLibrary(source.output.getRevision(), { kind: 'addVst3', sceneId, catalogId: plugin.id, stateAssetId: null }, signal())
+  const bytes = await downloadProfile(source)
+  const unavailable = await profileUpload(missing, bytes)
+  const blocked = await missing.dsp.previewProfile('phone', unavailable.uploadId, missing.output.getRevision(), signal())
+  assert.ok(blocked.issues.some(issue => issue.includes('VST3')))
+  const upload = await profileUpload(target, bytes)
+  const preview = await target.dsp.previewProfile('phone', upload.uploadId, target.output.getRevision(), signal())
+  assert.deepEqual(preview.issues, [])
+  await target.dsp.importProfile('phone', upload.uploadId, preview.previewId, preview.revision, signal())
+  const node = (await target.dsp.state()).scenes.scenes.flatMap(scene => scene.graph.nodes).find(node => node.type === 'vst3Plugin')!
+  assert.notEqual(node.vst3?.catalogId, plugin.id)
+  assert.equal(node.vst3?.catalogId, (await target.catalog.getState()).entries[0].id)
+  const download = await target.dsp.exportProfile('phone', target.output.getRevision(), 'portable', signal())
+  await assert.rejects(target.dsp.profileChunk('tablet', download.downloadId, 0), { code: 'NOT_FOUND' })
+  await target.dsp.disconnectUploads('phone')
+  await assert.rejects(target.dsp.profileChunk('phone', download.downloadId, 0), { code: 'NOT_FOUND' })
+  for (const f of [source, target, missing]) await f.dsp.shutdown()
+})
 
 test('Core DSP uses the original settings file, effective EQ and shared output revision', async (t) => {
   const f = fixture(t)
@@ -316,6 +561,35 @@ test('managed asset references survive profile round-trip and prevent deletion w
     newId: randomUUID
   })
   assert.equal((await reopened.list())[0].id, id)
+})
+
+test('an owned legacy convolution path retains its managed asset until the path is explicitly cleared', async (t) => {
+  const f = fixture(t)
+  const asset = await f.assets.importBuffer({
+    kind: 'impulseResponse',
+    fileName: 'legacy.wav',
+    data: new Uint8Array([1, 2, 3, 4])
+  })
+  const path = await f.assets.getPath(asset.id)
+  f.settings.update({
+    audioProcessing: {
+      ...f.settings.read().audioProcessing,
+      convolverIrPath: path,
+      convolverEnabled: true
+    }
+  })
+  await f.dsp.initialize()
+  assert.equal((await f.dsp.assets()).items[0].referenceCount, 1)
+  await assert.rejects(f.dsp.removeAsset(f.output.getRevision(), asset.id, signal()), /引用/)
+  f.settings.update({
+    audioProcessing: {
+      ...f.settings.read().audioProcessing,
+      convolverIrPath: '',
+      convolverEnabled: false
+    }
+  })
+  await f.dsp.removeAsset(f.output.getRevision(), asset.id, signal())
+  assert.equal((await f.dsp.assets()).total, 0)
 })
 
 test('scene IR paths are authorized and an asset ID cannot smuggle an arbitrary path', async (t) => {

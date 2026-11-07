@@ -252,11 +252,13 @@ const timestamp = (value: number) => new Date(value).toLocaleString()
             >
               <span
                 class="star-hit left"
+                data-te-interactive
                 @mouseenter="ready && (hoverSteps = star * 2 - 1)"
                 @click="chooseStar(star * 2 - 1)"
               />
               <span
                 class="star-hit right"
+                data-te-interactive
                 @mouseenter="ready && (hoverSteps = star * 2)"
                 @click="chooseStar(star * 2)"
               />

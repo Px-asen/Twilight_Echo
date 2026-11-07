@@ -196,17 +196,22 @@ window.runPlaybackMotionTests=async()=>{
   app.unmount();document.querySelector('#app').innerHTML=''
 
   await ipc.invoke('motion-resize',1200,760)
-  const settings=useSettingsStore().settings
-  settings.value.motionPreference='full'
+  let preferences={motionPreference:'full'}
+  const snapshot=()=>({settings:preferences,defaults:{cachePath:''},paths:{settingsFile:'',userDataPath:'',activeCachePath:''},platform:'win32',appVersion:'test',restartRequired:false,restartReasons:[]})
+  window.api.settings={get:async()=>snapshot(),update:async patch=>{preferences={...preferences,...patch};return snapshot()},onChanged:()=>()=>{}}
+  const settingsStore=useSettingsStore()
+  await settingsStore.loadSettings()
+  const settings=settingsStore.settings
+  await settingsStore.updateSettings({motionPreference:'full'})
   app=createApp(OnboardingWizard);app.mount('#app');await tick()
   const wizard=document.querySelector('.onboarding-wizard')
   const pointer=()=>wizard.dispatchEvent(new PointerEvent('pointermove',{clientX:1100,clientY:600,bubbles:true}))
   pointer();await frame();await tick()
   expect(document.querySelector('.onb-backdrop').style.transform.includes('translate3d'),'full parallax not written directly')
   for(const mode of ['reduced','off']){
-    settings.value.motionPreference='full';await tick();pointer()
-    settings.value.motionPreference=mode;await frame();await tick()
-    for(const layer of document.querySelectorAll('.onb-backdrop,.onb-scene-no'))expect(layer.style.transform===''&&getComputedStyle(layer).transform==='none',mode+' queued pointer frame escaped cancellation')
+    await settingsStore.updateSettings({motionPreference:'full'});await tick();pointer()
+    await settingsStore.updateSettings({motionPreference:mode});await frame();await tick()
+    for(const layer of document.querySelectorAll('.onb-backdrop,.onb-scene-no'))expect(layer.style.transform===''&&getComputedStyle(layer).transform==='none',mode+' queued pointer frame escaped cancellation '+JSON.stringify({inline:layer.style.transform,paint:getComputedStyle(layer).transform,root:wizard.dataset.motion,preference:settings.value.motionPreference}))
     pointer();await frame()
     expect(document.querySelector('.onb-backdrop').style.transform==='','non-full accepted pointer writes')
   }
@@ -216,10 +221,10 @@ window.runPlaybackMotionTests=async()=>{
   const originalMatchMedia=window.matchMedia.bind(window)
   const changes=new Set();let reduced=false
   window.matchMedia=query=>query==='(prefers-reduced-motion: reduce)'?{get matches(){return reduced},addEventListener:(_type,cb)=>changes.add(cb),removeEventListener:(_type,cb)=>changes.delete(cb)}:originalMatchMedia(query)
-  settings.value.motionPreference='system';app=createApp(OnboardingWizard);app.mount('#app');await tick()
+  await settingsStore.updateSettings({motionPreference:'system'});app=createApp(OnboardingWizard);app.mount('#app');await tick()
   reduced=true;changes.forEach(cb=>cb());await tick()
   expect(document.querySelector('.onboarding-wizard').dataset.motion==='reduced','system query change not applied')
-  settings.value.motionPreference='full';await tick()
+  await settingsStore.updateSettings({motionPreference:'full'});await tick()
   expect(document.querySelector('.onboarding-wizard').dataset.motion==='full','explicit full lost to system reduce')
   app.unmount();expect(changes.size===0,'media subscription leaked on unmount');window.matchMedia=originalMatchMedia
 

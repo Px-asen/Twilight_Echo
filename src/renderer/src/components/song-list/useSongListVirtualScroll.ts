@@ -9,6 +9,7 @@ import {
   type Ref
 } from 'vue'
 import type { Track } from '../../types/music'
+import type { ScrollViewport } from '../../utils/scrollToTopButton'
 import {
   getSongListTrackScrollTopForIndex,
   getSongListVirtualRange
@@ -53,7 +54,7 @@ export function useSongListVirtualScroll({
   updateViewportHeight: () => void
   resetScrollAndMeasure: () => void
   restoreScrollAndMeasure: () => void
-  scrollToTrack: (index: number) => void
+  scrollToTrack: (index: number, viewport?: ScrollViewport) => void
   scrollTop: Ref<number>
   viewportHeight: Ref<number>
 } {
@@ -136,11 +137,14 @@ export function useSongListVirtualScroll({
     })
   }
 
-  function scrollToTrack(index: number): void {
+  function scrollToTrack(index: number, viewport?: ScrollViewport): void {
     const container = containerRef.value
     if (!container) return
     updateViewportHeight()
-    const nextTop = getSongListTrackScrollTopForIndex({
+    const nextTop = viewport
+      ? tableOffsetTop.value + (index + 0.5) * rowHeight -
+        ((viewport.top + viewport.bottom) / 2 - container.getBoundingClientRect().top)
+      : getSongListTrackScrollTopForIndex({
       index,
       trackCount: trackCount.value,
       viewportHeight: container.clientHeight,

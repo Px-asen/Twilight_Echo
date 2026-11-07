@@ -26,7 +26,8 @@ export const useMusicStore=()=>({libraryScanStatus:ref({state:'idle'}),librarySc
 export const useNcmStore=()=>({isLoggedIn:ref(false),profile:ref(null)})
 export const useProviderStore=()=>({providers:ref([]),getProvider:()=>null})
 export const useAppNoticeStore=()=>({unreadCount:ref(1),activeTaskCount:ref(0),doNotDisturb:ref(false)})
-export const useWindowChrome=()=>({maximized:ref(false)})
+export const windowChrome={maximized:ref(false),fullScreen:ref(false),maximizeBehavior:ref('maximize')}
+export const useWindowChrome=()=>windowChrome
 export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
     )
     await writeFile(join(directory, 'import.ts'), `export default {render:()=>null}`)
@@ -91,7 +92,14 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
           win.webContents.sendInputEvent({type:'keyUp',keyCode:'Enter'});
           await new Promise(resolve=>setTimeout(resolve,150));
           await win.webContents.executeJavaScript('window.checkLibraryActivation()');
-          if(process.env.TE_CHROME_PREVIEW)require('node:fs').writeFileSync(process.env.TE_CHROME_PREVIEW,(await win.webContents.capturePage()).toPNG());
+          if(process.env.TE_CHROME_PREVIEW){
+            const fs=require('node:fs'),target=process.env.TE_CHROME_PREVIEW;
+            fs.writeFileSync(target,(await win.webContents.capturePage()).toPNG());
+            for(const fullScreen of [false,true]){
+              await win.webContents.executeJavaScript('window.prepareMacFullscreenPreview('+fullScreen+')');
+              fs.writeFileSync(target.replace(/\\.png$/,'-mac-'+(fullScreen?'exit':'enter')+'.png'),(await win.webContents.capturePage()).toPNG());
+            }
+          }
           console.error('CHROME_HIG_OK');app.exit(0);
         }catch(error){console.error(error);app.exit(1)}});`
     )
@@ -99,7 +107,7 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
     delete environment.ELECTRON_RUN_AS_NODE
     const result = await promisify(execFile)(
       require('electron'),
-      [join(directory, 'runner.cjs'), join(directory, 'index.html')],
+      ['--no-sandbox', join(directory, 'runner.cjs'), join(directory, 'index.html')],
       { windowsHide: true, timeout: 60_000, env: environment }
     )
     assert.match(result.stderr, /CHROME_HIG_OK/)
@@ -109,6 +117,7 @@ export const useBackStack=()=>({canGoBack:ref(true),backHint:ref(null)})`
 })
 
 const runtime = `import {createApp,h,ref,nextTick} from 'vue'
+import {windowChrome} from './fixtures'
 import TitleBar from '@renderer/components/TitleBar.vue'
 import SideMenu from '@renderer/components/SideMenu.vue'
 import StreamingLibrary from '@renderer/components/StreamingLibrary.vue'
@@ -116,18 +125,38 @@ import '@renderer/assets/base.css'
 import '@renderer/assets/bohr.css'
 import '@renderer/assets/fonts.css'
 import '@renderer/assets/icon-fonts.ts'
-const active=ref('streaming-home'),open=ref(true),liquid=ref(false),selected=[]
+const active=ref('streaming-home'),open=ref(true),liquid=ref(false),selected=[],activeTool=ref('settings')
+let dspRequests=0
 let recent=0,ranking=0
 createApp({render:()=>h('div',[
- h(TitleBar,{menuOpen:open.value,preview:true,activeTool:'settings',onToggleMenu:()=>open.value=!open.value}),
+ h(TitleBar,{menuOpen:open.value,preview:true,activeTool:activeTool.value,onDsp:()=>{dspRequests++;activeTool.value=activeTool.value==='dsp'?'settings':'dsp'},onToggleMenu:()=>open.value=!open.value}),
  h(SideMenu,{open:open.value,liquidMaterial:liquid.value,activeKey:active.value,onSelectPage:page=>{active.value=page.id;selected.push(page.id)}}),
  h(StreamingLibrary,{isLoggedIn:true,profile:null,profileSignature:'',likedSummary:{name:'喜欢',trackCount:0,cover:null},libraryLoaded:true,userPlaylistEntries:[],showLikedPanel:false,showSocialStats:false,showFeatureCards:true,onOpenRecent:()=>recent++,onOpenRanking:()=>ranking++})
 ])}).mount('#app')
 const expect=(condition,message)=>{if(!condition)throw Error(message)}
 const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,350))}
 const visibleGlyph=icon=>[...icon.querySelectorAll('.theme-icon-glyph')].filter(glyph=>getComputedStyle(glyph).display!=='none')
+window.prepareMacFullscreenPreview=async(fullScreen)=>{
+ windowChrome.maximizeBehavior.value='fullscreen';windowChrome.fullScreen.value=fullScreen;await settle()
+}
 window.runChromeHigTests=async()=>{
  await settle();await document.fonts.ready
+ const expand=document.querySelector('.title-bar .control-btn.maximize')
+ expect(expand.getAttribute('aria-label')==='最大化窗口','Windows caption lost maximize')
+ windowChrome.maximized.value=true;await nextTick()
+ expect(expand.title==='还原窗口','maximized caption does not offer restore')
+ windowChrome.maximizeBehavior.value='fullscreen';await nextTick()
+ expect(expand.title==='进入全屏'&&expand.querySelector('path'),'Mac maximized window does not offer native fullscreen')
+ windowChrome.fullScreen.value=true;windowChrome.maximized.value=false;await nextTick()
+ expect(expand.getAttribute('aria-label')==='退出全屏','native fullscreen state does not update the caption')
+ windowChrome.fullScreen.value=false;await nextTick()
+ expect(expand.title==='进入全屏','leaving native fullscreen does not reset the caption')
+ windowChrome.maximizeBehavior.value='maximize';await nextTick()
+ const dspButton=document.querySelector('.title-bar [aria-label="DSP 工作台"]')
+ expect(dspButton.nextElementSibling?.getAttribute('aria-label')==='声区'&&dspButton.nextElementSibling.nextElementSibling?.getAttribute('aria-label')==='外观','audio tools are not adjacent to appearance')
+ expect(dspButton.querySelector('[data-theme-icon-slot="playback.equalizer"]'),'DSP tool is missing its audio adjustment icon')
+ dspButton.click();await nextTick();expect(dspRequests===1&&dspButton.getAttribute('aria-pressed')==='true','DSP button does not emit or show its active state')
+ dspButton.click();await nextTick();expect(dspRequests===2&&dspButton.getAttribute('aria-pressed')==='false','DSP button cannot return to its inactive state')
  for(const font of ['Inter, MiSans, sans-serif','Georgia, MiSans, serif']){
   document.documentElement.style.setProperty('--te-font-sans',font)
   for(const tone of ['dark','pureWhite'])for(const family of ['outline','rounded','filled']){

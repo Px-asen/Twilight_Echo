@@ -486,6 +486,12 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     terms: '连接 控制 快捷键 集成 网络 代理 网易云 ncm 登录 检查 启动 账号 启动时检查网易云登录'
   },
   {
+    id: 'ncm-listening-sync',
+    section: 'connections',
+    title: '同步听歌记录到网易云',
+    terms: '网易云 ncm 同步 听歌 记录 历史 时长 scrobble 打卡 最近播放 排行'
+  },
+  {
     id: 'system-media',
     section: 'connections',
     title: '原生媒体控制 (SMTC)',
@@ -715,12 +721,6 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     disclosureId: 'advanced-engine-parameters'
   },
   {
-    id: 'dsp-workbench',
-    section: 'playback',
-    title: 'DSP 工作台',
-    terms: 'DSP 工作台 workbench rack 机架 均衡器 效果链 场景 校正 资料 插件 监测'
-  },
-  {
     id: 'dsp-master',
     section: 'playback',
     title: 'DSP 音效',
@@ -948,7 +948,9 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'plugin-theme',
     section: 'appearance',
     title: '插件主题',
-    terms: '外观 主题 界面 插件 主题 plugin theme 扩展 插件主题'
+    terms: '外观 主题 界面 插件 主题 plugin theme 扩展 插件主题',
+    fallbackId: 'appearance-workspace',
+    fallbackReason: '请打开自定义主题，在主题预设中选择或管理插件主题。'
   },
   {
     id: 'startup-experience',

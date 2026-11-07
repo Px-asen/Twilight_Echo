@@ -2,34 +2,33 @@ import { existsSync, writeFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Agent, request, type Dispatcher } from 'undici'
+import { createRequire } from 'node:module'
+import type { Dispatcher } from 'undici'
 import {
   NcmApiService,
   NCM_API_HOST,
   type NcmApiServiceOptions
 } from '../../core/providers/ncmApi.ts'
 
+const nodeRequire = createRequire(import.meta.url)
+
 /** The OS may assign a valid loopback port (such as 6000) blocked by Fetch. */
 export function createNcmLoopbackTransport(
   dispatcher?: Dispatcher
 ): Required<Pick<NcmApiServiceOptions, 'fetch' | 'closeTransport'>> {
   let activeDispatcher: Dispatcher | null = dispatcher ?? null
-  const getDispatcher = (): Dispatcher => {
-    if (!activeDispatcher) {
-      activeDispatcher = new Agent({
+  return {
+    fetch: async (url, init) => {
+      const { Agent, request } = nodeRequire('undici') as typeof import('undici')
+      activeDispatcher ??= new Agent({
         connections: 8,
         keepAliveTimeout: 30_000,
         keepAliveMaxTimeout: 60_000
       })
-    }
-    return activeDispatcher
-  }
-  return {
-    fetch: async (url, init) => {
       const response = await request(url, {
         signal: init.signal,
         headers: init.headers,
-        dispatcher: getDispatcher(),
+        dispatcher: activeDispatcher,
         maxRedirections: 20
       })
       const headers = new Headers()

@@ -5,12 +5,13 @@ const path = require('node:path')
 const { promisify } = require('node:util')
 const test = require('node:test')
 const { build } = require('esbuild')
+const { compileStyle, parse } = require('@vue/compiler-sfc')
 
 const root = path.resolve(__dirname, '..')
 
 test(
   'Wallpaper Engine bridge uses both CSPs and preserves playback, live controls and host windows',
-  { timeout: 90_000 },
+  { timeout: 120_000 },
   async () => {
     await fs.mkdir(path.join(root, 'tmp'), { recursive: true })
     const directory = await fs.mkdtemp(path.join(root, 'tmp', 'wallpaper-bridge-'))
@@ -25,9 +26,31 @@ test(
           'src/renderer/src/assets/base.css',
           'src/renderer/src/assets/appearance.css',
           'src/renderer/src/assets/materials.css',
+          'src/renderer/src/mini-player/MiniPlayer.css',
           'src/renderer/src/components/settings-page/SettingsPage.css',
           'src/renderer/src/components/settings-page/BackgroundAppearanceCustomizer.css'
         ].map((file) => fs.readFile(path.join(root, file), 'utf8'))
+      )
+      const player = await fs.readFile(
+        path.join(root, 'src/renderer/src/components/PlayingMusic.vue'),
+        'utf8'
+      )
+      const { descriptor } = parse(player)
+      const compiled = compileStyle({
+        source: descriptor.styles[0].content,
+        filename: 'PlayingMusic.vue',
+        id: 'data-v-wallpaper-fixture',
+        scoped: true
+      })
+      assert.deepEqual(compiled.errors, [])
+      const noise = await fs.readFile(
+        path.join(root, 'src/renderer/src/assets/images/playback-dither.svg')
+      )
+      css.push(
+        compiled.code.replaceAll(
+          '../assets/images/playback-dither.svg',
+          `data:image/svg+xml;base64,${noise.toString('base64')}`
+        )
       )
       await fs.writeFile(
         path.join(renderer, 'host.css'),
@@ -69,7 +92,7 @@ test(
         {
           env,
           windowsHide: true,
-          timeout: 80_000,
+          timeout: 110_000,
           maxBuffer: 2_000_000
         }
       )

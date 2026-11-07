@@ -5,6 +5,7 @@ export interface WindowState {
   width: number
   height: number
   maximized: boolean
+  fullScreen?: boolean
 }
 
 export function readWindowState(path: string): WindowState | undefined {
@@ -16,7 +17,12 @@ export function readWindowState(path: string): WindowState | undefined {
       Number.isFinite(value.height) &&
       value.height > 0
     )
-      return { width: value.width, height: value.height, maximized: value.maximized === true }
+      return {
+        width: value.width,
+        height: value.height,
+        maximized: value.maximized === true,
+        fullScreen: value.fullScreen === true
+      }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
       console.warn('[window] Unable to restore window size:', error)

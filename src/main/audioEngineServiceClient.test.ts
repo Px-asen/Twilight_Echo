@@ -68,12 +68,14 @@ test('Bridge driver/TLS lifecycle uses the topology deadline instead of the shor
     requestTimeoutMs: 15, topologyRequestTimeoutMs: 1000,
     electron: { utilityProcess: { fork: () => child } } })
   try {
-    const call = binding.callAsync('BridgeConnect', [])
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(child.killCount, 0)
-    const request = child.messages.find((m: any) => m.method === 'BridgeConnect') as any
-    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
-    await call
+    for (const method of ['BridgeConnect', 'BridgePrepareTimed', 'BridgeArmTimed', 'BridgeCancelTimed', 'BridgeSetTimedCorrection']) {
+      const call = binding.callAsync(method, [])
+      await new Promise(resolve => setTimeout(resolve, 40))
+      assert.equal(child.killCount, 0)
+      const request = child.messages.find((m: any) => m.method === method) as any
+      child.emit('message', { kind: 'response', requestId: request.requestId, ok: true })
+      await call
+    }
   } finally { binding.destroy() }
 })
 
@@ -135,7 +137,9 @@ test('crash listener calls cannot bypass the configured restart backoff', async 
   try {
     startAudioServiceForTest(binding)
     children[0].emit('exit', 1)
-    await assert.rejects(listenerCall!, /音频服务不可用/)
+    // The explicit restarting latch rejects before the missing-child branch;
+    // neither branch is allowed to fork from inside this crash listener.
+    await assert.rejects(listenerCall!, /Audio engine is restarting/)
     await new Promise((resolve) => setTimeout(resolve, 15))
     assert.equal(children.length, 1)
     await new Promise((resolve) => setTimeout(resolve, 60))
@@ -143,6 +147,74 @@ test('crash listener calls cannot bypass the configured restart backoff', async 
   } finally {
     binding.destroy()
   }
+})
+
+test('repeated short-lived audio crashes stop after two retries and retain the original exit code', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const children: ManualUtilityProcess[] = []
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js', restartDelayMs: 5,
+    launch: () => { const child = new ManualUtilityProcess(); children.push(child); return child }
+  })
+  try {
+    startAudioServiceForTest(binding)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      children[attempt].emit('exit', 3221225727)
+      context.mock.timers.tick(20)
+    }
+    assert.equal(children.length, 3)
+    assert.match(binding.fatalStartupError, /3221225727/)
+    context.mock.timers.tick(120_000)
+    await assert.rejects(binding.callAsync('EnumerateDevices', []), /3221225727/)
+    assert.equal(children.length, 3, 'polling cannot reopen the crash loop')
+    assert.equal(binding.restartAfterFatal(), true)
+    assert.equal(children.length, 4)
+    const request = binding.callAsync('EnumerateDevices', [])
+    const message = children[3].messages.at(-1) as { requestId: string }
+    children[3].emit('message', { kind: 'response', requestId: message.requestId, ok: true, value: '[]' })
+    assert.equal(await request, '[]')
+  } finally { binding.destroy() }
+})
+
+test('a stable audio process gets a fresh retry budget after recovery', context => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const children: ManualUtilityProcess[] = []
+  const binding = new AudioEngineServiceBinding({ serviceEntry: 'audio', restartDelayMs: 5,
+    launch: () => { const child = new ManualUtilityProcess(); children.push(child); return child } })
+  try {
+    startAudioServiceForTest(binding)
+    children[0].emit('exit', 1); context.mock.timers.tick(5)
+    children[1].emit('exit', 1); context.mock.timers.tick(10)
+    context.mock.timers.tick(60_000)
+    children[2].emit('exit', 1); context.mock.timers.tick(5)
+    assert.equal(children.length, 4)
+    assert.equal(binding.fatalStartupError, '')
+  } finally { binding.destroy() }
+})
+
+test('audio shutdown waits for process exit and prevents polling from creating a replacement', async () => {
+  class SlowExit extends ManualUtilityProcess {
+    override kill(): void { this.killCount++ }
+  }
+  const child = new SlowExit()
+  let launches = 0
+  const binding = new AudioEngineServiceBinding({ serviceEntry: 'audio', restartTimeoutMs: 1000,
+    launch: () => { launches++; return child } })
+  startAudioServiceForTest(binding)
+  let finished = false
+  const shutdown = binding.shutdown().then(() => { finished = true })
+  try {
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(child.killCount, 1)
+    assert.equal(finished, false)
+    binding.EnumerateDevices()
+    await assert.rejects(binding.callAsync('GetPlaybackInfo', []))
+    assert.equal(launches, 1)
+    child.emit('exit', 0)
+    await shutdown
+    assert.equal(finished, true)
+    assert.equal(launches, 1)
+  } finally { binding.destroy() }
 })
 
 test('old coalesced control completion cannot discard a replacement generation control', async (context) => {

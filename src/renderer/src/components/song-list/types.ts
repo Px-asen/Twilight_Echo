@@ -1,7 +1,7 @@
 import type { Track } from '../../types/music'
 import type { LibraryPlaylistSourceSummary } from '../../../../shared/libraryDatabase'
 
-export type LocalTransitionName = 'local-page-down' | 'local-page-up'
+export type LocalTransitionName = `local-${import('../../app/motion/policy').PageMotionName}`
 
 export type GridItem = {
   imported?: import('../../../../shared/corePlaylists.ts').CorePlaylistDescriptor['imported']

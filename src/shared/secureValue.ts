@@ -1,7 +1,7 @@
 export interface SecureValueEnvelope {
   __twilightSecure: true
   version: 1
-  backend: 'electron-safe-storage' | 'aes-256-gcm-machine'
+  backend: 'electron-safe-storage' | 'aes-256-gcm-machine' | 'windows-dpapi' | 'aes-256-gcm-profile'
   ciphertext: string
   iv?: string
   tag?: string

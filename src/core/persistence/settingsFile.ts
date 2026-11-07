@@ -5,7 +5,7 @@ import {
   type JsonFileOptions
 } from './jsonFile.ts'
 
-const MAX_SETTINGS_FILE_BYTES = 2 * 1024 * 1024
+export const MAX_SETTINGS_FILE_BYTES = 2 * 1024 * 1024
 
 type SettingsRecord = Record<string, unknown>
 

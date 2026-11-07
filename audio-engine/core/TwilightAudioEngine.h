@@ -32,6 +32,7 @@ struct NaturalPlaybackBoundaries {
 
 struct PlaybackInfo {
   PlaybackState state = PlaybackState::Stopped;
+  bool buffering = false;
   double positionSeconds = 0.0;
   double durationSeconds = 0.0;
   double volume = 1.0;
@@ -141,6 +142,17 @@ class TwilightAudioEngine {
   TAE_Result pullBridgePcm(float* data, size_t frames, TAE_BridgePcmInfo* info) {
     return pipeline_->pullBridgePcm(data, frames, info);
   }
+  TAE_Result pullBridgePcmTimeline(float* data, size_t frames, TAE_BridgePcmInfo* info, char* timeline, size_t capacity) {
+    return pipeline_->pullBridgePcmTimeline(data, frames, info, timeline, capacity);
+  }
+  TAE_Result setBridgeQueueControl(bool owned, const std::string& current, const std::string& next) {
+    return pipeline_->setBridgeQueueControl(owned, current, next);
+  }
+  TAE_Result commitBridgeSourceControls() { return pipeline_->commitBridgeSourceControls(); }
+  TAE_Result setBridgeAutoMixMode(const std::string& mode);
+  TAE_Result pullBridgeAudio(void* data, size_t capacity, size_t frames, TAE_BridgeAudioInfo* info) {
+    return pipeline_->pullBridgeAudio(data, capacity, frames, info);
+  }
   TAE_Result setPaused(bool paused);
   TAE_Result stop();
   TAE_Result seek(double positionSeconds);
@@ -173,6 +185,7 @@ class TwilightAudioEngine {
   TAE_Result setPlayMode(const std::string& mode);
   TAE_Result setAutoMixMode(const std::string&);
   std::string selectAutoMix(const std::string&);
+  std::string bindBridgeAutoMixSelection(const std::string&);
   TAE_Result prepareAutoMix(const std::string&);
   TAE_Result submitAutoMix(uint64_t);
   TAE_Result cancelAutoMix();

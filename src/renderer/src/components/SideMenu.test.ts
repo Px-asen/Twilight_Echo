@@ -16,10 +16,8 @@ test('local sidebar opening uses one transform transition without material chang
   assert.doesNotMatch(sideMenu, /box-shadow var\(--te-motion-panel\)/)
   assert.doesNotMatch(sideMenu, /side-menu-item-in/)
   assert.match(app, /transition: padding-left var\(--te-motion-panel\) var\(--te-ease-soft\);/)
-  assert.match(app, /opacity 0\.18s ease,\s*transform 0\.24s var\(--te-ease-out-strong\)/)
-  assert.match(app, /translate3d\(0, 16px, 0\)/)
-  assert.match(app, /opacity 0\.14s ease,\s*transform 0\.18s var\(--te-ease-enter\)/)
-  assert.match(app, /translate3d\(0, -12px, 0\)/)
+  assert.match(app, /<MotionTransition :name="songlistTransitionName">/)
+  assert.doesNotMatch(app, /\.page-(?:up|down)-(?:enter|leave)-active/)
 })
 
 /**

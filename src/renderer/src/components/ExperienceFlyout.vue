@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { findFlyoutExperience, usePluginFlyout } from '../stores/usePluginFlyout'
 import { useExtensionRegistry } from '../extensions/registry.ts'
 import EmbeddedExperience from './experience/EmbeddedExperience.vue'
+import MotionTransition from './MotionTransition.vue'
 import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer'
 
 /**
@@ -27,39 +28,41 @@ useFocusTrap(container, active)
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="target && experience"
-      ref="container"
-      class="experience-flyout"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="target.title"
-    >
-      <div class="experience-flyout-backdrop" @click="flyout.close()"></div>
-      <section class="experience-flyout-panel">
-        <header class="experience-flyout-header">
-          <span class="experience-flyout-title">{{ target.title }}</span>
-          <button
-            type="button"
-            class="experience-flyout-close"
-            aria-label="关闭面板"
-            title="关闭面板"
-            @click="flyout.close()"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="m3.5 3.5 9 9m0-9-9 9" />
-            </svg>
-          </button>
-        </header>
-        <div class="experience-flyout-body">
-          <EmbeddedExperience
-            :key="`${experience.pluginId}:${experience.id}:${experience.version}`"
-            :experience="experience"
-            @exit="flyout.close()"
-          />
-        </div>
-      </section>
-    </div>
+    <MotionTransition name="drawer-right" panel=".experience-flyout-panel" :pin="false">
+      <div
+        v-if="target && experience"
+        ref="container"
+        class="experience-flyout"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="target.title"
+      >
+        <div class="experience-flyout-backdrop" @click.self="flyout.close()"></div>
+        <section class="experience-flyout-panel">
+          <header class="experience-flyout-header">
+            <span class="experience-flyout-title">{{ target.title }}</span>
+            <button
+              type="button"
+              class="experience-flyout-close"
+              aria-label="关闭面板"
+              title="关闭面板"
+              @click="flyout.close()"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="m3.5 3.5 9 9m0-9-9 9" />
+              </svg>
+            </button>
+          </header>
+          <div class="experience-flyout-body">
+            <EmbeddedExperience
+              :key="`${experience.pluginId}:${experience.id}:${experience.version}`"
+              :experience="experience"
+              @exit="flyout.close()"
+            />
+          </div>
+        </section>
+      </div>
+    </MotionTransition>
   </Teleport>
 </template>
 
@@ -90,18 +93,6 @@ useFocusTrap(container, active)
   background: var(--te-app-bg, #141418);
   border-left: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   box-shadow: -18px 0 48px rgb(0 0 0 / 38%);
-  animation: experience-flyout-in 0.22s var(--te-ease-soft, ease-out);
-}
-
-@keyframes experience-flyout-in {
-  from {
-    transform: translateX(24px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
 }
 
 .experience-flyout-header {

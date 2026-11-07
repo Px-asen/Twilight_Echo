@@ -77,17 +77,17 @@ const playerFixture = `import {shallowRef} from 'vue'
 export const currentTrack=shallowRef(null),calls=[]
 export const usePlayerStore=()=>({currentTrack,playTrack:(track,queue)=>{calls.push({track,queue});currentTrack.value=track},playLibraryQuery:async(query,id)=>{calls.push({query,id})}})
 `
-const runtime = `import {createApp,h,nextTick,triggerRef} from 'vue'
+const runtime = `import {createApp,h,nextTick} from 'vue'
 import Page from '@renderer/components/ListeningAnalyticsPage.vue'
 import {tracks,artists} from './music'
 import {calls} from './player'
-import {useListeningStatsStore,resetListeningStatsForTest,recordListeningForTest,waitForListeningStatsReady} from '@renderer/stores/useListeningStatsStore'
-import {ListeningStatsDatabase} from '@renderer/stores/listeningStatsDatabase'
+import {useListeningStatsStore,waitForListeningStatsReady} from '@renderer/stores/useListeningStatsStore'
+import {installListeningCoreFixture} from '@renderer/components/listeningCore.fixture.mjs'
 import {getUnifiedRecentResolverRebuildCount} from '@renderer/utils/unifiedRecentTracks'
 let storageMode='json';const libraryListeners=new Set(),databaseCalls=[]
 window.api={library:{getStorageMode:async()=>storageMode,onChanged:listener=>(libraryListeners.add(listener),()=>libraryListeners.delete(listener)),database:{getTracksByIds:async ids=>{databaseCalls.push({type:'tracks',ids});return {revision:1,tracks:ids.map(id=>({...track('database'),id}))}},lookupPlaylistTracks:async input=>{databaseCalls.push({type:'history',input});return {revision:1,ids:input.entries.map(()=>'sqlite-track')}},queryTracks:async query=>{databaseCalls.push({type:'artist',query});return {revision:1,total:query.artist==='本地艺人'?1:0,tracks:[]}}}}}
 const expect=(ok,message)=>{if(!ok)throw new Error(message)}
-const tick=async()=>{await nextTick();await nextTick()}
+const tick=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,20));await nextTick()}
 const untilClosed=async()=>{const end=Date.now()+3000;while(document.querySelector('.stats-clear-dialog')){if(Date.now()>end)throw new Error('native clear dialog exit did not finish');await new Promise(resolve=>setTimeout(resolve,20))}await tick()}
 const waitFor=async(predicate,message)=>{const end=Date.now()+3000;while(!predicate()){if(Date.now()>end)throw new Error(message);await new Promise(resolve=>setTimeout(resolve,10))}}
 const text=selector=>document.querySelector(selector)?.textContent
@@ -96,9 +96,9 @@ const key=async(el,value)=>{el.focus();el.dispatchEvent(new KeyboardEvent('keydo
 const track=id=>({id:'local-'+id,title:'旋律 '+id,artist:'本地艺人',album:'曲集 '+id,filePath:'D:/fixture/'+id+'.wav',fileName:id+'.wav',duration:180,size:1,cover:null,lyrics:null,source:'local',format:'WAV'})
 const stat=(track,seconds,plays)=>({title:track.title,artist:track.artist,seconds,plays,skips:0,completions:0,lastPlayed:Date.now(),cover:null,track,sourceIds:[{source:track.source,trackId:track.id}]})
 window.runJournalTests=async()=>{
+  const host=await installListeningCoreFixture(tracks,databaseCalls)
   await waitForListeningStatsReady()
-  resetListeningStatsForTest()
-  const {listeningStats,persistenceStatus}=useListeningStatsStore(),views=[],artistViews=[]
+  const {listeningStats}=useListeningStatsStore(),views=[],artistViews=[]
   const app=createApp({render:()=>h(Page,{'onSelect-view':(...args)=>views.push(args),'onOpen-artist':value=>artistViews.push(value)})})
   app.mount('#app');await tick()
   expect(document.querySelector('.journal-empty'),'empty state missing')
@@ -109,7 +109,7 @@ window.runJournalTests=async()=>{
   const rows={}
   for(let index=0;index<12;index++)rows['s'+index]=stat(tracks.value[index],(12-index)*3600,index+1)
   rows.missing=stat(track(999),1000,2)
-  listeningStats.value={days:{[today]:3600,[yesterday]:1800},tracks:rows};await tick()
+  await host.replace({days:{[today]:3600,[yesterday]:1800},tracks:rows});await tick()
   expect(!document.querySelector('.journal-empty'),'recorded history did not replace empty state')
   expect(text('.hero-duration').includes('78.3'),'hero did not sum exact seconds')
   expect(document.querySelectorAll('.ranking-list li').length===5,'rankings are not initially bounded')
@@ -118,7 +118,7 @@ window.runJournalTests=async()=>{
   expect(text('.rhythm-total').includes('1.5'),'period time did not use daily records')
   for(const days of [7,90,30]){button('.an-segments',days+' 天').click();await tick();expect(document.querySelector('.rhythm-plot').getAttribute('aria-valuemax')===String(days),'range did not change chart')}
   const builds=getUnifiedRecentResolverRebuildCount()
-  listeningStats.value.days[today]+=3600;listeningStats.value.tracks.s0.seconds+=3600;triggerRef(listeningStats);await tick()
+  host.data().days[today]+=3600;host.data().tracks.s0.seconds+=3600;await host.flush();await tick()
   expect(text('.rhythm-total').includes('2.5'),'shallowRef tick did not update child chart')
   expect(text('.calendar-readout').includes('2小时'),'shallowRef tick did not update child calendar')
   expect(getUnifiedRecentResolverRebuildCount()===builds,'playback tick rebuilt the library resolver')
@@ -134,22 +134,22 @@ window.runJournalTests=async()=>{
   await key(document.activeElement,'End');expect(document.activeElement.dataset.day===today,'calendar End failed');await key(document.activeElement,'ArrowUp');expect(document.activeElement.dataset.day===yesterday,'calendar arrow failed')
   document.querySelector('.footprint-footer button').click();await tick();expect(document.querySelectorAll('#calendar-data tbody tr').length===31,'calendar table is not paginated')
   document.querySelector('.an-data-details').open=true;await tick();expect(document.querySelectorAll('.an-data-details tbody tr').length===7,'daily table does not follow range')
-  document.querySelector('.ranking-row:not(:disabled)').click();await tick();expect(calls.at(-1).queue.length===200&&calls.at(-1).track.id==='local-0','single track lost bounded queue')
+  document.querySelector('.ranking-row:not(:disabled)').click();await tick();expect(calls.at(-1).query.sort==='playlist'&&calls.at(-1).id==='local-0','single track lost bounded queue')
   const select=document.querySelector('.ranking-sort select');select.value='plays';select.dispatchEvent(new Event('change',{bubbles:true}));await tick();expect(text('.ranking-meta strong')==='旋律 11','play-count sorting only sorted an old top-five subset')
   document.querySelector('.ranking-expand').click();await tick();expect(document.querySelectorAll('.ranking-list li').length===10,'expanded ranking should be capped at ten')
   document.querySelector('.ranking-play-all').click();await tick();expect(calls.at(-1).queue.length===10&&calls.at(-1).track.id==='local-11','play ranking lost order')
   button('.ranking-tabs','艺人').click();await tick();document.querySelector('.ranking-row:not(:disabled)').click();await tick();expect(views.at(-1)[0]==='artists'&&views.at(-1)[1]==='artist:本地艺人','local artist route changed')
   const remote={...track('remote'),id:'provider:1',title:'远方',artist:'远程艺人',source:'test-provider',filePath:''}
-  tracks.value=[];artists.value=[];listeningStats.value={days:{[today]:3600},tracks:{remote:stat(remote,7200,8),gone:stat(track(999),3600,3)}};await tick()
+  tracks.value=[];artists.value=[];await host.replace({days:{[today]:3600},tracks:{remote:stat(remote,7200,8),gone:stat(track(999),3600,3)}});await tick()
   document.querySelector('.ranking-row:not(:disabled)').click();await tick();expect(artistViews.at(-1).providerId==='test-provider','provider artist route changed')
   button('.ranking-tabs','歌曲').click();await tick();expect(document.querySelectorAll('.ranking-row:disabled').length===1,'deleted local snapshot became playable')
   document.querySelector('.ranking-row:not(:disabled)').click();await tick();expect(calls.at(-1).track.source==='test-provider','empty local library blocked remote history')
-  persistenceStatus.value={state:'error',dirty:true,failureCount:1,lastError:'fixture'};await tick();expect(document.querySelector('.journal-notice'),'persistence failure missing')
-  resetListeningStatsForTest();await tick()
+  await host.error('fixture');await tick();expect(document.querySelector('.journal-notice'),'persistence failure missing')
+  await host.error(null);await host.replace({days:{},tracks:{}});await tick()
   const todayStart=Date.parse(today+'T00:00:00Z'),earlier=new Date(todayStart-10*86400000).toISOString().slice(0,10)
-  recordListeningForTest(track('clear'),60,todayStart-10*86400000)
-  recordListeningForTest(track('clear'),120,todayStart)
-  await tick()
+  host.record(track('clear'),60,todayStart-10*86400000)
+  host.record(track('clear'),120,todayStart)
+  await host.flush();await tick()
   const before=JSON.stringify(listeningStats.value),clearEntry=document.querySelector('.journal-clear')
   expect(!clearEntry.disabled,'clear entry unavailable with data')
   clearEntry.focus();clearEntry.click();await tick()
@@ -175,12 +175,12 @@ window.runJournalTests=async()=>{
   expect(listeningStats.value.days[earlier]===undefined&&listeningStats.value.days[today]===120,'custom clearing affected dates outside range')
   expect(text('.hero-duration').includes('2')&&text('.rhythm-total').includes('2'),'clearing failed to update hero and child chart')
   expect(text('.journal-notice').includes('已清除'),'clear success feedback missing')
-  const durable=new ListeningStatsDatabase(indexedDB);expect((await durable.load()).days[earlier]===undefined,'clear was not saved immediately');await durable.close()
+  expect(host.persisted().days[earlier]===undefined,'clear was not saved immediately')
   clearEntry.click();await tick();await setPreset('custom');await setDate('开始日期',earlier);await setDate('结束日期',earlier)
   expect(document.querySelector('.stats-clear-confirm').disabled&&text('.stats-clear-preview').includes('没有可清除'),'empty range can be cleared')
   dialog=document.querySelector('.stats-clear-dialog');dialog.dispatchEvent(new Event('cancel',{cancelable:true}));await untilClosed()
   expect(!document.querySelector('.stats-clear-dialog'),'Escape cancel did not close dialog')
-  listeningStats.value.tracks.legacy=stat(track('legacy'),3600,5);triggerRef(listeningStats);await tick()
+  host.data().tracks.legacy=stat(track('legacy'),3600,5);await host.flush();await tick()
   clearEntry.click();await tick();expect(document.querySelector('.stats-clear-legacy'),'undated history limitation is hidden')
   await setPreset('all');expect(!document.querySelector('.stats-clear-legacy'),'all-data clearing still claims to retain legacy history')
   document.querySelector('.stats-clear-confirm').click();await untilClosed()
@@ -188,17 +188,17 @@ window.runJournalTests=async()=>{
   expect(Object.keys(listeningStats.value.days).length===0&&Object.keys(listeningStats.value.tracks).length===0,'full clear retained historical data')
   storageMode='sqlite'
   const databaseTrack={...track('database'),id:'sqlite-track'}
-  listeningStats.value={days:{[today]:3600},tracks:{sqlite:stat(databaseTrack,7200,8)}}
-  triggerRef(listeningStats)
+  tracks.value=[databaseTrack]
+  await host.replace({days:{[today]:3600},tracks:{sqlite:stat(databaseTrack,7200,8)}})
   for(const listener of libraryListeners)listener()
   await waitFor(()=>databaseCalls.some(call=>call.type==='artist'),'SQLite ranking refresh did not finish')
   await tick()
-  expect(databaseCalls.some(call=>call.type==='history'),'SQLite ranking did not resolve history identities')
+  expect(databaseCalls.some(call=>call.type==='artist'),'Core ranking did not query indexed artist availability')
   expect(document.querySelectorAll('.ranking-row:not(:disabled)').length===1,'SQLite ranking did not resolve the database-only track')
   document.querySelector('.ranking-row:not(:disabled)').click();await tick()
   expect(calls.at(-1).query.sort==='playlist'&&calls.at(-1).id==='sqlite-track','SQLite ranking playback did not use a library query')
   button('.ranking-tabs','艺人').click();await tick()
   expect(views.at(-1)[0]==='artists'&&views.at(-1)[1]==='artist:本地艺人','SQLite artist availability did not use indexed lookup')
-  app.unmount();resetListeningStatsForTest()
+  app.unmount();await host.replace({days:{},tracks:{}})
 }
 `

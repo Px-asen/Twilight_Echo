@@ -49,7 +49,8 @@ html:not([data-te-shell-layout='custom'])
         .streaming-page,
         .analytics-page,
         .radio-podcast-page,
-        .network-sources-page
+        .network-sources-page,
+        .zones-page
       )
   ) {
   --te-scroll-caption-clearance: var(--te-window-content-top);
@@ -66,7 +67,8 @@ html:not([data-te-shell-layout='custom'])
     .streaming-content,
     .analytics-page,
     .radio-podcast-page,
-    .network-sources-page
+    .network-sources-page,
+    .zones-page
   ) {
   scroll-padding-top: var(--te-scroll-caption-clearance, 0px);
 }
@@ -118,7 +120,7 @@ html:not([data-te-shell-layout='custom']) .app-shell .streaming-content-header {
 html:not([data-te-shell-layout='custom'])
   .app-shell
   .main-content
-  > :is(.song-list, .analytics-page, .radio-podcast-page, .network-sources-page) {
+  > :is(.song-list, .analytics-page, .radio-podcast-page, .network-sources-page, .zones-page) {
   padding-top: calc(var(--te-scroll-caption-clearance, 0px) + 24px);
 }
 

@@ -47,6 +47,8 @@ export interface LibraryMetadataEnrichmentQueueOptions {
   now?: () => number
   onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   onTrackEnriched?: MetadataEnrichmentSink
+  /** Batch-capable owners can commit grouped matches without one write per copy. */
+  onTracksEnriched?: (updates: LibraryMetadataEnrichmentTrackUpdate[]) => Promise<void>
 }
 
 export interface LibraryMetadataEnrichmentBenchmarkResult {
@@ -69,7 +71,7 @@ type FailureBackoff = {
 }
 
 const DEFAULT_CONCURRENCY = 6
-const MIN_CONCURRENCY = 4
+const MIN_CONCURRENCY = 1
 const MAX_CONCURRENCY = 8
 const DEFAULT_RETRY_BASE_MS = 15_000
 const DEFAULT_RETRY_MAX_MS = 5 * 60_000
@@ -82,9 +84,12 @@ export class LibraryMetadataEnrichmentQueue {
   private readonly now: () => number
   private readonly onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   private readonly onTrackEnriched?: MetadataEnrichmentSink
+  private readonly onTracksEnriched?: LibraryMetadataEnrichmentQueueOptions['onTracksEnriched']
   private readonly entries = new Map<string, QueueEntry>()
   private readonly activeEntries = new Map<string, QueueEntry>()
   private readonly failures = new Map<string, FailureBackoff>()
+  private failureCleanupTimer: ReturnType<typeof setTimeout> | null = null
+  private nextFailureCleanupAt = Infinity
   private readonly waiters = new Map<number, Array<() => void>>()
   private readonly activeAbortControllers = new Map<number, Set<AbortController>>()
   private generation = 0
@@ -100,6 +105,7 @@ export class LibraryMetadataEnrichmentQueue {
     this.now = options.now ?? Date.now
     this.onStatus = options.onStatus
     this.onTrackEnriched = options.onTrackEnriched
+    this.onTracksEnriched = options.onTracksEnriched
   }
 
   getStatus(): LibraryMetadataEnrichmentStatus {
@@ -110,6 +116,7 @@ export class LibraryMetadataEnrichmentQueue {
     tracks: Track[],
     cachePolicy: Partial<MetadataEnrichmentPolicy> | undefined = undefined
   ): Promise<void> {
+    if (this.now() >= this.nextFailureCleanupAt) this.pruneFailures()
     const policy = normalizeMetadataEnrichmentPolicy(cachePolicy)
     if (!policy.cover && !policy.lyrics && !policy.metadata) return Promise.resolve()
 
@@ -200,6 +207,40 @@ export class LibraryMetadataEnrichmentQueue {
     await Promise.all([...this.workers])
   }
 
+  /** The owning service calls this after cancellation has joined its workers. */
+  dispose(): void {
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.failureCleanupTimer = null
+    this.nextFailureCleanupAt = Infinity
+    this.failures.clear()
+  }
+
+  private scheduleFailureCleanup(at: number): void {
+    if (this.failureCleanupTimer !== null && at >= this.nextFailureCleanupAt) return
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.nextFailureCleanupAt = at
+    this.failureCleanupTimer = setTimeout(() => this.pruneFailures(), Math.max(1, at - this.now()))
+    // Node timers must not extend an owner's lifetime; the portable Core also runs in browsers.
+    ;(this.failureCleanupTimer as unknown as { unref?: () => void }).unref?.()
+  }
+
+  private pruneFailures(): void {
+    if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
+    this.failureCleanupTimer = null
+    this.nextFailureCleanupAt = Infinity
+    const now = this.now()
+    let next = Infinity
+    for (const [key, failure] of this.failures) {
+      const expires = failure.retryAt + this.retryMaxMs
+      if (expires <= now && !this.entries.has(key) && !this.activeEntries.has(key)) {
+        this.failures.delete(key)
+      } else {
+        next = Math.min(next, expires <= now ? now + this.retryMaxMs : expires)
+      }
+    }
+    if (next !== Infinity) this.scheduleFailureCleanup(next)
+  }
+
   private startNewRun(): void {
     this.generation += 1
     this.status = createIdleStatus()
@@ -236,17 +277,31 @@ export class LibraryMetadataEnrichmentQueue {
       )
       if (generation !== this.generation) return
       this.failures.delete(entry.queryKey)
-      for (const { track, policy } of entry.tracks.values()) {
-        if (generation !== this.generation) return
-        const match = findBestMetadataMatch(track, candidates)
-        const enriched = enrichLocalTrackMetadata(track, match, policy)
-        if (enriched !== track) {
+      const processed = new Set<string>()
+      do {
+        const updates: LibraryMetadataEnrichmentTrackUpdate[] = []
+        for (const { track, policy } of entry.tracks.values()) {
+          if (generation !== this.generation) return
+          if (processed.has(track.id)) continue
+          processed.add(track.id)
+          const match = findBestMetadataMatch(track, candidates)
+          const enriched = enrichLocalTrackMetadata(track, match, policy)
+          if (enriched === track) continue
+          if (this.onTracksEnriched) updates.push({ source: track, track: enriched })
+          else {
+            acceptingUpdate = true
+            const accepted = this.onTrackEnriched?.({ source: track, track: enriched })
+            if (accepted && typeof accepted.then === 'function') await accepted
+            acceptingUpdate = false
+          }
+        }
+        if (updates.length) {
           acceptingUpdate = true
-          const accepted = this.onTrackEnriched?.({ source: track, track: enriched })
-          if (accepted && typeof accepted.then === 'function') await accepted
+          await this.onTracksEnriched!(updates)
           acceptingUpdate = false
         }
-      }
+        // Copies can join an active query while its owner is saving a batch.
+      } while (processed.size < entry.tracks.size)
       if (generation !== this.generation) return
       this.status.completed += entry.tracks.size
     } catch {
@@ -254,7 +309,9 @@ export class LibraryMetadataEnrichmentQueue {
       const previous = this.failures.get(entry.queryKey)
       const attempts = (previous?.attempts ?? 0) + 1
       const retryMs = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** (attempts - 1))
-      this.failures.set(entry.queryKey, { attempts, retryAt: this.now() + retryMs })
+      const retryAt = this.now() + retryMs
+      this.failures.set(entry.queryKey, { attempts, retryAt })
+      this.scheduleFailureCleanup(retryAt + this.retryMaxMs)
       this.status.failed += entry.tracks.size
       this.status.error = acceptingUpdate
         ? '元数据保存失败，请稍后重试'

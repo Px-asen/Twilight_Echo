@@ -280,7 +280,21 @@ export class LibraryDatabasePreferences {
       for (const source of rows) {
         const target = this.target(String(source.recording_id))
         if (represented.has(target.key) || this.value(target.key)?.state !== 'favorite') continue
-        const track = JSON.parse(String(source.payload)) as TrackData
+        let track = JSON.parse(String(source.payload)) as TrackData
+        if (source.provider === 'local') {
+          // Catalog display snapshots deliberately omit file paths. A newly
+          // favorited local recording must use its exact current private row,
+          // otherwise the next ordinary playlist save cannot retain its source.
+          const row = this.sql.prepare('SELECT payload FROM tracks WHERE id=?').get(source.track_id)
+          const current = row ? libraryTrack(JSON.parse(String(row.payload))) : undefined
+          if (current && versionSourceKey(current) === source.source_key) track = current
+          else {
+            // Offline favorites retain the original private source identity,
+            // not a replacement file that happens to reuse the legacy Track ID.
+            const [, filePath, subTrack, cueRange] = JSON.parse(String(source.source_key))
+            track = { ...track, filePath, ...(subTrack ? { subTrack } : {}), ...(cueRange ? { cueRange } : {}) }
+          }
+        }
         if (p.trackIds.includes(track.id)) continue
         p.trackIds.push(track.id); snapshots[track.id] = track; represented.add(target.key)
       }

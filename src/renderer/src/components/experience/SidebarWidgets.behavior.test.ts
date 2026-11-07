@@ -193,7 +193,7 @@ app.whenReady().then(async()=>{try{
  assert.deepEqual(await child().executeJavaScript('[...document.querySelectorAll("progress")].map(el=>el.value)'),[100,44,86]);
  assert.equal(await child().executeJavaScript('typeof require+":"+typeof window.api'),'undefined:undefined');
  assert.equal(await child().executeJavaScript('(()=>{try{parent.document.body;return false}catch{return true}})()'),true);
- await main('document.querySelector(".menu-nav").scrollTop=10000');await capture('expanded-dark');
+ await main('document.querySelector(".menu-nav").scrollTop=10000;new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await capture('expanded-dark');
  const point=await child().executeJavaScript('(()=>{const r=document.querySelector("#refresh").getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()');
  const offset=await main('(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return{x:r.x,y:r.y}})()');
  const position={x:Math.round(offset.x+point.x),y:Math.round(offset.y+point.y)};
@@ -214,10 +214,15 @@ app.whenReady().then(async()=>{try{
  await main('window.widgets.preview(true)');await until('!document.querySelector("iframe")','theme preview isolation');
  await main('window.widgets.preview(false)');await connected();
  await main('document.documentElement.dataset.teNavigationStyle="rail"');await until('!document.querySelector("iframe")','rail unmount');
- await main('document.querySelector(".sidebar-widget-toggle").focus();document.querySelector(".sidebar-widget-toggle").click()');await connected();
+ await main('document.documentElement.dataset.teMotion="full";document.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}));document.querySelector(".sidebar-widget-toggle").focus();document.querySelector(".sidebar-widget-toggle").click()');
+ await until('!!document.querySelector(".experience-flyout-panel")','flyout mount');
+ assert.deepEqual(await main('(()=>{const overlay=document.querySelector(".experience-flyout");return [overlay.getBoundingClientRect().left,overlay.getBoundingClientRect().width===innerWidth,getComputedStyle(overlay).transform]})()'),[0,true,'none'],'flyout backdrop must stay pinned while its panel moves');
+ await connected();
  assert.equal(await main('document.querySelector(".experience-flyout-title").textContent'),'设备电量');await capture('rail-flyout');
  await main('document.querySelector(".experience-flyout-close").focus()');await press('Escape',27);
  await until('!document.querySelector("iframe")','flyout Escape');
+ assert.equal(await main('document.getAnimations().length'),0,'keyboard close retained panel motion');
+ await main('document.documentElement.dataset.teMotion="off"');
  await main('document.querySelector(".sidebar-widget-toggle").click()');await connected();
  await main('window.widgets.set([])');await until('!document.querySelector(".experience-flyout")','disabled rail widget');assert.equal(await main('window.widgets.subscribers()'),1);
  await main('window.widgets.set([window.widgets.sample])');await until('!!document.querySelector(".sidebar-widget-toggle")','re-enabled rail widget');

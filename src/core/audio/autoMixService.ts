@@ -11,8 +11,9 @@ import {
   type TwilightAutoMixCoordinatorDependencies
 } from './twilightAutoMixCoordinator.ts'
 import type { ProviderPlaybackIdentityRegistry } from './providerPlaybackIdentity.ts'
+import type { AutoMixMaterialHost } from './autoMixMaterials.ts'
 
-interface CoreAutoMixOptions {
+export interface CoreAutoMixOptions {
   root: string
   settings(): Pick<AppSettings, 'autoMixStemMode' | 'autoMixStemDevice' | 'autoMixStemCacheMiB'>
   engine: {
@@ -26,6 +27,8 @@ interface CoreAutoMixOptions {
     reportAutoMixAnalysisState: NonNullable<TwilightAutoMixCoordinatorDependencies['onState']>
     clearAutoMixAnalysisState(): void
     invalidateAutoMixSource(): void
+    autoMixMaterials?: AutoMixMaterialHost
+    autoMixCommitMarginSeconds?: number
   }
   authorize: TwilightAutoMixCoordinatorDependencies['authorize']
   analysis: {
@@ -66,22 +69,25 @@ export class CoreAutoMixService {
       analyze: options.analysis.analyze,
       cancelAnalysis: options.analysis.cancel,
       scopedCancellation: true,
+      commitMarginSeconds: engine.autoMixCommitMarginSeconds,
       sourceRevision: (source) => options.identities.revision(source),
       assertSource: (source) => options.identities.assertCurrent(source),
-      select: async (request) =>
-        options.settings().autoMixStemMode === 'off'
-          ? engine.selectAutoMix(request)
-          : (await this.stems()).service.select(request, (json) => engine.selectAutoMix(json)),
-      stems: async (selection, _request, signal) =>
-        options.settings().autoMixStemMode === 'off'
-          ? null
-          : (await this.stems()).service.prepare(
-              selection,
-              () => engine.getAutoMixContext()?.info.position ?? 0,
-              signal
-            ),
+      select: async (request) => {
+        if (options.settings().autoMixStemMode === 'off') return engine.selectAutoMix(request)
+        const { service } = await this.stems()
+        return engine.autoMixMaterials
+          ? engine.autoMixMaterials.select(request, { select: (json, native) => service.select(json, native), release: selection => service.release(selection) })
+          : service.select(request, json => engine.selectAutoMix(json))
+      },
+      stems: async (selection, _request, signal) => {
+        if (options.settings().autoMixStemMode === 'off') return null
+        const { service } = await this.stems()
+        const prepare = (member: typeof selection) => service.prepare(member, () => engine.getAutoMixContext()?.info.position ?? 0, signal)
+        return engine.autoMixMaterials ? engine.autoMixMaterials.prepare(selection, prepare) : prepare(selection)
+      },
       releaseMaterials: async (selection) => {
-        if (this.materials) await (await this.materials).service.release(selection)
+        if (engine.autoMixMaterials) await engine.autoMixMaterials.release(selection)
+        else if (this.materials) await (await this.materials).service.release(selection)
       },
       prepare: (request) => engine.prepareAutoMix(request),
       submit: (id) => engine.submitAutoMix(id),

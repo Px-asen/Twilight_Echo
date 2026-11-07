@@ -4,6 +4,7 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { effectScope, nextTick, reactive, ref, watch } from 'vue'
+import { PersonalizedQueue } from '../../../core/playback/personalizedQueue.ts'
 
 const source = readFileSync(new URL('./StreamingPage.vue', import.meta.url), 'utf8')
 const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)![1]
@@ -108,97 +109,55 @@ test('NCM registration leaves the selected external provider alone', async (t) =
   assert.deepEqual(f.calls, [])
 })
 
-function personalizedRefillFixture(t: { after: (fn: () => void) => void }) {
-  const nodes = ast.statements.filter(
-    (node) =>
-      ts.isExpressionStatement(node) &&
-      ts.isCallExpression(node.expression) &&
-      node.expression.expression.getText(ast) === 'watch' &&
-      node.expression.arguments[0]?.getText(ast).includes('personalizedStreamRemaining')
-  )
-  assert.equal(nodes.length, 1)
-  const code = ts.transpileModule(nodes[0].getText(ast), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022 }
-  }).outputText
-  const queue = ref(Array.from({ length: 10 }, (_, index) => ({ queueEntryId: `entry:${index}` })))
-  const queueIndex = ref(0)
-  const currentTrack = ref(queue.value[0])
-  const personalizedStreamSession = ref<{ id: number; key: 'fm' | 'radar' } | null>(null)
-  const personalizedStreamRemaining = ref(10)
-  const personalizedStreamLoading = reactive({ fm: false, radar: false })
-  const calls: Array<{ key: string; id: number }> = []
-  const scope = effectScope()
-  scope.run(() =>
-    runInNewContext(code, {
-      watch,
-      currentTrack,
-      personalizedStreamSession,
-      personalizedStreamRemaining,
-      personalizedStreamLoading,
-      playbackStore: { queue, queueIndex },
-      loadMorePersonalizedStream: (key: 'fm' | 'radar', session: { id: number }) => {
-        calls.push({ key, id: session.id })
-        personalizedStreamLoading[key] = true
-      }
-    })
-  )
-  t.after(() => scope.stop())
-  return {
-    queue,
-    queueIndex,
-    session: personalizedStreamSession,
-    remaining: personalizedStreamRemaining,
-    loading: personalizedStreamLoading,
-    calls,
-    setIndex: (index: number) => {
-      queueIndex.value = index
-      currentTrack.value = queue.value[index]
-    }
-  }
-}
-
 for (const key of ['fm', 'radar'] as const) {
-  test(`${key} refills at the queue tail even after replaying previously played tracks`, async (t) => {
-    const f = personalizedRefillFixture(t)
-    f.session.value = { id: 1, key }
-    f.remaining.value = 0
+  test(`Core ${key} refills at the queue tail after replay without concurrent requests`, async (t) => {
+    const queue = { id: 'queue', revision: 1, total: 10, index: 0, occurrenceId: 'entry:0' }
+    const calls: string[] = []
+    let resolveBatch!: (tracks: unknown[]) => void
+    const owner = new PersonalizedQueue({
+      queue: () => queue,
+      supportedMethods: () => ['fetchPersonalFm', 'fetchPrivateContent'],
+      call: async (_provider, method) => { calls.push(method); return new Promise(resolve => { resolveBatch = resolve }) },
+      append: async (_id, tracks, current) => { assert.ok(current()); queue.total += tracks.length; return tracks.length },
+      now: Date.now, changed() {}
+    })
+    t.after(() => owner.shutdown())
+    owner.attach({ queueId: queue.id, providerId: 'fixture', key })
+    owner.observe(true)
     await flush()
-    assert.deepEqual(f.calls, [], 'an exhausted unplayed count must not refill a long queue')
-    f.setIndex(6)
+    assert.deepEqual(calls, [])
+    queue.index = 6
+    owner.observe(true)
     await flush()
-    assert.deepEqual(f.calls, [], 'four entries including the current track are above the limit')
-    f.setIndex(7)
+    assert.deepEqual(calls, [], 'four entries including the current track are above the limit')
+    queue.index = 7
+    owner.observe(true)
     await flush()
-    assert.deepEqual(f.calls, [{ key, id: 1 }])
-    f.setIndex(8)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0], key === 'fm' ? 'fetchPersonalFm' : 'fetchPrivateContent')
+    queue.index = 8
+    owner.observe(true)
     await flush()
-    assert.equal(f.calls.length, 1, 'an active refill must prevent concurrent requests')
-    f.queue.value.push(...[10, 11, 12].map((index) => ({ queueEntryId: `entry:${index}` })))
-    f.remaining.value = 3
-    f.loading[key] = false
+    assert.equal(calls.length, 1, 'an active refill must prevent concurrent requests')
+    const work = owner.refill()
+    resolveBatch([10,11,12].map(id => ({ id: String(id), title: String(id), artist: 'Artist', duration: 180 })))
+    await work
+    owner.observe(true)
     await flush()
-    assert.equal(f.calls.length, 1, 'new queue entries restore enough playback runway')
-    f.setIndex(10)
+    assert.equal(calls.length, 1, 'new queue entries restore enough playback runway')
+    queue.index = 10
+    owner.observe(true)
     await flush()
-    assert.deepEqual(f.calls, [
-      { key, id: 1 },
-      { key, id: 1 }
-    ])
+    assert.equal(calls.length, 2)
+    const second = owner.refill()
+    resolveBatch([{ id: '13', title: '13', artist: 'Artist', duration: 180 }])
+    await second
+    owner.stop()
+    owner.observe(true)
+    await flush()
+    assert.equal(calls.length, 2, 'a completed session must not refill')
   })
 }
-
-test('personalized refill ignores an invalid queue index and a completed session', async (t) => {
-  const f = personalizedRefillFixture(t)
-  f.queueIndex.value = -1
-  f.session.value = { id: 1, key: 'fm' }
-  f.remaining.value = 0
-  await flush()
-  assert.deepEqual(f.calls, [])
-  f.session.value = null
-  f.setIndex(9)
-  await flush()
-  assert.deepEqual(f.calls, [])
-})
 
 test('late provider registration does not refresh the root while playback metadata navigation is pending', async (t) => {
   const f = fixture(t)

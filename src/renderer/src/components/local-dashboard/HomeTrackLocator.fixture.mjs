@@ -30,6 +30,7 @@ const current = songs[0]
 window.api = { library: { getStorageMode: async () => 'json', onChanged: () => () => {} } }
 let playCalls = 0
 window.homePlayer = {
+  dspGraphStatus: ref(null),
   currentTrack: ref(current),
   isPlaying: ref(false),
   currentTime: ref(0),
@@ -66,7 +67,7 @@ window.homePlayer = {
   }
 }
 window.homeMusic = { tracks: ref(songs), albums: ref([]), artists: ref([]) }
-window.homeStats = { listeningStats: ref({ days: {}, tracks: {} }) }
+window.homeStats = { overview: ref(null), listeningStats: ref({ days: {}, tracks: {} }) }
 window.homeDsp = {
   audioProcessing: ref({
     dspEnabled: false,
@@ -247,6 +248,7 @@ async function showOnly(key) {
 async function checkHomeLocator(key) {
   await showOnly(key)
   const root = rootFor()
+  expect(root, key + ' root missing: ' + errors.join('; ') + document.querySelector('.home-test-pages')?.innerHTML)
   const rows = [...root.querySelectorAll('[data-te-track-id="' + current.id + '"]')]
   expect(rows.length > 0, key + ' current-song row missing')
   let scrollRoot = rows[0].parentElement

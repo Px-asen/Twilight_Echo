@@ -451,7 +451,13 @@ export class CoreSupervisor extends EventEmitter {
           )
         )
       }
-      const timer = setTimeout(cancel, this.options.requestTimeoutMs ?? 30_000)
+      // Browser authentication needs time for the user to scan and confirm,
+      // then for the provider to validate and save the returned account.
+      const timeoutMs = this.options.requestTimeoutMs ?? (
+        request.kind === 'command' && request.name === 'providers.call' &&
+        request.payload.method === 'openOfficialLogin' ? 245_000 : 30_000
+      )
+      const timer = setTimeout(cancel, timeoutMs)
       this.pending.set(request.requestId, {
         epoch: request.epoch,
         command: request.kind === 'command',

@@ -55,7 +55,11 @@ export function createAfterglowAnchorWindow(options: AfterglowAnchorOptions): Ba
   restoreHandler = options.onRestore
 
   window.on('restore', () => {
-    restoreHandler?.()
+    // Windows is still dispatching the anchor's native restore message here.
+    // Replacing the window in that callback can destroy its HWND reentrantly.
+    setImmediate(() => {
+      if (runtime.afterglowAnchorWindow === window && !window.isDestroyed()) restoreHandler?.()
+    })
   })
   window.on('closed', () => {
     if (runtime.afterglowAnchorWindow === window) {
@@ -70,6 +74,12 @@ export function createAfterglowAnchorWindow(options: AfterglowAnchorOptions): Ba
     window.minimize()
   }
   return window
+}
+
+/** Keep the taskbar restore affordance usable if recreating the UI fails. */
+export function minimizeAfterglowAnchorWindow(): void {
+  const window = runtime.afterglowAnchorWindow
+  if (window && !window.isDestroyed() && !window.isMinimized()) window.minimize()
 }
 
 export function destroyAfterglowAnchorWindow(): void {

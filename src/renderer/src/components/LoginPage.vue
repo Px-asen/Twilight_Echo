@@ -2,6 +2,7 @@
 import QRCode from 'qrcode'
 import './contentArrival.css'
 import ServerLoginForm from '@renderer/components/login/ServerLoginForm.vue'
+import LoginDisclaimerDialog from '@renderer/components/login/LoginDisclaimerDialog.vue'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBackHandler } from '../app/useBackStack'
@@ -30,6 +31,7 @@ type PageState =
   | 'loading'
   | 'account_list'
   | 'logged_in'
+  | 'login_notice'
   | 'qr_loading'
   | 'qr_ready'
   | 'qr_scanned'
@@ -67,6 +69,7 @@ const authUrl = ref('') // OAuth device flow URL (for showBrowserButton provider
 const accountStates = ref<Record<string, AccountState>>({})
 const serverLoginBusy = ref(false)
 const serverLoginMessage = ref('')
+const extraActionMethod = ref('')
 const confirmLogout = ref(false)
 const uidCopied = ref(false)
 
@@ -76,6 +79,7 @@ let accountsInitialized = false
 let disposed = false
 let providerChangeRevision = 0
 let providerRecoveryPending = false
+let extraActionController: AbortController | null = null
 
 /**
  * 声明了 login 能力的 provider 都显示在登录页。
@@ -147,6 +151,11 @@ const activeProfile = computed(() =>
 )
 
 const activeUi = computed(() => activeProvider.value?.ui)
+const primaryLoginAction = computed(() =>
+  activeUi.value?.loginExtraActions?.find(
+    (action) => action.primary && activeProvider.value?.supportedMethods?.includes(action.method)
+  )
+)
 const supportsServerLogin = computed(
   () => activeProvider.value?.supportedMethods?.includes('loginWithServer') === true
 )
@@ -259,6 +268,8 @@ function openAccount(providerId: string): void {
   }
   providerRecoveryPending = false
   loginRevision += 1
+  extraActionController?.abort()
+  extraActionController = null
   stopPolling()
   lastKeyGenTime.value = 0
   qrImage.value = ''
@@ -266,6 +277,7 @@ function openAccount(providerId: string): void {
   authUrl.value = ''
   errorMsg.value = ''
   serverLoginMessage.value = ''
+  extraActionMethod.value = ''
   activeProviderId.value = providerId
   confirmLogout.value = false
   if (
@@ -289,6 +301,22 @@ function openAccount(providerId: string): void {
   }
   if (supportsServerLogin.value) {
     pageState.value = 'qr_ready'
+    return
+  }
+  pageState.value = 'login_notice'
+}
+
+function acceptLoginDisclaimer(providerId: string): void {
+  if (
+    disposed ||
+    pageState.value !== 'login_notice' ||
+    activeProviderId.value !== providerId ||
+    !activeProvider.value
+  )
+    return
+  pageState.value = 'qr_loading'
+  if (primaryLoginAction.value) {
+    void handleExtraAction(primaryLoginAction.value.method)
     return
   }
   void startQrLogin()
@@ -418,7 +446,7 @@ function stopPolling(): void {
 
 async function startQrLogin(): Promise<void> {
   const providerId = activeProviderId.value
-  if (!providerId) return
+  if (!providerId || pageState.value === 'login_notice') return
   const now = Date.now()
   if (now - lastKeyGenTime.value < QR_KEY_COOLDOWN) return
   stopPolling()
@@ -460,6 +488,11 @@ async function startQrLogin(): Promise<void> {
 }
 
 function handleRefresh(): void {
+  if (pageState.value === 'login_notice') return
+  if (primaryLoginAction.value) {
+    void handleExtraAction(primaryLoginAction.value.method)
+    return
+  }
   lastKeyGenTime.value = 0
   void startQrLogin()
 }
@@ -471,8 +504,12 @@ function openAuthUrl(): void {
 }
 
 async function handleExtraAction(method: string): Promise<void> {
-  if (!activeProviderId.value) return
+  if (!activeProviderId.value || extraActionMethod.value || pageState.value === 'login_notice')
+    return
   const revision = ++loginRevision
+  extraActionMethod.value = method
+  const controller = new AbortController()
+  extraActionController = controller
   stopPolling()
   pageState.value = 'qr_loading'
   qrImage.value = ''
@@ -480,14 +517,20 @@ async function handleExtraAction(method: string): Promise<void> {
   errorMsg.value = ''
   try {
     const providerId = activeProviderId.value
-    await providerStore.callProvider(providerId, method)
+    const result = await providerStore.callProvider(providerId, method, [], controller.signal)
     if (revision !== loginRevision || activeProviderId.value !== providerId) return
+    if (result && typeof result === 'object' && 'loggedIn' in result && !result.loggedIn) {
+      throw new Error('登录会话未建立，请重新打开官方登录窗口')
+    }
     pageState.value = 'login_success'
     await syncSuccessfulLogin(providerId, true)
   } catch (error) {
     if (revision !== loginRevision) return
     pageState.value = 'error'
     errorMsg.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (revision === loginRevision) extraActionMethod.value = ''
+    if (extraActionController === controller) extraActionController = null
   }
 }
 
@@ -565,6 +608,8 @@ async function copyUid(): Promise<void> {
 function backToAccounts(): void {
   providerRecoveryPending = false
   loginRevision += 1
+  extraActionController?.abort()
+  extraActionController = null
   lastKeyGenTime.value = 0
   stopPolling()
   activeProviderId.value = null
@@ -576,6 +621,7 @@ function backToAccounts(): void {
   confirmLogout.value = false
   serverLoginBusy.value = false
   serverLoginMessage.value = ''
+  extraActionMethod.value = ''
 }
 
 // 账号详情/扫码登录是登录页内部的一层：标题栏返回键先退到平台列表，再退出
@@ -639,6 +685,8 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true
   loginRevision += 1
+  extraActionController?.abort()
+  extraActionController = null
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   stopPolling()
   if (uidCopiedTimer) clearTimeout(uidCopiedTimer)
@@ -775,7 +823,14 @@ onUnmounted(() => {
                 @submit="handleServerLogin"
               />
               <div v-else class="qr-stage">
-                <template v-if="isOAuthProvider">
+                <div v-if="pageState === 'login_notice'" class="oauth-panel">
+                  <p class="stage-muted">确认免责声明后继续登录</p>
+                </div>
+                <div v-else-if="extraActionMethod" class="oauth-panel" role="status">
+                  <div class="lp-spinner"></div>
+                  <p class="stage-muted">请在打开的登录窗口扫码或授权，完成后会自动返回</p>
+                </div>
+                <template v-else-if="isOAuthProvider">
                   <div class="oauth-panel">
                     <div class="lp-spinner"></div>
                     <p class="stage-muted">已在浏览器中打开授权页面，完成授权后将自动登录</p>
@@ -836,12 +891,16 @@ onUnmounted(() => {
                   </p>
                 </template>
 
-                <div v-if="activeUi?.loginExtraActions?.length" class="extra-actions">
+                <div
+                  v-if="pageState !== 'login_notice' && activeUi?.loginExtraActions?.length"
+                  class="extra-actions"
+                >
                   <button
                     v-for="action in activeUi.loginExtraActions"
                     :key="action.method"
                     type="button"
                     class="btn-secondary"
+                    :disabled="Boolean(extraActionMethod)"
                     @click="handleExtraAction(action.method)"
                   >
                     <i :class="action.icon"></i>
@@ -995,6 +1054,14 @@ onUnmounted(() => {
         </Transition>
       </main>
     </div>
+    <LoginDisclaimerDialog
+      v-if="pageState === 'login_notice' && activeProvider"
+      :key="activeProvider.id"
+      :provider-id="activeProvider.id"
+      :provider-name="activeProvider.name"
+      @accept="acceptLoginDisclaimer"
+      @cancel="backToAccounts"
+    />
   </div>
 </template>
 

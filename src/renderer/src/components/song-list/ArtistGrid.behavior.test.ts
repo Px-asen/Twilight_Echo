@@ -227,7 +227,7 @@ window.gridCollaborationDetails=async()=>{
   const actual=[...document.querySelectorAll('.track-row .track-title')].map(t=>t.textContent.trim()).sort()
   expect(JSON.stringify(actual)===JSON.stringify([...titles].sort()),'collaborations missing from '+name)
   document.querySelector('.artist-back').click()
-  await wait(()=>cards().length===6,'back to artist grid failed')
+  await wait(()=>cards().filter(card=>!card.closest('[inert]')).length===6,'back to artist grid failed')
  }
  const host=document.createElement('div');document.body.append(host)
  const opened=[]

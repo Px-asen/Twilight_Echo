@@ -91,10 +91,12 @@ import {createApp,h,nextTick,ref} from 'vue'
 import {createPinia,setActivePinia} from 'pinia'
 import SongList from '@renderer/components/SongList.vue'
 import {useMusicStore} from '@renderer/stores/useMusicStore.ts'
+import {installMusicCoreFixture} from '@renderer/components/musicCore.fixture.mjs'
 import {installScrollToTopButton} from '@renderer/utils/scrollToTopButton.ts'
 import '@renderer/assets/base.css'
 import '@renderer/assets/primeicons.css'
 
+window.songListReady = (async () => {
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const expect = (condition, message) => { if (!condition) throw new Error(message) }
 
@@ -118,8 +120,7 @@ window.songListPlayer = {
 
 const pinia = createPinia()
 setActivePinia(pinia)
-const music = useMusicStore()
-music.tracks.value = Array.from({ length: 6_000 }, (_, index) => ({
+const tracks = Array.from({ length: 6_000 }, (_, index) => ({
   id: 'locate-track-' + index,
   title: 'Locate track ' + index,
   artist: 'Test artist',
@@ -136,9 +137,10 @@ music.tracks.value = Array.from({ length: 6_000 }, (_, index) => ({
   bitDepth: 24,
   source: 'local'
 }))
-music.refreshLibraryIndex()
+await installMusicCoreFixture({ revision: 1, authoritative: [], localTracks: tracks })
+await useMusicStore().loadPlaylists()
 const targetIndex = 4_200
-currentTrack.value = music.tracks.value[targetIndex]
+currentTrack.value = tracks[targetIndex]
 
 const errors = []
 const app = createApp({
@@ -217,6 +219,7 @@ window.songListLocateTest = async () => {
   stopScrollControls()
   return 'SONG_LIST_LOCATE_OK'
 }
+})()
 `
 
 const runner = `
@@ -245,7 +248,7 @@ app.whenReady().then(async () => {
   )
   try {
     await window.loadFile(path.join(directory, 'index.html'))
-    console.log(await window.webContents.executeJavaScript('window.songListLocateTest()'))
+    console.log(await window.webContents.executeJavaScript('window.songListReady.then(() => window.songListLocateTest())'))
     app.exit(0)
   } catch (error) {
     console.error('SONG_LIST_LOCATE_FAILED', error && error.stack ? error.stack : error)

@@ -1,0 +1,68 @@
+name: Linux x86_64 Server container
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'deploy/server/**'
+      - 'src/main/**'
+      - 'src/core/**'
+      - 'src/shared/**'
+      - 'src/adapters-node/**'
+      - 'audio-engine/**'
+      - 'scripts/**'
+      - 'packages/**'
+      - 'patches/**'
+      - 'resources/plugins/**'
+      - 'resources/remote/**'
+      - 'resources/automix-stems/worker.py'
+      - 'resources/automix-stems/arrangement.py'
+      - 'resources/automix-stems/probe.py'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'docs/server-linux.md'
+      - 'docs/server-extensions.md'
+      - 'docs/audio-bridge-formats.md'
+      - 'docs/sync-group-transitions.md'
+      - 'docs/standalone-server-phase3.md'
+      - 'LICENSE'
+      - '.github/workflows/server-linux.yml'
+permissions:
+  contents: read
+jobs:
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build locked public models and verify Core, network formats, AutoMix, migration and extensions
+        id: verification
+        run: docker build --target verification -f deploy/server/Dockerfile -t twilight-server-verified .
+      - name: Preserve a failed public model conversion
+        if: failure() && steps.verification.outcome == 'failure'
+        run: |
+          mkdir -p "$RUNNER_TEMP/public-model-diagnostics"
+          docker build --target public-model-tools -f deploy/server/Dockerfile -t twilight-public-model-tools .
+          docker run --rm --mount type=bind,src="$RUNNER_TEMP/public-model-diagnostics",dst=/diagnostics \
+            twilight-public-model-tools python scripts/build-public-automix-assets.py \
+            --work /diagnostics/work --output /diagnostics/graphs
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.verification.outcome == 'failure'
+        with:
+          name: public-model-conversion-diagnostics
+          path: ${{ runner.temp }}/public-model-diagnostics/work/exports/
+          if-no-files-found: ignore
+      - name: Build runtime image
+        run: docker build --target runtime -f deploy/server/Dockerfile -t twilight-echo-server:local .
+      - name: Verify the final runtime as its non-root user
+        run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,size=256m
+          --mount type=bind,src="$PWD/scripts/server-container.test.cjs",dst=/tests/server-container.test.cjs,readonly
+          --entrypoint node twilight-echo-server:local --test /tests/server-container.test.cjs
+      - name: Export installable image
+        run: docker save twilight-echo-server:local | gzip > twilight-echo-server-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: twilight-echo-server-linux-x86_64
+          path: twilight-echo-server-linux-x86_64.tar.gz
+          if-no-files-found: error

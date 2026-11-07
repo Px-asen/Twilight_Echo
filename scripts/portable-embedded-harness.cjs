@@ -106,7 +106,7 @@ function createFakePlatform(overrides = {}) {
       return true
     },
     'audioEngine.pause': () => {
-      if (platform.audio.state === 'playing') platform.audio.state = 'paused'
+      if (platform.audio.state === 'playing' || platform.audio.state === 'buffering') platform.audio.state = 'paused'
       return true
     },
     'audioEngine.stop': () => {

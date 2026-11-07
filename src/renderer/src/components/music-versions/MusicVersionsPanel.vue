@@ -59,7 +59,10 @@ const detailsKey = ref<string | null>(null)
 const detailPage = ref(0)
 const relatedKeys = shallowRef<Set<string> | null>(null)
 const document = computed(() => getMusicVersions())
-const externalCatalog = computed<ReturnType<typeof buildVersionCatalog>>(() => [])
+const externalCatalog = computed(() => buildVersionCatalog(
+  props.sqliteMode ? props.tracks.filter(track => track.source && track.source !== 'local') : props.tracks,
+  scope.value
+))
 const databasePage = shallowRef<{
   items: ReturnType<typeof buildVersionCatalog>
   total: number

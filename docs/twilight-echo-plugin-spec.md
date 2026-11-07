@@ -238,8 +238,10 @@ schemaVersion 3 还可携带 `appearance`、`appearanceLayers`、`toneSchedule` 
   按区块的 `id/title/icon/method/args` 加载推荐内容；仅为能力兼容而提供空实现的
   provider 不得进入主页音源列表。`fetchRecommendPlaylists` 作为已准入首页的可选歌单架。
   可选的 `ui.streamingHome` 启用品牌首页版式：`subtitle` 为页首文案，
-  `requiresLogin: false` 允许在确认插件免责声明后浏览公开推荐（包含推荐歌单）；
+  `requiresLogin: false` 允许未登录时浏览公开推荐（包含推荐歌单）；
   缺省仍要求登录。分区可提供 `eyebrow` 与 `description`，说明内容来源，公开新歌和榜单不得标为个性化推荐。
+  免责声明在安装并启用插件后，进入其扫码或授权登录页时以二级弹窗确认；同意后才生成二维码或打开授权窗口，
+  取消或按 Esc 返回平台列表。同一次登录中的二维码刷新与失败重试不重复确认；已登录账号及服务器配置登录保持原流程。
   单个分区可声明 `requiresLogin: true`，未登录时跳过该请求并显示登录入口，不阻止其它公开分区加载。
   首页调用与普通 provider 调用均通过 `toProviderIpcArgs` 转换 Vue 响应式参数，再进入 preload。
   新字段的跨进程类型统一位于 `src/shared/providerHome.ts`。首页最多展示三个歌曲分区及十二张歌单，

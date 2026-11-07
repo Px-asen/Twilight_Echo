@@ -101,6 +101,8 @@ function runtimeEntrySource(): string {
 import { createPinia, setActivePinia } from 'pinia'
 import { usePlaylistLifecycleActions } from ${JSON.stringify(actionsPath)}
 import { useMusicStore } from ${JSON.stringify(storePath)}
+import { installMusicCoreFixture } from '@renderer/components/musicCore.fixture.mjs'
+import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import { MAX_PLAYLIST_IMPORT_BYTES } from ${JSON.stringify(lifecyclePath)}
 import PlaylistLifecycleToolbar from ${JSON.stringify(toolbarPath)}
 import PlaylistActionDialog from ${JSON.stringify(dialogPath)}
@@ -176,14 +178,14 @@ const setInputFile = async (selector, file) => {
 const runtimeReady = (async () => {
 const pinia = createPinia()
 setActivePinia(pinia)
-const music = useMusicStore()
-await music.loadPlaylists()
-music.tracks.value = [
+window.__playlistFixture.localTracks = [
   track('a', 'C:\\\\Music\\\\A.flac', 'A'),
   track('b', 'C:\\\\Music\\\\B.flac', 'B'),
   track('c', 'C:\\\\Music\\\\C.flac', 'C')
 ]
-music.refreshLibraryIndex()
+await installMusicCoreFixture(window.__playlistFixture)
+const music = useMusicStore()
+await music.loadPlaylists()
 
 const activePlaylistName = ref('Road Mix')
 const selectedIds = ref([])
@@ -198,7 +200,7 @@ const Root = {
       isPlaylistDetail: computed(() => !!currentPlaylist.value),
       repairMessage,
       getSelectedTracks: () =>
-        music.tracks.value.filter((item) => selectedIds.value.includes(item.id)),
+        window.__playlistFixture.localTracks.filter((item) => selectedIds.value.includes(item.id)),
       isSelected: (trackId) => selectedIds.value.includes(trackId),
       clearSelection: () => {
         selectedIds.value = []
@@ -264,7 +266,7 @@ const runPlaylistLifecycleRuntime = async () => {
     select.dispatchEvent(new Event('change', { bubbles: true }))
     await click('.playlist-export-controls button')
   }
-  expect(window.__playlistFixture.downloads.length === 3, 'all three exports must download')
+  await waitFor(() => window.__playlistFixture.downloads.length === 3, 'all three exports must download')
   for (const format of ['m3u', 'm3u8', 'pls']) {
     const download = window.__playlistFixture.downloads.find((item) => item.name === 'Road Mix.' + format)
     expect(download, 'missing .' + format + ' filename')
@@ -301,7 +303,7 @@ const runPlaylistLifecycleRuntime = async () => {
   })
   await waitFor(() => statusText().includes('已导入 1 首'), 'successful import feedback was not visible')
   expect(validReads === 1, 'valid import must read exactly once')
-  expect(currentPlaylist.value.trackIds.includes('c'), 'valid import did not update the real store')
+  expect(window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds.includes('c'), 'valid import did not update the real store')
 
   await setInputFile('#playlist-import', {
     name: 'invalid.txt',
@@ -370,7 +372,7 @@ const runPlaylistLifecycleRuntime = async () => {
     'recovered CAS conflict was not visible in the UI'
   )
   expect(music.playlists.value.some((playlist) => playlist.id === 'pl-remote'), 'authoritative remote playlist was lost')
-  expect(music.playlists.value.find((playlist) => playlist.id === 'pl-source')?.name === 'Road Renamed', 'local rename was lost during CAS recovery')
+  expect(window.__playlistFixture.authoritative.find((playlist) => playlist.id === 'pl-source')?.name === 'Road Renamed', 'local rename was lost during CAS recovery')
 
   await click(copyButton)
   expect(document.querySelector('#playlist-action-value').value === 'Road Renamed 副本', 'copy should suggest a name')
@@ -380,20 +382,26 @@ const runPlaylistLifecycleRuntime = async () => {
 
   selectedIds.value = ['b']
   await click('#playlist-reorder-start')
-  expect(currentPlaylist.value.trackIds[0] === 'b', 'manual reorder did not move the selected track')
+  expect(window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds[0] === 'b', 'manual reorder did not move the selected track')
 
   selectedIds.value = ['a', 'c']
   await click('#playlist-move')
   await setDialogValue('pl-target')
   await submitDialog()
-  const target = music.playlists.value.find((playlist) => playlist.id === 'pl-target')
+  const target = window.__playlistFixture.authoritative.find((playlist) => playlist.id === 'pl-target')
   expect(target.trackIds.includes('a') && target.trackIds.includes('c'), 'batch move did not populate target')
-  expect(!currentPlaylist.value.trackIds.includes('a') && !currentPlaylist.value.trackIds.includes('c'), 'batch move did not remove source ids')
+  expect(!window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds.includes('a') && !window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds.includes('c'), 'batch move did not remove source ids')
 
   await click('[aria-label="重新定位缺失文件"]')
-  await waitFor(() => statusText().includes('已重新定位 1 首'), 'unique relocation feedback missing')
-  expect(currentPlaylist.value.trackIds.includes('relocated-missing'), 'unique relocation was not applied')
-  expect(!currentPlaylist.value.trackIds.includes('missing'), 'stale missing id survived relocation')
+  let repair
+  for (let attempt = 0; attempt < 80; attempt++) {
+    repair = await useCoreConnection().query('playlists.repair.status', {})
+    if (repair?.state !== 'running') break
+    await tick()
+  }
+  expect(repair?.state === 'completed' && repair.relocated === 1, 'unique relocation result missing: ' + JSON.stringify(repair))
+  expect(window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds.includes('relocated-missing'), 'unique relocation was not applied')
+  expect(!window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds.includes('missing'), 'stale missing id survived relocation')
 
   expect(await music.flushPlaylists(), 'final lifecycle transaction did not flush')
   expect(window.__playlistFixture.authoritative.some((playlist) => playlist.id === 'pl-remote'), 'final CAS state discarded authoritative data')

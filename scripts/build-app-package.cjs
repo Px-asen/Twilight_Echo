@@ -21,11 +21,7 @@ function packageOutputDirectory(args, projectRoot = root) {
   const flag = '--config.directories.output'
   const index = args.findIndex((arg) => arg === flag || arg.startsWith(`${flag}=`))
   const directory =
-    index < 0
-      ? 'dist'
-      : args[index] === flag
-        ? args[index + 1]
-        : args[index].slice(flag.length + 1)
+    index < 0 ? 'dist' : args[index] === flag ? args[index + 1] : args[index].slice(flag.length + 1)
   return path.resolve(projectRoot, directory)
 }
 
@@ -51,7 +47,10 @@ function main(args = process.argv.slice(2)) {
   }
   const staging = windowsPackage
     ? preparePackagedAudioStaging(root, {
-        nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath, 'twilight-asio-helper-x86.exe': asio.artifactPath }
+        nativeOverrides: {
+          'twilight_smtc_node.node': smtc.artifactPath,
+          'twilight-asio-helper-x86.exe': asio.artifactPath
+        }
       })
     : null
   let result
@@ -73,7 +72,10 @@ function main(args = process.argv.slice(2)) {
     console.log(`Windows executable branding verified: ${branding.productName}`)
   }
   if (process.platform === 'win32' && fs.existsSync(packagedAsar)) {
-    const verified = verifyPackagedDependencyClosure(packagedAsar)
+    const verified = verifyPackagedDependencyClosure(packagedAsar, {
+      projectRoot: root,
+      externalPackages: ['electron']
+    })
     console.log(`Packaged dependency closure verified: ${verified.packages} packages`)
   }
 }

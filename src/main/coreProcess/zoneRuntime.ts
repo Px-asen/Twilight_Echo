@@ -20,6 +20,7 @@ import { AudioEngineServiceBinding } from '../audioEngineServiceClient.ts'
 import type { CoreServiceLauncher, CoreServiceLease } from './serviceLauncher.ts'
 import type { ZoneRuntime } from '../../core/playback/zoneRegistry.ts'
 import type { BridgeRuntimeState } from '../../shared/audioBridge.ts'
+import { zoneGroupOutput } from './zoneGroupOutput.ts'
 
 interface ZoneCatalog { version: 1; zones: ZoneDescriptor[] }
 export function playbackQueueApi(database: LibraryDatabaseServiceClient): CorePlaybackSessionOptions['queues'] {
@@ -28,6 +29,7 @@ export function playbackQueueApi(database: LibraryDatabaseServiceClient): CorePl
     importLegacyPlaybackQueue: command => database.importLegacyPlaybackQueue(command),
     restoreNamedPlaybackQueue: command => database.restoreNamedPlaybackQueue(command),
     restoreHeartBaseQueue: (...args) => database.restoreHeartBaseQueue(...args),
+    clonePlaybackQueue: reference => database.clonePlaybackQueue(reference),
     extendQueue: (...args) => database.extendPlaybackQueue(...args),
     replaceSource: command => database.replacePlaybackQueueSource(command),
     buildQueue: (...args) => database.buildLibraryQueue(...args),
@@ -68,7 +70,8 @@ export function zoneCatalog(root: string) {
 export async function createZoneRuntime(options: {
   root: string; zone: ZoneDescriptor; database: LibraryDatabaseServiceClient; launcher: CoreServiceLauncher
   platform: CoreDspPlatform
-  playback: Pick<CorePlaybackSessionOptions, 'queues' | 'resolver' | 'authorize' | 'resources' | 'automaticPlaybackAllowed'>
+  playback: Pick<CorePlaybackSessionOptions, 'queues' | 'resolver' | 'authorize' | 'resources' | 'automaticPlaybackAllowed' | 'observePlayback' | 'playbackStarted' | 'playbackSeeked'>
+  closed?(): void
   changed(): void
 }): Promise<ZoneRuntime> {
   const { root, zone, database, launcher, platform, playback: dependencies, changed } = options
@@ -79,9 +82,18 @@ export async function createZoneRuntime(options: {
     environment: { platform: process.platform, defaultCachePath: join(root, 'music-cache'), resolvePath: resolve },
     initial: { audioEqAutoPreamp: { enabled: false, manualDb: null } }, changed })
   const persist = createCoreAudioPersistence(settings)
+  // Platform discovery can fail before a native lease exists.
+  const environment = await platform.call('dsp.environment', {})
   let lease: CoreServiceLease | null = null
-  const audio = new AudioEngineManager(coreAudioConfiguration(settings.read()), {
+  let fatalAudio = false
+  const assets = new DspAssetLibrary(join(directory, 'dsp-assets'), { now: Date.now, newId: randomUUID })
+  const catalog = new Vst3CatalogService(join(directory, 'dsp-vst3'), { scan: p => audio.scanVst3Module(p) }, environment.searchPaths,
+    { platform: environment.platform, helpers: environment.helpers, now: Date.now })
+  const audio: AudioEngineManager = new AudioEngineManager(coreAudioConfiguration(settings.read()), {
     platform: process.platform, initialBridgeSelected: true,
+    dspAssetPathResolver: id => assets.getKnownPath(id),
+    vst3StateAssetResolver: id => assets.resolveVst3State(id),
+    vst3ModuleResolver: (id, classId) => catalog.resolveAvailableModule(id, classId),
     persistDeviceProfiles: persist.profile, persistAudioOutput: persist.output,
     audioServiceFactory: () => new AudioEngineServiceBinding({ serviceEntry: 'zone-audio', launch: () => {
       lease = launcher.launch('zone-audio'); return lease
@@ -90,32 +102,45 @@ export async function createZoneRuntime(options: {
   const report = (error: unknown) => console.error('[core.zone]', zone.id, error)
   audio.on('error', report)
   const output = new CoreAudioOutputService({ engine: audio, settings, changed })
-  const assets = new DspAssetLibrary(join(directory, 'dsp-assets'), { now: Date.now, newId: randomUUID })
-  const environment = await platform.call('dsp.environment', {})
-  const catalog = new Vst3CatalogService(join(directory, 'dsp-vst3'), { scan: p => audio.scanVst3Module(p) }, [],
-    { platform: environment.platform, helpers: environment.helpers, now: Date.now })
   const dsp = new CoreDspService({ engine: audio, configuration: output, settings,
     preferences: database, assets, catalog, platform, temporaryDirectory: environment.temporaryDirectory,
+    uploadDirectory: join(directory, 'dsp-upload-staging'),
+    hostSearchPaths: environment.fixedSearchPaths ? environment.searchPaths : undefined,
     now: Date.now, newId: randomUUID, failed: report })
   audio.on('playback-info', info => dsp.observePlayback(info))
   audio.on('audio-service-crash', reason => { void dsp.quarantineActive(reason).catch(report); changed() })
   const playback = new CorePlaybackSession({ ...dependencies, engine: audio,
-    repository: createCorePlaybackRepository(createPlaybackSessionStoreBundle(directory), database, `zone:${zone.id}:persisted`),
+    repository: createCorePlaybackRepository(createPlaybackSessionStoreBundle(directory), database, `zone:${zone.id}:persisted`, zone.id),
+    legacyImportScope: zone.id,
     resumeMode: () => 'trackAndPosition', now: Date.now,
     schedule: (callback, ms) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer) },
-    changed, fatal: error => { report(error); audio.destroy(); changed() } })
+    changed, fatal: error => { fatalAudio = true; report(error); audio.destroy(); changed() } })
   let closed = false
   const close = async () => {
     if (closed) return
     closed = true
-    try { await dsp.shutdown(); await playback.shutdown(); await audio.callBridge('BridgeShutdown') }
-    finally { audio.destroy(); await lease?.terminate() }
+    try { await dsp.shutdown() }
+    finally {
+      try {
+        if (fatalAudio) await lease?.terminate()
+        await playback.shutdown({ audioTerminated: fatalAudio })
+        options.closed?.()
+      }
+      finally {
+        try { if (!fatalAudio) await audio.callBridge('BridgeShutdown') }
+        finally { audio.destroy(); await lease?.terminate() }
+      }
+    }
   }
   try {
     await dsp.initialize(); await playback.initialize(); await dsp.activate()
-    return { playback, dsp,
+    return { playback, dsp, failed: () => fatalAudio, groupOutput: zoneGroupOutput(zone.id, audio),
       output: async () => await audio.callBridge('BridgeStatus') as BridgeRuntimeState,
-      connect: async peer => { await playback.stop(); await audio.callBridge('BridgeConnect', [peer]) },
+      connect: async (peer, coordinated) => {
+        if (!coordinated) await playback.stop()
+        await audio.callBridge('BridgeConnect', [peer])
+        if (coordinated) await audio.callBridge('BridgeCancelTimed')
+      },
       sources: () => audio.getQueueSnapshot().map(item => item.source), close }
   } catch (error) { await close().catch(report); throw error }
 }

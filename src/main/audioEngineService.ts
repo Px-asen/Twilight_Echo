@@ -85,10 +85,30 @@ const native = nativeLoad.binding
 const bridgeRuntime = native ? new AudioBridgeRuntime(native) : null
 const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
   BridgeStatus: () => bridgeRuntime!.state(),
+  BridgeSourceTimeline: () => bridgeRuntime!.sourceTimeline(),
+  BridgeBindAutoMix: (requestJson: string) => {
+    if (!native?.BindBridgeAutoMixSelection) throw new Error('请更新原生引擎以绑定同步组 AutoMix')
+    return native.BindBridgeAutoMixSelection(requestJson)
+  },
+  BridgeAutoMixMode: (mode: string) => {
+    const setMode = (native as unknown as { SetBridgeAutoMixMode?: (mode: string) => unknown }).SetBridgeAutoMixMode
+    if (!setMode) throw new Error('请更新原生引擎以设置同步组 AutoMix')
+    return setMode(mode)
+  },
+  BridgeQueueControl: (owned: boolean, current = '', next = '') => {
+    const control = (native as unknown as { SetBridgeQueueControl?: (owned: boolean, current: string, next: string) => unknown }).SetBridgeQueueControl
+    if (!control) throw new Error('请更新原生引擎以使用同步组连续播放')
+    return control(owned, current, next)
+  },
   BridgeHostStart: (options: BridgeHostOptions) => bridgeRuntime!.startHost(options),
   BridgeHostStop: () => bridgeRuntime!.stopHost(),
   BridgeConnect: (peer: BridgePeer) => bridgeRuntime!.connectPeer(peer),
   BridgeDisconnect: () => bridgeRuntime!.disconnectPeer(),
+  BridgePrepareTimed: (adaptive = false, holdMedia = false) => bridgeRuntime!.prepareTimedPlayback(adaptive, holdMedia),
+  BridgeReleaseTimedMedia: (epoch: number) => bridgeRuntime!.releaseTimedMedia(epoch),
+  BridgeArmTimed: (startAtCoreMs: number, mediaFrame = 0, synchronize = false) => bridgeRuntime!.armTimedPlayback(startAtCoreMs, mediaFrame, synchronize),
+  BridgeCancelTimed: () => bridgeRuntime!.cancelTimedPlayback(),
+  BridgeSetTimedCorrection: (ppm: number) => bridgeRuntime!.setTimedCorrection(ppm),
   BridgeQuarantine: () => bridgeRuntime!.quarantine(),
   BridgeShutdown: () => bridgeRuntime!.close()
 }
@@ -167,8 +187,10 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
     }
     const args = bridgeMethod ? message.args : bridgeRuntime!.beforeCall(message.method, message.args)
     const value = await (method as (...args: unknown[]) => unknown)(...args)
+    bridgeRuntime?.afterCall(message.method)
     post({ kind: 'response', requestId: message.requestId, ok: true, value })
   } catch (error) {
+    try { bridgeRuntime?.callFailed(message.method) } catch { /* The original native failure remains authoritative. */ }
     writeDiagnostic('audio.native', 'call.failed', { method: message.method, error }, 'error')
     post({
       kind: 'response',

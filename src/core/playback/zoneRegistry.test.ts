@@ -8,20 +8,20 @@ import { isCoreRequest } from '../../shared/coreProtocol.ts'
 
 const signal = () => new AbortController().signal
 function runtime() {
-  let state = 'stopped', pauses = 0, stops = 0, closed = false
+  let state = 'stopped', plays = 0, pauses = 0, stops = 0, closed = false
   let pendingPlay: Promise<void> | undefined
   const output = { supported: true, hosting: false, receiving: false, selected: true,
-    connected: false, peerName: null, error: null, receiver: null }
+    connected: true, peerName: null, error: null, receiver: null }
   const playback = {
     snapshot: () => ({ playback: { state }, track: null, queue: null, error: null }),
-    play: async () => { await pendingPlay; state = 'playing' },
+    play: async () => { plays++; await pendingPlay; state = 'playing' },
     pause: async () => { pauses++; state = 'paused' }, stop: async () => { stops++; state = 'stopped' },
     maintainSources: async <T>(action: (sources: string[]) => Promise<T>) => action(['active.flac'])
   } as unknown as CorePlaybackSession
   const value: ZoneRuntime = { playback, dsp: {} as ZoneRuntime['dsp'], output: async () => ({ ...output }),
     connect: async () => { throw new Error('Bridge connection refused') }, sources: () => ['active.flac'],
     close: async () => { closed = true } }
-  return { value, get pauses() { return pauses }, get stops() { return stops }, get closed() { return closed },
+  return { value, get plays() { return plays }, get pauses() { return pauses }, get stops() { return stops }, get closed() { return closed },
     slowPlay: (promise: Promise<void>) => { pendingPlay = promise } }
 }
 
@@ -60,10 +60,36 @@ test('a slow Zone Play never queues a different Zone Pause or same-Zone Stop', a
   const id = await zones.create('Study', 0)
   const pending = zones.transport(id, 0, { kind: 'play' }, signal())
   await zones.transport('local', 0, { kind: 'pause' }, signal())
-  await zones.transport(id, 1, { kind: 'stop' }, signal())
+  await zones.transport(id, null, { kind: 'stop' }, signal())
   assert.equal(local.pauses, 1)
   assert.equal(remote.stops, 1)
   finish(); await pending
+})
+
+test('Stop during slow output preflight cannot be followed by a late resurrected Play', async t => {
+  const local = runtime(), remote = runtime()
+  const output = await remote.value.output()
+  let finish!: () => void
+  const gate = new Promise<void>(resolve => { finish = resolve })
+  remote.value.output = async () => { await gate; return output }
+  const zones = new CoreZoneRegistry({ local: local.value, load: async () => [], save: async () => {},
+    create: async () => remote.value, newId: randomUUID, changed: () => {} })
+  t.after(() => zones.shutdown())
+  const id = await zones.create('Study', 0)
+  const pending = zones.transport(id, 0, { kind: 'play' }, signal())
+  const rejected = assert.rejects(pending, { code: 'CANCELLED' })
+  await zones.transport(id, null, { kind: 'stop' }, signal())
+  finish(); await rejected
+  assert.equal(remote.stops, 1)
+  assert.equal(remote.plays, 0)
+  let finishMaintenance!: () => void
+  const maintenanceGate = new Promise<void>(resolve => { finishMaintenance = resolve })
+  remote.value.output = async () => { await maintenanceGate; return output }
+  const beforeMaintenance = zones.transport(id, 2, { kind: 'play' }, signal())
+  const cancelled = assert.rejects(beforeMaintenance, { code: 'CANCELLED' })
+  await zones.maintainSources(async sources => { assert.ok(sources.includes('active.flac')) })
+  finishMaintenance(); await cancelled
+  assert.equal(remote.plays, 0)
 })
 
 test('one failed restored Zone is visible offline; corrupt topology cannot overwrite saved zones', async t => {
@@ -84,13 +110,38 @@ test('one failed restored Zone is visible offline; corrupt topology cannot overw
   await assert.rejects(corrupt.create('Replacement', 0), { code: 'NOT_READY' })
 })
 
+test('explicit reconnect retires a fatally failed Zone before creating its paused replacement', async t => {
+  const local = runtime(), failed = runtime(), replacement = runtime()
+  let creations = 0, connections = 0
+  failed.value.failed = () => true
+  failed.value.connect = async () => assert.fail('A destroyed engine cannot reconnect')
+  replacement.value.connect = async () => { connections++ }
+  const zones = new CoreZoneRegistry({ local: local.value, load: async () => [], save: async () => {},
+    create: async () => { creations++; if (creations > 1) assert.equal(failed.closed, true); return creations === 1 ? failed.value : replacement.value },
+    newId: randomUUID, changed: () => {} })
+  t.after(() => zones.shutdown())
+  const id = await zones.create('Study', 0)
+  await zones.connect(id, { host: 'localhost', port: 1234, token: 'a'.repeat(48), fingerprint: 'b'.repeat(64) }, 0)
+  assert.equal(creations, 2); assert.equal(connections, 1)
+  assert.equal(local.stops, 0)
+})
+
 test('multi-Zone public requests reject arbitrary IDs, actions, files and malformed consent', () => {
   const id = `zone-${randomUUID()}`
   const request = (name: string, payload: unknown) => isCoreRequest({ kind: 'command', name, payload, requestId: 'test', epoch: 'epoch' })
   assert.equal(request('zones.create', { revision: 0, name: 'Study' }), true)
   assert.equal(request('zones.transport', { zoneId: id, revision: 0, action: { kind: 'volume', volume: 0.2 } }), true)
+  assert.equal(request('zones.transport', { zoneId: id, revision: null, action: { kind: 'stop' } }), true)
+  assert.equal(request('zones.transport', { zoneId: id, revision: null, action: { kind: 'play' } }), false)
+  assert.equal(request('zones.transport', { zoneId: id, revision: null, action: { kind: 'volume', volume: 0 } }), false)
   assert.equal(request('zones.transport', { zoneId: '../../settings', revision: 0, action: { kind: 'play' } }), false)
   assert.equal(request('zones.transport', { zoneId: id, revision: 0, action: { kind: 'Play', source: 'secret.flac' } }), false)
   assert.equal(request('zones.dsp.edit', { zoneId: id, revision: 0, edit: { kind: 'processing', settings: { convolverIrPath: 'secret.wav' } } }), false)
   assert.equal(request('zones.create', { revision: 0, name: 'Study', token: 'secret' }), false)
+  const handoff = { source: { zoneId: 'local', revision: 0, queue: { id: 'queue-a', revision: 2, occurrenceId: 'first' } },
+    target: { zoneId: id, revision: 1, queue: null }, replace: false, resume: false }
+  assert.equal(request('zones.handoff', handoff), true)
+  assert.equal(request('zones.handoff', { ...handoff, resume: 'true' }), false)
+  assert.equal(request('zones.handoff', { ...handoff, target: handoff.source }), false)
+  assert.equal(request('zones.handoff', { ...handoff, source: { ...handoff.source, queue: { ...handoff.source.queue, filePath: 'injected' } } }), false)
 })

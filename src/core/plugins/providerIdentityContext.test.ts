@@ -17,6 +17,7 @@ import {
 
 interface ContextManager extends EventEmitter {
   providerIdentityContext(id: string): string
+  providerAccountContext(id: string): string
   identityContextChanged(pluginId: string): void
   callProvider(id: string, method: string, args: unknown[]): Promise<unknown>
   handleApiCall(id: string, message: unknown): Promise<{ ok: boolean }>
@@ -35,6 +36,9 @@ function fixture() {
       n.name &&
       [
         'identityContexts',
+        'accountContexts',
+        'providerAccountContext',
+        'accountContextChanged',
         'providerIdentityContext',
         'identityContextChanged',
         'callProvider',
@@ -43,7 +47,7 @@ function fixture() {
         'registerProviderFromPlugin'
       ].includes(n.name.getText(ast))
   )
-  assert.equal(members.length, 7)
+  assert.equal(members.length, 10)
   const plugins = [
     {
       descriptor: {
@@ -104,6 +108,25 @@ function fixture() {
   }
 }
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+test('listening account context survives ordinary settings writes and changes on credentials', async () => {
+  const { manager } = fixture()
+  const initial = manager.providerAccountContext('ncm')
+  const events: string[] = []
+  manager.on('provider-account', id => events.push(id))
+  const write = (key: string) => manager.handleApiCall('plugin.ncm', {
+    namespace: 'settings', requestId: key, method: 'set', args: [key, 'fixture']
+  })
+  await write('providerWriteIdempotency')
+  assert.equal(manager.providerAccountContext('ncm'), initial)
+  assert.deepEqual(events, [])
+  await write('cookie')
+  assert.notEqual(manager.providerAccountContext('ncm'), initial)
+  assert.deepEqual(events, ['ncm', 'ncm'])
+  const loggedIn = manager.providerAccountContext('ncm')
+  await manager.callProvider('ncm', 'logout', [])
+  assert.notEqual(manager.providerAccountContext('ncm'), loggedIn)
+})
 
 test('provider re-registration invalidates a previous host context even when methods are unchanged', () => {
   const { manager } = fixture(),

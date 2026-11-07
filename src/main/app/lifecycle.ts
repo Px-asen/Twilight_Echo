@@ -5,7 +5,6 @@ import { readAppSettings } from '../core/settings'
 import { join, extname } from 'path'
 import { cpus } from 'os'
 import { pathToFileURL } from 'url'
-import { fetch as undiciFetch } from 'undici'
 import { optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { mediaCoverCache } from '../cache/mediaCoverCache.ts'
@@ -242,6 +241,7 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
 
     // Focus-only: no OS protocol client / argv deep links (see AGENTS.md).
     app.on('second-instance', () => {
+      if (runtime.forceQuit) return
       if (isAfterglowModeActive()) {
         void restoreAfterglowMode()
         return
@@ -251,7 +251,11 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
         return
       }
       const win =
-        runtime.mainWindow ?? (getCoreApplication() && app.isReady() ? createWindow() : null)
+        runtime.mainWindow && !runtime.mainWindow.isDestroyed()
+          ? runtime.mainWindow
+          : getCoreApplication() && app.isReady()
+            ? createWindow()
+            : null
       if (!win || win.isDestroyed()) return
       if (win.isMinimized()) win.restore()
       win.show()
@@ -429,6 +433,8 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
         createRemoteMediaRequestHandler({
           imageCache: mediaCoverCache,
           fetch: async (source, init) => {
+            const { fetch: undiciFetch } = await import('undici')
+            init.signal?.throwIfAborted()
             const upstream = await undiciFetch(source, {
               method: init.method,
               signal: init.signal,
@@ -546,12 +552,18 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       }
 
       app.on('activate', function () {
+        if (runtime.forceQuit) return
         if (isAfterglowModeActive()) {
           void restoreAfterglowMode()
           return
         }
         if (runtime.miniPlayerWindow && !runtime.miniPlayerWindow.isDestroyed()) {
           restoreMainWindowFromMiniPlayer()
+        } else if (runtime.mainWindow && !runtime.mainWindow.isDestroyed()) {
+          const win = runtime.mainWindow
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
         } else if (
           (getCoreApplication() && (!runtime.mainWindow || runtime.mainWindow.isDestroyed())) ||
           BrowserWindow.getAllWindows().length === 0

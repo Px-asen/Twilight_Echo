@@ -5,9 +5,13 @@ initializeUtilityDiagnostics('twilight-plugin')
 import { createServicePort } from '../services/servicePort.ts'
 import { initProxy } from './proxyBootstrap'
 import { redactSensitiveText } from '../../shared/errors/redactSensitiveText.ts'
-import { QISHUI_PLUGIN_ID } from './qishuiAuthBridge.ts'
-import { createNcmApiRuntime } from '../ncm/runtimeAdapter.ts'
-import { normalizeInternalNcmRequestOptions } from '../../core/plugins/rpcCoordinator.ts'
+import {
+  QISHUI_PLUGIN_ID,
+  INTERNAL_NCM_PLUGIN_ID,
+  normalizeInternalNcmRequestOptions
+} from '../../shared/pluginHostContracts.ts'
+import { QQMUSIC_PLUGIN_ID } from '../../shared/qqmusicLogin.ts'
+import type { createNcmApiRuntime } from '../ncm/runtimeAdapter.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -171,14 +175,18 @@ interface TwilightPluginContext {
       checkQrLogin: (key: string) => Promise<unknown>
       clear: () => Promise<void>
     }
+    qqmusicAuth?: {
+      officialLogin: (options?: { signal?: AbortSignal }) => Promise<unknown>
+    }
     internal?: {
       ncm?: {
+        officialLoginAvailable: boolean
         request: (
           path: string,
           cookie?: string,
           options?: { signal?: AbortSignal; idempotencyKey?: string }
         ) => Promise<unknown>
-        officialLogin: () => Promise<string>
+        officialLogin: (options?: { signal?: AbortSignal }) => Promise<string>
         getCachedSong: (songId: number) => Promise<string | null>
         cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
         prepareAutoMixSong: (
@@ -193,7 +201,6 @@ interface TwilightPluginContext {
   }
 }
 
-const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'getPlaybackUrl',
   'getLyrics',
@@ -254,6 +261,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'fetchUserFolloweds',
   'fetchPlayRecords',
   'fetchRecentSongs',
+  'reportListening',
   'fetchIntelligenceList',
   'followArtist',
   'followUser',
@@ -265,7 +273,17 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'removeTracksFromPlaylist'
 ]
 
-const channel = createServicePort<PluginHostRequest | PluginHostApiResult, PluginHostResponse>()
+let closed = false
+let generation = 0
+let lifecycle = Promise.resolve()
+let activationLifetime: AbortController | null = null
+let activating: { pluginId: string; generation: number; work: Promise<void> } | null = null
+const channel = createServicePort<PluginHostRequest | PluginHostApiResult, PluginHostResponse>({
+  onClose: () => {
+    closed = true
+    void deactivatePlugin()
+  }
+})
 
 let activePlugin: PluginModule | null = null
 let localNcmRuntime: ReturnType<typeof createNcmApiRuntime> | null = null
@@ -302,14 +320,43 @@ channel.on('message', (message) => {
   }
 })
 
-async function activatePlugin(
-  message: Extract<PluginHostRequest, { kind: 'activate' }>
+function activatePlugin(message: Extract<PluginHostRequest, { kind: 'activate' }>): Promise<void> {
+  if (closed) return Promise.resolve()
+  if (activating?.pluginId === message.pluginId && activating.generation === generation)
+    return activating.work
+  const current = ++generation
+  activationLifetime?.abort(new Error('Plugin activation was replaced.'))
+  const lifetime = new AbortController()
+  activationLifetime = lifetime
+  const work = lifecycle.then(() => performActivation(message, current, lifetime.signal))
+  lifecycle = work.catch(reportError)
+  activating = { pluginId: message.pluginId, generation: current, work }
+  void work
+    .finally(() => {
+      if (activating?.work === work) activating = null
+    })
+    .catch(() => undefined)
+  return work
+}
+
+async function performActivation(
+  message: Extract<PluginHostRequest, { kind: 'activate' }>,
+  current: number,
+  signal: AbortSignal
 ): Promise<void> {
   try {
+    if (closed || current !== generation) return
     // Initialize proxy before loading any plugin code — plugins that access
     // blocked external APIs (YouTube, etc.) need the proxy tunnel active.
-    await initProxy()
+    await initProxy(signal)
+    if (closed || current !== generation) return
+    if (message.pluginId === INTERNAL_NCM_PLUGIN_ID) {
+      const { createNcmApiRuntime } = await import('../ncm/runtimeAdapter.ts')
+      if (closed || current !== generation) return
+      localNcmRuntime ??= createNcmApiRuntime()
+    }
     const module = (await import(pathToFileURL(message.mainPath).href)) as PluginModule
+    if (closed || current !== generation) return
     activePlugin =
       module.default && (module.default.activate || module.default.deactivate)
         ? module.default
@@ -322,16 +369,29 @@ async function activatePlugin(
         message.pluginId,
         message.apiVersion,
         message.dataDir,
-        message.manifest.permissions
+        message.manifest.permissions,
+        message.browserLoginProviders ?? [],
+        signal
       )
     )
-    post({ kind: 'activated', pluginId: message.pluginId })
+    if (!closed && current === generation) post({ kind: 'activated', pluginId: message.pluginId })
   } catch (error) {
-    reportError(error)
+    if (!closed && current === generation) reportError(error)
   }
 }
 
-async function deactivatePlugin(requestId: string): Promise<void> {
+function deactivatePlugin(requestId?: string): Promise<void> {
+  // Fence an import immediately; cleanup joins activation before replacing its state.
+  generation++
+  activationLifetime?.abort(new Error('Plugin is being deactivated.'))
+  abortPendingPluginCalls('Plugin is being deactivated.')
+  rejectPendingApiCalls('Plugin is being deactivated.')
+  const work = lifecycle.then(() => performDeactivation(requestId))
+  lifecycle = work.catch(reportError)
+  return lifecycle
+}
+
+async function performDeactivation(requestId?: string): Promise<void> {
   try {
     abortPendingPluginCalls('Plugin is being deactivated.')
     rejectPendingApiCalls('Plugin is being deactivated.')
@@ -351,7 +411,7 @@ async function deactivatePlugin(requestId: string): Promise<void> {
     providerHandlers.clear()
     commandHandlers.clear()
     experienceHandlers.clear()
-    post({ kind: 'deactivated', requestId })
+    if (requestId !== undefined) post({ kind: 'deactivated', requestId })
   }
 }
 
@@ -359,7 +419,9 @@ function createContext(
   pluginId: string,
   apiVersion: number,
   storagePath: string,
-  permissions: TwilightPluginPermission[]
+  permissions: TwilightPluginPermission[],
+  browserLoginProviders: Array<'ncm' | 'qqmusic'>,
+  activationSignal: AbortSignal
 ): TwilightPluginContext {
   const twilight: TwilightPluginContext['twilight'] = {
     events: {
@@ -473,21 +535,26 @@ function createContext(
   }
 
   if (pluginId === INTERNAL_NCM_PLUGIN_ID) {
+    // A retained context belongs to this activation, never to a later runtime.
+    const ncmRuntime = localNcmRuntime
     twilight.internal = {
       ncm: {
+        officialLoginAvailable: browserLoginProviders.includes('ncm'),
         request: async (path, cookie, options) => {
           if (typeof path !== 'string') throw new Error('ncmRequest path 必须是字符串')
           const normalized = normalizeInternalNcmRequestOptions(
             options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined
           )
-          localNcmRuntime ??= createNcmApiRuntime()
-          return localNcmRuntime.request(
-            path,
-            typeof cookie === 'string' ? cookie : undefined,
-            { ...normalized, signal: options?.signal }
-          )
+          if (!ncmRuntime) throw new Error('NetEase API runtime is not initialized')
+          return ncmRuntime.request(path, typeof cookie === 'string' ? cookie : undefined, {
+            ...normalized,
+            signal: options?.signal
+              ? AbortSignal.any([activationSignal, options.signal])
+              : activationSignal
+          })
         },
-        officialLogin: () => callInternalNcmApi('ncmOfficialLogin', []) as Promise<string>,
+        officialLogin: (options) =>
+          callInternalNcmApi('ncmOfficialLogin', [], options?.signal) as Promise<string>,
         getCachedSong: (songId) =>
           callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,
         cacheSong: (songId, url, fileName) =>
@@ -507,6 +574,12 @@ function createContext(
       getQrLogin: () => callQishuiAuthApi('qishuiGetQrLogin', []),
       checkQrLogin: (key) => callQishuiAuthApi('qishuiCheckQrLogin', [key]),
       clear: () => callQishuiAuthApi('qishuiClear', []).then(() => undefined)
+    }
+  }
+
+  if (pluginId === QQMUSIC_PLUGIN_ID && browserLoginProviders.includes('qqmusic')) {
+    twilight.qqmusicAuth = {
+      officialLogin: (options) => callApi('auth', 'qqmusicOfficialLogin', [], options?.signal)
     }
   }
 
@@ -622,6 +695,7 @@ function callApi(
   args: unknown[],
   signal?: AbortSignal
 ): Promise<unknown> {
+  if (closed) return Promise.reject(new Error('Plugin host is closed.'))
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   if (signal?.aborted) {
     return Promise.reject(abortReason(signal, 'Plugin host API call was cancelled.'))
@@ -798,5 +872,6 @@ function reportError(error: unknown): void {
 }
 
 function post(message: PluginHostResponse): void {
+  if (closed) return
   channel.postMessage(message)
 }

@@ -25,35 +25,6 @@
   cursor: default;
 }
 
-/* ===== Upward Drawer Transition ===== */
-.drawer-up-enter-active {
-  transition:
-    opacity var(--te-motion-panel) ease,
-    transform var(--te-motion-page) var(--te-ease-soft);
-  transform-origin: right bottom;
-}
-.drawer-up-leave-active {
-  transition:
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-panel) var(--te-ease-enter);
-  transform-origin: right bottom;
-}
-.drawer-up-enter-from,
-.drawer-up-leave-to {
-  opacity: 0;
-  transform: translateY(22px) scaleY(0.94);
-}
-
-:global(html[data-te-motion='full'] .drawer-up-enter-active) {
-  animation: player-drawer-arrive var(--te-motion-page) var(--te-ease-spring) both;
-}
-
-@keyframes player-drawer-arrive {
-  62% {
-    translate: 0 -2px;
-  }
-}
-
 /* ===== Volume Drawer ===== */
 .volume-anchor {
   position: relative;
@@ -214,22 +185,6 @@
 
 .drawer-glass .volume-drawer-val {
   color: #d8dee8;
-}
-
-.volume-drawer-enter-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-.volume-drawer-leave-active {
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-}
-.volume-drawer-enter-from,
-.volume-drawer-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(6px);
 }
 
 /* ===== Player Bar ===== */
@@ -1320,11 +1275,10 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
     inset 1px 0 0 rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
-  /* opacity/transform are here for the return leg of the stand-down below; Vue's
-     own enter/leave classes declare their own transition and override this. */
+  /* Resizing tracks the pointer directly. Opacity/transform handle returning
+     from lyric customization; MotionTransition owns opening and closing. */
   transition:
-    width 0.32s var(--te-ease-soft),
-    opacity var(--te-motion-panel) ease,
+    opacity var(--te-motion-panel) var(--te-ease-out-strong),
     transform var(--te-motion-panel) var(--te-ease-soft);
 }
 
@@ -1350,25 +1304,9 @@ html[data-te-motion='off'] .player-bar :deep(.ab-loop-range) {
   pointer-events: none;
   transform: translateX(28px);
   transition:
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-panel) var(--te-ease-enter),
+    opacity var(--te-motion-hover) var(--te-ease-out-strong),
+    transform var(--te-motion-panel) var(--te-ease-out-strong),
     visibility 0s linear var(--te-motion-panel);
-}
-
-.hifi-overlay-enter-active {
-  transition:
-    opacity var(--te-motion-panel) ease,
-    transform var(--te-motion-page) var(--te-ease-soft);
-}
-.hifi-overlay-leave-active {
-  transition:
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-panel) var(--te-ease-enter);
-}
-.hifi-overlay-enter-from,
-.hifi-overlay-leave-to {
-  opacity: 0;
-  transform: translateX(28px);
 }
 
 /* HiFi 侧边栏宽度调整手柄 */

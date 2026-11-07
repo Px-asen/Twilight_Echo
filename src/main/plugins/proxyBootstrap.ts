@@ -3,7 +3,10 @@
 // fallback policy so those security decisions stay explicit and testable.
 
 import { connect as netConnect } from 'net'
-import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
+import { createRequire } from 'node:module'
+import type { RequestInit as UndiciRequestInit } from 'undici'
+
+const nodeRequire = createRequire(import.meta.url)
 
 const COMMON_PROXY_PORTS = [7897, 7890, 7891, 1080, 10809, 8080, 2080, 7898]
 const DEFAULT_MAX_REDIRECTS = 5
@@ -58,6 +61,7 @@ export interface SecureProxyFetchOptions {
 
 export interface InstalledProxyFetch {
   fetch: typeof fetch
+  WebSocket: typeof globalThis.WebSocket
   close: () => Promise<void>
 }
 
@@ -467,6 +471,12 @@ export function installProxyFetch(
   allowDirectFallback = false,
   noProxy = ''
 ): InstalledProxyFetch {
+  // Keep this public factory synchronous; no transport is loaded during proxy detection.
+  const {
+    ProxyAgent,
+    WebSocket: UndiciWebSocket,
+    fetch: undiciFetch
+  } = nodeRequire('undici') as typeof import('undici')
   const dispatcher = new ProxyAgent({
     uri: normalizeProxyUrl(proxyUrl),
     connectTimeout: PROXY_CONNECT_TIMEOUT_MS,
@@ -494,6 +504,19 @@ export function installProxyFetch(
     return (await undiciFetch(url, undiciInit)) as unknown as Response
   }
 
+  // QR creation and its MQTT status channel must use the same network route.
+  // Replacing fetch alone leaves native WebSocket connections going direct.
+  class PluginWebSocket extends UndiciWebSocket {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      const target = new URL(url)
+      if (target.protocol === 'wss:') target.protocol = 'https:'
+      super(url, {
+        protocols,
+        ...(shouldProxyUrl(target, noProxy) ? { dispatcher } : {})
+      })
+    }
+  }
+
   return {
     fetch: createSecureProxyFetch({
       proxyRequest,
@@ -502,16 +525,25 @@ export function installProxyFetch(
       allowDirectFallback,
       noProxy
     }),
+    WebSocket: PluginWebSocket as unknown as typeof globalThis.WebSocket,
     close: () => dispatcher.close()
   }
 }
 
-let initialized = false
+let initialization: Promise<void> | null = null
 
-export async function initProxy(): Promise<void> {
-  if (initialized) return
-  initialized = true
+export function initProxy(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason)
+  if (!initialization) {
+    initialization = initializeProxy(signal).catch((error) => {
+      initialization = null
+      throw error
+    })
+  }
+  return initialization
+}
 
+async function initializeProxy(signal?: AbortSignal): Promise<void> {
   const mode = parseProxyMode(process.env.TWILIGHT_PLUGIN_PROXY_MODE)
   if (mode === 'off') {
     console.log('[proxy] Plugin proxy is disabled by application settings')
@@ -519,6 +551,7 @@ export async function initProxy(): Promise<void> {
   }
 
   const proxy = await detectProxy(mode)
+  signal?.throwIfAborted()
   if (!proxy) return
 
   const allowDirectFallback = parseExplicitBoolean(
@@ -532,9 +565,10 @@ export async function initProxy(): Promise<void> {
     process.env.no_proxy ?? process.env.NO_PROXY ?? ''
   )
   globalThis.fetch = installed.fetch
+  globalThis.WebSocket = installed.WebSocket
 
   console.log(
-    `[proxy] External HTTPS fetch uses ${proxyLabel(proxy.url)}; direct fallback ${
+    `[proxy] External HTTPS fetch and WSS use ${proxyLabel(proxy.url)}; direct fallback ${
       allowDirectFallback ? 'enabled' : 'disabled'
     }`
   )

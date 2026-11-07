@@ -4,7 +4,7 @@ import { nativeMenuTemplate, registerNativeContextMenuIpc } from './nativeContex
 import { dspEditorInteractionWindow } from '../app/dspEditorWindow.ts'
 import { registerEqualizerClipboardIpc } from './equalizerClipboardIpc.ts'
 import { registerTrackNamesClipboardIpc } from './trackNamesClipboardIpc.ts'
-import { readWindowChromeState } from '../app/windowChrome.ts'
+import { readWindowChromeState, toggleWindowMaximize } from '../app/windowChrome.ts'
 
 export function registerWindowIpc(ipcMain: IpcMain): void {
   ipcMain.handle('window:getState', (event) => {
@@ -69,11 +69,7 @@ export function registerWindowIpc(ipcMain: IpcMain): void {
     if (!shouldAcceptIpcEvent(event, 'window control IPC')) return
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return
-    if (win.isMaximized()) {
-      win.unmaximize()
-    } else {
-      win.maximize()
-    }
+    toggleWindowMaximize(win)
   })
 
   ipcMain.on('window:close', (event) => {

@@ -49,7 +49,7 @@ test('real settings groups reveal stable search targets, preserve drafts, and re
             if (id === '\0organization-icon')
               return 'export default "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1sAAAAASUVORK5CYII="'
             if (id === '\0organization-store:coreConnection')
-              return 'export function useCoreConnection(){return {state:{value:null},status:{value:null},query: async () => null, command: async (name,payload)=>{if(name==="backup.preview")return window.api.data?.previewPersonalBackup?.();if(name==="backup.stage")return window.api.data?.stagePersonalRestore?.(payload?.options);return null}}}'
+              return 'export function useCoreConnection(){return {state:{value:null},status:{value:null},query: async (name) => name === "audio.recovery" ? {kind:null,phase:"idle",engineAvailable:true,windowsServicesAvailable:true,error:null} : null, command: async (name,payload)=>{if(name==="backup.preview")return window.api.data?.previewPersonalBackup?.();if(name==="backup.stage")return window.api.data?.stagePersonalRestore?.(payload?.options);return null}}}'
             if (id.startsWith('\0organization-store:')) {
               const name = id.split(':')[1]
               return `export { ${name === 'registry' ? 'useExtensionRegistry' : name}${name === 'useListeningStatsStore' ? ', waitForListeningStatsReady' : ''} } from ${JSON.stringify(fixture)};${name === 'useThemeStore' ? 'export const syncThemeSettingsAppearance = () => {};' : ''}`

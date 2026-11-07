@@ -401,7 +401,8 @@ export class PlaybackController {
   async play(
     source: string,
     startTime = 0,
-    requested?: () => boolean
+    requested?: () => boolean,
+    beforeNativeStart?: () => Promise<void>
   ): Promise<AudioEnginePlayResult> {
     if (!source) throw audioEngineError('audio.source_empty', 'playback source is empty')
     const revision = ++this.transportRevision
@@ -417,6 +418,10 @@ export class PlaybackController {
     await this.prepareLoudnormForPlay(source)
     // Startup preparation can outlive a next/previous/stop or a newer play.
     // Never dispatch the old source after a newer transport action owns playback.
+    if (!isRequested()) return superseded
+    // Timed group preparation belongs after loudness/source setup (which may
+    // reload native queue metadata), immediately before supplying media.
+    if (beforeNativeStart) await beforeNativeStart()
     if (!isRequested()) return superseded
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? (current.duration ?? 0) : 0
@@ -434,6 +439,9 @@ export class PlaybackController {
       firstErrorContext.output !== 'asio'
     )
     if (!isCurrent()) return superseded
+    if (!nativeStarted && beforeNativeStart) {
+      throw nativeAudioError('audio.play_failed', 'timed Bridge media start failed', this.lastNativeError)
+    }
     let nativeFallbackReason = ''
     if (!nativeStarted && this.shouldFallbackFromAsio(firstErrorContext.output)) {
       nativeFallbackReason = this.lastNativeError || 'ASIO 输出不可用'

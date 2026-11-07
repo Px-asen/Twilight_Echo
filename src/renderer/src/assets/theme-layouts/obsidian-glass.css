@@ -875,6 +875,11 @@ html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item.active {
   box-shadow: inset 0 0 0 1px var(--nh-border-strong);
 }
 
+html[data-te-preset-layout='obsidian-glass'] .side-menu .navigation-indicator {
+  --te-navigation-motion-radius: 13px;
+  background: var(--te-navigation-active);
+}
+
 html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item.active::before {
   top: 9px;
   bottom: 9px;

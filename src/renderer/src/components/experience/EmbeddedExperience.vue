@@ -109,11 +109,11 @@ onBeforeUnmount(() => {
 <template>
   <div class="embedded-experience" :aria-busy="!ready && !error">
     <iframe
+      v-show="ready && !error"
       :key="attempt"
       ref="frame"
       :src="experience.url"
       :title="experience.name"
-      :inert="!ready || !!error"
       tabindex="0"
       sandbox="allow-scripts allow-same-origin"
     ></iframe>

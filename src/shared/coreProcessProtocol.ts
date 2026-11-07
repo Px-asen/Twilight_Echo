@@ -26,6 +26,8 @@ export interface CoreProcessConfiguration {
   remoteStaticRoot?: string
   libraryStorage: 'sqlite'
   recovery: boolean
+  /** Windows Service hosts decode for remote Bridges; they never own a Session 0 DAC. */
+  bridgeOnly?: boolean
   musicCachePath?: string
   streamingAudioCache?: 'off' | 'provider'
   ncmPlaybackQuality?: NcmPlaybackQuality
@@ -34,6 +36,8 @@ export interface CoreProcessConfiguration {
   downloadFolder?: string
   downloadPreferences?: DownloadPreferences
   plugins?: {
+    remoteManagement?: boolean
+    headless?: boolean
     appVersion: string
     index?: { localPath: string; remoteUrl?: string }
     bundledPlugins?: Array<{ id: string; sourcePath: string; defaultEnabled?: boolean }>

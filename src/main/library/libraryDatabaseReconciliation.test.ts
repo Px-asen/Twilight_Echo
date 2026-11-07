@@ -205,7 +205,7 @@ test('schema mismatches, malformed authorities and invalid bounds fail without m
   const db = new DatabaseSync(':memory:')
   t.after(() => db.close())
   db.exec('PRAGMA user_version=27')
-  assert.throws(() => reconcileMusicLibrary(db), /schemas 28 and 29/)
+  assert.throws(() => reconcileMusicLibrary(db), /schemas 28, 29 and 30/)
   assert.equal(db.isTransaction, false)
   assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 27)
   assert.throws(() => reconcileMusicLibrary(db, { exampleLimit: 101 }), /exampleLimit/)
@@ -218,9 +218,9 @@ test('schema mismatches, malformed authorities and invalid bounds fail without m
   f.db.sql.exec('ROLLBACK')
 })
 
-test('read-only reconciliation accepts both v28 and v29 without upgrading the selected database', t => {
+test('read-only reconciliation accepts v28 through v30 without upgrading the selected database', t => {
   const f = fixture(t)
-  for (const schema of [28, 29]) {
+  for (const schema of [28, 29, 30]) {
     f.db.sql.exec(`PRAGMA user_version=${schema}`)
     const before = f.db.sql.prepare('SELECT total_changes() n').get()!.n
     assert.equal(reconcileMusicLibrary(f.db.sql).schema, schema)

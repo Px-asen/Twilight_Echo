@@ -297,6 +297,7 @@ export function setupThemeWorkshopIpc(): void {
   const exportTep = async (project: WorkshopProject): Promise<string | null> => {
     const result = await dialog.showSaveDialog({
       title: '导出主题插件',
+      // eslint-disable-next-line no-control-regex -- Windows filenames must exclude control characters.
       defaultPath: `${project.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'theme'}.tep`,
       filters: [{ name: 'Twilight Echo 主题插件', extensions: ['tep'] }]
     })

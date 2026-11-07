@@ -105,6 +105,7 @@ test('production shell connects the title button, draft guard and full-window la
       const {app,BrowserWindow}=require('electron'),path=require('node:path');
       app.setPath('userData',path.join(__dirname,'profile'));
       app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1100,height:800,webPreferences:{offscreen:true,contextIsolation:false,backgroundThrottling:false}});
+      win.webContents.on('console-message', (_event,_level,message)=>console.error(message));
       try{await win.loadFile(path.join(__dirname,'index.html'));await win.webContents.executeJavaScript('window.runShellTests()');console.log('APPEARANCE_SHELL_OK');win.destroy();app.exit(0)}catch(error){console.error(error.stack);win.destroy();app.exit(1)}});`
     )
     const env = { ...process.env }
@@ -132,7 +133,9 @@ import {useAppNavigation} from '__RENDERER__/app/useAppNavigation.ts';
 import {guardAppearanceNavigation} from '__RENDERER__/app/appearanceNavigationGuard.ts';
 import {guardDspNavigation} from '__RENDERER__/app/dspNavigationGuard.ts';
 import {providePageDock} from '__RENDERER__/app/pageDock.ts';
-import {appearanceChromePreview,appearanceFullWindowPreview,appearanceEditorOpen} from '__RENDERER__/composables/appearanceEditorState.ts';
+import {appearanceChromePreview,appearanceFullWindowPreview,appearanceEditorOpen,themeAppearance} from '__RENDERER__/composables/appearanceEditorState.ts';
+import {orderNavigationPages,isNavigationPageVisible} from '__RENDERER__/app/navigationPages.ts';
+import {buildSidebarEntries} from '__RENDERER__/app/sidebarNavigation.ts';
 import {cloneAppearance} from '__RENDERER__/../../shared/appAppearance.ts';
 import '__RENDERER__/assets/appearance-layers.css';
 let leaveAllowed=false,leaveRequests=0,mounts=0;
@@ -140,7 +143,8 @@ window.api={window:{getState:async()=>({maximized:false}),onStateChanged:()=>()=
 let appearancePreview=null,savedAppearance=null;
 const modes=[],applyActiveTheme=async(_persist,mode)=>modes.push(mode),cacheSettingsAppearance=()=>{};
 __PREVIEW__
-const settings=ref(cloneAppearance({})),effectiveThemeLayers=ref(null);
+const settings=ref({...cloneAppearance({}),navigationPages:{order:[],hidden:[]}}),effectiveThemeLayers=ref(null);
+const navigationPages=ref([]);
 const AppearancePage=defineComponent({props:['active'],setup(_props,{expose,emit}){
  mounts++;const requestLeave=async()=>{leaveRequests++;return leaveAllowed};
  expose({requestLeave,requestClose:async()=>{if(await requestLeave())emit('back')}});
@@ -197,7 +201,7 @@ window.runShellTests=async()=>{
  expect(!nav.showAppearancePage.value&&!document.querySelector('#workspace'),'confirmed close did not release workspace');
  expect(!appearanceChromePreview.value&&modes.at(-1)==='apply','discard did not restore confirmed runtime');
  expect(!document.querySelector('#probe').hasAttribute('data-te-appearance-body'),'discard retained draft decoration');
- settings.value=cloneAppearance(draft);await settle();
+ settings.value={...cloneAppearance(draft),navigationPages:{order:[],hidden:[]}};await settle();
  await waitForLayers();
  expect(document.querySelector('#probe').dataset.teAppearanceBody==='controls','applied layers do not survive leaving editor');
  nav.openAppearancePage();await settle();nav.navigate({kind:'network'});await settle();

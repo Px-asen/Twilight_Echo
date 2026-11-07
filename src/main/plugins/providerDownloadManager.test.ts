@@ -57,5 +57,5 @@ test('terminal tasks are retained up to a bounded budget', () => {
 
 test('partial download artifacts are still cleaned up on failure', () => {
   const receiveFile = extractMethodBody('receiveFile')
-  assert.match(receiveFile, /await rm\(partPath, \{ force: true \}\)\.catch\(\(\) => undefined\)/)
+  assert.match(receiveFile, /await coreFsPromises\.rm\(partPath, \{ force: true \}\)\.catch\(\(\) => undefined\)/)
 })

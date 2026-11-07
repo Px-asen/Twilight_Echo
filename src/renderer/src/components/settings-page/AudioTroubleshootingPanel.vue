@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { audioRecoveryBusy, type AudioRecoveryKind, type AudioRecoveryState } from '../../../../shared/audioRecovery.ts'
 import { useCoreConnection } from '../../stores/coreConnection.ts'
 import { useLocale } from '../../app/useLocale.ts'
@@ -13,6 +13,12 @@ const error = ref('')
 const busy = computed(() => starting.value || Boolean(state.value && audioRecoveryBusy(state.value)))
 let mounted = false
 let timer: ReturnType<typeof setTimeout> | undefined
+
+watch(() => core.state.value?.audioRecovery, value => {
+  if (!value) return
+  state.value = value
+  schedule()
+})
 
 function schedule(): void {
   clearTimeout(timer)

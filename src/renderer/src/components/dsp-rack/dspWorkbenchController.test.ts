@@ -75,7 +75,7 @@ test('workbench templates compile, including multi-action event handlers', () =>
   }
 })
 
-test('settings editor entries remain outside the master-bypassed controls and only navigate', () => {
+test('the settings equalizer entry remains outside the master-bypassed controls and only navigates', () => {
   const source = readFileSync(
     new URL('../settings-page/DspSettingsSection.vue', import.meta.url),
     'utf8'
@@ -95,13 +95,13 @@ test('settings editor entries remain outside the master-bypassed controls and on
       if (
         click?.type === NodeTypes.DIRECTIVE &&
         click.exp?.type === NodeTypes.SIMPLE_EXPRESSION &&
-        ['openDspRackFromDsp', 'openEqualizerFromDsp'].includes(click.exp.content) &&
+        click.exp.content === 'openEqualizerFromDsp' &&
         ancestors.some((element) =>
           element.props.some(
             (prop) =>
               prop.type === NodeTypes.ATTRIBUTE &&
-              prop.name === 'id' &&
-              prop.value?.content === 'setting-dsp-workbench'
+              prop.name === 'class' &&
+              prop.value?.content === 'dsp-actions'
           )
         )
       ) {
@@ -124,7 +124,7 @@ test('settings editor entries remain outside the master-bypassed controls and on
     }
   }
   visit(template.children, [])
-  assert.deepEqual(entries.sort(), ['openDspRackFromDsp', 'openEqualizerFromDsp'])
+  assert.deepEqual(entries, ['openEqualizerFromDsp'])
   const emitted: string[] = []
   const handlers = entries
     .map((name) => source.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))![0])
@@ -135,7 +135,7 @@ test('settings editor entries remain outside the master-bypassed controls and on
       emit: (event: string) => emitted.push(event)
     }
   )
-  assert.deepEqual(emitted.sort(), ['openDspRack', 'openEqualizer'])
+  assert.deepEqual(emitted, ['openEqualizer'])
 })
 
 test('VST3 settings load through Core without the removed audio bridge', async () => {

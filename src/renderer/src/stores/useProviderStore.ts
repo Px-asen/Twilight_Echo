@@ -57,6 +57,7 @@ export interface ProviderUiMetadata {
     label: string
     icon: string
     method: string
+    primary?: boolean
   }>
   streamingHome?: import('../../../shared/providerHome').ProviderHomePresentation
   streamingDiscovery?: import('../../../shared/providerHome').ProviderDiscoveryPresentation
@@ -156,14 +157,15 @@ function ensurePluginChangeListener(): void {
 async function callProvider<T>(
   providerId: string,
   method: string,
-  args: unknown[] = []
+  args: unknown[] = [],
+  signal?: AbortSignal
 ): Promise<T> {
   const result = (await useCoreConnection().command('providers.call', {
     providerId,
     method: method as TwilightMediaProviderMethod,
     args: toProviderIpcArgs(args)
-  })) as T
-  if (/^(?:logout|login|checkQrLogin)/.test(method))
+  }, signal)) as T
+  if (/^(?:logout|login|checkQrLogin|openOfficialLogin)/.test(method))
     window.dispatchEvent(new Event('twilight-provider-auth-changed'))
   return result
 }

@@ -78,7 +78,8 @@ window.api = {
             epoch: 'network-locator-epoch',
             sequence: 0,
             phase: 'ready',
-            network: { revision: 1, profiles: 1, jobs: [] }
+            network: { revision: 1, profiles: 1, jobs: [] },
+            streams: { radioRevision: 1, podcastRevision: 1, error: '' }
           }
         }
       }
@@ -93,6 +94,15 @@ window.api = {
       })
       let value
       switch (name) {
+        case 'radio.stations':
+          value = page(stations)
+          break
+        case 'podcasts.subscriptions':
+          value = page([{ ...subscription, episodeCount: episodes.length }])
+          break
+        case 'podcasts.episodes':
+          value = page(episodes.map((episode) => ({ ...episode, subscriptionId: subscription.id })))
+          break
         case 'network.state':
           value = { revision: 1, profiles: 1, jobs: [] }
           break

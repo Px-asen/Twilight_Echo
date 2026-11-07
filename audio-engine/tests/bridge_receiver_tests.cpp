@@ -2,6 +2,7 @@
 #include <cassert>
 #include <limits>
 #include <iostream>
+#include <thread>
 using namespace twilight::audio;
 
 class FakeDac final : public IOutputBackend {
@@ -10,6 +11,7 @@ class FakeDac final : public IOutputBackend {
   OutputEventCallback event;
   bool stopped = false;
   int bufferFrames = 0;
+  OutputClockSnapshot clock;
   const char* id() const override { return "test-dac"; }
   bool open(const std::string&, const AudioFormat&, std::string*) override { return true; }
   bool setOutputConfig(const OutputConfig&, std::string*) override { return true; }
@@ -18,11 +20,29 @@ class FakeDac final : public IOutputBackend {
   void close() override { stop(); }
   AudioFormat outputFormat() const override { return {48000, 2, 32, AudioSampleFormat::Float32Interleaved}; }
   OutputInfo outputInfo() const override { OutputInfo info; info.actualSampleRate = 48000; info.bufferSizeFrames = bufferFrames; return info; }
+  OutputClockSnapshot outputClock() const override { return clock; }
   DopRuntimeFacts dopRuntimeFacts() const override { return {}; }
   NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const override { return {}; }
   std::string deviceName() const override { return "test"; }
 };
 int main() {
+  OutputClockCache cache;
+  std::atomic<bool> complete{false};
+  std::thread writer([&] {
+    for (uint64_t n = 1; n <= 100000; ++n) cache.publish({true, true, true, n, double(n * 2), double(n * 3), 48000});
+    complete = true;
+  });
+  while (!complete.load()) {
+    const auto value = cache.read();
+    if (value.valid) {
+      assert(value.positionFrames == value.epoch * 2);
+      assert(value.sampledAtMs == value.epoch * 3);
+      assert(value.sampleRate == 48000);
+    }
+  }
+  writer.join();
+  const auto mono = outputMonotonicMs();
+  assert(mono > 0 && outputMonotonicMs() >= mono);
   BridgeReceiver receiver;
   std::string error;
   assert(!receiver.open(std::make_unique<FakeDac>(), "auto", 48000, 2, &error));
@@ -39,6 +59,15 @@ int main() {
   for (size_t n = 0; n < 128; ++n) assert(output[n] == .125f); // DSP bypass, sample exact
   for (size_t n = 128; n < 256; ++n) assert(output[n] == 0); // bounded underflow silence
   assert(receiver.status().find("\"consumedFrames\":64") != std::string::npos);
+  dac->clock = {true, true, true, 7, 32, mono, 48000};
+  const auto clockStatus = receiver.status();
+  assert(clockStatus.find("\"callbackRequestedFrames\":128") != std::string::npos);
+  assert(clockStatus.find("\"positionFrames\":32") != std::string::npos);
+  assert(clockStatus.find("\"source\":\"wasapi-audio-clock\"") != std::string::npos);
+  assert(clockStatus.find("\"epoch\":7") != std::string::npos);
+  dac->clock.sampledAtMs = outputMonotonicMs() + 1000000;
+  assert(receiver.status().find("\"valid\":false") != std::string::npos);
+  assert(receiver.write(input.data(), 64, &error)); // A bad timestamp never disables legacy PCM.
   for (int n = 0; n < 5; ++n) assert(receiver.write(input.data(), 2048, &error));
   assert(!receiver.write(input.data(), 2048, &error)); // no overwrite/drop-oldest
   dac->event(OutputBackendEvent::DeviceInvalidated, "unplugged");
@@ -50,6 +79,8 @@ int main() {
   backend = std::make_unique<FakeDac>(); dac = backend.get();
   assert(receiver.open(std::move(backend), "explicit-usb-dac", 48000, 2, &error));
   assert(receiver.status().find("\"bufferedFrames\":0") != std::string::npos);
+  assert(receiver.status().find("\"supported\":false") != std::string::npos);
+  assert(receiver.status().find("\"callbackRequestedFrames\":0") != std::string::npos);
   input[0] = std::numeric_limits<float>::quiet_NaN();
   assert(!receiver.write(input.data(), 64, &error));
   assert(receiver.status().find("\"bufferedFrames\":0") != std::string::npos);

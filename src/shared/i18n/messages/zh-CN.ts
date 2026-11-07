@@ -242,6 +242,10 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   'audio.reason.output_dither_active.fix': '把输出级的抖动设为「关闭」。',
 
   // ── 输出路由与设备 ────────────────────────────────────────────────────────
+  'audio.reason.android_system_path.label': 'Android 系统音频输出',
+  'audio.reason.android_system_path.explain':
+    '音频经过 Android 系统音频通路，设备可能施加混音、重采样或音量调整，尚未验证逐位一致输出。',
+  'audio.reason.android_system_path.fix': '',
   'audio.reason.shared_mixer.label': '共享输出经过系统混音器',
   'audio.reason.shared_mixer.explain':
     '共享模式下音频要先过系统混音器，由它做音量、重采样和混音，通常不可能 bit-perfect。',

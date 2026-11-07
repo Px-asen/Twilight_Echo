@@ -67,6 +67,23 @@ test(
   }
 )
 
+test('Server host roots retire previously scanned modules before another scan or graph resolution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'twilight-vst3-host-roots-'))
+  try {
+    const modules = join(root, 'modules')
+    await mkdir(modules)
+    await writeFile(join(modules, 'fixture.vst3'), 'fixture')
+    const catalog = new Vst3CatalogService(join(root, 'catalog'), { scan: async () => ({
+      classId: 'A'.repeat(32), name: 'Fixture', vendor: 'Twilight', version: '1', parameters: []
+    }) }, [modules])
+    const state = await catalog.scan()
+    if (process.platform === 'win32') assert.equal(state.entries.length, 1)
+    await catalog.setSearchPaths([], true)
+    assert.equal((await catalog.getState()).entries.length, 0)
+    if (state.entries[0]) assert.equal(catalog.resolveAvailableModule(state.entries[0].id, state.entries[0].classId).modulePath, null)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('rejects an excessively nested persisted VST3 catalog on every platform', async () => {
   const root = await mkdtemp(join(tmpdir(), 'twilight-vst3-catalog-deep-'))
   try {

@@ -304,6 +304,8 @@ test('about settings expose bundled sponsor payment options and sponsor list', (
   assert.match(source, /name: '超新星燃烧小小行星带'/)
   assert.match(source, /name: 'lotywe'/)
   assert.match(source, /name: '晚钟空奏'/)
+  assert.match(source, /name: '呵呵htpo'/)
+  assert.match(source, /name: '阳春最忧郁之人'/)
   assert.match(source, /useEscapeToClose\(sponsorDialogOpen, closeSponsorDialog\)/)
   assert.match(source, /useFocusTrap\(sponsorDialogRef, sponsorDialogOpen\)/)
   assert.match(source, /const QQ_GROUP_QR_URL = '\.\/qq-group-qrcode\.jpg'/)

@@ -24,6 +24,7 @@
 #include <propsys.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
+#include "WasapiClock.h"
 #endif
 
 namespace twilight::audio {
@@ -92,6 +93,11 @@ struct WasapiSharedBackend::Impl {
   Microsoft::WRL::ComPtr<IMMDevice> device;
   Microsoft::WRL::ComPtr<IAudioClient> audioClient;
   Microsoft::WRL::ComPtr<IAudioRenderClient> renderClient;
+  wasapi::PresentationClock presentationClock;
+  ClockedRenderCallback clockedCallback;
+  ClockedCommitCallback clockedCommit;
+  ClockedRenderContext activeContext;
+  uint64_t releasedFrames = 0;
   HANDLE samplesReadyEvent = nullptr;
   std::mutex threadMutex;
   std::thread renderThread;
@@ -311,6 +317,7 @@ struct WasapiSharedBackend::Impl {
         continue;
       }
       const UINT32 framesAvailable = bufferFrameCount > padding ? bufferFrameCount - padding : 0;
+      presentationClock.sample();
       if (framesAvailable == 0) continue;
 
       BYTE* data = nullptr;
@@ -331,6 +338,7 @@ struct WasapiSharedBackend::Impl {
           outputFormat.channelCount,
           callback);
       hr = renderClient->ReleaseBuffer(framesAvailable, 0);
+      if (clockedCommit) clockedCommit(releasedFrames, framesAvailable, activeContext.epoch, SUCCEEDED(hr));
       if (FAILED(hr)) {
         recordRenderFailureFromRenderThread(hr, "无法提交共享输出缓冲区");
         if (isDeviceInvalidated(hr)) {
@@ -339,8 +347,10 @@ struct WasapiSharedBackend::Impl {
           break;
         }
       }
+      if (SUCCEEDED(hr) && clockedCallback) releasedFrames += framesAvailable;
     }
 
+    presentationClock.invalidate();
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
     if (deviceInvalidatedEventQueued.exchange(false) && eventCallback) {
@@ -388,10 +398,12 @@ struct WasapiSharedBackend::Impl {
       }
     }
     if (audioClient) audioClient->Stop();
+    presentationClock.invalidate();
   }
 
   void close() {
     stop();
+    presentationClock.detach();
     renderClient.Reset();
     audioClient.Reset();
     device.Reset();
@@ -534,6 +546,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputFormat.channelCount = static_cast<int>(activeFormat->nChannels);
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  impl_->presentationClock.attach(impl_->audioClient.Get(), impl_->outputFormat.sampleRate);
   impl_->outputInfo.exclusive = false;
   impl_->outputInfo.accessMode = "shared";
   impl_->outputInfo.supportsOutputPerfect = false;
@@ -601,6 +614,21 @@ bool WasapiSharedBackend::setOutputConfig(const OutputConfig& config, std::strin
 }
 
 bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {
+  return startInternal(std::move(callback), {}, {}, std::move(eventCallback), error);
+}
+bool WasapiSharedBackend::supportsClockedRendering() const {
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  return impl_->presentationClock.read().supported && !impl_->outputFormat.dopEncoded;
+#else
+  return false;
+#endif
+}
+bool WasapiSharedBackend::startClocked(ClockedRenderCallback callback, ClockedCommitCallback commit, OutputEventCallback eventCallback, std::string* error) {
+  if (!callback || !commit) { if (error) *error = "Clocked render and commit callbacks are required"; return false; }
+  return startInternal({}, std::move(callback), std::move(commit), std::move(eventCallback), error);
+}
+bool WasapiSharedBackend::startInternal(RenderCallback callback, ClockedRenderCallback clockedCallback, ClockedCommitCallback commit,
+    OutputEventCallback eventCallback, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   if (!impl_->audioClient || !impl_->renderClient) {
     impl_->recordFailure("backend_start_failure", "共享输出后端尚未打开", error);
@@ -611,7 +639,21 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
     return false;
   }
 
-  impl_->callback = std::move(callback);
+  impl_->clockedCallback = std::move(clockedCallback);
+  impl_->clockedCommit = std::move(commit);
+  if (impl_->clockedCallback) {
+    if (!supportsClockedRendering() || FAILED(impl_->audioClient->Reset())) {
+      if (error) *error = "Clocked output requires PCM and a resettable device clock";
+      return false;
+    }
+    impl_->releasedFrames = 0;
+    impl_->callback = [this](float* out, size_t frames) {
+      impl_->activeContext = clockedRenderContext(impl_->presentationClock.read(),
+          impl_->releasedFrames, impl_->bufferFrameCount, outputMonotonicMs());
+      return impl_->clockedCallback(out, frames, impl_->activeContext);
+    };
+  } else impl_->callback = std::move(callback);
+  impl_->presentationClock.begin();
   impl_->eventCallback = std::move(eventCallback);
 
   BYTE* data = nullptr;
@@ -619,7 +661,9 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   if (!impl_->renderSucceeded(hr, error, "无法预填充输出缓冲区")) return false;
   // Prefill with silence so Start() does not attack at full level after a device rebind.
   // Still pull one buffer of samples from the decoder so the stream position stays aligned.
-  if (data) {
+  if (data && impl_->clockedCallback) {
+    std::memset(data, 0, static_cast<size_t>(impl_->bufferFrameCount) * impl_->outputFormat.channelCount * sizeof(float));
+  } else if (data) {
     wasapi::renderFloatCallbackWithLeadingSilence(
         reinterpret_cast<float*>(data),
         impl_->bufferFrameCount,
@@ -629,6 +673,7 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   }
   hr = impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, AUDCLNT_BUFFERFLAGS_SILENT);
   if (!impl_->renderSucceeded(hr, error, "无法提交预填充输出缓冲区")) return false;
+  if (impl_->clockedCallback) impl_->releasedFrames += impl_->bufferFrameCount;
 
   impl_->running = true;
   impl_->launchRenderThread();
@@ -642,6 +687,8 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   return true;
 #else
   (void)callback;
+  (void)clockedCallback;
+  (void)commit;
   (void)eventCallback;
   if (error) *error = "当前构建未启用系统音频输出";
   return false;
@@ -685,6 +732,14 @@ OutputInfo WasapiSharedBackend::outputInfo() const {
 
 DopRuntimeFacts WasapiSharedBackend::dopRuntimeFacts() const {
   return impl_->dopRuntimeFacts;
+}
+
+OutputClockSnapshot WasapiSharedBackend::outputClock() const {
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  return impl_->presentationClock.read();
+#else
+  return {};
+#endif
 }
 
 NativeDsdRuntimeFacts WasapiSharedBackend::nativeDsdRuntimeFacts() const {

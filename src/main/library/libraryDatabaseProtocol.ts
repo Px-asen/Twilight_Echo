@@ -87,6 +87,7 @@ export interface LibraryDatabaseWorkerApi
     CoreSourceRecoveryApi,
     CatalogDatabaseApi, AlbumBrowseDatabaseApi, MusicRatingsDatabaseApi, MusicPreferencesDatabaseApi, MusicTagsDatabaseApi, MusicFocusDatabaseApi, MusicExplorationDatabaseApi, CatalogUnifiedPlaybackDatabaseApi, GenreDatabaseApi, GenreBrowseDatabaseApi, EntityMetadataDatabaseApi, LegacyMusicMetadataDatabaseApi {
   insertCorePlaybackQueue(id: string, revision: number, edit: Extract<import('../../shared/libraryDatabase.ts').LibraryQueueEdit, { kind: 'insert' }>): Promise<import('../../shared/libraryDatabase.ts').LibraryQueueEditResult>
+  clonePlaybackQueue(reference: LibraryPlaybackQueueReference): Promise<import('../../shared/libraryDatabase.ts').LibraryQueueSnapshot>
   /** Current and SQL-selected successor, read together without exporting metadata or holes. */
   readLibraryQueuePlaybackWindow(
     id: string,
@@ -263,6 +264,7 @@ export const DATABASE_METHODS = new Set<DatabaseMethod>([
   'extendPlaybackQueue',
   'insertCorePlaybackQueue',
   'restoreHeartBaseQueue',
+  'clonePlaybackQueue',
   'replacePlaybackQueueSource',
   'readLibraryQueue',
   'readLibraryQueueNeighbor',

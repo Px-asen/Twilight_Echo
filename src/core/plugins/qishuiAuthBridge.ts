@@ -3,7 +3,7 @@ import { join, resolve } from '../../shared/portablePath.ts'
 
 const { existsSync } = coreFs
 
-export const QISHUI_PLUGIN_ID = 'com.twilightecho.provider.qishui'
+export { QISHUI_PLUGIN_ID } from '../../shared/pluginHostContracts.ts'
 
 export interface QishuiAuthModule {
   configure(hooks: {

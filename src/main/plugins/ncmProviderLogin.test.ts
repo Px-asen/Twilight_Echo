@@ -17,7 +17,7 @@ interface TestNcmProvider {
   ui: { authType: string; loginExtraActions?: unknown[] }
   checkLogin(): Promise<{ loggedIn: boolean; profile: { userId: number } | null }>
   logout(): Promise<void>
-  openOfficialLogin(): Promise<unknown>
+  openOfficialLogin(context?: { signal: AbortSignal }): Promise<unknown>
   getQrKey(): Promise<unknown>
   getQrImage(key: string): Promise<unknown>
   checkQrLogin(key: string): Promise<{ code: number; message?: string }>
@@ -42,6 +42,49 @@ interface TestNcmProvider {
     options?: { force?: boolean; quality?: string }
   ): Promise<string | null>
 }
+
+test('official NCM login saves a verified account and discards a cancelled browser result', async (t) => {
+  const module = await import(new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href)
+  t.after(() => module.deactivate())
+  let provider!: TestNcmProvider
+  const settings = new Map<string, unknown>([['cookie', 'MUSIC_U=previous']])
+  let finishBrowser!: (cookie: string) => void
+  let receivedSignal: AbortSignal | undefined
+  await module.activate({
+    twilight: {
+      internal: { ncm: {
+        officialLogin: ({ signal }: { signal?: AbortSignal }) => {
+          receivedSignal = signal
+          return new Promise<string>(resolve => { finishBrowser = resolve })
+        },
+        request: async (path: string, cookie: string) => {
+          assert.equal(cookie, 'MUSIC_U=official-test')
+          if (path.startsWith('/login/status')) return { code: 200, profile: { userId: 123, nickname: 'Official' } }
+          assert.ok(path.startsWith('/user/detail'))
+          return { code: 200, profile: { signature: '', follows: 0, followeds: 0 } }
+        }
+      } },
+      providers: { register: (value: TestNcmProvider) => { provider = value } }
+    },
+    settings: { get: (key: string) => settings.get(key),
+      set: (key: string, value: unknown) => settings.set(key, value),
+      delete: (key: string) => settings.delete(key) },
+    logger: { info() {}, warn() {}, error() {}, debug() {} }
+  })
+  const controller = new AbortController()
+  const cancelled = provider.openOfficialLogin({ signal: controller.signal })
+  assert.equal(receivedSignal, controller.signal)
+  controller.abort()
+  finishBrowser('MUSIC_U=cancelled')
+  await assert.rejects(cancelled, { name: 'AbortError' })
+  assert.equal(settings.get('cookie'), 'MUSIC_U=previous')
+  const login = provider.openOfficialLogin()
+  finishBrowser('MUSIC_U=official-test')
+  const result = await login as { loggedIn: boolean; profile: { userId: number } }
+  assert.equal(result.loggedIn, true)
+  assert.equal(result.profile.userId, 123)
+  assert.equal(settings.get('cookie'), 'MUSIC_U=official-test')
+})
 
 test('bundled NCM provider follows documented QR login request params', async () => {
   const requests: NcmRequest[] = []
@@ -112,7 +155,7 @@ test('bundled NCM provider follows documented QR login request params', async ()
   const provider = registeredProvider.current
   assert.equal(provider.ui.authType, 'qr')
   assert.deepEqual(provider.ui.loginExtraActions, [
-    { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin' }
+    { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin', primary: true }
   ])
   assert.equal(typeof provider.openOfficialLogin, 'function')
 
@@ -122,12 +165,13 @@ test('bundled NCM provider follows documented QR login request params', async ()
 
   const loginRequests = requests.filter((request) => request.path.startsWith('/login/qr/'))
   assert.equal(loginRequests.length, 3)
-  assert.equal(queryValue(loginRequests[0].path, 'ua'), null, loginRequests[0].path)
-  assert.equal(queryValue(loginRequests[1].path, 'platform'), 'web', loginRequests[1].path)
-  assert.equal(queryValue(loginRequests[1].path, 'ua'), 'pc', loginRequests[1].path)
-  assert.equal(queryValue(loginRequests[2].path, 'ua'), 'pc', loginRequests[2].path)
-  for (const request of loginRequests)
+  assert.equal(queryValue(loginRequests[1].path, 'platform'), 'pc', loginRequests[1].path)
+  for (const request of loginRequests) {
+    assert.match(queryValue(request.path, 'ua') ?? '', /NeteaseMusicDesktop\//)
+    assert.equal(queryValue(request.path, 'crypto'), 'eapi')
     assert.equal(request.path.includes('chainId='), false, request.path)
+  }
+  assert.equal(new Set(loginRequests.map(({ path }) => queryValue(path, 'ua'))).size, 1)
 
   await provider.searchSongs('hello')
   const searchRequest = requests.find((request) => request.path.startsWith('/cloudsearch'))
@@ -603,10 +647,14 @@ test('bundled NCM provider retries QR checks without cookies after API 502', asy
   })
 
   assert.equal((await registeredProvider.current?.checkQrLogin('qr-key'))?.code, 801)
-  assert.deepEqual(
-    requests.map((request) => request.path),
-    ['/login/qr/check?key=qr-key&ua=pc', '/login/qr/check?key=qr-key&noCookie=true&ua=pc']
-  )
+  assert.equal(requests.length, 2)
+  assert.equal(queryValue(requests[0].path, 'noCookie'), null)
+  assert.equal(queryValue(requests[1].path, 'noCookie'), 'true')
+  for (const { path } of requests) {
+    assert.equal(queryValue(path, 'key'), 'qr-key')
+    assert.match(queryValue(path, 'ua') ?? '', /NeteaseMusicDesktop\//)
+    assert.equal(queryValue(path, 'crypto'), 'eapi')
+  }
 
   providerModule.deactivate()
 })

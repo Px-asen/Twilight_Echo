@@ -57,7 +57,8 @@ const hero = computed(() => {
           ...matched,
           ...current,
           cover: current.cover ?? matched.cover,
-          coverSource: current.coverSource ?? matched.coverSource
+          coverSource:
+            current.coverSource ?? ('coverSource' in matched ? matched.coverSource : undefined)
         }
       : current
   }

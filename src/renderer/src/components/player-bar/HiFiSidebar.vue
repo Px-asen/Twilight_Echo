@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import MotionTransition from '../MotionTransition.vue'
 import { describeResampler } from '../../../../shared/resamplerStatus.ts'
 import AudioDeviceProfilesPanel from '@renderer/components/settings-page/AudioDeviceProfilesPanel.vue'
 import BridgeOutputPanel from '../settings-page/BridgeOutputPanel.vue'
@@ -277,6 +278,13 @@ const sectionTabs = [
   { id: 'tools' as const, label: '工具', icon: 'ph-toolbox' },
   { id: 'lyrics' as const, label: '歌词', icon: 'ph-text-aa' }
 ]
+const sectionMotion = ref<'page-up' | 'page-down'>('page-down')
+function selectSection(section: typeof activeSection.value): void {
+  const order = sectionTabs.map((tab) => tab.id)
+  sectionMotion.value =
+    order.indexOf(section) < order.indexOf(activeSection.value) ? 'page-up' : 'page-down'
+  activeSection.value = section
+}
 
 const rateActive = computed(() => Math.abs((props.playbackRate ?? 1) - 1) > 0.001)
 const abLoopPartial = computed(
@@ -641,7 +649,7 @@ const deckAccentVars = computed(() => {
           class="deck-rail-btn"
           :class="{ active: activeSection === tab.id }"
           :aria-pressed="activeSection === tab.id"
-          @click="activeSection = tab.id"
+          @click="selectSection(tab.id)"
         >
           <i class="ph" :class="tab.icon"></i>
           <span>{{ tab.label }}</span>
@@ -659,7 +667,7 @@ const deckAccentVars = computed(() => {
       </nav>
 
       <div class="deck-content">
-        <Transition name="deck-fade" mode="out-in">
+        <MotionTransition :name="sectionMotion" snapshot wait-for-enter>
           <!-- 链路 -->
           <section v-if="activeSection === 'console'" key="console" class="deck-stack">
             <section class="deck-card">
@@ -1777,7 +1785,7 @@ const deckAccentVars = computed(() => {
               </button>
             </section>
           </section>
-        </Transition>
+        </MotionTransition>
 
         <section v-if="playerBarButtons.length" class="deck-card">
           <div class="deck-card-label">

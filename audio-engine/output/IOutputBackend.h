@@ -3,6 +3,8 @@
 #include "../core/AudioTypes.h"
 #include "UsbPcmPolicy.h"
 #include "usb/UsbDirectHost.h"
+#include "OutputClock.h"
+#include "ClockedRender.h"
 
 #include <cstddef>
 #include <functional>
@@ -89,6 +91,13 @@ class IOutputBackend {
   virtual bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) = 0;
   virtual bool setOutputConfig(const OutputConfig& config, std::string* error) = 0;
   virtual bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) = 0;
+  // Opt-in PCM route. Never substitute the legacy callback or consume media
+  // during prefill. Existing backends and their ordinary start() stay usable.
+  virtual bool supportsClockedRendering() const { return false; }
+  virtual bool startClocked(ClockedRenderCallback, ClockedCommitCallback, OutputEventCallback, std::string* error) {
+    if (error) *error = "Clocked rendering is unavailable on this output";
+    return false;
+  }
   virtual bool startTyped(
       TypedRenderCallback callback,
       RenderCallback fallbackCallback,
@@ -102,6 +111,8 @@ class IOutputBackend {
 
   virtual AudioFormat outputFormat() const = 0;
   virtual OutputInfo outputInfo() const = 0;
+  // Unsupported backends keep their existing playback contract.
+  virtual OutputClockSnapshot outputClock() const { return {}; }
   virtual DopRuntimeFacts dopRuntimeFacts() const = 0;
   virtual NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const = 0;
   virtual std::string deviceName() const = 0;

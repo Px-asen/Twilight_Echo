@@ -4,7 +4,7 @@ import { APP_LOCALES, normalizeLanguagePreference } from '../../../../shared/i18
 import { useLocale } from '../../app/useLocale.ts'
 import type { HomePageMode, TrackActivationMode } from '../../types/settings'
 import type { BooleanSettingKey } from './types.ts'
-const { settings, updateSettings: persistSettings } = useSettingsStore()
+const { settings, platform, updateSettings: persistSettings } = useSettingsStore()
 const { t } = useLocale()
 function setLanguage(event: Event): void {
   const value = normalizeLanguagePreference((event.target as HTMLSelectElement).value)
@@ -105,14 +105,17 @@ defineProps<{
         <div data-setting-id="close-window" id="setting-close-window" class="setting-item">
           <div class="setting-copy">
             <strong>关闭主窗口时</strong>
-            <span>选择点击关闭按钮后的应用行为。</span>
+            <span v-if="platform === 'darwin'">选择关闭按钮或 ⌘W 的行为；⌘Q 始终退出应用。</span>
+            <span v-else>选择点击关闭按钮后的应用行为。</span>
           </div>
           <select
             class="preview-select"
             :value="settings.closeWindowBehavior"
             @change="setCloseBehavior"
           >
-            <option value="tray">最小化到系统托盘</option>
+            <option value="tray">
+              {{ platform === 'darwin' ? '关闭窗口，后台继续播放' : '最小化到系统托盘' }}
+            </option>
             <option value="miniPlayer">切换为迷你播放器</option>
             <option value="quit">退出应用</option>
           </select>

@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreApplication, type CoreApplicationDependencies } from './application.ts'
 import { CoreRemoteService } from './remote/service.ts'
+import { CoreAudioRecoveryService } from './audio/recoveryService.ts'
+import { CoreVisualizationService } from './audio/visualizationService.ts'
+import { CoreNcmListeningSync } from './listening/ncmSync.ts'
 import { createDefaultSettings } from './settings/normalization.ts'
 import { CoreStateDatabase } from '../main/library/coreStateDatabase.ts'
 import { emptyCoreStateCounts, type CoreStateApi } from '../shared/coreState.ts'
@@ -63,6 +66,10 @@ function fixture(
     database.commit('previous-upgrade')
   }
   const playback: CoreApplicationDependencies['playback'] = {
+    queuePage: async () => ({ items: [], total: 0, revision: 0, libraryRevision: 0, offset: 0 }),
+    assertIndependent: () => {},
+    claimOutput: async () => {},
+    releaseOutput: () => {},
     initialize: async () => {
       calls.push('playback.initialize')
     },
@@ -130,6 +137,8 @@ function fixture(
     captureWorkspace: async () => {
       throw new Error('No fixture queue')
     },
+    captureHandoff: async () => { throw new Error('No fixture queue') },
+    receiveHandoff: async () => {},
     shutdown: async () => {
       calls.push('playback.shutdown')
     }
@@ -293,9 +302,10 @@ function fixture(
       'migration:write',
       'statistics:read',
       'statistics:write'
-    ]
+    ],
+    role: CoreClientIdentity['role'] = 'desktop'
   ) {
-    const identity: CoreClientIdentity = { id, role: 'desktop', permissions }
+    const identity: CoreClientIdentity = { id, role, permissions }
     identities.set(id, identity)
     messages.set(id, [])
     application.connect(identity, (message) => messages.get(id)!.push(message))
@@ -329,6 +339,159 @@ function fixture(
   })
   return { application, playback, scan, calls, messages, connect, request }
 }
+
+test('Core remains usable after an audio startup crash and restores deferred owners on explicit recovery', async t => {
+  let nativeFailure: string | null = '音频服务进程退出：3221225727'
+  const restored: string[] = []
+  let configurationLocked = false
+  let restoreGate!: () => void
+  const restoreWait = new Promise<void>(resolve => { restoreGate = resolve })
+  const recovery = new CoreAudioRecoveryService({
+    engine: {
+      canRestartAudioEngine: () => true,
+      getAudioServiceFailure: () => nativeFailure,
+      restartAudioEngine: async () => { assert.equal(configurationLocked, true); nativeFailure = null }
+    },
+    playback: { recoverAudio: async (restart, configuration) => {
+      await configuration!.serialize(restart)
+      await configuration!.restored?.()
+    } },
+    configuration: {
+      serialize: async action => { assert.equal(configurationLocked, false); configurationLocked = true
+        try { return await action() } finally { configurationLocked = false } }, changed() {}
+    },
+    restoreStartup: async () => { await restoreWait; await f.application.restoreAudioInitialization() },
+    windows: true, confirmWindowsRestart: async () => false, restartWindowsServices: async () => {}, changed() {}
+  })
+  const visualization = new CoreVisualizationService({ epoch: 'current', engine: {
+    setVisualizationDemand: async () => { if (nativeFailure) throw new Error(nativeFailure); restored.push('visualization') },
+    readVisualizationDataAsync: async () => { throw new Error('No playback') }
+  }, send() {}, schedule: () => () => {} })
+  const settings = {
+    initialize: async ({ audio }: { audio?: boolean } = {}) => { assert.equal(audio, false); restored.push('library-settings') },
+    restoreAudio: async () => { if (nativeFailure) throw new Error(nativeFailure); restored.push('settings') },
+    getRevision: () => 7, state: () => ({ revision: 7 }), flush: async () => {}, rememberVolume() {}
+  } as unknown as CoreApplicationDependencies['settings']
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, settings, {
+    audioRecovery: recovery, visualization
+  })
+  await f.application.initialize()
+  assert.equal(f.application.snapshot().phase, 'ready')
+  assert.equal(f.application.snapshot().audioRecovery?.phase, 'failed')
+  assert.equal(recovery.isUnavailableError(new Error('disk full')), false)
+  assert.ok(f.calls.includes('scan.activate'))
+  f.connect('desktop', ['playback:read', 'playback:write', 'library:read', 'settings:read', 'settings:write'])
+  assert.equal((await f.request('desktop', 'library.tracks', { limit: 10 })).ok, true)
+  assert.equal((await f.request('desktop', 'settings.state')).ok, true)
+  const failed = await f.request('desktop', 'audio.recovery')
+  assert.equal(failed.ok, true)
+  if (failed.ok) assert.deepEqual(failed.value, { phase: 'failed', kind: null,
+    engineAvailable: true, windowsServicesAvailable: true, error: nativeFailure })
+  assert.equal((await f.request('desktop', 'audio.recovery.start', { kind: 'engine' })).ok, true)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(recovery.state().phase, 'restarting-engine', 'native ready is not completion of all deferred owners')
+  restoreGate()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(recovery.state().phase, 'succeeded')
+  assert.equal(recovery.state().error, null)
+  assert.deepEqual(restored, ['library-settings', 'visualization', 'settings'])
+  await f.application.restoreAudioInitialization()
+  assert.deepEqual(restored, ['library-settings', 'visualization', 'settings'])
+  assert.equal(f.calls.includes('play'), false)
+})
+
+test('Core does not defer unrelated visualization initialization errors when audio is healthy', async t => {
+  const visualization = new CoreVisualizationService({ epoch: 'current', engine: {
+    setVisualizationDemand: async () => { throw new Error('unexpected visualization failure') },
+    readVisualizationDataAsync: async () => { throw new Error('unused') }
+  }, send() {}, schedule: () => () => {} })
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, { visualization })
+  await assert.rejects(f.application.initialize(), /unexpected visualization failure/)
+  visualization.shutdown = async () => {}
+})
+
+test('catalog-source playlist append resolves trusted identities in one revision, preserves duplicates and never commits missing or stale selections', async t => {
+  const source = { id: 'D:/trusted/song.flac', filePath: 'D:/trusted/song.flac', title: 'Song', artist: 'Artist', album: 'Album', duration: 10, source: 'local' } as TrackData
+  let catalogRevision = 7, missing = false
+  const edits: unknown[] = [], resolves: string[] = []
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    catalog: { activate() {}, shutdown: async () => {}, getRevision: () => catalogRevision, resolve: async (id: string, revision: number) => {
+      resolves.push(id)
+      if (revision !== 7) throw Object.assign(new Error('stale catalog'), { code: 'STALE_REVISION' })
+      return missing ? null : source
+    }, status: async () => ({ revision: catalogRevision }) } as unknown as CoreApplicationDependencies['catalog'],
+    playlists: { waitForPending: async () => {}, initialize: async () => {}, getRevision: () => 2,
+      edit: async (...args: unknown[]) => { edits.push(args.slice(0, 2)); return { revision: 3 } }, shutdown: async () => {}, flush: async () => {} } as unknown as CoreApplicationDependencies['playlists']
+  })
+  f.connect('phone', ['library:read', 'library:write'], 'remote')
+  f.connect('read-only', ['library:read'], 'remote')
+  f.connect('write-only', ['library:write'], 'remote')
+  await f.application.initialize()
+  const input = { id: 'playlist', revision: 2, catalogRevision: 7, sourceIds: ['source-a', 'source-a'] }
+  assert.equal((await f.request('phone', 'playlists.addSources', input)).ok, true)
+  assert.deepEqual(resolves, ['source-a', 'source-a'])
+  assert.deepEqual(edits, [[2, { kind: 'add', id: 'playlist', tracks: [source, source] }]])
+  for (const id of ['read-only', 'write-only']) assert.equal((await f.request(id, 'playlists.addSources', input)).ok, false)
+  missing = true
+  assert.equal((await f.request('phone', 'playlists.addSources', input)).ok, false)
+  missing = false; catalogRevision = 8
+  assert.equal((await f.request('phone', 'playlists.addSources', input)).ok, false)
+  assert.equal((await f.request('phone', 'playlists.addSources', { ...input, filePath: 'D:/injected' })).ok, false)
+  assert.equal(edits.length, 1)
+})
+
+test('shared group dispatch requires playback permissions and library reads before replacing a common queue', async t => {
+  const groupId = 'group-11111111-1111-4111-8111-111111111111', zoneId = 'zone-22222222-2222-4222-8222-222222222222'
+  const calls: string[] = []
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, { zones: {
+    initialize: async () => {}, shutdown: async () => {},
+    listGroups: async () => ({ revision: 0, error: null, groups: [] }),
+    createGroup: async () => { calls.push('create'); return groupId },
+    removeGroup: async () => { calls.push('remove') },
+    groupTransport: async (_id: string, revision: number | null) => { calls.push(`transport:${revision}`) },
+    groupFromQuery: async () => { calls.push('query') },
+    editGroupSettings: async (edit: { revision: number; autoMixMode: string }) => { calls.push(`settings:${edit.revision}:${edit.autoMixMode}`) },
+    groupSignalPath: async () => ({ zoneId })
+  } as unknown as NonNullable<CoreApplicationDependencies['zones']> })
+  await f.application.initialize()
+  f.connect('reader', ['playback:read']); f.connect('controller', ['playback:read', 'playback:write'])
+  f.connect('library', ['playback:read', 'playback:write', 'library:read'])
+  assert.equal((await f.request('reader', 'groups.list')).ok, true)
+  const payload = { revision: 0, name: 'Music', members: [{ zoneId: 'local', revision: 0, downstreamDelayMs: 0 },
+    { zoneId, revision: 0, downstreamDelayMs: 3 }], source: { zoneId, queue: { id: 'queue', revision: 1, occurrenceId: 'a:2' } } }
+  assert.equal((await f.request('reader', 'groups.create', payload)).ok, false)
+  const created = await f.request('controller', 'groups.create', payload)
+  assert.equal(created.ok, true); assert.deepEqual(created.ok && created.value, { id: groupId })
+  assert.equal((await f.request('controller', 'groups.queueFromQuery', { groupId, revision: 0, query: {} })).ok, false)
+  assert.equal((await f.request('library', 'groups.queueFromQuery', { groupId, revision: 0, query: {} })).ok, true)
+  assert.equal((await f.request('controller', 'groups.transport', { groupId, revision: null, action: { kind: 'pause' } })).ok, true)
+  assert.equal((await f.request('controller', 'groups.remove', { groupId, revision: 0 })).ok, true)
+  const settings = { groupId, revision: 7, autoMixMode: 'natural' }
+  assert.equal((await f.request('controller', 'groups.settings.edit', settings)).ok, false)
+  f.connect('settings', ['settings:write'])
+  assert.equal((await f.request('settings', 'groups.settings.edit', settings)).ok, true)
+  assert.deepEqual(calls, ['create', 'query', 'transport:null', 'remove', 'settings:7:natural'])
+})
+
+test('only a trusted local desktop or server administrator can consent to Bridge and Zone provisioning', async t => {
+  const calls: string[] = []
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    bridge: { invite: async () => { calls.push('invite'); return {invitation:null} }, shutdown: async () => {} } as unknown as NonNullable<CoreApplicationDependencies['bridge']>,
+    zones: { initialize: async () => {}, shutdown: async () => {}, create: async () => { calls.push('create'); return 'zone-id' } } as unknown as NonNullable<CoreApplicationDependencies['zones']>
+  })
+  await f.application.initialize()
+  for (const role of ['desktop','server-admin','remote','system','plugin','mini-player'] as const) {
+    f.connect(role, ['playback:read','playback:write','settings:read','settings:write'], role)
+    for (const [name,payload] of [['bridge.invitation',{}],['zones.create',{revision:0,name:'Study'}]] as const) {
+      const result = await f.request(role,name,payload)
+      assert.equal(result.ok,role === 'desktop' || role === 'server-admin')
+      if (!result.ok) assert.equal(result.error.code,'FORBIDDEN')
+    }
+  }
+  f.connect('read-only-admin',['playback:read'],'server-admin')
+  assert.equal((await f.request('read-only-admin','zones.create',{revision:0,name:'Study'})).ok,false)
+  assert.deepEqual(calls,['invite','create','invite','create'])
+})
 
 test('Android bridge selection and controls use the real Core permission and query boundary', async (t) => {
   const db = new LibraryDatabase(':memory:')
@@ -1981,6 +2144,22 @@ test('Core exploration dispatch keeps exact local navigation and manual performa
   exploration.observe(beforeDelete)
   assert.equal(f.application.snapshot().catalogRevision, event.snapshot.catalogRevision, 'late replies do not roll back the observed revision')
   assert.equal(db.queryTracks({ limit: 10 }).total, 1)
+})
+
+test('listening sync status is query-only and respects listening history permissions', async t => {
+  const sync = new CoreNcmListeningSync({ enabled: true, available: () => true,
+    context: () => 'account', account: async () => 7, submit: async () => {},
+    now: () => 0, newId: () => 'attempt', changed() {} })
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, { listeningSync: sync })
+  await f.application.initialize()
+  f.connect('reader', ['statistics:read'])
+  f.connect('other', ['library:read'])
+  const response = await f.request('reader', 'listeningSync.status')
+  assert.equal(response.ok, true)
+  if (response.ok) assert.deepEqual(response.value, sync.status())
+  assert.equal((await f.request('other', 'listeningSync.status')).ok, false)
+  assert.equal((await f.request('reader', 'listeningSync.status', { upload: true })).ok, false)
+  await sync.shutdown()
 })
 
 test('recent history views require statistics permission as well as ordinary library access', async (t) => {

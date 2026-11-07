@@ -434,6 +434,27 @@ test('Core bridge discovery, RPC and initial SSE use the authenticated existing 
   )
 })
 
+test('RPC carries a bounded personal bitmap while legacy command bodies keep their smaller limit', async t => {
+  const { server, base, request } = await fixture(t)
+  let calls = 0
+  const dataUrl = 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024).toString('base64')
+  const body = JSON.stringify({ requestId: 'artwork', epoch: 'desktop', kind: 'command',
+    name: 'metadata.entity.artworkOverride', payload: { entityId: 'artist', revision: 1, mode: 'value', language: 'zh-Hans', dataUrl } })
+  server.setCoreRpcHandler(async envelope => {
+    calls++
+    assert.equal((envelope.payload as { dataUrl: string }).dataUrl, dataUrl)
+    return { requestId: envelope.requestId, ok: true }
+  })
+  assert.equal((await fetch(`${base}/api/core/rpc`, { method: 'POST', body })).status, 401)
+  const response = await request('/api/core/rpc', { method: 'POST', body })
+  assert.equal(response.status, 200)
+  assert.equal((await response.json() as { ok: boolean }).ok, true)
+  assert.equal(calls, 1)
+  await assert.rejects(request('/api/core/rpc', { method: 'POST', body: body + ' '.repeat(64 * 1024), signal: AbortSignal.timeout(5000) }))
+  await assert.rejects(request('/api/command', { method: 'POST', body: JSON.stringify({ type: 'play', extra: 'x'.repeat(65 * 1024) }), signal: AbortSignal.timeout(5000) }))
+  assert.equal(calls, 1)
+})
+
 test('HTTP cannot export a provider session, including forged TLS headers and payloads', async t => {
   const { server, base, request } = await fixture(t)
   let reads = 0

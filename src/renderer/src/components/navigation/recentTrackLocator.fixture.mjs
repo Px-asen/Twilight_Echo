@@ -109,9 +109,9 @@ window.locatePlayer = {
   queue: ref([tracks[339], tracks[340]]),
   playTrack: (...args) => playCalls.push(args),
   playLibraryQuery: async (...args) => playCalls.push(args),
-  setPlayMode() {},
-  playNextTrack() {},
-  appendQueueTracks() {}
+  setPlayMode() { /* The locator fixture does not change the playback mode. */ },
+  playNextTrack() { /* The locator fixture does not advance playback. */ },
+  appendQueueTracks() { /* The locator fixture does not append tracks. */ }
 }
 const page = (query = {}) => {
   if (query.sort === 'lastPlayed' && query.historyRevision !== historyRevision)

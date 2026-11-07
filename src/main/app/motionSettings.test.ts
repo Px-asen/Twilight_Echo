@@ -27,6 +27,7 @@ test('changing only motionPreference updates open lyrics and tray windows withou
     trayPlayerWindow: window('tray')
   }
   const dependencies: Record<string, unknown> = {
+    '../coreProcess/settingsBridge.ts': { getCoreSettingsBridge: () => null },
     electron: {},
     '../core/runtime': { runtime },
     '../../shared/twilightAutoMix.ts': {},

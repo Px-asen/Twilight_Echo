@@ -29,22 +29,72 @@ test('production audio RPC sends real post-DSP PCM through pinned TLS without op
   })
   const facts = { sampleRate: 48000, channels: 2, bufferedFrames: 0, capacityFrames: 12000, prebufferFrames: 1920,
     consumedFrames: 0, underruns: 0, started: false, failed: false, backend: 'wasapi-exclusive', deviceName: 'Silent fixture DAC',
-    actualSampleRate: 48000, actualBitDepth: 24, actualChannels: 2, actualOutputFormat: 'int24', exclusive: true }
-  let blocks = []
+    actualSampleRate: 48000, actualBitDepth: 24, actualChannels: 2, actualOutputFormat: 'int24', exclusive: true,
+    adaptiveSupported: true }
+  const blankTimed = () => ({ supported: true, state: 'disabled', error: '', ended: false,
+    targetAtMs: 0, mediaFrame: 0, deviceStartFrame: null, deviceStartAtMs: null, presentedMediaFrames: null })
+  let blocks = [], streamGeneration = 0, startedAt = 0, timed = blankTimed(), targetNodeMs = 0, adaptive = null
+  let syntheticSource = 0, sourceUpdatedAt = 0
+  const advanceSource = () => {
+    const now = Number(process.hrtime.bigint()) / 1e6
+    if (targetNodeMs && adaptive && ['running', 'completed'].includes(timed.state)) {
+      const elapsed = Math.max(0, now-Math.max(targetNodeMs, sourceUpdatedAt))
+      syntheticSource = Math.min(adaptive.inputFrames, syntheticSource+elapsed*48*1.0001/(1+adaptive.requestedPpm*1e-6))
+      timed.presentedMediaFrames = syntheticSource
+    }
+    sourceUpdatedAt = now
+  }
   const dac = {
     Stop() {}, SetOutputDevice() {}, SetOutputBackend() {}, PullBridgePcm() { throw Error('Receiver must not decode') },
     OpenBridgeReceiver(backend, device) {
       assert.equal(backend, 'wasapi-exclusive'); assert.equal(device, 'explicit-fixture')
+      ++streamGeneration; startedAt = 0; timed = blankTimed(); targetNodeMs = 0; adaptive = null
+      syntheticSource = sourceUpdatedAt = 0
       facts.bufferedFrames = facts.consumedFrames = 0; facts.started = false
     },
-    CloseBridgeReceiver() { facts.bufferedFrames = 0; facts.started = false },
+    CloseBridgeReceiver() { facts.bufferedFrames = 0; facts.started = false; timed = blankTimed(); targetNodeMs = 0; adaptive = null },
     WriteBridgePcm(data) { blocks.push(Buffer.from(data)); facts.bufferedFrames += data.length / 8
+      if (adaptive) adaptive.inputFrames += data.length/8
       assert.ok(facts.bufferedFrames <= facts.capacityFrames)
       if (facts.bufferedFrames >= facts.prebufferFrames) facts.started = true },
-    StartBridgeReceiver() { facts.started = true }, GetBridgeReceiverInfo() { return JSON.stringify(facts) }
+    StartBridgeReceiver() { facts.started = true },
+    PrepareBridgeTimedReceiver() { timed.state = 'prepared'; facts.started = true },
+    PrepareBridgeAdaptiveReceiver() {
+      timed.state = 'prepared'; facts.started = true
+      adaptive = { requestedPpm: 0, effectivePpm: 0, inputFrames: 0, pendingInputFrames: 134,
+        resamplerDelayFrames: 134, sourceConsumedFrames: 0, inputCreditFrames: 12000 }
+    },
+    SetBridgeTimedCorrection(ppm, generation) {
+      assert.equal(generation, streamGeneration); assert.ok(adaptive)
+      advanceSource()
+      adaptive.requestedPpm = adaptive.effectivePpm = ppm
+    },
+    ArmBridgeTimedReceiver(time, generation, frame) {
+      assert.equal(generation, streamGeneration); assert.ok(facts.bufferedFrames >= facts.prebufferFrames)
+      assert.equal(timed.state, 'prepared')
+      targetNodeMs = time - 40000; timed.state = 'armed'; timed.targetAtMs = time; timed.mediaFrame = frame
+    },
+    EndBridgeTimedReceiver() { timed.ended = true },
+    GetBridgeReceiverInfo() {
+      advanceSource()
+      const now = Number(process.hrtime.bigint()) / 1e6
+      if (facts.started && !startedAt) startedAt = now
+      if (adaptive) adaptive.inputCreditFrames = timed.ended ? 0 : facts.capacityFrames-facts.bufferedFrames
+      return JSON.stringify({ ...facts, timedStart: timed, adaptive, clock: {
+        supported: true, valid: facts.started, running: facts.started, source: 'wasapi-audio-clock',
+        streamGeneration, epoch: 1, sampleRate: 48000,
+        positionFrames: facts.started ? (now - startedAt) * 48 * 1.0001 : 0,
+        sampledAtMs: now + 40000, readAtMs: now + 40000, callbackRequestedFrames: facts.consumedFrames
+      } })
+    }
   }
   const receiver = new AudioBridgeRuntime(dac)
-  const clock = setInterval(() => { if (facts.started) { const n = Math.min(480, facts.bufferedFrames)
+  const clock = setInterval(() => { if (facts.started) {
+    if (timed.state !== 'disabled') {
+      if (!targetNodeMs || Number(process.hrtime.bigint()) / 1e6 < targetNodeMs) return
+      timed.state = 'running'; timed.deviceStartFrame = 4800; timed.deviceStartAtMs = timed.targetAtMs
+    }
+    const n = Math.min(480, facts.bufferedFrames)
     facts.bufferedFrames -= n; facts.consumedFrames += n } }, 10)
   t.after(async () => {
     clearInterval(clock)
@@ -89,6 +139,74 @@ test('production audio RPC sends real post-DSP PCM through pinned TLS without op
   assert.equal(playback.outputBackend, 'bridge-pcm')
   // PCM blocks never cross the command-RPC lane.
   assert.ok(!messages.includes('PullBridgePcm')); assert.ok(!messages.includes('WriteBridgePcm'))
+  // Same production process/RPC lane, but a deliberately synthetic +100 ppm
+  // presentation clock. This validates propagation, not physical DAC accuracy.
+  await binding.callAsync('Play', [source])
+  let measured
+  const deadline = Date.now() + 5000
+  do {
+    measured = await binding.callAsync('BridgeStatus', [])
+    if (measured.timing?.output.state === 'ready') break
+    await delay(50)
+  } while (Date.now() < deadline)
+  assert.equal(measured.timing.output.state, 'ready')
+  assert.ok(Math.abs(measured.timing.output.driftPpm - 100) < .1)
+  await binding.callAsync('Pause', [])
+  const prepare = async (adaptive = false) => {
+    await binding.callAsync('BridgePrepareTimed', [adaptive])
+    await binding.callAsync('Play', [source])
+    const deadline = Date.now() + 2000
+    let status
+    do {
+      status = await binding.callAsync('BridgeStatus', [])
+      if (status.receiver?.bufferedFrames >= facts.prebufferFrames && status.timing?.output.state === 'warming') break
+      await delay(20)
+    } while (Date.now() < deadline)
+    assert.equal(status.timing.output.state, 'warming')
+    assert.equal(facts.consumedFrames, 0, 'decoder/DSP PCM must remain unconsumed during silent preroll')
+  }
+  await prepare()
+  const target = Number(process.hrtime.bigint()) / 1e6 + 350
+  await binding.callAsync('BridgeArmTimed', [target, 44100])
+  assert.ok(Math.abs(targetNodeMs - target) < 10)
+  await delay(50)
+  assert.equal(facts.consumedFrames, 0)
+  await binding.callAsync('Pause', [])
+  await until(() => timed.state === 'disabled')
+  await delay(360)
+  assert.equal(facts.consumedFrames, 0, 'cancelled native service intent must not sound at its old deadline')
+  await prepare()
+  await binding.callAsync('BridgeArmTimed', [Number(process.hrtime.bigint()) / 1e6 + 200, 0])
+  await until(() => facts.consumedFrames >= 960)
+  await binding.callAsync('BridgeCancelTimed', [])
+  assert.equal(timed.state, 'disabled'); assert.equal(facts.started, false)
+  await prepare(true)
+  let corrected = await binding.callAsync('BridgeSetTimedCorrection', [200])
+  assert.equal(corrected.adaptive.requestedPpm, 200)
+  assert.equal(facts.consumedFrames, 0)
+  await binding.callAsync('BridgeArmTimed', [Number(process.hrtime.bigint()) / 1e6 + 200, 0])
+  await until(() => facts.consumedFrames >= 960)
+  corrected = await binding.callAsync('BridgeSetTimedCorrection', [-200])
+  assert.equal(corrected.adaptive.requestedPpm, -200)
+  await binding.callAsync('BridgeCancelTimed', [])
+  assert.equal(adaptive, null); assert.equal(facts.started, false)
+  await prepare(true)
+  await binding.callAsync('BridgeArmTimed', [Number(process.hrtime.bigint()) / 1e6 + 200, 0, true])
+  let loop
+  const loopDeadline = Date.now()+4500
+  do {
+    loop = await binding.callAsync('BridgeStatus', [])
+    if (loop.synchronization?.state === 'correcting' && Math.abs(loop.synchronization.requestedPpm) > .5) break
+    await delay(30)
+  } while (Date.now() < loopDeadline)
+  assert.equal(loop.synchronization.state, 'correcting')
+  assert.ok(Math.abs(loop.synchronization.requestedPpm) > .5 && Math.abs(loop.synchronization.requestedPpm) <= 1000)
+  await assert.rejects(binding.callAsync('BridgeSetTimedCorrection', [200]), /闭环控制/)
+  await binding.callAsync('Pause', [])
+  await until(() => timed.state === 'disabled')
+  await delay(300)
+  assert.equal((await binding.callAsync('BridgeStatus', [])).synchronization, null)
+  assert.equal(facts.started, false)
   await receiver.stopHost()
   let lost
   for (let n = 0; n < 100; ++n) {
@@ -99,4 +217,8 @@ test('production audio RPC sends real post-DSP PCM through pinned TLS without op
   assert.equal(lost.selected, true); assert.equal(lost.connected, false)
   await assert.rejects(binding.callAsync('Play', [source]), /未连接/)
   t.diagnostic('Real decode 44.1 -> 48 kHz, TLS PCM and -6 dB DSP RMS ratio: ' + ratio.toFixed(4))
+  t.diagnostic('Synthetic device clock +100 ppm across production audio RPC: ' + measured.timing.output.driftPpm.toFixed(3) + ' ppm')
+  t.diagnostic('Production timed lane: real decode/DSP PCM held before arm, armed Pause cancelled, explicit reprepare started successfully (simulated DAC).')
+  t.diagnostic('Production adaptive RPC: optional prepare, generation-bound +/-200 ppm acknowledgements and joined cancel passed (simulated DAC/SRC; native sample accuracy tested in C++).')
+  t.diagnostic('Production closed-loop RPC: paired presentation feedback issued automatic correction; manual rate ownership refused; Pause revoked future control (simulated DAC/SRC).')
 })

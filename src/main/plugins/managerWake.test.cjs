@@ -268,15 +268,22 @@ async function fixture(
     '../security/remoteMediaGrants.ts': media,
     '../audio/providerPlaybackIdentity.ts': identities
   }
-  const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../../core/plugins/manager.ts'), 'utf8'), {
+  const managerPath = path.join(__dirname, '../../core/plugins/manager.ts')
+  const source = ts.transpileModule(fs.readFileSync(managerPath, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   }).outputText
+  // Resolve the portable Core dependencies from the manager's actual location.
+  // Only the host boundaries above are mocked; a missing import must fail here.
+  for (const [, id] of source.matchAll(/require\("([^"]+)"\)/g)) {
+    if (!id.startsWith('.') || id in dependencies) continue
+    const target = path.resolve(path.dirname(managerPath), id)
+    dependencies[id] = await import(pathToFileURL(path.extname(target) ? target : `${target}.ts`).href)
+  }
   const exports = {}
   vm.runInNewContext(source, {
     exports,
     require: (id) => {
       if (id in dependencies) return dependencies[id]
-      if (id.startsWith('.')) return {}
       return require(id)
     },
     Buffer,

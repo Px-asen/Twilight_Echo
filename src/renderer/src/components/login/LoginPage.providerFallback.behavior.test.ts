@@ -60,7 +60,10 @@ test('login and title bar recover from disabled providers in real Electron rende
       appearanceStyle,
       themeIcon,
       themeIconStyle,
-      loginStyle
+      loginStyle,
+      disclaimer,
+      disclaimerStyle,
+      nativeDialog
     ] = await Promise.all([
       readFile(require.resolve('vue/dist/vue.global.prod.js'), 'utf8'),
       component('../LoginPage.vue'),
@@ -76,7 +79,10 @@ test('login and title bar recover from disabled providers in real Electron rende
       readFile(new URL('../../assets/appearance.css', import.meta.url), 'utf8'),
       component('../ThemeIcon.vue'),
       componentStyle('../ThemeIcon.vue'),
-      componentStyle('../LoginPage.vue')
+      componentStyle('../LoginPage.vue'),
+      component('./LoginDisclaimerDialog.vue'),
+      componentStyle('./LoginDisclaimerDialog.vue'),
+      readFile(new URL('../../composables/useNativeDialog.ts', import.meta.url), 'utf8')
     ])
     const primeIconFont = await readFile(require.resolve('primeicons/fonts/primeicons.woff2'))
     const primeIconStyle = (
@@ -87,7 +93,7 @@ test('login and title bar recover from disabled providers in real Electron rende
     )
     await writeFile(
       join(directory, 'index.html'),
-      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}\n${loginStyle}\n${primeIconStyle}\n.stage-enter-active,.stage-leave-active{transition:none!important}</style><div id="title"></div><div id="app"></div>
+      `<!doctype html><meta charset="utf-8"><style>${baseStyle}\n${appearanceStyle}\n${await readFile(new URL('../../assets/theme-layouts/obsidian-glass.css', import.meta.url), 'utf8')}\n${await readFile(new URL('../../assets/theme-layouts/paper-light.css', import.meta.url), 'utf8')}\n${titleStyle}\n${iconStyle}\n${themeIconStyle}\n${loginStyle}\n${disclaimerStyle}\n${primeIconStyle}\n.stage-enter-active,.stage-leave-active{transition:none!important}</style><div id="title"></div><div id="app"></div>
       <script>${vue}</script><script>window.qrImageFixture = ${JSON.stringify(await QRCode.toDataURL('https://music.163.com/login?codekey=fixture', { margin: 1, width: 220 }))};</script><script>${runtime}</script>
       <script>
         const load = source => {
@@ -98,6 +104,8 @@ test('login and title bar recover from disabled providers in real Electron rende
         window.visibilityPolling = load(${JSON.stringify(commonJs(visibilityPolling))});
         window.providerStoreModule = load(${JSON.stringify(commonJs(providerStore))});
         window.ServerLoginForm = load(${JSON.stringify(serverForm)}).default;
+        window.nativeDialog = load(${JSON.stringify(commonJs(nativeDialog))});
+        window.LoginDisclaimerDialog = load(${JSON.stringify(disclaimer)}).default;
         window.LoginPage = load(${JSON.stringify(login)}).default;
         window.titleBarIconPaths = load(${JSON.stringify(commonJs(iconPaths))});
         window.themeIconRegistry = ${JSON.stringify(THEME_ICON_SLOT_REGISTRY)};
@@ -145,9 +153,18 @@ test('login and title bar recover from disabled providers in real Electron rende
             win.setSize(1040, 780);
             await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
             for (const theme of ['pureWhite', 'dark']) {
-              await win.webContents.executeJavaScript('(async () => { document.documentElement.dataset.theme = ' + JSON.stringify(theme) + '; delete document.documentElement.dataset.tePresetLayout; for (const property of ["--te-player-bg", "--te-app-bg", "--te-playback-page-text"]) document.documentElement.style.removeProperty(property); await mountLogin([ncm]); await document.fonts.ready; await new Promise(resolve => setTimeout(resolve, 650)); })()');
+              await win.webContents.executeJavaScript('(async () => { document.documentElement.dataset.theme = ' + JSON.stringify(theme) + '; delete document.documentElement.dataset.tePresetLayout; for (const property of ["--te-player-bg", "--te-app-bg", "--te-playback-page-text"]) document.documentElement.style.removeProperty(property); await mountLogin([ncm], "ncm", false, undefined, false); await document.fonts.ready; await new Promise(resolve => setTimeout(resolve, 650)); })()');
+              fs.writeFileSync(path.join(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, 'login-disclaimer-' + theme + '.png'), (await win.webContents.capturePage()).toPNG());
+              await win.webContents.executeJavaScript('acceptDisclaimer()');
               fs.writeFileSync(path.join(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, 'ncm-qr-' + theme + '.png'), (await win.webContents.capturePage()).toPNG());
+              await win.webContents.executeJavaScript('mountLogin([{ ...ncm, ui: { ...ncm.ui, loginExtraActions: ncm.ui.loginExtraActions.map(action => ({ ...action, primary: true })) } }], "ncm", false, (_id, method) => method === "openOfficialLogin" ? new Promise(() => {}) : undefined)');
+              await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 650))');
+              fs.writeFileSync(path.join(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, 'official-login-' + theme + '.png'), (await win.webContents.capturePage()).toPNG());
             }
+            win.setSize(390, 620);
+            await win.webContents.executeJavaScript('mountLogin([ncm], "ncm", false, undefined, false)');
+            await win.webContents.executeJavaScript('checkDisclaimerBounds()');
+            fs.writeFileSync(path.join(process.env.TWILIGHT_LOGIN_SCREENSHOTS_DIR, 'login-disclaimer-narrow.png'), (await win.webContents.capturePage()).toPNG());
           }
           console.log('LOGIN_PROVIDER_FALLBACK_OK ' + cases);
           app.exit(0);
@@ -159,7 +176,7 @@ test('login and title bar recover from disabled providers in real Electron rende
       ['--no-sandbox', join(directory, 'runner.cjs'), join(directory, 'index.html')],
       { windowsHide: true, timeout: 60_000 }
     )
-    assert.match(stdout, /LOGIN_PROVIDER_FALLBACK_OK 17/)
+    assert.match(stdout, /LOGIN_PROVIDER_FALLBACK_OK 20/)
   } finally {
     const target = resolve(directory)
     assert.ok(
@@ -238,15 +255,15 @@ changed = () => coreState.value.pluginsRevision++;
 const core = {
   state: coreState,
   query: async name => { expect(name === 'providers.list', 'unexpected query: ' + name); return available; },
-  command: async (name, { providerId, method, args }) => { expect(name === 'providers.call', 'unexpected command: ' + name); return window.api.providers.call(providerId, method, args); }
+  command: async (name, { providerId, method, args }, signal) => { expect(name === 'providers.call', 'unexpected command: ' + name); return window.api.providers.call(providerId, method, args, signal); }
 };
 window.api = {
   providers: {
     list: async () => available,
-    call: async (id, method, args) => {
+    call: async (id, method, args, signal) => {
       calls.push({ id, method, args });
       if (!available.some(provider => provider.id === id)) throw new Error('Provider ' + id + ' 未启用');
-      const custom = handler?.(id, method, args);
+      const custom = handler?.(id, method, args, signal);
       if (custom !== undefined) return custom;
       if (method === 'checkLogin') return { loggedIn: false, profile: null };
       if (method === 'getQrLogin') return { key: id + '-key', imageDataUrl: window.qrImageFixture };
@@ -261,6 +278,8 @@ window.fixtureRequire = id => {
   if (id === 'qrcode') return { default: { toDataURL: async () => window.qrImageFixture } };
   if (id.endsWith('.css')) return {};
   if (id.endsWith('/ServerLoginForm.vue')) return { default: window.ServerLoginForm };
+  if (id.endsWith('/LoginDisclaimerDialog.vue')) return { default: window.LoginDisclaimerDialog };
+  if (id.includes('useNativeDialog')) return window.nativeDialog;
   if (id.endsWith('/TitleBarIcon.vue')) return { default: window.TitleBarIcon };
   if (id.endsWith('/ThemeIcon.vue')) return { default: window.ThemeIcon };
   if (id.includes('shared/theme')) return { THEME_ICON_SLOT_REGISTRY: window.themeIconRegistry };
@@ -272,7 +291,7 @@ window.fixtureRequire = id => {
   if (id.includes('mediaProvider')) return { toProviderIpcArgs: args => args };
   if (id.includes('useNcmStore')) return { useNcmStore: () => ({ isLoggedIn: loggedIn, profile, checkLogin: async () => { calls.push({ id: 'ncm', method: 'ncmCheckLogin' }); } }) };
   if (id.includes('useBackStack')) return { useBackHandler() {}, useBackStack: () => ({ canGoBack, backHint: ref(null) }) };
-  if (id.includes('useWindowChrome')) return { useWindowChrome: () => ({ maximized: ref(false) }) };
+  if (id.includes('useWindowChrome')) return { useWindowChrome: () => ({ maximized: ref(false), fullScreen: ref(false), maximizeBehavior: ref('maximize') }) };
   if (id.includes('useAppNoticeStore')) return { useAppNoticeStore: () => ({ unreadCount: ref(0), activeTaskCount: ref(0), doNotDisturb: ref(false) }) };
   if (id.includes('extensions/registry')) return { useExtensionRegistry: () => ({ uiContributions: ref([]) }) };
   if (id.includes('usePluginFlyout')) return { usePluginFlyout: () => ({ target: ref(null), toggle() {} }) };
@@ -280,16 +299,90 @@ window.fixtureRequire = id => {
 };
 const store = () => window.providerStoreModule.useProviderStore();
 const replaceProviders = async providers => { available = providers; changed(); await settle(); };
-const mountLogin = async (providers, initialProviderId = 'ncm', forceProfile = false, custom) => {
+const acceptDisclaimer = async () => {
+  const button = document.querySelector('.disclaimer-accept');
+  expect(button, 'login disclaimer is missing');
+  button.click(); await settle();
+};
+const checkDisclaimerBounds = () => {
+  const dialog = document.querySelector('dialog:modal');
+  expect(dialog && dialog.contains(document.activeElement), 'disclaimer did not take modal focus');
+  const bounds = dialog.getBoundingClientRect();
+  expect(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight, 'disclaimer overflows the viewport');
+  expect(dialog.scrollWidth <= dialog.clientWidth, 'disclaimer has horizontal overflow');
+};
+const mountLogin = async (providers, initialProviderId = 'ncm', forceProfile = false, custom, acceptNotice = true) => {
   loginApp?.unmount();
   available = providers; handler = custom; calls = []; success = 0; configure = 0;
   await store().syncProviders();
   loginApp = createApp({ render: () => h(window.LoginPage, { initialProviderId, forceProfile, onLoginSuccess: () => success++, onConfigure: () => configure++ }) });
   loginApp.mount('#app'); await settle();
+  if (acceptNotice && document.querySelector('.disclaimer-accept')) await acceptDisclaimer();
 };
 const text = () => document.querySelector('#app').textContent;
 const qrPolls = () => [...timers.values()].filter(timer => timer.interval === 5000);
 window.runProviderFallbackTests = async () => {
+  // Installing/enabling providers and opening the platform list must not request consent.
+  await mountLogin([], null, false, undefined, false);
+  await replaceProviders([ncm, bili]);
+  expect(!document.querySelector('dialog') && !calls.some(call => call.method === 'getQrLogin'), 'plugin registration started authentication');
+  document.querySelector('.provider-row').click(); await settle();
+  checkDisclaimerBounds();
+  expect(text().includes('免责声明') && !document.querySelector('.qr-image, .extra-actions'), 'QR content appeared before consent');
+  expect(!calls.some(call => call.method === 'getQrLogin') && qrPolls().length === 0, 'QR started before consent');
+  document.dispatchEvent(new Event('visibilitychange')); await settle();
+  expect(qrPolls().length === 0, 'visibility change bypassed consent');
+  document.querySelector('.login-disclaimer button').click(); await settle();
+  expect(!document.querySelector('dialog') && document.querySelectorAll('.provider-row').length === 2, 'cancel did not return to platforms');
+  expect(!calls.some(call => call.method === 'getQrLogin'), 'cancel requested a QR code');
+
+  // Escape cancels; accepting starts once, and a new visit asks again.
+  document.querySelector('.provider-row').click(); await settle();
+  const cancelEvent = new Event('cancel', { cancelable: true });
+  document.querySelector('dialog').dispatchEvent(cancelEvent); await settle();
+  expect(cancelEvent.defaultPrevented && !document.querySelector('dialog') && document.querySelector('.provider-row'), 'Escape did not cancel login');
+  document.querySelector('.provider-row').click(); await settle();
+  const acceptButton = document.querySelector('.disclaimer-accept');
+  acceptButton.click(); acceptButton.click(); await settle();
+  expect(calls.filter(call => call.method === 'getQrLogin').length === 1 && qrPolls().length === 1 && !document.querySelector('dialog'), 'accept did not start exactly one QR request');
+  document.querySelector('.chip-back').click(); await settle();
+  document.querySelector('.provider-row').click(); await settle();
+  expect(document.querySelector('dialog:modal') && qrPolls().length === 0, 'returning to QR login skipped consent');
+
+  // Replacing or removing the active provider cannot reuse its pending confirmation.
+  const oldAccept = document.querySelector('.disclaimer-accept');
+  await replaceProviders([bili]);
+  oldAccept.click(); await settle();
+  expect(document.querySelector('dialog:modal')?.textContent.includes('哔哩哔哩') && !calls.some(call => call.id === 'bili' && call.method === 'getQrLogin'), 'old confirmation authorized a replacement provider');
+  await acceptDisclaimer();
+  expect(calls.some(call => call.id === 'bili' && call.method === 'getQrLogin'), 'replacement consent did not start login');
+  await mountLogin([ncm], 'ncm', false, undefined, false);
+  await replaceProviders([]);
+  expect(!document.querySelector('dialog') && qrPolls().length === 0 && text().includes('暂无可用'), 'disabled plugin left a consent dialog open');
+
+  // Primary external login waits for consent, including a failed attempt and retry.
+  const official = { ...ncm, ui: { ...ncm.ui, loginExtraActions: [{ ...ncm.ui.loginExtraActions[0], primary: true }] } };
+  await mountLogin([official], 'ncm', false, (id, method) => method === 'openOfficialLogin' ? Promise.reject(new Error('授权失败')) : undefined, false);
+  expect(!calls.some(call => ['getQrLogin', 'openOfficialLogin'].includes(call.method)), 'official login opened before consent');
+  await acceptDisclaimer();
+  expect(text().includes('授权失败') && !document.querySelector('dialog'), 'official login failure lost retry state');
+  document.querySelector('.error-actions .btn-primary').click(); await settle();
+  expect(calls.filter(call => call.method === 'openOfficialLogin').length === 2 && !document.querySelector('dialog'), 'official retry repeated consent');
+
+  // An OAuth browser is also opened only after accepting, and unmount closes the modal.
+  const openWindow = window.open;
+  const openedUrls = [];
+  window.open = url => { openedUrls.push(url); return null; };
+  const oauth = { ...bili, ui: { authType: 'oauth', showBrowserButton: true } };
+  await mountLogin([oauth], 'bili', false, (id, method) => method === 'getQrLogin' ? { key: 'oauth-key', qrContent: 'https://fixture.invalid/authorize', imageDataUrl: window.qrImageFixture } : undefined, false);
+  expect(openedUrls.length === 0 && !calls.some(call => call.method === 'getQrLogin'), 'OAuth bypassed consent');
+  await acceptDisclaimer();
+  expect(openedUrls.length === 1, 'OAuth did not continue after consent');
+  window.open = openWindow;
+  await mountLogin([ncm], 'ncm', false, undefined, false);
+  loginApp.unmount(); loginApp = null; await settle();
+  expect(!document.querySelector('dialog:modal') && qrPolls().length === 0, 'unmounted disclaimer kept modal state');
+
   // The in-app NCM form is QR-only; official web login remains a separate action.
   let qrCode = 801;
   await mountLogin([ncm], 'ncm', false, (id, method) => method === 'checkQrLogin' ? { code: qrCode } : undefined);
@@ -328,6 +421,37 @@ window.runProviderFallbackTests = async () => {
   await new Promise(resolve => setTimeout(resolve, 1300)); await settle();
   expect(success === 1 && calls.some(call => call.method === 'openOfficialLogin') && calls.some(call => call.method === 'ncmCheckLogin'), 'official web login did not synchronize the account');
 
+  // A primary official action skips synthetic QR requests and preserves its retry path.
+  const officialNcm = { ...ncm, ui: { ...ncm.ui, loginExtraActions: ncm.ui.loginExtraActions.map(action => ({ ...action, primary: true })) } };
+  let finishOfficial, rejectOfficial, officialSignal;
+  const pendingOfficial = (id, method, args, signal) => method === 'openOfficialLogin'
+    ? new Promise((resolve, reject) => { finishOfficial = resolve; rejectOfficial = reject; officialSignal = signal; }) : undefined;
+  await mountLogin([officialNcm], 'ncm', false, pendingOfficial);
+  expect(calls.filter(call => call.method === 'openOfficialLogin').length === 1 && !calls.some(call => call.method === 'getQrLogin') && qrPolls().length === 0, 'primary login started an extra QR session');
+  expect(text().includes('请在打开的登录窗口') && document.querySelector('.extra-actions button').disabled, 'official login pending state is missing');
+  rejectOfficial(new Error('已取消官方登录')); await settle();
+  document.querySelector('.error-actions .btn-primary').click(); await settle();
+  expect(calls.filter(call => call.method === 'openOfficialLogin').length === 2 && !calls.some(call => call.method === 'getQrLogin'), 'official retry fell back to synthetic QR');
+  finishOfficial({ loggedIn: false }); await settle();
+  expect(text().includes('登录会话未建立') && success === 0, 'failed account validation was reported as a success');
+
+  await mountLogin([officialNcm, bili], 'ncm', false, pendingOfficial);
+  await replaceProviders([bili]);
+  expect(officialSignal?.aborted, 'leaving the account did not cancel its official login window');
+  await acceptDisclaimer();
+  finishOfficial({ loggedIn: true }); await settle();
+  expect(text().includes('登录 哔哩哔哩') && success === 0 && qrPolls().length === 1, 'late official result replaced the current account');
+
+  await mountLogin([officialNcm], 'ncm', false, pendingOfficial);
+  loginApp.unmount(); loginApp = null;
+  expect(officialSignal?.aborted, 'leaving the login page did not cancel its official login window');
+  finishOfficial({ loggedIn: true }); await settle();
+  expect(success === 0, 'unmounted official login reported success');
+
+  const unsupportedOfficial = { ...officialNcm, supportedMethods: ['getQrLogin', 'checkQrLogin'] };
+  await mountLogin([unsupportedOfficial]);
+  expect(calls.some(call => call.method === 'getQrLogin') && !calls.some(call => call.method === 'openOfficialLogin'), 'host without official login support lost QR login');
+
   // Stale persisted or caller-selected NCM defaults must only call enabled login providers.
   await mountLogin([searchOnly, bili]);
   expect(text().includes('登录 哔哩哔哩'), 'disabled initial NCM did not fall back: ' + text() + JSON.stringify(calls));
@@ -346,6 +470,7 @@ window.runProviderFallbackTests = async () => {
   handler = (id, method) => id === 'ncm' && method === 'checkQrLogin' ? new Promise(resolve => finishScan = resolve) : undefined;
   const oldScan = qrPolls()[0].callback();
   await replaceProviders([bili]);
+  await acceptDisclaimer();
   const afterDisable = calls.length;
   finishScan({ code: 803 }); await oldScan; await settle();
   expect(text().includes('登录 哔哩哔哩') && success === 0, 'disabled scan result changed the new login');
@@ -356,6 +481,7 @@ window.runProviderFallbackTests = async () => {
   let failQr;
   await mountLogin([ncm, bili], 'ncm', false, (id, method) => id === 'ncm' && method === 'getQrLogin' ? new Promise((resolve, reject) => failQr = reject) : undefined);
   await replaceProviders([bili]);
+  await acceptDisclaimer();
   failQr(new Error('old NCM QR failure')); await settle();
   expect(text().includes('登录 哔哩哔哩') && !text().includes('old NCM QR failure'), 'late QR failure overwrote fallback');
 
@@ -371,7 +497,7 @@ window.runProviderFallbackTests = async () => {
 
   // Server and settings providers must keep their own authentication flow.
   await mountLogin([server]);
-  expect(text().includes('登录 Jellyfin') && !calls.some(call => call.method === 'getQrLogin'), 'server fallback started QR login');
+  expect(text().includes('登录 Jellyfin') && !document.querySelector('dialog') && !calls.some(call => call.method === 'getQrLogin'), 'server fallback started QR login');
   await mountLogin([settings]);
   expect(configure === 1 && !calls.some(call => call.method === 'getQrLogin'), 'settings fallback did not open configuration');
 
@@ -397,7 +523,7 @@ window.runProviderFallbackTests = async () => {
 
   // Profile mode should choose an already connected alternative when its target is disabled.
   await mountLogin([bili, server], 'ncm', true, (id, method) => method === 'checkLogin' ? { loggedIn: id === 'jellyfin', profile: id === 'jellyfin' ? { userId: 42, nickname: '已连接账号' } : null } : undefined);
-  expect(text().includes('已连接账号') && !calls.some(call => call.method === 'getQrLogin'), 'profile fallback ignored connected account');
+  expect(text().includes('已连接账号') && !document.querySelector('dialog') && !calls.some(call => call.method === 'getQrLogin'), 'profile fallback ignored connected account');
 
   // Title bar target and label track plugin availability, ignoring cached NCM profiles.
   let selected;
@@ -519,6 +645,6 @@ window.runProviderFallbackTests = async () => {
   finishCheck({ loggedIn: false, profile: null }); await settle();
   expect(calls.length === beforeUnmountedResult && qrPolls().length === 0 && configure === 0, 'unmounted login resumed authentication');
   store().stopProviderHealthPolling();
-  return 17;
+  return 20;
 };
 `

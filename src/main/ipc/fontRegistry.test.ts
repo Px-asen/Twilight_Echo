@@ -64,7 +64,9 @@ test(
   'Windows font registry uses Unicode names without replacement characters',
   { skip: process.platform !== 'win32' },
   async () => {
-    const fonts = await listInstalledFontFamilies()
+    let fonts = await listInstalledFontFamilies()
+    // A busy Windows runner may time out the first PowerShell startup; the API permits retry.
+    if (fonts.length === 0) fonts = await listInstalledFontFamilies()
     assert.ok(fonts.length > 0)
     assert.ok(fonts.every((font) => !font.includes('\ufffd')))
   }

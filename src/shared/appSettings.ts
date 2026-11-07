@@ -277,6 +277,8 @@ export interface AppSettings {
   autoMixStemCacheMiB: import('./twilightAutoMix.ts').AutoMixStemCacheMiB
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
+  /** Report new listening attempts to the signed-in NetEase account; enabled by default. */
+  ncmListeningSyncEnabled: boolean
   playMode: PlayMode
   /** Last user software volume in [0, 1]. Default 0.7; bit-perfect needs explicit 1.0. */
   softwareVolume: number

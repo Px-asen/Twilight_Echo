@@ -73,7 +73,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   sectionChange: [section: SectionKey]
   openEqualizer: []
-  openDspRack: []
   openAppearance: [entry?: SettingsSearchEntry]
   reopenOnboarding: []
 }>()
@@ -1320,10 +1319,8 @@ onBeforeUnmount(() => {
             :auto-analyze-bpm="settings.autoAnalyzeBpm"
             @toggle-auto-analyze-bpm="toggleAutoAnalyzeBpm"
             @export-audio-diagnostics="exportAudioDiagnostics"
-          /><DspSettingsSection
-            @open-equalizer="emit('openEqualizer')"
-            @open-dsp-rack="emit('openDspRack')"
           />
+          <DspSettingsSection @open-equalizer="emit('openEqualizer')" />
           <BridgeOutputPanel manage />
         </section>
         <section v-show="activeSection === 'lyrics'" id="lyrics" class="glass-card preview-section">

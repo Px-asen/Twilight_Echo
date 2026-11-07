@@ -2,6 +2,7 @@
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import IntegrationsSettingsSection from './IntegrationsSettingsSection.vue'
 import NetworkProxySettingsSection from './NetworkProxySettingsSection.vue'
+import NcmListeningSyncSetting from './NcmListeningSyncSetting.vue'
 import type { AppSettings, ProxyMode } from '../../types/settings'
 import type { BooleanSettingKey } from './types.ts'
 const { settings } = useSettingsStore()
@@ -80,6 +81,10 @@ defineProps<{
           ></button>
         </div>
       </div>
+    </div>
+    <div class="section-block">
+      <h3>听歌记录</h3>
+      <div class="setting-list"><NcmListeningSyncSetting /></div>
     </div>
     <IntegrationsSettingsSection
       :discord-enabled="settings.discordRpcEnabled"

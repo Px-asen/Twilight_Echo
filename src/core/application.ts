@@ -24,7 +24,9 @@ import type { CoreAudioRecoveryService } from './audio/recoveryService.ts'
 import type { CorePlayerPresentationService } from './playback/presentationService.ts'
 import type { OutputInfo } from '../shared/audioEngineTypes.ts'
 import { projectCoreOutput } from './audio/outputProjection.ts'
-import { libraryQueueTrack } from './playback/libraryTrack.ts'
+import { libraryQueueTrack, libraryTrack } from './playback/libraryTrack.ts'
+import { toPlaybackQueueSnapshot } from './playback/queueSnapshots.ts'
+import type { LibraryQueueSeedItem } from '../shared/libraryQueueBuild.ts'
 import type { CoreNcmCloudTransferService } from './ncm/cloudTransferService.ts'
 import type { CoreSettingsBackupService } from './settings/backupService.ts'
 import type { CoreThemeService } from './settings/themeService.ts'
@@ -65,6 +67,7 @@ import {
   CORE_PROTOCOL_VERSION,
   coreOperation,
   isCoreRequest,
+  isCoreHostAdministrator,
   type CoreClientIdentity,
   type CoreClientMessage,
   type CoreRequestEnvelope,
@@ -79,10 +82,12 @@ import type { CoreScanService } from './library/scanService.ts'
 import type { CoreLibraryBackground } from './library/background.ts'
 import type { CoreMetadataService } from './library/metadataService.ts'
 import type { CoreStatisticsService } from './listening/service.ts'
+import type { CoreNcmListeningSync } from './listening/ncmSync.ts'
 import type { PluginNotice } from '../shared/pluginNotice.ts'
 import type { CorePluginExperiences } from './plugins/experiences.ts'
 import type { CorePluginMarketplace } from './plugins/marketplace.ts'
 import type { TwilightPluginManager } from './plugins/manager.ts'
+import type { CorePluginManagement } from './plugins/management.ts'
 
 interface Client {
   identity: CoreClientIdentity
@@ -132,7 +137,7 @@ export interface CoreApplicationDependencies {
   settings?: Pick<
     CoreSettingsService,
     'getRevision' | 'state' | 'edit' | 'initialize' | 'flush' | 'rememberVolume'
-  >
+  > & Partial<Pick<CoreSettingsService, 'restoreAudio'>>
   epoch: string
   playback: Omit<
     CorePlaybackSession,
@@ -149,6 +154,7 @@ export interface CoreApplicationDependencies {
   scan: Omit<CoreScanService, 'maintain'>
   libraryBackground?: Pick<CoreLibraryBackground, 'activate' | 'snapshot' | 'shutdown'>
   metadata?: CoreMetadataService
+  listeningSync?: CoreNcmListeningSync
   statistics: Omit<
     CoreStatisticsService,
     'exportData' | 'projectPage' | 'rememberArtwork' | 'artworkTracks' | 'recentPlaylist'
@@ -156,6 +162,7 @@ export interface CoreApplicationDependencies {
     Partial<Pick<CoreStatisticsService, 'projectPage' | 'rememberArtwork' | 'artworkTracks'>>
   pluginExperiences?: CorePluginExperiences
   pluginMarketplace?: CorePluginMarketplace
+  pluginManagement?: CorePluginManagement
   plugins?: TwilightPluginManager
   playlists?: CorePlaylistService
   recordingVersions?: CoreRecordingVersions
@@ -224,6 +231,8 @@ export class CoreApplication {
   private migrationRequired = true
   private active = 0
   private initialized = false
+  private readonly deferredAudioStartup = new Map<string, () => Promise<void>>()
+  private audioStartupRestore: Promise<void> | null = null
   private readiness: Promise<void> | null = null
   private shuttingDown = false
   private readonly work = new Set<Promise<void>>()
@@ -310,7 +319,7 @@ export class CoreApplication {
     await this.dependencies.playback.initialize()
     await this.dependencies.zones?.initialize()
     await Promise.all([
-      this.dependencies.visualization?.initialize(),
+      this.initializeAudio('visualization', async () => { await this.dependencies.visualization?.initialize() }),
       this.dependencies.scan.initialize(),
       this.dependencies.libraryMaintenance?.initialize()
     ])
@@ -340,8 +349,14 @@ export class CoreApplication {
       } catch (error) {
         console.error('[core.themes] Reconcile failed:', error)
       }
-      await this.dependencies.settings?.initialize()
-      await this.dependencies.dsp?.activate()
+      const settings = this.dependencies.settings
+      if (settings?.restoreAudio) {
+        await settings.initialize({ audio: false })
+        await this.initializeAudio('settings', () => settings.restoreAudio!())
+      } else await settings?.initialize()
+      await this.initializeAudio('dsp', async () => {
+        await this.dependencies.dsp?.activate()
+      })
       this.dependencies.autoMix?.activate()
       this.dependencies.analysis?.activate()
       this.dependencies.sleepTimer?.activate()
@@ -361,6 +376,28 @@ export class CoreApplication {
     })().finally(() => {
       this.readiness = null
     }))
+  }
+  private async initializeAudio(name: string, action: () => Promise<void>): Promise<void> {
+    try {
+      await action()
+      this.deferredAudioStartup.delete(name)
+    } catch (error) {
+      if (!this.dependencies.audioRecovery?.isUnavailableError(error)) throw error
+      this.deferredAudioStartup.set(name, action)
+      console.warn(`[core.audio] Deferred ${name} initialization:`, error)
+    }
+  }
+  /** Resume only native-dependent initialization after a confirmed engine restore. */
+  restoreAudioInitialization(): Promise<void> {
+    if (this.audioStartupRestore) return this.audioStartupRestore
+    const work = (async () => {
+      for (const [name, action] of this.deferredAudioStartup) {
+        await action()
+        this.deferredAudioStartup.delete(name)
+      }
+    })()
+    this.audioStartupRestore = work.finally(() => { this.audioStartupRestore = null })
+    return this.audioStartupRestore
   }
   snapshot(identity?: CoreClientIdentity): CoreSnapshot {
     // Graph transactions advance the same catalog revision without running the
@@ -430,6 +467,10 @@ export class CoreApplication {
       audioRevision:
         !identity || identity.permissions.includes('settings:read')
           ? (this.dependencies.output?.getRevision() ?? null)
+          : null,
+      audioRecovery:
+        !identity || identity.permissions.includes('playback:read')
+          ? (this.dependencies.audioRecovery?.state() ?? null)
           : null,
       settingsRevision:
         !identity || identity.permissions.includes('settings:read')
@@ -533,6 +574,8 @@ export class CoreApplication {
     this.dependencies.cloudTransfers?.disconnect(clientId)
     void this.dependencies.queueSubmission?.disconnect(clientId)
     void this.dependencies.playlistSubmission?.disconnect(clientId)
+    void this.dependencies.zones?.disconnectDspUploads(clientId).catch(error => console.error('[core.dsp.upload]', error))
+    void this.dependencies.pluginManagement?.disconnect(clientId).catch(error => console.error('[core.plugins.upload]', error))
     for (const controller of client.requests.values())
       controller.abort(new Error('Core client disconnected'))
   }
@@ -1312,25 +1355,163 @@ export class CoreApplication {
         return buildSignalPath(playback.snapshot().playback, await this.dependencies.dsp.status(),
           this.dependencies.bridge ? await this.dependencies.bridge.state() : null)
       }
+      case 'zones.queue.page': {
+        if (!this.dependencies.zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        return this.dependencies.zones.queuePage(request.payload.target, request.payload.queue, request.payload.offset, request.payload.limit)
+      }
+      case 'zones.queue.edit': {
+        if (!this.dependencies.zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        return this.dependencies.zones.queueEdit(request.payload.target, request.payload.queue, request.payload.edit)
+      }
+      case 'zones.queue.select': {
+        if (!this.dependencies.zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        const p = request.payload
+        return this.dependencies.zones.queueSelect(p.target, p.queue, p.index, p.occurrenceId, signal)
+      }
+      case 'zones.queue.load': {
+        if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
+        const zones = this.dependencies.zones
+        if (!zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        const { target, queue, selection, play } = request.payload
+        const restore = async (track: TrackData, preparation: AbortSignal) => {
+          preparation.throwIfAborted()
+          if (getTrackSource(track) === 'local') return { ...track, sourceSelection: 'explicit' as const }
+          if (!identity.permissions.includes('providers:call')) throw failure('FORBIDDEN', 'Provider access is not granted')
+          const resolve = this.dependencies.resolvePlaylistInputs
+          if (!resolve) throw failure('NOT_READY', 'Provider resolution is unavailable')
+          const tracks = await resolve([{ kind: 'provider', track: {
+            id: track.id, source: getTrackSource(track), ncmSongId: track.ncmSongId,
+            title: track.title, artist: track.artist, album: track.album, duration: track.duration
+          } }], preparation)
+          preparation.throwIfAborted()
+          if (!tracks[0]) throw failure('FAILED', '来源不可用')
+          return { ...this.preserveTrustedArtwork(tracks[0], track), sourceSelection: 'explicit' as const }
+        }
+        const seed = async (track: TrackData): Promise<LibraryQueueSeedItem> => {
+          const snapshot = { ...toPlaybackQueueSnapshot(await restore(track, signal)) }
+          return { id: snapshot.id, ...(snapshot.source === 'local' ? { localSnapshot: snapshot } : { snapshot }) }
+        }
+        return zones.loadQueue(target, queue, play, async destination => {
+          if (selection.kind === 'focus') {
+            if (!this.dependencies.focus) throw failure('NOT_READY', 'Focus is unavailable')
+            await this.dependencies.focus.play(selection.input, signal, restore, undefined, destination)
+            return
+          }
+          if (selection.kind === 'tag') {
+            if (!this.dependencies.tags) throw failure('NOT_READY', 'Tags are unavailable')
+            await this.dependencies.tags.play(selection.input, signal, restore, destination)
+            return
+          }
+          if (selection.kind === 'catalog') {
+            const catalog = this.dependencies.catalog
+            if (!catalog) throw failure('NOT_READY', 'Catalog is unavailable')
+            const guard = async () => {
+              signal.throwIfAborted()
+              if ((await catalog.status()).revision !== selection.revision) throw failure('STALE_REVISION', '音乐库已变化，请重新选择')
+            }
+            await destination.fromPages(async append => {
+              const items: LibraryQueueSeedItem[] = []
+              for (const id of selection.sourceIds) {
+                const track = await catalog.resolve(id, selection.revision)
+                if (!track) throw failure('STALE_REVISION', '来源已不存在，请刷新音乐库')
+                items.push(await seed(track))
+              }
+              await guard(); await append(items)
+            }, { selectedIndex: selection.selectedIndex ?? 0, beforeAdopt: guard }, signal)
+            return
+          }
+          const playlists = this.dependencies.playlists
+          if (!playlists) throw failure('NOT_READY', 'Playlists are unavailable')
+          let contentRevision: number | undefined
+          const query = (offset: number, limit = 100) => ({ id: selection.id, revision: selection.revision,
+            versionsRevision: selection.versionsRevision, contentRevision, offset, limit })
+          await destination.fromPages(async append => {
+            let offset = 0, total = -1
+            do {
+              signal.throwIfAborted()
+              const { page } = await playlists.playbackPage(query(offset), signal)
+              contentRevision = page.revision
+              if (page.offset !== offset || total >= 0 && page.total !== total) throw failure('STALE_REVISION', '歌单已变化，请重新读取')
+              total = page.total
+              if (!page.tracks.length) throw failure('FAILED', '歌单没有可播放的歌曲或分页不完整')
+              const items: LibraryQueueSeedItem[] = []
+              for (const track of page.tracks) items.push(await seed(libraryTrack(track)))
+              await append(items)
+              offset += page.tracks.length
+            } while (offset < total)
+          }, { beforeAdopt: async () => { await playlists.playbackPage(query(0, 1), signal) } }, signal)
+        }, signal)
+      }
+      case 'zones.dsp.library':
+      case 'zones.dsp.library.edit':
+      case 'zones.dsp.upload.begin':
+      case 'zones.dsp.upload.chunk':
+      case 'zones.dsp.upload.commit':
+      case 'zones.dsp.upload.cancel':
+      case 'zones.dsp.parameters':
+      case 'zones.dsp.profile.preview':
+      case 'zones.dsp.profile.import':
+      case 'zones.dsp.profile.export':
+      case 'zones.dsp.profile.chunk':
+      case 'zones.dsp.profile.release': {
+        const zones = this.dependencies.zones
+        if (!zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
+        if (request.name === 'zones.dsp.library.edit')
+          return zones.editDspLibrary(request.payload.zoneId, request.payload.revision, request.payload.edit, signal)
+        if (request.name === 'zones.dsp.profile.import')
+          return zones.importDspProfile(request.payload.zoneId, identity.id, request.payload.uploadId, request.payload.previewId, request.payload.revision, signal)
+        return zones.withDspLibrary(request.payload.zoneId, async dsp => {
+          switch (request.name) {
+            case 'zones.dsp.library': return dsp.library(request.payload.assetOffset, request.payload.pluginOffset, request.payload.revision)
+            case 'zones.dsp.upload.begin': return dsp.beginUpload(identity.id, request.payload)
+            case 'zones.dsp.upload.chunk': return dsp.uploadChunk(identity.id, request.payload.uploadId, request.payload.offset, request.payload.data)
+            case 'zones.dsp.upload.commit': return dsp.commitUpload(identity.id, request.payload.uploadId, request.payload.revision, signal)
+            case 'zones.dsp.upload.cancel': return dsp.cancelUpload(identity.id, request.payload.uploadId)
+            case 'zones.dsp.parameters': return dsp.nodeParameters(request.payload.revision, request.payload.sceneId, request.payload.nodeId, request.payload.offset)
+            case 'zones.dsp.profile.preview': return dsp.previewProfile(identity.id, request.payload.uploadId, request.payload.revision, signal)
+            case 'zones.dsp.profile.export': return dsp.exportProfile(identity.id, request.payload.revision, request.payload.name, signal)
+            case 'zones.dsp.profile.chunk': return dsp.profileChunk(identity.id, request.payload.downloadId, request.payload.offset)
+            case 'zones.dsp.profile.release': return dsp.releaseProfile(identity.id, request.payload.downloadId)
+          }
+        })
+      }
       case 'zones.list':
+      case 'groups.list':
+      case 'groups.create':
+      case 'groups.remove':
+      case 'groups.transport':
+      case 'groups.queueFromQuery':
+      case 'groups.settings.edit':
+      case 'groups.signalPath':
       case 'zones.create':
       case 'zones.remove':
       case 'zones.connect':
       case 'zones.transport':
+      case 'zones.handoff':
       case 'zones.queueFromQuery':
       case 'zones.dsp':
       case 'zones.dsp.edit':
       case 'zones.signalPath': {
         const zones = this.dependencies.zones
         if (!zones) throw failure('NOT_READY', 'Multi-Zone runtime unavailable')
-        if (['zones.create', 'zones.remove', 'zones.connect'].includes(request.name) && identity.role !== 'desktop')
-          throw failure('FORBIDDEN', 'Zone consent requires the desktop')
+        if (['zones.create', 'zones.remove', 'zones.connect'].includes(request.name) && !isCoreHostAdministrator(identity))
+          throw failure('FORBIDDEN', 'Zone consent requires local host administration')
         switch (request.name) {
           case 'zones.list': return zones.list()
+          case 'groups.list': return zones.listGroups()
+          case 'groups.create': return { id: await zones.createGroup(request.payload, signal) }
+          case 'groups.remove': return zones.removeGroup(request.payload.groupId, request.payload.revision)
+          case 'groups.transport': return zones.groupTransport(request.payload.groupId, request.payload.revision, request.payload.action, signal)
+          case 'groups.settings.edit': return zones.editGroupSettings(request.payload, signal)
+          case 'groups.queueFromQuery':
+            if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
+            return zones.groupFromQuery(request.payload.groupId, request.payload.revision, request.payload.query, request.payload.selectedId, signal)
+          case 'groups.signalPath': return zones.groupSignalPath(request.payload.groupId, request.payload.zoneId)
           case 'zones.create': return { id: await zones.create(request.payload.name, request.payload.revision) }
           case 'zones.remove': return zones.remove(request.payload.zoneId, request.payload.revision)
           case 'zones.connect': return zones.connect(request.payload.zoneId, request.payload.peer, request.payload.revision)
           case 'zones.transport': return zones.transport(request.payload.zoneId, request.payload.revision, request.payload.action, signal)
+          case 'zones.handoff': return zones.handoff(request.payload, signal)
           case 'zones.queueFromQuery':
             if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
             return zones.fromQuery(request.payload.zoneId, request.payload.revision, request.payload.query, request.payload.selectedId, signal)
@@ -1347,11 +1528,11 @@ export class CoreApplication {
       case 'zones.select': {
         const bridge = this.dependencies.bridge
         if (!bridge) throw failure('NOT_READY', 'Audio Bridge is unavailable')
-        if (request.name.startsWith('bridge.') && identity.role !== 'desktop')
-          throw failure('FORBIDDEN', 'Audio Bridge consent requires the desktop')
+        if (request.name.startsWith('bridge.') && !isCoreHostAdministrator(identity))
+          throw failure('FORBIDDEN', 'Audio Bridge consent requires local host administration')
         if (request.name === 'zones.state') return bridge.state()
         if (request.name === 'bridge.invitation') return bridge.invite()
-        if (request.name === 'bridge.host') return bridge.host(request.payload.revision, request.payload.enabled, request.payload.sampleRate)
+        if (request.name === 'bridge.host') return bridge.host(request.payload.revision, request.payload.enabled, request.payload.sampleRate, request.payload)
         if (request.name === 'bridge.connect') return bridge.connect(request.payload.revision, request.payload.peer)
         return bridge.select(request.payload.revision, request.payload.outputId)
       }
@@ -1452,7 +1633,7 @@ export class CoreApplication {
           case 'audio.dsp.correction':
             return dsp.correction(request.payload.id)
           case 'audio.dsp.edit':
-            return dsp.edit(request.payload, signal)
+            return this.dependencies.zones ? this.dependencies.zones.editDsp('local', request.payload, signal) : dsp.edit(request.payload, signal)
           case 'audio.dsp.import':
             return dsp.import(request.payload, signal)
           case 'audio.dsp.export':
@@ -1859,6 +2040,24 @@ export class CoreApplication {
           request.payload.edit,
           signal
         )
+      case 'playlists.addSources': {
+        if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
+        const catalog = this.dependencies.catalog, playlists = this.dependencies.playlists
+        if (!catalog || !playlists) throw failure('NOT_READY', 'Music catalog or playlists are unavailable')
+        const { id, revision, catalogRevision, sourceIds } = request.payload
+        const tracks: TrackData[] = []
+        for (const sourceId of sourceIds) {
+          signal.throwIfAborted()
+          const track = await catalog.resolve(sourceId, catalogRevision)
+          if (!track) throw failure('STALE_REVISION', '来源已不存在，请刷新音乐库')
+          tracks.push(track)
+        }
+        // Resolve against one catalog revision before making the single playlist commit.
+        if ((await catalog.status()).revision !== catalogRevision)
+          throw failure('STALE_REVISION', '音乐库已变化，请重新选择歌曲')
+        signal.throwIfAborted()
+        return playlists.edit(revision, { kind: 'add', id, tracks }, signal)
+      }
       case 'playlists.catalog':
       case 'playlists.collection':
       case 'playlists.members':
@@ -1927,6 +2126,29 @@ export class CoreApplication {
           throw failure('INVALID_REQUEST', 'Invalid plugin request')
         return this.dependencies.plugins.callExperienceRequest(id, pluginRequest)
       }
+      case 'plugins.management.list':
+      case 'plugins.management.edit':
+      case 'plugins.management.upload.begin':
+      case 'plugins.management.upload.chunk':
+      case 'plugins.management.upload.cancel':
+      case 'plugins.management.preview':
+      case 'plugins.management.install':
+      case 'plugins.management.cancel': {
+        const management = this.dependencies.pluginManagement
+        if (!management) throw failure('UNSUPPORTED_CAPABILITY', '扩展管理不可用')
+        const administrator = isCoreHostAdministrator(identity)
+        switch (request.name) {
+          case 'plugins.management.list': return management.list(administrator, request.payload.offset)
+          case 'plugins.management.edit': return management.edit(administrator, request.payload, signal)
+          case 'plugins.management.upload.begin': return management.begin(identity.id, administrator, request.payload)
+          case 'plugins.management.upload.chunk': return management.chunk(identity.id, administrator, request.payload.uploadId, request.payload.offset, request.payload.data)
+          case 'plugins.management.upload.cancel': return management.cancelUpload(identity.id, request.payload.uploadId)
+          case 'plugins.management.preview': return management.preview(identity.id, administrator, request.payload.uploadId, signal)
+          case 'plugins.management.install': return management.install(identity.id, administrator, request.payload.previewId, signal)
+          case 'plugins.management.cancel': return management.cancel(identity.id, request.payload.previewId)
+        }
+        break
+      }
       case 'plugins.installSource':
         if (!this.dependencies.plugins) throw failure('FAILED', 'Plugin runtime unavailable')
         return this.dependencies.plugins.installFromPath(request.payload.path)
@@ -1960,6 +2182,10 @@ export class CoreApplication {
       }
       case 'statistics.summary':
         return this.dependencies.statistics.summary()
+      case 'listeningSync.status':
+        return this.dependencies.listeningSync?.status() ?? {
+          enabled: false, available: false, pending: 0, lastSubmitted: null, error: null
+        }
       case 'statistics.overview':
         return this.dependencies.statistics.overview(signal)
       case 'statistics.previewClear':
@@ -2244,6 +2470,7 @@ export class CoreApplication {
         controller.abort(new Error('Core shutting down'))
     try {
       await this.dependencies.audioRecovery?.shutdown()
+      await this.dependencies.pluginManagement?.shutdown()
       await Promise.all([
         this.dependencies.audition?.shutdown(),
         this.dependencies.visualization?.shutdown(),
@@ -2279,6 +2506,7 @@ export class CoreApplication {
       await this.dependencies.settings?.flush()
       await this.dependencies.importPreviews?.shutdown()
       await this.dependencies.imports?.shutdown()
+      await this.dependencies.listeningSync?.shutdown()
       await this.dependencies.plugins?.destroy()
       await this.dependencies.playlists?.shutdown()
       await this.dependencies.recordingVersions?.flush()

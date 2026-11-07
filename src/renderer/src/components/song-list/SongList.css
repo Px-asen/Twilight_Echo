@@ -1,33 +1,3 @@
-.local-page-down-enter-active,
-.local-page-down-leave-active,
-.local-page-up-enter-active,
-.local-page-up-leave-active {
-  transition:
-    transform 0.24s var(--te-ease-soft),
-    opacity 0.18s ease;
-  will-change: transform;
-}
-
-.local-page-down-enter-from {
-  transform: translate3d(0, -26px, 0);
-  opacity: 0;
-}
-
-.local-page-down-leave-to {
-  transform: translate3d(0, 18px, 0);
-  opacity: 0;
-}
-
-.local-page-up-enter-from {
-  transform: translate3d(0, 26px, 0);
-  opacity: 0;
-}
-
-.local-page-up-leave-to {
-  transform: translate3d(0, -18px, 0);
-  opacity: 0;
-}
-
 .song-list {
   display: grid;
   position: relative;
@@ -2115,39 +2085,6 @@
   cursor: not-allowed;
 }
 
-/* ── Dialog Transition ── */
-.dialog-fade-enter-active,
-.dialog-fade-leave-active {
-  transition: opacity 0.2s;
-}
-
-.dialog-fade-enter-from,
-.dialog-fade-leave-to {
-  opacity: 0;
-}
-
-.dialog-fade-enter-active .create-playlist-dialog {
-  transition:
-    transform 0.25s var(--te-ease-soft, ease),
-    opacity 0.2s;
-}
-
-.dialog-fade-leave-active .create-playlist-dialog {
-  transition:
-    transform 0.2s,
-    opacity 0.15s;
-}
-
-.dialog-fade-enter-from .create-playlist-dialog {
-  transform: scale(0.92) translateY(10px);
-  opacity: 0;
-}
-
-.dialog-fade-leave-to .create-playlist-dialog {
-  transform: scale(0.95);
-  opacity: 0;
-}
-
 /* ── Multi-select ──
    Neutral left-rail + soft fill. No purple wash.
    Selected rows keep hover quiet so glass/scale animations don't fight selection. */
@@ -2486,19 +2423,6 @@
   margin-top: 18px;
 }
 
-.dialog-fade-enter-active .excluded-tracks-dialog,
-.dialog-fade-leave-active .excluded-tracks-dialog {
-  transition:
-    transform 0.2s ease,
-    opacity 0.16s ease;
-}
-
-.dialog-fade-enter-from .excluded-tracks-dialog,
-.dialog-fade-leave-to .excluded-tracks-dialog {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
 @media (max-width: 680px) {
   .excluded-tracks-dialog {
     max-height: calc(100vh - 24px);
@@ -2624,7 +2548,7 @@
   touch-action: pan-y;
 }
 .playlist-card.is-dragging {
-  opacity: 0.55;
+  opacity: 0.94;
   cursor: grabbing;
   outline: 2px solid var(--te-primary-500);
   outline-offset: 2px;

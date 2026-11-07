@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { effectScope, nextTick, ref, shallowRef } from 'vue'
-import { createCorePlayerStore } from './corePlayerStore.ts'
+import { createCorePlayerStore, type CorePlayerStoreOptions } from './corePlayerStore.ts'
 import { createCorePlayerResource } from './corePlayerResource.ts'
 import type { CorePlayerClient } from './corePlayerTypes.ts'
 import type { CoreClientMessage, CoreSnapshot } from '../../../../shared/coreProtocol.ts'
@@ -70,7 +70,25 @@ const track = (id = 'one'): TrackData => ({
   cover: null,
   lyrics: null
 })
-function fixture(initial = snapshot()) {
+test('Core stays ready for library access while failed or recovering audio is not playable', () => {
+  const f = fixture()
+  try {
+    assert.equal(f.player.audioEngineReady.value, true)
+    const recovery = { phase: 'failed' as const, kind: null, engineAvailable: true,
+      windowsServicesAvailable: true, error: '音频服务进程退出：255' }
+    f.state.value = { ...f.state.value, audioRecovery: recovery }
+    assert.equal(f.state.value.phase, 'ready')
+    assert.equal(f.player.audioEngineReady.value, false)
+    assert.match(f.player.audioEngineError.value ?? '', /255/)
+    f.state.value = { ...f.state.value, audioRecovery: { ...recovery, phase: 'restarting-engine', kind: 'engine', error: null } }
+    assert.equal(f.player.audioEngineReady.value, false)
+    f.state.value = { ...f.state.value, audioRecovery: { ...recovery, phase: 'succeeded', kind: 'engine', error: null } }
+    assert.equal(f.player.audioEngineReady.value, true)
+    assert.equal(f.player.audioEngineError.value, null)
+  } finally { f.player.dispose() }
+})
+
+function fixture(initial = snapshot(), options: CorePlayerStoreOptions = {}) {
   const state = shallowRef(initial)
   const status = shallowRef<CoreBridgeStatus | null>({
     connectionId: 'window',
@@ -111,7 +129,8 @@ function fixture(initial = snapshot()) {
     },
     visible: ref(true),
     resolveArtwork: async () => null,
-    newId: () => `id-${++nextId}`
+    newId: () => `id-${++nextId}`,
+    ...options
   })
   return {
     state,
@@ -425,4 +444,66 @@ test('presentation and bookmark lists remain fenced by the current occurrence', 
   assert.equal(f.player.currentFavorite.value, null)
   assert.deepEqual(f.player.currentTrackBookmarks.value, [])
   f.player.dispose()
+})
+
+test('background metadata progress does not re-resolve artwork or invalidate the playing track', async () => {
+  let resolutions = 0, colors = 0
+  const f = fixture(snapshot(), {
+    resolveArtwork: async handle => { resolutions++; return handle ?? null },
+    extractColor: async () => { colors++; return '#123456' }
+  })
+  f.setQuery(async name => name === 'player.presentation' ? {
+    current: { trackId: 'one', occurrenceId: 'entry:0' },
+    cover: 'cover://one', coverSource: null
+  } : null)
+  try {
+    f.state.value = { ...snapshot(), track: { ...track(), artists: [{ name: 'Artist' }] },
+      queue: queueReference(), presentationRevision: 1 }
+    await tick()
+    const playing = f.player.currentTrack.value
+    const before = { resolutions, colors }
+    for (let i = 1; i <= 20; i++) {
+      f.state.value = { ...structuredClone(f.state.value), sequence: i,
+        entityMetadataRevision: i, entityMetadataContentRevision: i, libraryRevision: i }
+      await tick()
+    }
+    assert.deepEqual({ resolutions, colors }, before)
+    assert.equal(f.player.currentTrack.value, playing)
+    f.state.value = { ...structuredClone(f.state.value),
+      track: { ...f.state.value.track!, title: 'Updated title' } }
+    await tick()
+    assert.equal(f.player.currentTrack.value?.title, 'Updated title')
+    assert.notEqual(f.player.currentTrack.value, playing)
+    assert.deepEqual({ resolutions, colors }, before, 'a tag edit does not change the artwork')
+  } finally { f.player.dispose() }
+})
+
+test('a changed cover is resolved once and its late predecessor cannot replace the current theme', async () => {
+  const colorResults = new Map<string, (color: string) => void>()
+  const resolved: string[] = []
+  const f = fixture(snapshot(), {
+    resolveArtwork: async handle => {
+      if (handle) resolved.push(handle)
+      return handle ?? null
+    },
+    extractColor: url => new Promise(resolve => colorResults.set(url, resolve))
+  })
+  let cover = 'cover://one'
+  f.setQuery(async name => name === 'player.presentation' ? {
+    current: { trackId: 'one', occurrenceId: 'entry:0' }, cover, coverSource: null
+  } : null)
+  try {
+    f.state.value = { ...snapshot(), track: track(), queue: queueReference(), presentationRevision: 1 }
+    await tick()
+    cover = 'cover://two'
+    f.state.value = { ...f.state.value, presentationRevision: 2 }
+    await tick()
+    colorResults.get('cover://two')!('#223344')
+    await tick()
+    colorResults.get('cover://one')!('#aabbcc')
+    await tick()
+    assert.deepEqual(resolved, ['cover://one', 'cover://two'])
+    assert.equal(f.player.themeCoverUrl.value, 'cover://two')
+    assert.equal(f.player.coverThemeColor.value, '#223344')
+  } finally { f.player.dispose() }
 })

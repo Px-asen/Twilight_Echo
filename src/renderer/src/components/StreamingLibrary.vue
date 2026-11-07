@@ -665,7 +665,7 @@ function deleteMenuPlaylist(): void {
   margin-bottom: 16px;
 }
 .playlist-item.is-dragging {
-  opacity: 0.55;
+  opacity: 0.94;
   cursor: grabbing;
   outline: 2px solid var(--te-primary-500);
 }

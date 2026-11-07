@@ -9,10 +9,25 @@ import { promisify } from 'node:util'
 import test from 'node:test'
 import vue from '@vitejs/plugin-vue'
 import { build } from 'vite'
+import { reorderScrollDelta } from '../app/motion/reorderMotion.ts'
 
 const require = createRequire(import.meta.url)
 const execFileAsync = promisify(execFile)
 const workspaceRoot = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
+
+test('drag autoscroll accelerates at the edge and covers the same distance at 60 and 120 Hz', () => {
+  const distance = (hz: number, y: number) =>
+    Array.from({ length: hz }, () => reorderScrollDelta(y, 0, 400, 1 / hz)).reduce(
+      (a, b) => a + b,
+      0
+    )
+  assert.equal(distance(60, 200), 0)
+  assert.ok(distance(60, 360) < distance(60, 380))
+  assert.ok(distance(60, 380) < distance(60, 400))
+  assert.ok(Math.abs(distance(60, 380) - distance(120, 380)) < 0.01)
+  assert.ok(Math.abs(distance(60, 400) - 720) < 0.01)
+  assert.ok(Math.abs(distance(60, 0) + 720) < 0.01)
+})
 
 test('local and online playlists support persistent manual ordering without accidental clicks', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-hold-order-'))
@@ -27,7 +42,18 @@ test('local and online playlists support persistent manual ordering without acci
       configFile: false,
       logLevel: 'error',
       root: workspaceRoot,
-      plugins: [vue()],
+      plugins: [
+        {
+          name: 'reorder-provider-fixture',
+          enforce: 'pre',
+          load(id) {
+            if (id.replaceAll('\\', '/').endsWith('/stores/useProviderStore.ts'))
+              return `export const useProviderStore=()=>({getProvider:()=>({supportedMethods:[]})})`
+            return null
+          }
+        },
+        vue()
+      ],
       resolve: {
         alias: {
           '@renderer': join(workspaceRoot, 'src/renderer/src'),
@@ -117,8 +143,8 @@ window.runPlaylistLifecycleRuntime = async () => {
   let instance = mount()
   const element = id => document.querySelector('[data-reorder-id="' + id + '"]')
   function point(id) { const r = element(id).getBoundingClientRect(); return { clientX:r.x+10, clientY:r.y+25 } }
-  function pointer(type, id) {
-    const e = new PointerEvent(type, { ...point(id), pointerId:1, pointerType:'touch', isPrimary:true, button:0, bubbles:true, cancelable:true })
+  function pointer(type, id, coordinates = point(id)) {
+    const e = new PointerEvent(type, { ...coordinates, pointerId:1, pointerType:'touch', isPrimary:true, button:0, bubbles:true, cancelable:true })
     ;(type === 'pointerdown' ? element(id) : document).dispatchEvent(e)
   }
   pointer('pointerdown', 'a'); pointer('pointerup', 'a'); element('a').click()
@@ -127,14 +153,27 @@ window.runPlaylistLifecycleRuntime = async () => {
   expect(reorder.active.value === null, 'scroll before hold should cancel activation')
   pointer('pointerdown', 'a'); await pause(500)
   expect(reorder.active.value === 'a', 'long press did not activate')
-  pointer('pointermove', 'c'); pointer('pointerup', 'c'); element('c').click()
+  const drop = point('c'), destinationTop = element('c').getBoundingClientRect().top
+  pointer('pointermove', 'c', drop); await nextTick(); await pause(50)
+  expect(Math.abs(element('a').getBoundingClientRect().top-destinationTop)<1, 'dragged item did not follow the pointer')
+  expect(new DOMMatrix(getComputedStyle(element('b')).transform).m42<0, 'neighbor did not yield its slot')
+  expect(moves===0, 'neighbor projection changed business order before drop')
+  pointer('pointerup', 'c', drop); element('c').click()
   await nextTick()
   expect(moves === 1 && clicks === 1, 'drop fired a click or failed to move')
   expect(ordered.playlists.value.map(t => t.id).join(',') === 'b,hidden,c,a', 'filtered ordering lost hidden positions')
+  await pause(250)
+  expect([...document.querySelectorAll('[data-reorder-id]')].every(node=>!node.getAnimations().length&&!node.style.transform&&!node.style.transition&&!node.style.pointerEvents), 'drop left motion styles or effects behind')
   pointer('pointerdown', 'b'); await pause(500)
+  pointer('pointermove', 'a');await nextTick();await pause(35)
+  document.documentElement.dataset.teMotion='reduced';await nextTick();await pause(35)
+  expect(!document.getAnimations().length, 'reduced preference did not settle moving neighbors')
   document.dispatchEvent(new KeyboardEvent('keydown', { key:'Escape' }))
+  await nextTick()
   pointer('pointerup', 'c')
   expect(moves === 1 && reorder.active.value === null, 'Escape committed a move')
+  expect([...document.querySelectorAll('[data-reorder-id]')].every(node=>!node.style.transform), 'cancel left neighbor projections behind')
+  delete document.documentElement.dataset.teMotion
   instance.$.appContext.app.unmount()
   instance = mount()
   expect(ordered.playlists.value.map(t => t.id).join(',') === 'b,hidden,c,a', 'order did not survive remount')

@@ -1039,6 +1039,10 @@ int main() {
     std::vector<float> samples(512 * 2, 1.5f);
     chain.process(samples.data(), 512);
     assert(chain.graphStatusJson().find("\"totalLatencyFrames\":11") != std::string::npos);
+    assert(chain.tailFramesForRender() == 11);
+    assert(chain.graphStatusJson().find("\"totalTailFrames\":11") != std::string::npos);
+    assert(chain.graphStatusJson().find("\"tailFrames\":11") != std::string::npos);
+    assert(chain.graphStatusJson().find("\"latencySampleRate\":48000") != std::string::npos);
     assert(chain.graphStatusJson().find("\"latencyFrames\":11") != std::string::npos);
     for (size_t frame = 0; frame < 11; ++frame) assert(samples[frame * 2] == 0.0f);
     assert(samples[11 * 2] > 0.0f);
@@ -1065,6 +1069,11 @@ int main() {
     assert(status.convolverActive);
     assert(status.partitionSize == 1024);
     assert(status.channelMappingMode == "mono-to-all");
+    assert(chain.graphStatusJson().find("\"totalLatencyFrames\":1024") != std::string::npos);
+    chain.convolverRealtimeState()->bypassed.store(true, std::memory_order_release);
+    assert(chain.graphStatusJson().find("\"totalLatencyFrames\":0") != std::string::npos);
+    chain.convolverRealtimeState()->bypassed.store(false, std::memory_order_release);
+    assert(chain.graphStatusJson().find("\"totalLatencyFrames\":1024") != std::string::npos);
     std::filesystem::remove(wavPath);
   }
 

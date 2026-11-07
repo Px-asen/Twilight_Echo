@@ -105,6 +105,8 @@ function normalizeTarget(value: unknown): SavedNavigationTarget | null {
       return { kind: 'radio' }
     case 'network':
       return { kind: 'network' }
+    case 'zones':
+      return { kind: 'zones' }
     case 'plugin':
       return text(value.pluginId) && text(value.pageId)
         ? { kind: 'plugin', pluginId: value.pluginId, pageId: value.pageId }

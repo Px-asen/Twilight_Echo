@@ -231,6 +231,7 @@ watch(
 void containerRef.value
 void tbodyRef.value
 
+let locateViewport: import('../../utils/scrollToTopButton').ScrollViewport | undefined
 useLocatePlayingTrack({
   containerRef,
   tbodyRef,
@@ -239,13 +240,14 @@ useLocatePlayingTrack({
   enabled: computed(() => props.active && !!activePlaylist.value),
   rowHeight,
   playingRowSelector: '.is-playing',
-  database: { enabled: databaseEnabled, locate: database.locate }
+  database: { enabled: databaseEnabled, query: database.query, read: useCoreLibraryApi().queryTracks,
+    locate: (id, viewport) => { locateViewport = viewport; database.locate(id) } }
 })
 watch(
   () => databasePage.value.page,
   (page) => {
     if (page && page.anchorIndex !== undefined && page.anchorIndex >= 0)
-      void nextTick(() => scrollToTrack(page.anchorIndex!))
+      void nextTick(() => { scrollToTrack(page.anchorIndex!, locateViewport); locateViewport = undefined })
   },
   { flush: 'post' }
 )

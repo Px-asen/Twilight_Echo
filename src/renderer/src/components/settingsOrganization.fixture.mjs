@@ -246,18 +246,21 @@ window.runSettingsOrganizationTests = async () => {
   await search('外观工作区')
   expect(appearanceWorkspaceRequests === 1, 'searching the workspace must reveal its entry first')
   processing.value = { ...processing.value, dspEnabled: false }
-  await search('DSP 工作台')
-  const dspEntry = page.querySelector('[data-setting-id="dsp-workbench"]')
-  expect(dspEntry.checkVisibility(), 'workbench entry is not visible')
-  expect(!dspEntry.closest('[inert]'), 'bypassing DSP disabled the workbench entry')
+  await search('DSP 音效')
+  const dspEntry = page.querySelector('#dsp .dsp-actions')
+  expect(dspEntry.checkVisibility(), 'equalizer entry is not visible')
+  expect(!dspEntry.closest('[inert]'), 'bypassing DSP disabled the equalizer entry')
   const dspButtons = [...dspEntry.querySelectorAll('button')]
-  expect(dspButtons[0].textContent.includes('打开 DSP 工作台'), 'workbench entry uses old name')
+  expect(
+    dspButtons.length === 1 && dspButtons[0].textContent.includes('打开均衡器'),
+    'settings should only retain the equalizer shortcut'
+  )
   for (const button of dspButtons) {
     expect(!button.disabled, 'editor entry is disabled while DSP is bypassed')
     button.click()
     await settle()
   }
-  expect(dspWorkspaceRequests === 1 && equalizerRequests === 1, 'editor entries lost navigation')
+  expect(dspWorkspaceRequests === 0 && equalizerRequests === 1, 'equalizer entry lost navigation')
   expect(processing.value.dspEnabled === false, 'opening an editor enabled DSP')
   expect(
     page.querySelector('#dsp .dsp-disabled-content [class="soft-button"]').closest('[inert]'),

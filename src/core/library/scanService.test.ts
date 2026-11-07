@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { LibraryDatabase } from '../../main/library/libraryDatabase.ts'
 import {
   LIBRARY_SCAN_DATABASE_METHODS,
@@ -51,7 +54,7 @@ test('maintenance retains a user Pause; reset does not resume the scan or pendin
   assert.equal(service.snapshot()?.state, 'paused')
   assert.equal(scanner.current, null)
   await service.resume(original.jobId)
-  await service.enqueueDirectories(['D:/Music/pending'])
+  await service.enqueueDirectories([f.root + '/pending'])
   await service.maintain(async () => {
     f.sql.resetLibrary()
   }, false)
@@ -103,8 +106,11 @@ class Scanner implements CoreScanRunner {
   }
 }
 function fixture(t: test.TestContext) {
+  const root = mkdtempSync(join(tmpdir(), 'core-scan-')).replaceAll('\\', '/')
+  mkdirSync(join(root, 'downloads'))
+  mkdirSync(join(root, 'pending'))
   const sql = new LibraryDatabase(':memory:')
-  sql.updateConfiguration({ folders: ['D:/Music'], exclusions: [] })
+  sql.updateConfiguration({ folders: [root], exclusions: [] })
   const names = [
     ...LIBRARY_SCAN_DATABASE_METHODS,
     'getMetadata',
@@ -156,8 +162,9 @@ function fixture(t: test.TestContext) {
   t.after(async () => {
     for (const service of services) await service.shutdown()
     sql.close()
+    rmSync(root, { recursive: true, force: true })
   })
-  return { sql, database, create, errors, changes, authorized }
+  return { root, sql, database, create, errors, changes, authorized }
 }
 
 function finish(f: ReturnType<typeof fixture>, scanner: Scanner, jobId: string): void {
@@ -177,30 +184,30 @@ test('startup reserves one task before authorization; polling waits for completi
     gate = deferred<string>()
   const { service, scanner } = f.create(() => gate.promise)
   await service.initialize()
-  assert.equal(await service.poll('D:/Music'), undefined)
+  assert.equal(await service.poll(f.root), undefined)
   service.activate()
   const startup = service.startup()
   await service.startup()
-  assert.equal(await service.poll('D:/Music'), undefined)
-  gate.resolve('D:/Music')
+  assert.equal(await service.poll(f.root), undefined)
+  gate.resolve(f.root)
   await startup
   const job = f.sql.getLatestScanJob()!
   assert.equal(job.mode, 'startup')
   finish(f, scanner, job.id)
   await tick()
   let completed = false
-  const polling = service.poll('D:/Music').then((result) => {
+  const polling = service.poll(f.root).then((result) => {
     completed = true
     return result
   })
-  assert.equal(await service.poll('D:/Music'), undefined)
+  assert.equal(await service.poll(f.root), undefined)
   await tick()
   assert.equal(completed, false)
   const polled = f.sql.getLatestScanJob()!
   assert.equal(polled.mode, 'watch')
   finish(f, scanner, polled.id)
   assert.equal(await polling, false, 'unchanged revision uses polling backoff')
-  const interrupted = service.poll('D:/Music')
+  const interrupted = service.poll(f.root)
   await tick()
   await service.shutdown()
   assert.equal(await interrupted, undefined)
@@ -245,7 +252,7 @@ test('start returns the durable job ACK; controls use its identity and work surv
   ])
   assert.equal(await service.cancel(status.jobId), true)
   assert.equal(f.sql.getScanProgress(status.jobId).state, 'cancelled')
-  assert.deepEqual(f.authorized, ['D:/Music'])
+  assert.deepEqual(f.authorized, [f.root])
 })
 
 test('download indexing survives restart but never restarts an explicit Pause or Cancel', async (t) => {
@@ -262,8 +269,8 @@ test('download indexing survives restart but never restarts an explicit Pause or
   first.service.activate()
   const full = await first.service.start({ mode: 'full' })
   await first.service.pause(full.jobId)
-  await first.service.enqueueDirectories(['D:/Music/downloads', 'D:/Music/downloads'])
-  assert.deepEqual(pending, ['D:/Music/downloads'])
+  await first.service.enqueueDirectories([f.root + '/downloads', f.root + '/downloads'])
+  assert.deepEqual(pending, [f.root + '/downloads'])
   assert.equal(first.scanner.calls.filter((call) => call.startsWith('scan:')).length, 1)
   await first.service.shutdown()
   const second = f.create(undefined, repository)
@@ -273,10 +280,10 @@ test('download indexing survives restart but never restarts an explicit Pause or
   assert.deepEqual(second.scanner.calls, [])
   assert.equal(await second.service.cancel(full.jobId), true)
   await second.service.startup()
-  assert.equal(await second.service.poll('D:/Music'), undefined)
+  assert.equal(await second.service.poll(f.root), undefined)
   await tick()
   assert.deepEqual(second.scanner.calls, [])
-  assert.deepEqual(pending, ['D:/Music/downloads'])
+  assert.deepEqual(pending, [f.root + '/downloads'])
   // Explicit Continue lifts the durable user stop; completion drains pending changes.
   await second.service.resume(full.jobId)
   finish(f, second.scanner, full.jobId)
@@ -284,7 +291,7 @@ test('download indexing survives restart but never restarts an explicit Pause or
   for (let i = 0; i < 20 && !second.scanner.current; i++) await tick()
   const job = f.sql.getLatestScanJob()!
   assert.equal(job.mode, 'watch')
-  assert.deepEqual(job.roots, ['D:/Music/downloads'])
+  assert.deepEqual(job.roots, [f.root + '/downloads'])
   for (let i = 0; i < 20 && pending.length; i++) await tick()
   assert.deepEqual(pending, [])
   await second.service.cancel(job.id)
@@ -310,13 +317,13 @@ test('a change arriving during watch startup is retained for the next scan', asy
   )
   await active.service.initialize()
   active.service.activate()
-  await active.service.enqueueDirectories(['D:/Music'])
+  await active.service.enqueueDirectories([f.root])
   await tick()
-  await active.service.enqueueDirectories(['D:/Music'])
-  authorization.resolve('D:/Music')
+  await active.service.enqueueDirectories([f.root])
+  authorization.resolve(f.root)
   for (let i = 0; i < 20 && !active.scanner.current; i++) await tick()
   await tick()
-  assert.deepEqual(pending, ['D:/Music'])
+  assert.deepEqual(pending, [f.root])
   const first = active.service.snapshot()!.jobId
   finish(f, active.scanner, first)
   for (let i = 0; i < 20 && active.service.snapshot()?.jobId === first; i++) await tick()
@@ -376,7 +383,7 @@ test('revoked roots and cancelled preparation create no durable job and dispatch
   const start = preparing.service.start({ mode: 'startup' }, client.signal)
   const rejected = assert.rejects(start, /cancelled/)
   client.abort(new Error('Client cancelled'))
-  gate.resolve('D:/Music')
+  gate.resolve(f.root)
   await rejected
   assert.deepEqual(f.sql.listScanJobs(), [])
   assert.deepEqual(preparing.scanner.calls, [])

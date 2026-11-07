@@ -10,6 +10,7 @@ import type { CorePlaybackSession } from '../playback/session.ts'
 interface RecoveryEngine {
   canRestartAudioEngine(): boolean
   restartAudioEngine(maintenance?: () => Promise<void>): Promise<void>
+  getAudioServiceFailure?(): string | null
 }
 
 /** A recovery job outlives the settings panel and owns its configuration/transport barriers. */
@@ -27,6 +28,7 @@ export class CoreAudioRecoveryService {
     windows: boolean
     confirmWindowsRestart(signal: AbortSignal): Promise<boolean>
     restartWindowsServices(): Promise<void>
+    restoreStartup?(): Promise<void>
     changed(): void
   }
   constructor(options: CoreAudioRecoveryService['options']) {
@@ -34,13 +36,29 @@ export class CoreAudioRecoveryService {
   }
 
   state(): AudioRecoveryState {
+    const failure = this.unavailableReason()
+    const failed = Boolean(failure) && !audioRecoveryBusy({ phase: this.phase })
     return {
-      phase: this.phase,
+      phase: failed ? 'failed' : this.phase,
       kind: this.kind,
       engineAvailable: this.options.engine.canRestartAudioEngine(),
       windowsServicesAvailable: this.options.windows,
-      error: this.error
+      error: failed ? projectCoreError(failure) : this.error
     }
+  }
+
+  unavailableReason(): string | null {
+    return this.options.engine.getAudioServiceFailure?.() || null
+  }
+
+  isUnavailableError(error: unknown): boolean {
+    const reason = this.unavailableReason()
+    if (!reason || !(error instanceof Error)) return false
+    return (
+      (error as { code?: string }).code === 'AUDIO_SERVICE_UNAVAILABLE' ||
+      error.message.includes(reason) ||
+      error.message.includes('Audio engine is restarting')
+    )
   }
 
   start(kind: AudioRecoveryKind): AudioRecoveryState {
@@ -53,10 +71,12 @@ export class CoreAudioRecoveryService {
     this.kind = kind
     this.error = null
     this.setPhase(kind === 'windows-services' ? 'confirming' : 'restarting-engine')
-    this.work = this.run(kind).catch((error: unknown) => {
-      this.error = projectCoreError(error)
-      this.setPhase((error as { code?: string })?.code === 'CANCELLED' ? 'cancelled' : 'failed')
-    })
+    this.work = this.run(kind)
+      .catch((error: unknown) => {
+        this.error = projectCoreError(error)
+        this.setPhase((error as { code?: string })?.code === 'CANCELLED' ? 'cancelled' : 'failed')
+      })
+      .finally(() => { this.work = null })
     return this.state()
   }
 
@@ -77,9 +97,9 @@ export class CoreAudioRecoveryService {
       this.setPhase('cancelled')
       return
     }
-    await this.options.configuration.serialize(async () => {
-      try {
-        await this.options.playback.recoverAudio(() =>
+    try {
+      await this.options.playback.recoverAudio(
+        () =>
           this.options.engine.restartAudioEngine(
             kind === 'windows-services'
               ? async () => {
@@ -88,12 +108,15 @@ export class CoreAudioRecoveryService {
                   this.setPhase('restarting-engine')
                 }
               : undefined
-          )
-        )
-      } finally {
-        this.options.configuration.changed()
-      }
-    })
+          ),
+        {
+          serialize: action => this.options.configuration.serialize(action),
+          restored: this.options.restoreStartup
+        }
+      )
+    } finally {
+      this.options.configuration.changed()
+    }
     this.setPhase('succeeded')
   }
 

@@ -14,6 +14,9 @@ class ReplayGainProcessor final : public IAudioProcessor {
   void reset() override;
   bool isActive() const override;
   double currentGainDb() const;
+  void adoptPreparedGain(const ReplayGainProcessor& next) noexcept {
+    gainDb_ = next.gainDb_; gainLinear_ = next.gainLinear_; active_ = next.active_;
+  }
 
  private:
   void updateGain(const ReplayGainInfo& info);

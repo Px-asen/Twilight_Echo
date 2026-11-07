@@ -1,4 +1,3 @@
-import type { TrackData as RawTrack } from '../../../../shared/track.ts'
 import type { Track } from '@renderer/types/music'
 import type { useCoreConnection } from '../../stores/coreConnection.ts'
 import { getAlbumIdentity } from '@renderer/stores/library/musicStoreData.ts'
@@ -26,7 +25,7 @@ export interface VersionCatalogPage {
 }
 
 export function buildVersionCatalog(
-  tracks: readonly RawTrack[],
+  tracks: readonly Track[],
   scope: VersionScope
 ): VersionCatalogItem[] {
   const items = new Map<string, VersionCatalogItem>()
@@ -35,7 +34,7 @@ export function buildVersionCatalog(
     const key =
       scope === 'tracks'
         ? versionSourceKey(track)
-        : JSON.stringify(['album', source, getAlbumIdentity(track)])
+        : JSON.stringify(['album', source, getAlbumIdentity({ ...track, filePath: track.filePath ?? '' })])
     const existing = items.get(key)
     if (existing) {
       if (scope === 'albums') {

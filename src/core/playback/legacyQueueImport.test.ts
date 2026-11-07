@@ -6,6 +6,7 @@ import { libraryQueueTrack } from './libraryTrack.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
 import type { CoreQueueImportCommand } from '../../shared/coreQueueImport.ts'
+import { legacyQueueImportOwner } from '../../shared/coreQueueImport.ts'
 
 function fixture(t: test.TestContext) {
   const db = new LibraryDatabase(':memory:')
@@ -91,6 +92,48 @@ test('legacy mixed/temporary-local queues use the actual library revision and pr
   assert.equal(db.collectLibraryQueueGarbage(0), 0) // protected until file publication
 })
 
+test('primary, Zone and group legacy sessions at the same revision have independent SQL identities and import leases', async (t) => {
+  const f = fixture(t)
+  const scopes = [
+    undefined,
+    'zone-11111111-1111-4111-8111-111111111111',
+    'group-22222222-2222-4222-8222-222222222222'
+  ]
+  const imported: Awaited<ReturnType<typeof importLegacyQueue>>[] = []
+  for (const [index, scope] of scopes.entries()) {
+    const session = structuredClone(f.session)
+    for (const track of session.queue!) track.queueEntryId = `${index}:${track.queueEntryId}`
+    session.track.queueEntryId = `${index}:${session.track.queueEntryId}`
+    imported.push(
+      await importLegacyQueue({
+        api: f.api,
+        session,
+        sessionRevision: 1,
+        libraryRevision: f.db.getMetadata().revision,
+        scope
+      })
+    )
+  }
+  assert.equal(imported[0].queue.id, 'core-session-1')
+  assert.equal(new Set(imported.map((item) => item.queue.id)).size, 3)
+  assert.ok(imported.every((item) => item.queue.index === 2 && item.position === 24))
+  f.db.sql.exec('UPDATE queues SET created_at=0')
+  f.db.syncLibraryQueueReferences(legacyQueueImportOwner(imported[0].queue.id), [])
+  f.db.collectLibraryQueueGarbage(1)
+  assert.throws(() => f.db.getLibraryQueue(imported[0].queue.id))
+  assert.ok(imported.slice(1).every((item) => f.db.getLibraryQueue(item.queue.id).total === 3))
+  assert.throws(
+    () =>
+      f.db.buildLibraryQueue({
+        kind: 'begin',
+        id: imported[1].queue.id,
+        contentRevision: f.db.getMetadata().revision,
+        order: 'original'
+      }),
+    /reserved|Core/i
+  )
+})
+
 test('a lost import publication reply is read-recovered without re-inserting or renaming occurrences', async (t) => {
   const f = fixture(t)
   const commands: string[] = []
@@ -118,6 +161,51 @@ test('a lost import publication reply is read-recovered without re-inserting or 
   const result = await importLegacyQueue(options)
   assert.deepEqual(commands, ['begin', 'append', 'commit', 'begin'])
   assert.equal(result.queue.selectedEntryId, f.session.track.queueEntryId)
+})
+
+test('modern import metadata preserves original order while old callers keep the old export shape', async (t) => {
+  const f = fixture(t)
+  const originalEntryIds = f.session.queue!.map((track) => track.queueEntryId!).reverse()
+  const { queue } = await importLegacyQueue({
+    api: f.api,
+    session: f.session,
+    sessionRevision: 15,
+    libraryRevision: f.db.getMetadata().revision,
+    originalEntryIds
+  })
+  const reference = {
+    id: queue.id,
+    revision: queue.revision,
+    index: queue.index,
+    entryId: queue.selectedEntryId!
+  }
+  const legacy = f.db.exportPlaybackQueue(reference, 32 * 1024 * 1024)
+  assert.deepEqual(Object.keys(legacy).sort(), ['libraryRevision', 'queue', 'queueIndex'])
+  const rich = f.db.exportPlaybackQueue(reference, 32 * 1024 * 1024, true)
+  assert.deepEqual(rich.originalQueueEntryIds, originalEntryIds)
+  assert.deepEqual(rich.queue, legacy.queue)
+  assert.throws(
+    () =>
+      f.db.exportPlaybackQueue(reference, Buffer.byteLength(JSON.stringify(legacy.queue)), true),
+    /容量/
+  )
+  for (const invalid of [
+    originalEntryIds.slice(1),
+    [originalEntryIds[0], originalEntryIds[0], originalEntryIds[2]],
+    ['unknown', ...originalEntryIds.slice(1)]
+  ]) {
+    await assert.rejects(
+      importLegacyQueue({
+        api: f.api,
+        session: f.session,
+        sessionRevision: 16,
+        libraryRevision: f.db.getMetadata().revision,
+        originalEntryIds: invalid
+      }),
+      /原始顺序/
+    )
+  }
+  assert.throws(() => f.db.getLibraryQueue('core-session-16'))
 })
 
 test('an interrupted hidden import retires only its own bounded rows; overlapping occurrences remain isolated by queue', async (t) => {

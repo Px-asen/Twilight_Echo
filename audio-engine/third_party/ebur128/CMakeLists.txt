@@ -17,3 +17,6 @@ target_include_directories(twilight_ebur128
 if(UNIX)
   target_link_libraries(twilight_ebur128 PRIVATE m)
 endif()
+if(MSVC)
+  target_compile_definitions(twilight_ebur128 PRIVATE _USE_MATH_DEFINES)
+endif()

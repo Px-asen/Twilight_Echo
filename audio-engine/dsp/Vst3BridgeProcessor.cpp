@@ -342,6 +342,20 @@ bool Vst3BridgeProcessor::launchHost() {
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESHOWWINDOW;
   startup.wShowWindow = SW_HIDE;
+  // The audio service may exit without running native destructors. Keep every
+  // helper in an owned job so it cannot outlive its engine or retain plugin files.
+  HANDLE job = CreateJobObjectW(nullptr, nullptr);
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+    const std::string message = windowsError(GetLastError());
+    if (job) CloseHandle(job);
+    CloseHandle(inputEvent);
+    UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+    setFailure("Unable to configure the VST3 host lifetime job: " + message);
+    return false;
+  }
   PROCESS_INFORMATION process{};
   if (!CreateProcessW(
           hostPath.c_str(),
@@ -349,16 +363,31 @@ bool Vst3BridgeProcessor::launchHost() {
           nullptr,
           nullptr,
           FALSE,
-          CREATE_NO_WINDOW,
+          CREATE_NO_WINDOW | CREATE_SUSPENDED,
           nullptr,
           hostDirectory.c_str(),
           &startup,
           &process)) {
     const std::string message = windowsError(GetLastError());
+    CloseHandle(job);
     CloseHandle(inputEvent);
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
     setFailure("Unable to launch the isolated VST3 host: " + message);
+    return false;
+  }
+  if (!AssignProcessToJobObject(job, process.hProcess) ||
+      ResumeThread(process.hThread) == static_cast<DWORD>(-1)) {
+    const std::string message = windowsError(GetLastError());
+    TerminateProcess(process.hProcess, 0xC000013A);
+    WaitForSingleObject(process.hProcess, 500);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(job);
+    CloseHandle(inputEvent);
+    UnmapViewOfFile(shared);
+    CloseHandle(mapping);
+    setFailure("Unable to start the isolated VST3 host with its lifetime job: " + message);
     return false;
   }
   CloseHandle(process.hThread);
@@ -370,6 +399,7 @@ bool Vst3BridgeProcessor::launchHost() {
       mappingHandle_ = mapping;
       inputEventHandle_ = inputEvent;
       hostProcessHandle_ = process.hProcess;
+      hostJobHandle_ = job;
       sharedMemory_ = shared;
       lastError_.clear();
       nextSequence_ = 0;
@@ -382,6 +412,7 @@ bool Vst3BridgeProcessor::launchHost() {
     if (state == static_cast<LONG>(HostState::Failed) || WaitForSingleObject(process.hProcess, 0) == WAIT_OBJECT_0) {
       const std::string message = sharedStatusMessage(shared);
       CloseHandle(process.hProcess);
+      CloseHandle(job);
       CloseHandle(inputEvent);
       UnmapViewOfFile(shared);
       CloseHandle(mapping);
@@ -394,6 +425,7 @@ bool Vst3BridgeProcessor::launchHost() {
   SetEvent(inputEvent);
   TerminateProcess(process.hProcess, 0xC000013A);
   CloseHandle(process.hProcess);
+  CloseHandle(job);
   CloseHandle(inputEvent);
   UnmapViewOfFile(shared);
   CloseHandle(mapping);
@@ -419,10 +451,12 @@ void Vst3BridgeProcessor::destroyHost() {
   if (inputEvent) CloseHandle(inputEvent);
   if (shared) UnmapViewOfFile(shared);
   if (mappingHandle_) CloseHandle(static_cast<HANDLE>(mappingHandle_));
+  if (hostJobHandle_) CloseHandle(static_cast<HANDLE>(hostJobHandle_));
 #endif
   mappingHandle_ = nullptr;
   inputEventHandle_ = nullptr;
   hostProcessHandle_ = nullptr;
+  hostJobHandle_ = nullptr;
   sharedMemory_ = nullptr;
   active_.store(false, std::memory_order_release);
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
-import { mkdtemp, open, rm, mkdir, link, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, rm, mkdir, copyFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -40,7 +40,7 @@ test('host passes each selected device to the worker and rechecks enable after d
   await mkdir(workerDirectory)
   await mkdir(join(pack, 'runtime'), { recursive: true })
   // A tiny process fixture observes the real spawn request without running a model.
-  await link(process.execPath, join(pack, 'runtime/python.exe'))
+  await copyFile(process.execPath, join(pack, 'runtime/python.exe'))
   const metadata = JSON.stringify({
     modelVersion: STEM_MODEL_VERSION,
     checkpointSha256: STEM_CHECKPOINT_SHA256

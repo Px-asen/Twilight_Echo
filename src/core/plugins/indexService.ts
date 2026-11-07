@@ -32,7 +32,14 @@ import type {
   TwilightPluginManifest
 } from './types'
 import { parseJsonWithNestingLimit } from '../../shared/jsonSafety.ts'
-import { LEGACY_GITHUB_PLUGIN_INDEX_URL } from '../../shared/pluginDistribution.ts'
+import {
+  DEFAULT_PLUGIN_INDEX_URL,
+  LEGACY_GITHUB_PLUGIN_INDEX_URL
+} from '../../shared/pluginDistribution.ts'
+export {
+  DEFAULT_PLUGIN_INDEX_URL,
+  resolvePluginIndexUrl
+} from '../../shared/pluginDistribution.ts'
 
 const { existsSync } = coreFs
 const { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } = coreFsPromises
@@ -96,8 +103,6 @@ export interface DownloadedPluginPackage {
   evidence: TwilightPluginInstallEvidence
   cleanup: () => Promise<void>
 }
-
-export const DEFAULT_PLUGIN_INDEX_URL = OFFICIAL_PLUGIN_INDEX_URL
 
 const INDEX_SCHEMA_VERSION = 1
 const DEFAULT_INDEX_SIZE_LIMIT_BYTES = 1024 * 1024
@@ -1119,10 +1124,6 @@ export class PluginIndexService {
       throw new Error(`插件包 manifest 与索引 entry 不一致：${entry.id} (${mismatches.join(', ')})`)
     }
   }
-}
-
-export function resolvePluginIndexUrl(value?: string): string {
-  return value?.trim() || DEFAULT_PLUGIN_INDEX_URL
 }
 
 async function consumeResponseBody(

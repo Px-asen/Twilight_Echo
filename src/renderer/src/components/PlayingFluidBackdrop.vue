@@ -308,5 +308,6 @@ onBeforeUnmount(() => {
   display: block;
   pointer-events: none;
   contain: strict;
+  background: var(--te-playback-fluid-bg);
 }
 </style>

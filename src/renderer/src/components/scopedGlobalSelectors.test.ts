@@ -38,7 +38,7 @@ test('scoped component styles keep descendants inside global theme selectors', (
     const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8')
     assert.doesNotMatch(
       source,
-      /:global\([^\r\n)]+\)\s+[^,{\r\n]+[,{]/,
+      /:global\((?:[^()\r\n]|\([^()\r\n]*\))*\)\s+[^,{\r\n]+[,{]/,
       `${relativePath} contains a global ancestor whose scoped descendant will be dropped by Vue`
     )
   }

@@ -14,10 +14,12 @@ import { libraryTrack } from '../playback/libraryTrack.ts'
 import { projectCoreTrack } from '../projections.ts'
 import {
   LibraryMetadataEnrichmentQueue,
-  type LibraryMetadataEnrichmentProvider
+  type LibraryMetadataEnrichmentProvider,
+  type LibraryMetadataEnrichmentTrackUpdate
 } from './metadataEnrichment.ts'
 import { searchMetadataTracks } from './metadataSearch.ts'
-import { patchLibraryMetadata } from './metadataPatch.ts'
+import { patchLibraryMetadataBatch } from './metadataPatch.ts'
+import { deferMacrotask } from '../../shared/portableAsync.ts'
 import { CoreEntityMetadataService, type EntityMetadataOptions } from './entityMetadataService.ts'
 
 interface Options {
@@ -38,6 +40,16 @@ interface Candidates {
   items: MetadataMatchCandidate[]
 }
 
+type PendingUpdate = {
+  update: LibraryMetadataEnrichmentTrackUpdate
+  generation: number
+  resolve(): void
+  reject(error: unknown): void
+}
+
+const WRITE_BATCH_SIZE = 25
+const WRITE_DELAY_MS = 100
+
 /** Provider work and version-fenced commits survive UI detachment, never a second library writer. */
 export class CoreMetadataService {
   readonly entities: CoreEntityMetadataService | undefined
@@ -55,11 +67,16 @@ export class CoreMetadataService {
   private readonly candidates = new Map<string, Candidates>()
   private status: LibraryMetadataEnrichmentStatus | null = null
   private totals = { total: 0, completed: 0, failed: 0, skipped: 0, error: '' }
+  private readonly updates: PendingUpdate[] = []
+  private writeTimer: ReturnType<typeof setTimeout> | null = null
+  private writeTask: Promise<void> | null = null
   constructor(options: Options) {
     this.options = options
     this.entities = options.entities ? new CoreEntityMetadataService(options.entities) : undefined
     this.queue = new LibraryMetadataEnrichmentQueue({
       provider: options.provider,
+      // Foreground searches and playback use these providers too.
+      concurrency: 2,
       now: options.now,
       onStatus: (status) => {
         const totals = this.totals
@@ -75,21 +92,55 @@ export class CoreMetadataService {
           this.status.state = 'failed'
         options.changed()
       },
-      onTrackEnriched: async (update) => {
-        const generation = this.generation
-        const saved = await patchLibraryMetadata(
-          options.database,
-          update,
+      onTracksEnriched: (updates) => this.saveUpdates(updates)
+    })
+  }
+  private async saveUpdates(updates: LibraryMetadataEnrichmentTrackUpdate[]): Promise<void> {
+    const results = await Promise.allSettled(
+      updates.map(
+        (update) =>
+          new Promise<void>((resolve, reject) => {
+            this.updates.push({ update, generation: this.generation, resolve, reject })
+            this.scheduleWrites()
+          })
+      )
+    )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
+  }
+  private scheduleWrites(): void {
+    if (this.writeTimer || this.writeTask || !this.updates.length) return
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null
+      this.writeTask = this.flushUpdates().finally(() => {
+        this.writeTask = null
+        this.scheduleWrites()
+      })
+    }, WRITE_DELAY_MS)
+  }
+  private async flushUpdates(): Promise<void> {
+    while (this.updates.length) {
+      const batch = this.updates.splice(0, WRITE_BATCH_SIZE)
+      const generation = batch[0].generation
+      try {
+        const saved = await patchLibraryMetadataBatch(
+          this.options.database,
+          batch.map((item) => item.update),
           () => !this.stopped && !this.suspended && generation === this.generation
         )
         if (saved) {
-          const record = saved.tracks.find((track) => track.id === update.source.id)
-          if (record) this.seen.set(record.id, signature(libraryTrack(record)))
-          options.changed()
-          options.libraryChanged()
+          for (const record of saved.tracks)
+            this.seen.set(record.id, signature(libraryTrack(record)))
+          this.options.changed()
+          this.options.libraryChanged()
         }
+        for (const item of batch) item.resolve()
+      } catch (error) {
+        for (const item of batch) item.reject(error)
       }
-    })
+      // A fast/cache-hit provider must not turn a whole page into one long turn.
+      if (this.updates.length) await new Promise<void>((done) => deferMacrotask(done))
+    }
   }
   activate(): void {
     if (this.activated || this.stopped) return
@@ -162,6 +213,9 @@ export class CoreMetadataService {
     this.suspended = true
     this.requested = false
     this.generation++
+    if (this.writeTimer) clearTimeout(this.writeTimer)
+    this.writeTimer = null
+    for (const item of this.updates.splice(0)) item.resolve()
     return this.queue.cancel() || active
   }
   private request<T>(
@@ -254,8 +308,15 @@ export class CoreMetadataService {
     this.stopped = true
     this.cancel()
     this.lifetime.abort(new Error('Core metadata service stopped'))
-    await Promise.all([this.entities?.shutdown(), this.task, this.queue.join(), Promise.allSettled([...this.requests])])
+    await Promise.all([
+      this.entities?.shutdown(),
+      this.task,
+      this.queue.join(),
+      this.writeTask,
+      Promise.allSettled([...this.requests])
+    ])
     this.candidates.clear()
+    this.queue.dispose()
   }
 }
 

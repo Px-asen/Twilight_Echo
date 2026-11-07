@@ -24,6 +24,19 @@ function fixture(t: test.TestContext) {
   return { root, options, changed: () => changed }
 }
 
+test('NetEase listening sync defaults on for new and legacy settings and preserves saved choices', t => {
+  const f = fixture(t)
+  assert.equal(new CoreSettingsRepository(f.options).read().ncmListeningSyncEnabled, true)
+  writeFileSync(f.options.filePath, JSON.stringify({ ncmPlaybackQuality: 'lossless' }))
+  const repository = new CoreSettingsRepository(f.options)
+  assert.equal(repository.read().ncmListeningSyncEnabled, true)
+  assert.equal(repository.read().ncmPlaybackQuality, 'lossless')
+  repository.update({ ncmListeningSyncEnabled: false })
+  assert.equal(new CoreSettingsRepository(f.options).read().ncmListeningSyncEnabled, false)
+  repository.update({ ncmListeningSyncEnabled: true })
+  assert.equal(new CoreSettingsRepository(f.options).read().ncmListeningSyncEnabled, true)
+})
+
 test('normalization keeps platform defaults, aliases and all settings domains without Electron', () => {
   for (const [platform, output] of [
     ['win32', 'wasapi'],
@@ -32,6 +45,18 @@ test('normalization keeps platform defaults, aliases and all settings domains wi
   ] as const) {
     const defaults = createDefaultSettings(platform)
     assert.equal(defaults.audioOutput, output)
+    assert.equal(defaults.closeWindowBehavior, platform === 'darwin' ? 'tray' : 'quit')
+    assert.equal(defaults.closeToTray, platform === 'darwin')
+    const fresh = normalizeAppSettings(
+      {},
+      {
+        platform,
+        defaultCachePath: 'default-cache',
+        resolvePath: (path) => path
+      }
+    )
+    assert.equal(fresh.closeWindowBehavior, defaults.closeWindowBehavior)
+    assert.equal(fresh.closeToTray, defaults.closeToTray)
     const settings = normalizeAppSettings(
       { autoLaunch: true, closeToTray: true, musicCachePath: './old-cache' },
       {
@@ -48,6 +73,40 @@ test('normalization keeps platform defaults, aliases and all settings domains wi
     assert.equal(settings.audioDeviceProfiles.volumeCeiling, 1)
     assert.equal(settings.playbackResumeMode, 'off')
   }
+})
+
+test('macOS keeps explicit and legacy close preferences ahead of the background-playback default', () => {
+  for (const [saved, expected] of [
+    [{ closeWindowBehavior: 'quit', closeToTray: true }, 'quit'],
+    [{ closeWindowBehavior: 'tray', closeToTray: false }, 'tray'],
+    [{ closeWindowBehavior: 'miniPlayer' }, 'miniPlayer'],
+    [{ closeToTray: false }, 'quit'],
+    [{ closeToTray: true }, 'tray'],
+    [{ minimizeToTray: false }, 'quit'],
+    [{ minimizeToTray: true }, 'tray']
+  ] as const) {
+    const settings = normalizeAppSettings(saved, {
+      platform: 'darwin',
+      defaultCachePath: 'default-cache',
+      resolvePath: (path) => path
+    })
+    assert.equal(settings.closeWindowBehavior, expected)
+    assert.equal(settings.closeToTray, expected === 'tray')
+  }
+})
+
+test('macOS starts in background-close mode and retains a saved quit choice after reopening', (t) => {
+  const f = fixture(t)
+  const options = {
+    ...f.options,
+    environment: { ...f.options.environment, platform: 'darwin' as const }
+  }
+  const repository = new CoreSettingsRepository(options)
+  assert.equal(repository.read().closeWindowBehavior, 'tray')
+  repository.update({ closeWindowBehavior: 'quit' })
+  const reopened = new CoreSettingsRepository(options)
+  assert.equal(reopened.read().closeWindowBehavior, 'quit')
+  assert.equal(reopened.read().closeToTray, false)
 })
 
 test('the existing full settings file round-trips; startup audio inputs never override persisted choices', (t) => {

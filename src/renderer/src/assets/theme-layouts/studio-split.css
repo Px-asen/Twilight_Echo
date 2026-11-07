@@ -93,6 +93,11 @@ html[data-te-preset-layout='studio-split'] body .side-menu .menu-item:hover {
   background: var(--te-navigation-hover);
 }
 
+html[data-te-preset-layout='studio-split'] body .side-menu .navigation-indicator {
+  --te-navigation-motion-radius: 0px;
+  background: var(--te-navigation-bg);
+}
+
 html[data-te-preset-layout='studio-split'] body .side-menu .menu-item:hover .item-icon {
   transform: none;
 }

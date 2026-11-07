@@ -81,6 +81,7 @@ export const AUDIO_REASON_CODES: Record<string, ReasonCodeEntry> = {
 
   // ── Output routing / device ──────────────────────────────────────────────
   shared_mixer: { severity: 'blocking', origin: 'output', settingsAnchor: 'playback' },
+  android_system_path: { severity: 'info', origin: 'output' },
   routing_not_auto: { severity: 'blocking', origin: 'output', settingsAnchor: 'playback' },
   routing_changes_semantics: { severity: 'blocking', origin: 'output', settingsAnchor: 'dsp' },
   plugin_path: { severity: 'blocking', origin: 'output', settingsAnchor: 'playback' },

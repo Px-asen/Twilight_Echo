@@ -206,7 +206,7 @@ test('settings wallpaper is painted once by the overlay root, never per element'
   assert.doesNotMatch(darkSettingsPageRule, /--te-settings-bg-image/)
   assert.match(
     appSource,
-    /class="settings-overlay-root"[\s\S]*?settings-overlay-root--active[\s\S]*?<Transition\s+name="settings-page"[\s\S]*?<SettingsPage/
+    /class="settings-overlay-root"[\s\S]*?settings-overlay-root--active[\s\S]*?<MotionTransition\s+name="settings-page"[\s\S]*?<SettingsPage/
   )
   assert.match(
     appSource,
@@ -232,7 +232,7 @@ test('settings wallpaper is painted once by the overlay root, never per element'
     /html\[data-theme='dark'\]\[data-te-surface-material='liquidGlass'\]\s+\.settings-overlay-root--active::before\s*\{[^}]*?radial-gradient/
   )
   assert.match(appSource, /\.app-shell-title\s*\{[\s\S]*?z-index:\s*2100/)
-  assert.match(appSource, /\.settings-page-enter-active\s*\{[\s\S]*?z-index:\s*2000/)
+  assert.match(appSource, /\[data-motion-surface='settings-page'\]\[data-motion-phase='enter'\]\s*\{[\s\S]*?z-index:\s*2000/)
   // The title material tints and blurs the existing wallpaper instead of repainting it.
   const titleMaterialRule =
     titleBarSource.match(/\.title-bar-background\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''

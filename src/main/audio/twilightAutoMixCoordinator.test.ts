@@ -660,6 +660,27 @@ test('live playback deadline prevents submission after analysis or model delay',
     coordinator.destroy()
   }))
 
+test('capture-clock group commit margin leaves preparation time while the local guard stays unchanged', async () =>
+  fixture(async root => {
+    for (const [margin, position, expected] of [[undefined, 38.5, 0], [1, 38.5, 1], [1, 39, 0]] as const) {
+      const c = context()
+      let submitted = 0
+      const coordinator = new TwilightAutoMixCoordinator({
+        context: () => c, authorize: async source => source, identify: async () => 'a'.repeat(64),
+        cache: new TwilightAutoMixWindowCache(join(root, `margin-${margin}-${position}.json`)),
+        analyze: async (_source, options) => result(options), cancelAnalysis: () => {}, cancel: async () => true,
+        commitMarginSeconds: margin, backgroundAnalysis: false,
+        select: async () => { c.info.position = position; return { ok: true, selectionId: 7, currentStartSeconds: 40 } },
+        prepare: async () => true, status: async () => c.info,
+        submit: async () => { submitted++; return true }
+      })
+      coordinator.setMode('natural'); await coordinator.idle()
+      assert.equal(submitted, expected, `margin=${margin}, position=${position}`)
+      if (!expected) assert.equal(coordinator.reason, 'preparation_missed_boundary')
+      coordinator.destroy()
+    }
+  }))
+
 test('stem timeout falls back to base preparation while releasing its ticket', async () =>
   fixture(async (root) => {
     const c = context()

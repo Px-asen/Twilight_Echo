@@ -27,6 +27,7 @@ import {
 } from '../../shared/libraryQueueBuild.ts'
 import { compactPlaylistRecord } from '../../shared/playlistSnapshot.ts'
 import type { CoreQueueImportCommand, CoreQueueImportReply } from '../../shared/coreQueueImport.ts'
+import { legacyQueueImportOwner } from '../../shared/coreQueueImport.ts'
 import type { CoreQueueRestoreCommand } from '../../shared/coreQueueRestore.ts'
 import { MAX_QUEUE_OCCURRENCE_ID_LENGTH } from '../../shared/nativeQueue.ts'
 import { shuffleArray } from '../../shared/shuffleArray.ts'
@@ -215,8 +216,7 @@ export class LibraryDatabaseQueues {
    * Every append is bounded and once-only; invalid/uncertain continuations are
    * abandoned rather than replayed. Both occurrence orders publish together. */
   importLegacyPlaybackQueue(input: CoreQueueImportCommand): CoreQueueImportReply {
-    if (!input || !/^core-session-[0-9]+$/.test(input.id))
-      throw new Error('Invalid Core legacy queue import identity')
+    legacyQueueImportOwner(input?.id)
     validateLibraryQueueBuild(input, true)
     if (input.kind === 'begin') {
       const previous = this.row('SELECT state FROM queues WHERE id=?', input.id)
@@ -246,6 +246,44 @@ export class LibraryDatabaseQueues {
     )
       throw new Error('Invalid named queue restore mode')
     return this.stream(input, 'named')
+  }
+  /** Private SQL snapshot for a Zone handoff. Keep duplicate occurrences and both
+   * orders, but never share the mutable cursor or export the full queue to JS. */
+  clonePlaybackQueue(reference: LibraryPlaybackQueueReference): LibraryQueueSnapshot {
+    if (!isLibraryPlaybackQueueReference(reference))
+      throw new Error('Invalid handoff queue reference')
+    return this.owner.transaction(() => {
+      const source = this.expected(reference.id, reference.revision)
+      if (
+        !source.total ||
+        source.index !== reference.index ||
+        source.selectedEntryId !== reference.entryId
+      )
+        throw Object.assign(new Error('Handoff queue selection changed concurrently'), {
+          code: 'STALE_REVISION'
+        })
+      const id = randomUUID()
+      this.run(
+        `INSERT INTO queues(id,revision,ordering,selected_entry,created_at,state,total_count,play_mode)
+        SELECT ?,0,ordering,selected_entry,?,'ready',total_count,play_mode FROM queues WHERE id=?`,
+        id,
+        Date.now(),
+        source.id
+      )
+      this.run(
+        `INSERT INTO queue_entries(queue_id,position,entry_id,track_id,original_position)
+        SELECT ?,position,entry_id,track_id,original_position FROM queue_entries WHERE queue_id=?`,
+        id,
+        source.id
+      )
+      this.run(
+        `INSERT INTO queue_snapshots(queue_id,entry_id,payload)
+        SELECT ?,entry_id,payload FROM queue_snapshots WHERE queue_id=?`,
+        id,
+        source.id
+      )
+      return this.get(id)
+    })
   }
   restoreHeartBaseQueue(base: LibraryPlaybackQueueReference, selectedTrackId: string) {
     if (
@@ -535,7 +573,7 @@ export class LibraryDatabaseQueues {
         if (occurrenceOwner === 'legacy')
           this.run(
             'INSERT INTO queue_references VALUES (?,?,?)',
-            'core:legacy-import',
+            legacyQueueImportOwner(id),
             id,
             Date.now()
           )
@@ -656,7 +694,9 @@ export class LibraryDatabaseQueues {
       (!options ||
         typeof options !== 'object' ||
         Array.isArray(options) ||
-        Object.keys(options).some((key) => !['search', 'expectedRevision', 'occurrenceId'].includes(key)) ||
+        Object.keys(options).some(
+          (key) => !['search', 'expectedRevision', 'occurrenceId'].includes(key)
+        ) ||
         (options.occurrenceId !== undefined && !occurrenceId(options.occurrenceId)) ||
         (options.search !== undefined &&
           (typeof options.search !== 'string' || options.search.length > 32768)))
@@ -680,7 +720,11 @@ export class LibraryDatabaseQueues {
       WHERE q.queue_id=? AND ${options?.occurrenceId ? 'q.entry_id=?' : search ? matches : 'q.position>=?'} ORDER BY q.position LIMIT ? ${!options?.occurrenceId && search ? 'OFFSET ?' : ''}`
       )
       .all(
-        ...(options?.occurrenceId ? [id, options.occurrenceId, 1] : search ? [id, search, bounds.limit, bounds.offset] : [id, bounds.offset, bounds.limit])
+        ...(options?.occurrenceId
+          ? [id, options.occurrenceId, 1]
+          : search
+            ? [id, search, bounds.limit, bounds.offset]
+            : [id, bounds.offset, bounds.limit])
       ) as Row[]
     const total = search
       ? Number(
@@ -753,7 +797,11 @@ export class LibraryDatabaseQueues {
       items: next && next.position !== index ? [...current.items, next] : current.items
     }
   }
-  exportPlayback(reference: LibraryPlaybackQueueReference, maxBytes: number) {
+  exportPlayback(
+    reference: LibraryPlaybackQueueReference,
+    maxBytes: number,
+    includeOriginalOrder = false
+  ) {
     if (
       !isLibraryPlaybackQueueReference(reference) ||
       !Number.isSafeInteger(maxBytes) ||
@@ -804,6 +852,20 @@ export class LibraryDatabaseQueues {
         queue.push(JSON.parse(json))
       }
       if (queue.length !== snapshot.total) throw new Error('Incomplete playback queue export')
+      if (includeOriginalOrder) {
+        const originalQueueEntryIds = this.owner.sql
+          .prepare('SELECT entry_id FROM queue_entries WHERE queue_id=? ORDER BY original_position')
+          .all(reference.id)
+          .map((row) => String(row.entry_id))
+        if (bytes + Buffer.byteLength(JSON.stringify(originalQueueEntryIds)) + 64 > maxBytes)
+          throw new Error('含原始顺序的播放快照超过保存容量，未截断导出')
+        return {
+          queue,
+          queueIndex: position,
+          libraryRevision: this.owner.revision(),
+          originalQueueEntryIds
+        }
+      }
       return { queue, queueIndex: position, libraryRevision: this.owner.revision() }
     })
   }
@@ -811,7 +873,9 @@ export class LibraryDatabaseQueues {
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid queue revision')
     const queue = this.get(id)
     if (queue.revision !== revision)
-      throw Object.assign(new Error('Library queue changed concurrently'), { code: 'STALE_REVISION' })
+      throw Object.assign(new Error('Library queue changed concurrently'), {
+        code: 'STALE_REVISION'
+      })
     return queue
   }
   delete(id: string, revision: number): void {

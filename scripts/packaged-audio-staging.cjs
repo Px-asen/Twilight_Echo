@@ -19,6 +19,28 @@ const { createAudioCapabilityManifest } = require('./generate-audio-capability-m
 const { createReleaseCapabilityStatus } = require('./verify-release-capability-consistency.cjs')
 const { stagedVst3Files } = require('./prepare-vst3-msvc.cjs')
 const { readStagedAudioRuntimeObservation } = require('./staged-audio-runtime-observation.cjs')
+const { collectProductionPackages } = require('./server-package-dependencies.cjs')
+
+function productionPackageFileSets(root) {
+  const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  // Electron supplies its own built-in module; do not embed its development
+  // download (or its downloader dependencies) inside app.asar.
+  return collectProductionPackages(root, metadata.dependencies || {}, {
+    externalPackages: ['electron']
+  }).map((record) => ({
+    from: record.source.replaceAll('\\', '/'),
+    to: record.destination,
+    filter: [
+      '**/*',
+      '!node_modules/**',
+      '!**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**',
+      '!**/*.map',
+      '!**/*.ts',
+      '!**/*.md',
+      ...(record.manifest.name === '@neteasecloudmusicapienhanced/api' ? ['!public/**'] : [])
+    ]
+  }))
+}
 
 function refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus) {
   const manifest = createAudioCapabilityManifest({ artifactDir: nativeDir, runtimeStatus })
@@ -75,6 +97,9 @@ function preparePackagedAudioStaging(
     }
   }
   for (const name of NATIVE_RUNTIME_FILES) {
+    // The desktop resource filter excludes this Server-only addon. Its manifest
+    // must describe the desktop payload rather than every build-host module.
+    if (name === 'twilight_image_node.node') continue
     const isolatedPath = isolatedDir && join(isolatedDir, name)
     const sourcePath =
       nativeOverrides[name] ||
@@ -94,11 +119,23 @@ function preparePackagedAudioStaging(
   refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus)
 
   const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  const stagedConfig = sourceConfig.replace(
+  const audioConfig = sourceConfig.replace(
     '  - from: resources/audio-engine',
     `  - from: '${nativeDir.replaceAll('\\', '/')}'`
   )
-  if (stagedConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
+  if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
+  // Mirror the installed production graph with native electron-builder file
+  // sets: its pnpm collector otherwise flattens away conflicting nested versions.
+  const fileSets = productionPackageFileSets(root).flatMap((entry) => [
+    `  - from: ${JSON.stringify(entry.from)}`,
+    `    to: ${JSON.stringify(entry.to)}`,
+    `    filter: ${JSON.stringify(entry.filter)}`
+  ])
+  const stagedConfig = audioConfig.replace(
+    /^files:\r?$/m,
+    ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
+  )
+  if (!/^files:\r?$/m.test(audioConfig)) throw new Error('Package files entry was not found')
   const configPath = join(temporaryDir, 'electron-builder.yml')
   writeFileSync(configPath, stagedConfig)
   return {
@@ -116,4 +153,8 @@ function preparePackagedAudioStaging(
   }
 }
 
-module.exports = { preparePackagedAudioStaging, refreshAudioCapabilityArtifacts }
+module.exports = {
+  preparePackagedAudioStaging,
+  productionPackageFileSets,
+  refreshAudioCapabilityArtifacts
+}

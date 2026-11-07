@@ -9,6 +9,7 @@
 #include "../utils/JsonUtils.h"
 #include "AudioFixtureLibrary.h"
 #include "ChannelLayoutFixture.h"
+#include "PerformanceTestPriority.h"
 
 #include <algorithm>
 #include <atomic>
@@ -59,35 +60,6 @@ struct ControlledBackendState {
   bool started = false;
   uint64_t callbackInvocations = 0;
   uint64_t callbacksWithAudio = 0;
-};
-
-class ScopedPerformanceTestThreadPriority {
- public:
-  ScopedPerformanceTestThreadPriority() {
-#ifdef _WIN32
-    thread_ = GetCurrentThread();
-    previousPriority_ = GetThreadPriority(thread_);
-    if (previousPriority_ != THREAD_PRIORITY_ERROR_RETURN) {
-      changed_ = SetThreadPriority(thread_, THREAD_PRIORITY_ABOVE_NORMAL) != FALSE;
-    }
-#endif
-  }
-
-  ~ScopedPerformanceTestThreadPriority() {
-#ifdef _WIN32
-    if (changed_) SetThreadPriority(thread_, previousPriority_);
-#endif
-  }
-
-  ScopedPerformanceTestThreadPriority(const ScopedPerformanceTestThreadPriority&) = delete;
-  ScopedPerformanceTestThreadPriority& operator=(const ScopedPerformanceTestThreadPriority&) = delete;
-
- private:
-#ifdef _WIN32
-  HANDLE thread_ = nullptr;
-  int previousPriority_ = THREAD_PRIORITY_ERROR_RETURN;
-  bool changed_ = false;
-#endif
 };
 
 std::mutex g_backendMutex;

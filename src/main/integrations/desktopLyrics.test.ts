@@ -47,8 +47,19 @@ test('desktop lyrics stay out of the Windows taskbar across focus and interactio
     runtime: { desktopLyricsWindow: win },
     getEffectiveDesktopLyricsSettings: () => settings,
     currentTaskbarBounds: () => ({ x: 100, y: 100, width: 320, height: 40 }),
-    windowPosition: () => ({ x: 100, y: 100 }),
-    clampToCurrentDisplay: (_win: unknown, x: number, y: number) => ({ x, y }),
+    windowPosition: () => ({
+      x: 100,
+      y: 100,
+      width: settings.windowWidth,
+      height: settings.windowHeight
+    }),
+    clampToCurrentDisplay: (_win: unknown, x: number, y: number) => ({
+      x,
+      y,
+      width: settings.windowWidth,
+      height: settings.windowHeight
+    }),
+    appliedWindowSettings: new WeakMap(),
     desktopLyricsPausedHidden: false,
     desktopLyricsInteractionActive: false,
     appliedTaskbarPlacement: false,
@@ -80,6 +91,173 @@ test('desktop lyrics stay out of the Windows taskbar across focus and interactio
       }
     }
   }
+})
+
+async function windowSettingsFixture() {
+  const main = await source('./desktopLyrics.ts')
+  const script = [
+    main.slice(
+      main.indexOf('function constrainDesktopLyricsBounds'),
+      main.indexOf('export function getEffectiveDesktopLyricsSettings')
+    ),
+    main.slice(
+      main.indexOf('function applyWindowSettings'),
+      main.indexOf('function clearTaskbarStackingTimer')
+    ),
+    main.slice(main.indexOf('function clampToCurrentDisplay'), main.indexOf('function validWord'))
+  ].join('\n')
+  const settings = normalizeDesktopLyricsSettings({ version: 3, windowX: 100, windowY: 600 })
+  const calls: string[] = []
+  const display = { workArea: { x: 0, y: 0, width: 1707, height: 960 } }
+  let bounds = { x: 100, y: 600, width: settings.windowWidth, height: settings.windowHeight }
+  let rounding = false
+  const win = {
+    isDestroyed: () => false,
+    setFocusable: () => calls.push('focusable'),
+    setSkipTaskbar: () => calls.push('taskbar'),
+    setAlwaysOnTop: () => calls.push('stacking'),
+    setIgnoreMouseEvents: () => calls.push('mouse'),
+    getBounds: () => ({ ...bounds }),
+    getPosition: () => [bounds.x, bounds.y],
+    setBounds(value: typeof bounds) {
+      calls.push('bounds')
+      bounds = { ...value }
+      if (rounding) {
+        bounds.x -= 1
+        bounds.y += 1
+        bounds.width += 1
+        bounds.height += 1
+      }
+    },
+    setPosition() {
+      assert.fail('position and size must be applied together')
+    }
+  }
+  const context = {
+    runtime: { desktopLyricsWindow: win, appSettings: { desktopLyrics: settings } },
+    screen: {
+      getDisplayMatching: () => display,
+      getAllDisplays: () => [display],
+      getPrimaryDisplay: () => display
+    },
+    getEffectiveDesktopLyricsSettings: () => settings,
+    currentTaskbarBounds: () => ({ x: 100, y: 960, width: 320, height: 40 }),
+    appliedWindowSettings: new WeakMap(),
+    desktopLyricsPausedHidden: false,
+    desktopLyricsInteractionActive: false,
+    appliedTaskbarPlacement: false,
+    taskbarStackingTimer: null,
+    clearDesktopLyricsHoverTracking: () => {},
+    clearTaskbarStackingTimer: () => {},
+    syncDesktopLyricsHoverTracking: () => {},
+    persistDesktopLyricsPosition: () => {
+      calls.push('persist')
+      settings.windowX = bounds.x
+      settings.windowY = bounds.y
+    },
+    setInterval: () => ({ unref: () => {} }),
+    applyWindowSettings: () => {},
+    windowPosition: () => bounds,
+    clampToCurrentDisplay: (_win: unknown, _x: number, _y: number) => bounds
+  }
+  runInNewContext(stripTypeScriptTypes(script), context)
+  return {
+    context,
+    settings,
+    calls,
+    display,
+    win,
+    roundNativeBounds: () => {
+      rounding = true
+    }
+  }
+}
+
+test('large desktop lyrics fit the work area and settle after fractional-DPI rounding', async () => {
+  const f = await windowSettingsFixture()
+  f.context.applyWindowSettings()
+  f.calls.length = 0
+  f.settings.windowWidth = 1920
+  f.settings.windowHeight = 320
+  f.roundNativeBounds()
+  f.context.applyWindowSettings()
+  assert.deepEqual(f.calls, ['bounds', 'persist'])
+  const settled = f.win.getBounds()
+  assert.ok(settled.width <= f.display.workArea.width + 1)
+  assert.ok(settled.x >= f.display.workArea.x - 1)
+  for (let i = 0; i < 20; i++) f.context.applyWindowSettings()
+  assert.deepEqual(
+    f.calls,
+    ['bounds', 'persist'],
+    'settings projections must not start another resize/save cycle'
+  )
+  assert.deepEqual(f.win.getBounds(), settled)
+  assert.equal(f.settings.windowWidth, 1920, 'keep the preferred size for larger displays')
+
+  f.calls.length = 0
+  f.settings.windowWidth = 480
+  f.settings.windowHeight = 140
+  f.context.applyWindowSettings()
+  assert.equal(f.win.getBounds().width, 481)
+  assert.equal(f.win.getBounds().height, 141)
+  assert.deepEqual(f.calls, ['bounds'])
+})
+
+test('vertical lyrics and dragging fit small displays with negative coordinates', async () => {
+  const f = await windowSettingsFixture()
+  f.display.workArea = { x: -1280, y: -200, width: 1280, height: 720 }
+  Object.assign(f.settings, {
+    writingMode: 'vertical',
+    windowWidth: 480,
+    windowHeight: 960,
+    windowX: -300,
+    windowY: 400
+  })
+  const expected = { x: -480, y: -200, width: 480, height: 720 }
+  assert.deepEqual({ ...f.context.windowPosition() }, expected)
+  assert.deepEqual({ ...f.context.clampToCurrentDisplay(f.win, -300, 400) }, expected)
+  f.context.applyWindowSettings()
+  assert.deepEqual(f.win.getBounds(), expected)
+  const calls = f.calls.length
+  f.context.applyWindowSettings()
+  assert.equal(f.calls.length, calls)
+  assert.equal(f.settings.windowHeight, 960)
+})
+
+test('repeated font changes do not touch native focus, stacking, mouse, or geometry', async () => {
+  const f = await windowSettingsFixture()
+  f.context.applyWindowSettings()
+  f.calls.length = 0
+  for (const fontSize of [20, 36, 53, 64, 32, 48]) {
+    f.settings.fontSize = fontSize
+    f.context.applyWindowSettings()
+  }
+  assert.deepEqual(f.calls, [])
+  f.settings.locked = true
+  f.context.applyWindowSettings()
+  assert.deepEqual(f.calls, ['mouse'])
+  f.calls.length = 0
+  f.settings.alwaysOnTop = false
+  f.context.applyWindowSettings()
+  assert.deepEqual(f.calls, ['stacking'])
+})
+
+test('unchanged native positions are not written back to Core', async () => {
+  const main = await source('./desktopLyrics.ts')
+  const script = main.slice(
+    main.indexOf('function persistDesktopLyricsPosition'),
+    main.indexOf('function currentTaskbarBounds')
+  )
+  const settings = normalizeDesktopLyricsSettings({ version: 3, windowX: -1, windowY: 400 })
+  const context = {
+    runtime: { appSettings: { desktopLyrics: settings } },
+    getCoreSettingsBridge: () => {
+      assert.fail('unchanged position must not enqueue a settings edit')
+    },
+    persistDesktopLyricsPosition: (_win: unknown) => {}
+  }
+  runInNewContext(stripTypeScriptTypes(script), context)
+  context.persistDesktopLyricsPosition({ isDestroyed: () => false, getPosition: () => [-1, 400] })
 })
 
 test('taskbar lyrics preserve translation preferences and fit both lines without changing saved settings', async () => {
@@ -194,11 +372,9 @@ test('desktop lyrics uses constrained dragging and locked hover unlock forwardin
 test('desktop lyrics uses programmatic bounds updates so a non-resizable window can shrink', async () => {
   const main = await source('./desktopLyrics.ts')
 
-  assert.match(
-    main,
-    /const bounds = win\.getBounds\(\)[\s\S]*?win\.setBounds\(\{[\s\S]*?width: settings\.windowWidth,[\s\S]*?height: settings\.windowHeight/
-  )
+  assert.match(main, /win\.setBounds\(nextBounds\)/)
   assert.doesNotMatch(main, /win\.setSize\(settings\.windowWidth, settings\.windowHeight\)/)
+  assert.doesNotMatch(main, /win\.setPosition\(/)
 })
 
 test('pause auto-hide makes the transparent native window click-through', async () => {

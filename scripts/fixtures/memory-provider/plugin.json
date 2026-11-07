@@ -1,0 +1,13 @@
+{
+  "id": "com.twilightecho.fixture.memory",
+  "name": "Memory benchmark fixture",
+  "version": "1.0.0",
+  "description": "Deterministic local benchmark provider",
+  "author": "Twilight Echo",
+  "license": "Apache-2.0",
+  "type": ["provider"],
+  "main": "index.mjs",
+  "engines": { "twilightEcho": ">=0.20.0" },
+  "apiVersion": 1,
+  "permissions": ["network", "library:read"]
+}

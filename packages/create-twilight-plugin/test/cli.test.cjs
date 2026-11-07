@@ -11,6 +11,27 @@ async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'twilight-plugin-cli-'))
 }
 
+test('packs the complete interface example as an API v4 page with all local assets', async () => {
+  const root = await tempDir()
+  const target = path.join(root, 'full-interface')
+  await fs.cp(path.resolve(__dirname, '../../../sdk/examples/full-interface'), target, {
+    recursive: true
+  })
+  const result = await packCommand([target])
+  const unpacked = path.join(root, 'unpacked')
+  await extract(result.outputFile, { dir: unpacked })
+  const manifest = validatePluginManifest(
+    JSON.parse(await fs.readFile(path.join(unpacked, 'plugin.json'), 'utf8'))
+  )
+  assert.equal(manifest.main, undefined)
+  assert.equal(manifest.apiVersion, 4)
+  assert.equal(manifest.contributes.experiences[0].launch, 'page')
+  assert.equal(manifest.contributes.experiences[0].bridgeVersion, 2)
+  assert.equal(manifest.contributes.experiences[0].entry, 'ui/index.html')
+  for (const file of ['index.html', 'app.js', 'bridge.js', 'app.css'])
+    assert.equal(await exists(path.join(unpacked, 'ui', file)), true)
+})
+
 test('packs the sidebar widget example with its custom HTML, scripts and styles', async () => {
   const root = await tempDir()
   const target = path.join(root, 'sidebar-widget')

@@ -7,28 +7,139 @@ import { LibraryDatabase } from '../library/libraryDatabase.ts'
 import { createPlaybackSessionStoreBundle } from './playbackSessionRepository.ts'
 import { createCorePlaybackRepository } from './corePlaybackRepository.ts'
 import { libraryQueueTrack } from '../../core/playback/libraryTrack.ts'
+import { importLegacyQueue } from '../../core/playback/legacyQueueImport.ts'
 
-test('persisted Zone owners never replace another session queue reference', async t => {
+test('persisted Zone owners never replace another session queue reference', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'core-zone-repository-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const db = new LibraryDatabase(':memory:')
   t.after(() => db.close())
-  db.replaceDocument({ version: 2, revision: 0, folders: [], exclusions: [], tracks: [{ id: 'one', filePath: 'D:/one.flac' }] })
-  const repositories = ['core:persisted-playback', 'zone:a:persisted', 'zone:b:persisted'].map((owner, i) =>
-    createCorePlaybackRepository(createPlaybackSessionStoreBundle(join(root, String(i))), {
-      syncLibraryQueueReferences: async (...args) => db.syncLibraryQueueReferences(...args)
-    }, owner))
+  db.replaceDocument({
+    version: 2,
+    revision: 0,
+    folders: [],
+    exclusions: [],
+    tracks: [{ id: 'one', filePath: 'D:/one.flac' }]
+  })
+  const repositories = ['core:persisted-playback', 'zone:a:persisted', 'zone:b:persisted'].map(
+    (owner, i) =>
+      createCorePlaybackRepository(
+        createPlaybackSessionStoreBundle(join(root, String(i))),
+        {
+          syncLibraryQueueReferences: async (...args) => db.syncLibraryQueueReferences(...args)
+        },
+        owner
+      )
+  )
   const ids: string[] = []
   for (const repository of repositories) {
-    const queue = db.createLibraryQueue({}); ids.push(queue.id)
+    const queue = db.createLibraryQueue({})
+    ids.push(queue.id)
     const row = db.readLibraryQueue(queue.id).items[0]
-    await repository.save({ version: 1, savedAt: new Date().toISOString(), mode: 'trackAndPosition', position: 0,
-      track: libraryQueueTrack(row.track!, row.queueEntryId), libraryQueue: { id: queue.id, revision: queue.revision, index: queue.index, entryId: queue.selectedEntryId! } }, 0)
+    await repository.save(
+      {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        mode: 'trackAndPosition',
+        position: 0,
+        track: libraryQueueTrack(row.track!, row.queueEntryId),
+        libraryQueue: {
+          id: queue.id,
+          revision: queue.revision,
+          index: queue.index,
+          entryId: queue.selectedEntryId!
+        }
+      },
+      0
+    )
   }
   db.sql.exec('UPDATE queues SET created_at=0')
   assert.equal(db.collectLibraryQueueGarbage(1), 0)
-  assert.ok(ids.every(id => db.getLibraryQueue(id).total === 1))
-  assert.deepEqual((await Promise.all(repositories.map(r => r.load()))).map(r => r?.data?.libraryQueue?.id), ids)
+  assert.ok(ids.every((id) => db.getLibraryQueue(id).total === 1))
+  assert.deepEqual(
+    (await Promise.all(repositories.map((r) => r.load()))).map((r) => r?.data?.libraryQueue?.id),
+    ids
+  )
+})
+
+test('publishing a Zone session releases only its scoped import lease, not another Zone or the primary import', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'core-scoped-publication-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  db.replaceDocument({
+    version: 2,
+    revision: 0,
+    folders: [],
+    exclusions: [],
+    tracks: [{ id: 'one', filePath: 'D:/one.flac' }]
+  })
+  const scope = 'zone-11111111-1111-4111-8111-111111111111'
+  const imports: Array<{
+    queue: Awaited<ReturnType<typeof importLegacyQueue>>['queue']
+    track: ReturnType<typeof libraryQueueTrack>
+  }> = []
+  for (const [i, current] of [
+    undefined,
+    scope,
+    'zone-22222222-2222-4222-8222-222222222222'
+  ].entries()) {
+    const track = libraryQueueTrack({ id: 'one', filePath: 'D:/one.flac' }, `occurrence-${i}`)
+    const result = await importLegacyQueue({
+      api: {
+        importLegacyPlaybackQueue: async (command) => db.importLegacyPlaybackQueue(command),
+        readQueue: async (...args) => db.readLibraryQueue(...args)
+      },
+      session: {
+        version: 1,
+        savedAt: '2026-11-03T00:00:00Z',
+        mode: 'trackAndPosition',
+        track,
+        queue: [track],
+        queueIndex: 0,
+        position: 12
+      },
+      sessionRevision: 1,
+      libraryRevision: db.getMetadata().revision,
+      scope: current
+    })
+    imports.push({ queue: result.queue, track })
+  }
+  const repository = createCorePlaybackRepository(
+    createPlaybackSessionStoreBundle(root),
+    {
+      syncLibraryQueueReferences: async (...args) => db.syncLibraryQueueReferences(...args)
+    },
+    `zone:${scope}:persisted`,
+    scope
+  )
+  const { queue, track } = imports[1]
+  await repository.save(
+    {
+      version: 1,
+      savedAt: '2026-11-03T00:00:00Z',
+      mode: 'trackAndPosition',
+      track,
+      position: 12,
+      libraryQueue: {
+        id: queue.id,
+        revision: queue.revision,
+        index: queue.index,
+        entryId: queue.selectedEntryId!
+      }
+    },
+    0
+  )
+  const owners = db.sql
+    .prepare('SELECT DISTINCT owner FROM queue_references ORDER BY owner')
+    .all()
+    .map((row) => row.owner)
+  assert.ok(owners.includes('core:legacy-import'))
+  assert.ok(owners.includes('core:legacy-import:zone-22222222-2222-4222-8222-222222222222'))
+  assert.ok(!owners.includes(`core:legacy-import:${scope}`))
+  db.sql.exec('UPDATE queues SET created_at=0')
+  assert.equal(db.collectLibraryQueueGarbage(1), 0)
+  assert.ok(imports.every((item) => db.getLibraryQueue(item.queue.id).total === 1))
 })
 
 test('current and last-good playback files retain their SQL queues across owner disposal and GC', async (t) => {
@@ -144,7 +255,6 @@ test('both active and last-good heart sessions protect their base queue from ref
     else assert.throws(() => db.getLibraryQueue(base.id), /does not exist/)
   }
 })
-
 
 test('saved playback tracks without filePath load cleanly and retain their SQL queue reference', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'core-no-filepath-repository-'))

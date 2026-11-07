@@ -6,6 +6,8 @@ const EXPLICIT_ALBUM_MARK = 0x100000
 const COOKIE_KEY = 'cookie'
 const PC_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0'
+const QR_PC_UA =
+  'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.17.204416'
 const TRANSIENT_LOGIN_ERROR_CODES = new Set([301, 502, 503, 460])
 const NCM_PLAYBACK_QUALITY_FALLBACKS = {
   auto: ['hires', 'lossless', 'exhigh', 'standard'],
@@ -72,7 +74,8 @@ export async function activate(context) {
       loginInstructions: '请使用网易云音乐 App 扫码登录',
       qrStatusCodes: { waiting: 801, scanned: 802, expired: 800, success: 803 },
       loginExtraActions: [
-        { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin' }
+        { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin',
+          primary: ncmApi.officialLoginAvailable !== false }
       ],
       streamingSections: [
         { id: 'daily', title: '每日推荐', icon: 'pi pi-calendar', method: 'fetchRecommendSongs' },
@@ -136,6 +139,7 @@ export async function activate(context) {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    reportListening,
     fetchIntelligenceList,
     followArtist,
     followUser,
@@ -176,7 +180,9 @@ function withPcUa(path) {
 }
 
 function withQrLoginParams(path) {
-  return appendQueryParams(path, { ua: 'pc' })
+  // The gateway forwards ua literally. Use one PC identity for key creation
+  // and polling; its native QR does not need a web fingerprint/chainId.
+  return appendQueryParams(path, { ua: QR_PC_UA, crypto: 'eapi' })
 }
 
 function shouldUsePcUa(path) {
@@ -1109,8 +1115,9 @@ async function logout() {
   resetCaches()
 }
 
-async function openOfficialLogin() {
-  const cookie = await ncmApi.officialLogin()
+async function openOfficialLogin(requestContext) {
+  const cookie = await ncmApi.officialLogin({ signal: requestContext?.signal })
+  throwIfRequestAborted(requestContext)
   if (!cookie || typeof cookie !== 'string' || !cookie.includes('MUSIC_U=')) {
     throw new Error('网易云官方登录未返回有效 Cookie')
   }
@@ -1176,14 +1183,14 @@ async function loginByEmailPassword(email, password) {
 }
 
 async function getQrKey() {
-  const data = await request('/login/qr/key')
+  const data = await request(withQrLoginParams('/login/qr/key'))
   return data.code === 200 && data.data?.unikey ? data.data.unikey : null
 }
 
 async function getQrImage(key) {
   const data = await request(
     withQrLoginParams(
-      `/login/qr/create?key=${encodeURIComponent(String(key))}&platform=web&qrimg=true`
+      `/login/qr/create?key=${encodeURIComponent(String(key))}&platform=pc&qrimg=true`
     )
   )
   if (data.code !== 200 || !data.data?.qrimg) return null
@@ -3021,6 +3028,45 @@ async function fetchPlayRecords(type = 1) {
     track.playCount = Number(item.playCount ?? item.playcount ?? 0) || 0
     track.score = Number(item.score ?? 0) || 0
     return track
+  })
+}
+
+// ── 实际听歌记录上报 (scrobble/v1) ──────────────────────────────────
+async function reportListening(report, requestContext) {
+  if (!report || !Number.isSafeInteger(report.id) || report.id <= 0 ||
+      !Number.isSafeInteger(report.accountId) || report.accountId <= 0 ||
+      !Number.isFinite(report.time) || report.time < 1 ||
+      !Number.isFinite(report.total) || report.total <= 0 || report.time > report.total) {
+    throw new Error('听歌同步需要有效的歌曲、账号和实际收听时长')
+  }
+  return runIdempotentProviderWrite('reportListening', report, requestContext, async () => {
+    const cookie = await getCookie()
+    if (!cookie) throw new Error('请先登录网易云音乐')
+    const profile = await ensureProfile()
+    throwIfRequestAborted(requestContext)
+    if (Number(profile.userId) !== report.accountId || await getCookie() !== cookie) {
+      throw new Error('网易云账号已切换，本次听歌记录已取消同步')
+    }
+    const path = appendQueryParams('/scrobble/v1', {
+      id: report.id,
+      time: Math.floor(report.time),
+      total: report.total,
+      name: String(report.name || '').slice(0, 200),
+      artist: String(report.artist || '').slice(0, 200),
+      ...(report.sourceid ? { sourceid: report.sourceid } : {}),
+      ...(report.level ? { level: report.level } : {}),
+      ...(report.bitrate ? { bitrate: report.bitrate } : {}),
+      // The gateway caches GET responses; every listening attempt needs its own key.
+      timestamp: Date.now(),
+      reportId: requestContext?.idempotencyKey || `${Date.now()}-${Math.random()}`
+    })
+    const result = await request(path, cookie, requestContext)
+    // Upstream can return code 200 with PLV/PLD failure text. Require both receipts.
+    if (result.code !== 200 || result.data !== 'scrobble_v1 上报成功' ||
+        !result.details?.plv?.fileName || !result.details?.pld?.fileName) {
+      throw new Error(result.msg || '网易云未确认完整听歌记录；为避免重复，本次不自动重试')
+    }
+    return { submitted: true }
   })
 }
 

@@ -1,0 +1,23 @@
+services:
+  server:
+    image: ${TWILIGHT_IMAGE:-twilight-echo-server:local}
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deploy/server/Dockerfile
+      target: runtime
+    user: "${TWILIGHT_UID:-1000}:${TWILIGHT_GID:-1000}"
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - type: bind
+        source: ${TWILIGHT_DATA:?Set TWILIGHT_DATA to an empty private data directory}
+        target: /data
+      - type: bind
+        source: ${TWILIGHT_MUSIC:?Set TWILIGHT_MUSIC to the music directory}
+        target: /music
+        read_only: true

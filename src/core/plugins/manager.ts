@@ -1,4 +1,5 @@
 import { randomUUID } from '../../shared/portableCrypto.ts'
+import { pluginManagementToken, type PluginManagementEdit } from '../../shared/pluginManagement.ts'
 import { PortableBuffer } from '../../shared/portableBytes.ts'
 import { coreFs, coreFsPromises, coreProcess } from '../ports/index.ts'
 const { existsSync, mkdirSync, statSync } = coreFs
@@ -100,6 +101,7 @@ import {
 import type { DynamicIslandConfig } from '../../shared/dynamicIsland.ts'
 import type { PlaylistImportApplyResult } from '../../shared/playlists.ts'
 import type { RemoteProviderSession } from '../../shared/remoteCoreBridge.ts'
+import { QQMUSIC_PLUGIN_ID, type QqMusicOfficialCredential } from '../../shared/qqmusicLogin.ts'
 
 export interface TwilightPluginManagerOptions {
   appVersion: string
@@ -117,12 +119,13 @@ export interface TwilightPluginManagerOptions {
     defaultEnabled?: boolean
   }>
   ncm?: {
+    officialLoginAvailable?: boolean
     request: (
       path: string,
       cookie?: string,
       options?: { signal?: AbortSignal; idempotencyKey?: string }
     ) => Promise<unknown>
-    officialLogin: () => Promise<string>
+    officialLogin: (signal?: AbortSignal) => Promise<string>
     getCachedSong: (songId: number) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
     prepareAutoMixSong?: (
@@ -133,6 +136,7 @@ export interface TwilightPluginManagerOptions {
     ) => Promise<string | null>
   }
   importPlaylists?: (notice: PluginPlaylistImportNotice) => Promise<PlaylistImportApplyResult[]>
+  qqmusicOfficialLogin?: (signal?: AbortSignal) => Promise<QqMusicOfficialCredential>
   autoMixEnabled?: () => boolean
   getPlaybackInfo: () => Promise<unknown> | unknown
   applyNativeDspPluginChain: (chainJson: string) => Promise<void> | void
@@ -224,10 +228,14 @@ interface RunningPlugin {
   proxySources?: Set<string>
 }
 
-interface InstallFromPathOptions {
+export interface InstallFromPathOptions {
   source?: TwilightPluginSource
   sourceLabel?: string
   evidence?: TwilightPluginInstallEvidence
+  /** Trusted Core caller supplies a confirmation bound to this staged package. */
+  confirm?: PluginManagerPlatform['confirmInstall']
+  expectedToken?: () => string
+  signal?: AbortSignal
 }
 
 interface StartPluginOptions {
@@ -300,6 +308,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly recordPlaybackIdentity: TwilightPluginManagerOptions['recordPlaybackIdentity']
   private readonly bundledPlugins: NonNullable<TwilightPluginManagerOptions['bundledPlugins']>
   private readonly ncm: TwilightPluginManagerOptions['ncm']
+  private readonly qqmusicOfficialLogin: TwilightPluginManagerOptions['qqmusicOfficialLogin']
   private readonly importPlaylists: TwilightPluginManagerOptions['importPlaylists']
   private readonly getPlaybackInfo: TwilightPluginManagerOptions['getPlaybackInfo']
   private readonly autoMixEnabled: TwilightPluginManagerOptions['autoMixEnabled']
@@ -321,6 +330,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly logSizes = new Map<string, number>()
   private readonly providerHealth = new Map<string, ProviderHealthRecord>()
   private readonly identityContexts = new Map<string, number>()
+  private readonly accountContexts = new Map<string, number>()
   private readonly stopOperations = new Map<string, Promise<void>>()
   private readonly internalNcmRequests = new Map<string, AbortController>()
   private readonly qishuiAuth = new QishuiAuthBridge()
@@ -344,6 +354,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.recordPlaybackIdentity = options.recordPlaybackIdentity
     this.bundledPlugins = options.bundledPlugins ?? []
     this.ncm = options.ncm
+    this.qqmusicOfficialLogin = options.qqmusicOfficialLogin
     this.importPlaylists = options.importPlaylists
     this.getPlaybackInfo = options.getPlaybackInfo
     this.autoMixEnabled = options.autoMixEnabled
@@ -467,7 +478,7 @@ export class TwilightPluginManager extends EventEmitter {
             return { installSource: candidateSource, manifest: candidateManifest }
           },
           requestConfirmation: ({ manifest: candidateManifest }, evidence) =>
-            this.requestTrustBasedInstall(candidateManifest, evidence)
+            (options.confirm ?? this.requestTrustBasedInstall.bind(this))(candidateManifest, evidence)
         })
         installSource = boundary.inspected.installSource
         manifest = boundary.inspected.manifest
@@ -481,10 +492,16 @@ export class TwilightPluginManager extends EventEmitter {
         await assertPluginTreeSafe(installSource)
         const evidence = { ...boundEvidence, manifestVerified: true }
         await confirmPluginInstallWithFreshEvidence(evidence, () =>
-          this.requestTrustBasedInstall(manifest, evidence)
+          (options.confirm ?? this.requestTrustBasedInstall.bind(this))(manifest, evidence)
         )
       }
       return await this.pluginOperationQueue.run(manifest.id, async () => {
+        options.signal?.throwIfAborted()
+        if (options.expectedToken) {
+          const current = await this.findDescriptor(manifest.id).catch(() => null)
+          if (pluginManagementToken(current) !== options.expectedToken())
+            throw Object.assign(new Error('扩展已改变，请重新预览安装包'), { code: 'STALE_REVISION' })
+        }
         const candidateRoot = join(transactionRoot, 'candidate')
         await cp(installSource, candidateRoot, {
           recursive: true,
@@ -582,6 +599,17 @@ export class TwilightPluginManager extends EventEmitter {
 
   async enable(id: string): Promise<TwilightPluginDescriptor> {
     return this.pluginOperationQueue.run(id, () => this.enableUnchecked(id))
+  }
+
+  async editManaged(edit: PluginManagementEdit, signal: AbortSignal): Promise<void> {
+    return this.pluginOperationQueue.run(edit.id, async () => {
+      signal.throwIfAborted()
+      if (pluginManagementToken(await this.findDescriptor(edit.id)) !== edit.token)
+        throw Object.assign(new Error('扩展状态已改变，请刷新'), { code: 'STALE_REVISION' })
+      if (edit.action === 'enable') await this.enableUnchecked(edit.id)
+      else if (edit.action === 'disable') await this.disableUnchecked(edit.id)
+      else await this.uninstallUnchecked(edit.id, { removeData: edit.removeData })
+    })
   }
 
   private async enableUnchecked(id: string): Promise<TwilightPluginDescriptor> {
@@ -766,6 +794,20 @@ export class TwilightPluginManager extends EventEmitter {
       this.identityContexts.get(owner.descriptor.id) ?? 0]) : 'unavailable'
   }
 
+  /** Playback writes must survive unrelated plugin settings/idempotency saves. */
+  providerAccountContext(providerId: string): string {
+    const owner = this.contributingPlugins().findLast(p => p.providers.some(p => p.id === providerId))
+    return owner ? JSON.stringify([owner.descriptor.id, owner.descriptor.version,
+      this.accountContexts.get(owner.descriptor.id) ?? 0]) : 'unavailable'
+  }
+
+  private accountContextChanged(pluginId: string): void {
+    this.accountContexts.set(pluginId, (this.accountContexts.get(pluginId) ?? 0) + 1)
+    for (const plugin of this.contributingPlugins())
+      if (plugin.descriptor.id === pluginId)
+        for (const provider of plugin.providers) this.emit('provider-account', provider.id)
+  }
+
   /** Persistent text caches use the stored account/config epoch; RPC sharing
    * still uses providerIdentityContext's in-session registration revision. */
   providerMetadataContext(providerId: string): string {
@@ -881,7 +923,10 @@ export class TwilightPluginManager extends EventEmitter {
     const changesContext = ['logout', 'openOfficialLogin', 'loginByPhonePassword',
       'loginByPhoneCaptcha', 'loginByEmailPassword', 'loginWithServer', 'getQrLogin',
       'checkQrLogin'].includes(method)
-    if (changesContext) this.identityContextChanged(running.descriptor.id)
+    if (changesContext) {
+      this.identityContextChanged(running.descriptor.id)
+      this.accountContextChanged(running.descriptor.id)
+    }
     const result = this.rpcCalls.request<unknown, ProviderRpcMetadata>({
       requestId,
       pluginId: running.descriptor.id,
@@ -944,7 +989,10 @@ export class TwilightPluginManager extends EventEmitter {
           }
         : {})
     })
-    return changesContext ? result.finally(() => this.identityContextChanged(running.descriptor.id)) : result
+    return changesContext ? result.finally(() => {
+      this.identityContextChanged(running.descriptor.id)
+      this.accountContextChanged(running.descriptor.id)
+    }) : result
   }
 
   async destroy(): Promise<void> {
@@ -1387,7 +1435,11 @@ export class TwilightPluginManager extends EventEmitter {
       manifest: toManifest(descriptor),
       mainPath: safeMainPath,
       dataDir: descriptor.paths.dataDir,
-      apiVersion: descriptor.apiVersion
+      apiVersion: descriptor.apiVersion,
+      browserLoginProviders: [
+        ...(this.ncm && this.ncm.officialLoginAvailable !== false ? ['ncm' as const] : []),
+        ...(this.qqmusicOfficialLogin ? ['qqmusic' as const] : [])
+      ]
     } satisfies PluginHostRequest)
     try {
       await activation
@@ -1552,8 +1604,9 @@ export class TwilightPluginManager extends EventEmitter {
     }
     if (message.kind === 'api-call') {
       const controller =
-        message.namespace === 'internal' &&
-        (message.method === 'ncmRequest' || message.method === 'ncmPrepareAutoMixSong')
+        (message.namespace === 'internal' &&
+          ['ncmRequest', 'ncmPrepareAutoMixSong', 'ncmOfficialLogin'].includes(message.method)) ||
+        (message.namespace === 'auth' && message.method === 'qqmusicOfficialLogin')
           ? new AbortController()
           : null
       const requestKey = controller ? this.internalNcmRequestKey(id, message.requestId) : null
@@ -1600,10 +1653,14 @@ export class TwilightPluginManager extends EventEmitter {
           value = await this.settings.get(storagePath, key)
         else if (['set', 'delete'].includes(message.method) && typeof key === 'string') {
           this.identityContextChanged(id)
+          if (key === 'cookie') this.accountContextChanged(id)
           try {
             if (message.method === 'set') await this.settings.set(storagePath, key, message.args[1])
             else await this.settings.delete(storagePath, key)
-          } finally { this.identityContextChanged(id) }
+          } finally {
+            this.identityContextChanged(id)
+            if (key === 'cookie') this.accountContextChanged(id)
+          }
         }
         else throw new Error('未知插件设置操作')
         return { kind: 'api-result', requestId: message.requestId, ok: true, value }
@@ -1633,6 +1690,16 @@ export class TwilightPluginManager extends EventEmitter {
         }
       }
       if (message.namespace === 'auth') {
+        if (message.method === 'qqmusicOfficialLogin') {
+          if (id !== QQMUSIC_PLUGIN_ID) throw new Error('QQ 音乐登录 API 仅允许 QQ 音乐插件访问')
+          this.requirePermission(id, 'network', 'twilight.qqmusicAuth')
+          if (!this.qqmusicOfficialLogin) throw new Error('当前宿主不支持 QQ 音乐官方窗口登录')
+          if (message.args.length) throw new Error('QQ 音乐官方登录不接受自定义网址或参数')
+          return {
+            kind: 'api-result', requestId: message.requestId, ok: true,
+            value: await this.qqmusicOfficialLogin(signal)
+          }
+        }
         return {
           kind: 'api-result',
           requestId: message.requestId,
@@ -1903,7 +1970,7 @@ export class TwilightPluginManager extends EventEmitter {
       })
     }
     if (message.method === 'ncmOfficialLogin') {
-      return this.ncm.officialLogin()
+      return this.ncm.officialLogin(signal)
     }
     if (message.method === 'ncmGetCachedSong') {
       const songId = Number(message.args[0])

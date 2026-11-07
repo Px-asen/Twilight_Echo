@@ -1,4 +1,7 @@
 /** Authenticated LAN bridge capabilities, independent of the desktop's internal command table. */
+import { REMOTE_LIBRARY_QUERIES, REMOTE_LIBRARY_COMMANDS } from './remoteLibrary.ts'
+import { DSP_LIBRARY_QUERIES, DSP_LIBRARY_COMMANDS } from './dspLibrary.ts'
+import { PLUGIN_MANAGEMENT_QUERIES, PLUGIN_MANAGEMENT_COMMANDS } from './pluginManagement.ts'
 export const REMOTE_CORE_BRIDGE_VERSION = 1
 
 /**
@@ -9,8 +12,9 @@ export const REMOTE_CORE_BRIDGE_VERSION = 1
 export const REMOTE_CORE_PROTOCOL_RANGE = { min: 1, max: 1 } as const
 
 /**
- * The single Core session served today, routed to a local DAC or an authorized Bridge. Any other zone is
- * refused, so a future server hosting several zones can route by `zoneId` without a protocol break.
+ * Legacy requests keep their original local-session envelope. Multi-Zone calls
+ * name their destination explicitly in a validated payload, never by silently
+ * retargeting existing playback or library requests.
  */
 export const REMOTE_CORE_LOCAL_ZONE = 'local'
 
@@ -40,6 +44,9 @@ export interface RemoteProviderSession {
 }
 
 export const REMOTE_CORE_QUERIES = [
+  ...PLUGIN_MANAGEMENT_QUERIES,
+  ...DSP_LIBRARY_QUERIES,
+  ...REMOTE_LIBRARY_QUERIES,
   'core.getSnapshot',
   'state.snapshot',
   'playback.getQueueWindow',
@@ -58,10 +65,14 @@ export const REMOTE_CORE_QUERIES = [
   'media.lyrics',
   'providers.session'
   , 'zones.state', 'audio.dsp', 'audio.dsp.status', 'audio.signalPath'
-  , 'zones.list', 'zones.dsp', 'zones.signalPath'
+  , 'zones.list', 'zones.dsp', 'zones.signalPath', 'groups.list', 'groups.signalPath'
+  , 'zones.queue.page'
 ] as const
 
 export const REMOTE_CORE_COMMANDS = [
+  ...PLUGIN_MANAGEMENT_COMMANDS,
+  ...DSP_LIBRARY_COMMANDS,
+  ...REMOTE_LIBRARY_COMMANDS,
   'playback.play',
   'playback.pause',
   'playback.stop',
@@ -74,5 +85,7 @@ export const REMOTE_CORE_COMMANDS = [
   'playback.replaceQueue',
   'catalog.play'
   , 'zones.select', 'audio.dsp.edit'
-  , 'zones.transport', 'zones.dsp.edit'
+  , 'zones.transport', 'zones.dsp.edit', 'zones.handoff'
+  , 'groups.create', 'groups.remove', 'groups.transport', 'groups.queueFromQuery', 'groups.settings.edit'
+  , 'zones.queue.load', 'zones.queue.edit', 'zones.queue.select'
 ] as const

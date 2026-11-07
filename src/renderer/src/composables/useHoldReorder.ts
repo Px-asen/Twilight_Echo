@@ -1,10 +1,14 @@
-import { onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { createReorderMotion, reorderScrollDelta } from '../app/motion/reorderMotion'
+import { observeMotionPolicy } from '../app/motion/policy'
 
 export function useHoldReorder(move: (from: string, to: string) => void, delay = 450) {
   const active = ref<string | null>(null)
   const over = ref<string | null>(null)
   let timer: ReturnType<typeof setTimeout> | undefined
   let frame = 0
+  let previousFrame = 0
+  let scrollRemainder = 0
   let origin: HTMLElement | null = null
   let group: HTMLElement | null = null
   let scroller: HTMLElement | null = null
@@ -16,25 +20,36 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
   let startX = 0
   let startY = 0
   let suppressClick = false
+  let trustedPointer = false
+  const motion = createReorderMotion()
+  const stopPolicy = observeMotionPolicy(document, motion.settle)
 
   function hitTest(): void {
-    const target = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-reorder-id]')
-    over.value =
-      target?.closest('[data-reorder-group]') === group ? (target?.dataset.reorderId ?? null) : null
+    over.value = motion.hit(x, y)
   }
-  function scroll(): void {
+  function scroll(time: number): void {
     if (!active.value) return
+    if (!origin?.isConnected) {
+      cancel()
+      return
+    }
     if (scroller) {
       const rect = scroller.getBoundingClientRect()
-      const delta = y < rect.top + 44 ? -12 : y > rect.bottom - 44 ? 12 : 0
+      const delta = reorderScrollDelta(y, rect.top, rect.bottom, (time - previousFrame) / 1000)
       if (delta) {
-        scroller.scrollTop += delta
+        // Chromium may round scrollTop, so carry fractional distance forward.
+        const total = delta + scrollRemainder
+        const whole = Math.trunc(total)
+        scrollRemainder = total - whole
+        scroller.scrollTop += whole
         hitTest()
-      }
+      } else scrollRemainder = 0
     }
+    previousFrame = time
+    motion.paint(x, y)
     frame = requestAnimationFrame(scroll)
   }
-  function cancel(): void {
+  function release(): void {
     clearTimeout(timer)
     cancelAnimationFrame(frame)
     document.removeEventListener('pointermove', pointerMove)
@@ -42,6 +57,8 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     document.removeEventListener('pointercancel', cancel)
     document.removeEventListener('keydown', keydown)
     window.removeEventListener('blur', cancel)
+    window.removeEventListener('resize', cancel)
+    if (origin?.hasPointerCapture(pointerId)) origin.releasePointerCapture(pointerId)
     active.value = null
     over.value = null
     origin = null
@@ -49,6 +66,12 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     scroller = null
     pending = null
     pointerType = ''
+    scrollRemainder = 0
+  }
+  function cancel(): void {
+    const settle = motion.finish()
+    release()
+    void nextTick(settle)
   }
   function activate(): void {
     if (pending === null || active.value !== null) return
@@ -57,6 +80,12 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     over.value = pending
     suppressClick = true
     window.getSelection()?.removeAllRanges()
+    if (origin && group) {
+      motion.begin(origin, group, scroller, startX, startY)
+      if (trustedPointer) origin.setPointerCapture(pointerId)
+      motion.paint(x, y)
+    }
+    previousFrame = performance.now()
     frame = requestAnimationFrame(scroll)
   }
   function keydown(event: KeyboardEvent): void {
@@ -83,11 +112,14 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     if (active.value) hitTest()
     const from = active.value
     const to = over.value
-    cancel()
+    motion.paint(x, y)
+    const settle = motion.finish()
+    release()
     if (from && to && from !== to) move(from, to)
+    void nextTick(settle)
   }
   function start(event: PointerEvent, id: string): void {
-    if (event.button !== 0 || !event.isPrimary) return
+    if (event.button !== 0 || !event.isPrimary || active.value) return
     suppressClick = false
     const target = event.target as HTMLElement
     if (
@@ -101,6 +133,7 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     group = origin.closest('[data-reorder-group]')
     pointerId = event.pointerId
     pointerType = event.pointerType
+    trustedPointer = event.isTrusted
     pending = id
     x = startX = event.clientX
     y = startY = event.clientY
@@ -115,6 +148,7 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     document.addEventListener('pointercancel', cancel)
     document.addEventListener('keydown', keydown)
     window.addEventListener('blur', cancel)
+    window.addEventListener('resize', cancel)
   }
   function click(event: MouseEvent): void {
     if (!suppressClick) return
@@ -122,6 +156,10 @@ export function useHoldReorder(move: (from: string, to: string) => void, delay =
     event.preventDefault()
     event.stopImmediatePropagation()
   }
-  onBeforeUnmount(cancel)
+  onBeforeUnmount(() => {
+    release()
+    motion.dispose()
+    stopPolicy()
+  })
   return { active, over, start, click, cancel }
 }

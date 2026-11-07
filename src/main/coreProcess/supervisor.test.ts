@@ -265,6 +265,61 @@ function command(epoch: string, requestId: string): CoreRequestEnvelope {
   return { kind: 'command', epoch, requestId, name: 'playback.pause', payload: {} }
 }
 
+test('official provider login survives the ordinary deadline and accepts a delayed account result', async (t) => {
+  const { supervisor, children } = fixture(t, { requestTimeoutMs: undefined })
+  supervisor.connect({ ...identity, permissions: [...identity.permissions, 'providers:call'] })
+  const started = supervisor.start()
+  const core = children[0].child
+  core.boot()
+  await started
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const request = supervisor.request(identity.id, {
+      kind: 'command', name: 'providers.call', epoch: core.epoch, requestId: 'official',
+      payload: { providerId: 'qq', method: 'openOfficialLogin', args: [] }
+    })
+    const ordinary = assert.rejects(supervisor.request(identity.id, command(core.epoch, 'ordinary')), {
+      code: 'OUTCOME_UNKNOWN'
+    })
+    t.mock.timers.tick(181_000)
+    await ordinary
+    assert.deepEqual(core.sent.filter(row => row.message.kind === 'core:cancel')
+      .map(row => row.message.requestId), ['ordinary'])
+    core.emit('message', {
+      kind: 'core:client-message', clientId: identity.id,
+      message: { kind: 'response', requestId: 'official', epoch: core.epoch, ok: true,
+        value: { loggedIn: true } }
+    })
+    assert.deepEqual(await request, { loggedIn: true })
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+for (const timeoutMs of [undefined, 50]) {
+  test(`official login is cancelled at its ${timeoutMs === undefined ? 'default' : 'configured'} deadline`, async (t) => {
+    const { supervisor, children } = fixture(t, { requestTimeoutMs: timeoutMs })
+    supervisor.connect({ ...identity, permissions: [...identity.permissions, 'providers:call'] })
+    const started = supervisor.start()
+    const core = children[0].child
+    core.boot()
+    await started
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      const rejected = assert.rejects(supervisor.request(identity.id, {
+        kind: 'command', name: 'providers.call', epoch: core.epoch, requestId: 'official',
+        payload: { providerId: 'ncm', method: 'openOfficialLogin', args: [] }
+      }), { code: 'OUTCOME_UNKNOWN' })
+      t.mock.timers.tick(timeoutMs ?? 245_000)
+      await rejected
+      assert.equal(core.sent.at(-1)?.message.kind, 'core:cancel')
+      assert.equal(core.sent.at(-1)?.message.requestId, 'official')
+    } finally {
+      t.mock.timers.reset()
+    }
+  })
+}
+
 test('only the fixed service registry launches children and transfers distinct private ports', async (t) => {
   const { supervisor, children } = fixture(t)
   const started = supervisor.start()
@@ -797,6 +852,32 @@ test('platform UI lifetime is cancelled before a crashed Core can be replaced', 
   await tick()
   assert.equal(supervisor.getStatus().phase, 'ready')
   assert.equal(old.sent.filter((row) => row.message.kind === 'core:platform-response').length, 0)
+})
+
+test('three fixed Zone audio leases have separate capacity and a failed peer does not reclaim others', async t => {
+  const { supervisor, children } = fixture(t)
+  const started = supervisor.start(), core = children[0].child
+  core.boot(); await started
+  const open = (leaseId: string, service: string) => core.emit('message', { kind: 'core:service-open', epoch: core.epoch, leaseId, service })
+  open('primary', 'audio')
+  for (let i = 0; i < 4; i++) open(`zone-${i}`, 'zone-audio')
+  assert.equal(children.length, 5)
+  assert.ok(children.slice(1).every(child => child.entry === '/registered/audio'))
+  assert.ok(core.sent.some(row => row.message.kind === 'core:service-error' && row.message.leaseId === 'zone-3'))
+  const primary = children[1].child, first = children[2].child, second = children[3].child
+  first.emit('exit', 1)
+  await tick()
+  assert.equal(primary.kills, 0); assert.equal(second.kills, 0)
+  assert.equal(supervisor.getStatus().phase, 'ready')
+  open('replacement', 'zone-audio')
+  assert.equal(children.length, 6)
+  second.stopReply = false
+  core.emit('message', { kind: 'core:service-close', epoch: core.epoch, leaseId: 'zone-1' })
+  const stop = second.sent.find(row => row.message.kind === 'supervisor:stop-audio')!
+  assert.ok(stop); assert.equal(second.kills, 0)
+  second.emit('message', { kind: 'supervisor:audio-stopped', requestId: stop.message.requestId, stopped: true })
+  await tick()
+  assert.equal(second.kills, 1); assert.equal(primary.kills, 0)
 })
 
 test('core:service-close silences audio and audio-test peers before terminating their process', async (t) => {

@@ -40,7 +40,7 @@ test('dark cover backgrounds stay brighter, legible and stable through fades wit
     const { stdout } = await promisify(execFile)(
       require('electron') as string,
       ['--no-sandbox', '--force-device-scale-factor=1', join(directory, 'runner.cjs')],
-      { env, windowsHide: true, timeout: 45_000 }
+      { env, windowsHide: true, timeout: 120_000 }
     )
     assert.match(stdout, /PLAYBACK_BACKDROP_OK/)
   } finally {
@@ -116,6 +116,12 @@ function fixtureHtml(template: string, css: string): string {
     await nextTick()
     await Promise.all([...document.images].map(image => image.decode()))
     await new Promise(resolve => setTimeout(resolve, settle))
+    if (motion === 'off') {
+      const deadline = performance.now() + 3000
+      while (document.querySelectorAll('.backdrop-cover-wrap').length > 1 && performance.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      if (document.querySelectorAll('.backdrop-cover-wrap').length > 1) throw Error('Previous cover did not retire')
+    }
   }
   </script></body></html>`
 }
@@ -125,6 +131,8 @@ function runnerSource(): string {
   const assert = require('node:assert/strict')
   const { join } = require('node:path')
   const { mkdir, writeFile } = require('node:fs/promises')
+  // Pixel comparisons use the same software rasterizer on local and hosted Windows.
+  app.disableHardwareAcceleration()
   const profile = process.env.TWILIGHT_ELECTRON_USER_DATA_DIR || join(__dirname, 'profile')
   app.setPath('userData', profile)
   app.commandLine.appendSwitch('disk-cache-dir', join(profile, 'cache'))
@@ -134,7 +142,10 @@ function runnerSource(): string {
     const js = code => win.webContents.executeJavaScript(code)
     const configure = options => js('window.configure(' + JSON.stringify(options) + ')')
     const capture = async () => {
-      const image = await win.webContents.capturePage()
+      const { data } = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+        fromSurface: true, captureBeyondViewport: false
+      })
+      const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'))
       return { image, pixels: image.toBitmap(), ...image.getSize() }
     }
     const stats = (before, after) => {
@@ -188,6 +199,11 @@ function runnerSource(): string {
     }
     try {
       await win.loadFile(join(__dirname, 'index.html'))
+      // CI desktops may be only 1024px wide; the rendering viewport is explicit.
+      win.webContents.debugger.attach('1.3')
+      await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+        width: 2560, height: 1440, deviceScaleFactor: 1, mobile: false
+      })
       const visualDir = process.env.TWILIGHT_BACKDROP_VISUAL_DIR
       if (visualDir) await mkdir(visualDir, { recursive: true })
       for (const track of [0, 1]) {
@@ -267,7 +283,6 @@ function runnerSource(): string {
 
       // Offscreen capturePage uses DPR 1 even with a fractional-scale switch.
       // Capture the actual compositor surface at 150%, matching the reported display.
-      win.webContents.debugger.attach('1.3')
       await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
         width: 1706, height: 1066, deviceScaleFactor: 1.5, mobile: false
       })

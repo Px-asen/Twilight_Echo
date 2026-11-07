@@ -35,9 +35,10 @@ The current explicit floors are enforced through root `pnpm-workspace.yaml` `ove
 second npm lockfile:
 
 - `form-data@4.0.6` fixes `GHSA-hmw2-7cc7-3qxx` / `CVE-2026-12143` (multipart CRLF injection).
-- `follow-redirects@1.16.1` fixes `GHSA-q3jh-wrc6-jgq8` and `GHSA-8r9p-f939-6h3c`
-  (cross-origin credential stripping and sensitive-header matching). The override covers nested Axios consumers.
-- `qs@6.16.0` fixes the tracked `qs` moderate advisories, including `GHSA-q8mj-m7cp-5q26` / `CVE-2026-8723` (comma-array stringify DoS).
+- `follow-redirects@1.16.2` retains the credential-stripping fixes and fixes `GHSA-mrwp-f3q8-3g9p`
+  (cross-realm sensitive-header arrays). The override covers nested Axios consumers.
+- `qs@6.16.1` retains earlier parser/stringifier fixes and fixes `GHSA-6pq8-jhm2-2vcw` (comma-array stringify DoS).
+- `node-forge@1.4.1` replaces the 1.4.0 RSA backport with the upstream fixed release, covering the additional ASN.1, TLS, PEM and authentication advisories. The obsolete patch and audit exception are removed; attack rejection, valid signatures and NCM encryption remain covered by integration tests.
 - Root `undici@6.29.1` retains the earlier header, WebSocket, retry, blob and cookie fixes and adds `GHSA-4qv8-2p9j-2685` / `GHSA-xjj6-f33q-929c` (EventSource memory and content-encoding DoS). The 7.x Electron download branch is pinned to `7.30.1`, also fixing `GHSA-f72v-6w45-q472` (SRI algorithm-token normalization).
 - `postcss@8.5.26` fixes `GHSA-fxqj-rqcc-2cmp` (sourceMappingURL arbitrary `.map` read).
 - `nanoid@3.3.18` fixes `GHSA-28wg-ghj8-5hjv` / `GHSA-2v37-7h3g-55p8` (infinite loop in generators, via vue → postcss).

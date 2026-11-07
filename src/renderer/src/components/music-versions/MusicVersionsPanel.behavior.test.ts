@@ -71,6 +71,8 @@ const runtime = `import '@renderer/assets/base.css'
 import {createApp,h,nextTick,shallowRef,ref} from 'vue'
 import Panel from '@renderer/components/music-versions/MusicVersionsPanel.vue'
 import {getMusicVersions,loadMusicVersions} from '@renderer/stores/musicVersions.ts'
+import {installVersionsCoreFixture} from '@renderer/components/music-versions/versionsCore.fixture.mjs'
+import {buildVersionCatalog} from '@renderer/components/music-versions/versionCatalog.ts'
 const expect=(value,message)=>{if(!value)throw new Error(message)}
 const tick=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,20));await nextTick()}
 const button=text=>[...document.querySelectorAll('button')].find(el=>el.textContent.trim()===text)
@@ -78,7 +80,7 @@ const click=async text=>{const el=button(text);expect(el&&!el.disabled,'button u
 const value=async(el,text)=>{el.value=text;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));await tick()}
 const track=(id,album='Release')=>({id,title:'Song '+id,artist:'Artist',album,albumId:album,filePath:'D:/music/'+id+'.flac',fileName:id+'.flac',source:'local',duration:180,size:1,cover:null,lyrics:null,discNumber:1,trackNumber:Number(id)+1})
 window.runVersionTests=async()=>{
-  localStorage.clear();loadMusicVersions()
+  const host=await installVersionsCoreFixture();await loadMusicVersions()
   const tracks=shallowRef(Array.from({length:10000},(_,i)=>track(String(i),i<2?'Release A':'Release B')))
   const key=ref(0),plays=[]
   const app=createApp({setup:()=>()=>h(Panel,{key:key.value,tracks:tracks.value,onPlay:items=>plays.push(items)})})
@@ -89,7 +91,7 @@ window.runVersionTests=async()=>{
   boxes()[0].click();boxes()[1].click();await tick()
   await value(document.querySelectorAll('.version-tools input')[1],'Studio')
   await click('关联为同版本的多个来源')
-  expect(localStorage.length===0,'preview must not persist')
+  expect(host.persisted().tracks.versions.length===0,'preview must not persist')
   expect(document.querySelector('.version-preview').textContent.includes('2 个来源'),'preview explains merge')
   await click('确认保存关系');expect(getMusicVersions().tracks.versions.length===1,'source group persisted')
   await click('清空选择');boxes()[1].click();await tick();await click('设为偏好来源');await click('确认保存关系')
@@ -114,12 +116,12 @@ window.runVersionTests=async()=>{
   await value(document.querySelectorAll('.version-tools input')[1],'Remastered');await click('修改版本标签');await click('确认保存关系')
   await click('撤回所选人工关系');await click('确认保存关系')
   expect(getMusicVersions().albums.families.length===0,'retract removes dangling family')
-  await click('修改版本标签');localStorage.setItem('twilight.music-versions.v1',JSON.stringify({version:1,tracks:{versions:[],families:[]},albums:{versions:[],families:[]}}));await click('确认保存关系')
+  await click('修改版本标签');host.external({version:1,tracks:{versions:[],families:[]},albums:{versions:[],families:[]}},false);await click('确认保存关系')
   expect(document.querySelector('[role=alert]').textContent.includes('其他窗口'),'stale preview detects external edit')
   await value(document.querySelector('select'),'tracks');await tick()
   app.unmount();document.querySelector('#app').replaceChildren()
 
-  localStorage.clear();loadMusicVersions()
+  host.external({version:1,tracks:{versions:[],families:[]},albums:{versions:[],families:[]}});await loadMusicVersions()
   const dbTracks=Array.from({length:125},(_,i)=>track('db-'+i,i<60?'Release A':'Release B'))
   const dbRequests=[],queryPlays=[]
   const filterTracks=query=>{
@@ -134,7 +136,7 @@ window.runVersionTests=async()=>{
     const matches=filterTracks(query),offset=query.offset||0,limit=query.limit||200
     return {tracks:matches.slice(offset,offset+limit),versions:{},total:matches.length,revision:8,offset}
   }
-  window.api={library:{database:{
+  const database={
     queryTracks,
     queryCollections:async(kind,query)=>{
       const groups=[...new Set(dbTracks.map(item=>'id:'+item.albumId))].map(id=>({id,name:id.slice(3),artist:'Artist',trackCount:filterTracks({albumId:id}).length,duration:3600,cover:null}))
@@ -142,7 +144,8 @@ window.runVersionTests=async()=>{
       const offset=query.offset||0,limit=query.limit||200
       return {items:matches.slice(offset,offset+limit),total:matches.length,revision:8,offset,letterOffsets:{}}
     }
-  }}}
+  }
+  host.query((name,payload)=>{if(name==='versions.catalog'){dbRequests.push(payload);const items=buildVersionCatalog(filterTracks(payload),payload.scope).map(item=>({key:item.key,track:item.tracks[0],trackCount:item.trackCount,albumId:payload.scope==='albums'?'id:'+item.tracks[0].albumId:undefined}));return {revision:8,total:items.length,offset:payload.offset,items:items.slice(payload.offset,payload.offset+payload.limit)}}if(name==='library.tracks')return queryTracks(payload);if(name==='library.collections')return database.queryCollections(payload.kind,payload.query);throw Error('Unexpected database query '+name)})
   const databaseApp=createApp({setup:()=>()=>h(Panel,{tracks:[],sqliteMode:true,onPlayQuery:(query,id)=>queryPlays.push({query,id})})})
   databaseApp.mount('#app');await tick()
   expect(document.querySelectorAll('.version-list > li').length===50,'SQLite track catalog renders only one page')

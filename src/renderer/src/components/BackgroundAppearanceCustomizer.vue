@@ -737,6 +737,8 @@ watch(tone, (value) => emit('toneChange', value === 'dark' ? 'dark' : 'pureWhite
                       :current-color="currentPartColor"
                       :player-mode="state.draft.playerBar?.mode ?? settings.playerBar.mode"
                       :now-playing-background="settings.nowPlayingBackground"
+                      :player-settings="settings"
+                      @player-settings="changeQuickSetting"
                       :busy="characterBusy"
                       @update:draft="state.draft = $event"
                       @update:player-target="setPlayerTarget"

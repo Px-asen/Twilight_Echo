@@ -153,6 +153,11 @@ html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active {
   box-shadow: inset 0 0 0 1px var(--sf-shell-line);
 }
 
+html[data-te-preset-layout='paper-light'] .side-menu .navigation-indicator {
+  --te-navigation-motion-radius: 13px;
+  background: var(--te-navigation-active);
+}
+
 html[data-te-preset-layout='paper-light'] .side-menu .menu-item.active::before {
   top: 9px;
   bottom: 9px;

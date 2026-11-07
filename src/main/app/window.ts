@@ -193,9 +193,12 @@ export function supportsWindowsAcrylic(): boolean {
 export interface CreateWindowOptions {
   /** Recreated after Afterglow: the renderer adopts live engine state. */
   afterglowRestore?: boolean
+  /** Keep the existing anchor and its media session until this window is ready. */
+  deferAfterglowAnchorHandoff?: boolean
 }
 
 export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
+  let awaitingAfterglowHandoff = options.deferAfterglowAnchorHandoff === true
   const windowStatePath = join(app.getPath('userData'), 'window-state.json')
   const windowState = readWindowState(windowStatePath)
   const requestedTransparency = runtime.appSettings.windowTransparency === true
@@ -254,8 +257,10 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
     () => runtime.appSettings.shortcutEnabled.closeWindow !== false
   )
   runtime.mainWindow.on('ready-to-show', () => {
+    awaitingAfterglowHandoff = false
     if (windowState?.maximized) runtime.mainWindow?.maximize()
     runtime.mainWindow?.show()
+    if (windowState?.fullScreen) runtime.mainWindow?.setFullScreen(true)
   })
 
   clearHiddenMainWindowUnloadTimer()
@@ -305,7 +310,8 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
           saveWindowState(windowStatePath, {
             width: bounds.width,
             height: bounds.height,
-            maximized: createdMainWindow.isMaximized()
+            maximized: createdMainWindow.isMaximized(),
+            fullScreen: createdMainWindow.isFullScreen()
           })
         } catch {
           // Ignore bounds persistence errors during background teardown.
@@ -330,12 +336,14 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
       saveWindowState(windowStatePath, {
         width: bounds.width,
         height: bounds.height,
-        maximized: win.isMaximized()
+        maximized: win.isMaximized(),
+        fullScreen: win.isFullScreen()
       })
     } catch (error) {
       console.error('[window] Unable to save window size:', error)
     }
-    const closeBehavior = runtime.appSettings.closeWindowBehavior ?? 'quit'
+    const closeBehavior =
+      runtime.appSettings.closeWindowBehavior ?? (process.platform === 'darwin' ? 'tray' : 'quit')
     const coreUnready = getCoreApplication()?.snapshot?.() === null
     if (
       !runtime.forceQuit &&
@@ -374,7 +382,7 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
 
   runtime.mainWindow.on('closed', () => {
     // Afterglow owns the unload: the tray, taskbar anchor and SMTC survive it.
-    if (afterglowUnloading) {
+    if (afterglowUnloading || awaitingAfterglowHandoff) {
       afterglowUnloading = false
     } else {
       destroyTaskbarThumbarButtons()
@@ -395,10 +403,10 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
 
   if (process.platform === 'win32') {
     try {
-      if (getCoreApplication()) {
+      if (getCoreApplication() && !options.deferAfterglowAnchorHandoff) {
         rebindWindowsSmtc()
         destroyAfterglowAnchorWindow()
-      } else initializeWindowsSmtc()
+      } else if (!getCoreApplication()) initializeWindowsSmtc()
     } catch (error) {
       console.warn('[smtc] unable to initialize Windows media session:', error)
     }
@@ -406,7 +414,7 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
     // only after that identity is stable, otherwise the Shell can regroup the
     // window and discard a toolbar registered under the old identity.
     try {
-      createTaskbarThumbarButtons()
+      if (!options.deferAfterglowAnchorHandoff) createTaskbarThumbarButtons()
     } catch (error) {
       console.warn('[thumbar] unable to initialize taskbar buttons:', error)
     }

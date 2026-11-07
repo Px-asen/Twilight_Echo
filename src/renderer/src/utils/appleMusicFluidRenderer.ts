@@ -321,8 +321,8 @@ void main() {
       + warpAmp * 0.55 * sin((aPos.x - aPos.y) * 3.9 + u_phase * 0.36)
   );
 
-  vec4 packed = texture2D(u_blurredTex, clamp(warpedUv, 0.005, 0.995));
-  vec3 lab = vec3(packed.r, packed.g - 0.5, packed.b - 0.5);
+  vec4 encodedLab = texture2D(u_blurredTex, clamp(warpedUv, 0.005, 0.995));
+  vec3 lab = vec3(encodedLab.r, encodedLab.g - 0.5, encodedLab.b - 0.5);
 
   // Branch-free post-blur chroma recovery keeps transitions jewel-saturated instead of pastel-flat
   float c = length(lab.yz);

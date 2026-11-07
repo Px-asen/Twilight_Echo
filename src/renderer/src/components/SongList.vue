@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import PlaybackIcon from '@renderer/components/icons/PlaybackIcon.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
+import MotionTransition from '@renderer/components/MotionTransition.vue'
+import type { PageMotionName } from '@renderer/app/motion/policy'
 import { useHoldReorder } from '@renderer/composables/useHoldReorder'
 import NativeContextMenu from '@renderer/components/NativeContextMenu.vue'
 import { useLocalPlaylistOrder } from '@renderer/components/song-list/useLocalPlaylistOrder'
@@ -20,11 +22,15 @@ import {
   watch
 } from 'vue'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
-const GenreWorkspacePanel = defineAsyncComponent(() => import('./music-genres/GenreWorkspacePanel.vue'))
+const GenreWorkspacePanel = defineAsyncComponent(
+  () => import('./music-genres/GenreWorkspacePanel.vue')
+)
 const GenreBrowsePanel = defineAsyncComponent(() => import('./music-genres/GenreBrowsePanel.vue'))
 const MusicTagsPanel = defineAsyncComponent(() => import('./music-tags/MusicTagsPanel.vue'))
 const MusicFocusPanel = defineAsyncComponent(() => import('./music-focus/MusicFocusPanel.vue'))
-const MusicExplorationSearch = defineAsyncComponent(() => import('./music-exploration/MusicExplorationSearch.vue'))
+const MusicExplorationSearch = defineAsyncComponent(
+  () => import('./music-exploration/MusicExplorationSearch.vue')
+)
 import { useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useCoreConnection } from '../stores/coreConnection.ts'
@@ -127,7 +133,7 @@ const props = defineProps<{
   category: string
   filter: string | null
   hasPlayer: boolean
-  transitionName: 'page-down' | 'page-up'
+  transitionName: PageMotionName
   previewTracks?: Track[]
   recentProviderId?: string
   returnFromDetail?: () => void
@@ -254,7 +260,8 @@ const recentSourceOptions = computed(() => {
 })
 
 const activeRecentSourceLabel = computed(
-  () => recentSourceOptions.value.find((o) => o.id === recentSource.value)?.label ?? recentSource.value
+  () =>
+    recentSourceOptions.value.find((o) => o.id === recentSource.value)?.label ?? recentSource.value
 )
 
 function selectRecentSource(sourceId: string): void {
@@ -333,7 +340,9 @@ function previewGroups(kind: 'artist' | 'album' | 'genre'): GridItem[] {
             const values = splitGenreValues(track.genre, separators)
             return values.length ? values : ['未知流派']
           })()
-        : kind === 'artist' ? libraryArtistNames(track) : [track[kind] || '未知']
+        : kind === 'artist'
+          ? libraryArtistNames(track)
+          : [track[kind] || '未知']
     for (const name of names) {
       const key = kind === 'album' ? String(track.albumId ?? name) : name
       let group = groups.get(key)
@@ -365,8 +374,7 @@ const genres = computed(() => {
   return list.sort((left, right) => {
     if (mode === 'trackCount-desc') {
       return (
-        (right.trackCount ?? 0) - (left.trackCount ?? 0) ||
-        compareGenreNames(left.name, right.name)
+        (right.trackCount ?? 0) - (left.trackCount ?? 0) || compareGenreNames(left.name, right.name)
       )
     }
     if (mode === 'added-newest') {
@@ -555,8 +563,7 @@ const viewTitle = computed(() => {
 })
 
 const hasInlineGridStatus = computed(
-  () =>
-    props.category === 'folders' || props.category === 'artists' || props.category === 'albums'
+  () => props.category === 'folders' || props.category === 'artists' || props.category === 'albums'
 )
 const gridStatsText = computed(() => {
   if (
@@ -641,7 +648,8 @@ const albumDurationText = computed(() => {
   const album = currentAlbum.value
   const seconds =
     album?.duration ??
-    album?.tracks?.reduce((sum, track) => sum + Math.max(0, track.duration || 0), 0) ?? 0
+    album?.tracks?.reduce((sum, track) => sum + Math.max(0, track.duration || 0), 0) ??
+    0
   const minutes = Math.round(seconds / 60)
   if (seconds <= 0) return ''
   if (minutes < 1) return '不足 1 分钟'
@@ -822,7 +830,8 @@ watch(
 const databaseQuery = computed(() =>
   databaseTableEnabled.value &&
   databaseHistoryReady.value &&
-  (!(isPlaylistDetail.value || props.category === 'recent') || databasePlaylistState.value.id !== null)
+  (!(isPlaylistDetail.value || props.category === 'recent') ||
+    databasePlaylistState.value.id !== null)
     ? {
         ...libraryTrackQuery(libraryViewState.value, debouncedSearchQuery.value),
         ...databaseDetailScope.value,
@@ -1273,7 +1282,8 @@ const databaseGridSelection = computed(() => ({
                 ? { sort: 'addedAt' as const, direction: 'desc' as const }
                 : {
                     collectionSort: 'label' as const,
-                    direction: genreSort.value === 'name-desc' ? ('desc' as const) : ('asc' as const)
+                    direction:
+                      genreSort.value === 'name-desc' ? ('desc' as const) : ('asc' as const)
                   }
             : {})
         }
@@ -1316,14 +1326,19 @@ const databaseAlbumPages = createLibraryCollectionPages(
 )
 const databaseAlbumState = databaseAlbumPages.state
 const currentAlbumReleaseDate = useAlbumReleaseDate(() => currentAlbum.value)
-watch([
-  () => core.state.value?.epoch,
-  () => core.state.value?.entityMetadataContentRevision ?? core.state.value?.entityMetadataRevision,
-  () => core.state.value?.settingsRevision
-], () => {
-  if (databaseGridEnabled.value && databaseGridKind.value === 'albums') databaseCollections.invalidate()
-  if (databaseAlbumEnabled.value) databaseAlbumPages.invalidate()
-})
+watch(
+  [
+    () => core.state.value?.epoch,
+    () =>
+      core.state.value?.entityMetadataContentRevision ?? core.state.value?.entityMetadataRevision,
+    () => core.state.value?.settingsRevision
+  ],
+  () => {
+    if (databaseGridEnabled.value && databaseGridKind.value === 'albums')
+      databaseCollections.invalidate()
+    if (databaseAlbumEnabled.value) databaseAlbumPages.invalidate()
+  }
+)
 watch(
   () => ({ enabled: databaseAlbumEnabled.value, albumId: props.filter?.slice(6) }),
   ({ enabled, albumId }) => databaseAlbumPages.setQuery(enabled ? 'albums' : null, { albumId }),
@@ -1780,8 +1795,8 @@ function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): vo
 
 useEscapeToClose(showContextMenu, closeContextMenu)
 
-// Query totals can arrive while out-in still displays the previous (shorter)
-// table. Wait for the new view before restoring a deep absolute position.
+// Query totals can arrive before the new table has mounted. Restore deep
+// positions only against the incoming view, never its frozen outgoing painter.
 const scrollViewReady = ref(true)
 watch(
   currentLibraryViewKey,
@@ -1850,17 +1865,24 @@ void tbodyRef.value
 const albumTracksRef = ref<HTMLElement | null>(null)
 const trackToolbarRef = ref<HTMLElement | null>(null)
 let albumToolbarObserver: ResizeObserver | undefined
-watch([albumTracksRef, trackToolbarRef, isAlbumDetail], ([main, toolbar, album]) => {
-  albumToolbarObserver?.disconnect()
-  if (!album || !main || !toolbar) return
-  const measure = () => {
-    main.style.setProperty('--album-toolbar-height', toolbar.getBoundingClientRect().height + 'px')
-    updateViewportHeight()
-  }
-  measure()
-  albumToolbarObserver = new ResizeObserver(measure)
-  albumToolbarObserver.observe(toolbar)
-}, { flush: 'post' })
+watch(
+  [albumTracksRef, trackToolbarRef, isAlbumDetail],
+  ([main, toolbar, album]) => {
+    albumToolbarObserver?.disconnect()
+    if (!album || !main || !toolbar) return
+    const measure = () => {
+      main.style.setProperty(
+        '--album-toolbar-height',
+        toolbar.getBoundingClientRect().height + 'px'
+      )
+      updateViewportHeight()
+    }
+    measure()
+    albumToolbarObserver = new ResizeObserver(measure)
+    albumToolbarObserver.observe(toolbar)
+  },
+  { flush: 'post' }
+)
 onBeforeUnmount(() => albumToolbarObserver?.disconnect())
 const visibleTracks = computed(() =>
   databaseTableEnabled.value
@@ -1975,7 +1997,7 @@ const QUICK_GENRE_SUGGESTIONS: readonly string[] = [
 ]
 
 function readStoredCustomGenres(): string[] {
-  if (typeof window === 'undefined') return []
+  if (props.previewTracks || typeof window === 'undefined') return []
   try {
     const raw = window.localStorage.getItem(CUSTOM_GENRES_STORAGE_KEY)
     if (!raw) return []
@@ -1990,7 +2012,7 @@ function readStoredCustomGenres(): string[] {
 }
 
 function writeStoredCustomGenres(names: readonly string[]): void {
-  if (typeof window === 'undefined') return
+  if (props.previewTracks || typeof window === 'undefined') return
   try {
     window.localStorage.setItem(CUSTOM_GENRES_STORAGE_KEY, JSON.stringify(names))
   } catch {
@@ -2063,12 +2085,7 @@ async function loadGenreCoverTracks(): Promise<void> {
   }
 }
 watch(
-  [
-    () => props.category,
-    showGrid,
-    () => libraryStorage.mode.value,
-    musicStore.libraryRevision
-  ],
+  [() => props.category, showGrid, () => libraryStorage.mode.value, musicStore.libraryRevision],
   ([category, grid, mode]) => {
     if (category === 'genres' && grid && mode === 'sqlite' && !props.previewTracks) {
       void loadGenreCoverTracks()
@@ -2826,10 +2843,14 @@ watch(
       let favoriteCount = 0
       for (let offset = 0; offset < tracks.length; offset += 200) {
         const page = tracks.slice(offset, offset + 200)
-        const result = await core.query('playlists.favorites', {
-          revision,
-          items: page.map(trackInput)
-        }, controller.signal)
+        const result = await core.query(
+          'playlists.favorites',
+          {
+            revision,
+            items: page.map(trackInput)
+          },
+          controller.signal
+        )
         count += result.contains.length
         favoriteCount += result.contains.filter(Boolean).length
       }
@@ -3166,7 +3187,7 @@ useLocatePlayingTrack({
         (!!currentTrack.value && getLogicalTrackSource(currentTrack.value) === 'local'))
   ),
   rowHeight,
-  database: { enabled: databaseTableEnabled, locate: locateCurrentTrack }
+  database: { enabled: databaseTableEnabled, query: databaseQuery, read: libraryApi.queryTracks, locate: locateCurrentTrack }
 })
 
 function collectionLetterDisabled(letter: string): boolean {
@@ -3283,7 +3304,9 @@ function finishViewSwitchAndRestoreScroll(): void {
   restoreScrollAndMeasure()
 }
 
-function locateCurrentTrack(): void {
+let locateViewport: import('../utils/scrollToTopButton').ScrollViewport | undefined
+function locateCurrentTrack(_id?: string, viewport?: import('../utils/scrollToTopButton').ScrollViewport): void {
+  locateViewport = viewport
   if (databaseTableEnabled.value && currentTrack.value) {
     databasePages.locate(currentTrack.value.id)
     return
@@ -3296,7 +3319,7 @@ watch(
   () => databasePageState.value.page,
   (page) => {
     if (!page || page.anchorIndex === undefined || page.anchorIndex < 0) return
-    void nextTick(() => scrollToTrack(page.anchorIndex!))
+    void nextTick(() => { scrollToTrack(page.anchorIndex!, locateViewport); locateViewport = undefined })
   },
   { flush: 'post' }
 )
@@ -3335,10 +3358,12 @@ watch(
         @select="applySourceSelection"
       />
     </Teleport>
-    <Transition
+    <MotionTransition
       :name="localTransitionName"
-      mode="out-in"
+      snapshot
+      wait-for-enter
       @before-leave="beginViewSwitch"
+      @enter="finishViewSwitchAndRestoreScroll"
       @after-enter="finishViewSwitchAndRestoreScroll"
       @enter-cancelled="finishViewSwitchAndRestoreScroll"
       @leave-cancelled="finishViewSwitchAndRestoreScroll"
@@ -3509,11 +3534,7 @@ watch(
               >
                 添加流派
               </button>
-              <button
-                type="button"
-                class="genre-add-cancel"
-                @click="showAddGenreBar = false"
-              >
+              <button type="button" class="genre-add-cancel" @click="showAddGenreBar = false">
                 收起
               </button>
             </div>
@@ -3602,9 +3623,7 @@ watch(
             v-else-if="
               databaseGridEnabled &&
               category !== 'playlists' &&
-              (category === 'genres'
-                ? genreMosaicItems.length === 0
-                : collectionResultCount === 0)
+              (category === 'genres' ? genreMosaicItems.length === 0 : collectionResultCount === 0)
             "
             class="empty-state"
           >
@@ -3642,7 +3661,9 @@ watch(
             <p class="empty-hint">请更改流派筛选或搜索条件</p>
           </div>
           <div
-            v-else-if="!databaseGridEnabled && category === 'genres' && genreMosaicItems.length === 0"
+            v-else-if="
+              !databaseGridEnabled && category === 'genres' && genreMosaicItems.length === 0
+            "
             class="empty-state"
           >
             <p class="empty-text">暂无流派</p>
@@ -3726,7 +3747,9 @@ watch(
                     ×
                   </button>
                   <div class="genre-card-overlay">
-                    <span v-if="item.trackCount" class="genre-card-count">{{ item.trackCount }} 首</span>
+                    <span v-if="item.trackCount" class="genre-card-count"
+                      >{{ item.trackCount }} 首</span
+                    >
                     <div class="genre-card-title" :title="item.name">{{ item.name }}</div>
                   </div>
                 </div>
@@ -3797,14 +3820,23 @@ watch(
                         >
                           <template #placeholder>
                             <div class="artist-cover-placeholder">
-                              <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
+                                <ThemeIcon
+                                  class="library-placeholder-icon"
+                                  icon-slot="library.artist"
+                                />
                             </div>
                           </template>
                         </CoverImg>
                         <div v-else class="artist-cover-placeholder">
-                          <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
+                            <ThemeIcon
+                              class="library-placeholder-icon"
+                              icon-slot="library.artist"
+                            />
                         </div>
-                        <ArtistImageCredit v-if="artist.attribution" :attribution="artist.attribution" />
+                          <ArtistImageCredit
+                            v-if="artist.attribution"
+                            :attribution="artist.attribution"
+                          />
                         <div class="artist-name" :title="artist.name">{{ artist.name }}</div>
                       </ArtistMetadataIdentity>
                       <div class="artist-count">{{ item.trackCount }} 首</div>
@@ -3981,10 +4013,21 @@ watch(
               @add-to-playlist="addCurrentAlbumToPlaylist"
             />
             <div ref="albumTracksRef" class="collection-tracks-main">
-          <div ref="trackToolbarRef" class="song-list-header" :class="{ 'album-detail-toolbar': !!currentAlbum || isArtistDetail }">
+                <div
+                  ref="trackToolbarRef"
+                  class="song-list-header"
+                  :class="{ 'album-detail-toolbar': !!currentAlbum || isArtistDetail }"
+                >
             <div v-if="isAlbumDetail" class="album-tracks-heading">
-              <h3>歌曲</h3><span>{{ tableTrackCount }} 首</span>
-              <span v-if="databaseReadPending" class="album-tracks-loading" role="status" aria-live="polite">正在读取…</span>
+                    <h3>歌曲</h3>
+                    <span>{{ tableTrackCount }} 首</span>
+                    <span
+                      v-if="databaseReadPending"
+                      class="album-tracks-loading"
+                      role="status"
+                      aria-live="polite"
+                      >正在读取…</span
+                    >
             </div>
             <div v-if="!isAlbumDetail && !isArtistDetail" class="header-left">
               <div class="title-group">
@@ -4249,7 +4292,10 @@ watch(
                         type="checkbox"
                         :checked="libraryViewState.filters.lossless"
                         @change="
-                          setLibraryFilter('lossless', ($event.target as HTMLInputElement).checked)
+                                setLibraryFilter(
+                                  'lossless',
+                                  ($event.target as HTMLInputElement).checked
+                                )
                         "
                       />
                       <span>无损</span>
@@ -4419,8 +4465,12 @@ watch(
                   v-model="searchQuery"
                   type="text"
                   class="search-input"
-                  :placeholder="isAlbumDetail ? '搜索本专辑歌曲' : '搜索歌曲、歌手、专辑或文件夹'"
-                  :aria-label="isAlbumDetail ? '搜索本专辑歌曲' : '搜索歌曲、歌手、专辑或文件夹'"
+                        :placeholder="
+                          isAlbumDetail ? '搜索本专辑歌曲' : '搜索歌曲、歌手、专辑或文件夹'
+                        "
+                        :aria-label="
+                          isAlbumDetail ? '搜索本专辑歌曲' : '搜索歌曲、歌手、专辑或文件夹'
+                        "
                   @focus="searchInputFocused = true"
                   @blur="searchInputFocused = false"
                 />
@@ -4433,7 +4483,11 @@ watch(
                   title="搜索网络歌曲"
                 >
                   <span>网络搜索</span>
-                  <input v-model="searchOnlineSongs" type="checkbox" aria-label="搜索网络歌曲" />
+                        <input
+                          v-model="searchOnlineSongs"
+                          type="checkbox"
+                          aria-label="搜索网络歌曲"
+                        />
                   <span class="online-search-toggle-track" aria-hidden="true"></span>
                 </label>
               </div>
@@ -4450,9 +4504,15 @@ watch(
               scope="library-focus"
             />
           </div>
-          <p v-if="category === 'recent' && recentSourceError" class="repair-status" role="alert">
+                <p
+                  v-if="category === 'recent' && recentSourceError"
+                  class="repair-status"
+                  role="alert"
+                >
             {{ recentSourceError }}
-            <button type="button" class="selection-btn" @click="loadRecentSources">重试</button>
+                  <button type="button" class="selection-btn" @click="loadRecentSources">
+                    重试
+                  </button>
           </p>
           <EntityMetadataPanel
             v-if="metadataTarget && !isArtistDetail && !isAlbumDetail"
@@ -4480,7 +4540,9 @@ watch(
             role="alert"
           >
             {{ databaseReadError }}
-            <button type="button" class="selection-btn" @click="retryDatabaseRead">重试</button>
+                  <button type="button" class="selection-btn" @click="retryDatabaseRead">
+                    重试
+                  </button>
           </p>
           <div
             v-if="showUnifiedSearchStatus"
@@ -4511,7 +4573,10 @@ watch(
               </span>
             </div>
           </div>
-          <MusicExplorationSearch v-if="!props.previewTracks && !isArtistDetail && debouncedSearchQuery.trim()" :query="debouncedSearchQuery" />
+                <MusicExplorationSearch
+                  v-if="!props.previewTracks && !isArtistDetail && debouncedSearchQuery.trim()"
+                  :query="debouncedSearchQuery"
+                />
           <div
             v-if="databaseReadError && databasePageState.total === null"
             class="empty-state"
@@ -4519,7 +4584,9 @@ watch(
           >
             <p class="empty-text">曲库读取失败</p>
             <p class="empty-hint">{{ databaseReadError }}</p>
-            <button type="button" class="selection-btn" @click="retryDatabaseRead">重试</button>
+                  <button type="button" class="selection-btn" @click="retryDatabaseRead">
+                    重试
+                  </button>
           </div>
           <div
             v-else-if="databaseReadPending && databasePageState.total === null"
@@ -4687,7 +4754,9 @@ watch(
                 </tr>
                 <template
                   v-for="(track, index) in visibleTracks"
-                  :key="track ? tableTrackKey(track) : `pending:${visibleRange.start + index}`"
+                        :key="
+                          track ? tableTrackKey(track) : `pending:${visibleRange.start + index}`
+                        "
                 >
                   <tr
                     v-if="track"
@@ -4719,7 +4788,10 @@ watch(
                       <span v-else>{{ trackListNumber(track, Number(index)) }}</span>
                     </td>
                     <td v-if="!isAlbumDetail || hasSelection" class="col-cover">
-                      <div class="track-cover-cell" :class="{ 'has-selection': hasSelection }">
+                            <div
+                              class="track-cover-cell"
+                              :class="{ 'has-selection': hasSelection }"
+                            >
                         <label
                           v-if="hasSelection"
                           class="track-select-checkbox"
@@ -4812,9 +4884,13 @@ watch(
                     :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
                   >
                     <td class="col-index">{{ visibleRange.start + index + 1 }}</td>
-                    <td v-if="!isAlbumDetail || hasSelection" class="col-cover"><span class="pending-cover"></span></td>
+                          <td v-if="!isAlbumDetail || hasSelection" class="col-cover">
+                            <span class="pending-cover"></span>
+                          </td>
                     <td class="col-info"><span class="pending-line"></span></td>
-                    <td v-if="!isAlbumDetail" class="col-album"><span class="pending-line"></span></td>
+                          <td v-if="!isAlbumDetail" class="col-album">
+                            <span class="pending-line"></span>
+                          </td>
                     <td class="col-duration"></td>
                   </tr>
                 </template>
@@ -4883,7 +4959,9 @@ watch(
                 </div>
                 <div
                   v-if="
-                    canViewSelectedContext && selectedTrack?.album.trim() && contextActionCount <= 1
+                          canViewSelectedContext &&
+                          selectedTrack?.album.trim() &&
+                          contextActionCount <= 1
                   "
                   class="menu-item"
                   data-te-interactive
@@ -5061,7 +5139,11 @@ watch(
                     </div>
                   </div>
                 </div>
-                <div class="menu-item" data-te-interactive @click="customizeLibraryAppearance">
+                      <div
+                        class="menu-item"
+                        data-te-interactive
+                        @click="customizeLibraryAppearance"
+                      >
                   <i class="ph ph-palette"></i>
                   <span>定制此区域外观</span>
                 </div>
@@ -5073,7 +5155,7 @@ watch(
           </div>
         </template>
       </div>
-    </Transition>
+    </MotionTransition>
 
     <input
       ref="playlistImportInput"
@@ -5101,13 +5183,13 @@ watch(
 
     <!-- Create Playlist Dialog -->
     <Teleport to="body">
-      <Transition name="dialog-fade">
+      <NativeDialogTransition overlay>
         <div
           v-if="showCreatePlaylistDialog"
           class="dialog-overlay"
           @click.self="dismissCreatePlaylistDialog"
         >
-          <div class="create-playlist-dialog" @click.stop>
+          <div class="create-playlist-dialog" data-dialog-panel @click.stop>
             <h3 class="dialog-title">创建歌单</h3>
             <input
               v-model="newPlaylistName"
@@ -5130,7 +5212,7 @@ watch(
             </div>
           </div>
         </div>
-      </Transition>
+      </NativeDialogTransition>
     </Teleport>
 
     <NativeDialogTransition>
@@ -5179,9 +5261,10 @@ watch(
     </Teleport>
 
     <Teleport to="body">
-      <Transition name="dialog-fade">
+      <NativeDialogTransition overlay>
         <div v-if="showTagManager" class="dialog-overlay" @click.self="closeTagManager">
           <LocalLibraryTagManager
+            data-dialog-panel
             :key="tagManagerInstance"
             :initial-view="tagManagerInitialView"
             :tracks="tagManagerTracks"
@@ -5190,17 +5273,17 @@ watch(
             @applied="applyTagManagerWrite"
           />
         </div>
-      </Transition>
+      </NativeDialogTransition>
     </Teleport>
 
     <Teleport to="body">
-      <Transition name="dialog-fade">
+      <NativeDialogTransition overlay>
         <div
           v-if="showExcludedTracksDialog"
           class="dialog-overlay"
           @click.self="showExcludedTracksDialog = false"
         >
-          <div class="excluded-tracks-dialog" @click.stop>
+          <div class="excluded-tracks-dialog" data-dialog-panel @click.stop>
             <div class="excluded-dialog-header">
               <div>
                 <h3 class="dialog-title">已从音乐库移除</h3>
@@ -5261,7 +5344,7 @@ watch(
             </div>
           </div>
         </div>
-      </Transition>
+      </NativeDialogTransition>
     </Teleport>
   </div>
 </template>

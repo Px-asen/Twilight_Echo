@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict')
-const { createHash } = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -63,8 +62,7 @@ test('installed extract-zip rejects a symlink followed by a same-name file', asy
 const {
   assertLocalVirtualStore,
   assertSingleLockfile,
-  assertNodeForgePatch,
-  FORGE_PATCH_PATH,
+  assertNodeForgeVersion,
   readModulesMetadata,
   verifyInstallPolicy
 } = require('./verify-install-policy.cjs')
@@ -73,16 +71,13 @@ function makeCandidate(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-install-policy-'))
   fs.mkdirSync(path.join(root, 'patches'), { recursive: true })
   fs.mkdirSync(path.join(root, 'node_modules', '.pnpm'), { recursive: true })
-  const forgePatch = fs.readFileSync(path.resolve(__dirname, '..', FORGE_PATCH_PATH))
-  const forgeHash = createHash('sha256').update(forgePatch).digest('hex')
-  fs.writeFileSync(path.join(root, FORGE_PATCH_PATH), forgePatch)
   fs.writeFileSync(
     path.join(root, 'package.json'),
     JSON.stringify({ packageManager: 'pnpm@11.7.0', scripts: { postinstall: 'x' } })
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-lock.yaml'),
-    `lockfileVersion: '9.0'\npatchedDependencies:\n  node-forge@1.4.0: ${forgeHash}\npackages:\n  '@neteasecloudmusicapienhanced/api@4.35.1(patch_hash=abc)': {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.0(patch_hash=${forgeHash})\n`
+    "lockfileVersion: '9.0'\npackages:\n  '@neteasecloudmusicapienhanced/api@4.36.1(patch_hash=abc)': {}\n  node-forge@1.4.1: {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.1\n"
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-workspace.yaml'),
@@ -90,14 +85,15 @@ function makeCandidate(options = {}) {
       'nodeLinker: hoisted',
       'overrides:',
       '  form-data: 4.0.6',
-      '  qs: 6.16.0',
+      '  qs: 6.16.1',
+      '  follow-redirects: 1.16.2',
+      '  node-forge: 1.4.1',
       'patchedDependencies:',
-      "  '@neteasecloudmusicapienhanced/api@4.35.1': patches/@neteasecloudmusicapienhanced__api@4.35.1.patch",
-      '  node-forge@1.4.0: patches/node-forge@1.4.0.patch'
+      "  '@neteasecloudmusicapienhanced/api@4.36.1': patches/@neteasecloudmusicapienhanced__api@4.36.1.patch"
     ].join('\n')
   )
   fs.writeFileSync(
-    path.join(root, 'patches', '@neteasecloudmusicapienhanced__api@4.35.1.patch'),
+    path.join(root, 'patches', '@neteasecloudmusicapienhanced__api@4.36.1.patch'),
     'patch'
   )
   const store = options.externalStore || path.join(root, 'node_modules', '.pnpm')
@@ -118,25 +114,17 @@ test('install policy accepts the single-lock pnpm candidate layout', () => {
   }
 })
 
-test('install policy rejects a missing or unbound node-forge security patch', () => {
-  for (const corrupt of ['declaration', 'file', 'hash']) {
+test('install policy rejects vulnerable node-forge resolutions and obsolete audit exceptions', () => {
+  for (const corrupt of ['override', 'resolution', 'nested', 'exception']) {
     const root = makeCandidate()
     try {
-      if (corrupt === 'file') fs.rmSync(path.join(root, FORGE_PATCH_PATH))
-      else {
-        const target = path.join(
-          root,
-          corrupt === 'hash' ? 'pnpm-lock.yaml' : 'pnpm-workspace.yaml'
-        )
-        const text = fs.readFileSync(target, 'utf8')
-        fs.writeFileSync(
-          target,
-          corrupt === 'hash'
-            ? text.replace(/node-forge@1\.4\.0: [a-f0-9]+/, 'node-forge@1.4.0: invalid')
-            : text.replace(/\n  node-forge@1\.4\.0: patches\/node-forge@1\.4\.0\.patch/, '')
-        )
-      }
-      assert.throws(() => assertNodeForgePatch(root), /node-forge.*(?:patch|dependency)/)
+      const target = path.join(root, ['resolution', 'nested'].includes(corrupt) ? 'pnpm-lock.yaml' : 'pnpm-workspace.yaml')
+      const text = fs.readFileSync(target, 'utf8')
+      fs.writeFileSync(target,
+        corrupt === 'nested' ? text + '\n  node-forge@1.4.0: {}\n' :
+        corrupt === 'exception' ? text + '\nauditConfig:\n  ignoreGhsas:\n    - GHSA-86w9-cpqp-85rv\n' :
+        text.replace('node-forge: 1.4.1', 'node-forge: 1.4.0'))
+      assert.throws(() => assertNodeForgeVersion(root), /node-forge/)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }

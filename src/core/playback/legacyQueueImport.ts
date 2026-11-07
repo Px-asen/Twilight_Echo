@@ -8,18 +8,30 @@ import { toPlaybackQueueSnapshots } from './queueSnapshots.ts'
 import { cloneTrackForPlaybackSession } from './sessionTrack.ts'
 import type { LibraryQueueApi } from './libraryQueueSource.ts'
 
-/** Import only the old durable array. Its original order was not persisted;
- * the saved displayed order is also its original order, as in the old player. */
+/** Import a durable array. Old backups use displayed order as original order;
+ * modern migration bundles may supply the separately persisted original order. */
 export async function importLegacyQueue(options: {
   api: CoreQueueImportApi & Pick<LibraryQueueApi, 'readQueue'>
   session: PlaybackSessionData<TrackData>
   sessionRevision: number
   libraryRevision: number
+  scope?: string
+  /** Optional modern migration metadata; old array-only backups keep their original behavior. */
+  originalEntryIds?: string[]
 }): Promise<{ queue: LibraryQueueSnapshot; position: number }> {
   const { session, api } = options
   const tracks = toPlaybackQueueSnapshots(
     (session.queue?.length ? session.queue : [session.track]).map(cloneTrackForPlaybackSession)
   )
+  const original = options.originalEntryIds
+  const originalPositions = original ? new Map(original.map((id, index) => [id, index])) : null
+  if (
+    original &&
+    (original.length !== tracks.length ||
+      originalPositions!.size !== tracks.length ||
+      tracks.some((track) => !originalPositions!.has(track.queueEntryId!)))
+  )
+    throw new Error('迁移队列的原始顺序与 occurrence 不一致')
   let selected = session.track.queueEntryId
     ? tracks.findIndex(
         (t) => t.queueEntryId === session.track.queueEntryId && t.id === session.track.id
@@ -37,7 +49,7 @@ export async function importLegacyQueue(options: {
     selected >= 0 &&
     (!session.track.queueEntryId || tracks[selected].queueEntryId === session.track.queueEntryId)
   if (selected < 0) selected = 0
-  const id = `core-session-${options.sessionRevision}`
+  const id = `core-session-${options.scope ? `${options.scope}-` : ''}${options.sessionRevision}`
   const start = {
     kind: 'begin' as const,
     id,
@@ -58,6 +70,9 @@ export async function importLegacyQueue(options: {
       const items = tracks.slice(offset, offset + LIBRARY_PAGE_SIZE).map((track) => ({
         id: track.id,
         occurrenceId: track.queueEntryId!,
+        ...(originalPositions
+          ? { originalPosition: originalPositions.get(track.queueEntryId!)! }
+          : {}),
         ...(getTrackSource(track) === 'local'
           ? { localSnapshot: { ...track } }
           : { snapshot: { ...track } })

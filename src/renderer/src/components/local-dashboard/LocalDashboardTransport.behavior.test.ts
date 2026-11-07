@@ -23,7 +23,7 @@ test('homepage playback and return geometry remain stable across routes and moti
     const appDescriptor = parse(appSource).descriptor
     const template = appDescriptor.template!.content
     const mainTag = template.match(/<div\s+class="main-content"[\s\S]*?>/)![0]
-    const localTransition = template.match(/<Transition\s+:name=[\s\S]*?<\/Transition>/)![0]
+    const localTransition = template.match(/<MotionTransition\s+:name=[\s\S]*?<\/MotionTransition>/)![0]
     const sidebarVisibility = appSource.slice(
       appSource.indexOf('const showLocalSidebar = computed('),
       appSource.indexOf('const sideMenuActiveKey')
@@ -33,12 +33,13 @@ test('homepage playback and return geometry remain stable across routes and moti
       `<script setup>
 import {computed,defineComponent,h,ref} from 'vue'
 import {useAppNavigation} from '@renderer/app/useAppNavigation.ts'
+import MotionTransition from '@renderer/components/MotionTransition.vue'
 import LocalDashboard from '@renderer/components/local-dashboard/LocalHome.vue'
 const navigation=useAppNavigation()
 window.homeNavigation=navigation
 const {menuOpen,pageTarget,localViewVisible,activeCategory,activeFilter,songlistTransitionName,
  showPlayingPage,showPluginPage,showDspRackPage,showRadioPodcastPage,showLoginPage,
- showSettingsPage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
+ showSettingsPage,showAppearancePage,showThemeStudioPage,showEqualizerPage,onSelectView}=navigation
 const appearanceFullWindowPreview=ref(false)
 ${sidebarVisibility}
 const hasPlayerBar=ref(false), mainContentMinHeight='100vh'
@@ -66,8 +67,9 @@ const openSettingsPage=()=>{}, enterStreamingMode=()=>{}, handleStreamingLogin=(
       ],
       resolve: {
         alias: [
+          { find: /^.*\/coreConnection(?:\.ts)?$/, replacement: join(directory, 'fixtures.ts') },
           {
-            find: /^(?:(?:\.\.\/)+stores\/use(?:Music|Player|ListeningStats|AudioOutputDsp)Store|@renderer\/stores\/use(?:Music|Theme|Player|ListeningStats|AudioOutputDsp)Store|\.\.\/utils\/unifiedRecentTracks|pinia)$/,
+            find: /^(?:(?:\.\.\/)+stores\/use(?:Music|Settings|Player|ListeningStats|AudioOutputDsp)Store|@renderer\/stores\/use(?:Music|Settings|Theme|Player|ListeningStats|AudioOutputDsp)Store|\.\.\/utils\/unifiedRecentTracks|pinia)$/,
             replacement: join(directory, 'fixtures.ts')
           },
           {
@@ -138,21 +140,33 @@ app.whenReady().then(async()=>{
  }catch(error){console.error(error.stack);app.exit(1)}
 })`
 
-const fixtures = `import {ref} from 'vue'
+const fixtures = `import {computed,ref,watch} from 'vue'
+import {normalizePlayerBarSettings} from '@renderer/../../shared/playerBar.ts'
 const first={id:'one',title:'First',artist:'Artist',album:'Album',duration:100,path:'first.flac'}
 const last={id:'two',title:'Last played',artist:'Artist',album:'Album',duration:100,path:'last.flac'}
 export const state={tracks:ref([first,last]),recent:ref(last),currentTrack:ref(null),isPlaying:ref(false),calls:[]}
-const player={currentTrack:state.currentTrack,isPlaying:state.isPlaying,dominantColor:ref('#aabbcc'),
+const revision=ref(1)
+watch(state.tracks,()=>revision.value++,{flush:'sync'})
+export const useSettingsStore=()=>({settings:ref({playerBar:normalizePlayerBarSettings({visibility:'hidden'})})})
+const player={dspGraphStatus:ref(null),playLibraryQuery:async(query,id)=>{const tracks=state.tracks.value;player.playTrack(tracks.find(t=>t.id===id)??tracks[0],tracks)},currentTrack:state.currentTrack,isPlaying:state.isPlaying,dominantColor:ref('#aabbcc'),
  currentTime:ref(0),duration:ref(100),progress:ref(0),seek(){},formatTime:seconds=>String(seconds),
  playTrack(track,queue){state.calls.push(['start',track.id,queue.map(item=>item.id)]);state.currentTrack.value=track;state.isPlaying.value=true},
  togglePlay(){state.calls.push(['toggle']);state.isPlaying.value=!state.isPlaying.value},
  next(){state.calls.push(['next'])},prev(){state.calls.push(['previous'])},setPlayMode(mode){state.calls.push(['mode',mode])}}
+export const useCoreConnection=()=>({state:computed(()=>({phase:'ready',epoch:'home',libraryRevision:revision.value})),query:async(name,p={})=>{
+ if(name==='library.metadata')return {revision:revision.value,trackCount:state.tracks.value.length,folders:[],exclusions:[]};
+ if(name==='library.tracks')return {revision:revision.value,total:state.tracks.value.length,offset:0,totalDuration:200,tracks:state.tracks.value.slice(0,p.limit??200)};
+ if(name==='library.collections')return {revision:revision.value,total:0,offset:0,items:[],letterOffsets:{}};
+ if(name==='library.artwork')return {revision:revision.value,items:[]};
+ if(name==='audio.dsp.status'||name==='audio.dsp')return null;
+ throw Error('Unexpected home query '+name)
+}})
 export const useMusicStore=()=>({tracks:state.tracks,albums:ref([]),artists:ref([])})
 export const useThemeStore=()=>({presetLayout:ref('default')})
 export const usePlayerStore=()=>player
-export const useListeningStatsStore=()=>({listeningStats:ref({days:{}})})
+export const useListeningStatsStore=()=>({overview:ref(null),listeningStats:ref({days:{}})})
 export const getMostListenedTracks=()=>[]
-export const getRecentTracks=()=>state.recent.value?[{id:state.recent.value.id,track:state.recent.value}]:[]
+export const getRecentTracks=()=>state.recent.value?[{id:state.recent.value.id,track:state.recent.value,displayTrack:state.recent.value}]:[]
 export const waitForListeningStatsReady=async()=>{}
 export const createUnifiedRecentTrackResolver=tracks=>stat=>tracks.find(track=>track.id===stat.id)||stat.track
 export const useAudioOutputDspStore=()=>({audioProcessing:ref({dspEnabled:false}),playbackInfo:ref(null),outputInfo:ref(null)})
@@ -176,10 +190,10 @@ window.runHomeTransportTests=async()=>{
  const fallback=document.querySelector('.fresh-cover img')
  expect(fallback?.naturalWidth===1254,'recent music is missing the bundled fallback artwork')
  expect(Math.abs(fallback.getBoundingClientRect().width-fallback.parentElement.getBoundingClientRect().width)<1,'fallback cover is cropped at its intrinsic size')
- expect(controls().length===1,'fresh launch must show its regular play control')
+ expect(controls().length===2,'fresh launch must offer listening and shuffle controls')
  expect(play()?.getAttribute('aria-label')==='开始收听'&&play().querySelector('[data-playback-icon="play"]'),'idle control must have the visible play glyph and matching accessible label')
  expect(play().getBoundingClientRect().width>0,'idle control must occupy visible space')
- expect(play().classList.contains('is-idle')&&play().textContent.includes('开始收听'),'fresh launch must show a labeled listening invitation')
+ expect(play().classList.contains('is-labelled')&&play().textContent.includes('开始收听'),'fresh launch must show a labeled listening invitation')
  expect(!document.querySelector('.hero-actions')?.textContent.includes('播放这首'),'no duplicate text CTA')
  const cardHeight=()=>document.querySelector('.feature-card').getBoundingClientRect().height
  const idleHeight=cardHeight()
@@ -203,7 +217,7 @@ window.runHomeTransportTests=async()=>{
  expect(document.querySelector('.hero-progress').getBoundingClientRect().bottom<=document.querySelector('.hero-actions').getBoundingClientRect().top,'progress returns above transport')
  expect(JSON.stringify(state.calls[0])===JSON.stringify(['start','two',['one','two']]),'idle control must play the displayed last track with its normal queue')
  expect(controls().length===3&&play().getAttribute('aria-label')==='暂停','starting a track must expose all three regular controls')
- expect(document.querySelector('.hero-actions').classList.contains('is-current')&&!play().classList.contains('is-idle'),'active controls must expose their session transport')
+ expect(document.querySelector('.hero-actions').classList.contains('is-current')&&!play().classList.contains('is-labelled'),'active controls must expose their session transport')
  expect(controls().every(button=>{const r=button.getBoundingClientRect();return r.width>=44&&r.height>=44}),'all transport controls must retain usable hit targets')
  play().click();await settle()
  expect(Math.abs(cardHeight()-playingHeight)<1,'pause must preserve the card height')
@@ -229,7 +243,7 @@ window.runHomeTransportTests=async()=>{
   expect(image?.naturalWidth===1254&&Math.abs(image.getBoundingClientRect().width-frame.getBoundingClientRect().width)<1&&Math.abs(image.getBoundingClientRect().height-frame.getBoundingClientRect().height)<1,'fallback cover sizing broke at '+width+'px')
   const gridBox=grid.getBoundingClientRect()
   expect(tiles.length===6&&tiles.every(tile=>{const box=tile.getBoundingClientRect();return box.width>0&&box.left>=gridBox.left-1&&box.right<=gridBox.right+1}),'responsive music shelf must keep its cards in bounds at '+width+' '+density)
-  expect(document.querySelector('.signal-card').getBoundingClientRect().bottom<gridBox.top,'signal card returns above recent music')
+  expect(document.querySelector('.signal-card').getBoundingClientRect().top>gridBox.bottom,'signal details must remain below the music shelves')
   expect(host.scrollWidth<=host.clientWidth+1,'homepage content overflows horizontally '+JSON.stringify({width,font,density,client:host.clientWidth,scroll:host.scrollWidth,children:[...host.children].map(el=>({class:el.className,right:el.getBoundingClientRect().right}))}))
   state.currentTrack.value={...originalTrack,title:'A Cielo Abierto (Viaje V) — A long musical journey across the evening sky',album:'A very long album title that must not displace the audio metadata or transport controls'};await settle()
   expect(title.scrollHeight>lineHeight*1.5,'long title must wrap at width '+width)
@@ -243,11 +257,11 @@ window.runHomeTransportTests=async()=>{
  controls()[0].click();controls()[2].click()
  expect(state.calls.at(-2)[0]==='previous'&&state.calls.at(-1)[0]==='next','skip controls retain their actions')
  state.currentTrack.value=null;state.isPlaying.value=false;state.recent.value=null;await settle()
- expect(controls().length===1,'no history must still expose playback for the first library track')
+ expect(controls().length===2,'no history must still expose playback and shuffle for the library')
  play().click();await settle()
  expect(state.calls.at(-1)[1]==='one','no-history play must select the displayed first track')
  state.currentTrack.value=null;state.isPlaying.value=false
- state.recent.value={id:'outside',title:'Outside library',artist:'Artist',duration:100};await settle()
+ state.recent.value={id:'outside',source:'ncm',title:'Outside library',artist:'Artist',duration:100};await settle()
  play().click();await settle()
  expect(JSON.stringify(state.calls.at(-1))===JSON.stringify(['start','outside',['outside']]),'available history outside the library must use a single-track queue')
  state.currentTrack.value=null;state.isPlaying.value=false;state.recent.value=null;state.tracks.value=[];await settle()
@@ -265,7 +279,8 @@ async function runHomeReturnTests(){
  navigation.menuOpen.value=true
  await until(()=>document.querySelector('.feature-card'))
  await sleep(400)
- const measure=()=>{const el=document.querySelector('.feature-card');if(!el)return null;const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}}
+ // The page surface owns its reversible translation; the card's layout must stay stable within it.
+ const measure=()=>{const el=document.querySelector('.feature-card');if(!el)return null;const r=el.getBoundingClientRect(),surface=el.closest('.local-home-layout'),movement=new DOMMatrix(surface?getComputedStyle(surface).transform:'none');return {x:r.x-movement.m41,y:r.y-movement.m42,width:r.width,height:r.height}}
  const returns=[
   ['library',()=>navigation.onSelectView('allSongs',null),()=>navigation.selectSidebarPage({kind:'local',category:'dashboard',filter:null})],
   ['recent',()=>navigation.navigate({kind:'recent',scope:'device'}),()=>navigation.goBackPage()],

@@ -20,15 +20,17 @@ DsdMuteGuardPlan DsdMuteGuard::arm(DsdMuteTransport from, DsdMuteTransport to, i
   plan_.to = to;
   plan_.rateChanged = fromRate > 0 && toRate > 0 && fromRate != toRate;
   plan_.transition = transitionFor(from, to, plan_.rateChanged);
-  plan_.preRollFrames = config_.preRollFrames;
-  plan_.postRollFrames = config_.postRollFrames;
+  const bool involvesDsd = from != DsdMuteTransport::Pcm || to != DsdMuteTransport::Pcm;
+  plan_.preRollFrames = involvesDsd ? config_.preRollFrames : 0;
+  plan_.postRollFrames = involvesDsd ? config_.postRollFrames : 0;
   plan_.timeoutFrames = config_.timeoutFrames;
   preRollRemaining_.store(plan_.preRollFrames, std::memory_order_release);
   postRollRemaining_.store(plan_.postRollFrames, std::memory_order_release);
   lockWaitFrames_.store(0, std::memory_order_release);
   lockConfirmed_.store(false, std::memory_order_release);
   lockRequired_.store(to != DsdMuteTransport::Pcm, std::memory_order_release);
-  state_.store(static_cast<uint8_t>(DsdMuteState::Locking), std::memory_order_release);
+  state_.store(static_cast<uint8_t>(involvesDsd ? DsdMuteState::Locking : DsdMuteState::Ready),
+               std::memory_order_release);
   return plan_;
 }
 
@@ -106,12 +108,24 @@ void DsdMuteGuard::stop() noexcept {
 }
 
 DsdMuteState DsdMuteGuard::state() const noexcept { return static_cast<DsdMuteState>(state_.load(std::memory_order_acquire)); }
-DsdMuteGuardPlan DsdMuteGuard::plan() const noexcept { return plan_; }
+DsdMuteGuardPlan DsdMuteGuard::plan() const noexcept {
+  auto result = plan_;
+  if (state() == DsdMuteState::Stopped) {
+    // Report the active plan, not a previous stream's transition. stop() must
+    // not rewrite plan_: an output callback may still be retiring on that data.
+    result.transition = DsdMuteTransition::None;
+    result.preRollFrames = result.postRollFrames = 0;
+    result.timeoutFrames = config_.timeoutFrames;
+    result.rateChanged = false;
+  }
+  return result;
+}
 uint32_t DsdMuteGuard::preRollRemaining() const noexcept { return preRollRemaining_.load(std::memory_order_acquire); }
 uint32_t DsdMuteGuard::postRollRemaining() const noexcept { return postRollRemaining_.load(std::memory_order_acquire); }
 
 DsdMuteTransition DsdMuteGuard::transitionFor(DsdMuteTransport from, DsdMuteTransport to, bool rateChanged) noexcept {
-  if (from == to) return rateChanged ? DsdMuteTransition::RateChange : DsdMuteTransition::None;
+  if (from == to) return rateChanged && to != DsdMuteTransport::Pcm
+                            ? DsdMuteTransition::RateChange : DsdMuteTransition::None;
   if (from == DsdMuteTransport::Pcm && to == DsdMuteTransport::Dop) return DsdMuteTransition::PcmToDop;
   if (from == DsdMuteTransport::Dop && to == DsdMuteTransport::Pcm) return DsdMuteTransition::DopToPcm;
   if (from == DsdMuteTransport::Pcm && to == DsdMuteTransport::Native) return DsdMuteTransition::PcmToNative;

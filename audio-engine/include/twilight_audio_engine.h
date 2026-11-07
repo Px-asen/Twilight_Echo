@@ -28,6 +28,14 @@ typedef struct TAE_BridgePcmInfo {
   uint32_t frames;
   int playing;
 } TAE_BridgePcmInfo;
+/** v2 wire codes: 1=float32 LE, 2=DoP packed int24 LE, 3/4/5=DSD LSB/MSB/NER8.
+ * DSD sample_rate is bits/s, frames are interleaved bytes per channel. */
+typedef struct TAE_BridgeAudioInfo {
+  TAE_BridgePcmInfo pcm;
+  uint32_t wire_format;
+  uint64_t channel_mask;
+  uint32_t bytes;
+} TAE_BridgeAudioInfo;
 typedef void* TAE_BridgeReceiverHandle;
 
 typedef enum TAE_Result {
@@ -51,12 +59,45 @@ typedef void (*TAE_EventCallback)(const char* event_type, const char* payload_js
 TAE_API TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine);
 TAE_API void TAE_DestroyEngine(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_PullBridgePcm(TAE_EngineHandle engine, float* data, size_t frames, TAE_BridgePcmInfo* info);
-/** Receiver bypasses decoder, DSP and saved local routing. Explicit device
+/** Atomic PCM + private source-timeline observation. The JSON contains an
+ * occurrence ID (legacy IDs can contain paths). Never send it to a peer.
+ * Existing PCM callers keep the old ABI. */
+TAE_API TAE_Result TAE_PullBridgePcmTimeline(TAE_EngineHandle engine, float* data, size_t frames,
+    TAE_BridgePcmInfo* info, char* timeline, size_t timeline_capacity);
+/** Private sync-group lease. owned=1 with empty IDs holds promotion; matching
+ * current/next IDs authorize exactly one preloaded promotion. owned=0 restores
+ * local gapless/crossfade policy without changing saved DSP preferences. */
+TAE_API TAE_Result TAE_SetBridgeQueueControl(TAE_EngineHandle engine, int owned,
+    const char* current_entry, const char* next_entry);
+/** Apply queued controls before the first captured PCM frame. Group-only;
+ * the audio service must hold network media until this source setup is done. */
+TAE_API TAE_Result TAE_CommitBridgeSourceControls(TAE_EngineHandle engine);
+/** Group-scoped effective mode. Releasing the queue lease restores the latest
+ * local SetAutoMixMode preference without persisting the group's mode there. */
+TAE_API TAE_Result TAE_SetBridgeAutoMixMode(TAE_EngineHandle engine, const char* mode);
+TAE_API TAE_Result TAE_PullBridgeAudio(TAE_EngineHandle engine, void* data, size_t capacity, size_t frames, TAE_BridgeAudioInfo* info);
+TAE_API TAE_Result TAE_OpenBridgeStreamReceiver(const char* backend, const char* device, int rate, int channels,
+    int wire_format, uint64_t channel_mask, TAE_BridgeReceiverHandle* receiver, char* error, size_t error_size);
+TAE_API TAE_Result TAE_WriteBridgeAudio(TAE_BridgeReceiverHandle receiver, const void* data, size_t bytes);
+/** Receiver bypasses decoder, user DSP and saved local routing. Explicit device
  * required; it never retries another backend or default speakers. */
 TAE_API TAE_Result TAE_OpenBridgeReceiver(const char* backend, const char* device, int rate, int channels,
     TAE_BridgeReceiverHandle* receiver, char* error, size_t error_size);
 TAE_API TAE_Result TAE_WriteBridgePcm(TAE_BridgeReceiverHandle receiver, const float* data, size_t frames);
 TAE_API TAE_Result TAE_StartBridgeReceiver(TAE_BridgeReceiverHandle receiver);
+/** Opt-in timed PCM. Prepare a fresh receiver (silent device preroll), write
+ * media, then arm using this host's native monotonic milliseconds and the
+ * streamGeneration from GetInfo. Close cancels and joins; no automatic replay. */
+TAE_API TAE_Result TAE_PrepareBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver);
+/** Separate opt-in lane: band-limited clock-adaptive PCM. Positive ppm expands
+ * output for a fast device. Corrections require the current stream generation;
+ * already buffered output keeps its original source-media coordinates. */
+TAE_API TAE_Result TAE_PrepareBridgeAdaptiveReceiver(TAE_BridgeReceiverHandle receiver);
+TAE_API TAE_Result TAE_SetBridgeTimedCorrection(TAE_BridgeReceiverHandle receiver, double output_rate_ppm,
+    uint64_t expected_generation);
+TAE_API TAE_Result TAE_ArmBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver, double start_at_ms,
+    uint64_t expected_generation, uint64_t media_frame);
+TAE_API TAE_Result TAE_EndBridgeTimedReceiver(TAE_BridgeReceiverHandle receiver);
 TAE_API TAE_Result TAE_GetBridgeReceiverInfo(TAE_BridgeReceiverHandle receiver, char* buffer, size_t capacity, size_t* required);
 TAE_API void TAE_CloseBridgeReceiver(TAE_BridgeReceiverHandle receiver);
 TAE_API TAE_Result TAE_SetEventCallback(TAE_EngineHandle engine, TAE_EventCallback callback, void* user_data);
@@ -178,6 +219,10 @@ TAE_API TAE_Result TAE_SetPlayMode(TAE_EngineHandle engine, const char* mode);
  * preparing/ready/degraded and plan id, then submit that exact id. */
 TAE_API TAE_Result TAE_SetAutoMixMode(TAE_EngineHandle, const char* mode);
 TAE_API TAE_Result TAE_SelectAutoMix(TAE_EngineHandle engine, const char* request_json, char* buffer, size_t buffer_size, size_t* required_size);
+/** Private group follower: bind the owner's sharedPlan to this member's local
+ * sources/occurrences, frame domain and generation. Does not select a plan. */
+TAE_API TAE_Result TAE_BindBridgeAutoMixSelection(TAE_EngineHandle engine, const char* request_json,
+    char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_PrepareAutoMix(TAE_EngineHandle, const char* request_json);
 TAE_API TAE_Result TAE_SubmitAutoMix(TAE_EngineHandle, uint64_t plan_id);
 TAE_API TAE_Result TAE_CancelAutoMix(TAE_EngineHandle);

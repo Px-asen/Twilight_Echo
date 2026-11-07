@@ -4,6 +4,44 @@ import test from 'node:test'
 import { CoreBridgeService } from './bridgeService.ts'
 import type { BridgeRuntimeState } from '../../shared/audioBridge.ts'
 
+test('a service-only host exposes no local DAC and rejects local routing before any playback or output call', async () => {
+  const calls: string[] = []
+  const service = new CoreBridgeService({
+    localOutputAllowed: false,
+    call: async method => { calls.push(method); return { selected: true, hosting: false, connected: false } },
+    output: { serialize: action => action() }, outputState: async () => assert.fail('No local device state'),
+    playback: { stop: async () => assert.fail('Local routing must be rejected before Stop') },
+    cast: { active: () => false }, identity: () => assert.fail('No local receiver'), name: 'Service', address: () => '', changed() {}
+  })
+  const state = await service.state()
+  assert.equal(state.selectedOutputId, 'bridge')
+  assert.equal(state.outputs.find(output => output.id === 'local')!.available, false)
+  await assert.rejects(service.select(0, 'local'), /只能选择输出桥/)
+  await assert.rejects(service.host(0, true, 48000), /不承载本机 DAC/)
+  await assert.rejects(service.assertLocal(), /仅向输出桥/)
+  assert.deepEqual(calls, ['BridgeStatus'])
+})
+
+test('primary grouped reconnect retains Bridge consent state, skips independent Stop and confirms the new receiver', async () => {
+  const calls: string[] = [], peer = { host: 'localhost', port: 12345, token: 'a'.repeat(48), fingerprint: 'b'.repeat(64) }
+  const service = new CoreBridgeService({
+    call: async method => { calls.push(method); return method === 'BridgeStatus' ? { selected: true, connected: true, peerName: 'Study' } : undefined },
+    coordinateConnection: async action => { calls.push('group-stop'); await action(true); calls.push('group-recover') },
+    output: { serialize: action => action() }, outputState: async () => assert.fail('No host setup'),
+    playback: { stop: async () => assert.fail('No independent Stop after group cancellation'), assertIndependent: () => { throw Object.assign(Error('Grouped'), { code: 'BUSY' }) } },
+    cast: { active: () => false }, identity: () => assert.fail('No new host identity'), name: 'Core', address: () => '', changed: () => {}
+  })
+  await service.connect(0, peer)
+  assert.deepEqual(calls, ['group-stop', 'BridgeConnect', 'BridgeCancelTimed', 'group-recover'])
+  const state = await service.state()
+  assert.equal(state.revision, 1); assert.equal(state.outputs[1].name, 'Study')
+  await assert.rejects(service.connect(0, peer), { code: 'STALE_REVISION' })
+  assert.throws(() => service.select(1, 'local'), { code: 'BUSY' })
+  assert.throws(() => service.host(1, true, 48000), { code: 'BUSY' })
+  await service.select(1, 'bridge')
+  assert.equal((await service.state()).revision, 2)
+})
+
 test('one Zone keeps its queue owner; output consent/select serialize and enforce revisions', async () => {
   const calls: string[] = []
   const runtime: BridgeRuntimeState = { supported: true, hosting: false, selected: false, connected: false,

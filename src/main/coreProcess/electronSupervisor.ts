@@ -1,4 +1,5 @@
-import { openNcmOfficialLogin } from '../ncm/api.ts'
+import { openNcmOfficialLogin } from '../ncm/officialLogin.ts'
+import { openQqMusicOfficialLogin } from '../plugins/qqmusicOfficialLogin.ts'
 import {
   validateThemeProfileAssets,
   deleteThemeAssets,
@@ -38,7 +39,7 @@ import { release } from 'node:os'
 import { CoreSupervisor, type CoreSupervisorOptions, type SupervisedProcess } from './supervisor.ts'
 import type { ServiceMessagePort } from '../services/servicePort.ts'
 import { observeUtilityProcess } from '../diagnostics/utilityObservation.ts'
-import { audioServiceEnv } from '../audioEngineServiceClient.ts'
+import { audioServiceEnv } from '../audio/audioServiceEnvironment.ts'
 import {
   resolveAuthorizedAudioSource,
   resolveAuthorizedLibraryDirectory,
@@ -260,6 +261,7 @@ export function createElectronCoreSupervisor(
         return path
       },
       'ncm.officialLogin': (_payload, signal) => openNcmOfficialLogin(signal),
+      'qqmusic.officialLogin': (_payload, signal) => openQqMusicOfficialLogin(signal),
       'overlay.show': async ({ pluginId }) => showDynamicIsland(pluginId),
       'overlay.hide': async ({ pluginId }) => hideDynamicIsland(pluginId),
       'overlay.configure': async ({ pluginId, config }) => configureDynamicIsland(pluginId, config),

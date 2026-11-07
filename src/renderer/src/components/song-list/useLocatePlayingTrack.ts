@@ -1,7 +1,8 @@
-import { computed, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
+import type { LibraryQuery } from '../../../../shared/libraryDatabase.ts'
 import type { Track } from '@renderer/types/music'
 import { useTrackLocator } from '@renderer/composables/useTrackLocator'
-import { registerScrollToTopCompanion } from '@renderer/utils/scrollToTopButton'
+import { registerScrollToTopCompanion, type ScrollViewport } from '@renderer/utils/scrollToTopButton'
 
 /** Locate in the filtered, sorted list without changing playback or selection. */
 export function useLocatePlayingTrack(options: {
@@ -15,7 +16,9 @@ export function useLocatePlayingTrack(options: {
   playingRowSelector?: string
   database?: {
     enabled: Readonly<Ref<boolean>>
-    locate: (id: string) => void
+    query: Readonly<Ref<LibraryQuery | null>>
+    read: (query: LibraryQuery) => Promise<{ anchorIndex?: number }>
+    locate: (id: string, viewport: ScrollViewport) => void
   }
 }): void {
   const { containerRef, tbodyRef, displayTracks, libraryTracks, currentTrack, enabled, rowHeight } =
@@ -55,6 +58,19 @@ export function useLocatePlayingTrack(options: {
 
   if (options.database) {
     const database = options.database
+    const available = ref(false)
+    watch([database.query, currentTrack, enabled], async ([query, track, active], _old, cleanup) => {
+      let current = true
+      cleanup(() => { current = false })
+      available.value = false
+      if (!active || !query || !track) return
+      try {
+        const page = await database.read({ ...query, anchorId: track.id, limit: 1 })
+        if (current) available.value = page.anchorIndex !== undefined && page.anchorIndex >= 0
+      } catch {
+        // The list owns query errors and retry; an unconfirmed target cannot be located.
+      }
+    }, { immediate: true })
     watch(
       [containerRef, database.enabled],
       ([container, active], _previous, onCleanup) => {
@@ -63,7 +79,7 @@ export function useLocatePlayingTrack(options: {
           label: '定位正在播放的歌曲',
           icon: 'ph ph-crosshair',
           isVisible: (viewport) => {
-            if (!enabled.value || !currentTrack.value || !tbodyRef.value) return false
+            if (!enabled.value || !available.value || !currentTrack.value || !tbodyRef.value) return false
             const body = tbodyRef.value
             const row = body.querySelector<HTMLElement>(
               options.playingRowSelector ?? '.track-playing'
@@ -75,11 +91,11 @@ export function useLocatePlayingTrack(options: {
             )
             return !rect || rect.bottom <= visibleTop || rect.top >= viewport.bottom
           },
-          activate: () => {
-            if (currentTrack.value) database.locate(currentTrack.value.id)
+          activate: (viewport) => {
+            if (currentTrack.value) database.locate(currentTrack.value.id, viewport)
           }
         })
-        const stop = watch([currentTrack, tbodyRef, enabled], registration.refresh, {
+        const stop = watch([currentTrack, tbodyRef, enabled, available], registration.refresh, {
           flush: 'post'
         })
         onCleanup(() => {

@@ -1,4 +1,4 @@
-import { computed, shallowReadonly, shallowRef, watch } from 'vue'
+import { computed, shallowReadonly, shallowRef, triggerRef, watch } from 'vue'
 import type { useCoreConnection } from '../coreConnection.ts'
 import type {
   CorePlaylistDescriptor,
@@ -195,15 +195,39 @@ export function createCoreMusicStore(core: Client) {
       'id' | 'revision'
     > = {}
   ) => core.query('playlists.members', { id, revision: revision(), ...query })
-  async function favoriteStates(tracks: readonly Track[]) {
-    const result = await core.query('playlists.favorites', {
-      revision: revision(),
-      items: tracks.map(trackInput)
-    })
-    const next = new Map(favorites.value)
-    tracks.forEach((t, i) => next.set(t.id, result.contains[i]))
-    favorites.value = next
+  async function queryFavoriteStates(tracks: readonly Track[], signal?: AbortSignal) {
+    const result = await core.query(
+      'playlists.favorites',
+      {
+        revision: revision(),
+        items: tracks.map(trackInput)
+      },
+      signal
+    )
+    signal?.throwIfAborted()
     return result.contains
+  }
+  async function favoriteStates(tracks: readonly Track[]) {
+    const cache = favorites.value
+    const epoch = core.state.value?.epoch
+    const requestedRevision = revision()
+    const values = await queryFavoriteStates(tracks)
+    // An older request must not repopulate a cache invalidated by a playlist edit.
+    if (
+      cache === favorites.value &&
+      epoch === core.state.value?.epoch &&
+      requestedRevision === core.state.value?.playlistsRevision
+    ) {
+      let changed = false
+      tracks.forEach((track, index) => {
+        if (cache.get(track.id) !== values[index]) {
+          cache.set(track.id, values[index])
+          changed = true
+        }
+      })
+      if (changed) triggerRef(favorites)
+    }
+    return values
   }
   async function readFavoriteTrackPages(produce: DisplayTrackProducer, signal?: AbortSignal) {
     let count = 0,
@@ -211,11 +235,13 @@ export function createCoreMusicStore(core: Client) {
     const guard = await produce(async (tracks) => {
       for (let o = 0; o < tracks.length; o += 200) {
         signal?.throwIfAborted()
-        const values = await favoriteStates(tracks.slice(o, o + 200))
+        // Selection summaries do not own display state. Retain only this page.
+        const values = await queryFavoriteStates(tracks.slice(o, o + 200), signal)
         count += values.length
-        favoriteCount += values.filter(Boolean).length
+        for (const favorite of values) if (favorite) favoriteCount++
       }
     })
+    signal?.throwIfAborted()
     guard?.()
     return { count, favoriteCount }
   }
@@ -492,6 +518,7 @@ export function createCoreMusicStore(core: Client) {
       generation++
       stop()
       off()
+      favorites.value = new Map()
     }
   }
 }

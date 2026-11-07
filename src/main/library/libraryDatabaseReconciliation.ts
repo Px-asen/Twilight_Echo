@@ -140,7 +140,7 @@ function reconcileSnapshot(sql: DatabaseSync, options: MusicLibraryReconciliatio
   sql.exec('BEGIN')
   try {
     const schema = Number(sql.prepare('PRAGMA user_version').get()!.user_version)
-    if (schema !== 28 && schema !== 29) throw new Error(`Reconciliation supports library schemas 28 and 29, received ${schema}; it does not migrate databases`)
+    if (schema !== 28 && schema !== 29 && schema !== 30) throw new Error(`Reconciliation supports library schemas 28, 29 and 30, received ${schema}; it does not migrate databases`)
     const scalar = (query: string, args: SQLInputValue[] = []) => Number(sql.prepare(query).get(...args)!.n)
     const revisions: MusicLibraryReconciliationReport['revisions'] = {}
     for (const row of sql.prepare(`SELECT 'catalog:'||key name,value FROM catalog_state WHERE key IN ('revision','versions_revision','playlists_revision','local_cursor','local_horizon','project_cursor','project_horizon')

@@ -13,16 +13,17 @@ const staging = resolve(output, 'ncm')
 await mkdir(staging, { recursive: true })
 const upstream = resolve(root, 'node_modules/@neteasecloudmusicapienhanced/api')
 const upstreamPackage = JSON.parse(await readFile(resolve(upstream, 'package.json'), 'utf8'))
-if (upstreamPackage.version !== '4.35.1') throw new Error('Review the NCM mobile gateway before changing upstream API version')
+if (upstreamPackage.version !== '4.36.1') throw new Error('Review the NCM mobile gateway before changing upstream API version')
 const source = await readFile(resolve(root, 'resources/plugins/ncm-provider/index.mjs'), 'utf8')
 const routes = [...new Set([...source.matchAll(/(?:`|')\/(\w[\w/]*)(?=[?`'])/g)].map(m => m[1]))]
-const unsupported = new Set(['song/url/match', 'login/qr/create', 'cloud/upload/token'])
+// NCBL uses Node crypto/zlib and belongs to the desktop/server playback owner.
+const unsupported = new Set(['song/url/match', 'login/qr/create', 'cloud/upload/token', 'scrobble/v1'])
 const included = []
 for (const route of routes.filter(r => !unsupported.has(r))) {
   try { await readFile(resolve(upstream, 'module', route.replaceAll('/', '_') + '.js')); included.push(route) } catch { /* prefixes aren't endpoints */ }
 }
 const shims = {
-  option: `module.exports=(q,c='')=>({crypto:c,cookie:q.cookie||'',ua:q.ua||'',e_r:false})`,
+  option: `module.exports=(q,c='')=>({crypto:q.crypto||c||'',cookie:q.cookie||'',ua:q.ua||'',e_r:false})`,
   logger: `module.exports={info(){},warn(){},error(){},debug(){}}`,
   crypto: `module.exports={MD5:v=>({toString:()=>__hostCall('md5',{value:String(v)})})}`,
   config: await readFile(resolve(upstream, 'util/config.json'), 'utf8')

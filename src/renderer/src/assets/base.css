@@ -96,7 +96,14 @@
   --te-motion-press: 90ms;
   --te-motion-hover: 160ms;
   --te-motion-panel: 280ms;
+  --te-motion-surface-enter: 200ms;
+  --te-motion-surface-exit: 140ms;
+  --te-motion-disclosure-exit: 100ms;
   --te-motion-page: 400ms;
+  --te-motion-page-enter: 240ms;
+  --te-motion-page-exit: 140ms;
+  --te-motion-exit: 180ms;
+  --te-motion-artwork: 360ms;
   /* Asymmetric motion: hover-in settles on a long out-quint tail, hover-out returns fast. */
   --te-motion-settle: 500ms;
   --te-motion-return: 220ms;
@@ -339,6 +346,16 @@
   --te-scroll-top-border: rgba(15, 23, 42, 0.1);
   --te-scroll-top-color: #2563eb;
   --te-scroll-top-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+}
+
+/* Outgoing page painters are inert snapshots, never new live components. */
+[data-motion-snapshot],
+[data-motion-snapshot] *,
+[data-motion-snapshot] *::before,
+[data-motion-snapshot] *::after {
+  animation: none !important;
+  transition: none !important;
+  pointer-events: none !important;
 }
 
 /* Scrollbars stay visually absent until the pointer reaches the scroll edge or scrolling is active. */
@@ -1212,7 +1229,8 @@ html[data-theme='pureWhite'] .menu-item-import:hover {
   background: #f3f4f6;
 }
 
-html[data-theme='pureWhite'] .menu-item.active {
+html[data-theme='pureWhite'] .menu-item.active,
+html[data-theme='pureWhite'] .side-menu .navigation-indicator {
   background: #e8e8e8;
   box-shadow: none;
 }
@@ -1555,7 +1573,8 @@ html[data-theme='dark'] .streaming-menu-item:hover {
   background: var(--te-hover-bg);
 }
 
-html[data-theme='dark'] .menu-item.active {
+html[data-theme='dark'] .menu-item.active,
+html[data-theme='dark'] .side-menu .navigation-indicator {
   background: var(--te-active-bg);
   box-shadow: none;
 }

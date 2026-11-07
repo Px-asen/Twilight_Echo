@@ -408,6 +408,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   std::ostringstream json;
   json << "{"
        << "\"state\":\"" << stateToString(info.state) << "\","
+       << "\"buffering\":" << (info.state == PlaybackState::Playing && info.buffering ? "true" : "false") << ","
        << "\"position\":" << json_utils::number(info.positionSeconds) << ","
        << "\"duration\":" << json_utils::number(info.durationSeconds) << ","
        << "\"volume\":" << info.volume << ","
@@ -1332,7 +1333,7 @@ TAE_Result TwilightAudioEngine::setAutoMixMode(const std::string& mode) {
     emitError(error, TAE_RESULT_INVALID_ARGUMENT, "set-auto-mix-mode");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
-  if (mode != "off" && before.autoMixMode != mode && !before.stream.isDsd &&
+  if (!pipeline_->bridgeGroupOwned() && mode != "off" && before.autoMixMode != mode && !before.stream.isDsd &&
       (before.outputInfo.pcmPassthrough || !before.sourceTimelineExact) &&
       before.state != PipelineState::Stopped) {
     const auto result = restartCurrentPlaybackForReroute(before.positionSeconds,
@@ -1353,7 +1354,7 @@ TAE_Result TwilightAudioEngine::setAutoMixMode(const std::string& mode) {
     }
     return result;
   }
-  if (mode != "off" && before.state != PipelineState::Stopped) {
+  if (!pipeline_->bridgeGroupOwned() && mode != "off" && before.state != PipelineState::Stopped) {
     std::optional<QueueItem> upcoming;
     { std::lock_guard lock(mutex_); upcoming = queue_.upcoming(); }
     std::string preloadError;
@@ -1363,10 +1364,27 @@ TAE_Result TwilightAudioEngine::setAutoMixMode(const std::string& mode) {
   applyPipelineStatusLocked(pipeline_->status());
   return TAE_RESULT_OK;
 }
+TAE_Result TwilightAudioEngine::setBridgeAutoMixMode(const std::string& mode) {
+  ClockWake wake(*this);
+  std::lock_guard transportLock(transportMutex_);
+  if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
+  const auto result = pipeline_->setBridgeAutoMixMode(mode);
+  if (result == TAE_RESULT_OK) {
+    std::lock_guard lock(mutex_);
+    applyPipelineStatusLocked(pipeline_->status());
+    publishStateLocked();
+  }
+  return result;
+}
 std::string TwilightAudioEngine::selectAutoMix(const std::string& json) {
   ClockWake wake(*this);
   std::lock_guard transportLock(transportMutex_);
   return pipeline_ ? pipeline_->selectAutoMix(json) : "{\"ok\":false,\"reason\":\"audio_service_unavailable\"}";
+}
+std::string TwilightAudioEngine::bindBridgeAutoMixSelection(const std::string& json) {
+  ClockWake wake(*this);
+  std::lock_guard transportLock(transportMutex_);
+  return pipeline_ ? pipeline_->selectAutoMix(json, true) : "{\"ok\":false,\"reason\":\"audio_service_unavailable\"}";
 }
 TAE_Result TwilightAudioEngine::prepareAutoMix(const std::string& json) {
   ClockWake wake(*this);
@@ -1479,6 +1497,7 @@ TAE_Result TwilightAudioEngine::rebindQueue(const std::string& queueJson, int st
         !sameQueuePosition(replacement.current(), expected))
       return TAE_RESULT_INVALID_ARGUMENT;
     replacement.setPlayMode(QueueManager::parsePlayMode(mode));
+    const auto selected = replacement.current();
     upcoming = replacement.upcoming();
     const auto commit = [&] {
       queue_ = std::move(replacement);
@@ -1488,7 +1507,7 @@ TAE_Result TwilightAudioEngine::rebindQueue(const std::string& queueJson, int st
       info_.upcomingTrack = upcoming.value_or(QueueItem{});
     };
     if (pipeline_) {
-      if (!pipeline_->rebindQueue(*expected, upcoming, commit, &preloadNeeded)) return TAE_RESULT_OK;
+      if (!pipeline_->rebindQueue(*expected, upcoming, commit, &preloadNeeded, &*selected)) return TAE_RESULT_OK;
     } else commit();
     if (!upcoming || preloadNeeded) info_.preloadReady = false;
     transportActive = info_.state != PlaybackState::Stopped && !pausedOutputReleased_;
@@ -2820,7 +2839,9 @@ void TwilightAudioEngine::clockLoop() {
       }
       if (emitEnded) {
         recordNaturalBoundaryLocked();
-        autoNextItem = queue_.advanceAfterEnd();
+        // A coordinated member cannot choose the EOF/reopen fallback. Only the
+        // group's owner may re-arm it after every DAC presents the common tail.
+        if (!pipeline_ || !pipeline_->bridgeGroupOwned()) autoNextItem = queue_.advanceAfterEnd();
         if (autoNextItem && !autoNextItem->source.empty()) {
           info_.queueIndex = queue_.currentIndex();
           info_.playMode = queue_.playModeId();
@@ -2936,6 +2957,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
       break;
   }
 
+  info_.buffering = status.buffering;
   info_.positionSeconds = status.positionSeconds;
   info_.requestedConfigRevision = status.requestedConfigRevision;
   info_.appliedConfigRevision = status.appliedConfigRevision;
@@ -3277,6 +3299,7 @@ TAE_Result analyzeWithProbeResult(
 enum class JsonGetter {
   None,
   AutoMixSelection,
+  BridgeAutoMixBinding,
   Queue,
   QueueState,
   UpcomingTrack,
@@ -3500,6 +3523,12 @@ TAE_Result TAE_SelectAutoMix(TAE_EngineHandle engine, const char* json,
   if (!engine || !json) return TAE_RESULT_INVALID_ARGUMENT;
   return copyJsonWithProbeResult(engine, JsonGetter::AutoMixSelection, json, buffer, buffer_size,
       required_size, nullptr, [&](uint64_t*) { return fromHandle(engine)->selectAutoMix(json); });
+}
+TAE_Result TAE_BindBridgeAutoMixSelection(TAE_EngineHandle engine, const char* json,
+    char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine || !json) return TAE_RESULT_INVALID_ARGUMENT;
+  return copyJsonWithProbeResult(engine, JsonGetter::BridgeAutoMixBinding, json, buffer, buffer_size,
+      required_size, nullptr, [&](uint64_t*) { return fromHandle(engine)->bindBridgeAutoMixSelection(json); });
 }
 TAE_Result TAE_PrepareAutoMix(TAE_EngineHandle engine, const char* json) {
   if (!engine || !json) return TAE_RESULT_INVALID_ARGUMENT;

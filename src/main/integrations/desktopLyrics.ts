@@ -38,6 +38,10 @@ let taskbarStackingTimer: ReturnType<typeof setInterval> | null = null
 let desktopLyricsExperienceTheme: ExperienceWindowTheme = 'default'
 
 const DESKTOP_LYRICS_HOVER_CHECK_INTERVAL_MS = 120
+const appliedWindowSettings = new WeakMap<
+  BrowserWindow,
+  { taskbar: boolean; alwaysOnTop: boolean; ignoreMouseEvents: boolean }
+>()
 
 function sendDesktopLyricsExperienceTheme(): void {
   const win = runtime.desktopLyricsWindow
@@ -67,6 +71,8 @@ function persistDesktopLyricsPosition(win: BrowserWindow): void {
   if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return
   if (win.isDestroyed()) return
   const [windowX, windowY] = win.getPosition()
+  const saved = runtime.appSettings.desktopLyrics
+  if (saved.windowX === windowX && saved.windowY === windowY) return
   const core = getCoreSettingsBridge()
   if (core) {
     void core
@@ -93,7 +99,21 @@ function currentTaskbarBounds() {
   )
 }
 
-function windowPosition(): { x: number; y: number } {
+function constrainDesktopLyricsBounds(
+  requested: Electron.Rectangle,
+  area: Electron.Rectangle
+): Electron.Rectangle {
+  const width = Math.min(requested.width, area.width)
+  const height = Math.min(requested.height, area.height)
+  return {
+    x: Math.max(area.x, Math.min(Math.round(requested.x), area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(Math.round(requested.y), area.y + area.height - height)),
+    width,
+    height
+  }
+}
+
+function windowPosition(): Electron.Rectangle {
   if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return currentTaskbarBounds()
   const settings = runtime.appSettings.desktopLyrics
   const requested = {
@@ -102,9 +122,9 @@ function windowPosition(): { x: number; y: number } {
     width: settings.windowWidth,
     height: settings.windowHeight
   }
-  const visible =
+  const visibleDisplay =
     !(requested.x === -1 && requested.y === -1) &&
-    screen.getAllDisplays().some((display) => {
+    screen.getAllDisplays().find((display) => {
       const area = display.workArea
       const horizontal =
         Math.min(requested.x + requested.width, area.x + area.width) - Math.max(requested.x, area.x)
@@ -113,12 +133,16 @@ function windowPosition(): { x: number; y: number } {
         Math.max(requested.y, area.y)
       return horizontal >= 80 && vertical >= 48
     })
-  if (visible) return { x: requested.x, y: requested.y }
+  if (visibleDisplay) return constrainDesktopLyricsBounds(requested, visibleDisplay.workArea)
   const area = screen.getPrimaryDisplay().workArea
-  return {
-    x: Math.round(area.x + (area.width - settings.windowWidth) / 2),
-    y: Math.round(area.y + area.height - settings.windowHeight - 56)
-  }
+  return constrainDesktopLyricsBounds(
+    {
+      ...requested,
+      x: Math.round(area.x + (area.width - settings.windowWidth) / 2),
+      y: Math.round(area.y + area.height - settings.windowHeight - 56)
+    },
+    area
+  )
 }
 
 export function getEffectiveDesktopLyricsSettings(): DesktopLyricsSettingsV3 {
@@ -153,14 +177,48 @@ function applyWindowSettings(): void {
   const win = runtime.desktopLyricsWindow
   if (!win || win.isDestroyed()) return
   const settings = getEffectiveDesktopLyricsSettings()
-  win.setFocusable(settings.placement !== 'taskbar')
-  // On Windows, setFocusable(true) adds the window back to the taskbar.
-  win.setSkipTaskbar(true)
-  if (settings.placement === 'taskbar') {
-    appliedTaskbarPlacement = true
-    win.setBounds(currentTaskbarBounds())
-    win.setAlwaysOnTop(true, 'screen-saver')
-    win.setIgnoreMouseEvents(true)
+  const taskbar = settings.placement === 'taskbar'
+  const alwaysOnTop = taskbar || settings.alwaysOnTop
+  const ignoreMouseEvents =
+    desktopLyricsPausedHidden || (settings.locked && !desktopLyricsInteractionActive)
+  const ignoreMouse = taskbar || ignoreMouseEvents
+  const previous = appliedWindowSettings.get(win)
+  // Reapplying native focus/stacking styles can dismiss the main window's
+  // select popup on Windows. Text/style edits only need a renderer update.
+  if (!previous || previous.taskbar !== taskbar) {
+    win.setFocusable(!taskbar)
+    // On Windows, setFocusable(true) adds the window back to the taskbar.
+    win.setSkipTaskbar(true)
+  }
+  if (!previous || previous.alwaysOnTop !== alwaysOnTop) {
+    win.setAlwaysOnTop(alwaysOnTop, 'screen-saver')
+  }
+  if (!previous || previous.taskbar !== taskbar || previous.ignoreMouseEvents !== ignoreMouse) {
+    win.setIgnoreMouseEvents(ignoreMouse, { forward: !taskbar && ignoreMouse })
+  }
+  appliedWindowSettings.set(win, { taskbar, alwaysOnTop, ignoreMouseEvents: ignoreMouse })
+
+  const bounds = win.getBounds()
+  const nextBounds = taskbar
+    ? currentTaskbarBounds()
+    : appliedTaskbarPlacement
+      ? windowPosition()
+      : clampToCurrentDisplay(win, bounds.x, bounds.y)
+  // Windows rounds between physical pixels and DIPs at fractional scaling.
+  // Accept its one-DIP rounding instead of chasing it with more native moves
+  // and Core settings writes. Move and resize together: setPosition() can
+  // otherwise grow a transparent, non-resizable window on each correction.
+  const positionChanged =
+    Math.abs(bounds.x - nextBounds.x) > 1 || Math.abs(bounds.y - nextBounds.y) > 1
+  if (
+    positionChanged ||
+    Math.abs(bounds.width - nextBounds.width) > 1 ||
+    Math.abs(bounds.height - nextBounds.height) > 1
+  ) {
+    win.setBounds(nextBounds)
+  }
+  appliedTaskbarPlacement = taskbar
+  if (taskbar) {
     clearDesktopLyricsHoverTracking()
     desktopLyricsInteractionActive = false
     if (taskbarStackingTimer === null) {
@@ -172,40 +230,8 @@ function applyWindowSettings(): void {
     return
   }
   clearTaskbarStackingTimer()
-  win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
-  const ignoreMouseEvents =
-    desktopLyricsPausedHidden || (settings.locked && !desktopLyricsInteractionActive)
-  win.setIgnoreMouseEvents(ignoreMouseEvents, { forward: ignoreMouseEvents })
   syncDesktopLyricsHoverTracking()
-  const bounds = win.getBounds()
-  if (bounds.width !== settings.windowWidth || bounds.height !== settings.windowHeight) {
-    // BrowserWindow.setSize() is constrained by the non-resizable style on
-    // Windows and can silently ignore a shrink. setBounds() still permits
-    // trusted programmatic resizing while keeping the window non-resizable
-    // for the user.
-    win.setBounds({
-      ...bounds,
-      width: settings.windowWidth,
-      height: settings.windowHeight
-    })
-  }
-  if (appliedTaskbarPlacement) {
-    appliedTaskbarPlacement = false
-    const restored = windowPosition()
-    win.setPosition(restored.x, restored.y)
-  }
-  const current = win.getPosition()
-  const constrained = clampToCurrentDisplay(win, current[0], current[1])
-  if (constrained.x !== current[0] || constrained.y !== current[1]) {
-    win.setPosition(constrained.x, constrained.y)
-    if (getCoreSettingsBridge()) {
-      persistDesktopLyricsPosition(win)
-      return
-    }
-    settings.windowX = constrained.x
-    settings.windowY = constrained.y
-    writeAppSettings(runtime.appSettings)
-  }
+  if (positionChanged) persistDesktopLyricsPosition(win)
 }
 
 function clearTaskbarStackingTimer(): void {
@@ -328,14 +354,15 @@ function setDesktopLyricsPausedHidden(hidden: boolean): void {
   applyWindowSettings()
 }
 
-function clampToCurrentDisplay(win: BrowserWindow, x: number, y: number): { x: number; y: number } {
+function clampToCurrentDisplay(win: BrowserWindow, x: number, y: number): Electron.Rectangle {
   if (runtime.appSettings.desktopLyrics.placement === 'taskbar') return currentTaskbarBounds()
   const size = win.getBounds()
   const area = screen.getDisplayMatching({ ...size, x, y }).workArea
-  return {
-    x: Math.min(Math.max(Math.round(x), area.x), area.x + area.width - size.width),
-    y: Math.min(Math.max(Math.round(y), area.y), area.y + area.height - size.height)
-  }
+  const settings = runtime.appSettings.desktopLyrics
+  return constrainDesktopLyricsBounds(
+    { x, y, width: settings.windowWidth, height: settings.windowHeight },
+    area
+  )
 }
 
 function validWord(raw: unknown): boolean {
@@ -486,10 +513,7 @@ function createDesktopLyricsWindow(): void {
     }
   }
   const win = new BrowserWindow({
-    width: settings.windowWidth,
-    height: settings.windowHeight,
-    x: position.x,
-    y: position.y,
+    ...position,
     frame: false,
     transparent: true,
     alwaysOnTop: settings.alwaysOnTop,
@@ -655,7 +679,7 @@ export function setupDesktopLyricsIpc(): void {
   if (!resumeBound) {
     resumeBound = true
     screen.on('display-metrics-changed', () => {
-      if (runtime.appSettings.desktopLyrics.placement === 'taskbar') notifySettingsChanged()
+      notifySettingsChanged()
     })
     powerMonitor.on('resume', requestDesktopLyricsResync)
   }
@@ -760,13 +784,7 @@ export function setupDesktopLyricsIpc(): void {
     const win = runtime.desktopLyricsWindow
     if (!win || win.isDestroyed() || runtime.appSettings.desktopLyrics.locked) return
     const position = clampToCurrentDisplay(win, Number(value.x), Number(value.y))
-    const settings = runtime.appSettings.desktopLyrics
-    win.setBounds({
-      x: position.x,
-      y: position.y,
-      width: settings.windowWidth,
-      height: settings.windowHeight
-    })
+    win.setBounds(position)
   })
 
   ipcMain.on('desktopLyrics:moveEnd', (event) => {

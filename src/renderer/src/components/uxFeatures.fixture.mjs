@@ -37,8 +37,7 @@ async function click(text) {
   b.click()
   await settle()
 }
-let loudnessChanged,
-  resolveList,
+let resolveList,
   connects = 0,
   stopped = 0,
   scanned = 0,
@@ -175,14 +174,6 @@ window.api = {
     },
     onStatus: () => () => {}
   },
-  loudnessAnalysis: {
-    onBatchProgress: (callback) => {
-      loudnessChanged = callback
-      return () => {}
-    },
-    getBatch: async () => ({ status: { revision: 0, state: 'idle' } }),
-    cancelBatch: async () => {}
-  },
   app: {
     onUpdateState: () => () => {},
     getUpdateState: async () => createInitialAppUpdateSnapshot(),
@@ -269,7 +260,7 @@ window.runUxFeatureTests = async () => {
   expect(action === 'reveal', 'reveal did not use the Core download task ID')
   await click('加入曲库（复制）')
   expect(action === 'add', 'library action did not request indexing')
-  loudnessChanged({
+  downloadSnapshot = { ...downloadSnapshot, sequence: downloadSnapshot.sequence + 1, libraryLoudness: {
     status: {
       revision: 2,
       state: 'running',
@@ -279,7 +270,8 @@ window.runUxFeatureTests = async () => {
       failed: 0,
       currentTitle: '分析歌曲'
     }
-  })
+  }}
+  coreMessage({connectionId:'ux',message:{kind:'state',epoch:downloadSnapshot.epoch,sequence:downloadSnapshot.sequence,snapshot:structuredClone(downloadSnapshot)}})
   await settle()
   expect(
     document.body.textContent.includes('响度分析'),

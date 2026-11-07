@@ -2013,6 +2013,9 @@ export class LibraryDatabase {
   insertCorePlaybackQueue(id: string, revision: number, edit: Extract<LibraryQueueEdit, { kind: 'insert' }>) {
     return this.queues.edit(id, revision, edit, false, true)
   }
+  clonePlaybackQueue(reference: LibraryPlaybackQueueReference) {
+    return this.queues.clonePlaybackQueue(reference)
+  }
   restoreHeartBaseQueue(base: LibraryPlaybackQueueReference, selectedTrackId: string) {
     return this.queues.restoreHeartBaseQueue(base, selectedTrackId)
   }
@@ -2103,9 +2106,10 @@ export class LibraryDatabase {
   }
   exportPlaybackQueue(
     reference: import('../../shared/playbackSession.ts').LibraryPlaybackQueueReference,
-    maxBytes: number
+    maxBytes: number,
+    includeOriginalOrder = false
   ) {
-    return this.queues.exportPlayback(reference, maxBytes)
+    return this.queues.exportPlayback(reference, maxBytes, includeOriginalOrder)
   }
   readLibraryQueuePlaybackWindow(id: string, revision: number, index: number, wrap: boolean) {
     return this.queues.playbackWindow(id, revision, index, wrap)

@@ -185,6 +185,7 @@ test('prefers the latest registration when multiple plugins expose the same prov
 })
 
 test('classifies provider call timeouts by method latency class', () => {
+  assert.equal(getProviderCallTimeoutMs('openOfficialLogin'), 240_000)
   assert.equal(getProviderCallTimeoutMs('fetchSavedAlbums'), 120_000)
   assert.equal(getProviderCallTimeoutMs('fetchSavedArtists'), 120_000)
   assert.equal(getProviderCallTimeoutMs('fetchPlaylistTracks'), 120_000)
@@ -267,6 +268,15 @@ test('normalizes provider UI metadata defaults and filters malformed sections', 
     unifiedLibrary: undefined
   })
   assert.equal(normalizeProviderUi(undefined), undefined)
+})
+
+test('primary login actions survive normalization only when explicitly enabled', () => {
+  const actions = normalizeProviderUi({ loginExtraActions: [
+    { label: 'Official', method: 'openOfficialLogin', primary: true },
+    { label: 'Other', method: 'otherLogin', primary: 'true' }
+  ] })?.loginExtraActions
+  assert.equal(actions?.[0].primary, true)
+  assert.equal(actions?.[1].primary, undefined)
 })
 
 test('homepage presentation preserves public browsing and bounds provider copy', () => {

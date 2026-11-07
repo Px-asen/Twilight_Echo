@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useEscapeToClose } from '../app/useDismissLayer'
+import MotionTransition from './MotionTransition.vue'
 const props = defineProps<{
   open: boolean
   anchor: HTMLElement | null
@@ -101,7 +102,7 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <Teleport to="body">
-    <Transition name="appearance-popover">
+    <MotionTransition name="popover">
       <section
         v-if="open"
         ref="panel"
@@ -116,7 +117,7 @@ onBeforeUnmount(() => {
       >
         <div class="appearance-popover-content"><slot /></div>
       </section>
-    </Transition>
+    </MotionTransition>
   </Teleport>
 </template>
 <style scoped>
@@ -192,35 +193,6 @@ onBeforeUnmount(() => {
   top: calc(var(--appearance-arrow-y) - 5px);
   border-left: 0;
   border-bottom: 0;
-}
-.appearance-popover-enter-active,
-.appearance-popover-leave-active {
-  transition:
-    opacity 140ms ease,
-    transform 140ms var(--te-ease-soft, ease-out);
-}
-.appearance-popover-enter-from,
-.appearance-popover-leave-to {
-  opacity: 0;
-  transform: translateY(3px) scale(0.985);
-}
-@media (prefers-reduced-motion: reduce) {
-  :global(html:not([data-te-motion='full']) .appearance-popover-enter-active),
-  :global(html:not([data-te-motion='full']) .appearance-popover-leave-active) {
-    transition: none;
-  }
-}
-:global(html[data-te-motion='off'] .appearance-popover-enter-active),
-:global(html[data-te-motion='off'] .appearance-popover-leave-active) {
-  transition: none;
-}
-:global(html[data-te-motion='reduced'] .appearance-popover-enter-active),
-:global(html[data-te-motion='reduced'] .appearance-popover-leave-active) {
-  transition: opacity 100ms ease;
-}
-:global(html[data-te-motion='reduced'] .appearance-popover-enter-from),
-:global(html[data-te-motion='reduced'] .appearance-popover-leave-to) {
-  transform: none;
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .appearance-popover {

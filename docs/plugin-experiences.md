@@ -1,5 +1,7 @@
 # Plugin experiences: pages, panels and sidebar widgets (API v4)
 
+For a complete startup interface, start with the [Chinese authoring guide and runnable page example](./plugin-full-interface.md).
+
 This extension is additive. Existing API v1-v3 process and declarative-theme
 plugins continue to use their original lifecycle. An experience requires type
 `ui`, permission `ui:inject`, and `contributes.experiences`:

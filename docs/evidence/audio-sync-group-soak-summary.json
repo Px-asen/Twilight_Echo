@@ -1,0 +1,280 @@
+{
+  "kind": "controlled-time, production receiver/SWR and shared Core owner",
+  "sampleRate": 48000,
+  "durationNote": "1800 simulated seconds, not a physical DAC measurement",
+  "simulatedMs": 1800000,
+  "activeMs": 1798200,
+  "steady": {
+    "samples": 14999,
+    "p50": 0.2689265000323455,
+    "p99": 0.6047193749982398,
+    "maximum": 0.6425747708320463
+  },
+  "all": {
+    "samples": 17982,
+    "p50": 0.26463464585443336,
+    "p99": 0.9801747083335309,
+    "maximum": 1.8086692083937426
+  },
+  "estimatedMax": 1.6711225149010716,
+  "members": [
+    {
+      "id": "local",
+      "prepares": 6,
+      "corrections": 5552,
+      "phaseChecks": 188419
+    },
+    {
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "prepares": 6,
+      "corrections": 5582,
+      "phaseChecks": 188427
+    }
+  ],
+  "events": [
+    {
+      "at": 0,
+      "kind": "arm",
+      "id": "local",
+      "position": 0
+    },
+    {
+      "at": 0,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 0
+    },
+    {
+      "at": 600000,
+      "kind": "dsp-delay"
+    },
+    {
+      "at": 600000,
+      "kind": "silence",
+      "id": "local",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": -0.198502977960743,
+        "uncertaintyMs": 0.2150072082877159,
+        "requestedPpm": 203.332,
+        "effectivePpm": 199.3576676870834,
+        "sampledAtCoreMs": 100599999.99167094,
+        "samples": 2399
+      },
+      "clock": 280.0326185852242
+    },
+    {
+      "at": 600000,
+      "kind": "silence",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": 0.2054417874896899,
+        "uncertaintyMs": 0.21499280631542206,
+        "requestedPpm": -198.474,
+        "effectivePpm": -200.2315057599846,
+        "sampledAtCoreMs": 100599999.99281605,
+        "samples": 2399
+      },
+      "clock": -279.99176784654355
+    },
+    {
+      "at": 600000,
+      "kind": "arm",
+      "id": "local",
+      "position": 599.626801497022
+    },
+    {
+      "at": 600000,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 599.626801497022
+    },
+    {
+      "at": 900000,
+      "kind": "reverse-drift"
+    },
+    {
+      "at": 902300,
+      "kind": "silence",
+      "id": "local",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": -0.9122151823830791,
+        "uncertaintyMs": 0.2100072130560875,
+        "requestedPpm": 165.967,
+        "effectivePpm": 177.41489331268843,
+        "sampledAtCoreMs": 100902300.00151266,
+        "samples": 1208
+      },
+      "clock": 278.0160253195163
+    },
+    {
+      "at": 902300,
+      "kind": "silence",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": 0.896994770038873,
+        "uncertaintyMs": 0.20999281108379364,
+        "requestedPpm": -168.707,
+        "effectivePpm": -180.21196359530035,
+        "sampledAtCoreMs": 100902300.00151265,
+        "samples": 1208
+      },
+      "clock": -277.95820280718254
+    },
+    {
+      "at": 902300,
+      "kind": "arm",
+      "id": "local",
+      "position": 901.5478892818396
+    },
+    {
+      "at": 902300,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 901.5478892818396
+    },
+    {
+      "at": 905100,
+      "kind": "silence",
+      "id": "local",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": -0.9011617964347352,
+        "uncertaintyMs": 0.2150072082877159,
+        "requestedPpm": 124.582,
+        "effectivePpm": 136.39402803988787,
+        "sampledAtCoreMs": 100905099.995,
+        "samples": 10
+      },
+      "clock": -125.13569590022477
+    },
+    {
+      "at": 905100,
+      "kind": "silence",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": 0.9011589118981647,
+        "uncertaintyMs": 0.21499280631542206,
+        "requestedPpm": -127.363,
+        "effectivePpm": -139.2170661052017,
+        "sampledAtCoreMs": 100905099.995,
+        "samples": 10
+      },
+      "clock": 118.5886014924975
+    },
+    {
+      "at": 905100,
+      "kind": "arm",
+      "id": "local",
+      "position": 903.9689881200432
+    },
+    {
+      "at": 905100,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 903.9689881200432
+    },
+    {
+      "at": 908600,
+      "kind": "silence",
+      "id": "local",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": -0.8953634745380441,
+        "uncertaintyMs": 0.21750721335411072,
+        "requestedPpm": 6.39,
+        "effectivePpm": 14.305319385288229,
+        "sampledAtCoreMs": 100908600.00971393,
+        "samples": 13
+      },
+      "clock": -122.74597958927825
+    },
+    {
+      "at": 908600,
+      "kind": "silence",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": 0.8688199570292454,
+        "uncertaintyMs": 0.21749281138181686,
+        "requestedPpm": -9.22,
+        "effectivePpm": -17.16584302413615,
+        "sampledAtCoreMs": 100908600.00971392,
+        "samples": 13
+      },
+      "clock": 117.9007948453048
+    },
+    {
+      "at": 908600,
+      "kind": "arm",
+      "id": "local",
+      "position": 907.0900927565687
+    },
+    {
+      "at": 908600,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 907.0900927565687
+    },
+    {
+      "at": 1200000,
+      "kind": "silence",
+      "id": "local",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": 0.22555914259282872,
+        "uncertaintyMs": 0.2100072056055069,
+        "requestedPpm": -201.702,
+        "effectivePpm": -200.2315057599846,
+        "sampledAtCoreMs": 101199900.00142446,
+        "samples": 1164
+      },
+      "clock": -120.00267288481137
+    },
+    {
+      "at": 1200000,
+      "kind": "silence",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "sync": {
+        "state": "correcting",
+        "error": null,
+        "phaseErrorMs": -0.23050489911111072,
+        "uncertaintyMs": 0.20999281108379364,
+        "requestedPpm": 199.109,
+        "effectivePpm": 199.3576676870834,
+        "sampledAtCoreMs": 101199900.00142446,
+        "samples": 1164
+      },
+      "clock": 119.9830402818236
+    },
+    {
+      "at": 1200000,
+      "kind": "arm",
+      "id": "zone-27181672-493f-4483-9610-eff9e01c7fa0",
+      "position": 1198.1118622516697
+    },
+    {
+      "at": 1200000,
+      "kind": "arm",
+      "id": "local",
+      "position": 1198.1118622516697
+    },
+    {
+      "at": 1200000,
+      "kind": "explicit-reconnect"
+    }
+  ]
+}
