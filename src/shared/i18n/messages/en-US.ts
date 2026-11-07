@@ -253,6 +253,10 @@ export const EN_US_MESSAGES: Record<string, string> = {
   'audio.reason.output_dither_active.fix': 'Set output stage dither to "off".',
 
   // ══ Output routing / device ══════════════════════════════════════════════
+  'audio.reason.android_system_path.label': 'Android system audio output',
+  'audio.reason.android_system_path.explain':
+    'Audio passes through the Android system audio path. The device may apply mixing, resampling or volume changes, so bit-perfect output is not verified.',
+  'audio.reason.android_system_path.fix': '',
   'audio.reason.shared_mixer.label': 'Shared output goes through the system mixer',
   'audio.reason.shared_mixer.explain':
     'In shared mode audio passes through the system mixer, which handles volume, resampling and mixing. Bit-perfect output is generally not possible there.',

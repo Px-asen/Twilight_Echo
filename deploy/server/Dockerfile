@@ -8,6 +8,8 @@ COPY audio-engine/automix-native/dependencies.lock.json ./audio-engine/automix-n
 COPY scripts/build-public-automix-assets.py ./scripts/build-public-automix-assets.py
 COPY scripts/test-build-public-automix-assets.py ./scripts/test-build-public-automix-assets.py
 ENV TF_USE_LEGACY_KERAS=1 TF_ENABLE_ONEDNN_OPTS=0 OMP_NUM_THREADS=4 TF_NUM_INTRAOP_THREADS=4 TF_NUM_INTEROP_THREADS=1
+# Match the locked x86_64 export: AVX-512 changes the final bits of folded Conv/BN weights.
+ENV ATEN_CPU_CAPABILITY=avx2
 ENV PIP_DEFAULT_TIMEOUT=300 PIP_RETRIES=8 PIP_RESUME_RETRIES=12
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip==26.3
 RUN --mount=type=cache,target=/root/.cache/pip python -c "import json,runpy; builder=runpy.run_path('scripts/build-public-automix-assets.py'); builder['install_dependencies'](json.loads(builder['LOCK'].read_text()))"

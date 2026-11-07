@@ -1257,6 +1257,8 @@ if(TAE_BUILD_TESTS)
   # That silently turns the whole suite into a no-op that still reports "Passed".
   # Keep assertions live on every test target regardless of configuration.
   set(TAE_TEST_TARGETS
+    twilight_resampler_response_tests
+    twilight_usb_pcm_decoder_tests
     twilight_bridge_receiver_tests
     twilight_bridge_formats_tests
     twilight_bridge_automix_plan_tests
