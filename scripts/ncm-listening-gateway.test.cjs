@@ -1,8 +1,16 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const { createRequire } = require('node:module')
+const { basename } = require('node:path')
 const test = require('node:test')
 
 test('installed NCBL endpoint sends both encrypted uploads through the authenticated gateway', async (t) => {
+  // The gateway reads this cache during module initialization; a clean runner
+  // has no anonymous login cache and the fixture must not read a user's token.
+  const readFileSync = fs.readFileSync
+  t.mock.method(fs, 'readFileSync', (file, ...args) =>
+    basename(String(file)) === 'anonymous_token' ? '' : readFileSync(file, ...args)
+  )
   const ncmRequire = createRequire(require.resolve('@neteasecloudmusicapienhanced/api/server.js'))
   const axiosPath = ncmRequire.resolve('axios')
   const originalAxios = ncmRequire('axios')
