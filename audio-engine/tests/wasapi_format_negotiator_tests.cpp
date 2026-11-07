@@ -59,7 +59,17 @@ std::string extractFunctionBody(const std::string& source, const std::string& si
         source.size());
     std::abort();
   }
-  const size_t bodyStart = source.find('{', signaturePos);
+  // Default callback arguments may contain {} before the actual body.
+  const size_t parametersStart = source.find('(', signaturePos);
+  assert(parametersStart != std::string::npos);
+  size_t parametersEnd = parametersStart;
+  int parameterDepth = 0;
+  for (; parametersEnd < source.size(); ++parametersEnd) {
+    if (source[parametersEnd] == '(') ++parameterDepth;
+    else if (source[parametersEnd] == ')' && --parameterDepth == 0) break;
+  }
+  assert(parametersEnd < source.size());
+  const size_t bodyStart = source.find('{', parametersEnd + 1);
   assert(bodyStart != std::string::npos);
   int depth = 0;
   for (size_t i = bodyStart; i < source.size(); ++i) {
@@ -244,7 +254,7 @@ void testWasapiSharedStopDoesNotJoinCurrentRenderThread() {
   const std::string joinBody = extractFunctionBody(source, joinSignature);
   const std::string startBody = extractFunctionBody(
       source,
-      "bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+      "bool WasapiSharedBackend::startInternal(");
 
   assert(source.find("std::mutex threadMutex") != std::string::npos);
   assert(startBody.find("launchRenderThread()") != std::string::npos);
@@ -260,13 +270,15 @@ void testWasapiStartEntrypointsRejectAlreadyRunningBackend() {
   const std::string sharedStartBody = extractFunctionBody(
       sharedSource,
       "bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+  const std::string sharedStartHelperBody = extractFunctionBody(sharedSource, "bool WasapiSharedBackend::startInternal(");
+  const std::string sharedStartClockedBody = extractFunctionBody(sharedSource, "bool WasapiSharedBackend::startClocked(");
   const std::string exclusiveStartBody = extractFunctionBody(
       exclusiveSource,
       "bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
   const std::string exclusiveStartTypedBody = extractFunctionBody(exclusiveSource, "bool WasapiExclusiveBackend::startTyped");
   const std::string exclusiveStartHelperBody = extractFunctionBody(exclusiveSource, "bool startWithCallbacks(");
 
-  for (const std::string& body : {sharedStartBody, exclusiveStartHelperBody}) {
+  for (const std::string& body : {sharedStartHelperBody, exclusiveStartHelperBody}) {
     const size_t runningCheck = body.find("impl_->running.load()");
     const size_t directRunningCheck = body.find("running.load()");
     const size_t callbackInstall = body.find("impl_->callback");
@@ -282,6 +294,8 @@ void testWasapiStartEntrypointsRejectAlreadyRunningBackend() {
     assert(check < install);
     assert(check < launch);
   }
+  assert(sharedStartBody.find("return startInternal(std::move(callback)") != std::string::npos);
+  assert(sharedStartClockedBody.find("return startInternal({}, std::move(callback)") != std::string::npos);
   assert(exclusiveStartBody.find("impl_->startWithCallbacks(std::move(callback), nullptr") != std::string::npos);
   assert(exclusiveStartTypedBody.find("impl_->startWithCallbacks(std::move(fallbackCallback), std::move(callback)") !=
          std::string::npos);

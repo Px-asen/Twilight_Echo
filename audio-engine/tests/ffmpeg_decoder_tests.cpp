@@ -435,7 +435,9 @@ void assertDecoderReportsWavPackDsdBeforePcmConversion() {
     if (layout) decoder.setInputFactory(std::make_shared<const SeekableInputFactory>(
         [hosted](const std::string&) { return std::make_shared<MemoryAudioInput>(hosted); }));
     std::string error;
-    assert(decoder.open(layout ? "content://documents/opaque-audio" : fixture.string(), &error));
+    const bool opened = decoder.open(layout ? "content://documents/opaque-audio" : fixture.string(), &error);
+    if (!opened) std::fprintf(stderr, "WavPack DSD layout %d: %s\n", layout, error.c_str());
+    assert(opened);
     const auto stream = decoder.streamInfo();
     assert(stream.isDsd);
     assert(stream.dsdMode == DsdMode::Pcm);

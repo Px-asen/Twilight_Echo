@@ -287,16 +287,27 @@ async function exerciseSessionQueues(secure, token, epoch, zoneId = 'local') {
     return { target: { kind: 'zone', id: zone.id, revision: zone.revision }, queue: zone.queue &&
       { id: zone.queue.id, revision: zone.queue.revision, occurrenceId: zone.queue.occurrenceId } }
   }
-  const load = async selection => {
-    const result = await send('command', 'zones.queue.load', { ...await destination(), selection, play: false })
+  const load = async readSelection => {
+    let result
+    // Playback metadata can finish after Pause. A rejected stale selection has
+    // no side effects; refresh both revisions as a client would, without
+    // retrying transport failures or replaying an acknowledged queue load.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const target = await destination()
+      const selection = await readSelection()
+      result = await send('command', 'zones.queue.load', { ...target, selection, play: false })
+      if (result.ok || result.error?.code !== 'STALE_REVISION') break
+    }
     assert.equal(result.ok, true, JSON.stringify(result))
     const current = await destination()
     const page = await query('zones.queue.page', { target: current.target, queue: { id: current.queue.id, revision: current.queue.revision }, offset: 0, limit: 100 })
     assert.doesNotMatch(JSON.stringify(page), /filePath|[A-Z]:[\\/]/)
     return { current, page }
   }
-  const currentSource = await query('catalog.sources', { entityId })
-  const repeated = await load({ kind: 'catalog', revision: currentSource.revision, sourceIds: [currentSource.items[0].id, currentSource.items[0].id] })
+  const repeated = await load(async () => {
+    const currentSource = await query('catalog.sources', { entityId })
+    return { kind: 'catalog', revision: currentSource.revision, sourceIds: [currentSource.items[0].id, currentSource.items[0].id] }
+  })
   assert.equal(repeated.page.total, 2)
   assert.notEqual(repeated.page.items[0].queueEntryId, repeated.page.items[1].queueEntryId)
   const selected = await send('command', 'zones.queue.select', { target: repeated.current.target,
@@ -316,19 +327,26 @@ async function exerciseSessionQueues(secure, token, epoch, zoneId = 'local') {
   const stale = await send('command', 'zones.queue.edit', { target: repeated.current.target,
     queue: { id: repeated.current.queue.id, revision: repeated.current.queue.revision }, edit: { kind: 'clear' } })
   assert.equal(stale.error.code, 'STALE_REVISION')
-  const tagPage = await query('tags.members', { tagId: tag.id })
-  assert.equal((await load({ kind: 'tag', input: { tagId: tag.id, token: tagPage.token } })).page.total, 1)
-  const focusPage = await query('focus.query', { query: filter })
-  assert.equal((await load({ kind: 'focus', input: { query: filter, token: focusPage.token } })).page.total, 1)
+  assert.equal((await load(async () => {
+    const tagPage = await query('tags.members', { tagId: tag.id })
+    return { kind: 'tag', input: { tagId: tag.id, token: tagPage.token } }
+  })).page.total, 1)
+  assert.equal((await load(async () => {
+    const focusPage = await query('focus.query', { query: filter })
+    return { kind: 'focus', input: { query: filter, token: focusPage.token } }
+  })).page.total, 1)
   const latestSource = await query('catalog.sources', { entityId })
   const playlistRevision = (await query('playlists.catalog')).revision
   const added = await mutate('playlists.addSources', { id: playlist.id, revision: playlistRevision,
     catalogRevision: latestSource.revision, sourceIds: [latestSource.items[0].id, latestSource.items[0].id] })
-  const snapshot = await query('core.getSnapshot')
   // Ordinary playlists deduplicate track identities; queue occurrences above
   // deliberately do not. Keep the existing playlist membership contract.
   assert.equal((await query('playlists.members', { id: playlist.id, revision: added.revision })).total, 1)
-  assert.equal((await load({ kind: 'playlist', id: playlist.id, revision: added.revision, versionsRevision: snapshot.versionsRevision })).page.total, 1)
+  assert.equal((await load(async () => {
+    const snapshot = await query('core.getSnapshot')
+    const currentCatalog = await query('playlists.catalog')
+    return { kind: 'playlist', id: playlist.id, revision: currentCatalog.revision, versionsRevision: snapshot.versionsRevision }
+  })).page.total, 1)
   if (process.env.TWILIGHT_SESSION_QUEUE_SAMPLES) require('node:fs').writeFileSync(process.env.TWILIGHT_SESSION_QUEUE_SAMPLES,
     JSON.stringify({ format: 'twilight-session-queue-wire', version: 1, samples }, null, 2))
   console.log('[session-queues]', JSON.stringify({ pairedTls: true, realSqlite: true,
