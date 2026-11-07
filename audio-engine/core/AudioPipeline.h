@@ -149,6 +149,12 @@ class AudioPipeline {
       std::string* error);
   TAE_Result togglePause();
   TAE_Result pullBridgePcm(float* data, size_t frames, TAE_BridgePcmInfo* info);
+  TAE_Result pullBridgePcmTimeline(float* data, size_t frames, TAE_BridgePcmInfo* info, char* timeline, size_t capacity);
+  TAE_Result setBridgeQueueControl(bool owned, const std::string& current, const std::string& next);
+  TAE_Result setBridgeAutoMixMode(const std::string& mode);
+  bool bridgeGroupOwned() const { return bridgeGroupOwned_.load(std::memory_order_acquire); }
+  TAE_Result commitBridgeSourceControls();
+  TAE_Result pullBridgeAudio(void* data, size_t capacity, size_t frames, TAE_BridgeAudioInfo* info);
   TAE_Result stop();
   /** stop() body without the transport lock; callers must hold transportMutex_. */
   TAE_Result stopUnlocked();
@@ -181,11 +187,11 @@ class AudioPipeline {
    * Render callbacks never wait: a concurrent callback keeps reading the current
    * stream but cannot start an obsolete preload/AutoMix transition. */
   bool rebindQueue(const QueueItem& expected, const std::optional<QueueItem>& upcoming,
-                   const std::function<void()>& commit, bool* preloadNeeded = nullptr);
+                   const std::function<void()>& commit, bool* preloadNeeded = nullptr, const QueueItem* selected = nullptr);
   void resetPreloadOverlap();
   bool skipToPreloaded(const QueueItem& item, std::string* error);
   bool setAutoMixMode(const std::string&, std::string* error);
-  std::string selectAutoMix(const std::string& requestJson);
+  std::string selectAutoMix(const std::string& requestJson, bool bindGroupPlan = false);
   bool prepareAutoMix(const std::string& requestJson, std::string* error);
   bool submitAutoMix(uint64_t planId, std::string* error);
   void cancelAutoMix(const std::string& reason);
@@ -319,6 +325,12 @@ class AudioPipeline {
 
   std::shared_ptr<UsbPcmPolicy> usbPcmPolicy_;
   uint64_t bridgeGeneration_ = 0; // protected by transportMutex_
+  uint64_t bridgeCounterGeneration_ = UINT64_MAX, bridgePulledFrames_ = 0;
+  uint64_t bridgeTransitionFrame_ = 0, bridgeTransitionSerial_ = 0;
+  bool bridgeCapturing_ = false; // Only the capture pull's synchronous render may publish a boundary.
+  std::atomic<bool> bridgeGroupOwned_{false}, bridgeGroupAdvance_{false};
+  void recordBridgePromotion(size_t frameOffset, uint64_t postDspDelay = 0);
+  bool bridgeAdvanceReadyLocked() const;
   std::shared_ptr<UsbDirectHost> usbDirectHost_;
   std::shared_ptr<const SeekableInputFactory> inputFactory_;
   static std::shared_ptr<DecodeStream> makeDecodeStream(std::shared_ptr<const SeekableInputFactory> factory);
@@ -436,6 +448,8 @@ class AudioPipeline {
   uint64_t autoMixDecodeMs_ = 0, autoMixPrepareMs_ = 0;
   uint64_t autoMixRevision_ = 0, autoMixNextPlanId_ = 0;
   ta_am_mode autoMixMode_ = TA_AM_OFF;
+  ta_am_mode localAutoMixMode_ = TA_AM_OFF, bridgeAutoMixMode_ = TA_AM_OFF;
+  void applyAutoMixModeLocked(ta_am_mode mode);
   std::atomic<int> requestedAutoMixMode_{TA_AM_OFF};
   std::string autoMixReason_;
   mutable std::array<RetiredDecodeStream, kRetiredStreamSlots> retiredStreams_;

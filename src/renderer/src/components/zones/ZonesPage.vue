@@ -19,6 +19,7 @@ import ZoneWindowCard from './ZoneWindowCard.vue'
 import ZoneGroupFrame from './ZoneGroupFrame.vue'
 import ZoneSignalPath from './ZoneSignalPath.vue'
 import ZoneGroupAlignment from './ZoneGroupAlignment.vue'
+import ZoneGroupAutoMix from './ZoneGroupAutoMix.vue'
 import ZoneQueueCard from './ZoneQueueCard.vue'
 import ZoneProcessingCard from './ZoneProcessingCard.vue'
 import ZoneHostCard from './ZoneHostCard.vue'
@@ -360,6 +361,9 @@ const onRemove = async (): Promise<void> => {
               :path-member-id="detailZoneId"
               @pick-member="ws.select({ kind: 'group', id: selectedGroup.id }, $event)"
             />
+            <ZoneGroupAutoMix v-if="selectedGroup" class="zones-span-full" :group="selectedGroup"
+              :busy="pending.has(`group:${selectedGroup.id}`)"
+              @change="ws.editGroupAutoMix(selectedGroup, $event)" />
             <ZoneSignalPath
               class="zones-span-full"
               :path="signalPath"

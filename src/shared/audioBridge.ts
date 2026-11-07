@@ -1,4 +1,27 @@
 import type { BridgeClockStatus } from './audioBridgeClock.ts'
+export const BRIDGE_WIRE_FORMATS = ['float32-le', 'dop-int24-le', 'dsd-int8-lsb1', 'dsd-int8-msb1', 'dsd-int8-ner8'] as const
+export type BridgeWireFormat = typeof BRIDGE_WIRE_FORMATS[number]
+export interface BridgeStreamOptions { wireFormat?: BridgeWireFormat; channels?: number; channelMask?: number }
+export interface BridgeAudioFormat { sampleRate: number; channels: number; wireFormat: BridgeWireFormat; channelMask: number }
+export const bridgeWireCode = (format: BridgeWireFormat): number => BRIDGE_WIRE_FORMATS.indexOf(format) + 1
+export const bridgeSampleBytes = (format: BridgeWireFormat): number => format === 'float32-le' ? 4 : format === 'dop-int24-le' ? 3 : 1
+export const bridgeFrameRate = (format: BridgeAudioFormat): number => format.sampleRate / (format.wireFormat.startsWith('dsd-') ? 8 : 1)
+export const extendedBridgeFormat = (format: BridgeAudioFormat): boolean => format.wireFormat !== 'float32-le' || format.channels !== 2 || format.sampleRate > 192000 || format.channelMask !== 3
+export const bridgeCaptureDevice = (format: BridgeAudioFormat): string => extendedBridgeFormat(format)
+  ? `${format.sampleRate}/${format.channels}/${bridgeWireCode(format.wireFormat)}/${format.channelMask}` : `${format.sampleRate}/2`
+export function readBridgeAudioFormat(value: { sampleRate: number } & BridgeStreamOptions): BridgeAudioFormat {
+  const wireFormat = value.wireFormat ?? 'float32-le', channels = value.channels ?? 2
+  const channelMask = value.channelMask ?? (channels === 1 ? 4 : channels === 2 ? 3 : channels === 6 ? 0x60f : channels === 8 ? 0x63f : 0)
+  const rates = wireFormat === 'float32-le' ? [44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000]
+    : wireFormat === 'dop-int24-le' ? [176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000]
+      : [2822400, 3072000, 5644800, 6144000, 11289600, 12288000, 22579200, 24576000]
+  if (!BRIDGE_WIRE_FORMATS.includes(wireFormat) || !Number.isInteger(value.sampleRate) ||
+      (!rates.includes(value.sampleRate) && !(wireFormat === 'float32-le' && value.sampleRate >= 44100 && value.sampleRate <= 192000)) || !Number.isInteger(channels) || channels < 1 || channels > 8 ||
+      !Number.isSafeInteger(channelMask) || channelMask < 0 || channelMask > 0x3ffff ||
+      (channels > 2 && !channelMask) || (channelMask && channelMask.toString(2).replaceAll('0', '').length !== channels))
+    throw new Error('输出桥格式或声道布局无效')
+  return { sampleRate: value.sampleRate, wireFormat, channels, channelMask }
+}
 /** Each Bridge connection belongs to one Core session. */
 export interface BridgePeer {
   host: string
@@ -40,11 +63,14 @@ export function readBridgeOutputClock(value: unknown): BridgeOutputClock | null 
   result.source = raw.source
   const clock = result as unknown as BridgeOutputClock
   if ((clock.supported !== (clock.source !== 'unsupported')) ||
-      (clock.valid && (!clock.supported || !clock.running || clock.sampleRate < 44100 || clock.sampleRate > 192000 ||
+      (clock.valid && (!clock.supported || !clock.running || clock.sampleRate < 44100 || clock.sampleRate > 24576000 ||
         clock.sampledAtMs <= 0 || clock.sampledAtMs > clock.readAtMs))) throw new Error('Inconsistent Bridge clock')
   return clock
 }
 export interface BridgeReceiverFacts {
+  wireFormat?: BridgeWireFormat
+  channelMask?: number
+  actualChannelMask?: number
   sampleRate: number
   channels: number
   bufferedFrames: number
@@ -135,6 +161,15 @@ export function readBridgeReceiverFacts(value: unknown): BridgeReceiverFacts {
     result[key] = raw[key]
   }
   const facts = result as unknown as BridgeReceiverFacts
+  const format = readBridgeAudioFormat({ sampleRate: facts.sampleRate, channels: facts.channels,
+    wireFormat: raw.wireFormat as BridgeWireFormat | undefined, channelMask: raw.channelMask as number | undefined })
+  facts.wireFormat = format.wireFormat; facts.channelMask = format.channelMask
+  if (raw.actualChannelMask !== undefined) {
+    const mask = raw.actualChannelMask
+    if (!Number.isSafeInteger(mask) || Number(mask) < 0 || Number(mask) > 0x3ffff ||
+        (Number(mask) && Number(mask).toString(2).replaceAll('0', '').length !== facts.actualChannels)) throw new Error('Invalid Bridge device layout')
+    facts.actualChannelMask = Number(mask)
+  }
   facts.clock = readBridgeOutputClock(raw.clock)
   facts.timedStart = readBridgeTimedStart(raw.timedStart)
   if (raw.adaptiveSupported !== undefined && typeof raw.adaptiveSupported !== 'boolean') throw new Error('Invalid adaptive Bridge support')
@@ -144,8 +179,9 @@ export function readBridgeReceiverFacts(value: unknown): BridgeReceiverFacts {
       facts.adaptive.sourceConsumedFrames > facts.adaptive.inputFrames || facts.adaptive.inputCreditFrames > facts.capacityFrames))
     throw new Error('Inconsistent adaptive Bridge facts')
   if (facts.clock?.valid && facts.clock.sampleRate !== facts.sampleRate) throw new Error('Bridge clock format changed')
-  if (facts.channels !== 2 || facts.sampleRate < 44100 || facts.sampleRate > 192000 ||
-      facts.capacityFrames > facts.sampleRate || facts.bufferedFrames > facts.capacityFrames ||
+  if ((extendedBridgeFormat(format) && raw.wireFormat === undefined) ||
+      (format.wireFormat !== 'float32-le' && (facts.adaptiveSupported || facts.timedStart?.supported)) ||
+      facts.capacityFrames > bridgeFrameRate(format) || facts.bufferedFrames > facts.capacityFrames ||
       facts.prebufferFrames > facts.capacityFrames)
     throw new Error('Invalid Bridge format or buffer')
   return facts
@@ -170,12 +206,18 @@ export interface CoreZoneState extends BridgeRuntimeState {
   outputs: { id: 'local' | 'bridge'; name: string; available: boolean }[]
 }
 export interface BridgePcmBlock {
+  sourceTimeline?: string
   generation: number
   sampleRate: number
   channels: number
   frames: number
   playing: boolean
   pcm: Uint8Array
+}
+export interface BridgeAudioBlock extends Omit<BridgePcmBlock, 'pcm'> {
+  wireCode: number
+  channelMask: number
+  audio: Uint8Array
 }
 export function validBridgePeer(value: unknown): value is BridgePeer {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false

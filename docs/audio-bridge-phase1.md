@@ -4,6 +4,8 @@
 
 后续进展：[第二阶段多 Zone 与接力记录](D:/Project/Twilight_Echo/docs/audio-zones-phase2.md)。本文保留第一阶段单 Zone 的交付范围。
 
+2026-11-05 已扩展独立声区的原生 DSD／DoP 与多声道传输，入口和当前边界见[网络音频格式](./audio-bridge-formats.md)。下文双声道 PCM 限制保留为第一阶段历史范围。
+
 ## 怎么使用
 
 两台电脑均运行本次构建的 Twilight Echo。现阶段依托桌面宿主及其隔离音频服务；独立安装的 Windows Service、NAS／容器 Server 属于后续阶段。

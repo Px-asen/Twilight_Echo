@@ -2,6 +2,7 @@
 #include "../IOutputBackend.h"
 #include "BridgeResampler.h"
 #include "BridgePresentationHistory.h"
+#include "BridgeFormat.h"
 #include <atomic>
 
 namespace twilight::audio {
@@ -11,8 +12,11 @@ class BridgeReceiver {
  public:
   ~BridgeReceiver() { close(); }
   bool open(std::unique_ptr<IOutputBackend> backend, const std::string& device,
-            int rate, int channels, std::string* error);
+            int rate, int channels, std::string* error, BridgeWireFormat wire = BridgeWireFormat::Float32,
+            uint64_t channelMask = 3, bool strict = false);
   bool write(const float* samples, size_t frames, std::string* error);
+  bool writeAudio(const uint8_t* data, size_t bytes, std::string* error);
+  bool acceptsLegacyPcm() const { return wire_ == BridgeWireFormat::Float32 && format_.channelCount == 2; }
   bool start(std::string* error);
   bool prepareTimed(std::string* error);
   bool prepareAdaptiveTimed(std::string* error);
@@ -23,6 +27,7 @@ class BridgeReceiver {
   std::string status();
  private:
   size_t render(float* samples, size_t frames);
+  size_t renderTyped(PcmBlock& block);
   size_t renderTimed(float*, size_t, const ClockedRenderContext&);
   void commitTimed(uint64_t, size_t, uint64_t, bool);
   enum class TimedPhase { Disabled, Prepared, Armed, Running, Failed };
@@ -34,6 +39,11 @@ class BridgeReceiver {
   std::unique_ptr<IOutputBackend> backend_;
   AudioFormat format_;
   std::vector<float> ring_;
+  std::vector<uint8_t> rawRing_;
+  BridgeWireFormat wire_ = BridgeWireFormat::Float32;
+  uint64_t channelMask_ = 3, markerIndex_ = 0;
+  size_t wireFrameBytes_ = 8;
+  int nextInputMarker_ = -1;
   size_t capacity_ = 0;
   size_t prebufferFrames_ = 0;
   // Counts requested callback frames, not hardware presentation or successful

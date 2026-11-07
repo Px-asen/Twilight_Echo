@@ -84,6 +84,7 @@ export interface CorePlaybackEngine extends LibraryNativeQueueEngine {
    * before this session's serialized mutation lane becomes available. */
   interrupt?(preparingOnly?: boolean): void
   start(): Promise<void>
+  getAudioServiceFailure?(): string | null
   play(source: string, position?: number, requested?: () => boolean): Promise<AudioEnginePlayResult>
   pause(): Promise<void>
   stop(): Promise<void>
@@ -158,6 +159,7 @@ export class CorePlaybackSession {
   private currentTrack: TrackData | null = null
   private mode: PlayMode = 'sequential'
   private error: string | null = null
+  private startupAudioError: string | null = null
   private intent = 0
   private preview = new AbortController()
   private mutation: Promise<unknown> = Promise.resolve()
@@ -213,6 +215,15 @@ export class CorePlaybackSession {
       void this.commit(() => this.failStopped(new Error(this.error!))).catch(() => {})
     }
     if (this.info) this.info = { ...this.info, state: 'stopped' }
+    this.publish()
+  }
+  private readonly audioReady = (event: { outputRouteSynced?: boolean }) => {
+    if (!event?.outputRouteSynced || !this.startupAudioError) return
+    if (this.error === this.startupAudioError) {
+      this.error = null
+      this.uncertain = false
+    }
+    this.startupAudioError = null
     this.publish()
   }
   private readonly options: CorePlaybackSessionOptions
@@ -615,7 +626,14 @@ export class CorePlaybackSession {
     }
   }
   async initialize(): Promise<void> {
-    await this.options.engine.start()
+    try {
+      await this.options.engine.start()
+    } catch (error) {
+      if ((error as { code?: string })?.code !== 'AUDIO_SERVICE_UNAVAILABLE') throw error
+      this.startupAudioError = errorText(error)
+      this.error = this.startupAudioError
+      this.uncertain = true
+    }
     this.info = await this.options.engine.getPlaybackInfo()
     if (this.info.volume > 0) this.lastAudibleVolume = this.info.volume
     const saved = await this.options.repository.load()
@@ -738,6 +756,11 @@ export class CorePlaybackSession {
     this.options.engine.on('playback-info', this.listen)
     this.options.engine.on('playback-sample', this.listen)
     this.options.engine.on('audio-service-crash', this.crash)
+    this.options.engine.on('audio-service-ready', this.audioReady)
+    if (this.startupAudioError && this.info)
+      this.info = { ...this.info, state: 'stopped', nativePlaybackActive: false }
+    if (this.startupAudioError && this.options.engine.getAudioServiceFailure?.() === null)
+      this.audioReady({ outputRouteSynced: true })
     if (saved?.data && !saved.data.libraryQueue && this.currentTrack) {
       // Publish the reference before ready. Old versioned files/backups remain
       // available; a failed save retries via the completed import's read path.
@@ -2020,7 +2043,10 @@ export class CorePlaybackSession {
   }
 
   /** Revoke prepared sources; preserve the logical cursor and resume position without autoplay. */
-  async recoverAudio(restart: () => Promise<void>): Promise<void> {
+  async recoverAudio(restart: () => Promise<void>, configuration?: {
+    serialize<T>(action: () => Promise<T>): Promise<T>
+    restored?(): Promise<void>
+  }): Promise<void> {
     this.assertAudioAvailable()
     if (this.options.cast?.active())
       throw new Error('Stop casting before restarting the local audio engine')
@@ -2029,7 +2055,7 @@ export class CorePlaybackSession {
     this.resetAbLoopState()
     this.restored = true
     try {
-      await this.commit(() => {
+      const restore = () => this.commit(() => {
         const recover = async () => {
           try {
             await restart()
@@ -2049,6 +2075,15 @@ export class CorePlaybackSession {
         }
         return this.options.runTransport ? this.options.runTransport(recover) : recover()
       })
+      // Preserve configuration -> transport lock ordering, but keep playback
+      // blocked while deferred startup owners acquire configuration afterwards.
+      await (configuration ? configuration.serialize(restore) : restore())
+      await configuration?.restored?.()
+    } catch (error) {
+      this.uncertain = true
+      this.error = errorText(error)
+      this.publish()
+      throw error
     } finally {
       this.recoveringAudio = false
       this.finishPreparation(intent)
@@ -3188,6 +3223,7 @@ export class CorePlaybackSession {
     this.options.engine.off('playback-info', this.listen)
     this.options.engine.off('playback-sample', this.listen)
     this.options.engine.off('audio-service-crash', this.crash)
+    this.options.engine.off('audio-service-ready', this.audioReady)
     await this.heart?.shutdown()
     this.revoke()
     await this.mutation

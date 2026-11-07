@@ -20,6 +20,9 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <dlfcn.h>
+#endif
 #endif
 
 namespace twilight::audio {
@@ -64,6 +67,13 @@ std::string assetDirectory() {
     return {};
   file.resize(n);
   return utf8(std::filesystem::path(file).parent_path() / "automix-native");
+#elif defined(__linux__) && !defined(__ANDROID__)
+  Dl_info module{};
+  if (!dladdr(reinterpret_cast<const void *>(&assetDirectory), &module) || !module.dli_fname)
+    return {};
+  const std::filesystem::path file(module.dli_fname);
+  if (!file.is_absolute()) return {}; // Never bind models to a caller's working directory.
+  return utf8(file.parent_path() / "automix-native");
 #else
   return {};
 #endif

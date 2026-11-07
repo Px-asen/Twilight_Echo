@@ -1,4 +1,4 @@
-import type { BridgePeer, BridgeRuntimeState, CoreZoneState } from '../../shared/audioBridge.ts'
+import type { BridgePeer, BridgeRuntimeState, CoreZoneState, BridgeStreamOptions } from '../../shared/audioBridge.ts'
 import { bridgeInvitation } from '../../shared/audioBridge.ts'
 import type { CoreAudioOutputService } from './outputService.ts'
 import type { CorePlaybackSession } from '../playback/session.ts'
@@ -50,7 +50,7 @@ export class CoreBridgeService {
     const state = await this.state()
     if (state.selected || state.hosting) throw new Error('请先退出输出桥模式并选择此电脑输出')
   }
-  host(revision: number, enabled: boolean, sampleRate: number): Promise<void> {
+  host(revision: number, enabled: boolean, sampleRate: number, stream: BridgeStreamOptions = {}): Promise<void> {
     if (enabled && this.options.localOutputAllowed === false) return Promise.reject(new Error('Windows Service 不承载本机 DAC，请在交互式电脑上运行输出桥'))
     return this.edit(revision, async () => {
       if (!enabled) { await this.options.call('BridgeHostStop'); this.invitation = null; return }
@@ -62,7 +62,7 @@ export class CoreBridgeService {
       const result = await this.options.call('BridgeHostStart', [{ ...identity, name: this.options.name,
         backend: output.exclusiveMode && ['wasapi', 'coreaudio'].includes(output.output)
           ? `${output.output}-exclusive` : output.output,
-        device: output.device, sampleRate }]) as { port: number; token: string }
+        device: output.device, sampleRate, wireFormat: stream.wireFormat, channels: stream.channels, channelMask: stream.channelMask }]) as { port: number; token: string }
       this.invitation = bridgeInvitation({ host: this.options.address(), port: result.port,
         token: result.token, fingerprint: identity.fingerprint })
     })

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import { useAppNoticeStore } from '@renderer/stores/useAppNoticeStore.ts'
-import { parseBridgeInvitation, type CoreZoneState } from '../../../../shared/audioBridge.ts'
+import { parseBridgeInvitation, type CoreZoneState, type BridgeWireFormat } from '../../../../shared/audioBridge.ts'
 import { moveRadioFocus } from './radioFocus.ts'
 
 /**
@@ -15,10 +15,15 @@ const zone = ref<CoreZoneState | null>(null)
 const invitation = ref('')
 const peerInput = ref('')
 const sampleRate = ref(48000)
+const wireFormat = ref<BridgeWireFormat>('float32-le')
+const channels = ref(2)
 const busy = ref(false)
 const error = ref('')
 const revealed = ref(false)
-const RATES = [44100, 48000, 88200, 96000, 176400, 192000]
+const rates = computed(() => wireFormat.value === 'float32-le' ? [44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000]
+  : wireFormat.value === 'dop-int24-le' ? [176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000]
+    : [2822400, 3072000, 5644800, 6144000, 11289600, 12288000, 22579200, 24576000])
+watch(wireFormat, () => { if (!rates.value.includes(sampleRate.value)) sampleRate.value = rates.value[0] })
 
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
@@ -31,6 +36,12 @@ async function refresh(): Promise<void> {
     const next = await core.query('zones.state', {})
     if (disposed) return
     zone.value = next
+    if (next.hosting && next.receiver) {
+      const wire = next.receiver.wireFormat ?? 'float32-le'
+      wireFormat.value = wire.startsWith('dsd-') ? 'dsd-int8-lsb1' : wire
+      sampleRate.value = next.receiver.sampleRate
+      channels.value = next.receiver.channels
+    }
     if (!next.hosting) invitation.value = ''
     else if (!invitation.value) {
       const grant = await core.query('bridge.invitation', {})
@@ -123,7 +134,9 @@ function toggleHost(): Promise<void> {
     await core.command('bridge.host', {
       revision: zone.value!.revision,
       enabled,
-      sampleRate: sampleRate.value
+      sampleRate: sampleRate.value,
+      wireFormat: wireFormat.value,
+      channels: channels.value
     })
     revealed.value = false
     invitation.value = enabled ? ((await core.query('bridge.invitation', {})).invitation ?? '') : ''
@@ -246,7 +259,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <p id="zones-host-peer-hint" class="zones-hint" :class="{ 'is-error': Boolean(peerError) }">
-            {{ peerError || '在另一台电脑开启「允许此电脑作为输出桥」，复制邀请后粘贴到这里。连接后由此电脑解码和处理，再以加密的无损 PCM 发送。' }}
+            {{ peerError || '在另一台电脑开启「允许此电脑作为输出桥」，复制邀请后粘贴到这里。连接后按协商格式加密传送音频。' }}
           </p>
         </form>
       </article>
@@ -277,11 +290,28 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <label class="zones-select-row">
-          <span>接收采样率</span>
-          <select v-model="sampleRate" class="zones-select" :disabled="busy || zone?.hosting">
-            <option v-for="rate in RATES" :key="rate" :value="rate">{{ rate / 1000 }} kHz</option>
+          <span>接收格式</span>
+          <select v-model="wireFormat" class="zones-select" :disabled="busy || zone?.hosting">
+            <option value="float32-le">PCM · Float32</option>
+            <option value="dop-int24-le">DoP · DSD over PCM</option>
+            <option value="dsd-int8-lsb1">原生 DSD</option>
           </select>
         </label>
+        <label class="zones-select-row">
+          <span>声道布局</span>
+          <select v-model="channels" class="zones-select" :disabled="busy || zone?.hosting">
+            <option :value="1">单声道</option><option :value="2">双声道</option>
+            <option :value="6">5.1 · 侧环绕</option><option :value="8">7.1</option>
+          </select>
+        </label>
+        <label class="zones-select-row">
+          <span>接收采样率</span>
+          <select v-model="sampleRate" class="zones-select" :disabled="busy || zone?.hosting">
+            <option v-for="rate in rates" :key="rate" :value="rate">{{ rate >= 2822400 ? `${rate / 1000000} MHz` : `${rate / 1000} kHz` }}</option>
+          </select>
+        </label>
+        <p v-if="wireFormat !== 'float32-le'" class="zones-hint">DSD／DoP 需要匹配的 DSD 音源、Core 单位增益且不启用 PCM 处理。DoP 需独占输出及支持 DoP 的 DAC；原生 DSD 需驱动明确支持。DSD 和多声道暂不加入同步组。</p>
+        <p v-else-if="channels !== 2" class="zones-hint">按所选布局发送，DAC 必须支持相同声道数及布局，不自动降为双声道。多声道暂不加入同步组。</p>
         <div v-if="invitation && zone?.hosting" class="zones-invitation">
           <span class="zones-field">
             <i class="ph ph-key" aria-hidden="true" />

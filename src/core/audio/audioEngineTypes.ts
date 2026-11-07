@@ -31,6 +31,7 @@ export interface NativeAudioBinding {
   SetPlaybackRate: (rate: number) => void
   SetAutoMixMode?: (mode: import('../../shared/twilightAutoMix.ts').AutoMixMode) => void
   SelectAutoMix?: (requestJson: string) => string | Promise<unknown>
+  BindBridgeAutoMixSelection?: (requestJson: string) => string | Promise<unknown>
   PrepareAutoMix?: (requestJson: string) => void
   SubmitAutoMix?: (planId: number) => void
   CancelAutoMix?: () => void
@@ -119,6 +120,8 @@ export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
   restartAfterFatal?: () => boolean
   /** Manual recovery joins the old process before maintenance and a fresh ready handshake. */
   restart?: (maintenance?: () => Promise<void>) => Promise<void>
+  /** Stop restart timers and join any remaining audio process before Core exits. */
+  shutdown?: () => Promise<void>
   readonly fatalStartupError?: string
   on: (
     event: 'crash' | 'error-log' | 'log' | 'ready' | 'rpc-timeout',

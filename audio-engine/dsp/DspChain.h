@@ -28,6 +28,10 @@ class DspChain {
   void setTrackContext(const DspTrackContext& context);
   void process(float* samples, size_t frameCount);
   void processDouble(double* samples, size_t frameCount);
+  /** Render-thread-only, allocation-free track handoff. Keep filter/plugin
+   * histories; adopt the next track's prepared ReplayGain and processing order. */
+  bool canContinueTrackFrom(const DspChain& prepared) const;
+  bool continueTrackFrom(const DspChain& prepared);
   void reset();
   DspStatus status();
   DspConfig config() const;
@@ -52,6 +56,8 @@ class DspChain {
   void setNativeDspPluginChain(const std::string& json);
   std::string nativeDspPluginStatusJson() const;
   std::string graphStatusJson() const;
+  /** Prepared finite-history drain budget; no locks or JSON on the callback. */
+  uint64_t tailFramesForRender() const noexcept { return renderTailFrames_.load(std::memory_order_relaxed); }
 
   static DspConfig parseConfigJson(const std::string& json);
   static std::vector<DspEqBand> parseEqBandsJson(const std::string& json, EqMode mode);
@@ -68,6 +74,8 @@ class DspChain {
 
   void refreshStatusLocked();
   void clampOutput(float* samples, size_t frameCount);
+  struct GraphTiming { uint64_t latency = 0, tail = 0, drain = 0; };
+  GraphTiming graphTimingLocked(const ConvolverInfo& convolver, uint32_t limiterLatency) const;
 
   mutable std::mutex mutex_;
   DspConfig config_;
@@ -75,6 +83,7 @@ class DspChain {
   DspTrackContext trackContext_;
   DspStatus status_;
   std::atomic<bool> processingRequired_{false};
+  std::atomic<uint64_t> renderTailFrames_{0};
   ReplayGainProcessor* replayGain_ = nullptr;
   ParametricEqProcessor* eq_ = nullptr;
   ConvolverProcessor* convolver_ = nullptr;

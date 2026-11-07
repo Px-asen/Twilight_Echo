@@ -149,7 +149,7 @@ import { CorePlayerPresentationService } from '../../core/playback/presentationS
 import { createQueueInputResolver } from '../../core/playback/queueInputResolver.ts'
 import { authorizeNativeSource } from '../../core/playback/sourceResolver.ts'
 import { CoreSleepTimer } from '../../core/playback/sleepService.ts'
-import { CoreAutoMixService } from '../../core/audio/autoMixService.ts'
+import { CoreAutoMixService, type CoreAutoMixOptions } from '../../core/audio/autoMixService.ts'
 import { CoreModelPackService } from '../../core/audio/modelPackService.ts'
 import { OpraCatalog } from '../../core/audio/opraCatalog.ts'
 import { CoreVisualizationService } from '../../core/audio/visualizationService.ts'
@@ -1073,6 +1073,20 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       .find(entry => !entry.internal && String(entry.family) === 'IPv4')?.address ?? '127.0.0.1',
     changed: () => application?.changed()
   })
+  const autoMixDependencies: Omit<CoreAutoMixOptions, 'root' | 'engine'> = {
+    settings: () => settings.read(), identities: providerPlaybackIdentities,
+    authorize: source => platform!.call('paths.authorizeAudio', { source }),
+    analysis: {
+      analyze: (source, options, priority, signal) => analysis!.analyzeAutoMix(source, options, {
+        priority: priority === 'boundary' ? 90 : -20, signal
+      }),
+      cancel: source => { analysis?.cancelBySource(source, 'automix') }
+    },
+    environment: () => platform!.call('automix.environment', {}),
+    probe: (packDirectory, signal) => platform!.callJoined('automix.probe', { packDirectory }, signal),
+    runWorker: (request, signal) => platform!.callJoined('automix.runWorker', request, signal),
+    useSources: action => sourceResources.use(action), now: Date.now
+  }
   const catalogStore = zoneCatalog(config.root)
   const zones = new CoreZoneRegistry({
     ...catalogStore, newId: randomUUID, changed: () => application?.changed(),
@@ -1081,6 +1095,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       sources: () => audio!.getQueueSnapshot().map(item => item.source), close: async () => {} },
     groups: { ...syncGroupCatalog(config.root), create: (descriptor, outputs) => createSyncGroupRuntime({
       root: config.root, descriptor, outputs, database: database!, changed: () => application?.changed(),
+      autoMix: autoMixDependencies,
       closed: () => listeningSync.closeSession(descriptor.id),
       playback: { queues: playbackQueueApi(database!), resolver, resources: sourceResources,
         observePlayback: (track, info) => listeningSync.observe(descriptor.id, track, info),
@@ -1146,29 +1161,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     newId: randomUUID,
     changed: () => application?.changed()
   })
-  const autoMix = new CoreAutoMixService({
-    root: config.root,
-    settings: () => settings.read(),
-    engine: audio,
-    identities: providerPlaybackIdentities,
-    authorize: (source) => platform!.call('paths.authorizeAudio', { source }),
-    analysis: {
-      analyze: (source, options, priority, signal) =>
-        analysis!.analyzeAutoMix(source, options, {
-          priority: priority === 'boundary' ? 90 : -20,
-          signal
-        }),
-      cancel: (source) => {
-        analysis?.cancelBySource(source, 'automix')
-      }
-    },
-    environment: () => platform!.call('automix.environment', {}),
-    probe: (packDirectory, signal) =>
-      platform!.callJoined('automix.probe', { packDirectory }, signal),
-    runWorker: (request, signal) => platform!.callJoined('automix.runWorker', request, signal),
-    useSources: (action) => sourceResources.use(action),
-    now: Date.now
-  })
+  const autoMix = new CoreAutoMixService({ ...autoMixDependencies, root: config.root, engine: audio })
   const scanner = new LocalLibraryScanServiceClient({
     serviceEntry: 'scan',
     launch: () => launcher!.launch('scan')
@@ -2116,6 +2109,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       windows: process.platform === 'win32',
       confirmWindowsRestart: (signal) => platform!.call('audio.confirmWindowsRestart', {}, signal),
       restartWindowsServices: () => platform!.callJoined('audio.restartWindowsServices', {}),
+      restoreStartup: () => application!.restoreAudioInitialization(),
       changed: () => application?.changed()
     }),
     epoch: config.epoch,
@@ -2179,6 +2173,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   })
   remote.attach(application)
   await application.initialize()
+  audio.on('audio-service-ready', (result: { outputRouteSynced: boolean }) => {
+    if (result.outputRouteSynced)
+      void application?.restoreAudioInitialization().catch(error => console.error('[core.audio.restore]', error))
+  })
+  if (!audio.getAudioServiceFailure()) await application.restoreAudioInitialization()
   send({ kind: 'core:initialized', epoch: config.epoch })
   initializedSent = true
   if (ready) send({ kind: 'core:ready', epoch: config.epoch })

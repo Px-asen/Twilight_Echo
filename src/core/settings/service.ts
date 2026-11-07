@@ -21,6 +21,7 @@ export interface CoreSettingsServiceOptions {
     setAutoMixMode(mode: AppSettings['autoMixMode']): Promise<boolean>
     invalidateAutoMixSource(): void
     stop(): Promise<void>
+    getAudioServiceFailure?(): string | null
   }
 }
 
@@ -43,11 +44,17 @@ export class CoreSettingsService {
       settings: this.options.repository.read()
     }
   }
-  async initialize(): Promise<void> {
+  async initialize(options: { audio?: boolean } = {}): Promise<void> {
     await this.options.configureLibrary(null, this.options.repository.read())
+    if (options.audio !== false) await this.restoreAudio()
+  }
+  async restoreAudio(): Promise<void> {
     const mode = effectiveAutoMixMode(this.options.repository.read().autoMixMode)
-    if (mode !== 'off' && !(await this.options.audio.setAutoMixMode(mode)))
+    if (mode !== 'off' && !(await this.options.audio.setAutoMixMode(mode))) {
+      const reason = this.options.audio.getAudioServiceFailure?.()
+      if (reason) throw Object.assign(new Error(reason), { code: 'AUDIO_SERVICE_UNAVAILABLE' })
       throw new Error('音频引擎未能恢复 AutoMix 模式')
+    }
   }
   /** Same 350 ms debounce/rounding as the existing main-owned volume preference. */
   rememberVolume(volume: number): void {

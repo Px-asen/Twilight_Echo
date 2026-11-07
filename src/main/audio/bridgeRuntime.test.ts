@@ -154,6 +154,55 @@ async function until(predicate: () => boolean, timeoutMs = 2500) {
   while (!predicate() && Date.now() < end) await delay(10)
   assert.ok(predicate(), 'condition was not reached')
 }
+
+test('source timeline stays on the private Core port and is cleared after failure/flush', async t => {
+  const a = new NativeFixture(), b = new NativeFixture()
+  const pull = a.PullBridgePcm
+  let frames = 0
+  a.PullBridgePcm = count => ({ ...pull(count), sourceTimeline: JSON.stringify({ generation: a.generation,
+    sampleRate: 48000, frames: frames += count, positionFrames: frames, transitionSerial: 0, transitionFrame: 0,
+    entryId: 'legacy:C:/private/library/disc.wav:1' }) })
+  const sender = new AudioBridgeRuntime(a.binding()), receiver = new AudioBridgeRuntime(b.binding())
+  const clock = setInterval(() => b.consume(), 10)
+  t.after(async () => { clearInterval(clock); await sender.close(); await receiver.close() })
+  const identity = createRemoteTlsIdentity()
+  const grant = await receiver.startHost({ ...identity, name: 'Private', backend: 'wasapi-exclusive', device: 'explicit', sampleRate: 48000 })
+  await sender.connectPeer({ host: '127.0.0.1', port: grant.port, token: grant.token, fingerprint: identity.fingerprint })
+  a.playing = true
+  await until(() => !!sender.sourceTimeline())
+  assert.equal(sender.sourceTimeline()?.entryId, 'legacy:C:/private/library/disc.wav:1')
+  assert.equal(JSON.stringify(sender.state()).includes('private/library'), false)
+  assert.equal(JSON.stringify(receiver.state()).includes('private/library'), false)
+  assert.equal('sourceTimeline' in sender.state(), false)
+  sender.beforeCall('Pause', []); a.playing = false
+  assert.equal(sender.sourceTimeline(), null)
+  await receiver.stopHost(); await until(() => !sender.state().connected)
+  assert.equal(sender.sourceTimeline(), null)
+})
+
+test('group source setup withholds every PCM frame until DSP controls are acknowledged', async t => {
+  const a = new NativeFixture(), b = new AdaptiveNativeFixture()
+  let commits = 0
+  Object.assign(a, { CommitBridgeSourceControls: () => { commits++ } })
+  const sender = new AudioBridgeRuntime(a.binding()), receiver = new AudioBridgeRuntime(b.binding())
+  const clock = setInterval(() => b.consume(), 10)
+  t.after(async () => { clearInterval(clock); await sender.close(); await receiver.close() })
+  const identity = createRemoteTlsIdentity()
+  const grant = await receiver.startHost({ ...identity, name: 'Held source', backend: 'wasapi-exclusive', device: 'explicit', sampleRate: 48000 })
+  await sender.connectPeer({ host: '127.0.0.1', port: grant.port, token: grant.token, fingerprint: identity.fingerprint })
+  const prepared = await sender.prepareTimedPlayback(true, true)
+  sender.beforeCall('Play', []); a.playing = true
+  await delay(120)
+  assert.equal(b.received.length, 0)
+  assert.equal(b.timed.ended, false)
+  sender.afterCall('ApplyDspState')
+  assert.equal(commits, 1)
+  assert.throws(() => sender.releaseTimedMedia(prepared.epoch-1), /取消/)
+  sender.releaseTimedMedia(prepared.epoch)
+  await until(() => b.received.length > 0)
+  sender.beforeCall('Pause', [])
+  assert.throws(() => sender.releaseTimedMedia(prepared.epoch), /取消/)
+})
 test('TLS authorization, DAC credit pacing, transport flush, revocation and no speaker fallback', async t => {
   const a = new NativeFixture(), b = new NativeFixture()
   const sender = new AudioBridgeRuntime(a.binding()), receiver = new AudioBridgeRuntime(b.binding())
@@ -193,6 +242,27 @@ test('TLS authorization, DAC credit pacing, transport flush, revocation and no s
   sender.disconnectPeer()
   assert.equal(a.backend, 'asio'); assert.equal(a.device, 'explicit-dac')
   assert.equal(sender.state().selected, false)
+})
+
+test('closing a bridge-only sender releases TLS and audio without restoring an unavailable local backend', async t => {
+  const native = new NativeFixture(), dac = new NativeFixture()
+  native.backend = 'alsa'
+  const sender = new AudioBridgeRuntime(native.binding()), receiver = new AudioBridgeRuntime(dac.binding())
+  t.after(async () => { await sender.close(); await receiver.close() })
+  const identity = createRemoteTlsIdentity()
+  const grant = await receiver.startHost({ ...identity, name: 'Shutdown DAC', backend: 'wasapi-exclusive', device: 'explicit-dac', sampleRate: 48000 })
+  await sender.connectPeer({ host: '127.0.0.1', port: grant.port, token: grant.token, fingerprint: identity.fingerprint })
+  const backendChanges: string[] = []
+  native.SetOutputBackend = backend => { backendChanges.push(backend); throw Error('Output backend is not available in this build: ' + backend) }
+  native.playing = true
+  await sender.close()
+  await until(() => !receiver.state().receiving)
+  assert.deepEqual(backendChanges, [])
+  assert.equal(native.backend, 'bridge-pcm')
+  assert.equal(native.playing, false)
+  assert.equal(sender.state().connected, false)
+  assert.equal(sender.state().selected, true)
+  assert.equal(dac.opened, false)
 })
 
 test('a restarted selected Bridge quarantines playback and local route restoration until explicit release', async t => {

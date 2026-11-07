@@ -2,7 +2,7 @@ import type { CoreCastStart, CoreCastState, CoreCastDevice } from './coreCast.ts
 import type { ListeningSyncStatus } from './listeningSync.ts'
 import type { BridgePeer, CoreZoneState } from './audioBridge.ts'
 import type { ZonesView, ZoneTransport, ZoneHandoff } from './coreZones.ts'
-import type { SyncGroupCreate, SyncGroupTransport, SyncGroupsView } from './coreSyncGroups.ts'
+import type { SyncGroupCreate, SyncGroupTransport, SyncGroupsView, SyncGroupSettingsEdit } from './coreSyncGroups.ts'
 import type { CoreSignalPath } from './remoteDsp.ts'
 import type { PluginManagementEdit, PluginManagementPage, PluginUpload } from './pluginManagement.ts'
 import type { ZoneQueueTarget, ZoneQueueKey, ZoneQueueEdit, ZoneQueueLoad } from './zoneQueue.ts'
@@ -277,6 +277,8 @@ export interface CoreSnapshot {
   playlistsRevision: number | null
   versionsRevision: number | null
   audioRevision: number | null
+  /** Optional for older Core clients. Core readiness does not imply audio availability. */
+  audioRecovery?: AudioRecoveryState | null
   settingsRevision: number | null
   personalBackupRecovery?: boolean | null
   sleepTimer: CoreSleepTimerState | null
@@ -372,7 +374,7 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
   'sleep.cancel': { revision: number }
   'settings.edit': CoreSettingsEdit
   'cast.discover': Record<string, never>
-  'bridge.host': { revision: number; enabled: boolean; sampleRate: number }
+  'bridge.host': { revision: number; enabled: boolean; sampleRate: number } & import('./audioBridge.ts').BridgeStreamOptions
   'bridge.connect': { revision: number; peer: BridgePeer }
   'zones.select': { revision: number; outputId: 'local' | 'bridge' }
   'zones.create': { revision: number; name: string }
@@ -400,6 +402,7 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
   'groups.create': SyncGroupCreate
   'groups.remove': { groupId: string; revision: number }
   'groups.transport': SyncGroupTransport
+  'groups.settings.edit': SyncGroupSettingsEdit
   'groups.queueFromQuery': { groupId: string; revision: number; query: LibraryQuery; selectedId?: string }
   'cast.start': CoreCastStart
   'cast.end': { revision: number }
@@ -930,6 +933,7 @@ const OPERATIONS: Record<
   'groups.create': { kind: 'command', permission: 'playback:write' },
   'groups.remove': { kind: 'command', permission: 'playback:write' },
   'groups.transport': { kind: 'command', permission: 'playback:write' },
+  'groups.settings.edit': { kind: 'command', permission: 'settings:write' },
   'groups.queueFromQuery': { kind: 'command', permission: 'playback:write' },
   'zones.dsp': { kind: 'query', permission: 'settings:read' },
   'zones.signalPath': { kind: 'query', permission: 'playback:read' },

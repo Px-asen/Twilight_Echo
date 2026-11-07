@@ -49,6 +49,8 @@ export interface TwilightAutoMixCoordinatorDependencies {
   ): Promise<AutoMixAnalysisResult>
   cancelAnalysis(source: string): void
   scopedCancellation?: boolean
+  /** Minimum lead kept at commit; local hosts retain their two-second guard. */
+  commitMarginSeconds?: number
   select?(request: string): Promise<AutoMixSelection>
   releaseMaterials?(selection?: AutoMixSelection): Promise<void>
   stems?(
@@ -190,9 +192,15 @@ export class TwilightAutoMixCoordinator {
     await this.idle()
     await this.cancellation
   }
-  async suspend(): Promise<void> {
+  /** Revoke transport controls without joining analysis that may itself be
+   * reporting the transport failure. Full maintenance/shutdown still joins idle. */
+  suspendControls(): Promise<void> {
     this.suspended = true
     this.invalidate('source_maintenance')
+    return this.cancellation.then(() => {})
+  }
+  async suspend(): Promise<void> {
+    await this.suspendControls()
     await this.idle()
     await this.cancellation
   }
@@ -317,7 +325,7 @@ export class TwilightAutoMixCoordinator {
   }
   private timeAvailable(c: TwilightAutoMixContext, start?: number): void {
     const limit = start ?? c.info.duration - (this.mode === 'dj' ? 8 : 4)
-    if (!Number.isFinite(limit) || this.position(c) >= limit - 2)
+    if (!Number.isFinite(limit) || this.position(c) >= limit - (this.d.commitMarginSeconds ?? 2))
       throw new Error('preparation_missed_boundary')
   }
   private range(item: AudioEngineQueueItem, duration: number): [number, number] {

@@ -2,6 +2,7 @@ import type { ZoneView } from '../../../../shared/coreZones.ts'
 import type { SyncGroupEngineState, SyncGroupView } from '../../../../shared/coreSyncGroups.ts'
 import type { CoreSignalPath } from '../../../../shared/remoteDsp.ts'
 import type { BridgeReceiverFacts } from '../../../../shared/audioBridge.ts'
+import { bridgeFrameRate, readBridgeAudioFormat } from '../../../../shared/audioBridge.ts'
 import type { DspNodeType } from '../../../../shared/dspGraph.ts'
 import { nodeLabel } from '../../utils/dspNodeParams.ts'
 import {
@@ -181,7 +182,7 @@ export function signalPathStages(
   options: { peerName?: string | null } = {}
 ): PathStage[] {
   const playing = path.source.sampleRate > 0
-  const remote = path.transport.kind === 'tls-pcm'
+  const remote = path.transport.kind !== 'local'
   const codec = codecLabel(path.source.codec)
   const source: PathNode = {
     id: 'source',
@@ -280,6 +281,7 @@ export function signalPathStages(
             : 'exact',
     detail: [
       backendLabel(path.output.backend, receiver?.exclusive) || '驱动未报告',
+      ...(path.output.channels > 2 ? [`${path.output.channels} 声道${receiver?.actualChannelMask === 0 ? ' · 驱动未报告扬声器布局，按配置顺序对应输出通道' : ''}`] : []),
       '驱动回报的格式；DAC 内部处理未知'
     ]
   }
@@ -296,11 +298,11 @@ export function signalPathStages(
         label: '加密传输',
         icon: 'ph-lock-simple',
         value: path.transport.connected
-          ? `Float32 PCM · ${formatRate(path.transport.sampleRate)}`
+          ? `${path.transport.format === 'dop-int24-le' ? 'DoP' : path.transport.format.startsWith('dsd-') ? '原生 DSD' : 'Float32 PCM'} · ${formatRate(path.transport.sampleRate)}`
           : '未连接',
         tone: path.transport.connected ? (playing ? 'exact' : 'idle') : 'fault',
         detail: path.transport.connected
-          ? ['TLS 加密的无损 PCM', '输出桥不重复应用 Core 的 DSP']
+          ? [`TLS 加密 · ${path.transport.channels} 声道 · ${path.transport.format}`, '输出桥不重复应用 Core 的 DSP']
           : ['输出桥未连接，不会切回本机输出']
       }
     ]
@@ -317,7 +319,7 @@ export function signalPathStages(
     })
   }
   if (receiver) {
-    const ms = receiver.sampleRate ? Math.round((receiver.bufferedFrames * 1000) / receiver.sampleRate) : 0
+    const ms = receiver.sampleRate ? Math.round((receiver.bufferedFrames * 1000) / bridgeFrameRate(readBridgeAudioFormat(receiver))) : 0
     bridgeNodes.push({
       id: 'buffer',
       label: '缓冲',

@@ -4,7 +4,7 @@ import type { CoreDspService } from '../audio/dspService.ts'
 import type { CoreDspEdit } from '../../shared/coreDsp.ts'
 import type { CorePlaybackSession } from './session.ts'
 import type { LibraryQuery } from '../../shared/libraryDatabase.ts'
-import type { SyncGroupDescriptor, SyncGroupCreate, SyncGroupsView } from '../../shared/coreSyncGroups.ts'
+import type { SyncGroupDescriptor, SyncGroupCreate, SyncGroupsView, SyncGroupSettingsEdit } from '../../shared/coreSyncGroups.ts'
 import type { SyncGroupEngine, SyncGroupOutput } from './syncGroupEngine.ts'
 import type { ZoneQueueTarget, ZoneQueueKey, ZoneQueueEdit } from '../../shared/zoneQueue.ts'
 import type { ZoneQueueFence } from '../../shared/coreZones.ts'
@@ -93,7 +93,22 @@ export class CoreZoneRegistry {
       }
       return { id: member.zoneId, downstreamDelayMs: member.downstreamDelayMs,
         read: () => output().read(), prepare: (...args) => { this.requireStableGroupDsp(group); return output().prepare(...args) },
-        arm: (...args) => { this.requireStableGroupDsp(group); return output().arm(...args) }, silence: () => output().silence(), volume: v => output().volume(v) }
+        arm: (...args) => { this.requireStableGroupDsp(group); return output().arm(...args) }, silence: () => output().silence(), volume: v => output().volume(v),
+          ...(output().autoMix ? { autoMix: {
+            mode: (...args) => { this.requireStableGroupDsp(group); return output().autoMix!.mode(...args) },
+            select: (...args) => { this.requireStableGroupDsp(group); return output().autoMix!.select(...args) },
+            bind: (...args) => { this.requireStableGroupDsp(group); return output().autoMix!.bind(...args) },
+            prepare: (...args) => { this.requireStableGroupDsp(group); return output().autoMix!.prepare(...args) },
+            submit: (...args) => { this.requireStableGroupDsp(group); return output().autoMix!.submit(...args) },
+            status: () => output().autoMix!.status(), cancel: () => output().autoMix!.cancel()
+          } satisfies NonNullable<SyncGroupOutput['autoMix']> } : {}),
+          ...(output().continuous ? { continuous: {
+          acquire: () => output().continuous!.acquire(), release: () => output().continuous!.release(),
+          prepare: (...args) => { this.requireStableGroupDsp(group); return output().continuous!.prepare(...args) },
+          rebind: (...args) => { this.requireStableGroupDsp(group); return output().continuous!.rebind(...args) },
+          hold: () => output().continuous!.hold(),
+          advance: (...args) => { this.requireStableGroupDsp(group); return output().continuous!.advance(...args) }
+        } satisfies NonNullable<SyncGroupOutput['continuous']> } : {}) }
     })
   }
   private requireStableGroupDsp(group: GroupOwner) {
@@ -263,7 +278,11 @@ export class CoreZoneRegistry {
   async listGroups(): Promise<SyncGroupsView> {
     return { revision: this.revision, error: this.groupCatalogError, groups: [...this.groups.values()].map(group => {
       const snapshot = group.runtime?.playback.snapshot()
-      return { ...structuredClone(group.descriptor), revision: group.revision, playback: snapshot?.playback ?? null,
+      // Restored sessions intentionally ignore native media observations until
+      // Play. The durable group policy still applies to that paused snapshot.
+      return { ...structuredClone(group.descriptor), revision: group.revision, playback: snapshot?.playback
+        ? { ...snapshot.playback, autoMixMode: group.descriptor.autoMixMode ?? 'off' } : null,
+        autoMixMode: group.descriptor.autoMixMode ?? 'off', autoMixAvailable: group.runtime?.engine.supportsAutoMix() ?? false,
         track: snapshot?.track ?? null, queue: snapshot?.queue ?? null, coordination: group.runtime?.engine.state() ?? null,
         error: group.error ?? group.runtime?.engine.state().error ?? snapshot?.error ?? null }
     }) }
@@ -365,6 +384,46 @@ export class CoreZoneRegistry {
         case 'volume': await p.setVolume(command.volume); break
       }
     } finally { this.options.changed() }
+  }
+  editGroupSettings(command: SyncGroupSettingsEdit, signal: AbortSignal): Promise<void> {
+    return this.serialize(async () => {
+      const host = this.options.groups, group = this.group(command.groupId)
+      if (!host || this.groupCatalogError) throw fail('NOT_READY', this.groupCatalogError ?? '同步组清单不可写')
+      if (group.revision !== command.revision) throw fail('STALE_REVISION', '同步组已变化，请刷新')
+      if (!['off','natural','dj'].includes(command.autoMixMode)) throw fail('INVALID_REQUEST', '无效的同步组 AutoMix 模式')
+      if (group.transitioning || group.retiring) throw fail('BUSY', '同步组正在变更，请刷新')
+      const previous = group.descriptor.autoMixMode ?? 'off'
+      if (command.autoMixMode === previous) return
+      if (command.autoMixMode !== 'off' && !group.runtime?.engine.supportsAutoMix())
+        throw fail('NOT_READY', '请更新 Core 与成员引擎以使用同步组 AutoMix')
+      group.transitioning = true; group.abort.abort(); ++group.revision
+      const ticket = group.revision
+      let applied = false, committed = false
+      try {
+        // A settings edit deliberately leaves the whole group paused. Pause/
+        // Stop remain available even while native or persistence IO is pending.
+        if (group.runtime) await group.runtime.playback.pause()
+        else await Promise.all(group.descriptor.members.map(m => this.runtime(m.zoneId).groupOutput!.silence()))
+        signal.throwIfAborted()
+        if (group.revision !== ticket) throw fail('STALE_REVISION', '同步组已被后续操作暂停，请刷新')
+        applied = true
+        await group.runtime?.engine.setAutoMixMode(command.autoMixMode)
+        signal.throwIfAborted()
+        if (group.revision !== ticket) throw fail('STALE_REVISION', '同步组已变化，请刷新')
+        const descriptor = { ...group.descriptor, autoMixMode: command.autoMixMode }
+        await host.save(this.groupDescriptors().map(g => g.id === descriptor.id ? descriptor : g))
+        // Drain an already dispatched durable write, even if its caller went
+        // away. A later query reports the committed policy; no audio resumes.
+        group.descriptor = descriptor; committed = true
+        group.error = group.runtime ? null : '模式已关闭；请重连成员恢复组会话'
+      } catch (error) {
+        if (applied && !committed) {
+          try { await group.runtime?.engine.setAutoMixMode(previous) }
+          catch (restore) { group.error = '同步组模式恢复未确认，保持暂停；请重连后继续'; throw restore }
+        }
+        throw error
+      } finally { group.transitioning = false; this.options.changed() }
+    })
   }
   async groupFromQuery(id: string, revision: number, query: LibraryQuery, selectedId: string | undefined, signal: AbortSignal): Promise<void> {
     const group = this.group(id)

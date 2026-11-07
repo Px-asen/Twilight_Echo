@@ -5,7 +5,6 @@ import { readAppSettings } from '../core/settings'
 import { join, extname } from 'path'
 import { cpus } from 'os'
 import { pathToFileURL } from 'url'
-import { fetch as undiciFetch } from 'undici'
 import { optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { mediaCoverCache } from '../cache/mediaCoverCache.ts'
@@ -434,6 +433,8 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
         createRemoteMediaRequestHandler({
           imageCache: mediaCoverCache,
           fetch: async (source, init) => {
+            const { fetch: undiciFetch } = await import('undici')
+            init.signal?.throwIfAborted()
             const upstream = await undiciFetch(source, {
               method: init.method,
               signal: init.signal,

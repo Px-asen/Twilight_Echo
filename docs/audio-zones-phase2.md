@@ -1,5 +1,9 @@
 # 第二阶段：多 Zone、接力与同步组的软件链路已验证
 
+2026-11-05 格式扩展：[独立声区已支持原生 DSD／DoP 与多声道](./audio-bridge-formats.md)；同步组仍限定双声道 PCM，不对 DSD 做时钟 SRC。
+
+2026-11-05 切曲与迁移更新：[常规无缝与组 AutoMix](./sync-group-transitions.md)已接通，桌面和 Android「声区」组详情可设置模式；模式随整包迁移、备份和升级回退保留，恢复仍暂停。下方 11 月 3 日入口与证据保留原日期。
+
 2026-11-03。沿用[第一阶段](D:/Project/Twilight_Echo/docs/audio-bridge-phase1.md)的 TLS PCM Bridge。独立 Zone、有限队列接力、同步组拓扑／持久化／两端控制已实现。真实组所有者、SQLite 与两路真实 SWR／接收呈现历史的 **30 分钟模拟时间**联调通过；真实解码服务／TLS 也验证了同一输出重起播沿用已确认速率。第二阶段的软件主链已有无设备证据，手机 UI、双机／DAC 的实机验收继续后置到全部计划实现后。下一阶段为独立 Server／Windows Service 和完整远程控制面。
 
 | 验收项 | 当前状态 |
@@ -211,12 +215,12 @@ cd D:\Project\Twilight_Echo_Android
 
 ## 共同会话引擎与逐输出调度
 
-新增 [SyncGroupEngine](D:/Project/Twilight_Echo/src/core/playback/syncGroupEngine.ts)，作为一个 `CorePlaybackSession` 的协调音频引擎使用。原 SQL 队列／来源解析／持久化所有者仍只有一个；各物理 Zone 接收当前一项、`sequential`、1 倍速的本地 native 队列，不能独立推进或重复播放。组内可维护独立 DSP 与音量比例，不把多次接力克隆当成同步。
+新增 [SyncGroupEngine](D:/Project/Twilight_Echo/src/core/playback/syncGroupEngine.ts)，作为一个 `CorePlaybackSession` 的协调音频引擎使用。原 SQL 队列／来源解析／持久化所有者仍只有一个；各物理 Zone 接收有界、`sequential`、1 倍速的本地 native 窗口，不能独立选择 SQL successor。组内可维护独立 DSP 与音量比例，不把多次接力克隆当成同步。
 
 - 组先停止所有成员，准备同一 occurrence 与位置，等全部预缓冲和时钟就绪，再逐输出 arm。任一 prepare／arm 失败均撤销全部输出，不偷偷移除失败成员，也不自动让剩余成员继续。
 - 调度使用各输出实际 DSP 延迟和配置的下游延迟：`输出 PCM 起播时刻 = 共同可听时刻 − DSP 帧延迟 / 该帧域采样率 − 下游延迟`。原生 DSP 新增 `latencySampleRate`，不能用 DAC 采样率猜测 DSP 帧域。下游零值表示尚未校准 DAC 模拟级；可听时刻仍以软件模型命名，不冒充实测模拟输出。
 - 为取得真实延迟，修正了原有两项状态缺口：legacy DSP 路径的卷积／limiter 延迟纳入总计；卷积 render clone 已旁路时不再将其延迟及尾长计为正在处理。新增原生用例验证旁路／恢复的总计变化和 48 kHz 延迟帧域。
-- 曲终等待所有 DAC 的 `completed`，再由唯一引擎选择共同 successor／repeat。SQL 热 rebind 不改变已调度的当前媒体，Core maintainer 仍持有唯一队列游标；组的自然边界计数只推进一次。切曲会重新准备共同时间线，目前不提供组间 gapless／AutoMix 混音。
+- 2026-11-05 补充：已确定的下一项由全部成员共同确认，可在同一连续音频流上无缝推进；单曲循环也由组续接窗口。准确原生切曲帧决定共同可听边界，SQL 游标与自然边界只推进一次。准备不足时仍等全部 DAC `completed` 后共同重新起播。热 rebind 使用逐成员 CAS，部分／未知结果暂停全组。DSP 历史与逐曲 ReplayGain 顺序保留，组级 AutoMix 继续实施，见[无缝切曲记录](sync-group-transitions.md)。
 - Seek 统一撤销并重新 prepare／arm；Pause／Stop 同步撤销挂起的准备与 deadline，不被会话的慢提交 lane 卡住。新 `CorePlaybackEngine.interrupt(preparingOnly)` 仅由协调引擎提供；纯队列编辑只取消尚未完成的准备，不停止已运行媒体，原单机引擎没有新增前提。
 - DSP 延迟变化、待应用 DSP 或持续 500 ms 超出观测范围 1 ms 以上的组内估计偏差，会共同暂停并从最新共同媒体位置重缓冲。掉线／闭环失败暂停全部并保留成员；需要明确重连后恢复。无法确认停音会升级为音频服务故障，不报告已静音成功。
 - [zoneGroupOutput](D:/Project/Twilight_Echo/src/main/coreProcess/zoneGroupOutput.ts) 复用每 Zone 已有的受监督音频进程。新的 `AudioEngineManager.playTimedBridge()` 在 loudness／音源准备之后、真正 Play 之前 prepare，避免中途 LoadQueue 撤销定时计划；定时 Play 失败不尝试 ASIO／本地兜底或第二次普通 Play。
@@ -294,6 +298,6 @@ node --run test:audio-sync-groups:soak
 
 ## 下一阶段：独立 Server／Windows Service 与完整远程控制面
 
-第三阶段现已打通独立 Node Server、真实 Core／SQLite／音频进程的私有直连、本机命令行管理与无窗口 TLS 配对，见[第三阶段记录](D:/Project/Twilight_Echo/docs/standalone-server-phase3.md)。Windows Service 生命周期、备份恢复／升级回退、完整手机资料管理和 NAS／容器交付继续实施。独立 Node 的软件入口联调已通过；Windows Service 尚未完成。
+第三阶段已打通独立 Node Server、真实 Core／SQLite／音频进程的私有直连、本机命令行管理、无窗口 TLS 配对、Windows 服务宿主、备份恢复／升级回退及完整手机资料管理，见[第三阶段记录](D:/Project/Twilight_Echo/docs/standalone-server-phase3.md)。SCM／服务账号验收仍后置；Linux x86_64 容器输入已准备，实际构建与运行等待可用环境。
 
-第四阶段的 WAN／ARC 类访问、离线下载、移动网络策略和 Android Auto 继续保留。硬件测量与 Android 渲染按用户安排等全部计划实现后再统一执行。同步组当前不含组间 gapless／AutoMix、动态推荐、Cast、独立听歌统计和 DSP 资产导入的全面扩展；这些边界不冒充已具备完整 Roon 功能。
+第四阶段的 WAN／离线下载／移动网络策略和 Android Auto 已有后续实施记录，见 Android 仓库当前计划。硬件与部署验收按用户安排统一后置。同步组常规无缝切曲与组级 AutoMix 已完成；动态推荐和 Cast 的组扩展仍未实现，见[当前切曲状态](sync-group-transitions.md)。

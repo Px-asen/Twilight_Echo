@@ -112,7 +112,7 @@ function build() {
     { codec: 'alac', sourceSampleRate: 48000, sourceBitDepth: 24 }), output: output('书房音箱', true, 'FiiO K7'), error: null, groupId: scene === 'offline' ? null : GROUP })
   zones.push({ id: IDS.c, name: '卧室', revision: 4, track: tracks.highway, queue: queue('q-c', 5, 20), playback: playback('paused', 88, 205, 0.35),
     output: output('卧室音箱', false, ''), error: null, groupId: null })
-  if (scene !== 'offline') groups.push({ id: GROUP, name: '客厅 + 书房', revision: 21,
+  if (scene !== 'offline') groups.push({ id: GROUP, name: '客厅 + 书房', revision: 21, autoMixMode: 'off', autoMixAvailable: true,
     members: [{ zoneId: IDS.a, downstreamDelayMs: 12 }, { zoneId: IDS.b, downstreamDelayMs: 0 }],
     track: tracks.rooms, queue: queue('q-group', 1, 24),
     playback: playback('playing', 96, 241, 0.7, { codec: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24 }),
@@ -219,6 +219,13 @@ window.zonesFixtureCore = {
         else if (a.kind === 'seek') g.playback.position = a.position
         return
       }
+      case 'groups.settings.edit': {
+        const g = groupById(payload.groupId)
+        if (g.revision !== payload.revision) fail('同步组已变化，请刷新')
+        g.revision += 1; g.autoMixMode = payload.autoMixMode
+        g.playback.autoMixMode = payload.autoMixMode; g.playback.state = 'paused'; g.coordination.phase = 'paused'
+        return
+      }
       case 'zones.dsp.edit': {
         const s = dspState(payload.zoneId); if (s.revision !== payload.revision) fail('处理设置已变化，请刷新')
         if (payload.edit.kind === 'processing') Object.assign(s.processing, payload.edit.settings)
@@ -249,7 +256,7 @@ window.zonesFixtureCore = {
       }
       case 'groups.create': {
         const source = zoneById(payload.source.zoneId), id = 'group-' + crypto.randomUUID()
-        groups.push({ id, name: payload.name, revision: 0, members: payload.members.map(({ zoneId, downstreamDelayMs }) => ({ zoneId, downstreamDelayMs })),
+        groups.push({ id, name: payload.name, revision: 0, autoMixMode: 'off', autoMixAvailable: true, members: payload.members.map(({ zoneId, downstreamDelayMs }) => ({ zoneId, downstreamDelayMs })),
           track: source.track, queue: { ...source.queue, id: 'q-group-' + Date.now() }, playback: playback('paused', 0, source.track?.duration ?? 0, 0.6),
           coordination: { phase: 'paused', error: null, epoch: 0, audibleAtCoreMs: null, estimatedSkewMs: null, observationRangeMs: null, members: [] }, error: null })
         for (const m of payload.members) { const z = zoneById(m.zoneId); z.groupId = id; z.playback.state = 'paused'; z.revision += 1 }
@@ -289,7 +296,7 @@ const server = await createServer({
     host: '127.0.0.1',
     port,
     strictPort: true,
-    watch: { ignored: ['**/out/**', '**/resources/audio-engine/**', '**/tmp/**', '**/.cache/**', '**/dist/**', '**/outputs/**'] }
+    watch: { ignored: ['**/out/**', '**/resources/audio-engine/**', '**/.artifacts/**', '**/tmp/**', '**/.cache/**', '**/dist/**', '**/outputs/**'] }
   },
   resolve: { alias: { '@renderer': resolve(root, 'src/renderer/src') } },
   plugins: [

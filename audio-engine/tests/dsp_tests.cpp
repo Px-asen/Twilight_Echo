@@ -1039,6 +1039,9 @@ int main() {
     std::vector<float> samples(512 * 2, 1.5f);
     chain.process(samples.data(), 512);
     assert(chain.graphStatusJson().find("\"totalLatencyFrames\":11") != std::string::npos);
+    assert(chain.tailFramesForRender() == 11);
+    assert(chain.graphStatusJson().find("\"totalTailFrames\":11") != std::string::npos);
+    assert(chain.graphStatusJson().find("\"tailFrames\":11") != std::string::npos);
     assert(chain.graphStatusJson().find("\"latencySampleRate\":48000") != std::string::npos);
     assert(chain.graphStatusJson().find("\"latencyFrames\":11") != std::string::npos);
     for (size_t frame = 0; frame < 11; ++frame) assert(samples[frame * 2] == 0.0f);

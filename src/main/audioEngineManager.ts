@@ -148,6 +148,10 @@ export class AudioEngineManager extends EventEmitter {
   private readonly dsp: DspOrchestrator
   private readonly playback: PlaybackController
   private autoMixCoordinator: TwilightAutoMixCoordinator | null = null
+  private groupPlaybackOwned = false
+  private invalidateLocalAutoMix(reason: string): void {
+    if (!this.groupPlaybackOwned) this.autoMixCoordinator?.invalidate(reason)
+  }
   private autoMixMode: import('../shared/twilightAutoMix.ts').AutoMixMode = 'off'
   private autoMixAnalysisStatus: {
     state: 'preparing' | 'ready' | 'degraded' | 'off'
@@ -157,7 +161,7 @@ export class AudioEngineManager extends EventEmitter {
     this.autoMixCoordinator?.observe()
   }
   private readonly invalidateAutoMixService = (): void => {
-    this.autoMixCoordinator?.invalidate('service_changed')
+    this.invalidateLocalAutoMix('service_changed')
   }
   private scheduler: AudioEngineScheduler
   private loudnessAnalysisManager: LoudnessAnalysisManager | null = null
@@ -177,6 +181,7 @@ export class AudioEngineManager extends EventEmitter {
   private audioServiceReadyRestoreSerial = 0
   private audioServiceReadyRestore: Promise<void> | null = null
   private lastNativeError = ''
+  private audioServiceFailure: string | null = null
   // Why the in-process addon is unavailable, kept so every later "原生音频…失败"
   // quotes the real loader error instead of a bare "未加载".
   private nativeUnavailableReason = '未加载 twilight_audio_node.node'
@@ -514,6 +519,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private handleAudioServiceCrash(reason: string, options?: { fatal?: boolean }): void {
+    this.audioServiceFailure = reason
     this.resetAudioServiceState(reason)
     this.emit('audio-service-crash', { reason, fatal: options?.fatal === true })
     this.publishPlaybackInfo()
@@ -573,6 +579,12 @@ export class AudioEngineManager extends EventEmitter {
     return !this.destroyed && typeof this.audioServiceBinding?.restart === 'function'
   }
 
+  /** A process failure remains authoritative until its configuration is restored. */
+  getAudioServiceFailure(): string | null {
+    if (!this.native) return this.nativeUnavailableReason
+    return this.audioServiceFailure || this.audioServiceBinding?.fatalStartupError || null
+  }
+
   async restartAudioEngine(maintenance?: () => Promise<void>): Promise<void> {
     const binding = this.audioServiceBinding
     if (this.destroyed || !binding?.restart)
@@ -628,9 +640,17 @@ export class AudioEngineManager extends EventEmitter {
     this.invalidateAudioDeviceOptionsCache('audio-service-ready')
     this.audioServiceReadyRestore = this.outputRouter
       .serializeConfiguration(() => this.restoreAudioServiceReadyState())
+      .catch((error: unknown) => ({
+        outputRouteSynced: false,
+        errors: [this.getAudioServiceFailure() || (error instanceof Error ? error.message : String(error))]
+      }))
       .then((result) => {
         if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
         this.nativeOutputRouteSynced = result.outputRouteSynced
+        if (result.outputRouteSynced) {
+          this.audioServiceFailure = null
+          this.lastNativeError = ''
+        }
         this.nativePlaybackActive = false
         this.invalidateUpcomingTrackCache()
         this.playbackInfo = {
@@ -673,6 +693,9 @@ export class AudioEngineManager extends EventEmitter {
     // engine loud while the manager still reports the saved volume (renderer
     // pushes are then no-ops because playbackInfo already matches).
     const stateRestore = await this.restoreAudioServicePlaybackState()
+    if (routeRestore.synced && stateRestore.synced && this.processing.directMode) {
+      await this.applyDirectModeRuntimeOverrides(true)
+    }
     return {
       outputRouteSynced: routeRestore.synced && stateRestore.synced,
       errors: [...routeRestore.errors, ...stateRestore.errors]
@@ -772,23 +795,33 @@ export class AudioEngineManager extends EventEmitter {
     // The first service ready event can arrive during these awaited RPCs.
     // Share the recovery/configuration queue so its DSP revision cannot race
     // startup's ACK or overwrite the graph status while startup is finishing.
-    await this.outputRouter.serializeConfiguration(async () => {
-      this.nativeOutputRouteSynced = false
-      const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
-      this.nativeOutputRouteSynced = routeRestore.synced
-      await this.applyNativeDspSettings('初始化 DSP 配置', {}, false)
-      const volumeStep = await this.restoreAudioServiceOutputRouteStep(
-        'volume',
-        '初始化软件音量',
-        'SetVolume',
-        this.playback.effectiveVolume()
-      )
-      this.nativeVolumeSynced = volumeStep.ok
-      if (this.processing.directMode) await this.applyDirectModeRuntimeOverrides(true)
-    })
-    // Recovery may have queued behind startup while the first RPC was opening
-    // the service. Finish it before announcing readiness to playback callers.
-    await this.audioServiceReadyRestore
+    try {
+      await this.outputRouter.serializeConfiguration(async () => {
+        this.nativeOutputRouteSynced = false
+        const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
+        this.nativeOutputRouteSynced = routeRestore.synced
+        await this.applyNativeDspSettings('初始化 DSP 配置', {}, false)
+        const volumeStep = await this.restoreAudioServiceOutputRouteStep(
+          'volume',
+          '初始化软件音量',
+          'SetVolume',
+          this.playback.effectiveVolume()
+        )
+        this.nativeVolumeSynced = volumeStep.ok
+        if (this.processing.directMode) await this.applyDirectModeRuntimeOverrides(true)
+      })
+      // Recovery may have queued behind startup while the first RPC was opening
+      // the service. Finish it before announcing readiness to playback callers.
+      await this.audioServiceReadyRestore
+      const failure = this.getAudioServiceFailure()
+      if (failure) throw new Error(failure)
+    } catch (error) {
+      const failure = this.getAudioServiceFailure()
+      if (!failure) throw error
+      // Keep the control clock available for a later explicit engine recovery.
+      this.startClock()
+      throw Object.assign(new Error(failure), { code: 'AUDIO_SERVICE_UNAVAILABLE' })
+    }
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))
   }
@@ -1346,7 +1379,7 @@ export class AudioEngineManager extends EventEmitter {
     startTime = 0,
     requested?: () => boolean
   ): Promise<AudioEnginePlayResult> {
-    this.autoMixCoordinator?.invalidate('playback_changed')
+    this.invalidateLocalAutoMix('playback_changed')
     return this.playback.play(source, startTime, requested)
   }
 
@@ -1356,8 +1389,14 @@ export class AudioEngineManager extends EventEmitter {
   /** Group-only lane; ordinary play retains its original preparation contract. */
   async playTimedBridge(source: string, position: number, requested: () => boolean): Promise<AudioEnginePlayResult> {
     if (!this.bridgeSelected) throw new Error('同步组成员必须明确选择输出桥')
-    this.autoMixCoordinator?.invalidate('group_playback')
-    return this.playback.play(source, position, requested, async () => { await this.callBridge('BridgePrepareTimed', [true]) })
+    this.invalidateLocalAutoMix('group_playback')
+    let epoch: number | undefined
+    const result = await this.playback.play(source, position, requested, async () => {
+      const prepared = await this.callBridge('BridgePrepareTimed', [true, true]) as { epoch: number }
+      epoch = prepared?.epoch
+    })
+    if (result.nativeStarted && !result.superseded) await this.callBridge('BridgeReleaseTimedMedia', [epoch])
+    return result
   }
 
   async pause(): Promise<void> {
@@ -1365,7 +1404,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async seek(time: number): Promise<void> {
-    this.autoMixCoordinator?.invalidate('seek')
+    this.invalidateLocalAutoMix('seek')
     return this.playback.seek(time)
   }
 
@@ -1381,7 +1420,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setPlaybackRate(rate: number): Promise<void> {
-    this.autoMixCoordinator?.invalidate('playback_rate_changed')
+    this.invalidateLocalAutoMix('playback_rate_changed')
     if (this.processing.directMode) {
       this.directModePlaybackRateRestore = clampNumber(rate, 0.5, 2, 1)
       return this.playback.setPlaybackRate(1)
@@ -1390,15 +1429,15 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setLoopRange(startSeconds: number, endSeconds: number): Promise<boolean> {
-    this.autoMixCoordinator?.invalidate('loop_changed')
+    this.invalidateLocalAutoMix('loop_changed')
     return this.playback.setLoopRange(startSeconds, endSeconds)
   }
   async setLoopRangeConfirmed(start: number, end: number): Promise<boolean> {
-    this.autoMixCoordinator?.invalidate('loop_changed')
+    this.invalidateLocalAutoMix('loop_changed')
     return this.playback.setLoopRangeConfirmed(start, end)
   }
   seekConfirmed(position: number): Promise<void> {
-    this.autoMixCoordinator?.invalidate('seek')
+    this.invalidateLocalAutoMix('seek')
     return this.playback.seekConfirmed(position)
   }
   async setAutoMixMode(mode: import('../shared/twilightAutoMix.ts').AutoMixMode): Promise<boolean> {
@@ -1422,6 +1461,16 @@ export class AudioEngineManager extends EventEmitter {
   async prepareAutoMix(requestJson: string): Promise<boolean> {
     return this.callNativeMaybeAsync('Twilight AutoMix preparation', 'PrepareAutoMix', requestJson)
   }
+  async bindBridgeAutoMixSelection(requestJson: string): Promise<import('../shared/twilightAutoMix.ts').AutoMixSelection> {
+    if (!this.groupPlaybackOwned) throw new Error('group_ownership_required')
+    const result = await this.callBridge('BridgeBindAutoMix', [requestJson])
+    if (typeof result !== 'string') throw new Error('shared_plan_binding_failed')
+    return JSON.parse(result)
+  }
+  async setBridgeAutoMixMode(mode: import('../shared/twilightAutoMix.ts').AutoMixMode): Promise<void> {
+    if (!this.groupPlaybackOwned) throw new Error('group_ownership_required')
+    await this.callBridge('BridgeAutoMixMode', [mode])
+  }
   async submitAutoMix(planId: number): Promise<boolean> {
     return this.callNativeMaybeAsync('Twilight AutoMix submit', 'SubmitAutoMix', planId)
   }
@@ -1434,7 +1483,7 @@ export class AudioEngineManager extends EventEmitter {
     return info
   }
   invalidateAutoMixSource(): void {
-    this.autoMixCoordinator?.invalidate('provider_source_resolution_changed')
+    this.invalidateLocalAutoMix('provider_source_resolution_changed')
     this.autoMixCoordinator?.observe()
   }
   reportAutoMixAnalysisState(
@@ -1455,12 +1504,12 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async stop(): Promise<void> {
-    this.autoMixCoordinator?.invalidate('stopped')
+    this.invalidateLocalAutoMix('stopped')
     return this.playback.stop()
   }
 
   async stopForQueueRecovery(): Promise<number> {
-    this.autoMixCoordinator?.invalidate('queue_recovery')
+    this.invalidateLocalAutoMix('queue_recovery')
     return this.playback.stopForQueueRecovery()
   }
 
@@ -1469,7 +1518,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
-    this.autoMixCoordinator?.invalidate('queue_changed')
+    this.invalidateLocalAutoMix('queue_changed')
     return this.playback.loadQueue(items, startIndex)
   }
 
@@ -1478,10 +1527,10 @@ export class AudioEngineManager extends EventEmitter {
   ): Promise<import('../shared/nativeQueue.ts').NativeQueueCommit | null> {
     try {
       const commit = await this.playback.rebindQueue(request)
-      if (commit) this.autoMixCoordinator?.invalidate('queue_changed')
+      if (commit) this.invalidateLocalAutoMix('queue_changed')
       return commit
     } catch (error) {
-      this.autoMixCoordinator?.invalidate('queue_handoff_unknown')
+      this.invalidateLocalAutoMix('queue_handoff_unknown')
       throw error
     }
   }
@@ -1497,7 +1546,7 @@ export class AudioEngineManager extends EventEmitter {
   async continueAfterPlaybackEnd(
     options: import('./audio/playbackController.ts').PlaybackEndContinuation
   ): Promise<boolean> {
-    this.autoMixCoordinator?.invalidate('queue_changed')
+    this.invalidateLocalAutoMix('queue_changed')
     return this.playback.continueAfterPlaybackEnd(options)
   }
 
@@ -1546,8 +1595,12 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   /** Keep selected-output intent across service restarts without persisting consent credentials. */
-  async callBridge(method: 'BridgeStatus' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown' | 'BridgePrepareTimed' | 'BridgeArmTimed' | 'BridgeCancelTimed' | 'BridgeSetTimedCorrection', args: unknown[] = []): Promise<unknown> {
+  async callBridge(method: 'BridgeStatus' | 'BridgeSourceTimeline' | 'BridgeBindAutoMix' | 'BridgeAutoMixMode' | 'BridgeQueueControl' | 'BridgeHostStart' | 'BridgeHostStop' | 'BridgeConnect' | 'BridgeDisconnect' | 'BridgeShutdown' | 'BridgePrepareTimed' | 'BridgeReleaseTimedMedia' | 'BridgeArmTimed' | 'BridgeCancelTimed' | 'BridgeSetTimedCorrection', args: unknown[] = []): Promise<unknown> {
     if (!this.audioServiceBinding?.callAsync) throw new Error('输出桥需要隔离的原生音频服务')
+    if (method === 'BridgeShutdown' && this.getAudioServiceFailure() && this.audioServiceBinding.shutdown) {
+      await this.audioServiceBinding.shutdown()
+      return
+    }
     await this.audioServiceReadyRestore
     if (method === 'BridgeConnect') {
       await this.persistBridgeSelection?.(true)
@@ -1622,10 +1675,23 @@ export class AudioEngineManager extends EventEmitter {
     this.autoMixCoordinator = coordinator
     if (!coordinator) return
     coordinator.setMode(this.autoMixMode)
+    if (this.groupPlaybackOwned) void coordinator.suspend()
     this.on('playback-info', this.observeAutoMix)
     this.on('audio-service-crash', this.invalidateAutoMixService)
   }
+  /** Keep local preferences intact while the group owns all transition decisions. */
+  async acquireGroupPlayback(): Promise<void> {
+    this.groupPlaybackOwned = true
+    await this.autoMixCoordinator?.suspend()
+    await this.callBridge('BridgeQueueControl', [true])
+  }
+  async releaseGroupPlayback(): Promise<void> {
+    await this.callBridge('BridgeQueueControl', [false])
+    this.groupPlaybackOwned = false
+    this.autoMixCoordinator?.resume()
+  }
   getAutoMixContext(): TwilightAutoMixContext | null {
+    if (this.groupPlaybackOwned) return null
     const info = this.playback.playbackInfo
     const current = this.playback.queue[info.queueIndex]
     const next = info.upcomingTrack
@@ -1650,22 +1716,22 @@ export class AudioEngineManager extends EventEmitter {
   async selectQueueItem(
     selection: import('../shared/nativeQueue.ts').NativeQueueSelection
   ): Promise<boolean> {
-    this.autoMixCoordinator?.invalidate('queue_selection_changed')
+    this.invalidateLocalAutoMix('queue_selection_changed')
     return this.playback.selectQueueItem(selection)
   }
 
   async next(): Promise<void> {
-    this.autoMixCoordinator?.invalidate('manual_skip')
+    this.invalidateLocalAutoMix('manual_skip')
     return this.playback.next()
   }
 
   async previous(): Promise<void> {
-    this.autoMixCoordinator?.invalidate('manual_skip')
+    this.invalidateLocalAutoMix('manual_skip')
     return this.playback.previous()
   }
 
   async setPlayMode(mode: PlayMode): Promise<void> {
-    this.autoMixCoordinator?.invalidate('queue_mode_changed')
+    this.invalidateLocalAutoMix('queue_mode_changed')
     return this.playback.setPlayMode(mode)
   }
 
@@ -1706,6 +1772,9 @@ export class AudioEngineManager extends EventEmitter {
   /** Core-only runtime gate; no DSP revision or persisted user preference is changed. */
   async setVisualizationDemand(enabled: boolean): Promise<void> {
     this.visualizationDemand = enabled
+    // No capture can run after a confirmed native failure. Retain the disabled
+    // demand for the next service restore without making shutdown depend on it.
+    if (!enabled && this.getAudioServiceFailure()) return
     const native = this.native
     if (!native) throw new Error(this.nativeUnavailableReason)
     if (native.callAsync) await native.callAsync('SetVisualizationDemand', [enabled])

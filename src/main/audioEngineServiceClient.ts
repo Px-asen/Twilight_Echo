@@ -4,8 +4,7 @@ import { randomUUID } from 'crypto'
 import { observeDiagnosticOperation } from './diagnostics/observation.ts'
 import { diagnosticContext } from './diagnostics/logger.ts'
 import { observeUtilityProcess } from './diagnostics/utilityObservation.ts'
-import { existsSync } from 'fs'
-import { fork as forkNodeChildProcess, spawnSync } from 'child_process'
+import { fork as forkNodeChildProcess } from 'child_process'
 import type {
   AudioDeviceOption,
   AudioEngineQueueItem,
@@ -19,7 +18,7 @@ import type {
 } from './audioEngineManager'
 import type { BpmAnalysisResult } from './bpm/bpmCache'
 import type { DspGraphStatus } from '../shared/dspGraph.ts'
-import { getNativeAddonCandidates } from './audio/nativeBinding.ts'
+import { audioServiceEnv } from './audio/audioServiceEnvironment.ts'
 import { tryParseJsonWithNestingLimit } from './security/jsonSafety.ts'
 import {
   asUtilityProcessMessageRecord,
@@ -37,6 +36,8 @@ import {
   type AudioServiceCapabilities,
   type DspStatePayload
 } from '../shared/audioServiceContract.ts'
+
+export { audioServiceEnv } from './audio/audioServiceEnvironment.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -135,6 +136,8 @@ const SLOW_NATIVE_METHODS = new Set<string>([
   'GetEngineCapabilities',
   'ScanVst3Module',
   'SelectAutoMix',
+  'BindBridgeAutoMixSelection',
+  'BridgeBindAutoMix',
   'PrepareAutoMix'
 ])
 
@@ -142,6 +145,7 @@ const SLOW_NATIVE_METHODS = new Set<string>([
 // restart backoff resets after it.
 const AUDIO_SERVICE_STABLE_CHILD_MS = 60_000
 const MAX_AUDIO_SERVICE_RESTART_BACKOFF_MS = 30_000
+const MAX_AUDIO_SERVICE_SHORT_LIVED_FAILURES = 3
 
 function isSlowNativeMethod(method: keyof NativeAudioBinding): boolean {
   return SLOW_NATIVE_METHODS.has(String(method))
@@ -618,6 +622,19 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     return this.manualRestart
   }
 
+  async shutdown(): Promise<void> {
+    this.stopped = true
+    this.restarting = true
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = null
+    this.clearHealthProbe()
+    for (const child of new Set([this.child, this.retiringChild])) {
+      if (child) await terminateAudioServiceChild(child, this.options.restartTimeoutMs ?? 20_000)
+    }
+    this.child = this.retiringChild = null
+    this.destroy()
+  }
+
   private async restartManually(maintenance?: () => Promise<void>): Promise<void> {
     if (this.stopped) throw new Error('Audio service has been destroyed')
     if (this.restartTimer) clearTimeout(this.restartTimer)
@@ -959,6 +976,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     // resets the ladder.
     const livedMs = Date.now() - this.lastChildSpawnedAt
     this.restartAttempts = livedMs < AUDIO_SERVICE_STABLE_CHILD_MS ? this.restartAttempts + 1 : 1
+    if (this.restartAttempts >= MAX_AUDIO_SERVICE_SHORT_LIVED_FAILURES) {
+      this.fatalReason = reason
+      this.restarting = false
+      this.emit('crash', reason, { fatal: true })
+      return
+    }
     const backoffMs = Math.min(
       this.restartDelayMs * 2 ** (this.restartAttempts - 1),
       MAX_AUDIO_SERVICE_RESTART_BACKOFF_MS
@@ -1101,6 +1124,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     args: unknown[],
     apply: (value: unknown) => void
   ): void {
+    if (this.stopped || this.restarting || this.fatalReason) return
     const cacheKey = `${String(method)}:${JSON.stringify(args)}`
     if (this.cacheRequestsInFlight.has(cacheKey)) return
     this.cacheRequestsInFlight.add(cacheKey)
@@ -1503,46 +1527,4 @@ function parseDspGraphStatus(value: unknown): DspGraphStatus {
     throw new Error('audio service returned DSP graph status without nodes')
   }
   return status as DspGraphStatus
-}
-
-/**
- * Electron 自带 Chromium 的 libffmpeg.so，与引擎链接的系统 libav* 同名符号
- * 抢占全局符号表，导致音频服务（utility 进程）里 FFmpeg 协议注册表损坏
- * —— avformat_open_input 对本地文件/HTTP 一律报 “Protocol not found”
- * （-1330794744 / AVERROR_PROTOCOL_NOT_FOUND）。
- * 在 fork 前用 LD_PRELOAD 预载系统 libav*，保证引擎的 FFmpeg 符号解析一致。
- * 仅 Linux + 动态链接系统 FFmpeg 时生效；静态链接构建下 ldd 无 libav* 输出，自动跳过。
- */
-function systemFfmpegPreloadPaths(): string[] {
-  if (process.platform !== 'linux') return []
-  try {
-    const addon = getNativeAddonCandidates().find((candidate) => existsSync(candidate))
-    if (!addon) return []
-    const result = spawnSync('ldd', [addon], { encoding: 'utf8' })
-    if (result.status !== 0 || !result.stdout) return []
-    const wanted = new Set(['libavformat', 'libavcodec', 'libavutil', 'libswresample'])
-    const paths: string[] = []
-    for (const line of result.stdout.split('\n')) {
-      const match = /^\s*(\S+\.so[^\s]*)\s*=>\s*(\/\S+)/.exec(line)
-      if (!match) continue
-      const base = match[1].split('.')[0]
-      if (wanted.has(base) && !paths.includes(match[2])) paths.push(match[2])
-    }
-    return paths
-  } catch {
-    return []
-  }
-}
-
-export function audioServiceEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  if (process.platform === 'linux') {
-    const preload = systemFfmpegPreloadPaths()
-    if (preload.length > 0) {
-      const existing =
-        typeof env.LD_PRELOAD === 'string' && env.LD_PRELOAD ? env.LD_PRELOAD + ':' : ''
-      env.LD_PRELOAD = existing + preload.join(':')
-    }
-  }
-  return env
 }

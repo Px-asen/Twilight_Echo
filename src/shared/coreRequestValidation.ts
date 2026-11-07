@@ -474,6 +474,9 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
     }
     case 'groups.remove':
       return keys(p, ['groupId', 'revision']) && validSyncGroupId(p.groupId) && uint(p.revision)
+    case 'groups.settings.edit':
+      return keys(p, ['groupId', 'revision', 'autoMixMode']) && validSyncGroupId(p.groupId) && uint(p.revision) &&
+        typeof p.autoMixMode === 'string' && ['off','natural','dj'].includes(p.autoMixMode)
     case 'groups.signalPath':
       return keys(p, ['groupId', 'zoneId']) && validSyncGroupId(p.groupId) && validZoneId(p.zoneId)
     case 'groups.queueFromQuery':

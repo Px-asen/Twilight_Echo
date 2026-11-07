@@ -82,6 +82,7 @@ function onFrameClick(event: MouseEvent): void {
 <template>
   <article
     class="zone-group"
+    data-te-interactive
     :class="[`is-${phase}`, { 'is-selected': selected, 'has-error': Boolean(group.error) }]"
     :style="{ '--zone-members': members.length }"
     :data-members="members.length"

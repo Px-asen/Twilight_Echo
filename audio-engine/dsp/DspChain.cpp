@@ -800,6 +800,39 @@ void DspChain::process(float* samples, size_t frameCount) {
   }
 }
 
+bool DspChain::canContinueTrackFrom(const DspChain& next) const {
+  if (format_.sampleRate != next.format_.sampleRate || format_.channelCount != next.format_.channelCount ||
+      graphConfigured_ != next.graphConfigured_ || graphRevision_ != next.graphRevision_ ||
+      processors_.size() != next.processors_.size() || graphNodes_.size() != next.graphNodes_.size() ||
+      graphPluginNodes_.size() != next.graphPluginNodes_.size() || graphVst3Nodes_.size() != next.graphVst3Nodes_.size() ||
+      activeProcessors_.capacity() < next.activeProcessors_.size()) return false;
+  for (size_t i = 0; i < graphNodes_.size(); ++i)
+    if (graphNodes_[i].id != next.graphNodes_[i].id || graphNodes_[i].type != next.graphNodes_[i].type ||
+        graphNodes_[i].enabled != next.graphNodes_[i].enabled || graphNodes_[i].bypassReason != next.graphNodes_[i].bypassReason) return false;
+  return true;
+}
+
+bool DspChain::continueTrackFrom(const DspChain& next) {
+  if (!canContinueTrackFrom(next)) return false;
+  // All track-dependent gain decisions were made off the callback. Every
+  // other processor remains the live instance, preserving delay and tails.
+  replayGain_->adoptPreparedGain(*next.replayGain_);
+  activeProcessors_.clear();
+  for (auto* processor : next.activeProcessors_) {
+    IAudioProcessor* live = nullptr;
+    for (size_t i = 0; i < processors_.size(); ++i) if (processor == next.processors_[i].get()) live = processors_[i].get();
+    for (size_t i = 0; i < graphPluginNodes_.size(); ++i) if (processor == next.graphPluginNodes_[i].get()) live = graphPluginNodes_[i].get();
+    for (size_t i = 0; i < graphVst3Nodes_.size(); ++i) if (processor == next.graphVst3Nodes_[i].get()) live = graphVst3Nodes_[i].get();
+    if (live) activeProcessors_.push_back(live);
+  }
+  status_.replayGainActive = next.status_.replayGainActive;
+  status_.loudnormActive = next.status_.loudnormActive;
+  status_.replayGainDb = next.status_.replayGainDb;
+  status_.dspActive = next.status_.dspActive;
+  processingRequired_.store(next.processingRequired_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  return true;
+}
+
 void DspChain::processDouble(double* samples, size_t frameCount) {
   if (!processingRequired_.load(std::memory_order_relaxed)) return;
   if (!samples || frameCount == 0) return;
@@ -952,40 +985,55 @@ std::string DspChain::nativeDspPluginStatusJson() const {
   return nativePlugins_ ? nativePlugins_->statusJson() : std::string("{\"plugins\":[]}");
 }
 
+DspChain::GraphTiming DspChain::graphTimingLocked(const ConvolverInfo& convolverInfo, uint32_t limiterLatency) const {
+  GraphTiming timing;
+  for (const GraphNodeRuntime& node : graphNodes_) {
+    if (!node.enabled || !node.processor || !node.bypassReason.empty() || !node.processor->isActive()) continue;
+    if (node.type == "convolver") {
+      if (convolverInfo.bypassed) continue;
+      timing.latency += convolverInfo.latencyFrames;
+      timing.tail += convolverInfo.tailFrames;
+      timing.drain += convolverInfo.tailFrames;
+    } else if (node.type == "truepeaklimiter") {
+      timing.latency += limiterLatency;
+      timing.tail += limiterLatency;
+      timing.drain += limiterLatency;
+    } else if (node.vst3Bridge) {
+      timing.latency += node.vst3Bridge->latencyFrames();
+      // The isolated bridge's FIFO latency is additional to the plugin tail.
+      const auto latency = node.vst3Bridge->latencyFrames(), tail = node.vst3Bridge->tailFrames();
+      timing.tail += static_cast<uint64_t>(latency) + tail;
+      // VST's kInfiniteTail is a sentinel, not 2^32 frames to render. Preserve
+      // its declared tail in telemetry; only drain the known finite delay at
+      // terminal EOF, retaining the host's existing infinite-tail termination.
+      timing.drain += static_cast<uint64_t>(latency) + (tail == std::numeric_limits<uint32_t>::max() ? 0 : tail);
+    }
+  }
+  if (!graphConfigured_ && config_.enabled) {
+    if (convolverInfo.active && !convolverInfo.bypassed) {
+      timing.latency += convolverInfo.latencyFrames;
+      timing.tail += convolverInfo.tailFrames;
+      timing.drain += convolverInfo.tailFrames;
+    }
+    timing.latency += limiterLatency;
+    timing.tail += limiterLatency;
+    timing.drain += limiterLatency;
+  }
+  return timing;
+}
+
 std::string DspChain::graphStatusJson() const {
   std::lock_guard lock(mutex_);
   std::ostringstream json;
   const ConvolverInfo convolverInfo = convolver_ ? convolver_->info() : ConvolverInfo{};
   const uint32_t limiterLatency = truePeakLimiter_ && truePeakLimiter_->isActive()
-                                      ? static_cast<uint32_t>(truePeakLimiter_->latencyFrames())
-                                      : 0;
-  uint64_t totalLatency = 0;
-  uint64_t totalTail = 0;
-  for (const GraphNodeRuntime& node : graphNodes_) {
-    if (!node.enabled || !node.processor || !node.bypassReason.empty() || !node.processor->isActive()) continue;
-    if (node.type == "convolver") {
-      if (convolverInfo.bypassed) continue;
-      totalLatency += convolverInfo.latencyFrames;
-      totalTail += convolverInfo.tailFrames;
-    } else if (node.type == "truepeaklimiter") {
-      totalLatency += limiterLatency;
-    } else if (node.vst3Bridge) {
-      totalLatency += node.vst3Bridge->latencyFrames();
-      totalTail += node.vst3Bridge->tailFrames();
-    }
-  }
-  if (!graphConfigured_ && config_.enabled) {
-    if (convolverInfo.active && !convolverInfo.bypassed) {
-      totalLatency += convolverInfo.latencyFrames;
-      totalTail += convolverInfo.tailFrames;
-    }
-    totalLatency += limiterLatency;
-  }
+                                      ? static_cast<uint32_t>(truePeakLimiter_->latencyFrames()) : 0;
+  const auto timing = graphTimingLocked(convolverInfo, limiterLatency);
   json << "{\"revision\":" << graphRevision_ << ",\"activeSceneId\":"
        << (graphSceneId_.empty() ? "null" : "\"" + json_utils::escape(graphSceneId_) + "\"")
        << ",\"totalLatencyFrames\":"
-       << totalLatency << ",\"latencySampleRate\":" << format_.sampleRate
-       << ",\"totalTailFrames\":" << totalTail << ",\"nodes\":[";
+       << timing.latency << ",\"latencySampleRate\":" << format_.sampleRate
+       << ",\"totalTailFrames\":" << timing.tail << ",\"nodes\":[";
   for (size_t index = 0; index < graphNodes_.size(); ++index) {
     const GraphNodeRuntime& node = graphNodes_[index];
     // A convolver bypassed on the render thread still reports isActive() here -- this chain
@@ -999,7 +1047,8 @@ std::string DspChain::graphStatusJson() const {
                              node.type == "truepeaklimiter" ? limiterLatency :
                              node.vst3Bridge ? node.vst3Bridge->latencyFrames() : 0;
     const uint64_t tail = node.type == "convolver" ? convolverInfo.tailFrames :
-                          node.vst3Bridge ? node.vst3Bridge->tailFrames() : 0;
+                          node.type == "truepeaklimiter" ? limiterLatency :
+                          node.vst3Bridge ? static_cast<uint64_t>(node.vst3Bridge->latencyFrames()) + node.vst3Bridge->tailFrames() : 0;
     const uint64_t overrunCount = node.type == "convolver" ? convolverInfo.overrunCount :
                                   node.vst3Bridge ? node.vst3Bridge->overrunCount() : 0;
     const uint64_t clipCount = node.type == "meter" && meter_ ? meter_->clipCount() : 0;
@@ -1190,6 +1239,9 @@ void DspChain::refreshStatusLocked() {
                       status_.loudnessContourActive ||
                       status_.truePeakLimiterActive || status_.nativeDspActive || status_.vst3DspActive;
   activeProcessors_.clear();
+  // Reserve the complete graph off the callback, including currently inactive
+  // ReplayGain. A later track may enable it without resetting any DSP history.
+  activeProcessors_.reserve(processors_.size()+graphPluginNodes_.size()+graphVst3Nodes_.size());
   if (graphConfigured_) {
     for (const GraphNodeRuntime& node : graphNodes_) {
       if (node.enabled && node.bypassReason.empty() && node.processor && node.processor->isActive()) {
@@ -1199,9 +1251,12 @@ void DspChain::refreshStatusLocked() {
     // ABI v1 plugins remain fixed after every built-in graph node and before the terminal clamp.
     if (nativePlugins_ && nativePlugins_->isActive()) activeProcessors_.push_back(nativePlugins_);
   } else {
-    activeProcessors_ = dsp::collectActiveProcessors(processors_);
+    for (const auto& processor : processors_) if (processor->isActive()) activeProcessors_.push_back(processor.get());
   }
   processingRequired_.store(!activeProcessors_.empty() || status_.headroomActive, std::memory_order_relaxed);
+  const auto limiterLatency = truePeakLimiter_ && truePeakLimiter_->isActive()
+      ? static_cast<uint32_t>(truePeakLimiter_->latencyFrames()) : 0;
+  renderTailFrames_.store(graphTimingLocked(info, limiterLatency).drain, std::memory_order_relaxed);
 }
 
 void DspChain::clampOutput(float* samples, size_t frameCount) {

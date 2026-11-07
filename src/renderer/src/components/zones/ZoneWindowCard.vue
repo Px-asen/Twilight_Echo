@@ -67,6 +67,7 @@ function onCardClick(event: MouseEvent): void {
 <template>
   <article
     class="zone-window"
+    data-te-interactive
     :class="[`is-${light}`, { 'is-selected': selected, 'has-error': Boolean(zone.error) }]"
     :data-zone-id="zone.id"
     @click="onCardClick"

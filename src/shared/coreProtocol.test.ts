@@ -5,6 +5,7 @@ import { isCoreRequest, coreOperation } from './coreProtocol.ts'
 import { isBoundedCoreJson } from './coreRequestValidation.ts'
 import { emptyCoreStateCounts } from './coreState.ts'
 import { validCorePlatformPayload, type CorePlatformRequest } from './corePlatform.ts'
+import { REMOTE_CORE_COMMANDS } from './remoteCoreBridge.ts'
 
 const request = (name: string, payload: unknown, kind = 'command') => ({
   kind,
@@ -12,6 +13,15 @@ const request = (name: string, payload: unknown, kind = 'command') => ({
   payload,
   requestId: 'request:1',
   epoch: 'core:1'
+})
+
+test('group AutoMix settings require explicit revision, bounded modes and settings permission', () => {
+  const payload = { groupId: 'group-11111111-1111-4111-8111-111111111111', revision: 4, autoMixMode: 'natural' }
+  for (const autoMixMode of ['off', 'natural', 'dj']) assert.equal(isCoreRequest(request('groups.settings.edit', { ...payload, autoMixMode })), true)
+  for (const edit of [{ autoMixMode: 'auto' }, { autoMixMode: ['natural'] }, { revision: null }, { revision: -1 }, { groupId: '../group' }, { filePath: 'private' }])
+    assert.equal(isCoreRequest(request('groups.settings.edit', { ...payload, ...edit })), false)
+  assert.equal(coreOperation('groups.settings.edit')?.permission, 'settings:write')
+  assert.ok((REMOTE_CORE_COMMANDS as readonly string[]).includes('groups.settings.edit'))
 })
 
 test('personal metadata operations stay library-write scoped and the full 2 MiB bitmap request crosses the public payload budget', () => {

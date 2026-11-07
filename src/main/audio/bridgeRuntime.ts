@@ -2,11 +2,12 @@ import { createServer, connect, type Server, type TLSSocket } from 'node:tls'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { NativeAudioBinding } from '../../core/audio/audioEngineTypes.ts'
-import type { BridgePeer, BridgePcmBlock, BridgeReceiverFacts, BridgeRuntimeState } from '../../shared/audioBridge.ts'
-import { validBridgePeer, readBridgeReceiverFacts } from '../../shared/audioBridge.ts'
+import type { BridgePeer, BridgePcmBlock, BridgeAudioBlock, BridgeAudioFormat, BridgeStreamOptions, BridgeReceiverFacts, BridgeRuntimeState } from '../../shared/audioBridge.ts'
+import { validBridgePeer, readBridgeReceiverFacts, readBridgeAudioFormat, bridgeWireCode, bridgeSampleBytes, bridgeFrameRate, extendedBridgeFormat, bridgeCaptureDevice } from '../../shared/audioBridge.ts'
 import { BridgeClockMonitor, readBridgeClockExchange } from '../../shared/audioBridgeClock.ts'
 import { BridgeTimelineController, type BridgeSyncStatus, type BridgeSyncSeed } from '../../shared/audioBridgeSync.ts'
 import { readBridgePackets, sendBridgeJson, sendBridgePacket } from './bridgeWire.ts'
+import { readBridgeSourceTimeline, type BridgeSourceTimeline } from '../../shared/bridgeSourceTimeline.ts'
 
 export interface BridgeNative {
   PullBridgePcm(frames: number): BridgePcmBlock
@@ -15,13 +16,17 @@ export interface BridgeNative {
   WriteBridgePcm(data: Uint8Array): void
   StartBridgeReceiver(): void
   GetBridgeReceiverInfo(): string
+  PullBridgeAudio?(frames: number): BridgeAudioBlock
+  OpenBridgeStreamReceiver?(backend: string, device: string, rate: number, channels: number, code: number, mask: number): void
+  WriteBridgeAudio?(data: Uint8Array): void
   PrepareBridgeTimedReceiver?(): void
   ArmBridgeTimedReceiver?(startAtMs: number, generation: number, mediaFrame: number): void
   EndBridgeTimedReceiver?(): void
   PrepareBridgeAdaptiveReceiver?(): void
   SetBridgeTimedCorrection?(ppm: number, generation: number): void
+  CommitBridgeSourceControls?(): void
 }
-export interface BridgeHostOptions {
+export interface BridgeHostOptions extends BridgeStreamOptions {
   key: string; cert: string; fingerprint: string
   name: string; backend: string; device: string; sampleRate: number
 }
@@ -30,6 +35,7 @@ const monotonicMs = () => Number(process.hrtime.bigint()) / 1e6
 const hasClock = (value: unknown) => Array.isArray(value) && value.includes('clock-v1')
 const hasTimedStart = (value: unknown) => Array.isArray(value) && value.includes('timed-start-v1')
 const hasAdaptive = (value: unknown) => Array.isArray(value) && value.includes('adaptive-pcm-v1')
+const hasTypedAudio = (value: unknown) => Array.isArray(value) && value.includes('typed-audio-v2')
 const parse = (data: Buffer): Record<string, unknown> => {
   const value: unknown = JSON.parse(data.toString('utf8'))
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Bridge control')
@@ -59,7 +65,7 @@ export class AudioBridgeRuntime {
   private resetClockProbes: (() => void) | null = null
   private timedEnabled = false
   private adaptiveEnabled = false
-  private timedPlan: { epoch: number; adaptive: boolean; phase: 'preparing' | 'prepared' | 'feeding' | 'armed' } | null = null
+  private timedPlan: { epoch: number; adaptive: boolean; mediaHeld: boolean; phase: 'preparing' | 'prepared' | 'feeding' | 'armed' } | null = null
   private timedSequence = 0
   private synchronizer: BridgeTimelineController | null = null
   private rateSeed: BridgeSyncSeed | null = null
@@ -68,6 +74,17 @@ export class AudioBridgeRuntime {
     reject(cause: Error): void; timer: ReturnType<typeof setTimeout> } | null = null
   private readonly bridge: BridgeNative | null
   private readonly native: NativeAudioBinding
+  private extended = false
+  private source: BridgeSourceTimeline | null = null
+  sourceTimeline(): BridgeSourceTimeline | null { return this.connected && this.source ? { ...this.source } : null }
+  private supportsTypedAudio(): boolean { return !!this.bridge?.PullBridgeAudio && !!this.bridge.OpenBridgeStreamReceiver && !!this.bridge.WriteBridgeAudio }
+  private openReceiver(options: BridgeHostOptions): void {
+    const format = readBridgeAudioFormat(options)
+    if (extendedBridgeFormat(format)) {
+      if (!this.supportsTypedAudio()) throw new Error('请更新原生引擎以使用 DSD／DoP／多声道输出桥')
+      this.bridge!.OpenBridgeStreamReceiver!(options.backend, options.device, format.sampleRate, format.channels, bridgeWireCode(format.wireFormat), format.channelMask)
+    } else this.bridge!.OpenBridgeReceiver(options.backend, options.device, format.sampleRate, 2)
+  }
 
   constructor(native: NativeAudioBinding) {
     this.native = native
@@ -83,6 +100,7 @@ export class AudioBridgeRuntime {
       synchronization: this.synchronizer?.view() ?? this.syncFailure }
   }
   quarantine(): void {
+    this.source = null
     this.native.Stop(); this.selected = true; this.connected = false
     this.error = '音频服务已重启；请重新连接输出桥或明确选择此电脑'
   }
@@ -93,11 +111,11 @@ export class AudioBridgeRuntime {
       throw new Error('本机正作为输出桥；请先关闭接收模式')
     if (method === 'SetOutputBackend') {
       this.savedBackend = String(args[0])
-      if (this.selected) return ['bridge-pcm']
+      if (this.selected) return [this.extended ? 'bridge-stream' : 'bridge-pcm']
     }
     if (method === 'SetOutputDevice') {
       this.savedDevice = String(args[0])
-      if (this.selected) return [`${this.facts?.sampleRate ?? 48000}/2`]
+      if (this.selected) return [bridgeCaptureDevice(readBridgeAudioFormat(this.facts ?? { sampleRate: 48000 }))]
     }
     if (this.selected && TRANSPORT.has(method)) {
       // The new lane accepts exactly one explicit start intent after preparation.
@@ -110,6 +128,7 @@ export class AudioBridgeRuntime {
     return args
   }
   private flushSender(): void {
+    this.source = null
     ++this.epoch
     this.cancelTimedRequest(new Error('定时播放已取消'))
     this.timedPlan = null
@@ -121,6 +140,14 @@ export class AudioBridgeRuntime {
   callFailed(method: string): void {
     if (!this.timedPlan || !TRANSPORT.has(method)) return
     this.flushSender(); this.native.Stop()
+  }
+  afterCall(method: string): void {
+    if (method === 'ApplyDspState' && this.timedPlan?.mediaHeld && this.timedPlan.phase === 'feeding')
+      this.bridge!.CommitBridgeSourceControls!()
+  }
+  releaseTimedMedia(epoch: number): void {
+    if (!this.timedPlan?.mediaHeld || this.timedPlan.epoch !== epoch || this.timedPlan.phase !== 'feeding') throw new Error('定时媒体准备已取消')
+    this.timedPlan.mediaHeld = false
   }
   private cancelTimedRequest(cause: Error): void {
     const pending = this.timedRequest; this.timedRequest = null
@@ -138,12 +165,13 @@ export class AudioBridgeRuntime {
   }
   /** Internal coordinator lane. Queue/source preparation must precede this;
    * the next Play/SelectQueueIndex supplies media but cannot sound before arm. */
-  async prepareTimedPlayback(adaptive = false): Promise<{ epoch: number; coreNowMs: number; receiver: BridgeReceiverFacts }> {
+  async prepareTimedPlayback(adaptive = false, holdMedia = false): Promise<{ epoch: number; coreNowMs: number; receiver: BridgeReceiverFacts }> {
     if (!this.connected || !this.timedEnabled) throw new Error('此输出桥不支持定时起播；原有独立播放仍可使用')
     if (adaptive && !this.adaptiveEnabled) throw new Error('此输出桥不支持时钟自适应 PCM；请更新输出桥')
+    if (holdMedia && !this.bridge?.CommitBridgeSourceControls) throw new Error('请更新原生引擎以准备同步组 DSP')
     this.flushSender(); this.native.Stop()
     const epoch = this.epoch
-    this.timedPlan = { epoch, adaptive, phase: 'preparing' }
+    this.timedPlan = { epoch, adaptive, mediaHeld: holdMedia, phase: 'preparing' }
     try {
       const receiver = await this.requestTimed('timed-prepare', { adaptive })
       if (this.timedPlan?.epoch !== epoch) throw new Error('定时播放已取消')
@@ -240,17 +268,17 @@ export class AudioBridgeRuntime {
     if (this.selected) throw new Error('请先选择本机输出，再启用输出桥接收')
     if (!['wasapi', 'wasapi-exclusive', 'asio', 'coreaudio', 'coreaudio-exclusive', 'alsa'].includes(options.backend) ||
         !options.device || ['auto', 'default', 'System Default', 'system default', 'system-default', '系统默认'].includes(options.device) ||
-        (options.backend === 'alsa' && !/^(?:alsa:)?(?:hw|plughw):/.test(options.device)) ||
-        ![44100, 48000, 88200, 96000, 176400, 192000].includes(options.sampleRate))
+        (options.backend === 'alsa' && !/^(?:alsa:)?(?:hw|plughw):/.test(options.device)))
       throw new Error('请先在音频设置中明确选择 DAC；输出桥不使用默认扬声器')
     await this.stopHost()
     this.native.Stop()
     // Validate the exact DAC before advertising consent. No playback starts.
-    this.bridge.OpenBridgeReceiver(options.backend, options.device, options.sampleRate, 2)
+    const format = readBridgeAudioFormat(options)
+    this.openReceiver({ ...options, ...format })
     try { this.facts = this.receiverFacts() }
     finally { this.bridge.CloseBridgeReceiver() }
     this.facts = this.stoppedFacts()
-    this.host = options; this.token = randomBytes(24).toString('hex'); this.error = null
+    this.host = { ...options, ...format }; this.token = randomBytes(24).toString('hex'); this.error = null
     const server = createServer({ key: options.key, cert: options.cert, minVersion: 'TLSv1.2', handshakeTimeout: 3000 }, socket => this.accept(socket))
     this.server = server
     server.maxConnections = 4
@@ -276,7 +304,7 @@ export class AudioBridgeRuntime {
   private accept(socket: TLSSocket): void {
     this.sockets.add(socket); socket.setNoDelay(true); socket.setTimeout(3000, () => socket.destroy())
     let authorized = false, waiting = false, generation = '', lastResponse = Date.now(), earliestPull = 0, offered = 0, credit = 0
-    let clockEnabled = false, receiverOpen = false
+    let clockEnabled = false, receiverOpen = false, typedEnabled = false
     let timedEnabled = false, adaptiveEnabled = false, timedEpoch: number | null = null, preparedUntil = 0, timedArmed = false
     let transportEpoch = 0, lastTimedRequest = 0
     const stop = () => { if (this.receiverSocket === socket) {
@@ -291,7 +319,7 @@ export class AudioBridgeRuntime {
       // A large ASIO callback must be able to reach its startup threshold;
       // a fixed 100 ms credit target could otherwise deadlock before start.
       const target = Math.min(this.facts!.capacityFrames,
-        Math.max(Math.round(this.facts!.sampleRate / 10), this.facts!.prebufferFrames))
+        Math.max(Math.round(bridgeFrameRate(readBridgeAudioFormat(this.facts!)) / 10), this.facts!.prebufferFrames))
       offered = Math.min(2048, target - (this.facts?.bufferedFrames ?? 0))
       if (this.facts?.adaptive) offered = Math.min(offered, this.facts.adaptive.inputCreditFrames)
       if (offered <= 0) return
@@ -318,8 +346,11 @@ export class AudioBridgeRuntime {
         if (hello.type !== 'hello' || hello.version !== 1 || token.length !== 48 ||
             !timingSafeEqual(Buffer.from(token), Buffer.from(this.token)) || this.receiverSocket || !this.host)
           throw new Error('Bridge authorization refused')
-        this.bridge!.OpenBridgeReceiver(this.host.backend, this.host.device, this.host.sampleRate, 2)
-        receiverOpen = true; clockEnabled = hasClock(hello.capabilities)
+        typedEnabled = hasTypedAudio(hello.capabilities) && this.supportsTypedAudio()
+        const extended = extendedBridgeFormat(readBridgeAudioFormat(this.host))
+        if (extended && !typedEnabled) throw new Error('Core must be updated for DSD/DoP/multichannel Bridge')
+        this.openReceiver(this.host)
+        receiverOpen = true; clockEnabled = !extended && hasClock(hello.capabilities)
         this.receiverSocket = socket
         this.facts = this.receiverFacts(); authorized = true
         timedEnabled = clockEnabled && hasTimedStart(hello.capabilities) && this.facts.timedStart?.supported === true &&
@@ -327,7 +358,7 @@ export class AudioBridgeRuntime {
         adaptiveEnabled = timedEnabled && hasAdaptive(hello.capabilities) && this.facts.adaptiveSupported === true &&
           typeof this.bridge!.PrepareBridgeAdaptiveReceiver === 'function' && typeof this.bridge!.SetBridgeTimedCorrection === 'function'
         sendBridgeJson(socket, { type: 'ready', version: 1, name: this.host.name, facts: this.facts,
-          capabilities: [...(clockEnabled ? ['clock-v1'] : []), ...(timedEnabled ? ['timed-start-v1'] : []), ...(adaptiveEnabled ? ['adaptive-pcm-v1'] : [])] })
+          capabilities: [...(typedEnabled ? ['typed-audio-v2'] : []), ...(clockEnabled ? ['clock-v1'] : []), ...(timedEnabled ? ['timed-start-v1'] : []), ...(adaptiveEnabled ? ['adaptive-pcm-v1'] : [])] })
         request(); return
       }
       if (kind === 0) {
@@ -430,27 +461,35 @@ export class AudioBridgeRuntime {
         }
         throw new Error('Unexpected Bridge control')
       }
-      if (kind !== 1 || data.length < 28) throw new Error('Unexpected PCM')
+      if (![1, 2].includes(kind) || data.length < (kind === 2 ? 40 : 28) || (kind === 2 && !typedEnabled)) throw new Error('Unexpected Bridge audio')
       if (data.readUInt32BE(24) !== credit) return // an old, revoked credit
       if (!waiting) throw new Error('Unsolicited PCM')
       lastResponse = Date.now() // Clock traffic must not hide an unanswered PCM credit.
       const epoch = data.readUInt32BE(0), nativeGeneration = data.readDoubleBE(4)
       const rate = data.readUInt32BE(12), channels = data.readUInt32BE(16), frames = data.readUInt32BE(20)
-      if (channels !== 2 || rate !== this.facts!.sampleRate || frames < 1 || frames > offered || data.length !== 28 + frames * 8)
-        throw new Error('Invalid PCM format or credit')
+      const format = readBridgeAudioFormat(this.facts!), extended = extendedBridgeFormat(format)
+      const head = kind === 2 ? 40 : 28
+      if ((extended && kind !== 2) || channels !== format.channels || rate !== format.sampleRate || frames < 1 || frames > offered ||
+          !Number.isSafeInteger(nativeGeneration) || nativeGeneration < 0 ||
+          (kind === 2 && (data.readUInt32BE(28) !== bridgeWireCode(format.wireFormat) || data.readDoubleBE(32) !== format.channelMask)) ||
+          data.length !== head + frames * channels * bridgeSampleBytes(format.wireFormat))
+        throw new Error('Invalid Bridge audio format or credit')
       const next = `${epoch}/${nativeGeneration}`
       if (next !== generation) {
         if (timedEpoch !== null) {
           if (epoch !== timedEpoch || generation) throw new Error('Timed media generation changed; reprepare required')
         } else {
           this.bridge!.CloseBridgeReceiver()
-          this.bridge!.OpenBridgeReceiver(this.host!.backend, this.host!.device, rate, channels)
+          this.openReceiver(this.host!)
           receiverOpen = true
-          if (this.receiverFacts().sampleRate !== rate) throw new Error('DAC format changed; reconnect required')
+          const actual = readBridgeAudioFormat(this.receiverFacts())
+          if (JSON.stringify(actual) !== JSON.stringify(format)) throw new Error('DAC format changed; reconnect required')
         }
         generation = next
       }
-      this.bridge!.WriteBridgePcm(data.subarray(28)); waiting = false; earliestPull = 0
+      if (kind === 2) this.bridge!.WriteBridgeAudio!(data.subarray(head))
+      else this.bridge!.WriteBridgePcm(data.subarray(head))
+      waiting = false; earliestPull = 0
       request()
     })
   }
@@ -468,13 +507,14 @@ export class AudioBridgeRuntime {
     if (!this.savedBackend && this.native.GetPlaybackInfo) {
       const raw = this.native.GetPlaybackInfo()
       const info = typeof raw === 'string' ? JSON.parse(raw) : raw
-      this.savedBackend = info.outputBackend === 'bridge-pcm' ? '' : info.outputBackend
+      this.savedBackend = ['bridge-pcm', 'bridge-stream'].includes(info.outputBackend) ? '' : info.outputBackend
       this.savedDevice = info.outputDevice ?? 'auto'
     }
     this.native.Stop(); this.selected = true; this.error = null
     const socket = connect({ host: peer.host, port: peer.port, rejectUnauthorized: false, minVersion: 'TLSv1.2' })
     this.sender = socket; socket.setNoDelay(true); socket.setTimeout(3500, () => socket.destroy(new Error('Bridge timed out')))
     let accepted = false, sequence = 0
+    let negotiated: BridgeAudioFormat | null = null
     let clockTimer: ReturnType<typeof setInterval> | undefined
     const pending = new Map<number, { sentAtMs: number; epoch: number }>()
     const clearClock = () => { clearInterval(clockTimer); pending.clear() }
@@ -494,7 +534,7 @@ export class AudioBridgeRuntime {
           this.synchronizer.fail('bridge_disconnected'); this.syncFailure = this.synchronizer.view(); this.synchronizer = null
         }
         this.cancelTimedRequest(cause); this.timedPlan = null
-        this.connected = false; this.error = cause.message; this.native.Stop()
+        this.source = null; this.connected = false; this.error = cause.message; this.native.Stop()
         if (!accepted) reject(cause)
       }
       this.closeSender = () => { clearClock(); socket.removeAllListeners('close'); socket.removeAllListeners('error'); socket.on('error', () => {}); socket.destroy() }
@@ -503,7 +543,7 @@ export class AudioBridgeRuntime {
       socket.once('secureConnect', () => {
         const fingerprint = socket.getPeerCertificate().fingerprint256?.replace(/:/g, '').toLowerCase()
         if (fingerprint !== peer.fingerprint) { socket.destroy(new Error('输出桥证书不匹配，请重新取得邀请')); return }
-        sendBridgeJson(socket, { type: 'hello', version: 1, token: peer.token, capabilities: ['clock-v1', 'timed-start-v1', 'adaptive-pcm-v1'] })
+        sendBridgeJson(socket, { type: 'hello', version: 1, token: peer.token, capabilities: ['clock-v1', 'timed-start-v1', 'adaptive-pcm-v1', ...(this.supportsTypedAudio() ? ['typed-audio-v2'] : [])] })
       })
       readBridgePackets(socket, (kind, data) => {
         const receivedAtMs = monotonicMs()
@@ -513,10 +553,11 @@ export class AudioBridgeRuntime {
           if (message.type !== 'ready' || message.version !== 1 || typeof message.name !== 'string' ||
               !message.facts || typeof message.facts !== 'object') throw new Error('Bridge handshake failed')
           this.facts = readBridgeReceiverFacts(message.facts)
-          if (this.facts.channels !== 2 || !Number.isInteger(this.facts.sampleRate) ||
-              this.facts.sampleRate < 44100 || this.facts.sampleRate > 192000) throw new Error('Invalid negotiated format')
-          this.native.SetOutputBackend('bridge-pcm'); this.native.SetOutputDevice(`${this.facts.sampleRate}/2`)
-          this.clockEnabled = hasClock(message.capabilities)
+          negotiated = readBridgeAudioFormat(this.facts)
+          this.extended = extendedBridgeFormat(negotiated)
+          if (this.extended && (!this.supportsTypedAudio() || !hasTypedAudio(message.capabilities))) throw new Error('请更新两端以使用 DSD／DoP／多声道输出桥')
+          this.native.SetOutputBackend(this.extended ? 'bridge-stream' : 'bridge-pcm'); this.native.SetOutputDevice(bridgeCaptureDevice(negotiated))
+          this.clockEnabled = !this.extended && hasClock(message.capabilities)
           this.timedEnabled = this.clockEnabled && hasTimedStart(message.capabilities)
           this.adaptiveEnabled = this.timedEnabled && hasAdaptive(message.capabilities)
           if (this.clockEnabled) {
@@ -551,17 +592,31 @@ export class AudioBridgeRuntime {
             !Number.isInteger(message.frames) || Number(message.frames) < 1 || Number(message.frames) > 2048)
           throw new Error('Invalid PCM credit')
         this.facts = readBridgeReceiverFacts(message.facts)
-        const block = this.bridge!.PullBridgePcm(Number(message.frames))
+        if (JSON.stringify(readBridgeAudioFormat(this.facts)) !== JSON.stringify(negotiated)) throw new Error('Bridge format changed; reconnect required')
+        if (this.timedPlan?.mediaHeld) { sendBridgeJson(socket, { type: 'idle', credit: message.credit, eof: false }); return }
+        const block = this.extended ? this.bridge!.PullBridgeAudio!(Number(message.frames)) : this.bridge!.PullBridgePcm(Number(message.frames))
+        const timeline = readBridgeSourceTimeline(block.sourceTimeline)
+        if (timeline && (timeline.generation !== block.generation || timeline.sampleRate !== block.sampleRate || timeline.frames < block.frames))
+          throw new Error('Bridge source timeline does not match its audio block')
+        if (timeline) this.source = { ...timeline, epoch: this.epoch }
         if (!block.playing || !block.frames) { sendBridgeJson(socket, { type: 'idle', credit: message.credit, eof: !block.playing }); return }
-        const header = Buffer.alloc(28)
+        const bytes = 'audio' in block ? block.audio : block.pcm
+        if (!Number.isSafeInteger(block.generation) || block.generation < 0 || !Number.isSafeInteger(block.frames) || block.frames < 1 || block.frames > Number(message.frames) ||
+            block.sampleRate !== negotiated!.sampleRate || block.channels !== negotiated!.channels ||
+            ('audio' in block && (block.wireCode !== bridgeWireCode(negotiated!.wireFormat) || block.channelMask !== negotiated!.channelMask)) ||
+            bytes.byteLength !== block.frames * block.channels * bridgeSampleBytes(negotiated!.wireFormat)) throw new Error('Native Bridge block does not match negotiated format')
+        const header = Buffer.alloc(this.extended ? 40 : 28)
         header.writeUInt32BE(this.epoch); header.writeDoubleBE(block.generation, 4)
         header.writeUInt32BE(block.sampleRate, 12); header.writeUInt32BE(block.channels, 16); header.writeUInt32BE(block.frames, 20)
         header.writeUInt32BE(Number(message.credit), 24)
-        sendBridgePacket(socket, 1, Buffer.concat([header, Buffer.from(block.pcm)]))
+        if (this.extended) { header.writeUInt32BE(bridgeWireCode(negotiated!.wireFormat), 28); header.writeDoubleBE(negotiated!.channelMask, 32) }
+        sendBridgePacket(socket, this.extended ? 2 : 1, Buffer.concat([header, Buffer.from(bytes)]))
       })
     })
   }
   disconnectPeer(restore = true): void {
+    this.source = null
+    this.extended = false
     this.rateSeed = null
     this.cancelTimedRequest(new Error('输出桥已断开')); this.timedPlan = null; this.timedEnabled = this.adaptiveEnabled = false
     this.synchronizer = null; this.syncFailure = null
@@ -574,5 +629,7 @@ export class AudioBridgeRuntime {
       this.native.SetOutputDevice(this.savedDevice)
     }
   }
-  async close(): Promise<void> { this.disconnectPeer(); await this.stopHost() }
+  // Shutdown releases the bridge without selecting a local DAC. A bridge-only
+  // build may not include the saved local backend; explicit disconnect owns restoration.
+  async close(): Promise<void> { this.disconnectPeer(false); await this.stopHost() }
 }

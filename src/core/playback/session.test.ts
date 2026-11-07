@@ -2599,6 +2599,80 @@ test('path-derived saved occurrence IDs survive native use, edits and cold pause
     await cold.shutdown()
   }
 })
+test('native startup failure keeps the saved queue and position available for manual recovery', async t => {
+  const f = await fixture(t)
+  await f.session.fromQuery({ ids: ['a', 'b'], sort: 'playlist' }, 'a', true)
+  await f.session.seek(23)
+  await f.session.pause()
+  const previous = f.session.snapshot()
+  await f.session.shutdown()
+  const calls = f.engine.calls.length
+  f.engine.start = async () => { throw Object.assign(new Error('音频服务进程退出：3221225727'), { code: 'AUDIO_SERVICE_UNAVAILABLE' }) }
+  const cold = f.create()
+  try {
+    await cold.initialize()
+    assert.equal(cold.snapshot().queue?.id, previous.queue?.id)
+    assert.equal(cold.snapshot().playback?.position, 23)
+    assert.equal(cold.snapshot().playback?.state, 'stopped')
+    assert.match(cold.snapshot().error ?? '', /3221225727/)
+    assert.equal(f.engine.calls.slice(calls).includes('play'), false)
+    f.engine.emit('audio-service-ready', { outputRouteSynced: false })
+    assert.match(cold.snapshot().error ?? '', /3221225727/)
+    f.engine.emit('audio-service-ready', { outputRouteSynced: true })
+    assert.equal(cold.snapshot().error, null)
+    assert.equal(cold.snapshot().playback?.position, 23)
+    assert.equal(cold.snapshot().playback?.state, 'stopped')
+    await cold.recoverAudio(async () => {})
+    assert.equal(f.engine.calls.slice(calls).includes('play'), false)
+    await cold.play()
+    assert.equal(f.engine.info.position, 23)
+  } finally { await cold.shutdown() }
+})
+
+test('audio recovery holds the playback barrier until deferred settings finish outside the configuration lock', async t => {
+  const f = await fixture(t)
+  await f.session.fromQuery({}, 'a', false)
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const enteredRestore = new Promise<void>(resolve => { entered = resolve })
+  let locked = false
+  const recovery = f.session.recoverAudio(async () => { assert.equal(locked, true) }, {
+    serialize: async action => { locked = true; try { return await action() } finally { locked = false } },
+    restored: async () => { assert.equal(locked, false); entered(); await held }
+  })
+  await enteredRestore
+  await assert.rejects(f.session.play(), { code: 'BUSY' })
+  release()
+  await recovery
+  assert.equal(f.engine.calls.includes('play'), false)
+  await f.session.play()
+  assert.equal(f.engine.calls.includes('play'), true)
+})
+
+test('startup observes an audio recovery that completed while the saved session was loading', async t => {
+  const f = await fixture(t)
+  await f.session.shutdown()
+  f.engine.start = async () => { throw Object.assign(new Error('native process exited'), { code: 'AUDIO_SERVICE_UNAVAILABLE' }) }
+  Object.assign(f.engine, { getAudioServiceFailure: () => null })
+  const cold = f.create()
+  try {
+    await cold.initialize()
+    assert.equal(cold.snapshot().error, null)
+    assert.equal(cold.snapshot().playback?.state, 'stopped')
+    assert.equal(f.engine.calls.includes('play'), false)
+  } finally { await cold.shutdown() }
+})
+
+test('unclassified startup failures still reject session initialization', async t => {
+  const f = await fixture(t)
+  await f.session.shutdown()
+  f.engine.start = async () => { throw new Error('unexpected startup bug') }
+  const cold = f.create()
+  await assert.rejects(cold.initialize(), /unexpected startup bug/)
+  await cold.shutdown()
+})
+
 async function fixture(
   t: test.TestContext,
   resolver: SourceResolver = {

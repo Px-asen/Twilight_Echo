@@ -744,11 +744,20 @@ if(TAE_BUILD_TESTS)
     tests/backend_factory_tests.cpp
     output/OutputBackendFactory.test.cpp
     output/OutputBackendFactory.cpp
+    core/AudioTypes.cpp
   )
   add_executable(twilight_bridge_receiver_tests tests/bridge_receiver_tests.cpp
     output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
   target_include_directories(twilight_bridge_receiver_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_bridge_receiver_unit COMMAND twilight_bridge_receiver_tests)
+  add_executable(twilight_bridge_formats_tests tests/bridge_formats_tests.cpp
+    output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
+  target_include_directories(twilight_bridge_formats_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_bridge_formats_unit COMMAND twilight_bridge_formats_tests)
+  add_executable(twilight_bridge_automix_plan_tests tests/bridge_automix_plan_tests.cpp)
+  target_include_directories(twilight_bridge_automix_plan_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(twilight_bridge_automix_plan_tests PRIVATE twilight_automix_native)
+  add_test(NAME twilight_bridge_automix_plan_unit COMMAND twilight_bridge_automix_plan_tests)
   add_executable(twilight_bridge_timed_tests tests/bridge_timed_tests.cpp
     output/bridge/BridgeReceiver.cpp output/bridge/BridgeResampler.cpp output/OutputClock.cpp core/AudioTypes.cpp)
   target_include_directories(twilight_bridge_timed_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1249,6 +1258,8 @@ if(TAE_BUILD_TESTS)
   # Keep assertions live on every test target regardless of configuration.
   set(TAE_TEST_TARGETS
     twilight_bridge_receiver_tests
+    twilight_bridge_formats_tests
+    twilight_bridge_automix_plan_tests
     twilight_bridge_timed_tests
     twilight_bridge_resampler_tests
     twilight_bridge_adaptive_tests

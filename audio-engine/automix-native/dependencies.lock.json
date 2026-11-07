@@ -49,5 +49,5 @@
       "license": "MIT"
     }
   },
-  "development": {"python": "3.12", "torch": "2.6.0+cpu", "torchaudio": "2.6.0+cpu", "tensorflow": "2.18.0", "tf-keras": "2.18.0", "tf2onnx": "1.16.1", "numpy": "1.26.4", "onnx": "1.17.0", "onnxruntime": "1.20.1", "soundfile": "0.13.1", "scipy": "1.15.3", "nasmValidated": "3.01"}
+  "development": {"python": "3.12", "torch": "2.6.0+cpu", "torchaudio": "2.6.0+cpu", "tensorflow": "2.18.0", "tf-keras": "2.18.0", "tf2onnx": "1.16.1", "numpy": "1.26.4", "onnx": "1.17.0", "onnxruntime": "1.20.1", "soundfile": "0.13.1", "scipy": "1.15.3", "einops": "0.8.0", "rotary-embedding-torch": "0.6.4", "soxr": "0.3.7", "nasmValidated": "3.01"}
 }

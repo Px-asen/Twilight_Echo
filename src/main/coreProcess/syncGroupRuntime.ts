@@ -12,6 +12,7 @@ import type { SyncGroupRuntime } from '../../core/playback/zoneRegistry.ts'
 import { VersionedDataStore } from '../persistence/versionedDataStore.ts'
 import { createPlaybackSessionStoreBundle } from '../persistence/playbackSessionRepository.ts'
 import { createCorePlaybackRepository } from '../persistence/corePlaybackRepository.ts'
+import { CoreAutoMixService, type CoreAutoMixOptions } from '../../core/audio/autoMixService.ts'
 
 interface GroupCatalog { version: 1; groups: SyncGroupDescriptor[] }
 export function syncGroupCatalog(root: string) {
@@ -24,7 +25,8 @@ export function syncGroupCatalog(root: string) {
       return v.groups.every(g => {
         if (!g || !validSyncGroupId(g.id) || ids.has(g.id) || typeof g.name !== 'string' || !g.name.trim() || g.name.length > 80 ||
             !Array.isArray(g.members) || g.members.length < 2 || g.members.length > MAX_CORE_ZONES ||
-            Object.keys(g).some(k => !['id', 'name', 'members'].includes(k))) return false
+            (g.autoMixMode !== undefined && !['off','natural','dj'].includes(g.autoMixMode)) ||
+            Object.keys(g).some(k => !['id', 'name', 'members', 'autoMixMode'].includes(k))) return false
         ids.add(g.id)
         return g.members.every(m => {
           if (!m || !validZoneId(m.zoneId) || members.has(m.zoneId) || !Number.isFinite(m.downstreamDelayMs) ||
@@ -36,7 +38,8 @@ export function syncGroupCatalog(root: string) {
     } })
   let revision = 0
   return {
-    load: async () => { const doc = await store.load(); revision = doc?.revision ?? 0; return doc?.data.groups ?? [] },
+    load: async () => { const doc = await store.load(); revision = doc?.revision ?? 0
+      return doc?.data.groups.map(g => ({ ...g, autoMixMode: g.autoMixMode ?? 'off' as const })) ?? [] },
     save: async (groups: SyncGroupDescriptor[]) => { revision = (await store.save({ version: 1, groups }, revision)).revision }
   }
 }
@@ -44,6 +47,7 @@ export function syncGroupCatalog(root: string) {
 export async function createSyncGroupRuntime(options: {
   root: string; descriptor: SyncGroupDescriptor; outputs: SyncGroupOutput[]; database: LibraryDatabaseServiceClient
   playback: Pick<CorePlaybackSessionOptions, 'queues' | 'resolver' | 'authorize' | 'resources' | 'automaticPlaybackAllowed' | 'observePlayback' | 'playbackStarted' | 'playbackSeeked'>
+  autoMix?: Omit<CoreAutoMixOptions, 'root' | 'engine'>
   closed?(): void
   changed(): void
 }): Promise<SyncGroupRuntime> {
@@ -61,7 +65,22 @@ export async function createSyncGroupRuntime(options: {
     resumeMode: () => 'trackAndPosition', now: Date.now,
     schedule: (action, ms) => { const timer = setTimeout(action, ms); return () => clearTimeout(timer) },
     changed, fatal: error => { console.error('[core.sync-group]', descriptor.id, error); changed() } })
-  await playback.initialize() // Saved queue/position only; no decoder or arm on recovery.
+  const autoMix = options.autoMix ? new CoreAutoMixService({ ...options.autoMix, root: directory, engine }) : null
+  let initialized = false
+  try {
+    await engine.start() // Acquire transition ownership without opening/arming a decoder.
+    await playback.initialize() // Saved queue/position only; no decoder or arm on recovery.
+    initialized = true
+    autoMix?.activate()
+    if (descriptor.autoMixMode && descriptor.autoMixMode !== 'off') {
+      if (!engine.supportsAutoMix()) throw new Error('同步组 AutoMix 运行时不可用，保持暂停；请更新成员引擎')
+      await engine.setAutoMixMode(descriptor.autoMixMode) // Restore policy, never decoder/arm or automatic Play.
+    }
+  } catch (error) {
+    await autoMix?.shutdown().catch(() => {})
+    if (initialized) await playback.shutdown().catch(() => {})
+    await engine.close().catch(() => {}); throw error
+  }
   return { playback, engine, sources: () => engine.getQueueSnapshot().map(item => item.source),
-    close: async () => { await playback.shutdown(); options.closed?.(); await engine.close() } }
+    close: async () => { await autoMix?.shutdown(); await playback.shutdown(); options.closed?.(); await engine.close() } }
 }

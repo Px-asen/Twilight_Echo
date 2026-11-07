@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 import {
   getNativeAddonCandidates,
   loadNativeBindingWithDiagnostics,
+  nativeRuntimeIdentity,
   rendererFallbackAllowed
 } from './nativeBinding.ts'
 
@@ -15,6 +18,24 @@ test('the legacy fallback capability stays false even in an old diagnostic envir
     else process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK = old
   })
   assert.equal(rendererFallbackAllowed(), false)
+})
+
+test('runtime identity follows the platform library, including Linux engine changes with an unchanged addon', t => {
+  const root = mkdtempSync(join(tmpdir(), 'twilight-native-identity-'))
+  t.after(() => { assert.ok(root.startsWith(join(tmpdir(), 'twilight-native-identity-'))); rmSync(root, { recursive: true, force: true }) })
+  mkdirSync(join(root, 'automix-native'))
+  for (const name of ['twilight_audio_node.node', 'automix-native/beat-this.tamg', 'automix-native/yamnet.tamg',
+    'twilight-audio-engine.dll', 'libtwilight-audio-engine.so', 'libtwilight-audio-engine.dylib']) writeFileSync(join(root, name), name)
+  const addon = join(root, 'twilight_audio_node.node')
+  const first = nativeRuntimeIdentity(addon, 'linux')
+  assert.equal(first['twilight-audio-engine.dll'], undefined)
+  assert.notEqual(first['libtwilight-audio-engine.so'], 'unavailable')
+  writeFileSync(join(root, 'libtwilight-audio-engine.so'), 'new engine')
+  const next = nativeRuntimeIdentity(addon, 'linux')
+  assert.equal(first['twilight_audio_node.node'], next['twilight_audio_node.node'])
+  assert.notEqual(first['libtwilight-audio-engine.so'], next['libtwilight-audio-engine.so'])
+  assert.notEqual(nativeRuntimeIdentity(addon, 'win32')['twilight-audio-engine.dll'], 'unavailable')
+  assert.notEqual(nativeRuntimeIdentity(addon, 'darwin')['libtwilight-audio-engine.dylib'], 'unavailable')
 })
 
 test('packaged utility workers load only the addon beside their own archive', () => {

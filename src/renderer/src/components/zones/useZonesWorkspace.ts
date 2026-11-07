@@ -17,6 +17,7 @@ import type {
 } from '../../../../shared/coreZones.ts'
 import type { CoreSignalPath } from '../../../../shared/remoteDsp.ts'
 import type { AudioProcessingSettings } from '../../../../shared/audioEngineTypes.ts'
+import type { AutoMixMode } from '../../../../shared/twilightAutoMix.ts'
 
 export type ZonesSelection = { kind: 'zone'; id: string } | { kind: 'group'; id: string }
 type Playback = ZoneView['playback']
@@ -283,6 +284,14 @@ export function useZonesWorkspace() {
     )
   }
 
+  function editGroupAutoMix(group: SyncGroupView, autoMixMode: AutoMixMode): Promise<boolean> {
+    const key = `group:${group.id}`
+    if (pending.has(key) || (group.autoMixMode ?? 'off') === autoMixMode) return Promise.resolve(false)
+    return run(key, 'settings', () => core.command('groups.settings.edit', {
+      groupId: group.id, revision: group.revision, autoMixMode
+    }), { success: '组 AutoMix 已保存，全组暂停待播' })
+  }
+
   function setVolume(target: ZonesSelection, volume: number): Promise<boolean> {
     const value = Math.min(1, Math.max(0, volume))
     volumeDraft.set(`${target.kind}:${target.id}`, value)
@@ -505,6 +514,7 @@ export function useZonesWorkspace() {
     refresh,
     zoneTransport,
     groupTransport,
+    editGroupAutoMix,
     setVolume,
     volumeOf,
     livePosition,

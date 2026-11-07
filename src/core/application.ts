@@ -137,7 +137,7 @@ export interface CoreApplicationDependencies {
   settings?: Pick<
     CoreSettingsService,
     'getRevision' | 'state' | 'edit' | 'initialize' | 'flush' | 'rememberVolume'
-  >
+  > & Partial<Pick<CoreSettingsService, 'restoreAudio'>>
   epoch: string
   playback: Omit<
     CorePlaybackSession,
@@ -231,6 +231,8 @@ export class CoreApplication {
   private migrationRequired = true
   private active = 0
   private initialized = false
+  private readonly deferredAudioStartup = new Map<string, () => Promise<void>>()
+  private audioStartupRestore: Promise<void> | null = null
   private readiness: Promise<void> | null = null
   private shuttingDown = false
   private readonly work = new Set<Promise<void>>()
@@ -317,7 +319,7 @@ export class CoreApplication {
     await this.dependencies.playback.initialize()
     await this.dependencies.zones?.initialize()
     await Promise.all([
-      this.dependencies.visualization?.initialize(),
+      this.initializeAudio('visualization', async () => { await this.dependencies.visualization?.initialize() }),
       this.dependencies.scan.initialize(),
       this.dependencies.libraryMaintenance?.initialize()
     ])
@@ -347,8 +349,14 @@ export class CoreApplication {
       } catch (error) {
         console.error('[core.themes] Reconcile failed:', error)
       }
-      await this.dependencies.settings?.initialize()
-      await this.dependencies.dsp?.activate()
+      const settings = this.dependencies.settings
+      if (settings?.restoreAudio) {
+        await settings.initialize({ audio: false })
+        await this.initializeAudio('settings', () => settings.restoreAudio!())
+      } else await settings?.initialize()
+      await this.initializeAudio('dsp', async () => {
+        await this.dependencies.dsp?.activate()
+      })
       this.dependencies.autoMix?.activate()
       this.dependencies.analysis?.activate()
       this.dependencies.sleepTimer?.activate()
@@ -368,6 +376,28 @@ export class CoreApplication {
     })().finally(() => {
       this.readiness = null
     }))
+  }
+  private async initializeAudio(name: string, action: () => Promise<void>): Promise<void> {
+    try {
+      await action()
+      this.deferredAudioStartup.delete(name)
+    } catch (error) {
+      if (!this.dependencies.audioRecovery?.isUnavailableError(error)) throw error
+      this.deferredAudioStartup.set(name, action)
+      console.warn(`[core.audio] Deferred ${name} initialization:`, error)
+    }
+  }
+  /** Resume only native-dependent initialization after a confirmed engine restore. */
+  restoreAudioInitialization(): Promise<void> {
+    if (this.audioStartupRestore) return this.audioStartupRestore
+    const work = (async () => {
+      for (const [name, action] of this.deferredAudioStartup) {
+        await action()
+        this.deferredAudioStartup.delete(name)
+      }
+    })()
+    this.audioStartupRestore = work.finally(() => { this.audioStartupRestore = null })
+    return this.audioStartupRestore
   }
   snapshot(identity?: CoreClientIdentity): CoreSnapshot {
     // Graph transactions advance the same catalog revision without running the
@@ -437,6 +467,10 @@ export class CoreApplication {
       audioRevision:
         !identity || identity.permissions.includes('settings:read')
           ? (this.dependencies.output?.getRevision() ?? null)
+          : null,
+      audioRecovery:
+        !identity || identity.permissions.includes('playback:read')
+          ? (this.dependencies.audioRecovery?.state() ?? null)
           : null,
       settingsRevision:
         !identity || identity.permissions.includes('settings:read')
@@ -1447,6 +1481,7 @@ export class CoreApplication {
       case 'groups.remove':
       case 'groups.transport':
       case 'groups.queueFromQuery':
+      case 'groups.settings.edit':
       case 'groups.signalPath':
       case 'zones.create':
       case 'zones.remove':
@@ -1467,6 +1502,7 @@ export class CoreApplication {
           case 'groups.create': return { id: await zones.createGroup(request.payload, signal) }
           case 'groups.remove': return zones.removeGroup(request.payload.groupId, request.payload.revision)
           case 'groups.transport': return zones.groupTransport(request.payload.groupId, request.payload.revision, request.payload.action, signal)
+          case 'groups.settings.edit': return zones.editGroupSettings(request.payload, signal)
           case 'groups.queueFromQuery':
             if (!identity.permissions.includes('library:read')) throw failure('FORBIDDEN', 'Library access is not granted')
             return zones.groupFromQuery(request.payload.groupId, request.payload.revision, request.payload.query, request.payload.selectedId, signal)
@@ -1496,7 +1532,7 @@ export class CoreApplication {
           throw failure('FORBIDDEN', 'Audio Bridge consent requires local host administration')
         if (request.name === 'zones.state') return bridge.state()
         if (request.name === 'bridge.invitation') return bridge.invite()
-        if (request.name === 'bridge.host') return bridge.host(request.payload.revision, request.payload.enabled, request.payload.sampleRate)
+        if (request.name === 'bridge.host') return bridge.host(request.payload.revision, request.payload.enabled, request.payload.sampleRate, request.payload)
         if (request.name === 'bridge.connect') return bridge.connect(request.payload.revision, request.payload.peer)
         return bridge.select(request.payload.revision, request.payload.outputId)
       }

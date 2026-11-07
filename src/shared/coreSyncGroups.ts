@@ -1,6 +1,7 @@
 import type { CoreQueueReference } from './coreProtocol.ts'
 import type { CorePlaybackView, CoreTrackView } from './coreViews.ts'
 import type { ZoneQueueFence, ZoneTransport } from './coreZones.ts'
+import type { AutoMixMode } from './twilightAutoMix.ts'
 
 export interface SyncGroupEngineState {
   phase: 'paused' | 'preparing' | 'armed' | 'playing' | 'rebuffering' | 'completed' | 'failed'
@@ -14,8 +15,10 @@ export interface SyncGroupEngineState {
 
 export const validSyncGroupId = (v: unknown): v is string => typeof v === 'string' && /^group-[a-f0-9-]{36}$/.test(v)
 export interface SyncGroupMember { zoneId: string; downstreamDelayMs: number }
-export interface SyncGroupDescriptor { id: string; name: string; members: SyncGroupMember[] }
+export interface SyncGroupDescriptor { id: string; name: string; members: SyncGroupMember[]; autoMixMode?: AutoMixMode }
+export interface SyncGroupSettingsEdit { groupId: string; revision: number; autoMixMode: AutoMixMode }
 export interface SyncGroupView extends SyncGroupDescriptor {
+  autoMixAvailable?: boolean
   revision: number
   playback: CorePlaybackView | null
   track: CoreTrackView | null

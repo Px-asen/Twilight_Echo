@@ -81,12 +81,12 @@ export type NativeBindingLoadResult = {
   candidateCount: number
 }
 
-export function nativeRuntimeIdentity(candidate: string): Record<string, string> {
+export function nativeRuntimeIdentity(candidate: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
   const directory = dirname(candidate)
   const runtime: Record<string, string> = { addonPath: candidate }
   for (const name of [
     'twilight_audio_node.node',
-    'twilight-audio-engine.dll',
+    platform === 'win32' ? 'twilight-audio-engine.dll' : platform === 'darwin' ? 'libtwilight-audio-engine.dylib' : 'libtwilight-audio-engine.so',
     'automix-native/beat-this.tamg',
     'automix-native/yamnet.tamg'
   ]) {

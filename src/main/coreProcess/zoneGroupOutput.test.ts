@@ -42,3 +42,60 @@ test('lost cancel acknowledgement is retained and retried against the explicitly
   await output.silence()
   assert.equal(cancels, 2)
 })
+
+test('continuous output leases local transitions, binds only the agreed window and keeps the member sequential', async () => {
+  const calls: unknown[][] = [], current = { id: 'a', source: 'C:/a.flac', queueEntryId: 'a:1' },
+    next = { id: 'b', source: 'C:/b.flac', queueEntryId: 'b:1' }
+  const audio = {
+    acquireGroupPlayback: async () => { calls.push(['acquire']) }, releaseGroupPlayback: async () => { calls.push(['release']) },
+    loadQueue: async (items: unknown[]) => { calls.push(['load', items]) },
+    setPlayMode: async (mode: string) => { calls.push(['mode', mode]) }, setPlaybackRate: async () => {},
+    playTimedBridge: async () => ({ nativeStarted: true }),
+    callBridge: async (...args: unknown[]) => { calls.push(args) },
+    getQueueSnapshot: () => [current, next], getQueueToken: () => 'private-native-token',
+    getPlaybackInfo: async () => ({ queueIndex: 1 }),
+    rebindQueue: async (request: unknown) => { calls.push(['rebind', request]); return { queueToken: 'new' } }
+  } as unknown as AudioEngineManager
+  const output = zoneGroupOutput('member', audio).continuous!
+  await output.acquire(); await output.prepare([current, next], 2, () => true)
+  await output.hold(); await output.advance('a:1', 'b:1')
+  assert.equal(await output.rebind(next, [next]), true)
+  await output.release()
+  assert.ok(calls.some(c => c[0] === 'mode' && c[1] === 'sequential'))
+  assert.ok(calls.some(c => c[0] === 'BridgeQueueControl' && JSON.stringify(c[1]) === '[true,"a:1","b:1"]'))
+  assert.deepEqual(calls.find(c => c[0] === 'rebind')?.[1], { expected: { queueToken: 'private-native-token', index: 1,
+    id: 'b', source: 'C:/b.flac' }, items: [next], startIndex: 0, playMode: 'sequential' })
+})
+
+test('group AutoMix ports use bridge-only mode/binding and preserve member-local native IDs', async () => {
+  const calls: unknown[][]=[]
+  const audio={
+    setBridgeAutoMixMode:async(...v:unknown[])=>{calls.push(['mode',...v])},
+    selectAutoMix:async(...v:unknown[])=>{calls.push(['select',...v]);return {ok:true,selectionId:11}},
+    bindBridgeAutoMixSelection:async(...v:unknown[])=>{calls.push(['bind',...v]);return {ok:true,selectionId:27}},
+    prepareAutoMix:async(...v:unknown[])=>{calls.push(['prepare',...v]);return true},
+    getAutoMixNativeStatus:async()=>({autoMixState:'ready',autoMixPlanId:99}),
+    submitAutoMix:async(...v:unknown[])=>{calls.push(['submit',...v]);return true},cancelAutoMix:async()=>true
+  } as unknown as AudioEngineManager
+  const port=zoneGroupOutput('member',audio).autoMix!
+  await port.mode('natural');assert.equal((await port.select('{}')).selectionId,11)
+  assert.equal((await port.bind('{}')).selectionId,27);await port.prepare('{"selectionId":27}')
+  assert.equal((await port.status()).autoMixPlanId,99);await port.submit(99);assert.equal(await port.cancel(),true)
+  assert.deepEqual(calls,[['mode','natural'],['select','{}'],['bind','{}'],['prepare','{"selectionId":27}'],['submit',99]])
+})
+
+test('continuous CAS waits for the native queue clock after capture promotion, including repeated occurrences', async () => {
+  const current={id:'a',source:'C:/a.flac',queueEntryId:'repeat:1'},calls:unknown[][]=[]
+  let reads=0
+  const audio={
+    getQueueSnapshot:()=>[current,current],getQueueToken:()=>'private-token',
+    // The cached view is deliberately still at zero. Capture already promoted.
+    getPlaybackInfo:async()=>({queueIndex:0}),
+    getQueueState:async()=>({currentIndex:++reads<2?0:1}),
+    callBridge:async()=>({transitionSerial:1}),
+    rebindQueue:async(request:unknown)=>{calls.push([request]);return {queueToken:'new'}}
+  } as unknown as AudioEngineManager
+  assert.equal(await zoneGroupOutput('member',audio).continuous!.rebind(current,[current]),true)
+  assert.ok(reads>=2)
+  assert.equal((calls[0][0] as {expected:{index:number}}).expected.index,1)
+})

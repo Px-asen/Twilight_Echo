@@ -303,3 +303,14 @@ test('volume icon follows the level', () => {
   assert.equal(volumeIcon(0.3), 'ph-speaker-simple-low')
   assert.equal(volumeIcon(0.8), 'ph-speaker-simple-high')
 })
+
+test('native DSD signal paths name their wire format and count buffered byte-frames, not DSD bits', () => {
+  const dsd = signalPathStages(path({ transport: { kind: 'tls-dsd', sampleRate: 2822400, channels: 6, format: 'dsd-int8-lsb1', connected: true },
+    receiver: { ...receiver(), sampleRate: 2822400, channels: 6, wireFormat: 'dsd-int8-lsb1', channelMask: 0x60f,
+      actualChannelMask: 0, bufferedFrames: 35280 }, output: { backend: 'asio', sampleRate: 2822400, bitDepth: 1, channels: 6, deviceName: 'DSD DAC' } }))
+  const nodes = dsd.flatMap(stage => stage.nodes)
+  assert.match(nodes.find(n => n.id === 'transport')!.value, /原生 DSD/)
+  assert.match(nodes.find(n => n.id === 'transport')!.detail.join(' '), /6 声道/)
+  assert.equal(nodes.find(n => n.id === 'buffer')!.value, '100 ms')
+  assert.match(nodes.find(n => n.id === 'device')!.detail.join(' '), /驱动未报告扬声器布局/)
+})

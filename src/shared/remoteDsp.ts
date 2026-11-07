@@ -56,7 +56,7 @@ export interface CoreSignalPath {
   source: { sampleRate: number; bitDepth: number; channels: number; codec: string }
   decoded: { sampleRate: number; bitDepth: number; channels: number; format: string }
   dsp: ReturnType<typeof projectRemoteDspStatus>
-  transport: { kind: 'local' | 'tls-pcm'; sampleRate: number; channels: number; format: string; connected: boolean }
+  transport: { kind: 'local' | 'tls-pcm' | 'tls-dsd'; sampleRate: number; channels: number; format: string; connected: boolean }
   receiver: BridgeReceiverFacts | null
   timing?: BridgeClockStatus | null
   output: { backend: string; sampleRate: number; bitDepth: number; channels: number; deviceName: string | null }
@@ -69,8 +69,8 @@ export function buildSignalPath(playback: CorePlaybackView | null, graph: DspGra
     decoded: { sampleRate: playback?.decodedSampleRate ?? 0, bitDepth: playback?.decodedBitDepth ?? 0,
       channels: playback?.decodedChannels ?? 0, format: playback?.decodedSampleFormat ?? '' },
     dsp: projectRemoteDspStatus(graph),
-    transport: { kind: remote ? 'tls-pcm' : 'local', sampleRate: facts?.sampleRate ?? playback?.actualSampleRate ?? 0,
-      channels: facts?.channels ?? playback?.actualChannels ?? 0, format: remote ? 'float32-le' : '', connected: !remote || zone.connected },
+    transport: { kind: remote ? facts?.wireFormat && facts.wireFormat !== 'float32-le' ? 'tls-dsd' : 'tls-pcm' : 'local', sampleRate: facts?.sampleRate ?? playback?.actualSampleRate ?? 0,
+      channels: facts?.channels ?? playback?.actualChannels ?? 0, format: remote ? facts?.wireFormat ?? 'float32-le' : '', connected: !remote || zone.connected },
     receiver: facts, timing: remote ? zone.timing ?? null : null,
     output: { backend: remote ? facts?.backend ?? '' : playback?.outputBackend ?? '',
       sampleRate: remote ? facts?.actualSampleRate ?? 0 : playback?.actualSampleRate ?? 0,

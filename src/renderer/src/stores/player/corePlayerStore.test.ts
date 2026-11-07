@@ -70,6 +70,24 @@ const track = (id = 'one'): TrackData => ({
   cover: null,
   lyrics: null
 })
+test('Core stays ready for library access while failed or recovering audio is not playable', () => {
+  const f = fixture()
+  try {
+    assert.equal(f.player.audioEngineReady.value, true)
+    const recovery = { phase: 'failed' as const, kind: null, engineAvailable: true,
+      windowsServicesAvailable: true, error: '音频服务进程退出：255' }
+    f.state.value = { ...f.state.value, audioRecovery: recovery }
+    assert.equal(f.state.value.phase, 'ready')
+    assert.equal(f.player.audioEngineReady.value, false)
+    assert.match(f.player.audioEngineError.value ?? '', /255/)
+    f.state.value = { ...f.state.value, audioRecovery: { ...recovery, phase: 'restarting-engine', kind: 'engine', error: null } }
+    assert.equal(f.player.audioEngineReady.value, false)
+    f.state.value = { ...f.state.value, audioRecovery: { ...recovery, phase: 'succeeded', kind: 'engine', error: null } }
+    assert.equal(f.player.audioEngineReady.value, true)
+    assert.equal(f.player.audioEngineError.value, null)
+  } finally { f.player.dispose() }
+})
+
 function fixture(initial = snapshot(), options: CorePlayerStoreOptions = {}) {
   const state = shallowRef(initial)
   const status = shallowRef<CoreBridgeStatus | null>({

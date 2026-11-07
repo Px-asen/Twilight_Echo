@@ -21,6 +21,7 @@ import { createPlaybackSessionStoreBundle } from '../../main/persistence/playbac
 import { zoneQueueFence, type ZoneDescriptor } from '../../shared/coreZones.ts'
 import type { SyncGroupCreate, SyncGroupDescriptor } from '../../shared/coreSyncGroups.ts'
 import { isCoreRequest } from '../../shared/coreProtocol.ts'
+import { ProviderPlaybackIdentityRegistry } from '../audio/providerPlaybackIdentity.ts'
 
 const signal = () => new AbortController().signal
 const peer = { host: 'localhost', port: 12345, token: 'a'.repeat(48), fingerprint: 'b'.repeat(64) }
@@ -54,7 +55,7 @@ class Engine extends EventEmitter implements CorePlaybackEngine {
   async setPlayMode(mode: PlayMode) { this.info.playMode = mode }
   async setPlaybackRate(rate: number) { this.info.playbackRate = rate }
 }
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, withAutoMix = false) {
   const root = await mkdtemp(join(tmpdir(), 'twilight-group-topology-'))
   const db = new LibraryDatabase(':memory:')
   db.replaceDocument({ version: 2, revision: 0, folders: [], exclusions: [], tracks: [
@@ -69,7 +70,8 @@ async function fixture(t: test.TestContext) {
     resolver: { resolve: async (track: unknown) => ({ source: (track as { filePath: string }).filePath, expiresAt: null }) },
     authorize: async (source: string) => source }
   const devices = new Map<string, Awaited<ReturnType<typeof device>>>()
-  let factoryGate: Promise<void> | null = null, failSave = false, missing = false, onSave: (() => void) | null = null
+  let factoryGate: Promise<void> | null = null, saveGate: Promise<void> | null = null, failSave = false, missing = false, onSave: (() => void) | null = null
+  const noMedia = async () => assert.fail('Paused settings must not analyze, prepare, submit or arm media')
   let local: ZoneRuntime, zones: CoreZoneRegistry
   async function device(descriptor: ZoneDescriptor) {
     const engine = new Engine()
@@ -89,7 +91,14 @@ async function fixture(t: test.TestContext) {
         volume: v => engine.setVolume(v) },
       connect: async (_peer, coordinated) => { connections++; assert.equal(coordinated, true); bridge.connected = true; stopFails = false },
       sources: () => engine.items.map(i => i.source), close: () => playback.shutdown() }
-    const result = { value, engine, bridge, get stops() { return stops }, get connections() { return connections },
+    let groupMode = 'off'
+    if (withAutoMix) {
+      value.groupOutput!.continuous = { acquire: async () => {}, release: async () => {},
+        prepare: noMedia, rebind: async () => true, hold: async () => {}, advance: noMedia }
+      value.groupOutput!.autoMix = { mode: async mode => { groupMode = mode }, select: noMedia, bind: noMedia,
+        prepare: noMedia, submit: noMedia, status: () => engine.getPlaybackInfo(), cancel: async () => true }
+    }
+    const result = { value, engine, bridge, get stops() { return stops }, get connections() { return connections }, get groupMode() { return groupMode },
       stopFailure: (enabled: boolean) => { stopFails = enabled } }
     devices.set(descriptor.id, result); return result
   }
@@ -98,8 +107,11 @@ async function fixture(t: test.TestContext) {
     const groups = syncGroupCatalog(root)
     zones = new CoreZoneRegistry({ ...zoneCatalog(root), local, newId: randomUUID, changed: () => {},
       create: async descriptor => { if (missing) throw Error('Audio launch failed'); return (await device(descriptor)).value },
-      groups: { ...groups, save: async data => { onSave?.(); if (failSave) throw Error('Catalog write failed'); await groups.save(data) },
-        create: async (descriptor, outputs) => { await factoryGate; return createSyncGroupRuntime({ root, descriptor, outputs, database, playback: dependencies, changed: () => {} }) } } })
+      groups: { ...groups, save: async data => { onSave?.(); await saveGate; if (failSave) throw Error('Catalog write failed'); await groups.save(data) },
+        create: async (descriptor, outputs) => { await factoryGate; return createSyncGroupRuntime({ root, descriptor, outputs, database, playback: dependencies, changed: () => {},
+          ...(withAutoMix ? { autoMix: { settings: () => ({ autoMixStemMode: 'off', autoMixStemDevice: 'cpu', autoMixStemCacheMiB: 512 }),
+            authorize: noMedia, analysis: { analyze: noMedia, cancel: () => {} }, identities: new ProviderPlaybackIdentityRegistry(),
+            useSources: action => action(), environment: noMedia, probe: noMedia, runWorker: noMedia, now: Date.now } } : {}) }) } } })
     await zones.initialize()
   }
   await start()
@@ -122,6 +134,8 @@ async function fixture(t: test.TestContext) {
   }
   return { root, db, devices, zones: () => zones, add, prepare, command,
     onSave: (action: (() => void) | null) => { onSave = action },
+    slowSave: (value: Promise<void> | null) => { saveGate = value },
+    autoMixSupport: (enabled: boolean) => { withAutoMix = enabled },
     slowFactory: (value: Promise<void>) => { factoryGate = value }, failSave: (value: boolean) => { failSave = value },
     restart: async (failZone = false) => { await zones.shutdown(); await local.playback.shutdown(); missing = failZone; await start() },
     restoreFactory: () => { missing = false } }
@@ -346,11 +360,116 @@ test('group catalog rejects overlapping outputs, invalid delay, credentials and 
   const a: SyncGroupDescriptor = { id: `group-${randomUUID()}`, name: 'Music', members: [
     { zoneId: 'local', downstreamDelayMs: 0 }, { zoneId: id, downstreamDelayMs: 250 } ] }
   await catalog.save([a])
+  assert.equal((await syncGroupCatalog(f.root).load())[0].autoMixMode, 'off')
   const stale = syncGroupCatalog(f.root); await stale.load()
   await assert.rejects(catalog.save([a, { ...a, id: `group-${randomUUID()}` }]))
   await assert.rejects(catalog.save([{ ...a, members: a.members.map(m => ({ ...m, downstreamDelayMs: -1 })) }]))
   await assert.rejects(catalog.save([{ ...a, token: peer.token } as SyncGroupDescriptor]))
+  await assert.rejects(catalog.save([{ ...a, autoMixMode: 'surprise' } as unknown as SyncGroupDescriptor]))
   await catalog.save([a]); await assert.rejects(stale.save([]))
+})
+
+test('group settings save a group-only mode and restore paused without preparing media', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  let group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'off'); assert.equal(group.autoMixAvailable, true)
+  const localModes = [...f.devices.values()].map(d => d.engine.info.autoMixMode)
+  await f.zones().editGroupSettings({ groupId, revision: group.revision, autoMixMode: 'natural' }, signal())
+  group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'natural'); assert.equal(group.playback?.autoMixMode, 'natural')
+  assert.equal(group.playback?.state, 'paused'); assert.equal(group.revision, 1)
+  assert.deepEqual([...f.devices.values()].map(d => d.engine.info.autoMixMode), localModes)
+  assert.ok([...f.devices.values()].every(d => d.groupMode === 'natural' && d.engine.plays === 0))
+  const stops = [...f.devices.values()].map(d => d.stops)
+  await f.zones().editGroupSettings({ groupId, revision: group.revision, autoMixMode: 'natural' }, signal())
+  assert.deepEqual([...f.devices.values()].map(d => d.stops), stops)
+  await assert.rejects(f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, signal()), { code: 'STALE_REVISION' })
+  assert.deepEqual([...f.devices.values()].map(d => d.stops), stops)
+  await f.restart()
+  group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'natural'); assert.equal(group.playback?.autoMixMode, 'natural')
+  assert.equal(group.playback?.state, 'paused'); assert.equal(group.coordination?.phase, 'paused')
+  assert.ok([...f.devices.values()].every(d => d.engine.plays === 0 && d.groupMode === 'natural'))
+})
+
+test('failed group settings persistence restores the old mode, keeps pause and does not retry', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  let writes = 0; f.onSave(() => { writes++ }); f.failSave(true)
+  await assert.rejects(f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, signal()), /Catalog write/)
+  const group = (await f.zones().listGroups()).groups[0]
+  assert.equal(writes, 1); assert.equal(group.autoMixMode, 'off'); assert.equal(group.playback?.autoMixMode, 'off')
+  assert.equal(group.playback?.state, 'paused')
+  assert.ok([...f.devices.values()].every(d => d.groupMode === 'off' && d.engine.plays === 0))
+  f.failSave(false); f.onSave(null)
+  await f.restart(); assert.equal((await f.zones().listGroups()).groups[0].autoMixMode, 'off')
+})
+
+test('unavailable AutoMix recovery stays paused and can be disabled without losing its queue', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  const queue = (await f.zones().listGroups()).groups[0].queue!.id
+  await f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'natural' }, signal())
+  f.autoMixSupport(false); await f.restart()
+  let group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'natural'); assert.equal(group.autoMixAvailable, false); assert.equal(group.playback, null)
+  await f.zones().editGroupSettings({ groupId, revision: group.revision, autoMixMode: 'off' }, signal())
+  await f.zones().connect(id, peer, (await f.zones().list()).zones.find(z => z.id === id)!.revision)
+  group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'off'); assert.equal(group.queue?.id, queue)
+  assert.notEqual(group.playback?.state, 'playing')
+  assert.ok([...f.devices.values()].every(d => d.engine.plays === 0))
+})
+
+test('Stop and Pause bypass slow settings IO; late saved mode never resumes the group', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  const entered = gate(), finish = gate(), caller = new AbortController()
+  f.onSave(entered.release); f.slowSave(finish.promise)
+  const editing = f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, caller.signal)
+  await entered.promise
+  await assert.rejects(f.zones().groupTransport(groupId, 1, { kind: 'play' }, signal()), { code: 'BUSY' })
+  await f.zones().groupTransport(groupId, null, { kind: 'pause' }, signal())
+  await f.zones().groupTransport(groupId, null, { kind: 'stop' }, signal())
+  caller.abort(); finish.release(); await editing; f.slowSave(null); f.onSave(null)
+  const group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'dj'); assert.equal(group.playback?.state, 'stopped')
+  assert.equal((await syncGroupCatalog(f.root).load())[0].autoMixMode, 'dj')
+  assert.ok([...f.devices.values()].every(d => d.engine.plays === 0))
+})
+
+test('a partially applied native mode is restored before reporting a failed setting', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  const port = f.devices.get(id)!.value.groupOutput!.autoMix!, mode = port.mode
+  port.mode = async value => { if (value === 'dj') throw Error('Member mode refused'); await mode(value) }
+  await assert.rejects(f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, signal()), /Member mode refused/)
+  const group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'off'); assert.equal(group.playback?.state, 'paused')
+  assert.ok([...f.devices.values()].every(d => d.groupMode === 'off' && d.engine.plays === 0))
+  assert.equal((await syncGroupCatalog(f.root).load())[0].autoMixMode, 'off')
+})
+
+test('unsupported group settings do not write or prepare media', async t => {
+  const f = await fixture(t), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  const before = [...f.devices.values()].map(d => d.stops)
+  let writes = 0; f.onSave(() => { writes++ })
+  assert.equal((await f.zones().listGroups()).groups[0].autoMixAvailable, false)
+  await assert.rejects(f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, signal()), { code: 'NOT_READY' })
+  assert.deepEqual([...f.devices.values()].map(d => d.stops), before); assert.equal(writes, 0)
+})
+
+test('cancelled settings before mode application preserve the previous saved policy', async t => {
+  const f = await fixture(t, true), id = await f.add(); await f.prepare(id)
+  const groupId = await f.zones().createGroup(await f.command(id), signal())
+  let writes = 0; f.onSave(() => { writes++ })
+  const caller = new AbortController(); caller.abort()
+  await assert.rejects(f.zones().editGroupSettings({ groupId, revision: 0, autoMixMode: 'dj' }, caller.signal), /abort/i)
+  assert.equal(writes, 0)
+  const group = (await f.zones().listGroups()).groups[0]
+  assert.equal(group.autoMixMode, 'off'); assert.equal(group.playback?.state, 'paused')
 })
 
 test('public group payloads are bounded, explicit and cannot inject paths or use unfenced Play', () => {

@@ -1,7 +1,7 @@
 import type { TLSSocket } from 'node:tls'
 
-export const BRIDGE_PACKET_LIMIT = 20 * 1024
-// A length prefix plus one bounded JSON control or stereo Float32 block. Audio
+export const BRIDGE_PACKET_LIMIT = 2048 * 8 * 4 + 40
+// A length prefix plus one bounded JSON control or up-to-eight-channel audio block. Audio
 // stays inside the utility process; it never crosses the Core command RPC lane.
 export function sendBridgePacket(socket: TLSSocket, kind: number, data: Buffer): void {
   if (data.length > BRIDGE_PACKET_LIMIT || socket.writableLength > 128 * 1024)

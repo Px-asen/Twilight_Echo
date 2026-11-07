@@ -86,6 +86,6 @@ export const REMOTE_CORE_COMMANDS = [
   'catalog.play'
   , 'zones.select', 'audio.dsp.edit'
   , 'zones.transport', 'zones.dsp.edit', 'zones.handoff'
-  , 'groups.create', 'groups.remove', 'groups.transport', 'groups.queueFromQuery'
+  , 'groups.create', 'groups.remove', 'groups.transport', 'groups.queueFromQuery', 'groups.settings.edit'
   , 'zones.queue.load', 'zones.queue.edit', 'zones.queue.select'
 ] as const

@@ -180,12 +180,15 @@ export function createCorePlayerStore(
       abLoopA: computed(() => core.state.value?.abLoop?.a ?? null),
       abLoopB: computed(() => core.state.value?.abLoop?.b ?? null),
       audioEngineReady: computed(
-        () => core.status.value?.phase === 'ready' && core.state.value?.phase === 'ready'
+        () => core.status.value?.phase === 'ready' && core.state.value?.phase === 'ready' &&
+          !core.state.value.audioRecovery?.error &&
+          !['confirming', 'restarting-engine', 'restarting-services'].includes(core.state.value.audioRecovery?.phase ?? '')
       ),
       audioEngineError: computed(
         () =>
           commandError.value?.message ??
           core.failure.value?.message ??
+          core.state.value?.audioRecovery?.error ??
           core.state.value?.error ??
           null
       ),

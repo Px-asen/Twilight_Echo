@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreApplication, type CoreApplicationDependencies } from './application.ts'
 import { CoreRemoteService } from './remote/service.ts'
+import { CoreAudioRecoveryService } from './audio/recoveryService.ts'
+import { CoreVisualizationService } from './audio/visualizationService.ts'
 import { CoreNcmListeningSync } from './listening/ncmSync.ts'
 import { createDefaultSettings } from './settings/normalization.ts'
 import { CoreStateDatabase } from '../main/library/coreStateDatabase.ts'
@@ -338,6 +340,76 @@ function fixture(
   return { application, playback, scan, calls, messages, connect, request }
 }
 
+test('Core remains usable after an audio startup crash and restores deferred owners on explicit recovery', async t => {
+  let nativeFailure: string | null = '音频服务进程退出：3221225727'
+  const restored: string[] = []
+  let configurationLocked = false
+  let restoreGate!: () => void
+  const restoreWait = new Promise<void>(resolve => { restoreGate = resolve })
+  const recovery = new CoreAudioRecoveryService({
+    engine: {
+      canRestartAudioEngine: () => true,
+      getAudioServiceFailure: () => nativeFailure,
+      restartAudioEngine: async () => { assert.equal(configurationLocked, true); nativeFailure = null }
+    },
+    playback: { recoverAudio: async (restart, configuration) => {
+      await configuration!.serialize(restart)
+      await configuration!.restored?.()
+    } },
+    configuration: {
+      serialize: async action => { assert.equal(configurationLocked, false); configurationLocked = true
+        try { return await action() } finally { configurationLocked = false } }, changed() {}
+    },
+    restoreStartup: async () => { await restoreWait; await f.application.restoreAudioInitialization() },
+    windows: true, confirmWindowsRestart: async () => false, restartWindowsServices: async () => {}, changed() {}
+  })
+  const visualization = new CoreVisualizationService({ epoch: 'current', engine: {
+    setVisualizationDemand: async () => { if (nativeFailure) throw new Error(nativeFailure); restored.push('visualization') },
+    readVisualizationDataAsync: async () => { throw new Error('No playback') }
+  }, send() {}, schedule: () => () => {} })
+  const settings = {
+    initialize: async ({ audio }: { audio?: boolean } = {}) => { assert.equal(audio, false); restored.push('library-settings') },
+    restoreAudio: async () => { if (nativeFailure) throw new Error(nativeFailure); restored.push('settings') },
+    getRevision: () => 7, state: () => ({ revision: 7 }), flush: async () => {}, rememberVolume() {}
+  } as unknown as CoreApplicationDependencies['settings']
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, settings, {
+    audioRecovery: recovery, visualization
+  })
+  await f.application.initialize()
+  assert.equal(f.application.snapshot().phase, 'ready')
+  assert.equal(f.application.snapshot().audioRecovery?.phase, 'failed')
+  assert.equal(recovery.isUnavailableError(new Error('disk full')), false)
+  assert.ok(f.calls.includes('scan.activate'))
+  f.connect('desktop', ['playback:read', 'playback:write', 'library:read', 'settings:read', 'settings:write'])
+  assert.equal((await f.request('desktop', 'library.tracks', { limit: 10 })).ok, true)
+  assert.equal((await f.request('desktop', 'settings.state')).ok, true)
+  const failed = await f.request('desktop', 'audio.recovery')
+  assert.equal(failed.ok, true)
+  if (failed.ok) assert.deepEqual(failed.value, { phase: 'failed', kind: null,
+    engineAvailable: true, windowsServicesAvailable: true, error: nativeFailure })
+  assert.equal((await f.request('desktop', 'audio.recovery.start', { kind: 'engine' })).ok, true)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(recovery.state().phase, 'restarting-engine', 'native ready is not completion of all deferred owners')
+  restoreGate()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(recovery.state().phase, 'succeeded')
+  assert.equal(recovery.state().error, null)
+  assert.deepEqual(restored, ['library-settings', 'visualization', 'settings'])
+  await f.application.restoreAudioInitialization()
+  assert.deepEqual(restored, ['library-settings', 'visualization', 'settings'])
+  assert.equal(f.calls.includes('play'), false)
+})
+
+test('Core does not defer unrelated visualization initialization errors when audio is healthy', async t => {
+  const visualization = new CoreVisualizationService({ epoch: 'current', engine: {
+    setVisualizationDemand: async () => { throw new Error('unexpected visualization failure') },
+    readVisualizationDataAsync: async () => { throw new Error('unused') }
+  }, send() {}, schedule: () => () => {} })
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, { visualization })
+  await assert.rejects(f.application.initialize(), /unexpected visualization failure/)
+  visualization.shutdown = async () => {}
+})
+
 test('catalog-source playlist append resolves trusted identities in one revision, preserves duplicates and never commits missing or stale selections', async t => {
   const source = { id: 'D:/trusted/song.flac', filePath: 'D:/trusted/song.flac', title: 'Song', artist: 'Artist', album: 'Album', duration: 10, source: 'local' } as TrackData
   let catalogRevision = 7, missing = false
@@ -378,6 +450,7 @@ test('shared group dispatch requires playback permissions and library reads befo
     removeGroup: async () => { calls.push('remove') },
     groupTransport: async (_id: string, revision: number | null) => { calls.push(`transport:${revision}`) },
     groupFromQuery: async () => { calls.push('query') },
+    editGroupSettings: async (edit: { revision: number; autoMixMode: string }) => { calls.push(`settings:${edit.revision}:${edit.autoMixMode}`) },
     groupSignalPath: async () => ({ zoneId })
   } as unknown as NonNullable<CoreApplicationDependencies['zones']> })
   await f.application.initialize()
@@ -393,7 +466,11 @@ test('shared group dispatch requires playback permissions and library reads befo
   assert.equal((await f.request('library', 'groups.queueFromQuery', { groupId, revision: 0, query: {} })).ok, true)
   assert.equal((await f.request('controller', 'groups.transport', { groupId, revision: null, action: { kind: 'pause' } })).ok, true)
   assert.equal((await f.request('controller', 'groups.remove', { groupId, revision: 0 })).ok, true)
-  assert.deepEqual(calls, ['create', 'query', 'transport:null', 'remove'])
+  const settings = { groupId, revision: 7, autoMixMode: 'natural' }
+  assert.equal((await f.request('controller', 'groups.settings.edit', settings)).ok, false)
+  f.connect('settings', ['settings:write'])
+  assert.equal((await f.request('settings', 'groups.settings.edit', settings)).ok, true)
+  assert.deepEqual(calls, ['create', 'query', 'transport:null', 'remove', 'settings:7:natural'])
 })
 
 test('only a trusted local desktop or server administrator can consent to Bridge and Zone provisioning', async t => {

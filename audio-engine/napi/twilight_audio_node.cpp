@@ -478,7 +478,7 @@ napi_value SelectAutoMix(napi_env env, napi_callback_info info) {
   const auto request = argc ? getStringArg(env, argv[0]) : "{}";
   size_t required = 0;
   auto result = TAE_SelectAutoMix(g_engine, request.c_str(), nullptr, 0, &required);
-  if (required > 64 * 1024 || !required) return throwOnError(env, TAE_RESULT_INVALID_ARGUMENT);
+  if (required > 256 * 1024 || !required) return throwOnError(env, TAE_RESULT_INVALID_ARGUMENT);
   std::vector<char> buffer(required);
   result = TAE_SelectAutoMix(g_engine, request.c_str(), buffer.data(), buffer.size(), &required);
   if (result != TAE_RESULT_OK) return throwOnError(env, result);
@@ -490,6 +490,18 @@ napi_value PrepareAutoMix(napi_env env, napi_callback_info info) {
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   const auto request = argc ? getStringArg(env, argv[0]) : "{}";
   return throwOnError(env, TAE_PrepareAutoMix(g_engine, request.c_str()));
+}
+napi_value BindBridgeAutoMixSelection(napi_env env, napi_callback_info info) {
+  ensureEngine(); clearLastError();
+  size_t argc = 1; napi_value argv[1]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const auto request = argc ? getStringArg(env, argv[0]) : "{}";
+  size_t required = 0;
+  auto result = TAE_BindBridgeAutoMixSelection(g_engine, request.c_str(), nullptr, 0, &required);
+  if (required > 256 * 1024 || !required) return throwOnError(env, TAE_RESULT_INVALID_ARGUMENT);
+  std::vector<char> buffer(required);
+  result = TAE_BindBridgeAutoMixSelection(g_engine, request.c_str(), buffer.data(), buffer.size(), &required);
+  if (result != TAE_RESULT_OK) return throwOnError(env, result);
+  napi_value value; napi_create_string_utf8(env, buffer.data(), NAPI_AUTO_LENGTH, &value); return value;
 }
 napi_value SubmitAutoMix(napi_env env, napi_callback_info info) {
   ensureEngine(); clearLastError();
@@ -1050,6 +1062,21 @@ napi_value AnalyzeLoudness(napi_env env, napi_callback_info info) {
   return json;
 }
 
+napi_value SetBridgeQueueControl(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  size_t argc = 3; napi_value argv[3]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (!argc) { napi_throw_type_error(env, nullptr, "Bridge queue control requires ownership"); return makeUndefined(env); }
+  return throwOnError(env, TAE_SetBridgeQueueControl(g_engine, getBoolArg(env, argv[0], false),
+      argc > 1 ? getStringArg(env, argv[1]).c_str() : "", argc > 2 ? getStringArg(env, argv[2]).c_str() : ""));
+}
+napi_value SetBridgeAutoMixMode(napi_env env, napi_callback_info info) {
+  ensureEngine(); size_t argc = 1; napi_value argv[1]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const auto mode = argc ? getStringArg(env, argv[0]) : "off";
+  return throwOnError(env, TAE_SetBridgeAutoMixMode(g_engine, mode.c_str()));
+}
+napi_value CommitBridgeSourceControls(napi_env env, napi_callback_info) {
+  ensureEngine(); return throwOnError(env, TAE_CommitBridgeSourceControls(g_engine));
+}
 napi_value PullBridgePcm(napi_env env, napi_callback_info info) {
   ensureEngine();
   size_t argc = 1; napi_value argv[1];
@@ -1059,8 +1086,9 @@ napi_value PullBridgePcm(napi_env env, napi_callback_info info) {
     napi_throw_range_error(env, nullptr, "Bridge pull requires 1–2048 frames"); return makeUndefined(env);
   }
   std::array<float, 4096> pcm{};
+  std::array<char, 64 * 1024> timeline{};
   TAE_BridgePcmInfo facts{};
-  const auto result = TAE_PullBridgePcm(g_engine, pcm.data(), static_cast<size_t>(requested), &facts);
+  const auto result = TAE_PullBridgePcmTimeline(g_engine, pcm.data(), static_cast<size_t>(requested), &facts, timeline.data(), timeline.size());
   if (result != TAE_RESULT_OK) return throwOnError(env, result);
   napi_value object, value;
   napi_create_object(env, &object);
@@ -1072,11 +1100,58 @@ napi_value PullBridgePcm(napi_env env, napi_callback_info info) {
   napi_get_boolean(env, facts.playing != 0, &value); napi_set_named_property(env, object, "playing", value);
   napi_create_buffer_copy(env, facts.frames * facts.channels * sizeof(float), pcm.data(), nullptr, &value);
   napi_set_named_property(env, object, "pcm", value);
+  napi_create_string_utf8(env, timeline.data(), NAPI_AUTO_LENGTH, &value);
+  napi_set_named_property(env, object, "sourceTimeline", value);
   return object;
 }
 napi_value CloseBridgeReceiver(napi_env env, napi_callback_info) {
   TAE_CloseBridgeReceiver(g_bridgeReceiver); g_bridgeReceiver = nullptr;
   return makeUndefined(env);
+}
+napi_value PullBridgeAudio(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  size_t argc = 1; napi_value argv[1]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double frames = argc ? getNumberArg(env, argv[0], 0) : 0;
+  if (frames < 1 || frames > 2048 || std::floor(frames) != frames) {
+    napi_throw_range_error(env, nullptr, "Bridge pull requires 1-2048 frames"); return makeUndefined(env);
+  }
+  std::array<float, 2048*8> data{};
+  TAE_BridgeAudioInfo facts{};
+  const auto result = TAE_PullBridgeAudio(g_engine, data.data(), sizeof(data), static_cast<size_t>(frames), &facts);
+  if (result != TAE_RESULT_OK) return throwOnError(env, result);
+  napi_value object, value; napi_create_object(env, &object);
+  const auto number = [&](const char* name, double n) { napi_create_double(env, n, &value); napi_set_named_property(env, object, name, value); };
+  number("generation", static_cast<double>(facts.pcm.generation)); number("sampleRate", facts.pcm.sample_rate);
+  number("channels", facts.pcm.channels); number("frames", facts.pcm.frames); number("channelMask", static_cast<double>(facts.channel_mask));
+  number("wireCode", facts.wire_format);
+  napi_get_boolean(env, facts.pcm.playing != 0, &value); napi_set_named_property(env, object, "playing", value);
+  napi_create_buffer_copy(env, facts.bytes, data.data(), nullptr, &value); napi_set_named_property(env, object, "audio", value);
+  return object;
+}
+napi_value OpenBridgeStreamReceiver(napi_env env, napi_callback_info info) {
+  size_t argc = 6; napi_value argv[6]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc != 6) { napi_throw_type_error(env, nullptr, "Bridge stream requires backend, DAC, rate, channels, wire code and channel mask"); return makeUndefined(env); }
+  const double rate = getNumberArg(env, argv[2], 0), channels = getNumberArg(env, argv[3], 0), code = getNumberArg(env, argv[4], 0), mask = getNumberArg(env, argv[5], -1);
+  if (!std::isfinite(rate) || std::floor(rate) != rate || rate < 44100 || rate > 24576000 ||
+      channels < 1 || channels > 8 || std::floor(channels) != channels ||
+      code < 1 || code > 5 || std::floor(code) != code || mask < 0 || mask > 0x3ffff || std::floor(mask) != mask) {
+    napi_throw_range_error(env, nullptr, "Invalid Bridge stream format"); return makeUndefined(env);
+  }
+  TAE_CloseBridgeReceiver(g_bridgeReceiver); g_bridgeReceiver = nullptr;
+  const auto backend = getStringArg(env, argv[0]), device = getStringArg(env, argv[1]);
+  std::array<char, 2048> error{};
+  const auto result = TAE_OpenBridgeStreamReceiver(backend.c_str(), device.c_str(), static_cast<int>(rate), static_cast<int>(channels),
+      static_cast<int>(code), static_cast<uint64_t>(mask), &g_bridgeReceiver, error.data(), error.size());
+  if (result != TAE_RESULT_OK) napi_throw_error(env, nullptr, error.data());
+  return makeUndefined(env);
+}
+napi_value WriteBridgeAudio(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value argv[1]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  bool buffer = false; if (argc) napi_is_buffer(env, argv[0], &buffer);
+  void* data = nullptr; size_t bytes = 0;
+  if (buffer) napi_get_buffer_info(env, argv[0], &data, &bytes);
+  if (!data || !bytes || bytes > 2048*8*4) { napi_throw_range_error(env, nullptr, "Invalid Bridge audio block"); return makeUndefined(env); }
+  return throwOnError(env, TAE_WriteBridgeAudio(g_bridgeReceiver, data, bytes));
 }
 napi_value OpenBridgeReceiver(napi_env env, napi_callback_info info) {
   size_t argc = 4; napi_value argv[4];
@@ -1169,6 +1244,12 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_add_env_cleanup_hook(env, cleanup, nullptr);
   define(env, exports, "Play", Play);
   define(env, exports, "PullBridgePcm", PullBridgePcm);
+  define(env, exports, "SetBridgeQueueControl", SetBridgeQueueControl);
+  define(env, exports, "SetBridgeAutoMixMode", SetBridgeAutoMixMode);
+  define(env, exports, "CommitBridgeSourceControls", CommitBridgeSourceControls);
+  define(env, exports, "PullBridgeAudio", PullBridgeAudio);
+  define(env, exports, "OpenBridgeStreamReceiver", OpenBridgeStreamReceiver);
+  define(env, exports, "WriteBridgeAudio", WriteBridgeAudio);
   define(env, exports, "OpenBridgeReceiver", OpenBridgeReceiver);
   define(env, exports, "CloseBridgeReceiver", CloseBridgeReceiver);
   define(env, exports, "WriteBridgePcm", WriteBridgePcm);
@@ -1230,6 +1311,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "AnalyzeAutoMix", AnalyzeAutoMix);
   define(env, exports, "SetAutoMixMode", SetAutoMixMode);
   define(env, exports, "SelectAutoMix", SelectAutoMix);
+  define(env, exports, "BindBridgeAutoMixSelection", BindBridgeAutoMixSelection);
   define(env, exports, "PrepareAutoMix", PrepareAutoMix);
   define(env, exports, "SubmitAutoMix", SubmitAutoMix);
   define(env, exports, "CancelAutoMix", CancelAutoMix);

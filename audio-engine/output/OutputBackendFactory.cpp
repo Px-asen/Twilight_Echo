@@ -131,7 +131,7 @@ std::string defaultBackendId() {
 }
 
 bool isOutputBackendAvailable(const std::string& backendId) {
-  if (backendId == "bridge-pcm") return true;
+  if (backendId == "bridge-pcm" || backendId == "bridge-stream") return true;
   (void)backendId;  // Builds with every platform backend disabled still compile cleanly.
 #if defined(__ANDROID__) && defined(TAE_ENABLE_OBOE)
   if (backendId == "oboe") return true;
@@ -159,6 +159,7 @@ bool isOutputBackendAvailable(const std::string& backendId) {
 
 std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId, std::string* error) {
   if (backendId == "bridge-pcm") return std::make_unique<BridgeCaptureBackend>();
+  if (backendId == "bridge-stream") return std::make_unique<BridgeCaptureBackend>(true);
   if (!isOutputBackendAvailable(backendId)) {
     if (error) *error = "Output backend is not available in this build: " + backendId;
     return nullptr;

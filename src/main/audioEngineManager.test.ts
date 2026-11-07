@@ -1529,6 +1529,40 @@ function makeManager(
   })
 }
 
+test('group transition lease suspends local AutoMix and restores it without changing DSP preferences', async () => {
+  const calls: unknown[][] = []
+  class GroupBinding extends FakeAudioServiceBinding {
+    override callAsync(method: string, args: unknown[]): Promise<unknown> {
+      if (method === 'BridgeQueueControl' || method === 'BridgeAutoMixMode') { calls.push([method, ...args]); return Promise.resolve() }
+      if (method === 'BridgeBindAutoMix') { calls.push([method, ...args]); return Promise.resolve('{"ok":true,"selectionId":51}') }
+      return super.callAsync(method, args)
+    }
+  }
+  const service = new GroupBinding()
+  const manager = new AudioEngineManager({ exclusiveMode: false, audioProcessing: { gapless: false, crossfadeSeconds: 4 } },
+    { audioServiceFactory: () => service, scheduler: TEST_SCHEDULER, deviceOptionsProvider: () => DEVICE_OPTIONS })
+  const coordinator = { setMode: (mode: unknown) => calls.push(['mode', mode]), suspend: async () => { calls.push(['suspend']) },
+    resume: () => { calls.push(['resume']) }, observe: () => {}, invalidate: (reason: string) => { calls.push(['invalidate', reason]) }, destroy: () => {} }
+  try {
+    await manager.start()
+    manager.setAutoMixCoordinator(coordinator as unknown as Parameters<typeof manager.setAutoMixCoordinator>[0])
+    const before = structuredClone(manager.getAudioProcessing())
+    await assert.rejects(manager.bindBridgeAutoMixSelection('{}'), /group_ownership_required/)
+    await assert.rejects(manager.setBridgeAutoMixMode('natural'), /group_ownership_required/)
+    await manager.acquireGroupPlayback()
+    assert.equal(manager.getAutoMixContext(), null)
+    assert.deepEqual(calls.slice(-2), [['suspend'], ['BridgeQueueControl', true]])
+    await manager.loadQueue([{ id: 'a', source: 'C:/a.wav', queueEntryId: 'one' }], 0)
+    assert.equal(calls.some(c => c[0] === 'invalidate'), false)
+    await manager.setBridgeAutoMixMode('natural')
+    assert.deepEqual(calls.at(-1), ['BridgeAutoMixMode', 'natural'])
+    assert.equal((await manager.bindBridgeAutoMixSelection('{"sharedPlan":{}}')).selectionId, 51)
+    await manager.releaseGroupPlayback()
+    assert.deepEqual(calls.slice(-2), [['BridgeQueueControl', false], ['resume']])
+    assert.deepEqual(manager.getAudioProcessing(), before)
+  } finally { manager.destroy() }
+})
+
 test('Core AB confirmed mutations await ACK and never publish a lost Seek as success', async () => {
   class LoopBinding extends DeferredAudioServiceBinding {
     SetLoopRange = (_start: number, _end: number): void => {}
@@ -2217,6 +2251,46 @@ test('module switches gate matching nodes in an active custom scene', async () =
   assert.equal(graph.nodes?.find((node) => node.id === 'scene-compressor')?.enabled, true)
   manager.destroy()
 })
+
+for (const directMode of [false, true]) {
+  test(`audio startup preserves the native crash reason with direct mode ${directMode}`, async () => {
+    class CrashingService extends FakeAudioServiceBinding {
+      failed = true
+      crashed = false
+      override async callAsync(method: string, args: unknown[]): Promise<unknown> {
+        if (this.failed) {
+          if (!this.crashed) {
+            this.crashed = true
+            this.emit('crash', '音频服务进程退出：3221225727')
+          }
+          throw new Error('Audio engine is restarting')
+        }
+        return super.callAsync(method, args)
+      }
+      async restart() { this.failed = false; this.emit('ready') }
+    }
+    const service = new CrashingService()
+    const manager = new AudioEngineManager({ exclusiveMode: false, volume: 0.35,
+      audioOutput: 'wasapi', audioDevice: 'auto', audioProcessing: { directMode },
+      audioOutputConfig: { routingMode: 'stereo' } }, {
+      audioServiceFactory: () => service, scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    })
+    try {
+      await assert.rejects(manager.start(), { code: 'AUDIO_SERVICE_UNAVAILABLE', message: '音频服务进程退出：3221225727' })
+      assert.equal(manager.getAudioServiceFailure(), '音频服务进程退出：3221225727')
+      assert.equal((await manager.getPlaybackInfo()).state, 'stopped')
+      assert.equal(manager.getAudioProcessing().directMode, directMode)
+      assert.equal(manager.canRestartAudioEngine(), true)
+      await manager.restartAudioEngine()
+      assert.equal(manager.getAudioServiceFailure(), null)
+      assert.equal(service.volume, 0.35)
+      assert.equal(service.outputConfig.routingMode, directMode ? 'auto' : 'stereo')
+      assert.equal(service.playCalls, 0)
+      assert.equal((await manager.getPlaybackInfo()).state, 'stopped')
+    } finally { manager.destroy() }
+  })
+}
 
 for (const readyFirst of [false, true]) {
   test(`cold startup serializes DSP initialization when service ready arrives ${readyFirst ? 'before' : 'during'} start`, async () => {
@@ -9637,6 +9711,8 @@ test('group timed media prepares after source setup and never retries a failed P
     assert.equal((await manager.playTimedBridge('tone.flac', 2, () => true)).nativeStarted, true)
     assert.ok(order.indexOf('BridgePrepareTimed') >= 0)
     assert.ok(order.indexOf('BridgePrepareTimed') < order.indexOf('Play'))
+    assert.ok(order.indexOf('BridgeReleaseTimedMedia') > order.lastIndexOf('ApplyDspState'))
+    assert.ok(order.indexOf('BridgeReleaseTimedMedia') > order.indexOf('Play'))
     assert.equal(order.slice(order.indexOf('BridgePrepareTimed')+1).includes('LoadQueue'), false)
     await manager.stop()
     rejectPlay = true; order.length = 0
