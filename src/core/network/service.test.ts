@@ -128,9 +128,10 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
   }
 }
 async function completed(service: CoreNetworkService) {
-  for (let i = 0; i < 100; i++) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
     if (service.state().jobs.every((job) => job.state !== 'running')) return
-    await tick()
+    await new Promise(resolve => setTimeout(resolve, 10))
   }
   throw new Error('job did not finish')
 }

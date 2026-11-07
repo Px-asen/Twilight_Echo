@@ -116,6 +116,12 @@ function fixtureHtml(template: string, css: string): string {
     await nextTick()
     await Promise.all([...document.images].map(image => image.decode()))
     await new Promise(resolve => setTimeout(resolve, settle))
+    if (motion === 'off') {
+      const deadline = performance.now() + 3000
+      while (document.querySelectorAll('.backdrop-cover-wrap').length > 1 && performance.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      if (document.querySelectorAll('.backdrop-cover-wrap').length > 1) throw Error('Previous cover did not retire')
+    }
   }
   </script></body></html>`
 }
@@ -125,6 +131,8 @@ function runnerSource(): string {
   const assert = require('node:assert/strict')
   const { join } = require('node:path')
   const { mkdir, writeFile } = require('node:fs/promises')
+  // Pixel comparisons use the same software rasterizer on local and hosted Windows.
+  app.disableHardwareAcceleration()
   const profile = process.env.TWILIGHT_ELECTRON_USER_DATA_DIR || join(__dirname, 'profile')
   app.setPath('userData', profile)
   app.commandLine.appendSwitch('disk-cache-dir', join(profile, 'cache'))

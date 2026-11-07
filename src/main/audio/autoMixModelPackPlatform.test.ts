@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { link, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
@@ -67,7 +67,7 @@ test('unpublished pack probes are restricted to the fixed managed root and joine
     worker = join(root, 'workers')
   await mkdir(join(pack, 'runtime'), { recursive: true })
   await mkdir(worker)
-  await link(process.execPath, join(pack, 'runtime/python.exe'))
+  await copyFile(process.execPath, join(pack, 'runtime/python.exe'))
   await writeFile(
     join(worker, 'probe.py'),
     `console.log('TWILIGHT_STEM_CAPABILITIES='+JSON.stringify({cpu:true,gpu:false}))`

@@ -225,6 +225,13 @@ const files = [
 ]
 
 function runCoreTests(args = process.argv.slice(2), run = spawnSync) {
+  if (process.platform === 'win32') {
+    const prepared = run(process.execPath, ['scripts/prepare-automix-stem-zip-decoder.cjs'], {
+      cwd: resolve(__dirname, '..'), stdio: 'inherit', windowsHide: true
+    })
+    if (prepared.error) throw prepared.error
+    if (prepared.status !== 0) return prepared.status ?? 1
+  }
   const result = run(process.execPath, [
     '--experimental-strip-types', '--test', '--test-concurrency=2',
     '--import', './scripts/register-renderer-aliases.mjs', ...args, ...files
