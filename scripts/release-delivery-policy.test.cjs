@@ -6,7 +6,10 @@ const path = require('node:path')
 const test = require('node:test')
 const { createMinimalPe } = require('./pe-fixture.cjs')
 const { NATIVE_RUNTIME_FILES } = require('./release-artifact-strip.cjs')
-const { preparePackagedAudioStaging } = require('./packaged-audio-staging.cjs')
+const {
+  preparePackagedAudioStaging,
+  productionPackageFileSets
+} = require('./packaged-audio-staging.cjs')
 
 const root = path.resolve(__dirname, '..')
 
@@ -31,9 +34,10 @@ test('packaging overlays an isolated fresh engine and dependencies while preserv
   const isolatedDir = path.join(directory, 'fresh')
   fs.mkdirSync(liveDir, { recursive: true })
   fs.mkdirSync(isolatedDir)
+  fs.writeFileSync(path.join(directory, 'package.json'), '{"dependencies":{}}')
   fs.writeFileSync(
     path.join(directory, 'electron-builder.yml'),
-    'extraResources:\n  - from: resources/audio-engine\n'
+    'files:\n  - out/**\nextraResources:\n  - from: resources/audio-engine\n'
   )
   for (const name of [
     ...NATIVE_RUNTIME_FILES,
@@ -72,6 +76,8 @@ test('packaging overlays an isolated fresh engine and dependencies while preserv
       fs.readFileSync(smtcOverride)
     )
     assert.ok(fs.existsSync(path.join(packagedDir, 'fresh-runtime.dll')))
+    assert.ok(fs.existsSync(path.join(liveDir, 'twilight_image_node.node')))
+    assert.equal(fs.existsSync(path.join(packagedDir, 'twilight_image_node.node')), false)
     assert.equal(
       fs.readFileSync(path.join(packagedDir, 'automix-native', 'manifest.json'), 'utf8'),
       '{"preserved":true}'
@@ -88,10 +94,48 @@ test('packaging overlays an isolated fresh engine and dependencies while preserv
       fs.readFileSync(path.join(packagedDir, 'audio-capabilities.json'), 'utf8')
     )
     assert.ok(
+      !manifest.nativeArtifacts.some((artifact) => artifact.path === 'twilight_image_node.node')
+    )
+    assert.ok(
       JSON.stringify(manifest).includes(createHash('sha256').update(freshCore).digest('hex'))
     )
   } finally {
     staging?.dispose()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('desktop file sets retain installed nested production versions without dev packages', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-desktop-dependencies-'))
+  const writePackage = (relative, name, version, dependencies = {}) => {
+    const target = path.join(directory, relative)
+    fs.mkdirSync(target, { recursive: true })
+    fs.writeFileSync(
+      path.join(target, 'package.json'),
+      JSON.stringify({ name, version, dependencies })
+    )
+  }
+  try {
+    writePackage('', 'desktop', '2.0.0', { parent: '1', shared: '1' })
+    writePackage('node_modules/parent', 'parent', '1.0.0', { shared: '2' })
+    writePackage('node_modules/shared', 'shared', '1.0.0')
+    writePackage('node_modules/parent/node_modules/shared', 'shared', '2.0.0')
+    writePackage('node_modules/dev-only', 'dev-only', '1.0.0')
+    const parentManifest = path.join(directory, 'node_modules/parent/package.json')
+    const parent = JSON.parse(fs.readFileSync(parentManifest, 'utf8'))
+    parent.peerDependencies = { electron: '*' }
+    fs.writeFileSync(parentManifest, JSON.stringify(parent))
+    writePackage('node_modules/electron', 'electron', '43.8.1', { downloader: '1' })
+    writePackage('node_modules/downloader', 'downloader', '1.0.0')
+    const fileSets = productionPackageFileSets(directory)
+    assert.deepEqual(fileSets.map((entry) => entry.to).sort(), [
+      'node_modules/parent',
+      'node_modules/parent/node_modules/shared',
+      'node_modules/shared'
+    ])
+    assert.ok(fileSets.every((entry) => entry.filter.includes('!node_modules/**')))
+  } finally {
+    assert.equal(path.dirname(directory), path.resolve(os.tmpdir()))
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
@@ -313,10 +357,13 @@ test('update checks download GitHub release installers without electron-updater'
 
 test('release docs keep non-Windows audio backends explicitly unverified', () => {
   const readme = read('README.md')
-  assert.match(readme, /macOS 与 Linux 后端已有实现，但尚未达到正式发布验证标准/)
   assert.match(
     readme,
-    /CoreAudio 与 ALSA 后端已存在，但目前没有经过与 Windows 同等级别的发布和真实设备验证/
+    /macOS（CoreAudio）与 Linux（ALSA）已有实现和安装包，但尚未经过与 Windows 同等级别的发布和真实设备验证/
+  )
+  assert.match(
+    read('README.en.md'),
+    /macOS \(CoreAudio\) and Linux \(ALSA\) backends and packages are available, but have not received the same release and real-device validation as Windows/
   )
   assert.doesNotMatch(readme, /macOS 与 Linux 的原生音频引擎仍在验证阶段（代码已 release-ready/)
 })

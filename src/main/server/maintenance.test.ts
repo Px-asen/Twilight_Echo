@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { backupServerProfile, restoreServerProfile } from './maintenance.ts'
 import { initializeServerProfile, lockServerProfile } from './profile.ts'
 import { createProfileCipher } from './profileCredentials.ts'
+import { syncGroupCatalog } from '../coreProcess/syncGroupRuntime.ts'
 
 async function fixture(t: test.TestContext) {
   const temporary = await mkdtemp(join(tmpdir(), 'twilight-maintenance-'))
@@ -44,11 +45,15 @@ test('offline snapshot retains SQLite, TLS identity and owned DSP files, but not
   const f = await fixture(t)
   const scope = Buffer.from('backup-plugin-scope')
   const credential = await createProfileCipher(f.root).protect(Buffer.from('backup-fixture-value'), scope)
+  const groups = [{ id: 'group-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Music', autoMixMode: 'dj' as const,
+    members: [{ zoneId: 'local', downstreamDelayMs: 0 }, { zoneId: 'zone-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', downstreamDelayMs: 3 }] }]
+  await syncGroupCatalog(f.root).save(groups)
   const manifest = await backupServerProfile(f.root, f.snapshot, '1.4.0')
   assert.ok(manifest.files.some((file) => file.path === 'dsp-assets/脉冲.bin'))
   assert.ok(!manifest.files.some((file) => ['server.lock', 'server-run.json'].includes(file.path)))
   await assert.rejects(access(join(f.root, 'server.lock')), { code: 'ENOENT' })
   await restoreServerProfile(f.snapshot, f.restored, '1.4.0')
+  assert.deepEqual(await syncGroupCatalog(f.restored).load(), groups)
   assert.equal((await createProfileCipher(f.restored).unprotect(credential, scope)).toString(), 'backup-fixture-value')
   assert.equal(await readFile(join(f.restored, 'remote-tls.json'), 'utf8'), 'private test identity')
   assert.deepEqual(

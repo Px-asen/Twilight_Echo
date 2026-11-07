@@ -58,6 +58,7 @@ function packageReadme(applicationVersion, nodeVersion) {
     '手机 Focus／标签／Server 歌单与声区选歌队列：docs/session-queues-mobile.md；Android 与 Server 需一起更新。',
     '手机／CLI 管理逐声区 DSP 资料、.tedsp 配置包预览／导入导出、场景及 VST3 参数／扫描：docs/server-dsp-library.md。',
     '手机／CLI 的 .tep 扩展预览、安装、更新与启停：docs/server-extensions.md。',
+    '原生 DSD／DoP／多声道：docs/audio-bridge-formats.md；组 AutoMix／无缝切曲及两端设置：docs/sync-group-transitions.md。',
     'Windows Service 的 DAC 输出位于其他交互式 Bridge，不直接在 Session 0 打开设备。',
     '不包含 Python 环境、用户 VST3 模块或登录凭据；不自动安装、注册服务或更改权限。',
     ''
@@ -69,6 +70,7 @@ function packageServer({
   destination,
   node = process.execPath,
   nodeLicense,
+  audioRuntime,
   stripEnvironment = resolveMingwEnvironment()
 }) {
   if (process.platform !== 'win32' || process.arch !== 'x64')
@@ -107,7 +109,7 @@ function packageServer({
     for (const entry of ENTRIES) copy(`out/server/${entry}.cjs`)
     copy('out/server-service/twilight-server-service.exe')
     copy('out/server-service/twilight_server_credentials.node')
-    const sourceNative = path.join(root, 'resources/audio-engine')
+    const sourceNative = audioRuntime ? fs.realpathSync(audioRuntime) : path.join(root, 'resources/audio-engine')
     const native = path.join(staged, 'resources/audio-engine')
     fs.mkdirSync(native, { recursive: true })
     for (const name of [
@@ -213,6 +215,8 @@ function packageServer({
     copy('docs/session-queues-mobile.md')
     copy('docs/server-dsp-library.md')
     copy('docs/server-extensions.md')
+    copy('docs/audio-bridge-formats.md')
+    copy('docs/sync-group-transitions.md')
     fs.writeFileSync(
       path.join(staged, 'README.txt'),
       packageReadme(application.version, runtime.version)
@@ -294,6 +298,7 @@ if (require.main === module) {
       to: { type: 'string' },
       node: { type: 'string' },
       'node-license': { type: 'string' },
+      'audio-runtime': { type: 'string' },
       zip: { type: 'string' }
     }
   })
@@ -301,7 +306,8 @@ if (require.main === module) {
     const result = packageServer({
       destination: values.to,
       node: values.node,
-      nodeLicense: values['node-license']
+      nodeLicense: values['node-license'],
+      audioRuntime: values['audio-runtime']
     })
     const archive = values.zip
       ? await archiveServerPackage(result.destination, values.zip)

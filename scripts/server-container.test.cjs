@@ -7,9 +7,9 @@ const { mkdtemp, mkdir, writeFile, readFile, rm, access, stat } = require('node:
 const { join } = require('node:path')
 const { tmpdir } = require('node:os')
 const { once } = require('node:events')
-const { randomUUID, randomBytes } = require('node:crypto')
+const { randomUUID, randomBytes, createHash } = require('node:crypto')
 
-test(`container runtime scans, checks health, restores an offline snapshot and stops via ${process.platform === 'win32' ? 'local administration' : 'SIGTERM'}`, { timeout: 90_000 }, async t => {
+test(`container runtime analyzes AutoMix, scans, checks health, restores an offline snapshot and stops via ${process.platform === 'win32' ? 'local administration' : 'SIGTERM'}`, { timeout: 240_000 }, async t => {
   const app = process.env.TWILIGHT_CONTAINER_APP || '/opt/twilight'
   const native = require(join(app, 'resources/audio-engine/twilight_audio_node.node'))
   assert.equal(typeof native.GetDspGraphStatus, 'function')
@@ -32,6 +32,16 @@ test(`container runtime scans, checks health, restores an offline snapshot and s
   wave.writeUInt32LE(8000, 24); wave.writeUInt32LE(16000, 28); wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34)
   wave.write('data', 36); wave.writeUInt32LE(16000, 40)
   await writeFile(join(music, 'Container.wav'), wave)
+  // Run from an unrelated cwd and omit assetDirectory: models must be found
+  // beside the actual native library, never in the source checkout or cwd.
+  const analysisCode = `const n=require(process.argv[1]);const r=JSON.parse(n.AnalyzeAutoMix(process.argv[2],JSON.stringify({sourceIdentity:process.argv[3],sourceStartSeconds:0,sourceEndSeconds:1,rangeStartSeconds:0})));if(!r.ok)throw Error(JSON.stringify(r));console.log(JSON.stringify({ok:r.ok,modelVersion:r.modelVersion,coverage:r.coverage}))`
+  const analysis = JSON.parse((await promisify(execFile)(process.execPath, ['-e', analysisCode,
+    join(app, 'resources/audio-engine/twilight_audio_node.node'), join(music, 'Container.wav'),
+    createHash('sha256').update(wave).digest('hex')], { cwd: temporary, env, timeout: 180_000 })).stdout)
+  assert.equal(analysis.ok, true)
+  const models = JSON.parse(await readFile(join(app, 'resources/audio-engine/automix-native/manifest.json'), 'utf8')).models
+  assert.equal(analysis.modelVersion, `twilight-automix-native-1:${models['beat-this-small0'].graphSha256}:${models.yamnet.graphSha256}`)
+  assert.equal(analysis.coverage.durationSeconds, 1)
   await cli('init', '--library', music)
   const credentialKey = randomBytes(32)
   await writeFile(join(root, 'server-credentials.key'), credentialKey, { mode: 0o600 })

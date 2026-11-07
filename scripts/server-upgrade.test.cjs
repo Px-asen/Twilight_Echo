@@ -16,8 +16,8 @@ const temporary = fs.mkdtempSync(join(tmpdir(), 'twilight-upgrade-package-'))
 const old = process.env.TWILIGHT_SERVER_UPGRADE_OLD_ROOT || join(temporary, 'old-version')
 const current = join(temporary, "new ' 中文 version")
 test.before(() => {
-  if (!process.env.TWILIGHT_SERVER_UPGRADE_OLD_ROOT) packageServer({ destination: old })
-  packageServer({ destination: current })
+  if (!process.env.TWILIGHT_SERVER_UPGRADE_OLD_ROOT) packageServer({ destination: old, audioRuntime: process.env.TWILIGHT_SERVER_AUDIO_RUNTIME })
+  packageServer({ destination: current, audioRuntime: process.env.TWILIGHT_SERVER_AUDIO_RUNTIME })
   // A version-label fixture exercises the version fence; it is not a published 1.4.1 release.
   const manifestPath = join(current, 'server-package.json'),
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
@@ -87,6 +87,15 @@ test(
       fixture.music,
       '--apply'
     )
+    // Seed independently saved member policies after the old migration entry.
+    // Upgrade/rollback must retain them without adopting the group's modes.
+    for (const [index, zone] of [{ id: 'local' }, ...fixture.zones].entries()) {
+      const file = join(index ? join(data, 'zones', zone.id) : data, 'settings.json')
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8'))
+      Object.assign(settings, { autoMixMode: index % 2 ? 'natural' : 'dj', autoMixStemMode: 'auto',
+        autoMixStemDevice: 'cpu', autoMixStemCacheMiB: 1024 })
+      fs.writeFileSync(file, JSON.stringify(settings))
+    }
     const inventory = (directory, prefix = '') =>
       fs
         .readdirSync(join(directory, prefix), { withFileTypes: true })
@@ -96,7 +105,7 @@ test(
             : [[join(prefix, entry.name), fs.readFileSync(join(directory, prefix, entry.name))]]
         )
         .sort(([a], [b]) => a.localeCompare(b))
-    const verifyInstance = async (instance) => {
+    const verifyInstance = async (instance, seedModes = false) => {
       const at = (...args) => cli(instance.application, ...args, '--data', instance.data)
       const server = spawn(
         join(instance.application, 'out/server-service/twilight-server-service.exe'),
@@ -130,12 +139,12 @@ test(
           })
         ])
         const health = await at('status')
-        const rpc = async (name, payload = {}) => {
+        const rpc = async (name, payload = {}, kind = 'query') => {
           const request = join(root, `rpc-${randomUUID()}.json`)
           fs.writeFileSync(
             request,
             JSON.stringify({
-              kind: 'query',
+              kind,
               name,
               payload,
               epoch: health.epoch,
@@ -144,8 +153,14 @@ test(
           )
           return at('rpc', '--request', request)
         }
-        const zones = await rpc('zones.list'),
+        const zones = await rpc('zones.list')
+        let groups = await rpc('groups.list')
+        if (seedModes) {
+          for (const [index, group] of groups.groups.entries())
+            await rpc('groups.settings.edit', { groupId: group.id, revision: group.revision,
+              autoMixMode: index ? 'dj' : 'natural' }, 'command')
           groups = await rpc('groups.list')
+        }
         assert.equal(zones.error, null, stderr)
         assert.equal(groups.error, null, stderr)
         assert.equal(zones.zones.length, 4)
@@ -176,6 +191,10 @@ test(
             const directory = index ? join(instance.data, 'zones', original.id) : instance.data
             const settings = JSON.parse(fs.readFileSync(join(directory, 'settings.json'), 'utf8'))
             assert.equal(settings.softwareVolume, 0.2 + index * 0.1)
+            assert.equal(settings.autoMixMode, index % 2 ? 'natural' : 'dj')
+            assert.equal(settings.autoMixStemMode, 'auto')
+            assert.equal(settings.autoMixStemDevice, 'cpu')
+            assert.equal(settings.autoMixStemCacheMiB, 1024)
             assert.equal(settings.dspScenes[0].name, `${original.id} room`)
             assert.equal(settings.dspPinnedSceneId, 'room')
             const assets = new DspAssetLibrary(join(directory, 'dsp-assets'), {
@@ -194,6 +213,8 @@ test(
           } else {
             assert.equal(session.error, null)
             assert.deepEqual(session.members, fixture.groups[index - 4].members)
+            assert.equal(session.autoMixMode, index === 4 ? 'natural' : 'dj')
+            assert.equal(session.playback.autoMixMode, session.autoMixMode)
             assert.equal(session.coordination.phase, 'paused')
           }
         }
@@ -233,6 +254,7 @@ test(
           id: session.id,
           queueId: session.queue.id,
           occurrenceId: session.queue.occurrenceId,
+          autoMixMode: session.autoMixMode,
           position: session.playback.position
         }))
       } finally {
@@ -243,7 +265,7 @@ test(
         }
       }
     }
-    const baseline = await verifyInstance({ application: old, data })
+    const baseline = await verifyInstance({ application: old, data }, true)
     const before = inventory(data)
     const upgraded = await cli(
       current,
@@ -279,6 +301,7 @@ test(
         positions: baseline.map((session) => session.position),
         originalOrders: true,
         memberDspAssets: true,
+        groupAutoMixModes: baseline.slice(4).map(session => session.autoMixMode),
         sourceUnchanged: true,
         connected: false,
         hardware: null

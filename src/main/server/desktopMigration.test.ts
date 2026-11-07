@@ -26,13 +26,13 @@ async function files(root: string, prefix = ''): Promise<Array<[string, Buffer]>
   }
   return result.sort(([a], [b]) => a.localeCompare(b))
 }
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, withAutoMix = false) {
   const root = await mkdtemp(join(tmpdir(), 'twilight-desktop-bundle-'))
   t.after(async () => {
     assert.equal(resolve(root, '..'), resolve(tmpdir()))
     await rm(root, { recursive: true, force: true })
   })
-  const source = await desktopMigrationFixture(root)
+  const source = await desktopMigrationFixture(root, withAutoMix ? ['natural', 'dj'] : undefined)
   return { root, ...source, bundle: join(root, 'bundle'), destination: join(root, 'server') }
 }
 
@@ -63,8 +63,8 @@ test('offline bundle previews and migrates six SQL sessions, shuffled/original o
     [...SERVER_SETTINGS_FIELDS].sort()
   )
   assert.deepEqual(
-    manifest.groups.map(({ id, name, members }) => ({ id, name, members })),
-    f.groups
+    manifest.groups.map(({ id, name, members, autoMixMode }) => ({ id, name, members, autoMixMode })),
+    f.groups.map(group => ({ ...group, autoMixMode: group.autoMixMode ?? 'off' }))
   )
   const options = { file: f.bundle, destination: f.destination, libraryRoots: [f.music] }
   const preview = await migrateDesktopBundle(options)
@@ -72,7 +72,7 @@ test('offline bundle previews and migrates six SQL sessions, shuffled/original o
   await assert.rejects(access(f.destination), { code: 'ENOENT' })
   await migrateDesktopBundle({ ...options, apply: true })
   assert.deepEqual(await zoneCatalog(f.destination).load(), f.zones)
-  assert.deepEqual(await syncGroupCatalog(f.destination).load(), f.groups)
+  assert.deepEqual(await syncGroupCatalog(f.destination).load(), f.groups.map(group => ({ ...group, autoMixMode: group.autoMixMode ?? 'off' })))
   const db = new LibraryDatabase(join(f.destination, 'music-library.sqlite'))
   try {
     const queueIds = new Set<string>()
@@ -130,6 +130,28 @@ test('offline bundle previews and migrates six SQL sessions, shuffled/original o
     assert.ok([...queueIds].every((id) => db.getLibraryQueue(id).total === 3))
   } finally {
     db.close()
+  }
+  assert.deepEqual(await files(f.source), before)
+})
+
+test('bundle preview and apply retain distinct group AutoMix modes without changing member preferences', async t => {
+  const f = await fixture(t, true), before = await files(f.source)
+  const manifest = await exportDesktopMigration({ source: f.source, destination: f.bundle, stopped: true })
+  assert.deepEqual(manifest.groups.map(g => g.autoMixMode), ['natural', 'dj'])
+  const options = { file: f.bundle, destination: f.destination, libraryRoots: [f.music] }
+  const preview = await migrateDesktopBundle(options)
+  assert.deepEqual((preview.additional as { groups: { autoMixMode: string }[] }).groups.map(g => g.autoMixMode), ['natural', 'dj'])
+  await assert.rejects(access(f.destination), { code: 'ENOENT' })
+  const applied = await migrateDesktopBundle({ ...options, apply: true })
+  assert.deepEqual((applied.additional as { groups: { autoMixMode: string }[] }).groups.map(g => g.autoMixMode), ['natural', 'dj'])
+  assert.deepEqual(await syncGroupCatalog(f.destination).load(), f.groups)
+  for (const id of ['local', ...f.zones.map(z => z.id)]) {
+    const at = (root: string) => id === 'local' ? root : join(root, 'zones', id)
+    const original = JSON.parse(await readFile(join(at(f.source), 'settings.json'), 'utf8'))
+    const restored = JSON.parse(await readFile(join(at(f.destination), 'settings.json'), 'utf8'))
+    for (const key of ['autoMixMode', 'autoMixStemMode', 'autoMixStemDevice', 'autoMixStemCacheMiB'])
+      assert.equal(restored[key], original[key], `${id}: ${key}`)
+    assert.equal(restored.autoMixMode, id === 'local' ? 'dj' : original.autoMixMode)
   }
   assert.deepEqual(await files(f.source), before)
 })
@@ -309,6 +331,8 @@ test('bundle rejects escaped references, invalid topology and existing import ta
   const manifestFile = join(f.bundle, 'migration.json')
   for (const corrupt of [
     { ...original, personal: '../desktop/settings.json' },
+    ...['unexpected', null, ['natural']].map(autoMixMode => ({ ...original,
+      groups: original.groups.map((group, i) => i ? group : { ...group, autoMixMode }) })),
     {
       ...original,
       groups: original.groups.map((group, i) =>

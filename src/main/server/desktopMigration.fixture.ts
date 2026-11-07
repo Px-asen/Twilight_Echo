@@ -19,12 +19,13 @@ import { zoneCatalog } from '../coreProcess/zoneRuntime.ts'
 import { syncGroupCatalog } from '../coreProcess/syncGroupRuntime.ts'
 import type { ZoneDescriptor } from '../../shared/coreZones.ts'
 import type { SyncGroupDescriptor } from '../../shared/coreSyncGroups.ts'
+import type { AutoMixMode } from '../../shared/twilightAutoMix.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
 import { queueReference } from './playbackMigration.ts'
 
 /** A stopped modern desktop profile with six independent SQL sessions at revision 1. */
-export async function desktopMigrationFixture(root: string) {
+export async function desktopMigrationFixture(root: string, autoMixModes?: readonly [AutoMixMode, AutoMixMode]) {
   const source = join(root, 'desktop'),
     music = join(root, '音乐')
   await mkdir(source, { recursive: true })
@@ -75,6 +76,7 @@ export async function desktopMigrationFixture(root: string) {
       ]
     }
   ]
+  if (autoMixModes) groups.forEach((group, index) => { group.autoMixMode = autoMixModes[index] })
   await zoneCatalog(source).save(zones)
   await syncGroupCatalog(source).save(groups)
   const db = new LibraryDatabase(join(source, 'music-library.sqlite'))
@@ -156,6 +158,8 @@ export async function desktopMigrationFixture(root: string) {
         })
         const settings = structuredClone(configuration.settings)
         settings.softwareVolume = 0.2 + index * 0.1
+        if (autoMixModes) Object.assign(settings, { autoMixMode: index % 2 ? 'natural' : 'dj',
+          autoMixStemMode: 'auto', autoMixStemDevice: 'cpu', autoMixStemCacheMiB: 1024 })
         settings.dspScenes[0].name = `${id} room`
         await writeFile(join(directory, 'settings.json'), JSON.stringify(settings))
       }

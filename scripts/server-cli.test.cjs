@@ -12,6 +12,17 @@ const { createServer, createConnection } = require('node:net')
 const { request: httpsRequest } = require('node:https')
 const { randomBytes, randomUUID, createHash, X509Certificate } = require('node:crypto')
 
+function serverTestNodeExecutable(
+  applicationRoot,
+  { platform = process.platform, executable = process.execPath } = {}
+) {
+  // Windows ZIPs own their Node binary. Linux images provide Node in the
+  // base image, not in /server/runtime. Never fall back from a broken ZIP.
+  return applicationRoot && platform === 'win32'
+    ? join(applicationRoot, 'runtime/node.exe')
+    : executable
+}
+
 function registerServerCliTest(
   mode = 'console',
   {
@@ -827,6 +838,6 @@ function registerServerCliTest(
     }
   )
 }
-module.exports = { registerServerCliTest }
+module.exports = { registerServerCliTest, serverTestNodeExecutable }
 if (require.main === module)
   for (const mode of ['console', 'service-child']) registerServerCliTest(mode)

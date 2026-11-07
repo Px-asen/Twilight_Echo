@@ -9,6 +9,7 @@ const { mkdtemp, readFile, writeFile, rm, access } = require('node:fs/promises')
 const { join, resolve } = require('node:path')
 const { tmpdir } = require('node:os')
 const { randomUUID } = require('node:crypto')
+const { serverTestNodeExecutable } = require('./server-cli.test.cjs')
 
 for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
   test(
@@ -18,12 +19,14 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
       const temporary = await mkdtemp(join(tmpdir(), 'twilight-desktop-bundle-core-'))
       const data = join(temporary, 'server'),
         bundle = join(temporary, 'bundle')
-      const entry = resolve(__dirname, '../out/server/server.cjs')
+      const application = process.env.TWILIGHT_SERVER_PACKAGE_TEST_ROOT
+      const entry = application ? join(application, 'out/server/server.cjs') : resolve(__dirname, '../out/server/server.cjs')
+      const node = serverTestNodeExecutable(application)
       let server, exited
       try {
         const { desktopMigrationFixture, addOnlineMigrationFixture } =
           await import('../src/main/server/desktopMigration.fixture.ts')
-        const f = await desktopMigrationFixture(temporary)
+        const f = await desktopMigrationFixture(temporary, ['natural', 'dj'])
         const online = contextKind ? await addOnlineMigrationFixture(f, contextKind) : undefined
         const guard = join(temporary, 'no-electron.cjs')
         await writeFile(
@@ -37,7 +40,7 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
         }
         const cli = async (...args) =>
           (
-            await promisify(execFile)(process.execPath, [entry, ...args], {
+            await promisify(execFile)(node, [entry, ...args], {
               env,
               windowsHide: true,
               timeout: 20000,
@@ -53,7 +56,7 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
         assert.equal(JSON.parse(await cli(...migrate)).applied, false)
         await assert.rejects(access(data), { code: 'ENOENT' })
         assert.equal(JSON.parse(await cli(...migrate, '--apply')).applied, true)
-        server = spawn(process.execPath, [entry, 'service-child', '--data', data], {
+        server = spawn(node, [entry, 'service-child', '--data', data], {
           env,
           windowsHide: true,
           cwd: temporary,
@@ -92,6 +95,7 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
           const session = all.find((session) => session.id === original.id)
           assert.ok(session, original.id)
           assert.equal(session.playback.state, 'paused')
+          assert.equal(session.playback.nativePlaybackActive, false)
           assert.equal(session.playback.position, 10 + index)
           assert.equal(session.queue.total, 3)
           assert.equal(session.queue.index, 2)
@@ -123,6 +127,10 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
               )
             )
             assert.equal(settings.softwareVolume, 0.2 + index * 0.1)
+            assert.equal(settings.autoMixMode, index % 2 ? 'natural' : 'dj')
+            assert.equal(settings.autoMixStemMode, 'auto')
+            assert.equal(settings.autoMixStemDevice, 'cpu')
+            assert.equal(settings.autoMixStemCacheMiB, 1024)
             assert.equal(settings.dspScenes[0].name, `${original.id} room`)
             const path = await rpc('query', 'groups.signalPath', {
               groupId: session.groupId,
@@ -132,7 +140,11 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
           } else {
             assert.equal(session.error, null, JSON.stringify({ session, stderr }))
             assert.deepEqual(session.members, f.groups[index - 4].members)
+            assert.equal(session.autoMixMode, f.groups[index - 4].autoMixMode)
+            assert.equal(session.playback.autoMixMode, session.autoMixMode)
+            assert.equal(session.autoMixAvailable, true)
             assert.equal(session.coordination.phase, 'paused')
+            assert.equal(session.coordination.audibleAtCoreMs, null)
           }
         }
         const workspace = await rpc('query', 'workspace.state')
@@ -178,6 +190,7 @@ for (const contextKind of [undefined, 'heart', 'detached', 'personalized'])
             queuesDistinct: true,
             positions: all.map((session) => session.playback.position),
             memberDsp: true,
+            groupAutoMixModes: groups.groups.map(group => group.autoMixMode),
             disconnected: true,
             hardware: null,
             ungrouped: true

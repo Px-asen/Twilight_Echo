@@ -8,6 +8,8 @@
 
 ## Windows ZIP 解压即可运行，不依赖全局 Node
 
+**当前交付（2026-11-05）：** [Windows x64 Server · 网络格式／组 AutoMix／迁移修复](D:/Project/Twilight_Echo/dist/TwilightEchoServer-2.0.0-win32-x64-network-formats-automix-20261105-r4.zip)。包含原生 DSD／DoP／多声道、组 AutoMix 和模式迁移修复；搭配当前 Android APK 使用。下方带日期的旧包保留为历史入口和回退来源。
+
 **11 月 4 日工作区版：** [Windows x64 ZIP](D:/Project/Twilight_Echo/dist/TwilightEchoServer-1.4.0-win32-x64-workspace-20261104.zip)含新声区队列接口、远程资料／图片运行时和手机工作区所需协议。与本轮 Android 一起使用；最终归档解压后的自包含、TLS／PCM 和新队列链路验证见[交付记录](./session-queues-mobile.md)。下方升级版保留为旧包兼容入口。
 
 本机升级版：[Windows x64 ZIP](D:/Project/Twilight_Echo/dist/TwilightEchoServer-1.4.0-win32-x64-upgrade.zip) · [传输校验文件](D:/Project/Twilight_Echo/dist/TwilightEchoServer-1.4.0-win32-x64-upgrade.zip.sha256)。这是包含新维护入口的本地交付包，应用版本仍为 1.4.0。先前的[原始包](D:/Project/Twilight_Echo/dist/TwilightEchoServer-1.4.0-win32-x64.zip)保留，供旧包兼容与回退验证，不原地覆盖。
@@ -118,7 +120,7 @@ node out/server/server.cjs migrate --from 'D:\Backups\desktop-personal.json' `
 # 核对预览后，对同一命令增加 --apply。
 ```
 
-`--settings` 接受原有平面／v2 设置备份；迁移其中明确提供的业务字段：语言、曲库监视／识别与歌词策略、播放恢复／上一首／模式／音量／睡眠计时、音源质量，以及处理参数、EQ 预设／自动余量、耳机补偿、场景和固定场景。主题、窗口和设备界面设置不属于 Server 配置；设备、路径、远程监听和授权也不会从设置备份接管。
+`--settings` 接受原有平面／v2 设置备份；迁移其中明确提供的业务字段：语言、曲库监视／识别与歌词策略、播放恢复／上一首／模式／音量／睡眠计时、AutoMix 模式与分离偏好、音源质量，以及处理参数、EQ 预设／自动余量、耳机补偿、场景和固定场景。AutoMix 分离偏好包含开启策略、计算设备偏好和缓存额度，不复制模型包或缓存路径，也不在恢复时准备／播放。主题、窗口和设备界面设置不属于 Server 配置；设备、路径、远程监听和授权也不会从设置备份接管。
 
 `--dsp` 使用现有 `.tedsp` 格式及资产校验合同，导入场景、规则、固定关系和内嵌 IR／校正／VST3 状态资产；与设置备份同时提供时，以该包的场景列表和固定场景为准。VST3 模块和许可证不随包安装，预览的 `vst3References` 列出需要在新服务环境重新扫描／关联的引用。缺失的托管 IR 不会被包中附加的任意路径替代。
 
@@ -145,10 +147,10 @@ node D:\Project\Twilight_Echo\out\server\server.cjs migrate --from $bundle `
 
 整包包含：
 
-- 原个人备份支持的数据域，以及最多 4 个 Zone、2 个互不重叠同步组的名称、成员和下游延迟（毫秒）。
+- 原个人备份支持的数据域，以及最多 4 个 Zone、2 个互不重叠同步组的名称、成员、下游延迟（毫秒）和组 AutoMix 模式。旧包缺少模式时按关闭恢复，无效模式拒绝导入。
 - 每个当前会话的重复 occurrence、选中项、位置、显示顺序和原始顺序。逐 Zone／组使用独立 SQL 导入身份及持久引用，主会话仍保留原 `core-session-<revision>` 合同。
 - 命名 SQL 队列转成可携带的数组；沿用原恢复合同，捕获当前共享队列的内容／游标，保留命名会话自身的位置和模式。原始顺序单独保存，不把大数组塞入 2 MiB 的会话状态文件。
-- 每个物理 Zone 的业务设置、DSP 场景／规则／固定关系和托管资产。设置只导出 Server 的业务字段；不带桌面 UI、设备、远程监听或信任配置。
+- 每个物理 Zone 的业务设置、独立 AutoMix 偏好、DSP 场景／规则／固定关系和托管资产。独立模式与组模式分别恢复，解除编组后不丢成员原偏好。设置只导出 Server 的业务字段；不带桌面 UI、设备、远程监听或信任配置。
 - 主会话的心动／喜欢列表、心动原队列、离开队列的推荐曲目和个性化电台延续信息。它们使用独立上下文文件，不改变原个人 JSON 的无 SQL 引用格式；导入后重新绑定新队列。预览 `additional.playbackContexts` 列出相关上下文及心动原队列数量。
 
 原始顺序文件和上下文在预览时即检查，失败不会退化成普通队列。队列和命名会话仍遵守现有格式容量，超过时明确拒绝，不截断。
@@ -332,11 +334,11 @@ node --run test:server-upgrade # Windows，候选与回退隔离副本；不修�
 
 服务宿主和升级验证未安装 Windows Service、启动真实 DAC 或安装 APK。按用户单项授权，仅将 `out/server-service/twilight-server-service.exe` 的强制完整性标签从继承 Low 改为显式 Medium，原标签 `S:AI(ML;ID;NW;;;LW)` 保存于本地 `.service-exe-label-original.json`。首次夹具失败时已恢复，再修正夹具并重新验证后保留 Medium；未更改目录、其他文件 DACL、Windhawk 或沙箱。未来重建／重装若再次继承 Low，仍需针对新文件确认处理。后续控制面工作已修改 Android 客户端源码；手机 UI 与实际双机／DAC 验收继续等全部计划实现后统一进行。
 
-## 接下来完成服务化与完整控制面
+## 当前收口与部署依赖
 
 1. **部署验收后置**：Windows x64 自包含运行时／依赖／ZIP 已提供；实际 SCM 注册、账号权限和开关机验收等全部计划实现后统一执行。
 2. **升级已可回退**：新旧独立包、快照、候选健康检查、活动入口、回退副本和不确定切换恢复已接通。真实 SCM／服务账号验收后置。桌面当前只持有 Electron 单实例锁，没有 Server Profile 锁，整包导出仍须由操作者先正常退出；不能直接复制活动桌面目录。
-3. **完整远程日常管理**：Focus、标签、评分／收藏、歌单与人工资料的 TLS RPC、实体表单和日常管理工作区已接通，新增显式声区队列接口。无 GUI 的 DSP 资产／插件管理继续实施。Server 的大图缩图与图片回显依赖随新包携带的 `twilight_image_node.node`；见[使用记录](./session-queues-mobile.md)。
+3. **完整远程日常管理**：Focus、标签、评分／收藏、歌单、人工资料和显式声区队列接口已接通。无 GUI 的 DSP 资产、`.tedsp`、VST3 参数与 `.tep` 扩展管理已完成，见 [DSP 管理](./server-dsp-library.md)、[扩展管理](./server-extensions.md)和[工作区](./session-queues-mobile.md)。Server 的大图缩图与图片回显依赖包内 `twilight_image_node.node`。
 4. **NAS／容器部署（2026-11-05）**：目标已确定 Linux x86_64，容器／Compose／持久目录／Profile 凭据及 CI 构建验证已接入，见 [Linux 部署](./server-linux.md)。用户确认没有可用环境，实际 Linux 镜像构建与运行仍待验收。
 
 第四阶段已实现可达 VPN／HTTPS 地址管理、离线下载、计费网络策略与 Android Auto 浏览搜索，见 Android 仓库 `MOBILE_LIBRARY.md`。真实 WAN／车机及原后置实机验收仍待执行；第二阶段数字同步证据仍以[原记录](D:/Project/Twilight_Echo/docs/audio-zones-phase2.md)为准。

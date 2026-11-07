@@ -1,4 +1,5 @@
 import '../../adapters-node/index.ts'
+import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   copyFile,
@@ -290,7 +291,7 @@ export async function exportDesktopMigration(options: {
             defaultCachePath: join(directory, 'music-cache'),
             resolvePath: resolve
           },
-          changed() {}
+          changed() { /* The offline export does not publish settings updates. */ }
         })
         if (settingsRepository.issue?.kind === 'corrupt')
           throw new Error('会话设置及其备份损坏；请先在桌面修复后再迁移')
@@ -406,8 +407,7 @@ export async function exportDesktopMigration(options: {
     state?.close()
     database?.close()
     await unlock?.()
-    if (resolve(temporary, '..') !== resolve(tmpdir()))
-      throw new Error('导出临时目录位置不符，未清理')
+    assert.equal(resolve(temporary, '..'), resolve(tmpdir()), '导出临时目录位置不符，未清理')
     await rm(temporary, { recursive: true, force: true })
   }
 }
@@ -503,7 +503,7 @@ export async function migrateDesktopBundle(
     additional: async (destination, database, apply, localDatabase) => {
       // Existing catalog writers validate IDs, counts, members and delay units before any runtime starts.
       const descriptors = manifest.zones.map(({ id, name }) => ({ id, name }))
-      const groups = manifest.groups.map(({ id, name, members }) => ({ id, name, members }))
+      const groups = manifest.groups.map(({ id, name, members, autoMixMode = 'off' }) => ({ id, name, members, autoMixMode }))
       await zoneCatalog(destination).save(descriptors)
       await syncGroupCatalog(destination).save(groups)
       const ids = new Set(['local', ...descriptors.map((zone) => zone.id)])
@@ -653,6 +653,7 @@ export async function migrateDesktopBundle(
           id: group.id,
           name: group.name,
           members: group.members,
+          autoMixMode: group.autoMixMode ?? 'off',
           playback
         })
       }

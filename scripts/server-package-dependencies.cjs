@@ -16,8 +16,9 @@ function resolvePackage(from, name) {
 
 /** Preserve the installed dependency graph, including nested versions and peers.
  * No install, lifecycle script, registry request or symlink is needed at runtime. */
-function collectProductionPackages(root, roots) {
+function collectProductionPackages(root, roots, { externalPackages = [] } = {}) {
   root = fs.realpathSync(root)
+  const external = new Set(externalPackages)
   const staged = new Map(),
     queue = []
   const add = (source) => {
@@ -36,6 +37,7 @@ function collectProductionPackages(root, roots) {
     queue.push(record)
   }
   for (const name of Object.keys(roots).sort()) {
+    if (external.has(name)) continue
     const source = resolvePackage(root, name)
     if (!source) throw new Error(`缺少已安装的生产依赖：${name}`)
     add(source)
@@ -49,6 +51,7 @@ function collectProductionPackages(root, roots) {
       ...Object.keys(manifest.peerDependencies || {})
     ])
     for (const name of [...names].sort()) {
+      if (external.has(name)) continue
       const optional =
         Object.hasOwn(manifest.optionalDependencies || {}, name) ||
         manifest.peerDependenciesMeta?.[name]?.optional === true

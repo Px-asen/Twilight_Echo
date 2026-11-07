@@ -52,6 +52,20 @@ test('settings and tedsp migration retain processing, scene rules, pin and asset
   assert.equal(await readFile(f.source.settingsFile, 'utf8'), source)
 })
 
+test('AutoMix preferences migrate as business settings without adopting device or pack paths', async t => {
+  const f = await fixture(t)
+  const modes = { autoMixMode: 'dj', autoMixStemMode: 'auto', autoMixStemDevice: 'cpu', autoMixStemCacheMiB: 1024 }
+  await writeFile(f.source.settingsFile, JSON.stringify({ ...modes, audioDevice: 'old-DAC', cachePath: 'Z:/old-pack' }))
+  const result = await prepareMigratedConfiguration(f.root, {
+    settingsFile: f.source.settingsFile, resumeMode: 'trackAndPosition', libraryRoots: [], mappings: []
+  })
+  for (const [field, value] of Object.entries(modes))
+    assert.equal(result.settings[field as keyof typeof result.settings], value)
+  assert.deepEqual(result.report.importedFields, Object.keys(modes))
+  assert.notEqual(result.settings.audioDevice, 'old-DAC')
+  assert.notEqual(result.settings.cachePath, 'Z:/old-pack')
+})
+
 test('a partial settings backup changes only its supplied business fields and keeps the personal resume mode', async (t) => {
   const f = await fixture(t)
   await writeFile(

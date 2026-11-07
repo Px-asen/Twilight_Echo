@@ -58,7 +58,10 @@ async function main() {
   prepareVst3Msvc({ root, environment: releaseEnvironment })
   const asio = buildAsioHelper({ root, environment: releaseEnvironment, tests: false })
   const staging = preparePackagedAudioStaging(root, {
-    nativeOverrides: { 'twilight_smtc_node.node': smtc.artifactPath, 'twilight-asio-helper-x86.exe': asio.artifactPath }
+    nativeOverrides: {
+      'twilight_smtc_node.node': smtc.artifactPath,
+      'twilight-asio-helper-x86.exe': asio.artifactPath
+    }
   })
   let build
   try {
@@ -76,7 +79,10 @@ async function main() {
   const branding = verifyWindowsAppBranding(path.join(root, 'dist', 'win-unpacked'))
   console.log(`Windows executable branding verified: ${branding.productName}`)
   const packagedAsar = path.join(root, 'dist', 'win-unpacked', 'resources', 'app.asar')
-  const dependencyClosure = verifyPackagedDependencyClosure(packagedAsar)
+  const dependencyClosure = verifyPackagedDependencyClosure(packagedAsar, {
+    projectRoot: root,
+    externalPackages: ['electron']
+  })
   console.log(`Packaged dependency closure verified: ${dependencyClosure.packages} packages`)
   const verify = run(process.execPath, [
     path.join(root, 'scripts', 'verify-release-artifacts.cjs'),
