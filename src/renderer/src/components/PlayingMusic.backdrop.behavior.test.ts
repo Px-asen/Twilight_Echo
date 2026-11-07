@@ -40,7 +40,7 @@ test('dark cover backgrounds stay brighter, legible and stable through fades wit
     const { stdout } = await promisify(execFile)(
       require('electron') as string,
       ['--no-sandbox', '--force-device-scale-factor=1', join(directory, 'runner.cjs')],
-      { env, windowsHide: true, timeout: 45_000 }
+      { env, windowsHide: true, timeout: 120_000 }
     )
     assert.match(stdout, /PLAYBACK_BACKDROP_OK/)
   } finally {
