@@ -1088,7 +1088,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     id: 'fixture-provider:yrc-scroll-a',
     title: 'YRC scroll A',
     lyrics:
-      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,10000](5000,300,0)Line (5300,300,0)five'
+      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,10000](5000,300,0)Line (5300,9000,0)five'
   }
   const yrcTrackB = {
     ...yrcTrackA,
@@ -1120,6 +1120,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
 
   host.playing(true)
   host.select(yrcTrackA)
+  await waitFor(() => player.currentTrack.value?.lyrics === yrcTrackA.lyrics && document.querySelectorAll('.lyric-row').length === 6, 'YRC content did not reach the layout probe')
   await player.seek(5)
   await tick()
   installStageGeometry()
@@ -1128,7 +1129,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
 
   const activeRow = document.querySelector('.lyric-row.active')
   const rows = [...document.querySelectorAll('.lyric-row')]
-  expect(activeRow, 'no lyric row became active at 5s')
+  expect(activeRow, 'no lyric row became active at 5s; clock=' + player.currentTime.value + '; rowCount=' + rows.length)
   const activeIndex = rows.indexOf(activeRow)
   expect(activeIndex > 0, 'the probe needs a later active line; index=' + activeIndex)
 
@@ -1186,12 +1187,14 @@ window.runPlayingMusicLyricsRuntime = async () => {
   )
 
   host.select(yrcTrackB)
-  player.seek(0)
+  await waitFor(() => player.currentTrack.value?.id === yrcTrackB.id && player.currentTrack.value?.lyrics === yrcTrackB.lyrics, 'alternate YRC content did not arrive')
+  await player.seek(0)
   await tick()
   installStageGeometry()
 
   host.select(yrcTrackA)
-  player.seek(5)
+  await waitFor(() => player.currentTrack.value?.id === yrcTrackA.id && player.currentTrack.value?.lyrics === yrcTrackA.lyrics, 'restored YRC content did not arrive')
+  await player.seek(5)
   await tick()
   installStageGeometry()
   await new Promise((resolve) => setTimeout(resolve, 520))
