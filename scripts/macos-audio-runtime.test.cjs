@@ -4,11 +4,42 @@ const path = require('node:path')
 const test = require('node:test')
 
 const {
+  bundleMacOSRuntimeDependencies,
   isSystemDependency,
   parseOtoolDependencies,
   parseOtoolRpaths,
   validateBundledMacOSRuntime
 } = require('./macos-audio-runtime.cjs')
+
+test('staged rpath copies retain their source identity and distinct same-name libraries still fail', () => {
+  const root = path.resolve('/tmp/macos-bundle-origin'), output = path.join(root, 'runtime')
+  const engine = path.join(output, 'engine.dylib'), addon = path.join(output, 'audio.node')
+  const source = path.join(root, 'build', 'resampler.dylib'), staged = path.join(output, 'resampler.dylib')
+  const other = path.join(root, 'other', 'resampler.dylib')
+  const run = (conflict) => {
+    const files = new Set([engine, addon, source, other]), loads = new Map([
+      [engine, [source]], [addon, [conflict ? other : '@rpath/resampler.dylib']], [staged, []]
+    ])
+    const search = new Map([[engine, []], [addon, [output]], [staged, []]])
+    const copies = []
+    const result = bundleMacOSRuntimeDependencies([engine, addon], output, {
+      exists: file => files.has(file), realpath: file => file,
+      inspectDependencies: file => loads.get(file), inspectRpaths: file => search.get(file),
+      copy: (from, to) => { copies.push([from, to]); files.add(to) },
+      run: (command, args) => {
+        if (command !== 'install_name_tool') return
+        const target = args.at(-1)
+        if (args[0] === '-change') loads.set(target, loads.get(target).map(load => load === args[1] ? args[2] : load))
+        if (args[0] === '-delete_rpath') search.set(target, search.get(target).filter(value => value !== args[1]))
+      }
+    })
+    assert.deepEqual(copies, [[source, staged]])
+    assert.equal(result.copiedDependencies, 1)
+    assert.equal(result.verification.binaries, 3)
+  }
+  run(false)
+  assert.throws(() => run(true), /basename collision/)
+})
 
 test('parses otool dependency and rpath output without treating the Mach-O identity as a load', () => {
   assert.deepEqual(
