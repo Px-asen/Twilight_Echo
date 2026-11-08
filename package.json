@@ -1,6 +1,6 @@
 {
   "name": "TwilightEcho",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Twilight Echo music player",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
