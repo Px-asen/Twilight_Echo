@@ -241,10 +241,6 @@ test('migration requires explicit root grants, refuses an existing profile and l
 
 test('a restore failure after reserving the new profile removes only that incomplete target', async (t) => {
   const f = await fixture(t)
-  f.backup.data.playlists = [
-    { id: 'incomplete-playlist', name: 'Missing creation date', trackIds: ['song'] }
-  ]
-  await writeFile(f.file, JSON.stringify(f.backup))
   const original = await readFile(f.file, 'utf8')
   await assert.rejects(
     migratePersonalBackup({
@@ -252,9 +248,14 @@ test('a restore failure after reserving the new profile removes only that incomp
       destination: f.destination,
       libraryRoots: [f.music],
       restoreOptions: f.options,
-      apply: true
+      apply: true,
+      additional: async (root) => {
+        assert.equal(root, f.destination)
+        await access(join(root, 'music-library.sqlite'))
+        throw new Error('扩展恢复失败')
+      }
     }),
-    /歌单恢复数据/
+    /扩展恢复失败/
   )
   await assert.rejects(access(f.destination), { code: 'ENOENT' })
   assert.equal(await readFile(f.file, 'utf8'), original)
