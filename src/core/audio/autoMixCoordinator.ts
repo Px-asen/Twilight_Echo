@@ -279,6 +279,11 @@ export class TwilightAutoMixCoordinator {
   private useSources<T>(action: () => Promise<T>): Promise<T> {
     return this.d.useSources ? this.d.useSources(action) : action()
   }
+  private rememberWindow(key: string, features: AutoMixFeatures): void {
+    this.validWindows.set(key, features)
+    while (this.validWindows.size > 64)
+      this.validWindows.delete(this.validWindows.keys().next().value!)
+  }
   private record(
     stage: AutoMixPrepareStage,
     outcome: AutoMixDiagnosticEntry['outcome'],
@@ -403,7 +408,11 @@ export class TwilightAutoMixCoordinator {
           const source = await this.d.authorize(item.source)
           this.current(revision, signal)
           this.d.assertSource?.(source)
-          if (!this.d.allowSourceUris && /^[a-z][a-z0-9+.-]*:/i.test(source) && !/^[a-z]:[\\/]/i.test(source))
+          if (
+            !this.d.allowSourceUris &&
+            /^[a-z][a-z0-9+.-]*:/i.test(source) &&
+            !/^[a-z]:[\\/]/i.test(source)
+          )
             throw new Error('actual_online_source_identity_unavailable')
           this.sources.add(source)
           files.push(source)
@@ -436,14 +445,16 @@ export class TwilightAutoMixCoordinator {
         const memoryKey = JSON.stringify(identity)
         const reused = this.validWindows.get(memoryKey)
         if (reused) return reused
+        let cached: AutoMixFeatures | null = null
         try {
-          const cached = await this.d.cache.get(identity)
-          if (cached) {
-            this.validWindows.set(memoryKey, cached)
-            return cached
-          }
+          cached = await this.d.cache.get(identity)
         } catch {
           this.record('cache', 'fallback', 'cache_read_failed', 0)
+        }
+        verifySources(activeSignal)
+        if (cached) {
+          this.rememberWindow(memoryKey, cached)
+          return cached
         }
         const result = await this.d.analyze(
           files[deck],
@@ -460,9 +471,7 @@ export class TwilightAutoMixCoordinator {
         if (!result.ok) throw new Error(result.reason)
         if (!isTwilightAutoMixWindowResult(identity, result))
           throw new Error('analysis_coverage_mismatch')
-        this.validWindows.set(memoryKey, result)
-        while (this.validWindows.size > 64)
-          this.validWindows.delete(this.validWindows.keys().next().value!)
+        this.rememberWindow(memoryKey, result)
         try {
           await this.d.cache.set(identity, result)
         } catch {

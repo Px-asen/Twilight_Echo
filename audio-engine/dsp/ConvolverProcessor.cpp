@@ -17,6 +17,7 @@
 #include <limits>
 #include <numbers>
 #include <mutex>
+#include <unordered_map>
 
 namespace twilight::audio {
 namespace {
@@ -521,7 +522,7 @@ bool ConvolverProcessor::loadImpulseResponse(const std::string& path, std::strin
 
   originalIr_ = std::move(ir);
   irIdentity_ = identity;
-  irCache_.clear();
+  runtimeIr_.reset();
   info_ = {};
   realtimeBudget_.reset();
   info_.loaded = true;
@@ -541,11 +542,11 @@ bool ConvolverProcessor::loadImpulseResponse(const std::string& path, std::strin
 
 void ConvolverProcessor::unloadImpulseResponse() {
   originalIr_.reset();
-  irCache_.clear();
+  runtimeIr_.reset();
   channels_.clear();
   routedInput_.fill(0.0f);
   wetOutput_.fill(0.0f);
-  wetDelayBuffer_.clear();
+  std::vector<float>{}.swap(wetDelayBuffer_);
   wetDelayFrames_ = 0;
   wetDelayWriteFrame_ = 0;
   wetGain_ = 1.0;
@@ -805,6 +806,8 @@ void ConvolverProcessor::rebuild() {
   wetGain_ = 1.0;
   if (!config_.enabled || !config_.convolverEnabled || !originalIr_ || format_.sampleRate <= 0 ||
       format_.channelCount <= 0 || format_.channelCount > 8) {
+    runtimeIr_.reset();
+    std::vector<float>{}.swap(wetDelayBuffer_);
     info_.active = false;
     return;
   }
@@ -872,16 +875,16 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
   }
 
   const bool needsResample = originalIr_->sampleRate != format_.sampleRate;
-  auto cached = irCache_.find(format_.sampleRate);
-  if (cached == irCache_.end()) {
-    auto prepared = needsResample
+  if (!runtimeIr_ || runtimeIr_->sampleRate != format_.sampleRate) {
+    // Keep only the active rate. Other live graphs can still share their IR
+    // through the weak preparation index without pinning retired rates here.
+    runtimeIr_ = needsResample
         ? cachedPreparation<IrData>(irIdentity_.empty() ? "" : irIdentity_ + ":rate:" + std::to_string(format_.sampleRate),
             [&]() { return std::make_shared<IrData>(resampleIr(*originalIr_, format_.sampleRate)); })
         : originalIr_;
-    cached = irCache_.emplace(format_.sampleRate, std::move(prepared)).first;
   }
 
-  const IrData& ir = *cached->second;
+  const IrData& ir = *runtimeIr_;
   if (ir.samples.empty() || ir.frames == 0) {
     if (error) *error = "脉冲响应没有可用采样";
     return false;

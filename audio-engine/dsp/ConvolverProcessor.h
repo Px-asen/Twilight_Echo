@@ -9,7 +9,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace twilight::audio {
@@ -67,7 +66,7 @@ class ConvolverProcessor final : public IAudioProcessor {
   AudioFormat format_;
   std::shared_ptr<const IrData> originalIr_;
   std::string irIdentity_;
-  std::unordered_map<int, std::shared_ptr<const IrData>> irCache_;
+  std::shared_ptr<const IrData> runtimeIr_;
   std::vector<std::unique_ptr<FftChannel>> channels_;
   std::array<float, 8> routedInput_{};
   std::array<float, 8> wetOutput_{};
