@@ -316,10 +316,10 @@ test(
     assert.equal(current.tracks[0].title, 'Restored after removal')
     assert.equal(current.tracks[0].addedAt, 42)
     assert.equal(current.tracks[0].custom, true)
-    assert.deepEqual(
-      JSON.parse(readFileSync(join(f.root, 'playlists.json'), 'utf8')).data[0].trackIds,
-      ['original']
-    )
+    const restoredPlaylists = await f.database.preferencesPlaylistsLoad()
+    const restoredPlaylist = restoredPlaylists!.data.find((playlist) => playlist.id === 'favorite')!
+    assert.deepEqual(restoredPlaylist.trackIds, ['original'])
+    assert.ok(Number.isFinite(Date.parse(restoredPlaylist.createdAt)))
     assert.equal(existsSync(getLocalLibraryRemovalJournalPath(f.json)), false)
     assert.equal(readFileSync(f.json, 'utf8'), source)
   }
