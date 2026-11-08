@@ -16,17 +16,24 @@ export function useNavigationIndicator(
   const spring = createMotionSpring(([x, y, width, height]) => {
     const element = indicator.value
     if (element) {
-      element.style.transform = `translate3d(${x}px,${y}px,0) scale(${width},${height})`
-      const radius = 'var(--te-navigation-motion-radius, var(--te-radius-global, 8px))'
-      element.style.borderRadius = `calc(${radius} / ${Math.max(1, width)}) / calc(${radius} / ${Math.max(1, height)})`
+      // Scaling a 1px surface magnifies raster rounding at fractional display
+      // scales (150% paints it as 2 device pixels). Paint the actual row size.
+      element.style.width = `${width}px`
+      element.style.height = `${height}px`
+      element.style.transform = `translate3d(${x}px,${y}px,0)`
+      element.style.borderRadius =
+        'var(--te-navigation-motion-radius, var(--te-radius-global, 8px))'
     }
   })
   function update(animate: boolean): void {
     const container = root.value,
       element = indicator.value
     if (!container || !element) return
-    if (document.hidden || container.ownerDocument.hidden ||
-        container.ownerDocument.documentElement.dataset.teVisibility === 'hidden') {
+    if (
+      document.hidden ||
+      container.ownerDocument.hidden ||
+      container.ownerDocument.documentElement.dataset.teVisibility === 'hidden'
+    ) {
       cancelAnimationFrame(frame)
       frame = 0
       spring.finish()
@@ -73,8 +80,12 @@ export function useNavigationIndicator(
   function schedule(): void {
     cancelAnimationFrame(frame)
     frame = 0
-    if (document.hidden || root.value?.ownerDocument.hidden ||
-        root.value?.ownerDocument.documentElement.dataset.teVisibility === 'hidden') return
+    if (
+      document.hidden ||
+      root.value?.ownerDocument.hidden ||
+      root.value?.ownerDocument.documentElement.dataset.teVisibility === 'hidden'
+    )
+      return
     frame = requestAnimationFrame(() => {
       frame = 0
       update(false)
