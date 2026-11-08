@@ -1,4 +1,54 @@
-# 常驻日志与诊断包
+# 调试会话、常驻日志与诊断包
+
+## 复现一次问题并反馈
+
+打开 **设置 → 系统与关于 → 日志与问题排查**，点击 **开始调试**，然后复现问题。界面会持续显示正在记录；可以填写说明并点击“标记刚刚发生的问题”，最后选择 **结束并导出调试包**。取消保存对话框会继续记录。导出失败后，本地会话仍然保留，可重新导出。
+
+调试会话保留完整本地路径、JavaScript 堆栈文件及行列号、模块加载过程、Core 最近状态和调用关联信息。文本中的密码、Token、Cookie 和网络认证信息仍会过滤。调试模式不递归扫描用户磁盘，也不记录音频内容或任意网络请求体。
+
+如果遇到音频进程退出、原生插件崩溃等问题，先勾选 **启用崩溃取证**，再点击 **重启并开始取证**。开始和结束都需要重启；队列和进度按应用原有退出流程保存，重启后手动继续播放。异常退出后再次启动会延续同一个调试会话。结束时先选择导出位置，应用关闭取证并重启，然后自动完成导出。
+
+崩溃转储是可选附件，可能包含敏感内存片段，不能按文本日志的脱敏规则保证其内容安全；导出时会单独提示。所有记录只保存在本机，不自动上传。
+
+调试数据与常驻日志分开保存在 `debug-sessions/<会话编号>/`，预算 1 GiB、保留 7 天，每个会话最多保留 3 份完成的转储。清理优先处理已结束的旧会话，待导出失败的会话保留以便重试。容量、写入错误和采集覆盖不足会显示在状态与导出包中。
+
+状态会区分服务日志确认、Electron 采集器启用结果、原生进程附加结果和已保存的转储数量。服务在 5 秒内未确认模式切换时会报告超时；采集 helper 的启动、附加或写入失败会记录阶段及系统错误码。开启取证不代表已经产生转储。
+
+### 在调试包中找证据
+
+- `timeline.jsonl`：按 `debugSessionId`、`operationId`、`requestId`、进程实例和服务代次关联一次操作。
+- `debug/startup/`：加载原生模块及执行原生命令前写下的记录，即使进程在返回结果之前退出也能保留。
+- `debug/processes/`：Core 和后台服务最后发布的缓存。`alive`、`collectedAt`、`dataAgeMs` 区分当前状态和历史证据。导出不探测或重新启动故障音频进程。
+- `debug/directories.json`、`debug/windows/`：实际目录、Windows 构建修订号、应用错误事件和进程模块清单。
+- `debug/crashes/`：异常代码、异常地址、模块加载基址和可选 `.dmp`。异常地址减去所属模块加载基址得到模块偏移。
+- `snapshots.json` 中的 `build.javascript`、`build.native`：发布文件与调试符号之间的身份映射。
+
+三端桌面共用调试会话、日志和 Electron Crashpad 本地转储。Windows 的独立 Node、ASIO 和 VST3 进程在加载业务原生模块前自行注册到采集 helper，由进程外写入精简转储；采集器不会附加到 Electron 进程。macOS/Linux 独立原生辅助进程的转储暂未覆盖，状态中会明确注明。
+
+包内 `README.md` 优先列出问题说明、关联操作编号、故障进程、异常代码和可计算的模块偏移，再列出进程最后状态与缺失证据。十六进制模块基址和异常地址在调试包中保留原值。
+
+### 用发布符号还原代码位置
+
+构建保留 source maps 和原生符号，发布二进制仍裁剪。符号默认归档到 `output/diagnostic-symbols/`，也可以通过 `TWILIGHT_SYMBOL_DIRECTORY` 指定保留目录。发布时应一起留存该归档；符号文件不进入用户安装包。
+
+```powershell
+# 使用诊断包中对应二进制的 artifactId 和模块偏移。
+node scripts/symbolize-diagnostics.cjs --artifact <artifactId> --offset 0x5d70 --addr2line D:/tools/bin/addr2line.exe
+# JavaScript 堆栈的行列号均按 1 起算。
+node scripts/symbolize-diagnostics.cjs --artifact <javascriptArtifactId> --line 120 --column 8
+```
+
+MSVC PDB 使用打包的 x64 采集 helper 的只读符号解析入口；GNU 符号使用 `addr2line`。缺少对应构建的符号会直接报错，不用相近版本替代。
+
+### 验证打包后的完整流程
+
+```powershell
+node scripts/run-debug-session-package-smoke.cjs path/to/TwilightEcho.exe
+```
+
+该命令在独立的中文和空格路径中创建测试配置，依次验证普通调试导出、启用取证后重启、utility process 真实崩溃、关闭取证后重启与自动导出；随后检查 ZIP 中的会话缓存、模块身份、转储和缺失项。结果与诊断包留在命令输出的目录。测试窗口隐藏，使用测试专用 `--no-sandbox`，不改变发布配置。
+
+## 常驻日志
 
 应用启动时自动开启 debug 级别日志，只保存到本机。设置 → 系统与关于 → 日志与问题排查可以查看状态、打开目录、标记刚刚发生的问题、导出 ZIP 和清理历史日志。保留最近 7 天，总容量 256 MiB，JSONL 分段 8 MiB；正在写入的文件不会被清理。写入异常或容量不足时优先保留活动文件，并在状态和包清单中注明丢失情况。
 
@@ -49,7 +99,7 @@ log.warn('tags.partial', { succeeded: 4, failed: 1, error })
 
 启动、设置加载保存、窗口和渲染进程生命周期、Vue/JavaScript 错误、未处理异常、服务退出、睡眠恢复、更新阶段自动记录。IPC/RPC 覆盖音乐服务、下载、媒体库、标签、备份恢复、主题、插件和媒体集成操作；高频播放状态、频谱、进度 getter 按秒汇总，失败逐条记录。下载任务状态与系统媒体会话另有领域事件。网络记录请求和响应头阶段，保留原响应流及错误传播行为，不读取请求体或音频内容。
 
-主进程 worker 每 250 ms 异步批量写入，error/fatal/warn 优先。单条事件最多 16 KiB，发送队列最多 4 MiB，内存备用记录最多 1 MiB。过载优先丢弃低级别事件，记录 `events.dropped`；日志故障不会通过 console 再次递归记录。正常退出最多等待 2 秒刷新。异常退出可能留下截断尾行，导出器会忽略并计数。
+主进程每 250 ms 异步批量写入，error/fatal/warn 优先。单条事件最多 16 KiB，发送队列最多 4 MiB，内存备用记录最多 1 MiB。过载优先丢弃低级别事件，记录 `events.dropped`；日志故障不会通过 console 再次递归记录。正常退出最多等待 2 秒刷新。异常退出可能留下截断尾行，导出器会忽略并计数。
 
 原生采样独立于 JavaScript RPC、transport 锁和 clock 线程。每秒读取回调和消费计数，pipeline 锁只使用 try-lock；锁忙、无活动流和 DSD 会明确标记不可用。日志磁盘失败保留原生有界 ring，并向主进程输出一次状态说明。样本中的多个原子字段并非整个引擎的原子快照。
 
@@ -101,4 +151,4 @@ pnpm run build
 
 长时间取证使用 `scripts/diagnostics-playback-soak.ts`。先在启动 shell 设置 `TAE_DIAGNOSTICS_DIR`、`TWILIGHT_LOG_SESSION_ID` 和 `TAE_SERVICE_GENERATION`，再执行 `node --experimental-strip-types scripts/diagnostics-playback-soak.ts 输出目录 1800 addon路径`。脚本使用真实 WASAPI 共享 PCM 解码输出、音量 0，包含每秒健康、普通轮询、20 条/秒写入负载、磁盘增长和回调性能报告。它验证日志与音频性能，不代表复现了用户 #132。
 
-此系统不采集进程内存转储，也不自动远程上传。旧音频 Markdown/JSON 导出仍保留。
+常驻日志不采集进程内存转储；仅用户主动选择的崩溃取证会话启用转储。旧音频 Markdown/JSON 导出保持原有脱敏行为。

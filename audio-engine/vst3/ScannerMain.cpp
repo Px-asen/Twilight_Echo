@@ -1,4 +1,5 @@
 #include "Vst3ModuleProbe.h"
+#include "../diagnostics/CrashCaptureRegistration.h"
 
 #include <windows.h>
 
@@ -21,6 +22,7 @@ std::string utf8(const wchar_t* value) {
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
+  twilight::diagnostics::registerCrashCapture();
   if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test") {
     std::cout << "{\"kind\":\"twilight-vst3-scanner\",\"protocolVersion\":1,\"status\":\"ready\"}";
     return 0;

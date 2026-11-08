@@ -7,10 +7,15 @@ const busy = ref('')
 const note = ref('')
 const message = ref('')
 const failed = ref(false)
+const captureCrashes = ref(false)
+const includeCrashes = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
 async function refresh() {
   try {
-    status.value = await window.api.diagnostics.getStatus()
+    const next = await window.api.diagnostics.getStatus()
+    if (next.debug?.id !== status.value?.debug?.id)
+      includeCrashes.value = next.debug?.captureCrashes ?? false
+    status.value = next
   } catch (error) {
     failed.value = true
     message.value = error instanceof Error ? error.message : String(error)
@@ -40,8 +45,36 @@ function mark() {
 }
 function exportBundle() {
   void run('export', async () => {
-    const result = await window.api.diagnostics.exportBundle()
+    const session = status.value?.debug
+    const result = await window.api.diagnostics.exportBundle(
+      session && session.state !== 'ended'
+        ? { debugSessionId: session.id, includeCrashes: includeCrashes.value }
+        : undefined
+    )
     if (result.filePath) message.value = `诊断包已导出：${result.filePath}`
+  })
+}
+function startDebug() {
+  void run('start', async () => {
+    const session = await window.api.diagnostics.startDebug({
+      captureCrashes: captureCrashes.value
+    })
+    includeCrashes.value = session.captureCrashes
+    message.value =
+      session.state === 'restart-required' ? '正在重启以开始崩溃取证…' : '调试已开始，请复现问题。'
+  })
+}
+function finishDebug() {
+  const session = status.value?.debug
+  if (!session) return
+  void run('finish', async () => {
+    const result = await window.api.diagnostics.exportBundle({
+      debugSessionId: session.id,
+      includeCrashes: includeCrashes.value,
+      stopDebug: true
+    })
+    if (result.restarting) message.value = '正在关闭崩溃取证，重启后自动导出。'
+    else if (result.filePath) message.value = `调试包已导出：${result.filePath}`
   })
 }
 function clear() {
@@ -67,9 +100,117 @@ onUnmounted(() => clearInterval(timer))
       运行日志会自动保存在本机。遇到问题后可以记下时间，并导出诊断包用于排查。
     </p>
     <div class="setting-list">
+      <div class="setting-item top-align">
+        <div class="diagnostic-form">
+          <div class="setting-copy">
+            <strong>{{
+              status?.debug && status.debug.state !== 'ended'
+                ? '调试会话进行中'
+                : '复现问题并收集调试日志'
+            }}</strong>
+            <span>记录完整本地路径、模块和调用过程，帮助定位问题。</span>
+          </div>
+          <template v-if="status?.debug && status.debug.state !== 'ended'">
+            <span
+              >已记录
+              {{
+                Math.max(0, Math.floor((Date.now() - Date.parse(status.debug.startedAt)) / 60000))
+              }}
+              分钟 · {{ (status.debug.bytes / 1048576).toFixed(1) }} MiB / 1 GiB</span
+            >
+            <template v-if="status.debug.captureCrashes">
+              <span
+                >崩溃转储已保存 {{ status.debug.crashes?.dumps ?? 0 }} 份，结束取证时会重启。</span
+              >
+              <span v-if="status.debug.crashes"
+                >Electron 采集器：{{
+                  {
+                    disabled: '未启用',
+                    pending: '等待重启',
+                    active: '已启用',
+                    stopped: '已关闭',
+                    failed: '启用失败'
+                  }[status.debug.crashes.electron]
+                }}
+                · 原生进程：{{
+                  status.debug.crashes.native === 'unsupported'
+                    ? '此平台暂未覆盖'
+                    : `${status.debug.crashes.collectors.filter((item) => item.status === 'attached').length} 个已附加`
+                }}</span
+              >
+            </template>
+            <span v-if="status.debug.processes?.length"
+              >服务日志确认：{{
+                status.debug.processes.filter(
+                  (item) => item.alive && item.captureState === 'active'
+                ).length
+              }}
+              / {{ status.debug.processes.filter((item) => item.alive).length }}</span
+            >
+            <small v-if="status.debug.droppedEvents" class="diagnostic-warning"
+              >{{ status.debug.droppedEvents }} 条调试记录因容量或写入限制未保存。</small
+            >
+            <small
+              v-for="warning in status.debug.warnings"
+              :key="warning"
+              class="diagnostic-warning"
+              >{{ warning }}</small
+            >
+            <label v-if="status.debug.captureCrashes" class="inline-controls">
+              <input
+                v-model="includeCrashes"
+                type="checkbox"
+              />导出时包含崩溃转储（可能含敏感内存片段）
+            </label>
+            <button
+              class="brand-soft-button"
+              type="button"
+              :disabled="Boolean(busy)"
+              @click="finishDebug"
+            >
+              {{ busy === 'finish' ? '正在结束并导出…' : '结束并导出调试包' }}
+            </button>
+          </template>
+          <template v-else>
+            <label class="inline-controls"
+              ><input
+                v-model="captureCrashes"
+                type="checkbox"
+                :disabled="Boolean(busy)"
+              />启用崩溃取证（开始和结束时需要重启）</label
+            >
+            <button
+              class="brand-soft-button"
+              type="button"
+              :disabled="Boolean(busy)"
+              @click="startDebug"
+            >
+              {{ captureCrashes ? '重启并开始取证' : '开始调试' }}
+            </button>
+            <template v-if="status?.debug">
+              <span>上次会话已结束，记录仍保存在本机。</span>
+              <small v-if="status.debug.pendingExport?.error" class="diagnostic-error"
+                >导出失败：{{ status.debug.pendingExport.error }}</small
+              >
+              <label v-if="status.debug.captureCrashes" class="inline-controls"
+                ><input v-model="includeCrashes" type="checkbox" />包含崩溃转储</label
+              >
+              <button
+                class="soft-button"
+                type="button"
+                :disabled="Boolean(busy)"
+                @click="finishDebug"
+              >
+                重新导出上次调试包
+              </button>
+            </template>
+          </template>
+        </div>
+      </div>
+      <hr />
       <div class="setting-item">
         <div class="setting-copy">
-          <strong>{{ status?.error ? '日志保存遇到问题' : '详细日志已开启' }}</strong>
+          <strong>{{ status?.error ? '日志保存遇到问题' : '常驻日志已开启' }}</strong>
           <span v-if="status"
             >已使用 {{ (status.bytes / 1048576).toFixed(1) }} MiB · 最多 256 MiB · 保留最近 7
             天</span
@@ -130,7 +271,13 @@ onUnmounted(() => clearInterval(timer))
                   :class="busy === 'export' ? 'pi-spinner pi-spin' : 'pi-download'"
                   aria-hidden="true"
                 ></i>
-                {{ busy === 'export' ? '正在导出诊断包…' : '导出完整诊断包' }}
+                {{
+                  busy === 'export'
+                    ? '正在导出诊断包…'
+                    : status?.debug && status.debug.state !== 'ended'
+                      ? '导出当前调试包'
+                      : '导出诊断包'
+                }}
               </button>
             </div>
             <button
@@ -159,7 +306,9 @@ onUnmounted(() => clearInterval(timer))
           </p>
           <p class="diagnostic-privacy">
             <i class="pi pi-shield" aria-hidden="true"></i>
-            <span>诊断包不包含音频内容、密码或完整歌曲地址。日志不会自动上传。</span>
+            <span
+              >常驻日志会脱敏个人路径；调试日志保留完整本地路径。文本日志过滤认证信息，崩溃转储可能含敏感内存片段。文件不会自动上传。</span
+            >
           </p>
         </div>
       </div>

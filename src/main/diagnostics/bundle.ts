@@ -1,13 +1,25 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdtemp, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { StringDecoder } from 'node:string_decoder'
 import { ZipFile } from 'yazl'
-import type { DiagnosticEvent } from '../../shared/diagnostics.ts'
-import { sanitizeDiagnosticValue } from './sanitize.ts'
+import type { DebugSessionStatus, DiagnosticEvent } from '../../shared/diagnostics.ts'
+import {
+  sanitizeDiagnosticValue as sanitizeValue,
+  type DiagnosticSanitizeOptions
+} from './sanitize.ts'
 
 export interface DiagnosticCollector {
   name: string
@@ -25,7 +37,8 @@ export interface CollectorResult {
 export async function collectDiagnosticSnapshots(
   collectors: DiagnosticCollector[],
   timeoutMs = 2000,
-  totalMs = 15000
+  totalMs = 15000,
+  sanitizeOptions: DiagnosticSanitizeOptions = { preserveLocalPaths: false }
 ): Promise<CollectorResult[]> {
   const deadline = Date.now() + totalMs
   return Promise.all(
@@ -36,8 +49,8 @@ export async function collectDiagnosticSnapshots(
         Promise.resolve()
           .then(collector.collect)
           .then(
-            (value) => ({ status: 'ok' as const, value: sanitizeDiagnosticValue(value) }),
-            (error) => ({ status: 'failed' as const, error: sanitizeDiagnosticValue(error) })
+            (value) => ({ status: 'ok' as const, value: sanitizeValue(value, sanitizeOptions) }),
+            (error) => ({ status: 'failed' as const, error: sanitizeValue(error, sanitizeOptions) })
           ),
         new Promise<{ status: 'timeout' }>((resolve) => {
           timer = setTimeout(
@@ -114,13 +127,27 @@ export interface DiagnosticBundleOptions {
   memoryEvents?: DiagnosticEvent[]
   status?: unknown
   legacyFiles?: { source: string; name: string; module: string }[]
+  debugSession?: Pick<DebugSessionStatus, 'id' | 'startedAt' | 'captureCrashes'> &
+    Partial<DebugSessionStatus>
+  attachments?: { source: string; name: string }[]
 }
 
 export async function exportDiagnosticBundle(options: DiagnosticBundleOptions) {
-  const staging = await mkdtemp(join(tmpdir(), 'twilight-diagnostics-'))
+  const sanitizeOptions = {
+    preserveLocalPaths: Boolean(options.debugSession),
+    maxArrayLength: 16384,
+    maxDepth: 16
+  }
+  const sanitizeDiagnosticValue = (value: unknown) => sanitizeValue(value, sanitizeOptions)
+  // The user-selected destination is already writable; do not require access
+  // to an unrelated system temp directory to export their evidence.
+  const staging = await mkdtemp(join(dirname(options.destination), '.twilight-diagnostics-'))
   const partial = `${options.destination}.${randomUUID()}.partial`
   const files: string[] = []
-  const missing: string[] = []
+  const missing: string[] = [...(options.debugSession?.warnings ?? [])]
+  const crashSummaries: string[] = []
+  const processSummaries: string[] = []
+  const reportText = (value: unknown) => String(value ?? 'unknown').replace(/[\r\n`]/g, ' ')
   const coverage: {
     first: string | null
     last: string | null
@@ -140,9 +167,15 @@ export async function exportDiagnosticBundle(options: DiagnosticBundleOptions) {
     } catch (error) {
       missing.push(`disk snapshot: ${String(sanitizeDiagnosticValue(error))}`)
     }
-    const collectors = await collectDiagnosticSnapshots(options.collectors)
+    const collectors = await collectDiagnosticSnapshots(
+      options.collectors,
+      2000,
+      15000,
+      sanitizeOptions
+    )
     for (const result of collectors)
-      if (
+      if (result.status !== 'ok') missing.push(`${result.name}: ${result.status}`)
+      else if (
         result.value &&
         typeof result.value === 'object' &&
         'available' in result.value &&
@@ -151,6 +184,85 @@ export async function exportDiagnosticBundle(options: DiagnosticBundleOptions) {
         missing.push(`${result.name}: unavailable`)
     await writeFile(join(staging, 'snapshots.json'), `${JSON.stringify(collectors, null, 2)}\n`)
     files.push('snapshots.json')
+    let attachmentBytes = 0
+    for (const attachment of options.attachments ?? []) {
+      if (!/^debug\/[\w./-]+$/.test(attachment.name) || attachment.name.includes('..'))
+        throw new Error('Invalid attachment name')
+      try {
+        const size = (await stat(attachment.source)).size
+        if (attachmentBytes + size > 1024 * 1024 * 1024) {
+          missing.push(`${attachment.name}: capacity exceeded`)
+          continue
+        }
+        const target = join(staging, attachment.name)
+        await mkdir(join(target, '..'), { recursive: true })
+        if (attachment.name.endsWith('.json')) {
+          if (size > 16 * 1024 * 1024) {
+            missing.push(`${attachment.name}: JSON exceeds 16 MiB`)
+            continue
+          }
+          const value = sanitizeDiagnosticValue(
+            JSON.parse(await readFile(attachment.source, 'utf8'))
+          ) as any
+          if (attachment.name.startsWith('debug/processes/')) {
+            processSummaries.push(
+              `- ${reportText(value.role)} · PID ${reportText(value.processId)} · ${value.alive ? '采集时存活' : '已退出'} · 最后采集 ${reportText(value.snapshot?.collectedAt)} · ${reportText(value.error ?? value.captureState ?? '见缓存快照')}`
+            )
+          }
+          if (attachment.name.startsWith('debug/crashes/') && value.exceptionCode) {
+            const address = /^0x[\da-f]+$/i.test(value.exceptionAddress ?? '')
+              ? BigInt(value.exceptionAddress)
+              : null
+            const faulting =
+              address !== null && Array.isArray(value.modules)
+                ? value.modules.find(
+                    (module: any) =>
+                      /^0x[\da-f]+$/i.test(module.baseAddress ?? '') &&
+                      Number.isSafeInteger(module.size) &&
+                      module.size >= 0 &&
+                      address >= BigInt(module.baseAddress) &&
+                      address < BigInt(module.baseAddress) + BigInt(module.size)
+                  )
+                : undefined
+            const offset = faulting
+              ? `0x${(address! - BigInt(faulting.baseAddress)).toString(16)}`
+              : 'unknown'
+            crashSummaries.push(
+              `- PID ${reportText(value.processId)} · 异常 ${reportText(value.exceptionCode)} · ${reportText(faulting?.name)} + ${offset} · 转储 ${reportText(value.dumpStatus)}`
+            )
+          }
+          if (
+            attachment.name === 'debug/windows/application-errors.json' &&
+            Array.isArray(value.events)
+          )
+            for (const event of value.events.slice(-20))
+              crashSummaries.push(
+                `- ${reportText(event.timestamp)} · PID ${reportText(event.processId)} · 异常 ${reportText(event.exceptionCode)} · ${reportText(event.module)} + ${reportText(event.faultingOffset)}`
+              )
+          await writeFile(target, JSON.stringify(value, null, 2))
+        } else if (attachment.name.endsWith('.jsonl')) {
+          const reader = new LineReader(attachment.source),
+            output = await open(target, 'w')
+          try {
+            for (let line = await reader.next(); line !== null; line = await reader.next()) {
+              try {
+                await output.write(JSON.stringify(sanitizeDiagnosticValue(JSON.parse(line))) + '\n')
+              } catch {
+                missing.push(`${attachment.name}: invalid event`)
+              }
+            }
+          } finally {
+            await reader.close()
+            await output.close()
+          }
+        } else if (attachment.name.endsWith('.dmp')) await copyFile(attachment.source, target)
+        else continue
+        files.push(attachment.name)
+        attachmentBytes += size
+      } catch (error) {
+        missing.push(`${attachment.name}: ${String(error)}`)
+      }
+    }
     if (options.memoryEvents?.length) {
       await writeFile(
         join(logsDir, 'memory-fallback.jsonl'),
@@ -339,7 +451,31 @@ export async function exportDiagnosticBundle(options: DiagnosticBundleOptions) {
     files.push('markers.json')
     const snapshotFailures = collectors.filter((result) => result.status !== 'ok')
     const report = `# Twilight Echo 诊断包\n\n生成时间：${new Date().toISOString()}\n\n日志覆盖：${coverage.first ?? '无'} → ${coverage.last ?? '无'}\n\n记录 ${coverage.events} 条事件；去重 ${coverage.duplicates} 条；无效或截断记录 ${coverage.invalidLines} 条。\n\n## 采集状态\n\n${collectors.map((result) => `- ${result.name}：${result.status}（${result.durationMs} ms）`).join('\n')}\n\n缺失文件：${missing.length ? missing.join('；') : '无'}\n\n## 最近的重要事件\n\n${notable.map((entry) => `- ${entry.timestamp} [${entry.level}] ${entry.module} / ${entry.event}`).join('\n') || '没有记录到重要事件。'}\n\n## 如何排查\n\n先在 timeline.jsonl 中查找 problem.marked 或 incident，再按 operationId、requestId、serviceGeneration 和 streamToken 关联操作。snapshots.json 中的缓存状态带数据年龄；采集失败不能当作服务正常。原生健康计数是相邻采样，不代表整个引擎的原子快照。\n\n日志经过脱敏，不包含音频内容、认证密钥或完整歌曲地址。日志只在本机保存。\n`
-    await writeFile(join(staging, 'README.md'), report)
+    const debugSummary = options.debugSession
+      ? `## 调试会话\n\n${options.debugSession.id} · ${options.debugSession.startedAt}\n\n完整本地路径已保留。认证字段已过滤。${files.some((name) => name.endsWith('.dmp')) ? '包含崩溃转储；转储可能含敏感内存片段，未经过文本脱敏。' : '未包含崩溃转储。'}\n\n问题标记见 markers.json；进程最后状态见 debug/processes/；原生加载阶段见 debug/startup/；系统异常和模块清单见 debug/windows/ 与 debug/crashes/。\n\n`
+      : ''
+    const evidenceSummary = options.debugSession
+      ? `## 问题标记与相关操作\n\n${
+          markers
+            .slice(-12)
+            .map(
+              (entry: any) =>
+                `- ${reportText(entry.timestamp)} · ${reportText(entry.details?.note ?? entry.event)} · operationId=${reportText(entry.operationId)} · requestId=${reportText(entry.requestId)}`
+            )
+            .join('\n') || '本次会话没有人工标记。'
+        }\n\n## 故障进程与异常\n\n${crashSummaries.slice(-20).join('\n') || '没有采集到系统异常记录；转储文件和采集失败原因见 debug/crashes/ 与会话状态。'}\n\n## 进程最后状态\n\n${processSummaries.slice(-32).join('\n') || '未取得进程缓存。'}\n\n`
+      : ''
+    await writeFile(
+      join(staging, 'README.md'),
+      report
+        .replace('## 采集状态', `${debugSummary}${evidenceSummary}## 采集状态`)
+        .replace(
+          '日志经过脱敏，不包含音频内容、认证密钥或完整歌曲地址。',
+          options.debugSession
+            ? '文本日志过滤认证信息并保留完整本地路径。'
+            : '日志经过脱敏，不包含音频内容、认证密钥或完整歌曲地址。'
+        )
+    )
     files.push('README.md')
     const hashes: { name: string; bytes: number; sha256: string }[] = []
     for (const name of files) {
@@ -362,8 +498,11 @@ export async function exportDiagnosticBundle(options: DiagnosticBundleOptions) {
       privacy: {
         localOnly: true,
         audioPayloadCaptured: false,
-        credentialsCaptured: false,
-        fullPathsCaptured: false
+        credentialsCaptured: files.some((name) => name.endsWith('.dmp'))
+          ? 'possible-in-crash-dumps'
+          : false,
+        fullPathsCaptured: Boolean(options.debugSession),
+        crashDumpsIncluded: files.some((name) => name.endsWith('.dmp'))
       }
     }
     await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')

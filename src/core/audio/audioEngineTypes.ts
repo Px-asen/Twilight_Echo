@@ -107,6 +107,7 @@ export interface NativeAudioBinding {
 }
 
 export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
+  getDiagnosticEvidence?(): unknown
   getMetadataAsync: (source: string) => Promise<string | NativeAudioMetadata>
   /** Full native capability JSON; the sync accessor is a synthetic subset. */
   getEngineCapabilitiesAsync?: () => Promise<string>

@@ -10,7 +10,7 @@ import {
 } from '../../shared/diagnostics.ts'
 import { diagnosticIdentity, writeDiagnostic } from './logger.ts'
 import { sanitizeDiagnosticText } from './sanitize.ts'
-import { DiagnosticStore } from './store.ts'
+import { DiagnosticStore, type DiagnosticStoreOptions } from './store.ts'
 import { utilityDiagnosticStatuses } from './utilityObservation.ts'
 
 type QueuedDiagnostic = { event: DiagnosticEvent; line: string; bytes: number }
@@ -37,7 +37,11 @@ export class DiagnosticWriterClient {
   >()
   private timer: NodeJS.Timeout | null = null
   private closing = false
-  constructor(directory: string, workerEntry?: string | URL | null) {
+  constructor(
+    directory: string,
+    workerEntry?: string | URL | null,
+    storeOptions: Partial<DiagnosticStoreOptions> = {}
+  ) {
     this.directory = directory
     if (workerEntry) {
       this.worker = new Worker(workerEntry, {
@@ -85,7 +89,7 @@ export class DiagnosticWriterClient {
       this.worker.unref()
       return
     }
-    const store = new DiagnosticStore({ directory })
+    const store = new DiagnosticStore({ ...storeOptions, directory })
     this.localStore = store
     this.localChain = store.initialize().then(
       () => {

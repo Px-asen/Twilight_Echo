@@ -2,6 +2,9 @@ import { createServicePort } from './services/servicePort.ts'
 import { initializeUtilityDiagnostics } from './diagnostics/utility.ts'
 import { observeDiagnosticOperation } from './diagnostics/observation.ts'
 import { writeDiagnostic } from './diagnostics/logger.ts'
+import { debugCaptureContext, onDebugCaptureChange } from './diagnostics/debugContext.ts'
+import { recordNativeStartup } from './diagnostics/startupEvidence.ts'
+import { summarizeDiagnosticArguments } from './diagnostics/sanitize.ts'
 import type { DiagnosticContext } from '../shared/diagnostics.ts'
 import {
   describeNativeBindingFailure,
@@ -82,6 +85,22 @@ process.once('exit', () => {
 initializeUtilityDiagnostics('twilight-audio-engine')
 const nativeLoad = loadNativeBindingWithDiagnostics()
 const native = nativeLoad.binding
+const configureNativeDiagnostics = () => {
+  const context = debugCaptureContext()
+  const set = (
+    native as unknown as { SetDebugCapture?: (id: string, directory: string) => void } | null
+  )?.SetDebugCapture
+  if (set) set(context?.id ?? '', context?.directory ?? '')
+  else if (context)
+    writeDiagnostic(
+      'audio.native',
+      'debug-mode.unsupported',
+      { reason: 'Native engine requires an update to support live debug capture' },
+      'warn'
+    )
+}
+configureNativeDiagnostics()
+onDebugCaptureChange(configureNativeDiagnostics)
 const bridgeRuntime = native ? new AudioBridgeRuntime(native) : null
 const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
   BridgeStatus: () => bridgeRuntime!.state(),
@@ -91,12 +110,17 @@ const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
     return native.BindBridgeAutoMixSelection(requestJson)
   },
   BridgeAutoMixMode: (mode: string) => {
-    const setMode = (native as unknown as { SetBridgeAutoMixMode?: (mode: string) => unknown }).SetBridgeAutoMixMode
+    const setMode = (native as unknown as { SetBridgeAutoMixMode?: (mode: string) => unknown })
+      .SetBridgeAutoMixMode
     if (!setMode) throw new Error('请更新原生引擎以设置同步组 AutoMix')
     return setMode(mode)
   },
   BridgeQueueControl: (owned: boolean, current = '', next = '') => {
-    const control = (native as unknown as { SetBridgeQueueControl?: (owned: boolean, current: string, next: string) => unknown }).SetBridgeQueueControl
+    const control = (
+      native as unknown as {
+        SetBridgeQueueControl?: (owned: boolean, current: string, next: string) => unknown
+      }
+    ).SetBridgeQueueControl
     if (!control) throw new Error('请更新原生引擎以使用同步组连续播放')
     return control(owned, current, next)
   },
@@ -104,9 +128,11 @@ const bridgeMethods: Partial<Record<string, (...args: any[]) => unknown>> = {
   BridgeHostStop: () => bridgeRuntime!.stopHost(),
   BridgeConnect: (peer: BridgePeer) => bridgeRuntime!.connectPeer(peer),
   BridgeDisconnect: () => bridgeRuntime!.disconnectPeer(),
-  BridgePrepareTimed: (adaptive = false, holdMedia = false) => bridgeRuntime!.prepareTimedPlayback(adaptive, holdMedia),
+  BridgePrepareTimed: (adaptive = false, holdMedia = false) =>
+    bridgeRuntime!.prepareTimedPlayback(adaptive, holdMedia),
   BridgeReleaseTimedMedia: (epoch: number) => bridgeRuntime!.releaseTimedMedia(epoch),
-  BridgeArmTimed: (startAtCoreMs: number, mediaFrame = 0, synchronize = false) => bridgeRuntime!.armTimedPlayback(startAtCoreMs, mediaFrame, synchronize),
+  BridgeArmTimed: (startAtCoreMs: number, mediaFrame = 0, synchronize = false) =>
+    bridgeRuntime!.armTimedPlayback(startAtCoreMs, mediaFrame, synchronize),
   BridgeCancelTimed: () => bridgeRuntime!.cancelTimedPlayback(),
   BridgeSetTimedCorrection: (ppm: number) => bridgeRuntime!.setTimedCorrection(ppm),
   BridgeQuarantine: () => bridgeRuntime!.quarantine(),
@@ -146,7 +172,10 @@ servicePort.on('message', (message) => {
   if (message.kind !== 'request') return
   // Pairing credentials and TLS private keys stay off the diagnostics argument
   // stream. These are private process commands, not public remote RPC methods.
-  if (Object.hasOwn(bridgeMethods, message.method)) { void handleRequest(message); return }
+  if (Object.hasOwn(bridgeMethods, message.method)) {
+    void handleRequest(message)
+    return
+  }
   void observeDiagnosticOperation(
     'audio.native',
     String(message.method),
@@ -157,6 +186,15 @@ servicePort.on('message', (message) => {
 })
 
 async function handleRequest(message: AudioServiceRequest): Promise<void> {
+  if (!/^(GetPlaybackInfo|GetVisualizationData|GetSpectrumData)$/.test(message.method))
+    recordNativeStartup('native.request.start', {
+      method: message.method,
+      requestId: message.requestId,
+      context: message.diagnosticContext,
+      arguments: message.method.startsWith('Bridge')
+        ? []
+        : summarizeDiagnosticArguments(message.args, message.method)
+    })
   if (!native || nativeContractError) {
     writeDiagnostic('audio.native', 'binding.unavailable', { error: nativeContractError }, 'error')
     post({
@@ -185,12 +223,23 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
     if (typeof method !== 'function') {
       throw new Error(`原生音频服务不支持方法：${String(message.method)}`)
     }
-    const args = bridgeMethod ? message.args : bridgeRuntime!.beforeCall(message.method, message.args)
+    const args = bridgeMethod
+      ? message.args
+      : bridgeRuntime!.beforeCall(message.method, message.args)
     const value = await (method as (...args: unknown[]) => unknown)(...args)
+    if (!/^(GetPlaybackInfo|GetVisualizationData|GetSpectrumData)$/.test(message.method))
+      recordNativeStartup('native.request.complete', {
+        method: message.method,
+        requestId: message.requestId
+      })
     bridgeRuntime?.afterCall(message.method)
     post({ kind: 'response', requestId: message.requestId, ok: true, value })
   } catch (error) {
-    try { bridgeRuntime?.callFailed(message.method) } catch { /* The original native failure remains authoritative. */ }
+    try {
+      bridgeRuntime?.callFailed(message.method)
+    } catch {
+      /* The original native failure remains authoritative. */
+    }
     writeDiagnostic('audio.native', 'call.failed', { method: message.method, error }, 'error')
     post({
       kind: 'response',

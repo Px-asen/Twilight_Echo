@@ -103,8 +103,15 @@ const AUDIO_SERVICE_INVALID_MESSAGE = 'audio service returned an invalid or over
 const SLOW_NATIVE_METHODS = new Set<string>([
   // Bridge lifecycle opens/closes explicit drivers or waits for a bounded TLS
   // handshake. It must not trip the short control-RPC watchdog.
-  'BridgeHostStart', 'BridgeHostStop', 'BridgeConnect', 'BridgeDisconnect', 'BridgeShutdown',
-  'BridgePrepareTimed', 'BridgeArmTimed', 'BridgeCancelTimed', 'BridgeSetTimedCorrection',
+  'BridgeHostStart',
+  'BridgeHostStop',
+  'BridgeConnect',
+  'BridgeDisconnect',
+  'BridgeShutdown',
+  'BridgePrepareTimed',
+  'BridgeArmTimed',
+  'BridgeCancelTimed',
+  'BridgeSetTimedCorrection',
   'Play',
   // Pause includes a PCM fade and may close/reopen an exclusive device.
   'Pause',
@@ -227,6 +234,21 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
   private lastDspGraphStatus: DspGraphStatus = createEmptyDspGraphStatus()
   private serviceCapabilities: AudioServiceCapabilities | null = null
+  private lastKnownCapabilities: {
+    collectedAt: string
+    generation: number
+    value: AudioServiceCapabilities
+  } | null = null
+  private lastFailureEvidence: unknown = null
+
+  getDiagnosticEvidence(): unknown {
+    return {
+      generation: this.generation,
+      alive: Boolean(this.child),
+      lastKnownCapabilities: this.lastKnownCapabilities,
+      lastFailure: this.lastFailureEvidence
+    }
+  }
   private lastConvolverInfo: string | ConvolverInfo | null = null
   private lastVisualizationDataByKey = new Map<string, string | VisualizationData>()
   private visualizationCacheKeys = new Set<string>()
@@ -646,7 +668,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.child = null
     // Keep the old child and the restart gate on a failed exit ACK. A retry may
     // rejoin that process; neither polling nor a timer may launch an audio peer.
-    if (previous) await terminateAudioServiceChild(previous, this.options.restartTimeoutMs ?? 20_000)
+    if (previous)
+      await terminateAudioServiceChild(previous, this.options.restartTimeoutMs ?? 20_000)
     this.retiringChild = null
     this.generation++
     this.clearServiceDerivedCaches()
@@ -799,6 +822,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private handleMessage(message: unknown): void {
+    if (
+      message &&
+      typeof message === 'object' &&
+      typeof (message as { kind?: unknown }).kind === 'string' &&
+      String((message as { kind: string }).kind).startsWith('diagnostics:')
+    )
+      return
     const record = asUtilityProcessMessageRecord(message)
     if (!record) {
       this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
@@ -826,6 +856,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         }
         this.serviceCapabilities =
           (record.capabilities as AudioServiceCapabilities | undefined) ?? null
+        if (this.serviceCapabilities)
+          this.lastKnownCapabilities = {
+            collectedAt: new Date().toISOString(),
+            generation: this.generation,
+            value: this.serviceCapabilities
+          }
         this.clearHealthProbe()
         this.emit('ready', this.serviceCapabilities)
       } catch {
@@ -961,6 +997,15 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private handleExit(reason: string, options: { restart?: boolean } = {}): void {
     if (this.stopped) return
+    this.lastFailureEvidence = {
+      timestamp: new Date().toISOString(),
+      reason,
+      generation: this.generation,
+      pending: [...this.pending.entries()].map(([requestId, request]) => ({
+        requestId,
+        method: request.method
+      }))
+    }
     this.recordFailure(reason)
     this.child = null
     this.generation += 1
@@ -1376,7 +1421,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 }
 
-async function terminateAudioServiceChild(child: UtilityProcessLike, timeoutMs: number): Promise<void> {
+async function terminateAudioServiceChild(
+  child: UtilityProcessLike,
+  timeoutMs: number
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let exit: ((code: number | null) => void) | undefined
   const terminated = child.terminate
@@ -1394,7 +1442,10 @@ async function terminateAudioServiceChild(child: UtilityProcessLike, timeoutMs: 
     await Promise.race([
       terminated,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Audio service exit was not confirmed; restart withheld')), timeoutMs)
+        timer = setTimeout(
+          () => reject(new Error('Audio service exit was not confirmed; restart withheld')),
+          timeoutMs
+        )
       })
     ])
   } finally {

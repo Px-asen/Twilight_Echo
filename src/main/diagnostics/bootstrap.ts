@@ -14,6 +14,8 @@ import { installIpcDiagnostics, flushDiagnosticAggregates } from './observation.
 import { isTrustedIpcSender } from '../security/electronSecurity.ts'
 import { installNetworkDiagnostics } from './network.ts'
 import { observeUtilityProcess } from './utilityObservation.ts'
+import { initializeDesktopDebug } from './desktopDebug.ts'
+import { sanitizeDiagnosticValue } from './sanitize.ts'
 
 app.setName('TwilightEcho')
 
@@ -64,9 +66,14 @@ configureDevelopmentUserData()
 export const diagnosticDirectory =
   process.env.TWILIGHT_LOG_DIRECTORY || join(app.getPath('logs'), 'diagnostics')
 export const diagnosticWriter = new DiagnosticWriterClient(diagnosticDirectory, null)
-configureDiagnosticLogger({ sessionId: randomUUID(), processRole: 'main' }, (event) =>
-  diagnosticWriter.record(event)
-)
+const debugSessions = initializeDesktopDebug(diagnosticDirectory)
+configureDiagnosticLogger({ sessionId: randomUUID(), processRole: 'main' }, (event) => {
+  diagnosticWriter.record({
+    ...event,
+    details: sanitizeDiagnosticValue(event.details, { preserveLocalPaths: false })
+  })
+  debugSessions.record(event)
+})
 process.env.TWILIGHT_LOG_DIRECTORY = diagnosticDirectory
 process.env.TWILIGHT_LOG_SESSION_ID = diagnosticIdentity().sessionId
 process.env.TAE_DIAGNOSTICS_DIR = diagnosticDirectory
@@ -76,7 +83,13 @@ installNetworkDiagnostics()
 
 process.on('uncaughtExceptionMonitor', (error, origin) => {
   const entry = writeDiagnostic('app', 'process.uncaught-exception', { error, origin }, 'fatal')
-  if (entry) diagnosticWriter.emergency(entry)
+  if (entry) {
+    diagnosticWriter.emergency({
+      ...entry,
+      details: sanitizeDiagnosticValue(entry.details, { preserveLocalPaths: false })
+    })
+    debugSessions.emergency(entry)
+  }
 })
 writeDiagnostic('app', 'session.start', {
   appVersion: app.getVersion(),
@@ -157,4 +170,5 @@ registerDiagnosticQuit(app, async () => {
   flushDiagnosticAggregates()
   writeDiagnostic('app', 'session.end')
   await diagnosticWriter.close()
+  await debugSessions.close()
 })

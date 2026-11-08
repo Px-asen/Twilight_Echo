@@ -53,6 +53,7 @@ class DiagnosticLog {
   uint64_t nextSequence() const;
   bool trySnapshot(uint64_t sinceSequence, std::vector<Entry>& entries) const;
   static void setContext(const std::string& json);
+  static void setDebugCapture(const std::string& id, const std::string& directory);
 
   void clearForTests();
 
@@ -81,10 +82,11 @@ class DiagnosticJournal {
   uint64_t startMs_ = 0;
   unsigned part_ = 0;
   bool reportedFailure_ = false;
+  bool reportedDebugFailure_ = false;
 };
 // Conservative token sanitizer: retain numeric counters and known enums,
 // fingerprint other strings, and redact authentication fields recursively.
-std::string sanitizeNativeDiagnosticJson(const std::string& json);
+std::string sanitizeNativeDiagnosticJson(const std::string& json, bool preservePaths = false);
 struct EmptyOutputDetector {
   uint64_t token = 0, callbacks = 0, consumed = 0;
   unsigned consecutive = 0;

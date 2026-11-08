@@ -4,6 +4,8 @@ import { createRequire } from 'module'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import type { NativeAudioBinding } from './audioEngineTypes.ts'
+import { recordNativeStartup } from '../diagnostics/startupEvidence.ts'
+import { writeDiagnostic } from '../diagnostics/logger.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -47,7 +49,9 @@ export function getNativeAddonCandidates(context: NativeAddonLocationContext = {
   if (archive) return [join(dirname(archive), 'audio-engine', binary)]
 
   // The same anchoring supports built development workers and direct TS tools.
-  const moduleRoot = modulePath.match(/^(.*)[/\\](?:out[/\\](?:main|server)|src[/\\]main)[/\\]/i)?.[1]
+  const moduleRoot = modulePath.match(
+    /^(.*)[/\\](?:out[/\\](?:main|server)|src[/\\]main)[/\\]/i
+  )?.[1]
   const appPath =
     context.appPath ?? electronApp?.getAppPath?.() ?? moduleRoot ?? context.cwd ?? process.cwd()
   const resourcesPath = context.resourcesPath ?? process.resourcesPath
@@ -81,12 +85,19 @@ export type NativeBindingLoadResult = {
   candidateCount: number
 }
 
-export function nativeRuntimeIdentity(candidate: string, platform: NodeJS.Platform = process.platform): Record<string, string> {
+export function nativeRuntimeIdentity(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform
+): Record<string, string> {
   const directory = dirname(candidate)
   const runtime: Record<string, string> = { addonPath: candidate }
   for (const name of [
     'twilight_audio_node.node',
-    platform === 'win32' ? 'twilight-audio-engine.dll' : platform === 'darwin' ? 'libtwilight-audio-engine.dylib' : 'libtwilight-audio-engine.so',
+    platform === 'win32'
+      ? 'twilight-audio-engine.dll'
+      : platform === 'darwin'
+        ? 'libtwilight-audio-engine.dylib'
+        : 'libtwilight-audio-engine.so',
     'automix-native/beat-this.tamg',
     'automix-native/yamnet.tamg'
   ]) {
@@ -107,18 +118,41 @@ export function loadNativeBindingWithDiagnostics(
   getCandidates: () => string[] = getNativeAddonCandidates
 ): NativeBindingLoadResult {
   const candidates = getCandidates()
+  recordNativeStartup('binding.candidates', {
+    candidates,
+    architecture: process.arch,
+    versions: process.versions
+  })
   const attempts: NativeBindingLoadAttempt[] = []
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue
+    const started = performance.now()
+    recordNativeStartup('binding.load.start', { path: candidate })
+    writeDiagnostic('audio.native', 'binding.load.start', { path: candidate })
     try {
       // Native addons must be loaded dynamically because the file is produced by CMake.
+      const binding = require(candidate) as NativeAudioBinding
+      const runtime = nativeRuntimeIdentity(candidate)
+      recordNativeStartup('binding.load.complete', {
+        runtime,
+        durationMs: performance.now() - started
+      })
+      writeDiagnostic('audio.native', 'binding.load.complete', {
+        runtime,
+        durationMs: performance.now() - started
+      })
       return {
-        binding: require(candidate) as NativeAudioBinding,
-        runtime: nativeRuntimeIdentity(candidate),
+        binding,
+        runtime,
         attempts,
         candidateCount: candidates.length
       }
     } catch (err) {
+      recordNativeStartup('binding.load.failed', {
+        path: candidate,
+        error: err,
+        durationMs: performance.now() - started
+      })
       attempts.push({ candidate, error: err instanceof Error ? err.message : String(err) })
       console.warn('原生音频模块加载失败：', candidate, err)
     }

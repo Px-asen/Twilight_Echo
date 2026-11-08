@@ -7,6 +7,7 @@
 #include <regex>
 #include <sstream>
 #include <iomanip>
+#include <cerrno>
 #include "../utils/JsonUtils.h"
 #ifdef _WIN32
 #include <process.h>
@@ -22,6 +23,9 @@ constexpr size_t kMaxMessageChars = 512;
 constexpr size_t kMaxDetailsChars = 8192;
 constexpr size_t kMaxEventChars = 64;
 thread_local std::string diagnosticOperationId, diagnosticRequestId;
+std::mutex debugCaptureMutex;
+std::string debugCaptureId, debugCaptureDirectory;
+bool debugCaptureConfigured = false;
 
 std::string truncated(std::string value, size_t maxChars) {
   if (value.size() <= maxChars) return value;
@@ -200,6 +204,11 @@ void DiagnosticLog::setContext(const std::string& json) {
   };
   diagnosticOperationId = read("operationId"); diagnosticRequestId = read("requestId");
 }
+void DiagnosticLog::setDebugCapture(const std::string& id, const std::string& directory) {
+  std::lock_guard lock(debugCaptureMutex);
+  debugCaptureConfigured = true;
+  debugCaptureId = id; debugCaptureDirectory = directory;
+}
 
 namespace {
 std::string fingerprint(const std::string& value) {
@@ -219,7 +228,7 @@ uint64_t steadyMs() {
 }
 }
 
-std::string sanitizeNativeDiagnosticJson(const std::string& json) {
+std::string sanitizeNativeDiagnosticJson(const std::string& json, bool preservePaths) {
   // Token based, including escaped JSON strings; no raw string payload reaches disk.
   if (json.size() > 8192) return "{\"truncated\":true}";
   static const std::regex secret("password|passwd|secret|cookie|authorization|credential|^token$|(?:access|refresh|auth|bearer).?token|signature|api.?key", std::regex::icase);
@@ -246,7 +255,9 @@ std::string sanitizeNativeDiagnosticJson(const std::string& json) {
         out += "\"[redacted]\"";
       }
     } else {
-      if (std::regex_match(*value, enums)) out += '"' + *value + '"';
+      if (preservePaths && (value->rfind("/", 0) == 0 || value->rfind("\\\\", 0) == 0 ||
+          (value->size() > 2 && (*value)[1] == ':' && ((*value)[2] == '\\' || (*value)[2] == '/')))) out += '"' + jsonEscape(*value) + '"';
+      else if (std::regex_match(*value, enums)) out += '"' + *value + '"';
       else out += "{\"kind\":\"identifier\",\"fingerprint\":\"" + fingerprint(*value) + "\"}";
       i = end;
     }
@@ -294,9 +305,41 @@ void DiagnosticJournal::write(const std::string& event, const std::string& detai
     file.write(line.data(), static_cast<std::streamsize>(line.size())); file.flush();
     if (!file) throw std::runtime_error("diagnostic write failed");
     bytes_ += line.size(); reportedFailure_ = false;
-  } catch (...) {
-    if (!reportedFailure_) std::fprintf(stderr, "[TwilightDiagnostics] native journal unavailable; bounded engine ring remains available\n");
+  } catch (const std::exception& error) {
+    if (!reportedFailure_) std::fprintf(stderr, "[TwilightDiagnostics] native journal unavailable; stage=write errno=%d reason=%s\n", errno, error.what());
     reportedFailure_ = true;
+  }
+  std::string debugId, debugDirectory;
+  {
+    std::lock_guard lock(debugCaptureMutex);
+    if (debugCaptureConfigured) { debugId = debugCaptureId; debugDirectory = debugCaptureDirectory; }
+    else {
+      const char* id = std::getenv("TWILIGHT_DEBUG_SESSION_ID");
+      const char* directory = std::getenv("TWILIGHT_DEBUG_DIRECTORY");
+      if (id && directory) { debugId = id; debugDirectory = directory; }
+    }
+  }
+  if (!debugId.empty() && !debugDirectory.empty()) try {
+    if (std::filesystem::exists(std::filesystem::u8path(debugDirectory) / "capacity-reached")) return;
+    const auto directory = std::filesystem::u8path(debugDirectory) / "logs";
+    std::filesystem::create_directories(directory);
+    const auto file = directory / (instance_ + "-debug.active.jsonl");
+    const auto size = std::filesystem::exists(file) ? std::filesystem::file_size(file) : 0;
+    if (size > 64 * 1024 * 1024) throw std::runtime_error("native debug journal capacity reached");
+    std::ofstream output(file, std::ios::binary | std::ios::app);
+    output << "{\"schemaVersion\":1,\"eventId\":\"" << instance_ << ":" << sequence_
+      << "\",\"debugSessionId\":\"" << safeIdentifier(debugId) << "\",\"sessionId\":\"" << session_
+      << "\",\"processId\":" << getpid() << ",\"processRole\":\"native\",\"processInstanceId\":\"" << instance_
+      << "\",\"timestamp\":\"" << diagnosticIsoTimestamp(epochMs ? epochMs : nowEpochMs()) << "\",\"module\":\"audio.native\",\"event\":\"" << safeIdentifier(event)
+      << "\",\"level\":\"" << (level == DiagLevel::Warning ? "warn" : diagnosticLevelName(level))
+      << "\",\"operationId\":\"" << safeIdentifier(operationId) << "\",\"requestId\":\"" << safeIdentifier(requestId)
+      << "\",\"details\":" << sanitizeNativeDiagnosticJson(details, true) << ",\"nativeSequence\":" << originalSequence << "}\n";
+    output.flush();
+    if (!output) throw std::runtime_error("native debug journal write failed");
+    reportedDebugFailure_ = false;
+  } catch (const std::exception& error) {
+    if (!reportedDebugFailure_) std::fprintf(stderr, "[TwilightDiagnostics] native journal unavailable; stage=debug-write errno=%d reason=%s\n", errno, error.what());
+    reportedDebugFailure_ = true;
   }
 }
 

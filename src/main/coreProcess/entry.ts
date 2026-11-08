@@ -181,7 +181,7 @@ import { CoreAudioRecoveryService } from '../../core/audio/recoveryService.ts'
 import { LibraryDatabaseServiceClient } from '../library/libraryDatabaseServiceClient.ts'
 import { createPlaybackSessionStoreBundle } from '../persistence/playbackSessionRepository.ts'
 import { createCorePlaybackRepository } from '../persistence/corePlaybackRepository.ts'
-import { initializeUtilityDiagnostics } from '../diagnostics/utility.ts'
+import { initializeUtilityDiagnostics, setUtilityDiagnosticSnapshotProvider, publishUtilityDiagnosticSnapshot } from '../diagnostics/utility.ts'
 import type {
   CoreChildMessage,
   CoreParentMessage,
@@ -401,14 +401,26 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     dspAssetPathResolver: (id) => dspAssets.getKnownPath(id),
     vst3StateAssetResolver: (id) => dspAssets.resolveVst3State(id),
     vst3ModuleResolver: (id, classId) => vst3.resolveAvailableModule(id, classId),
-    audioServiceFactory: () =>
-      new AudioEngineServiceBinding({
+    audioServiceFactory: () => {
+      const binding = new AudioEngineServiceBinding({
         serviceEntry: 'audio',
         launch: () => launcher!.launch('audio')
       })
+      binding.on('ready', publishUtilityDiagnosticSnapshot)
+      binding.on('crash', publishUtilityDiagnosticSnapshot)
+      return binding
+    }
   })
   // EventEmitter error events are reported as state/failure, never unhandled process exceptions.
   audio.on('error', (error) => console.error('[core.audio]', error))
+  setUtilityDiagnosticSnapshotProvider(() => ({
+    audio: audio?.getCachedDiagnosticSnapshot(),
+    nativeRuntime: audio?.getNativeRuntimeIdentity(),
+    settings: settings.read(),
+    services: { database: Boolean(database), analysis: Boolean(analysis), plugins: Boolean(plugins) },
+    directories: { profile: config.root, library: config.libraryFilePath, covers: config.coverCacheDir,
+      musicCache: config.musicCachePath, plugins: join(config.root, 'plugins') }
+  }))
   const output: CoreAudioOutputService = new CoreAudioOutputService({
     engine: audio,
     settings,

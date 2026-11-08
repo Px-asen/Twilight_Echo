@@ -3947,5 +3947,8 @@ const char* TAE_GetVersion(void) {
 void TAE_SetDiagnosticContext(const char* context_json) {
   twilight::audio::DiagnosticLog::setContext(context_json ? context_json : "{}");
 }
+void TAE_SetDebugCapture(const char* session_id, const char* directory) {
+  twilight::audio::DiagnosticLog::setDebugCapture(session_id ? session_id : "", directory ? directory : "");
+}
 
 }  // extern "C"

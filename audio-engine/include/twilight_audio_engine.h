@@ -336,6 +336,7 @@ TAE_API uint64_t TAE_GetAnalysisExecutionCount(const char* analysis_kind);
 TAE_API const char* TAE_GetVersion(void);
 /* Optional diagnostic context for the current native control thread. */
 TAE_API void TAE_SetDiagnosticContext(const char* context_json);
+TAE_API void TAE_SetDebugCapture(const char* session_id, const char* directory);
 
 #ifdef __cplusplus
 }

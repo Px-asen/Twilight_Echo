@@ -50,7 +50,7 @@ export function observeDiagnosticOperation<T>(
     writeDiagnostic(
       module,
       'request.start',
-      { method, arguments: summarizeDiagnosticArguments(args) },
+      { method, arguments: summarizeDiagnosticArguments(args, method) },
       'debug',
       scope
     )

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/diagnostics.ts'
 import { DIAGNOSTICS_MAX_EVENT_BYTES } from '../../shared/diagnostics.ts'
 import { sanitizeDiagnosticValue } from './sanitize.ts'
+import { debugDiagnosticContext } from './debugContext.ts'
 
 const contextStorage = new AsyncLocalStorage<DiagnosticContext>()
 let sink: ((event: DiagnosticEvent) => void) | null = null
@@ -43,6 +44,7 @@ export function forwardDiagnosticEvent(entry: DiagnosticEvent): void {
       return
     const safe: DiagnosticEvent = {
       schemaVersion: 1,
+      ...debugDiagnosticContext(),
       eventId: entry.eventId,
       sessionId: identity.sessionId,
       processInstanceId: entry.processInstanceId,
@@ -56,7 +58,7 @@ export function forwardDiagnosticEvent(entry: DiagnosticEvent): void {
       level: entry.level,
       details: sanitizeDiagnosticValue(entry.details)
     }
-    for (const key of ['operationId', 'requestId'] as const)
+    for (const key of ['operationId', 'requestId', 'debugSessionId'] as const)
       if (typeof entry[key] === 'string' && /^[\w-]{1,128}$/.test(entry[key]!))
         safe[key] = entry[key]
     for (const key of ['serviceGeneration', 'streamToken'] as const)
@@ -85,6 +87,7 @@ export function writeDiagnostic(
     const entry: DiagnosticEvent = {
       schemaVersion: 1,
       ...identity,
+      ...debugDiagnosticContext(),
       ...diagnosticContext(),
       ...context,
       eventId: `${identity.processInstanceId}:${number}`,

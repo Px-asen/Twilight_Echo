@@ -24,9 +24,11 @@ ipcRenderer.send = (channel, ...args) =>
 
 export const diagnosticsApi: DiagnosticsApi = {
   getStatus: () => originalInvoke(IPC.diagnostics.status),
+  startDebug: (options) => originalInvoke(IPC.diagnostics.startDebug, options),
+  stopDebug: () => originalInvoke(IPC.diagnostics.stopDebug),
   markProblem: (note) => originalInvoke(IPC.diagnostics.marker, note),
   openDirectory: () => originalInvoke(IPC.diagnostics.directory),
-  exportBundle: () => originalInvoke(IPC.diagnostics.export),
+  exportBundle: (options) => originalInvoke(IPC.diagnostics.export, options),
   clearHistory: () => originalInvoke(IPC.diagnostics.clear),
   record: (events) =>
     originalSend(

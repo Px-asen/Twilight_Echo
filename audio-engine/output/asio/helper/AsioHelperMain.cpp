@@ -1,6 +1,7 @@
 #include "../RealAsioHost.h"
 #include "AsioHelperServer.h"
 #include "AsioHelperProtocol.h"
+#include "../../../diagnostics/CrashCaptureRegistration.h"
 
 #include <Windows.h>
 
@@ -32,6 +33,7 @@ bool parseArguments(int argc, wchar_t* argv[], Arguments* result) {
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
+  twilight::diagnostics::registerCrashCapture();
   if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test") {
     std::cout << "{\"kind\":\"twilight-asio-helper\",\"protocolVersion\":"
               << twilight::audio::asio_helper::kProtocolVersion

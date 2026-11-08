@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DebugSessionNotice from './components/DebugSessionNotice.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import MotionTransition from '@renderer/components/MotionTransition.vue'
 import { useSharedArtwork } from './app/motion/useSharedArtwork'
@@ -1021,6 +1022,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
 </script>
 
 <template>
+  <DebugSessionNotice />
   <AppearanceLayersHost
     v-if="appearanceFullWindowPreview || (!appearancePageRetained && !appearanceEditorOpen)"
     :settings="

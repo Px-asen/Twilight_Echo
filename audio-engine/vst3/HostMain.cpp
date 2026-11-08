@@ -1,3 +1,4 @@
+#include "../diagnostics/CrashCaptureRegistration.h"
 #include "Vst3ModuleProbe.h"
 #include "Vst3Runtime.h"
 #include "Vst3SharedProtocol.h"
@@ -337,6 +338,7 @@ int renderTest(const RenderTestArguments& arguments) {
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
+  twilight::diagnostics::registerCrashCapture();
   if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test") {
     std::cout << "{\"kind\":\"twilight-vst3-host\",\"protocolVersion\":"
               << twilight::vst3::ipc::kProtocolVersion << ",\"status\":\"ready\"}";
