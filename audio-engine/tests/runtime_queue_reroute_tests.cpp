@@ -6314,6 +6314,7 @@ int main() {
   RUN_RUNTIME_CASE(testExclusiveReleasedPauseEditsAndResumeFailureRetainContext());
   RUN_RUNTIME_CASE(testExclusiveReleasedPausePreservesCueQueueIdentity());
   RUN_RUNTIME_CASE(testQueueCursorSelectsSameFileCueWithoutReloadingContent());
+  RUN_RUNTIME_CASE(testSleepPauseAtTrackEndBlocksNativeSuccessors());
   RUN_RUNTIME_CASE(testNaturalBoundariesCountIdenticalOccurrencesAndLogicalCycles());
   RUN_RUNTIME_CASE(testNaturalSameIndexRepeatBoundaries(false));
   RUN_RUNTIME_CASE(testNaturalSameIndexRepeatBoundaries(true));
