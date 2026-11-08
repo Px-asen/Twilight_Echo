@@ -3170,97 +3170,26 @@ void testDsdRouteOverrideIsNotUsedForPlainPcmSources() {
   assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
 }
 
-// ---- Auto-discovered DSD compatibility route --------------------------------
-// The removed foo_dsd_asio path used to route DSD to a proxy automatically. Its
-// replacement must do the same without matching on vendor names: discovery is
-// driven purely by which drivers a capability probe proved can accept raw DSD.
-
-/** Scoped DSD-capable device discovery override. */
-struct ScopedNativeDsdDiscovery {
-  explicit ScopedNativeDsdDiscovery(std::vector<std::string> deviceIds) {
-    AudioPipeline::setNativeDsdDeviceDiscoveryForTests(
-        [ids = std::move(deviceIds)]() { return ids; });
-  }
-  ~ScopedNativeDsdDiscovery() {
-    AudioPipeline::setNativeDsdDeviceDiscoveryForTests(nullptr);
-  }
-};
-
-void testDsdRouteAutoDiscoveryUsesProbeVerifiedProxy() {
-  EngineHarness harness;
+void testDsdKeepsSelectedWasapiDevice(const std::string& mode) {
+  EngineHarness harness("twilight-issue218-dsd256.dsf", kDsd256Rate);
   auto& engine = harness.engine();
-  // Main output is wasapi-exclusive, which cannot carry Native DSD. No dsdRoute
-  // is configured at all -- discovery alone must find the capable driver.
-  ScopedNativeDsdDiscovery discovery({"auto-proxy"});
-
-  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitForStartedBackendCount(1));
-
-  const auto snapshots = g_backendRegistry.snapshots();
-  assert(snapshots.size() == 1);
-  assert(snapshots.front().backendId == "asio");
-  assert(snapshots.front().info.deviceName == "auto-proxy");
-  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
-  assert(snapshots.front().typedStarted);
-  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
-  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":true");
-  assertLatestPlaybackContains(engine, "\"dsdRouteDevice\":\"auto-proxy\"");
-}
-
-void testDsdRouteAutoDiscoveryIsInertWithoutCapableDevice() {
-  EngineHarness harness;
-  auto& engine = harness.engine();
-  // Nothing on the system can take raw DSD, so behavior must be unchanged from
-  // before auto-discovery existed: degrade over the main route.
-  ScopedNativeDsdDiscovery discovery({});
-
-  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitForStartedBackendCount(1));
-
-  const auto snapshots = g_backendRegistry.snapshots();
-  assert(!snapshots.empty());
-  assert(snapshots.front().info.deviceName != "auto-proxy");
-  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
-}
-
-void testExplicitDsdRouteWinsOverAutoDiscovery() {
-  EngineHarness harness;
-  auto& engine = harness.engine();
-  // Discovery would pick auto-proxy, but the user pinned dsd-proxy. The explicit
-  // choice must win: auto-discovery never overrides a deliberate setting.
-  ScopedNativeDsdDiscovery discovery({"auto-proxy"});
-  assert(
-      engine.setDspConfig(
-          "{\"dsdRoute\":{\"enabled\":true,\"backend\":\"asio\",\"device\":\"dsd-proxy\"}}") ==
-      TAE_RESULT_OK);
-
-  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitForStartedBackendCount(1));
-
-  const auto snapshots = g_backendRegistry.snapshots();
-  assert(snapshots.size() == 1);
-  assert(snapshots.front().info.deviceName == "dsd-proxy");
-  assertLatestPlaybackContains(engine, "\"dsdRouteDevice\":\"dsd-proxy\"");
-}
-
-void testDsdRouteAutoDiscoveryFallsBackToMainRouteWhenProxyRefuses() {
-  EngineHarness harness;
-  auto& engine = harness.engine();
-  // Discovery points at a device the fake backend always refuses. An
-  // auto-discovered route is a guess, so it must always retry the main route
-  // rather than failing playback.
-  ScopedNativeDsdDiscovery discovery({kMissingDsdProxyDeviceId});
-  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
-
+  assert(engine.setOutputDevice("moonriver-endpoint") == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"" + mode + "\"}") == TAE_RESULT_OK);
+  assert(engine.play("pcm-192k.flac", 0.0) == TAE_RESULT_OK);
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
 
   const auto snapshots = g_backendRegistry.snapshots();
-  assert(!snapshots.empty());
-  bool anyStarted = false;
   for (const auto& snapshot : snapshots) {
-    if (snapshot.started || snapshot.typedStarted) anyStarted = true;
+    assert(snapshot.backendId == "wasapi-exclusive");
+    assert(snapshot.info.deviceName == "moonriver-endpoint");
   }
-  assert(anyStarted);
+  assert(snapshots.back().typedStarted);
+  assert(formatLooksDopCarrier(snapshots.back().openedFormat));
+  assert(snapshots.back().openedFormat.sampleRate == 705600);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":256");
+  assertLatestPlaybackContains(engine, "\"actualSampleRate\":705600");
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
 }
 
 void testAlsaNativeDsdAcceptsTransportFrameRate() {
@@ -6150,6 +6079,12 @@ static void runUsbDirectCases() {
 }
 
 int main() {
+  if (std::getenv("TAE_RUNTIME_DSD_ROUTE_ONLY")) {
+    for (const std::string mode : {"auto", "dop", "native"})
+      RUN_RUNTIME_CASE(testDsdKeepsSelectedWasapiDevice(mode));
+    RUN_RUNTIME_CASE(testDsdRouteOverrideCarriesNativeDsdOffMainBackend());
+    return 0;
+  }
   if (std::getenv("TAE_RUNTIME_USB_DIRECT_ONLY")) { runUsbDirectCases(); return 0; }
   if (std::getenv("TAE_RUNTIME_AUTOMIX_MODE_ONLY")) {
     RUN_RUNTIME_CASE(testAutoMixFailedRerouteKeepsAcceptedModeAndTransport());
@@ -6297,6 +6232,8 @@ int main() {
   RUN_RUNTIME_CASE(testPcmVolumeFallsBackToFloatProcessing());
   RUN_RUNTIME_CASE(testDsd128StartsOnDop());
   RUN_RUNTIME_CASE(testAsioAutoPrefersNativeDsd());
+  for (const std::string mode : {"auto", "dop", "native"})
+    RUN_RUNTIME_CASE(testDsdKeepsSelectedWasapiDevice(mode));
   RUN_RUNTIME_CASE(testAlsaNativeDsdAcceptsTransportFrameRate());
   RUN_RUNTIME_CASE(testAsioDopModeDoesNotTryNativeDsd());
   RUN_RUNTIME_CASE(testAsioDopCandidateIsProvenAfterStart());
@@ -6309,10 +6246,6 @@ int main() {
   RUN_RUNTIME_CASE(testDsdRouteOverrideFallsBackToMainRouteWhenProxyMissing());
   RUN_RUNTIME_CASE(testDsdRouteStrictPassthroughFailsInsteadOfDegradingToPcm());
   RUN_RUNTIME_CASE(testDsdRouteOverrideIsNotUsedForPlainPcmSources());
-  RUN_RUNTIME_CASE(testDsdRouteAutoDiscoveryUsesProbeVerifiedProxy());
-  RUN_RUNTIME_CASE(testDsdRouteAutoDiscoveryIsInertWithoutCapableDevice());
-  RUN_RUNTIME_CASE(testExplicitDsdRouteWinsOverAutoDiscovery());
-  RUN_RUNTIME_CASE(testDsdRouteAutoDiscoveryFallsBackToMainRouteWhenProxyRefuses());
   RUN_RUNTIME_CASE(testAsioNativeDsdAndDopFailureFallsBackToPcm());
   RUN_RUNTIME_CASE(testAsioNativeDsdUnsupportedAndDopFailureFallsBackToPcm());
   RUN_RUNTIME_CASE(testDsd256StartsOnWasapiExclusiveDop());

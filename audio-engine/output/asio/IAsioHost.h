@@ -218,13 +218,4 @@ std::vector<int> asioDsdSemanticRateProbeSet();
 std::string asioSampleFormatName(AudioSampleFormat format);
 std::string enumerateAsioDevicesJson();
 
-/**
- * Device ids of ASIO drivers that a capability probe proved can accept a raw
- * DSD I/O format. Used to auto-discover a DSD-capable route when the main
- * output cannot carry DSD and the user has not pinned one explicitly.
- *
- * Ordering is the enumeration order, so the choice is stable across calls.
- */
-std::vector<std::string> asioNativeDsdCapableDeviceIds();
-
 }  // namespace twilight::audio

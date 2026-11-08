@@ -299,12 +299,7 @@ export class DeviceProfiles {
     )
       return false
     const route = profile.processing.dsdRoute
-    if (!route.enabled)
-      return (
-        output.isDsd &&
-        profile.processing.dsdOutputMode !== 'pcm' &&
-        output.actualBackend === 'asio'
-      )
+    if (!route.enabled) return false
     const primaryBackend = profile.exclusiveMode ? `${profile.backend}-exclusive` : profile.backend
     return (
       output.actualBackend === (route.backend || primaryBackend) &&

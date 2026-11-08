@@ -152,22 +152,4 @@ std::string enumerateAsioDevicesJson() {
   return json.str();
 }
 
-std::vector<std::string> asioNativeDsdCapableDeviceIds() {
-#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
-  auto host = createIsolatedAsioHost();
-  std::vector<std::string> capable;
-  for (const auto& device : host->enumerateDevices()) {
-    AsioDeviceInfo probed = device;
-    if (!device.nativeDsdCapable) {
-      std::string probeError;
-      if (!host->probeDevice(device.id, &probed, &probeError)) continue;
-    }
-    if (probed.nativeDsdCapable) capable.push_back(probed.id);
-  }
-  return capable;
-#else
-  return {};
-#endif
-}
-
 }  // namespace twilight::audio

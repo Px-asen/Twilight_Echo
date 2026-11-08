@@ -14,6 +14,18 @@
 
 恢复期间不能开始新的播放，设置页关闭再打开也能查看任务状态。正在投放到其他设备时，需先停止投放。若系统服务重启失败或超时，界面会显示失败；检查 Windows 声音输出，必要时重启电脑。
 
+## 排查 DSD 播放无声（#218）
+
+先核对实际设备与传输方式。DSD 默认使用选中的输出设备；需要独立 ASIO 输出时，显式配置 `dsdRoute`。已安装的 DSD 转码器可能指向其他设备，支持 DSD 的能力探测不能证明它连接到了当前 DAC。
+
+在 #218 的诊断包中，`2026-11-08T07:47:01Z` 前后的路由决策把 WASAPI 独占输出转到了 ASIO；随后驱动名称变为“DSD 转码器”，状态却保留了前一首 PCM 的 176400 Hz / 24-bit、`integer_passthrough_unavailable` 和 `dsdRate=0`。修复后播放不再自动选择该代理；显式独立路由的实际输出信息也不会被旧 PCM 状态覆盖。
+
+- `dsdMode=dop` 时，24-bit 是承载 DSD 数据的 DoP 容器。44.1 kHz 系列 DSD256 需要 705600 Hz 载波，看到 24-bit 本身不代表转换成了 PCM。
+- `dsdMode=native` 时，核对 `actualBackend`、`actualDeviceId` 和 `nativeDsdRuntimeState`。WASAPI 本身没有 Native DSD 输出；需要选择支持它的 ASIO 设备，或配置独立 DSD 路由。
+- 设备拒绝 DoP 载波时，默认 `pcm-fallback` 策略在同一选定设备上转换为 PCM，并报告原因；`exact` 策略则报错。以实际协商结果判断，不能从设备名称推断 DSD256 支持。
+
+原生回归覆盖 PCM→DSD256 切换、Auto／DoP／Native 模式下保持选定 WASAPI 设备，以及显式独立路由。Moonriver 3 的实际出声与设备锁定仍需真机验证。
+
 ## 新模块接入
 
 主进程和后台服务使用公共接口：
