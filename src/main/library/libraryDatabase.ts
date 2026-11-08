@@ -646,6 +646,7 @@ export class LibraryDatabase {
       // A previous owner's unacknowledged construction is never playable.
       // Recovery only marks it; bounded background maintenance releases rows.
       this.queues.recoverBuilds()
+      this.scheduleTransientIndexRelease()
     } catch (error) {
       this.sql.close()
       throw error
@@ -660,10 +661,11 @@ export class LibraryDatabase {
   private scheduleTransientIndexRelease(): void {
     if (this.transientIndexIdleTimer) clearTimeout(this.transientIndexIdleTimer)
     this.transientIndexIdleTimer = setTimeout(() => {
-      this.transientIndexIdleTimer = null
-      this.symSpellIndex = null
-      this.albumAliases = null
-      this.collections.clearTransientCaches()
+      this.clearTransientIndexes()
+      // Browsing can populate the page cache up to its normal working budget.
+      // Release unused pages after browsing stops; subsequent reads can refill
+      // the same cache without reducing the budget for active library work.
+      if (this.sql.isOpen) this.sql.exec('PRAGMA shrink_memory')
     }, TRANSIENT_INDEX_IDLE_TTL_MS)
     this.transientIndexIdleTimer.unref?.()
   }
@@ -675,6 +677,9 @@ export class LibraryDatabase {
     }
     this.symSpellIndex = null
     this.albumAliases = null
+    this.ordered.clear()
+    this.totals.clear()
+    this.statements.clear()
     this.collections.clearTransientCaches()
   }
   identificationSchedule(...args: Parameters<import('../../shared/musicIdentificationSchedule.ts').IdentificationScheduleDatabaseApi['identificationSchedule']>) {
@@ -1692,6 +1697,7 @@ export class LibraryDatabase {
     return stats
   }
   private orderedIds(query: LibraryQuery): string[] {
+    this.scheduleTransientIndexRelease()
     const resolvedSearch = query.sort === 'unifiedSearch' ? this.resolveUnifiedSearch(query) : null
     const { sql, params } =
       resolvedSearch !== null
@@ -1770,6 +1776,7 @@ export class LibraryDatabase {
   }
   queryTracks(query: LibraryQuery = {}): LibraryPage {
     validateLibraryQuery(query)
+    this.scheduleTransientIndexRelease()
     this.assertContentRevision(query.contentRevision)
     this.assertHistoryRevision(query)
     if (query.playlistView) return this.catalogReferences.tracks(this.playlistViews.query(query))
@@ -1954,6 +1961,7 @@ export class LibraryDatabase {
   }
   queryCollections(kind: LibraryCollectionKind, query: LibraryQuery = {}, metadata?: import('../../shared/entityMetadata.ts').EntityMetadataReadOptions): LibraryCollectionPage {
     validateLibraryQuery(query)
+    this.scheduleTransientIndexRelease()
     this.assertContentRevision(query.contentRevision)
     if (kind === 'playlists') {
       if (!query.playlistView) throw new Error('Playlist summaries require a catalog view')

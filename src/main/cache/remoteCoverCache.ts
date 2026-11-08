@@ -122,7 +122,9 @@ export function createRemoteCoverCache(
         const temporary = `${path}.${randomUUID()}.part`
         try {
           await mkdir(join(path, '..'), { recursive: true })
-          await writeFile(temporary, Buffer.concat([Buffer.from(`${mime}\n`), stored]))
+          // Write the header and image separately so publication does not retain
+          // a second full image buffer (up to 25 MiB) until disk I/O completes.
+          await writeFile(temporary, [Buffer.from(`${mime}\n`), stored])
           await rename(temporary, path)
           writeDiagnostic(
             'cover.cache',
