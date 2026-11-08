@@ -11,6 +11,20 @@ export type DiscoveryOrder = 'hot' | 'new'
 
 export const DISCOVERY_ALL_TAG = '全部'
 export const DISCOVERY_PAGE_SIZE = 30
+export interface StreamingDiscoverySnapshot {
+  providerId: string
+  catalogue: MediaProviderPlaylistCatalogue | null
+  selectedTag: string
+  order: DiscoveryOrder
+  highQuality: boolean
+  panelExpanded: boolean
+  playlists: MediaProviderPlaylistSummary[]
+  total: number
+  offset: number
+  hasMore: boolean
+  hqBefore: number
+  loadedOnce: boolean
+}
 
 type UseStreamingDiscoveryOptions = {
   providerId: Ref<string>
@@ -58,6 +72,8 @@ export function useStreamingDiscovery({
   onPageChange: (event: PageState) => void
   loadMore: () => Promise<void>
   retry: () => void
+  capture: () => StreamingDiscoverySnapshot
+  restore: (saved: StreamingDiscoverySnapshot) => void
 } {
   const catalogue = ref<MediaProviderPlaylistCatalogue | null>(null)
   const catalogueLoading = ref(false)
@@ -275,6 +291,23 @@ export function useStreamingDiscovery({
     togglePanel,
     onPageChange,
     loadMore,
-    retry
+    retry,
+    capture: () => ({ providerId: loadedProviderId, catalogue: catalogue.value, selectedTag: selectedTag.value,
+      order: order.value, highQuality: highQuality.value, panelExpanded: panelExpanded.value,
+      playlists: playlists.value, total: total.value, offset: offset.value, hasMore: hasMore.value, hqBefore, loadedOnce }),
+    restore(saved) {
+      resetForProvider(saved.providerId)
+      catalogue.value = saved.catalogue
+      selectedTag.value = saved.selectedTag
+      order.value = saved.order
+      highQuality.value = saved.highQuality
+      panelExpanded.value = saved.panelExpanded
+      playlists.value = saved.playlists
+      total.value = saved.total
+      offset.value = saved.offset
+      hasMore.value = saved.hasMore
+      hqBefore = saved.hqBefore
+      loadedOnce = saved.loadedOnce
+    }
   }
 }

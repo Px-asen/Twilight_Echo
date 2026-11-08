@@ -12,6 +12,7 @@ import type {
   StreamingSortDirection
 } from '@renderer/components/streaming-page/streamingTrackView'
 import type { Track, TrackArtistRef } from '../../types/music'
+import type { BrowseDisplayRow, BrowsePartState } from '../../../../shared/coreBrowse.ts'
 import CoverImg from '../CoverImg.vue'
 import { trackRowKeyAction } from '../song-list/trackRowKeyboard'
 import ExplicitBadge from '../ExplicitBadge.vue'
@@ -48,6 +49,10 @@ const props = withDefaults(
     icon?: string
     trackCountLabel: string
     tracks: Track[]
+    browseRows?: BrowseDisplayRow[]
+    browseOffset?: number
+    browseTotal?: number
+    duration?: number
     query?: string
     sort?: StreamingTrackSort
     direction?: StreamingSortDirection
@@ -136,6 +141,8 @@ const emit = defineEmits<{
   loadAllLiked: []
   loadMoreLiked: []
   trackContextMenu: [track: Track, index: number, event: MouseEvent]
+  browseRange: [start: number, end: number]
+  browseGroups: [groups: Record<string, BrowsePartState>]
 }>()
 
 function trackArtists(track: Track): TrackArtistRef[] {
@@ -172,7 +179,7 @@ const kindLabel = computed(() => {
 })
 
 const totalDurationLabel = computed(() => {
-  const total = props.tracks.reduce((sum, track) => sum + (Number(track.duration) || 0), 0)
+  const total = props.duration ?? props.tracks.reduce((sum, track) => sum + (Number(track.duration) || 0), 0)
   if (!total) return ''
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
@@ -180,7 +187,7 @@ const totalDurationLabel = computed(() => {
   return `约 ${minutes} 分钟`
 })
 
-const canPlay = computed(() => !props.loading && props.tracks.length > 0)
+const canPlay = computed(() => !props.loading && (props.totalTracks ?? props.tracks.length) > 0)
 
 const emptyMessage = computed(() => {
   switch (props.kind) {
@@ -199,9 +206,11 @@ const emptyMessage = computed(() => {
 
 const partState = shallowRef<Record<string, PartGroupState>>({})
 const stageRef = shallowRef<HTMLElement | null>(null)
-const displayRows = computed(() =>
-  buildMediaPartRows(props.tracks, partState.value, !!props.query.trim())
-)
+const displayRows = computed(() => props.browseRows
+  ? props.browseRows.map(row => row.kind === 'track' ? row : { ...row, group: {
+    ...row.group, tracks: [{ track: row.group.representative, index: 0 }]
+  } })
+  : buildMediaPartRows(props.tracks, partState.value, !!props.query.trim()))
 const {
   visibleItems: visibleRows,
   paddingTop,
@@ -210,13 +219,18 @@ const {
   scrollContainer,
   itemBounds,
   scrollToIndex
-} = useProgressiveList(() => displayRows.value)
+} = useProgressiveList(() => displayRows.value, {
+  total: () => props.browseTotal ?? displayRows.value.length,
+  offset: () => props.browseOffset ?? 0,
+  onRange: (start, end) => { if (props.browseRows) emit('browseRange', start, end) }
+})
 
 async function toggleParts(group: PartGroup, expanded: boolean): Promise<void> {
   partState.value = {
     ...partState.value,
     [group.id]: { expanded, page: partState.value[group.id]?.page ?? 0 }
   }
+  if (props.browseRows) emit('browseGroups', partState.value)
   if (!expanded) {
     await revealPartHeader(group)
   }
@@ -224,6 +238,7 @@ async function toggleParts(group: PartGroup, expanded: boolean): Promise<void> {
 
 async function changePartPage(group: PartGroup, page: number): Promise<void> {
   partState.value = { ...partState.value, [group.id]: { expanded: true, page } }
+  if (props.browseRows) emit('browseGroups', partState.value)
   await revealPartHeader(group)
 }
 
@@ -231,7 +246,7 @@ async function revealPartHeader(group: PartGroup): Promise<void> {
   await nextTick()
   // Keep the video's header visible when a page replaces twenty rows above the pager.
   scrollToIndex(
-    displayRows.value.findIndex((row) => row.kind === 'group' && row.group.id === group.id)
+    (props.browseOffset ?? 0) + displayRows.value.findIndex((row) => row.kind === 'group' && row.group.id === group.id)
   )
   await nextTick()
   // Paging can unmount the focused footer in the virtual window. Return focus
@@ -255,7 +270,7 @@ watch(
 )
 
 useStreamingTrackLocator({ scrollContainer, itemBounds }, props, (id) =>
-  displayRows.value.findIndex((row) => row.kind === 'track' && row.track.id === id)
+  { const index = displayRows.value.findIndex((row) => row.kind === 'track' && row.track.id === id); return index < 0 ? -1 : (props.browseOffset ?? 0) + index }
 )
 
 function onRowActivate(track: Track, index: number, event: MouseEvent): void {
@@ -343,7 +358,7 @@ const infoTrack = shallowRef<Track | null>(null)
 
         <div class="stage-meta-row">
           <span v-if="totalDurationLabel" class="stage-chip">{{ totalDurationLabel }}</span>
-          <span v-if="tracks.length" class="stage-chip muted">{{ tracks.length }} 首在列</span>
+          <span v-if="totalTracks ?? tracks.length" class="stage-chip muted">{{ totalTracks ?? tracks.length }} 首在列</span>
         </div>
 
         <div class="stage-actions">
@@ -395,7 +410,7 @@ const infoTrack = shallowRef<Track | null>(null)
       :query="query"
       :sort="sort"
       :direction="direction"
-      :count="tracks.length"
+      :count="totalTracks ?? tracks.length"
       :total="totalTracks ?? tracks.length"
       :refreshing="refreshing"
       @update:query="emit('update:query', $event)"
@@ -421,7 +436,7 @@ const infoTrack = shallowRef<Track | null>(null)
       }}</span>
     </div>
     <div
-      v-if="!loading && tracks.length === 0 && showPlayActions && !showFollow"
+      v-if="!loading && (totalTracks ?? tracks.length) === 0 && showPlayActions && !showFollow"
       class="stage-empty"
     >
       <i class="pi pi-wave-pulse" aria-hidden="true"></i>
@@ -430,7 +445,7 @@ const infoTrack = shallowRef<Track | null>(null)
 
     <!-- Loading skeleton -->
     <div
-      v-if="loading && tracks.length === 0"
+      v-if="loading && (totalTracks ?? tracks.length) === 0"
       class="stage-list stage-list-skeleton"
       :class="{ 'no-like': isExternal && !showTrackLikes }"
       aria-live="polite"
@@ -459,7 +474,7 @@ const infoTrack = shallowRef<Track | null>(null)
 
     <!-- Track list -->
     <div
-      v-else-if="tracks.length > 0"
+      v-else-if="(browseTotal ?? tracks.length) > 0"
       class="stage-list"
       :class="{ 'no-like': isExternal && !showTrackLikes }"
     >
@@ -531,7 +546,7 @@ const infoTrack = shallowRef<Track | null>(null)
                 <span class="part-toggle-label">{{ row.expanded ? '收起分P' : '展开分P' }}</span>
                 <i class="pi pi-chevron-down part-chevron" aria-hidden="true"></i>
                 <span
-                  v-if="row.group.tracks.some(({ track }) => track.id === currentTrackId)"
+                  v-if="row.group.playing ?? row.group.tracks.some(({ track }) => track.id === currentTrackId)"
                   class="part-now-playing"
                   >正在播放</span
                 >
@@ -548,9 +563,9 @@ const infoTrack = shallowRef<Track | null>(null)
           >
             <span class="part-range" role="status">
               {{ row.page * MEDIA_PART_PAGE_SIZE + 1 }}–{{
-                Math.min((row.page + 1) * MEDIA_PART_PAGE_SIZE, row.group.tracks.length)
+                Math.min((row.page + 1) * MEDIA_PART_PAGE_SIZE, (row.group.total ?? row.group.tracks.length))
               }}
-              / {{ row.group.tracks.length }} P{{ query ? ' 匹配' : '' }}
+              / {{ (row.group.total ?? row.group.tracks.length) }} P{{ query ? ' 匹配' : '' }}
             </span>
             <nav
               v-if="row.pageCount > 1"

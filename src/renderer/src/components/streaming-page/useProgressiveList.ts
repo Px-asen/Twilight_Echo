@@ -21,7 +21,8 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
 
 export function useProgressiveList<T>(
   source: () => readonly T[],
-  options: { initial?: number; step?: number; rowHeight?: number; overscan?: number } = {}
+  options: { initial?: number; step?: number; rowHeight?: number; overscan?: number;
+    total?: () => number; offset?: () => number; onRange?: (start: number, end: number) => void } = {}
 ): {
   visibleItems: ComputedRef<T[]>
   visibleStart: ComputedRef<number>
@@ -36,6 +37,8 @@ export function useProgressiveList<T>(
   const rowHeight = ref(options.rowHeight ?? STREAMING_ROW_HEIGHT)
   const overscan = options.overscan ?? STREAMING_OVERSCAN
   const items = computed(source)
+  const total = computed(() => options.total?.() ?? items.value.length)
+  const offset = computed(() => options.offset?.() ?? 0)
   const scrollTop = ref(0)
   const viewportHeight = ref(720)
   const listOffsetTop = ref(0)
@@ -144,7 +147,7 @@ export function useProgressiveList<T>(
   }
 
   function itemBounds(index: number): { top: number; bottom: number } | null {
-    if (!listEl || index < 0 || index >= items.value.length) return null
+    if (!listEl || index < 0 || index >= total.value) return null
     const top = listEl.getBoundingClientRect().top + listInsetTop + index * rowHeight.value
     return { top, bottom: top + rowHeight.value }
   }
@@ -152,7 +155,7 @@ export function useProgressiveList<T>(
   function scrollToIndex(index: number): void {
     measure()
     const root = scrollContainer.value
-    if (!root || index < 0 || index >= items.value.length) return
+    if (!root || index < 0 || index >= total.value) return
     root.scrollTo({
       top: Math.max(
         0,
@@ -168,19 +171,19 @@ export function useProgressiveList<T>(
 
   const windowRange = computed(() =>
     getPlaybackQueueWindow(
-      items.value.length,
+      total.value,
       Math.max(0, scrollTop.value - listOffsetTop.value),
       viewportHeight.value,
       rowHeight.value,
       overscan
     )
   )
-  const visibleStart = computed(() => windowRange.value.start)
+  const visibleStart = computed(() => Math.max(windowRange.value.start, offset.value))
   const visibleItems = computed(() =>
-    items.value.slice(windowRange.value.start, windowRange.value.end)
+    items.value.slice(Math.max(0, windowRange.value.start - offset.value), Math.max(0, windowRange.value.end - offset.value))
   )
-  const paddingTop = computed(() => windowRange.value.start * rowHeight.value)
-  const totalHeight = computed(() => items.value.length * rowHeight.value)
+  const paddingTop = computed(() => visibleStart.value * rowHeight.value)
+  const totalHeight = computed(() => total.value * rowHeight.value)
   const hasMoreToRender = computed(() => false)
 
   function onVisibilityChange(): void {
@@ -191,6 +194,7 @@ export function useProgressiveList<T>(
   }
 
   watch(items, scheduleMeasure, { flush: 'post' })
+  watch(windowRange, ({ start, end }) => options.onRange?.(start, end), { immediate: true })
   onMounted(() => {
     rowObserver = new ResizeObserver((entries) => {
       if (document.hidden) return

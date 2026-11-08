@@ -1,5 +1,6 @@
 import {
   computed,
+  nextTick,
   getCurrentInstance,
   onBeforeUnmount,
   ref,
@@ -131,6 +132,19 @@ interface SearchRequestSnapshot {
   source: SearchSource
   offset: number
 }
+export interface StreamingSearchSnapshot {
+  query: string
+  type: SearchType
+  source: SearchSource
+  offset: number
+  total: number
+  error: string
+  tracks: Track[]
+  albums: AlbumSearchItem[]
+  playlists: MediaProviderPlaylistSummary[]
+  artists: MediaProviderArtistSummary[]
+  playback: { snapshot: SearchRequestSnapshot; query: LibraryQuery } | null
+}
 
 export function useStreamingSearch({
   searchAlbums,
@@ -169,6 +183,8 @@ export function useStreamingSearch({
   performSearch: (keywords: string) => Promise<void>
   onPageChange: (event: PageState) => void
   onSearchTrackClick: (track: Track) => void
+  capture: () => StreamingSearchSnapshot
+  restore: (saved: StreamingSearchSnapshot) => Promise<void>
 } {
   const searchQuery = ref('')
   const searchType = ref<SearchType>('songs')
@@ -188,6 +204,7 @@ export function useStreamingSearch({
   let lastRequestFingerprint = ''
   let activeSearchController: AbortController | null = null
   let refreshQueued = false
+  let restoring = false
   let songPlayback: { snapshot: SearchRequestSnapshot; query: LibraryQuery } | null = null
 
   function refreshSearch(): void {
@@ -432,6 +449,7 @@ export function useStreamingSearch({
   watch(
     [searchQuery, searchType, searchSource],
     ([newQuery, newType, newSource], [oldQuery, oldType, oldSource]) => {
+      if (restoring) return
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
       const q = newQuery.trim()
       if (!q) {
@@ -539,7 +557,32 @@ export function useStreamingSearch({
     refreshSearch,
     performSearch,
     onPageChange,
-    onSearchTrackClick
+    onSearchTrackClick,
+    capture: () => ({ query: searchQuery.value, type: searchType.value, source: searchSource.value,
+      offset: searchOffset.value, total: searchTotal.value, error: searchError.value,
+      tracks: searchResults.value, albums: searchAlbumsResults.value, playlists: searchPlaylistsResults.value,
+      artists: searchArtistsResults.value, playback: songPlayback }),
+    async restore(saved) {
+      restoring = true
+      latestRequestId++
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+      cancelActiveSearch()
+      searchQuery.value = saved.query
+      searchType.value = saved.type
+      searchSource.value = saved.source
+      searchOffset.value = saved.offset
+      searchTotal.value = saved.total
+      searchError.value = saved.error
+      searchLoading.value = false
+      searchResults.value = saved.tracks
+      searchAlbumsResults.value = saved.albums
+      searchPlaylistsResults.value = saved.playlists
+      searchArtistsResults.value = saved.artists
+      songPlayback = saved.playback ? { ...saved.playback, snapshot: { ...saved.playback.snapshot, requestId: latestRequestId } } : null
+      lastRequestFingerprint = searchRequestFingerprint({ query: saved.query.trim(), type: saved.type, source: saved.source, offset: saved.offset })
+      await nextTick()
+      restoring = false
+    }
   }
 }
 

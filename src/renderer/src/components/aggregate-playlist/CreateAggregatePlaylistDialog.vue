@@ -16,11 +16,13 @@ const props = defineProps<{
   tracks: Track[]
   trackCount?: number
   createWithTracks?: (name: string) => Promise<{ playlistId: string; addedCount: number }>
+  draftName?: string
 }>()
 
 const emit = defineEmits<{
   close: []
   created: [playlistId: string, addedCount: number]
+  'update:draftName': [value: string]
 }>()
 
 const { createAggregatePlaylist, addTracksToPlaylistById } = useMusicStore()
@@ -34,10 +36,12 @@ watch(
   () => props.show,
   (show) => {
     if (!show) return
-    name.value = ''
+    name.value = props.draftName ?? ''
     error.value = ''
-  }
+  },
+  { immediate: true }
 )
+watch(name, value => emit('update:draftName', value))
 
 const trackLabel = computed(() =>
   (props.trackCount ?? props.tracks.length) > 1

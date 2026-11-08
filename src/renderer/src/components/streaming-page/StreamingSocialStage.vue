@@ -65,6 +65,8 @@ const props = withDefaults(
     tabs?: SocialStageTab[]
     activeTab?: string
     tracks?: Track[]
+    trackOffset?: number
+    trackTotal?: number
     currentTrackId?: string | null
     trackActivationMode?: 'singleClick' | 'doubleClick'
     isExternal?: boolean
@@ -139,6 +141,7 @@ const emit = defineEmits<{
   batchDelete: []
   clearSelection: []
   trackContextMenu: [track: Track, index: number, event: MouseEvent]
+  browseRange: [start: number, end: number]
 }>()
 
 const {
@@ -149,9 +152,16 @@ const {
   listRef,
   scrollContainer,
   itemBounds
-} = useProgressiveList(() => props.tracks)
+} = useProgressiveList(() => props.tracks, {
+  offset: () => props.trackOffset ?? 0,
+  total: () => props.trackTotal ?? props.tracks.length,
+  onRange: (start, end) => emit('browseRange', start, end)
+})
 
-useStreamingTrackLocator({ scrollContainer, itemBounds }, props)
+useStreamingTrackLocator({ scrollContainer, itemBounds }, props, id => {
+  const index = props.tracks.findIndex(track => track.id === id)
+  return index < 0 ? -1 : (props.trackOffset ?? 0) + index
+})
 
 function trackIndex(offset: number): number {
   return visibleStart.value + offset

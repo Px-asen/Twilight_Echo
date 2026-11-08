@@ -28,7 +28,12 @@ export type UseTrackMultiSelectOptions = {
   /** Current visible/ordered track list used for range and select-all. */
   tracks: TrackListSource
   /** Complete-query mode: no selected Track cache or synchronous materialization. */
-  querySelection?: () => { total: number; positionForKey(key: string): number | null } | null
+  querySelection?: () => {
+    total: number
+    positionForKey(key: string): number | null
+    prepareAll?: () => Promise<void>
+    onError?: (error: unknown) => void
+  } | null
   /** Occurrence identity for lists where one Track may appear more than once. */
   keyForTrack?: (track: Track) => string
   /**
@@ -127,6 +132,7 @@ export function useTrackMultiSelect({
   const selectedRanges = shallowRef<LibrarySelectionRange[]>([])
   const selectionVersion = ref(0)
   const query = computed(() => querySelection?.() ?? null)
+  let preparingAll = false
   const anchorIndex = ref<number | null>(null)
   const selectedTrackCache = new Map<string, { track: Track; order: number }>()
   let suppressNextRowDoubleClick = false
@@ -173,6 +179,7 @@ export function useTrackMultiSelect({
   }
 
   function clearSelection(): void {
+    preparingAll = false
     selectedRanges.value = []
     selectionVersion.value++
     selectedIds.value = new Set()
@@ -267,6 +274,23 @@ export function useTrackMultiSelect({
 
   function selectAll(): void {
     if (query.value) {
+      if (query.value.prepareAll) {
+        preparingAll = true
+        const version = selectionVersion.value
+        const current = query.value
+        const prepare = current.prepareAll!
+        void prepare()
+          .then(() => {
+            if (selectionVersion.value !== version || !query.value) return
+            setRanges(query.value.total > 0 ? [[0, query.value.total]] : [])
+            anchorIndex.value = query.value.total > 0 ? 0 : null
+          })
+          .catch((error) => current.onError?.(error))
+          .finally(() => {
+            preparingAll = false
+          })
+        return
+      }
       setRanges(query.value.total > 0 ? [[0, query.value.total]] : [])
       anchorIndex.value = query.value.total > 0 ? 0 : null
       return
@@ -377,7 +401,13 @@ export function useTrackMultiSelect({
       })
     }
     watch(preservesSelectedTracks, clearSelection, { flush: 'sync' })
-    watch(() => query.value?.total, clearSelection, { flush: 'sync' })
+    watch(
+      () => query.value?.total,
+      () => {
+        if (!preparingAll) clearSelection()
+      },
+      { flush: 'sync' }
+    )
     if (rangeContext)
       watch(
         typeof rangeContext === 'function' ? rangeContext : () => rangeContext.value,

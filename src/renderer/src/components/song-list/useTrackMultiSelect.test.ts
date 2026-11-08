@@ -7,6 +7,38 @@ const { useTrackMultiSelect, isTrackListShortcutTarget } = (await import(
   new URL('./useTrackMultiSelect.ts', import.meta.url).href
 )) as typeof import('./useTrackMultiSelect')
 
+test('select-all resolves an unknown provider count and a later clear cancels the pending selection', async () => {
+  const total = ref(800)
+  let ready!: () => void
+  const scope = effectScope()
+  const select = scope.run(() =>
+    useTrackMultiSelect({
+      tracks: ref([]),
+      querySelection: () => ({
+        total: total.value,
+        positionForKey: () => null,
+        prepareAll: () =>
+          new Promise<void>((resolve) => {
+            ready = () => {
+              total.value = 4201
+              resolve()
+            }
+          })
+      })
+    })
+  )!
+  select.selectAll()
+  ready()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(select.selectedCount.value, 4201)
+  select.selectAll()
+  select.clearSelection()
+  ready()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(select.selectedCount.value, 0)
+  scope.stop()
+})
+
 test('list shortcuts stay within the owning noneditable surface and yield to menus and dialogs', () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement')
   class TestElement {
