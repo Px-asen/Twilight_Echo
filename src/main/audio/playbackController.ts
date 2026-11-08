@@ -1701,9 +1701,26 @@ export class PlaybackController {
       info.actualBackend,
       reportedBackend
     )
+    const dsdRoute = this.processing.dsdRoute
+    const routeEvidence = info.outputInfo?.diagnostics
+    // An explicitly configured DSD route can have a different actual backend
+    // from the main PCM route. Keep its current facts instead of restoring the
+    // previous PCM snapshot as if a backend switch had returned stale data.
+    const configuredDsdRouteActive =
+      dsdRoute.enabled &&
+      routeEvidence?.dsdRouteOverrideActive === true &&
+      normalizeBackendId(info.outputBackend) === normalizeBackendId(expectedBackend) &&
+      normalizeBackendId(routeEvidence.dsdRouteBackend) ===
+        normalizeBackendId(dsdRoute.backend || expectedBackend) &&
+      normalizeBackendId(reportedActualBackend) ===
+        normalizeBackendId(routeEvidence.dsdRouteBackend) &&
+      routeEvidence.dsdRouteDevice === (dsdRoute.device || this.device) &&
+      (info.outputInfo?.isDsd === true ||
+        ((this.outputConfig.pcmToDsdMode ?? 'off') !== 'off' && dsdRoute.applyToPcmToDsd))
     const staleNativeOutputRoute =
       this.nativeOutputRouteSynced &&
       info.outputInfo?.outputReleased !== true &&
+      !configuredDsdRouteActive &&
       [reportedBackend, reportedActualBackend].some(
         (backend) =>
           backend.length > 0 && normalizeBackendId(backend) !== normalizeBackendId(expectedBackend)
@@ -1777,9 +1794,10 @@ export class PlaybackController {
     outputInfo.isDsd = isDsd
     outputInfo.dsdMode = dsdMode
     outputInfo.dsdRate = dsdRate
-    outputInfo.backend = staleNativeOutputRoute
-      ? expectedBackend
-      : preferNonEmpty(canonicalOutput?.backend, info.outputBackend, expectedBackend)
+    outputInfo.backend =
+      staleNativeOutputRoute || configuredDsdRouteActive
+        ? expectedBackend
+        : preferNonEmpty(canonicalOutput?.backend, info.outputBackend, expectedBackend)
     outputInfo.actualBackend = staleNativeOutputRoute
       ? expectedBackend
       : preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)

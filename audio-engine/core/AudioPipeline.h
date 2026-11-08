@@ -108,15 +108,6 @@ struct PipelineStatus {
 class AudioPipeline {
  public:
   using BackendFactory = std::function<std::unique_ptr<IOutputBackend>(const std::string&)>;
-  /**
-   * Device ids of output devices that a capability probe proved can accept a
-   * raw DSD stream. Used to auto-discover a DSD compatibility route when the
-   * main output cannot carry DSD and the user has not pinned one.
-   *
-   * Injectable so routing policy stays testable without linking a platform
-   * driver host, and so builds without ASIO simply report nothing.
-   */
-  using NativeDsdDeviceDiscovery = std::function<std::vector<std::string>()>;
 
   AudioPipeline();
   ~AudioPipeline();
@@ -229,13 +220,6 @@ class AudioPipeline {
   OutputInfo::RenderPerformanceSnapshot renderPerformanceSnapshot() const noexcept;
 
   static void setBackendFactoryForTests(BackendFactory factory);
-
-  /**
-   * Override DSD-capable device discovery. Passing an empty function restores
-   * the platform default (the ASIO capability probe, or nothing when ASIO is
-   * not built).
-   */
-  static void setNativeDsdDeviceDiscoveryForTests(NativeDsdDeviceDiscovery discovery);
 
  private:
   enum class ControlCommandType : uint8_t {

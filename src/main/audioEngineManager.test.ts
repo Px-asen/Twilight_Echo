@@ -2899,6 +2899,133 @@ test('getPlaybackInfo preserves canonical 192 kHz PCM output-perfect facts', asy
   assertPlaybackMirrorsOutputInfo(info)
 })
 
+for (const mode of ['native', 'dop', 'pcm-to-dsd'] as const) {
+  test(`configured DSD ${mode} route replaces previous PCM output facts`, async () => {
+    const sourceIsDsd = mode !== 'pcm-to-dsd'
+    const transport = mode === 'dop' ? 'dop' : 'native'
+    const outputInfo = makeOutputInfo({
+      backend: 'asio',
+      actualBackend: 'asio',
+      actualDeviceId: 'asio:studio',
+      isDsd: sourceIsDsd,
+      dsdMode: sourceIsDsd ? transport : 'pcm',
+      dsdRate: sourceIsDsd ? 256 : 0,
+      actualDsdRate: 256,
+      actualOutputFormat: transport === 'native' ? 'dsd-int8-lsb1' : 'int24',
+      actualSampleRate: transport === 'native' ? 11289600 : 705600,
+      actualBitDepth: transport === 'native' ? 1 : 24,
+      sourceExact: sourceIsDsd,
+      outputPerfect: sourceIsDsd,
+      perfectReasonCode: '',
+      perfectReason: '',
+      diagnostics: makeDiagnostics({
+        dsdRouteOverrideActive: true,
+        dsdRouteBackend: 'asio',
+        dsdRouteDevice: 'asio:studio',
+        dsdTransport: transport,
+        typedRawPath: true,
+        processingBypassed: true
+      })
+    })
+    const binding = new FakeNativeBinding({
+      state: 'playing',
+      source: sourceIsDsd ? 'symphony-dsd256.dsf' : 'pcm-192k.flac',
+      codec: sourceIsDsd ? 'dsd' : 'flac',
+      outputBackend: 'wasapi-exclusive',
+      sourceSampleRate: sourceIsDsd ? 11289600 : 192000,
+      sourceBitDepth: sourceIsDsd ? 1 : 24,
+      outputInfo
+    })
+    const manager = makeManager(
+      {
+        audioOutput: 'wasapi',
+        audioDevice: 'auto',
+        exclusiveMode: true,
+        audioOutputConfig: { pcmToDsdMode: sourceIsDsd ? 'off' : 'dsd256' },
+        audioProcessing: {
+          dsdOutputMode: transport,
+          dsdRoute: {
+            enabled: true,
+            backend: 'asio',
+            device: 'asio:studio',
+            applyToPcmToDsd: true,
+            strictPassthrough: false
+          }
+        }
+      },
+      binding
+    )
+    const state = manager as unknown as {
+      nativePlaybackActive: boolean
+      nativeOutputRouteSynced: boolean
+    }
+    state.nativePlaybackActive = true
+    state.nativeOutputRouteSynced = true
+
+    try {
+      const info = await manager.getPlaybackInfo()
+      assert.equal(info.outputBackend, 'wasapi-exclusive')
+      assert.equal(info.actualBackend, 'asio')
+      assert.equal(info.dsdMode, sourceIsDsd ? transport : 'pcm')
+      assert.equal(info.dsdRate, sourceIsDsd ? 256 : 0)
+      assert.equal(info.actualSampleRate, outputInfo.actualSampleRate)
+      assert.equal(info.actualBitDepth, outputInfo.actualBitDepth)
+      assert.equal(info.outputInfo.diagnostics.dsdTransport, transport)
+      assert.equal(info.outputInfo.diagnostics.dsdRouteOverrideActive, true)
+      assert.equal(info.outputPerfect, sourceIsDsd)
+      assertPlaybackMirrorsOutputInfo(info)
+    } finally {
+      manager.destroy()
+    }
+  })
+}
+
+test('DSD route evidence must match the enabled route and current main backend', async (t) => {
+  for (const mismatch of ['disabled', 'device', 'backend', 'inactive', 'main-backend']) {
+    const binding = new FakeNativeBinding({
+      source: 'album.dsf',
+      outputBackend: mismatch === 'main-backend' ? 'wasapi' : 'wasapi-exclusive',
+      outputInfo: makeOutputInfo({
+        backend: 'asio',
+        actualBackend: 'asio',
+        isDsd: true,
+        dsdMode: 'native',
+        diagnostics: makeDiagnostics({
+          dsdRouteOverrideActive: mismatch !== 'inactive',
+          dsdRouteBackend: mismatch === 'backend' ? 'alsa' : 'asio',
+          dsdRouteDevice: mismatch === 'device' ? 'other-device' : 'asio:studio'
+        })
+      })
+    })
+    const manager = makeManager(
+      {
+        audioOutput: 'wasapi',
+        exclusiveMode: true,
+        audioProcessing: {
+          dsdRoute: {
+            enabled: mismatch !== 'disabled',
+            backend: 'asio',
+            device: 'asio:studio',
+            applyToPcmToDsd: true,
+            strictPassthrough: false
+          }
+        }
+      },
+      binding
+    )
+    t.after(() => manager.destroy())
+    const state = manager as unknown as {
+      nativePlaybackActive: boolean
+      nativeOutputRouteSynced: boolean
+    }
+    state.nativePlaybackActive = true
+    state.nativeOutputRouteSynced = true
+    const info = await manager.getPlaybackInfo()
+    assert.equal(info.actualBackend, 'wasapi-exclusive', mismatch)
+    assert.notEqual(info.dsdMode, 'native', mismatch)
+  }
+})
+
 test('setAudioOutput rejects a stale ASIO snapshot after switching to WASAPI', async () => {
   const nativeBinding = new FakeNativeBinding({
     outputInfo: makeOutputInfo({
