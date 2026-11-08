@@ -114,6 +114,8 @@ function loadModule(relative, env, modules) {
     require(id) {
       if (id === 'vue') return env.lifecycle
       if (id in modules) return modules[id]
+      if (id.endsWith('/composables/workspaceSession'))
+        return loadModule('../composables/workspaceSession.ts', env, {})
       if (id.endsWith('.vue')) return { __esModule: true, default: {} }
       if (id.endsWith('.css')) return {}
       throw new Error(`Missing fixture module: ${id}`)
