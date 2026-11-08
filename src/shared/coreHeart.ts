@@ -17,6 +17,8 @@ export interface CoreHeartState {
 export interface CoreLikedPlayback {
   selectedId?: string
   play?: boolean
+  /** Shuffle the complete authenticated list; mutually exclusive with selectedId. */
+  shuffle?: boolean
 }
 /** Private database capability; preserves holes and queue-scoped occurrence IDs. */
 export interface CoreHeartQueueApi {

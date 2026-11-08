@@ -992,9 +992,11 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       return validCoreAudioPayload(name, p)
     case 'liked.play':
       return (
-        keys(p, ['selectedId', 'play']) &&
+        keys(p, ['selectedId', 'play', 'shuffle']) &&
         optional(p.selectedId, text) &&
-        optional(p.play, (value) => typeof value === 'boolean')
+        optional(p.play, (value) => typeof value === 'boolean') &&
+        optional(p.shuffle, (value) => typeof value === 'boolean') &&
+        !(p.shuffle === true && p.selectedId !== undefined)
       )
     case 'personalized.start':
       return (

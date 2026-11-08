@@ -1074,6 +1074,93 @@ test('Core builds the authenticated liked queue in bounded pages, uses the provi
   assert.equal(f.session.snapshot().queue?.id, before.queue?.id)
 })
 
+for (const shuffle of [false, true]) {
+  test(`liked playback retains all 2100 songs independently of the displayed first page (shuffle=${shuffle})`, async (t) => {
+    const tracks = Array.from({ length: 2100 }, (_, index) => recommended(index + 1))
+    const offsets: number[] = []
+    const provider = heartProvider(),
+      original = provider.call
+    provider.call = async (method, args, signal) => {
+      if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+      const offset = Number(args[0]),
+        limit = Number(args[1])
+      offsets.push(offset)
+      return {
+        tracks: tracks.slice(offset, offset + limit),
+        nextOffset: offset + limit,
+        hasMore: offset + limit < tracks.length
+      }
+    }
+    const f = await heartFixture(t, provider)
+    await f.session.startLiked(shuffle ? { shuffle: true } : { selectedId: 'ncm:2001' })
+    assert.deepEqual(
+      offsets,
+      Array.from({ length: 11 }, (_, index) => index * 200)
+    )
+    assert.equal(f.session.snapshot().queue?.total, 2100)
+    const queue = f.session.snapshot().queue!
+    const rows = offsets.flatMap((offset) => f.db.readLibraryQueue(queue.id, offset, 200).items)
+    assert.deepEqual(
+      new Set(rows.map((row) => row.track?.id)),
+      new Set(tracks.map((track) => track.id))
+    )
+    assert.equal(queue.index, shuffle ? 0 : 2000)
+    assert.equal(f.session.snapshot().track?.id, rows[queue.index].track?.id)
+    assert.equal(f.db.getLibraryQueue(queue.id).order, shuffle ? 'shuffle' : 'original')
+    assert.equal(f.session.snapshot().playback?.playMode, shuffle ? 'shuffle' : 'sequential')
+    if (!shuffle) assert.equal(f.session.snapshot().track?.id, 'ncm:2001')
+    assert.equal(f.session.snapshot().heart?.available, true)
+    assert.equal(f.engine.calls.filter((call) => call === 'loadQueue').length, 1)
+    assert.equal(f.engine.calls.filter((call) => call === 'play').length, 1)
+  })
+}
+
+for (const action of ['pause', 'next', 'select'] as const) {
+  test(`late liked-list paging cannot override a newer ${action} intent`, async (t) => {
+    const entered = deferred<void>(),
+      release = deferred<void>()
+    t.after(() => release.resolve())
+    const provider = heartProvider(),
+      original = provider.call
+    provider.call = async (method, args, signal) => {
+      if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+      if (args[0] === 0) return { tracks: [recommended(1)], nextOffset: 200, hasMore: true }
+      entered.resolve()
+      await release.promise
+      return { tracks: [recommended(2)], nextOffset: 201, hasMore: false }
+    }
+    const f = await heartFixture(t, provider)
+    await f.session.fromQuery({}, 'a')
+    await observeAt(f, 147)
+    const before = transportCalls(f.engine)
+    const loading = f.session.startLiked({ selectedId: 'ncm:2' })
+    const cancelled = assert.rejects(loading, /superseded|cancel/i)
+    await entered.promise
+    assert.deepEqual(
+      transportCalls(f.engine),
+      before,
+      'a slow provider page must not stop the playing decoder'
+    )
+    assert.equal(f.session.snapshot().playback?.position, 147)
+    if (action === 'pause') await f.session.pause()
+    else if (action === 'next') await f.session.navigate(1)
+    else await f.session.fromTrack(recommended(99))
+    const current = f.session.snapshot(),
+      calls = transportCalls(f.engine)
+    release.resolve()
+    await cancelled
+    await tick()
+    assert.equal(f.session.snapshot().queue?.id, current.queue?.id)
+    assert.equal(f.session.snapshot().track?.id, current.track?.id)
+    assert.equal(f.session.snapshot().playback?.state, current.playback?.state)
+    assert.deepEqual(
+      transportCalls(f.engine),
+      calls,
+      'late paging must not stop, load or play another song'
+    )
+  })
+}
+
 test('heart entry and exit preserve the seed decoder, position and occurrence without Pause, Play, Seek or LoadQueue', async (t) => {
   const seeds: unknown[] = []
   const f = await heartFixture(
