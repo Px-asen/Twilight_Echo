@@ -71,7 +71,7 @@ test('release fails for a missing or incorrectly built x86 helper', (t) => {
 })
 test('release rejects stale protocol and architecture metadata', (t) => {
   const dir = fixture(t)
-  for (const patch of [{ protocolVersion: 5 }, { architecture: 'arm64' }]) {
+  for (const patch of [{ protocolVersion: 6 }, { architecture: 'arm64' }]) {
     assert.throws(() =>
       verifyAsioHelperPair(dir, {
         spawn: (binary) => {

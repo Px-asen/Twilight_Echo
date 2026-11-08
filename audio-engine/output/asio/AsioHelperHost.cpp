@@ -226,6 +226,7 @@ bool AsioHelperHost::open(
         asio_helper::copyText(request.deviceId, sizeof(request.deviceId), resolvedId);
         request.format = asio_helper::encodeAudioFormat(config.format);
         request.bufferSizeFrames = static_cast<int32_t>(config.bufferSizeFrames);
+        request.bufferSizeInPcmFrames = config.bufferSizeInPcmFrames ? 1 : 0;
         request.outputChannelStart = config.outputChannelStart;
         if (config.sampleFormatMapping) {
           request.sampleFormatMappingReported =
@@ -284,7 +285,8 @@ bool AsioHelperHost::createBuffers(
   }
   if (response->channelCount == 0 || response->channelCount > asio_helper::kMaxChannels ||
       response->bufferSizeFrames <= 0 ||
-      response->bufferSizeFrames > static_cast<int32_t>(asio_helper::kMaxFrames)) {
+      response->bufferSizeFrames > static_cast<int32_t>(isDsdSampleFormat(openFormat_.sampleFormat)
+          ? asio_helper::kMaxDsdSamples : asio_helper::kMaxFrames)) {
     if (error) *error = asio_helper::failureMessage(
         asio_helper::FailureReason::ProtocolError,
         "ASIO helper returned invalid buffer geometry");
@@ -306,7 +308,9 @@ bool AsioHelperHost::createBuffers(
           asio_helper::decodeChannelFormat(response->channelFormats[channel]);
       const auto& record = response->channelFormats[channel];
       if (!asio_helper::validSampleFormat(record.logicalFormat) || record.littleEndian > 1 ||
-          record.validBitsAreMostSignificant > 1 || !asio::isSupportedChannelFormat(format)) {
+          record.validBitsAreMostSignificant > 1 || !asio::isSupportedChannelFormat(format) ||
+          asio::wireBytesForFrames(format, isDsdSampleFormat(openFormat_.sampleFormat)
+              ? std::max<long>(1, activeBufferSize_ / 8) : activeBufferSize_) > asio_helper::kChannelStride) {
         if (error) *error = "ASIO helper returned an invalid channel format";
         process_->abort(asio_helper::FailureReason::ProtocolError, "invalid channel format");
         return false;
@@ -471,11 +475,16 @@ void AsioHelperHost::commitOutputBuffer(long bufferIndex, size_t frameCount) {
   auto* shared = process_->shared();
   if (!shared || bufferIndex < 0 || bufferIndex > 1) return;
   asio_helper::RenderBuffer& buffer = shared->buffers[bufferIndex];
-  const uint32_t boundedFrames = static_cast<uint32_t>(
-      std::min({frameCount, size_t{asio_helper::kMaxFrames}, activeRenderFrameCapacity()}));
   const uint32_t channelCount = std::min<uint32_t>(
       renderChannelCount_.load(std::memory_order_acquire),
       asio_helper::kMaxChannels);
+  size_t capacity = activeRenderFrameCapacity();
+  for (uint32_t channel = 0; channel < channelCount; ++channel) {
+    const size_t wireStride = asio::wireBytesForFrames(renderChannelFormats_[channel], 1);
+    if (wireStride == 0) return;
+    capacity = std::min(capacity, asio_helper::kChannelStride / wireStride);
+  }
+  const uint32_t boundedFrames = static_cast<uint32_t>(std::min(frameCount, capacity));
   buffer.committedFrames = boundedFrames;
   std::memset(buffer.channelBytes, 0, sizeof(buffer.channelBytes));
   for (uint32_t channel = 0; channel < channelCount; ++channel) {
@@ -603,7 +612,7 @@ void AsioHelperHost::workerLoop() {
         callback = eventCallback_;
       }
       if (callback && record.event >= static_cast<int32_t>(AsioHostEvent::DriverReset) &&
-          record.event <= static_cast<int32_t>(AsioHostEvent::Xrun)) {
+          record.event <= static_cast<int32_t>(AsioHostEvent::HelperFailure)) {
         callback(
             static_cast<AsioHostEvent>(record.event),
             asio_helper::readText(record.message));

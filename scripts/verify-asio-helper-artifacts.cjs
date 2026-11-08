@@ -4,7 +4,7 @@ const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { readPeImports, readPeMachine, classifyImports } = require('./pe-imports.cjs')
 
-const ASIO_HELPER_PROTOCOL_VERSION = 6
+const ASIO_HELPER_PROTOCOL_VERSION = 7
 
 function verifyAsioHelperPair(nativeDir, { spawn = spawnSync } = {}) {
   for (const [file, architecture, machine] of [

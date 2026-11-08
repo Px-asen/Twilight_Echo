@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../IAsioHost.h"
+#include "../AsioBufferLimits.h"
 #include "AsioHelperVersion.h"
 
 #include <Windows.h>
@@ -19,7 +20,8 @@ namespace twilight::audio::asio_helper {
 constexpr uint32_t kProtocolMagic = 0x48414554u;
 constexpr uint32_t kMaxDevices = 64;
 constexpr uint32_t kMaxChannels = 32;
-constexpr uint32_t kMaxFrames = 32768;
+constexpr uint32_t kMaxFrames = asio::kMaximumPcmBufferFrames;
+constexpr uint32_t kMaxDsdSamples = asio::kMaximumDsdBufferSamples;
 constexpr uint32_t kMaxBytesPerSample = 8;
 constexpr uint32_t kMaxRates = 32;
 constexpr uint32_t kMaxFormats = 16;
@@ -29,6 +31,7 @@ constexpr uint32_t kHostEventRingSize = 16;
 constexpr uint32_t kMaxIdentityBytes = 512;
 constexpr uint32_t kMaxMessageBytes = 512;
 constexpr uint32_t kChannelStride = kMaxFrames * kMaxBytesPerSample;
+static_assert(kChannelStride == asio::kMaximumChannelBufferBytes);
 constexpr uint32_t kBufferBytes = kMaxChannels * kChannelStride;
 constexpr uint32_t kRenderQueueSlots = 32;
 
@@ -145,6 +148,7 @@ struct Request {
   int32_t nativeDsdControlOrder = 0;
   int32_t dsdMinimumBufferFrames = 0;
   int32_t dsdCadenceConfirmCallbacks = 2;
+  int32_t bufferSizeInPcmFrames = 0;
 };
 
 struct Response {

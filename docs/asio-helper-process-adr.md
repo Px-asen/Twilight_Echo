@@ -56,7 +56,14 @@ signals the request event, then waits for the matching response sequence or help
 Unknown commands, malformed counts, oversize strings, or a version mismatch fail closed with
 `asio_helper_protocol_error`.
 
-Revision 6 adds driver/helper architecture and the 32-bit resolvable-driver count. Every shared
+Revision 7 adds the `bufferSizeInPcmFrames` request flag, using the former four-byte padding
+before the response. The shared mapping size and all other record offsets remain unchanged.
+Native DSD driver counts may exceed 32768; storage is bounded by the existing 262144-byte
+channel stride. Packed bit-sample buffers start at count/8, and a confirmed byte-frame buffer
+that exceeds the channel allocation fails instead of being truncated. Direct host requests
+retain raw driver-count semantics unless the new flag is set.
+
+Revision 6 added driver/helper architecture and the 32-bit resolvable-driver count. Every shared
 record has a checked `sizeof`, `alignof` and complete `offsetof` manifest in
 `audio-engine/output/asio/helper/asio-helper-layout.json`. Packing is 8 bytes, render records retain
 64-byte alignment, and explicit padding removes the MSVC/MinGW member-alignment difference.

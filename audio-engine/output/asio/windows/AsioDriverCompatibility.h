@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../AsioRenderUtils.h"
+#include "../AsioBufferLimits.h"
 #include "../abi/AsioAbi.h"
 
 #include <Windows.h>
@@ -17,7 +18,7 @@
 
 namespace twilight::audio::asio_windows {
 
-inline constexpr int32_t kMaximumAsioBufferFrames = 32768;
+inline constexpr int32_t kMaximumAsioBufferFrames = asio::kMaximumPcmBufferFrames;
 inline constexpr int32_t kMaximumAsioChannels = 32;
 
 inline std::optional<AsioChannelFormat> channelFormatFor(
@@ -73,22 +74,23 @@ inline std::optional<AsioChannelFormat> channelFormatFor(
 struct AsioBufferRange {
   int32_t minimum = 0, maximum = 0, preferred = 0, granularity = 0;
   bool valid() const { return minimum > 0 && maximum >= minimum; }
-  bool accepts(int32_t size) const {
-    if (!valid() || size < minimum || size > maximum || size > kMaximumAsioBufferFrames) return false;
+  bool accepts(int32_t size, int32_t limit = kMaximumAsioBufferFrames) const {
+    if (!valid() || size < minimum || size > maximum || size > limit) return false;
     if (granularity < 0) return (size & (size - 1)) == 0;
     return granularity == 0 || (size - minimum) % granularity == 0;
   }
 };
 
 inline std::vector<int32_t> bufferSizeCandidates(const AsioBufferRange& range, int32_t requested,
-                                                int32_t minimumRequired = 0) {
+                                                int32_t minimumRequired = 0,
+                                                int32_t limit = kMaximumAsioBufferFrames) {
   std::vector<int32_t> result;
   const auto add = [&](int32_t value) {
-    if (value >= minimumRequired && range.accepts(value) &&
+    if (value >= minimumRequired && range.accepts(value, limit) &&
         std::find(result.begin(), result.end(), value) == result.end()) result.push_back(value);
   };
-  if (!range.valid() || range.minimum > kMaximumAsioBufferFrames) return result;
-  const int32_t ceiling = std::min(range.maximum, kMaximumAsioBufferFrames);
+  if (!range.valid() || range.minimum > limit) return result;
+  const int32_t ceiling = std::min(range.maximum, limit);
   const auto nearest = [&](int32_t value) {
     value = std::clamp(std::max(value, minimumRequired), range.minimum, ceiling);
     if (range.granularity < 0) {
@@ -110,6 +112,19 @@ inline std::vector<int32_t> bufferSizeCandidates(const AsioBufferRange& range, i
   for (int32_t size : {512, 1024, 2048, 4096, 8192, 256, 16384, 32768}) nearest(size);
   nearest(range.minimum); nearest(ceiling);
   return result;
+}
+
+// Use the driver's complete before/after range as evidence, rather than a
+// vendor name or an assumed DSD packing. FiiO 6.16 scales all three counts by
+// 256 at DSD256 (PCM 8/2048/1024 -> DSD 2048/524288/262144).
+inline int32_t nativeDsdBufferScale(const AsioBufferRange& pcm, const AsioBufferRange& dsd) {
+  if (!pcm.valid() || !dsd.valid() || pcm.preferred <= 0 || dsd.minimum % pcm.minimum != 0) return 1;
+  const int32_t scale = dsd.minimum / pcm.minimum;
+  if (scale <= 1 || int64_t{pcm.maximum} * scale != dsd.maximum ||
+      int64_t{pcm.preferred} * scale != dsd.preferred) return 1;
+  if (pcm.granularity <= 0 ? pcm.granularity != dsd.granularity
+                           : int64_t{pcm.granularity} * scale != dsd.granularity) return 1;
+  return scale;
 }
 
 inline void asioControlPause(std::chrono::milliseconds duration) {

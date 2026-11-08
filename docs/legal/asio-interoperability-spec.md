@@ -54,7 +54,8 @@ success value must not be treated as having rejected a format or rate.
 
 For a Native DSD request, the control thread must use this sequence before buffers are created:
 
-1. Read and retain the current sample rate and I/O format when available. A retained format may
+1. Read and retain the current sample rate and I/O format when available. For a PCM-unit buffer
+   preference, retain the PCM buffer range before changing modes. A retained format may
    be PCM or DSD. If the getter is unsupported, restoration uses PCM as the format baseline.
 2. Prefer can-do/set DSD, then select the semantic DSD rate and check the active I/O format.
    Restore the baseline between failed orders. Rate-first and rate-only negotiation are bounded
@@ -63,8 +64,11 @@ For a Native DSD request, the control thread must use this sequence before buffe
 3. Validate sample-rate readback, requiring consecutive target observations. Avoid a redundant
    set when the rate is already correct. A bounded supported-rate pivot may recover a stalled
    switch, but success always requires returning to the requested rate.
-4. Re-read the buffer-size range after the switch. Select legal requested/preferred/nearby sizes
-   within the helper limit. An unavailable or invalid range fails the open.
+4. Re-read the buffer-size range after the switch. If all range counts and the granularity scale
+   consistently, convert a PCM-unit preference by that observed ratio. Select legal
+   requested/preferred/nearby sizes within the helper's DSD-count and wire-byte limits.
+   An unavailable or invalid range fails the open. The actual driver count remains distinct
+   from the preference and from the packed render capacity.
 5. Treat pre-create channel information as advisory. Create buffers using bounded candidates,
    disposing each failed or partial allocation before another attempt. After successful creation,
    query every output channel and verify the sample rate again. Native DSD output channels must

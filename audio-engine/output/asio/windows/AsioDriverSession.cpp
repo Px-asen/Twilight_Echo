@@ -104,10 +104,14 @@ void traceNativeDsdText(const char* operation, const std::string& text) {
 std::vector<int32_t> sessionBufferSizeCandidates(
     const AsioBufferRange& range,
     const AsioOpenConfig& config,
-    bool nativeDsdRequested) {
+    bool nativeDsdRequested,
+    int32_t bufferScale = 1) {
   if (range.maximum <= 0) return {};
   if (nativeDsdRequested) {
-    return bufferSizeCandidates(range, config.bufferSizeFrames, config.dsdMinimumBufferFrames);
+    const int64_t scaled = int64_t{std::max(0L, config.bufferSizeFrames)} * bufferScale;
+    const int32_t requested = static_cast<int32_t>(std::min<int64_t>(scaled, asio::kMaximumDsdBufferSamples));
+    return bufferSizeCandidates(range, requested, config.dsdMinimumBufferFrames,
+                                asio::kMaximumDsdBufferSamples);
   }
   const bool needsAutoFloor =
       config.bufferSizeFrames <= 0 || config.bufferSizeFrames < asio::kMinimumSafeAsioBufferFrames;
@@ -137,6 +141,8 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
   // render pipeline nor raise spurious buffer-failure events.
   std::atomic<bool> danceInProgress = false;
   int32_t bufferSize = 0;
+  AsioBufferRange pcmBufferRange;
+  int32_t bufferSizeScale = 1;
   int32_t inputChannels = 0;
   int32_t outputBufferOffset = 0;
   AsioOpenConfig openConfig;
@@ -237,6 +243,13 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
       // Several otherwise-capable ASIO drivers implement CanDo/Set but omit
       // GetIoFormat. The active channel sample type is the authoritative proof.
       nativeDsdNegotiation = "get-unsupported";
+    }
+
+    if (openConfig.bufferSizeInPcmFrames && originalIoFormatKnown &&
+        originalIoFormat.formatType == asio_abi::kAsioIoFormatPcm) {
+      AsioBufferRange range;
+      if (asio_abi::asioErrorIsSuccess(driver->getBufferSize(
+              &range.minimum, &range.maximum, &range.preferred, &range.granularity))) pcmBufferRange = range;
     }
 
     std::string formatFirstError;
@@ -447,6 +460,8 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         state->originalIoFormatKnown = false;
         state->originalSampleRate = 0;
         state->startupSummary.clear();
+        state->pcmBufferRange = {};
+        state->bufferSizeScale = 1;
 
         CLSID clsid{};
         const std::wstring wideClsid(clsidText.begin(), clsidText.end());
@@ -522,11 +537,13 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         traceAsioDriverCall("after sample rate negotiation");
         AsioBufferRange range;
         const auto rangeResult = state->driver->getBufferSize(&range.minimum, &range.maximum, &range.preferred, &range.granularity);
+        if (nativeDsdRequested && config.bufferSizeInPcmFrames && asio_abi::asioErrorIsSuccess(rangeResult))
+          state->bufferSizeScale = nativeDsdBufferScale(state->pcmBufferRange, range);
         traceNativeDsdText("buffer-size-post-rate", "minimum=" + std::to_string(range.minimum) +
             " maximum=" + std::to_string(range.maximum) + " preferred=" + std::to_string(range.preferred) +
             " granularity=" + std::to_string(range.granularity));
         const auto sizes = asio_abi::asioErrorIsSuccess(rangeResult)
-            ? sessionBufferSizeCandidates(range, config, nativeDsdRequested)
+            ? sessionBufferSizeCandidates(range, config, nativeDsdRequested, state->bufferSizeScale)
             : std::vector<int32_t>{};
         if (sizes.empty()) {
           outcome.result.failureKind = AsioOpenFailureKind::Format;
@@ -871,7 +888,7 @@ bool AsioDriverSession::createBuffers(
           return true;
         };
         const auto tryRange = [&](const AsioBufferRange& range) {
-          const auto candidates = sessionBufferSizeCandidates(range, state->openConfig, dsd);
+          const auto candidates = sessionBufferSizeCandidates(range, state->openConfig, dsd, state->bufferSizeScale);
           // Output-only keeps healthy playback drivers inexpensive. Duplex is
           // a fallback for drivers that require their input pins to be allocated.
           const int configurations = !dsd && !state->openConfig.format.dopEncoded && state->inputChannels > 0 ? 2 : 1;
@@ -959,6 +976,9 @@ bool AsioDriverSession::createBuffers(
         }
         state->startupSummary = "requestedRate=" + std::to_string(state->openConfig.format.sampleRate) +
             " actualRate=" + std::to_string(state->actualSampleRate) + " attempts=" + std::to_string(attempts) +
+            " requestedBuffer=" + std::to_string(state->openConfig.bufferSizeFrames) +
+            " bufferScale=" + std::to_string(state->bufferSizeScale) +
+            " driverBuffer=" + std::to_string(state->bufferSize) +
             " buffers=" + attemptSummary;
         if (!created) {
           AsioCallbackRouter::uninstall(state.get(), nullptr);

@@ -576,6 +576,72 @@ void testCatalogIdentity() {
   assert(!DeviceCapabilityCache::instance().get(x86.id)->nativeDsdCapable);
 }
 
+void testLargeNativeDsdBuffers(const std::wstring& helperPath) {
+  setMode(L"large-dsd-bits");
+  AsioHelperHost host(helperPath);
+  for (int preferred : {1024, 2048}) {
+    auto config = openConfig();
+    config.bufferSizeFrames = preferred;
+    config.bufferSizeInPcmFrames = true;
+    config.format.sampleRate = 11289600;
+    config.format.sampleFormat = twilight::audio::AudioSampleFormat::DsdInt8Msb1;
+    config.format.bitDepth = 1;
+    AsioOpenResult result;
+    std::string error;
+    assert(host.open(config, &result, &error));
+    std::atomic<int> verified{0};
+    std::atomic<bool> failed{false};
+    assert(host.createBuffers([&](long index) {
+      const auto frames = host.activeRenderFrameCapacity();
+      assert(frames == static_cast<size_t>(preferred * 32));
+      for (long channel = 0; channel < 2; ++channel)
+        std::memset(host.outputBuffer(channel, index), channel == 0 ? 0x31 : 0x52, frames);
+      host.commitOutputBuffer(index, frames);
+    }, [&](AsioHostEvent, const std::string& message) {
+      if (message == "large-dsd-verified") verified.fetch_add(1);
+      else { std::cerr << "Large DSD fixture: " << message << '\n'; failed.store(true); }
+    }, &error));
+    assert(host.activeBufferSize() == preferred * 256);
+    assert(host.start(&error));
+    assert(waitUntil([&] {
+      return failed.load() || (verified.load() >= 5 && host.renderHealth().callbackCount >= 5 &&
+                              host.dsdBufferUnitConfirmed());
+    }, 3s));
+    assert(!failed.load());
+    assert(host.dsdBufferUnitConfirmed());
+    host.close();
+    assert(host.lastCloseError().empty());
+  }
+}
+
+void testOversizeDsdWireBuffersFail(const std::wstring& helperPath) {
+  for (const auto* mode : {L"large-dsd-ner8", L"large-dsd-bytes"}) {
+    setMode(mode);
+    AsioHelperHost host(helperPath);
+    auto config = openConfig();
+    config.bufferSizeFrames = 2048;
+    config.bufferSizeInPcmFrames = true;
+    config.format.sampleRate = 11289600;
+    config.format.sampleFormat = twilight::audio::AudioSampleFormat::DsdInt8Msb1;
+    config.format.bitDepth = 1;
+    AsioOpenResult result;
+    std::string error;
+    assert(host.open(config, &result, &error));
+    std::atomic<bool> failed{false};
+    const bool created = host.createBuffers([](long) {}, [&](AsioHostEvent event, const std::string& message) {
+      if (event == AsioHostEvent::HelperFailure && message.find("byte capacity") != std::string::npos)
+        failed.store(true);
+    }, &error);
+    if (std::wstring_view(mode) == L"large-dsd-ner8") {
+      assert(!created && error.find("byte capacity") != std::string::npos);
+    } else {
+      assert(created && host.start(&error));
+      assert(waitUntil([&] { return failed.load(); }, 3s));
+    }
+    host.close();
+  }
+}
+
 void testHandshakeMismatch(const std::wstring& helperPath) {
   setMode(L"normal");
   DWORD binaryType = 0;
@@ -643,6 +709,8 @@ int wmain(int argc, wchar_t* argv[]) {
   testProtocolReasonCodes();
   testNormalRoundTrip(argv[1]);
   testNativeDsdQueuePreservesOrderWithoutParentWakeups(argv[1]);
+  testLargeNativeDsdBuffers(argv[1]);
+  testOversizeDsdWireBuffersFail(argv[1]);
   testPcmBytesReachDriverAcrossReopen(argv[1]);
   testWireCapacityAndFloat64(argv[1]);
   testControlTimeout(argv[1]);
