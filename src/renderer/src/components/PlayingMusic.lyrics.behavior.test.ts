@@ -1440,21 +1440,33 @@ window.runPlayingMusicLyricsRuntime = async () => {
     toggleView()
     await waitMotion(() => !visualizer() && getComputedStyle(coverView).opacity === '1' && getComputedStyle(coverView).display !== 'none', 'capture did not restore cover')
   }
-  window.setPlayingMusicLayoutFixture = async (hasLyrics, appearance = {}) => {
+  window.setPlayingMusicLayoutFixture = async (hasLyrics, appearance = {}, lyrics = duetTrack.lyrics) => {
     document.documentElement.dataset.teMotion = 'off'
     document.documentElement.dataset.tePlayerLayout = 'standard'
-    settingsStore.settings.value.lyricsAppearance = { ...originalAppearance, ...appearance }
+    await settingsStore.updateSettings({ lyricsAppearance: { ...originalAppearance, ...appearance } })
     host.select({
       ...duetTrack,
       id: 'fixture-provider:responsive-layout',
       title: 'When the Bird Meets the Sky',
       artist: 'Whilist',
       album: '夜想録',
-      lyrics: hasLyrics ? duetTrack.lyrics : '',
-      translatedLyrics: hasLyrics ? duetTrack.translatedLyrics : null
+      lyrics: hasLyrics ? lyrics : '',
+      translatedLyrics: hasLyrics && lyrics === duetTrack.lyrics ? duetTrack.translatedLyrics : null
     })
     await tick()
     window.dispatchEvent(new Event('resize'))
+  }
+  window.setPlayingMusicWideLyricsFixture = async (lyricsMaxWidth) => {
+    await window.setPlayingMusicLayoutFixture(true, {
+      coverGap: 126, lyricsMaxWidth, lyricsOffsetX: 160,
+      styles: {
+        ...originalAppearance.styles,
+        active: { ...originalAppearance.styles.active, fontSize: 35, fontWeight: 800 },
+        normal: { ...originalAppearance.styles.normal, fontSize: 35, fontWeight: 800 }
+      }
+    }, '[00:00.00]' + '暮色回声照亮长夜'.repeat(4))
+    player.seek(1)
+    await tick()
   }
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }
@@ -1633,6 +1645,8 @@ function electronRunnerSource(): string {
       controlsClear: innerWidth > 1120 || time.bottom <= column.top,
       single: document.querySelector('.layout').classList.contains('layout--single'),
       overflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
+      stageWidth: rect('.stage').width,
+      lyricsWidth: lyrics?.width,
       cover: [cover.left, cover.right, cover.top, cover.bottom],
       column: [column.left, column.right, column.top, column.bottom],
       layout: [layout.left, layout.right, layout.top, layout.bottom],
@@ -1756,6 +1770,61 @@ app.whenReady().then(async () => {
       if (diagnostics.viewport[0] !== 1920 || diagnostics.viewport[1] !== 1080 || !diagnostics.centered || !diagnostics.coverFits || !diagnostics.coverCentered || !diagnostics.timeAtEdge) {
         throw new Error('custom lyric geometry failed: ' + JSON.stringify({ appearance, ...diagnostics }))
       }
+    }
+    // Issue #200: the lyric column must keep growing past the old stage cap,
+    // using the live personal settings rather than only the theme's defaults.
+    await resizeViewport(2048, 1152)
+    for (const lyricsMaxWidth of [820, 1000, 1100, 1200]) {
+      const appearance = { coverGap: 126, lyricsMaxWidth, lyricsOffsetX: 160 }
+      await window.webContents.executeJavaScript('window.setPlayingMusicWideLyricsFixture(' + lyricsMaxWidth + ')')
+      const diagnostics = await window.webContents.executeJavaScript(${JSON.stringify(layoutDiagnosticsSource)})
+      if (Math.abs(diagnostics.lyricsWidth - lyricsMaxWidth) > 1 || !diagnostics.centered || diagnostics.overflow) {
+        throw new Error('wide-screen lyric width was constrained: ' + JSON.stringify({ appearance, ...diagnostics }))
+      }
+      const textLines = await window.webContents.executeJavaScript('(() => { const text = document.querySelector(".lyric-text"); const range = document.createRange(); range.selectNodeContents(text); return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size })()')
+      if (textLines !== (lyricsMaxWidth < 1200 ? 2 : 1)) {
+        throw new Error('long lyric did not reflow with the selected width: ' + JSON.stringify({ lyricsMaxWidth, textLines }))
+      }
+      if (visualDir && lyricsMaxWidth === 1200) {
+        await mkdir(visualDir, { recursive: true })
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        await writeFile(path.join(visualDir, 'playing-lyrics-wide-1200.png'), (await window.webContents.capturePage()).toPNG())
+      }
+    }
+    // Personal defaults must still inherit the theme's geometry.
+    await window.webContents.executeJavaScript(
+      'window.setPlayingMusicLayoutFixture(true).then(() => { document.documentElement.style.setProperty("--te-playback-stage-span", "1200px"); document.documentElement.style.setProperty("--te-playback-stage-spread", "126px") })'
+    )
+    const themeGeometry = await window.webContents.executeJavaScript(${JSON.stringify(layoutDiagnosticsSource)})
+    if (Math.abs(themeGeometry.lyricsWidth - 1200) > 1) {
+      throw new Error('theme lyric width was constrained: ' + JSON.stringify(themeGeometry))
+    }
+    await window.webContents.executeJavaScript('document.documentElement.style.removeProperty("--te-playback-stage-span"); document.documentElement.style.removeProperty("--te-playback-stage-spread")')
+    const wideAppearance = { coverGap: 126, lyricsMaxWidth: 1200 }
+    await window.webContents.executeJavaScript('window.setPlayingMusicLayoutFixture(false, ' + JSON.stringify(wideAppearance) + ')')
+    const singleGeometry = await window.webContents.executeJavaScript(${JSON.stringify(layoutDiagnosticsSource)})
+    if (singleGeometry.stageWidth !== 1560 || !singleGeometry.centered) {
+      throw new Error('lyric width changed the cover-only stage: ' + JSON.stringify(singleGeometry))
+    }
+    await window.webContents.executeJavaScript('window.setPlayingMusicLayoutFixture(true, ' + JSON.stringify(wideAppearance) + ')')
+    for (const layout of ['lyrics-focus', 'split', 'minimal', 'full-cover']) {
+      const stageWidth = await window.webContents.executeJavaScript(
+        'document.documentElement.dataset.tePlayerLayout = ' + JSON.stringify(layout) + '; document.querySelector(".stage").getBoundingClientRect().width'
+      )
+      if (stageWidth !== (layout === 'full-cover' ? 2048 : 1560)) {
+        throw new Error('lyric width changed the ' + layout + ' stage: ' + stageWidth)
+      }
+    }
+    await window.webContents.executeJavaScript('document.documentElement.dataset.tePlayerLayout = "standard"; document.querySelector(".visualizer-toggle-button").click()')
+    const visualizerSize = await window.webContents.executeJavaScript('(() => { const rect = document.querySelector(".stage--visualizer").getBoundingClientRect(); return [rect.width, rect.height] })()')
+    if (visualizerSize[0] !== 2048 || visualizerSize[1] !== 1152) {
+      throw new Error('lyric width constrained the visualizer: ' + JSON.stringify(visualizerSize))
+    }
+    await window.webContents.executeJavaScript('document.querySelector(".visualizer-toggle-button").click()')
+    await resizeViewport(1440, 900)
+    const narrowGeometry = await window.webContents.executeJavaScript(${JSON.stringify(layoutDiagnosticsSource)})
+    if (Math.abs(narrowGeometry.lyricsWidth - 882) > 1 || !narrowGeometry.centered || narrowGeometry.overflow) {
+      throw new Error('wide lyric setting did not fit the narrower viewport: ' + JSON.stringify(narrowGeometry))
     }
     await window.webContents.executeJavaScript('window.setPlayingMusicLayoutFixture(true)')
     if (visualDir) {

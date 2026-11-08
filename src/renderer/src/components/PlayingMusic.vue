@@ -645,7 +645,7 @@ watch(
 )
 
 // Use the existing presentation clock between Core samples for line transitions.
-watch(currentTime, time => syncActiveLyricIndex(time))
+watch(currentTime, (time) => syncActiveLyricIndex(time))
 
 watch(
   activeLyricIndex,
@@ -894,12 +894,14 @@ onBeforeUnmount(() => {
           <div class="backdrop-accent" />
         </div>
 
-        <div v-if="currentTrack" :key="`stage:${coverIdentity}`" class="stage">
-          <main
-            class="layout"
-            :class="{ 'layout--single': !reserveLyricsColumn }"
-            :style="layoutStyle"
-          >
+        <div
+          v-if="currentTrack"
+          :key="`stage:${coverIdentity}`"
+          class="stage"
+          :class="{ 'stage--lyrics': reserveLyricsColumn }"
+          :style="layoutStyle"
+        >
+          <main class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
             <section class="cover-column">
               <div class="cover-frame" :style="coverStyle">
                 <CoverImg
@@ -1454,6 +1456,20 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
     )
   );
   margin-inline: auto;
+}
+
+/* Fit both columns and the stage's horizontal padding when lyrics grow wider. */
+:global(html[data-te-player-layout='standard'] .playing-music .stage--lyrics) {
+  width: min(
+    100%,
+    max(
+      1560px,
+      calc(
+        360px + var(--te-lyric-cover-gap, var(--te-playback-stage-spread, 40px)) +
+          var(--te-lyric-max-width, var(--te-playback-stage-span, 820px)) + 72px
+      )
+    )
+  );
 }
 
 :global(html[data-te-player-stage-align='top'] .playing-music .cover-column) {
