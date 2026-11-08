@@ -76,6 +76,8 @@ jobs:
       - name: Build and package macOS target
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # The Vue type checker exceeds Node's default 2 GiB heap on arm64 runners.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           pnpm run build
           pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
