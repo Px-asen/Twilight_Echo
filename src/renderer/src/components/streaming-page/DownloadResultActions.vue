@@ -13,7 +13,6 @@ const indexed = computed(() => indexState.value === 'indexed')
 let indexRequest = 0
 async function refreshIndexedTrack() {
   const request = ++indexRequest
-  indexState.value = 'checking'
   indexError.value = ''
   try {
     const result = await core.query('downloads.indexed', { id: props.task.id })
@@ -25,9 +24,15 @@ async function refreshIndexedTrack() {
     indexState.value = 'unknown'
   }
 }
-watch(() => [props.task.id, core.state.value?.libraryRevision], refreshIndexedTrack, {
-  immediate: true
-})
+watch([
+  () => props.task.id, () => core.state.value?.epoch, () => core.state.value?.libraryRevision
+], ([id, epoch], [previousId, previousEpoch]) => {
+  if (id !== previousId || epoch !== previousEpoch) {
+    indexState.value = 'checking'
+    submitted.value = false
+  }
+  void refreshIndexedTrack()
+}, { immediate: true })
 onBeforeUnmount(() => {
   indexRequest++
 })

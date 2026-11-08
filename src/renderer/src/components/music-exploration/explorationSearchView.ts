@@ -19,23 +19,37 @@ export function createExplorationSearchView(read: (query: MusicExplorationQuery,
     current?.abort(); current = null; cancelExpiry = null
     state.value = { page: null, loading: false, error: '资料缓存已到期，请重新读取' }
   }
-  async function load(offset = 0, keepToken = false) {
+  async function load(offset = 0, options: { keepToken?: boolean; keepPage?: boolean } = {}) {
+    if (disposed) return
     current?.abort()
-    cancelExpiry?.(); cancelExpiry = null
+    const previousPage = options.keepPage ? state.value.page : null
+    // A retained page keeps its original permission deadline while the new read is pending.
+    if (!previousPage) { cancelExpiry?.(); cancelExpiry = null }
     const request = new AbortController(); current = request
-    const token = keepToken ? state.value.page?.token : undefined
-    state.value = { page: null, loading: !!text, error: '' }
-    if (!text || disposed) return
+    const token = options.keepToken ? state.value.page?.token : undefined
+    state.value = { page: previousPage, loading: !!text, error: '' }
+    if (!text) return
     try {
-      const page = await read({ search: text, kinds: ['artist', 'work', 'performance'], scope, offset, limit: 10, ...(token ? { token } : {}) }, request.signal)
+      const query: MusicExplorationQuery = { search: text, kinds: ['artist', 'work', 'performance'], scope, offset, limit: 10, ...(token ? { token } : {}) }
+      let page = await read(query, request.signal)
       if (current !== request || disposed) return
+      if (previousPage && offset > 0 && offset >= page.total) {
+        const lastOffset = Math.max(0, Math.floor((page.total - 1) / 10) * 10)
+        page = await read({ ...query, offset: lastOffset, token: page.token }, request.signal)
+      }
+      if (current !== request || disposed) return
+      cancelExpiry?.(); cancelExpiry = null
       state.value = { page, loading: false, error: '' }
       if (page.token.expiresAt !== null) expire(page.token.expiresAt)
     } catch (error) {
-      if (current === request && !disposed) state.value = { page: null, loading: false, error: error instanceof Error ? error.message : String(error) }
+      if (current === request && !disposed) {
+        cancelExpiry?.(); cancelExpiry = null
+        state.value = { page: null, loading: false, error: error instanceof Error ? error.message : String(error) }
+      }
     }
   }
   return { state, setQuery(query: string, nextScope: 'library' | 'catalog' = 'library') { text = query.trim(); scope = nextScope; return load() },
-    page(offset: number) { return load(offset, true) }, refresh() { return load() },
+    page(offset: number) { return load(offset, { keepToken: true }) },
+    refresh() { return load(state.value.page?.offset ?? 0, { keepPage: true }) },
     dispose() { disposed = true; current?.abort(); current = null; cancelExpiry?.(); cancelExpiry = null } }
 }

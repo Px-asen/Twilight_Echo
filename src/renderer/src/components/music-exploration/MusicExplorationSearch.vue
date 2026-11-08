@@ -7,23 +7,33 @@ const core = useCoreConnection()
 const view = createExplorationSearchView((query, signal) => core.query('exploration.query', query, signal))
 const state = view.state, scope = ref<'library' | 'catalog'>('library'), selected = ref('')
 const MusicExplorationPanel = defineAsyncComponent(() => import('./MusicExplorationPanel.vue'))
-watch(() => [props.query, scope.value, core.state.value?.epoch, core.state.value?.explorationRevision,
-  core.state.value?.catalogRevision, core.state.value?.libraryRevision, core.state.value?.entityMetadataRevision,
-  core.state.value?.pluginsRevision] as const, () => { selected.value = ''; void view.setQuery(props.query, scope.value) }, { immediate: true })
+watch([
+  () => props.query.trim(), scope, () => core.state.value?.epoch,
+  () => core.state.value?.pluginsRevision, () => core.state.value?.explorationRevision,
+  () => core.state.value?.catalogRevision, () => core.state.value?.libraryRevision,
+  () => core.state.value?.entityMetadataRevision
+], ([query, nextScope, epoch, plugins], [previousQuery, previousScope, previousEpoch, previousPlugins]) => {
+  if (query !== previousQuery || nextScope !== previousScope || epoch !== previousEpoch || plugins !== previousPlugins) {
+    selected.value = ''
+    void view.setQuery(query, nextScope)
+  } else {
+    void view.refresh()
+  }
+}, { immediate: true })
 onBeforeUnmount(() => view.dispose())
 </script>
 
 <template>
   <section v-if="query.trim()" class="exploration-search" aria-label="统一搜索的人物与作品" :aria-busy="state.loading">
     <header><h3>人物与作品</h3><label>范围 <select v-model="scope"><option value="library">库内参与内容</option><option value="catalog">含外部目录缓存</option></select></label></header>
-    <p v-if="state.loading" role="status">正在查找人物与作品…</p>
+    <p v-if="state.loading && !state.page" role="status">正在查找人物与作品…</p>
     <p v-else-if="state.error" role="alert">{{ state.error }} <button type="button" @click="view.refresh()">重新读取</button></p>
     <template v-else-if="state.page">
       <p v-if="!state.page.total">暂无匹配的{{ scope === 'library' ? '库内' : '已保存' }}人物或作品。</p>
       <ul v-else><li v-for="item in state.page.items" :key="item.id">
         <button type="button" :aria-pressed="selected === item.id" @click="selected = item.id">{{ item.title }} <span>· {{ item.kind === 'artist' ? '人物' : item.kind === 'work' ? '作品' : '演绎' }} · {{ item.inLibrary ? `库内 ${item.sourceCount} 个来源` : '仅目录缓存' }}</span></button>
       </li></ul>
-      <nav v-if="state.page.total > 10" aria-label="人物作品搜索分页"><button type="button" :disabled="!state.page.offset" @click="view.page(Math.max(0, state.page.offset - 10))">上一页</button><span>{{ state.page.offset + 1 }}–{{ state.page.offset + state.page.items.length }} / {{ state.page.total }}</span><button type="button" :disabled="state.page.offset + state.page.items.length >= state.page.total" @click="view.page(state.page.offset + 10)">下一页</button></nav>
+      <nav v-if="state.page.total > 10" aria-label="人物作品搜索分页"><button type="button" :disabled="state.loading || !state.page.offset" @click="view.page(Math.max(0, state.page.offset - 10))">上一页</button><span>{{ state.page.offset + 1 }}–{{ state.page.offset + state.page.items.length }} / {{ state.page.total }}</span><button type="button" :disabled="state.loading || state.page.offset + state.page.items.length >= state.page.total" @click="view.page(state.page.offset + 10)">下一页</button></nav>
     </template>
     <template v-if="selected"><button type="button" @click="selected = ''">收起详情</button><MusicExplorationPanel :entity-id="selected" /></template>
   </section>

@@ -69,7 +69,7 @@ test('a permission deadline removes visible search results without networking an
   assert.equal(callback, null)
 })
 
-test('compiled unified entity results navigate the chosen exact ID and clear on a new query or durable change', async t => {
+test('compiled unified entity results navigate the chosen exact ID and clear on a new query', async t => {
   const snapshot = shallowRef({ epoch: 'one', explorationRevision: 1 }), query = ref('Same name')
   const requests: MusicExplorationQuery[] = [], opened: string[] = []
   const Search = component('../music-exploration/MusicExplorationSearch.vue', {
@@ -96,4 +96,99 @@ test('compiled unified entity results navigate the chosen exact ID and clear on 
   const select = ui.nodes().find(n => n.tag === 'select')!
   select.props['onUpdate:modelValue']('catalog'); await settle()
   assert.equal(requests.at(-1)!.scope, 'catalog')
+})
+
+test('refresh keeps the current page visible, reads a fresh token and retires superseded replies', async () => {
+  const pending: Array<{ query: MusicExplorationQuery; signal: AbortSignal; resolve: (p: MusicExplorationPage) => void }> = []
+  const view = createExplorationSearchView((query, signal) => new Promise(resolve => pending.push({ query, signal, resolve })))
+  const first = view.setQuery('Person')
+  pending[0].resolve(page()); await first
+  const next = view.page(10)
+  pending[1].resolve(page(10)); await next
+  const refresh = view.refresh()
+  assert.equal(view.state.value.page?.offset, 10)
+  assert.equal(view.state.value.loading, true)
+  assert.equal(pending[2].query.offset, 10)
+  assert.equal(pending[2].query.token, undefined)
+  const latest = view.refresh()
+  assert.equal(pending[2].signal.aborted, true)
+  pending[3].resolve({ ...page(10), total: 12 }); await latest
+  pending[2].resolve(page(10)); await refresh
+  assert.equal(view.state.value.page?.total, 12)
+  assert.equal(view.state.value.loading, false)
+  const changed = view.setQuery('Other')
+  assert.equal(view.state.value.page, null)
+  pending[4].resolve(page()); await changed
+  view.dispose()
+})
+
+test('refresh cannot extend the permission deadline of retained results', async () => {
+  let now = 100, callback: (() => void) | null = null
+  let finish!: (p: MusicExplorationPage) => void
+  const view = createExplorationSearchView(async () => new Promise(resolve => { finish = resolve }), {
+    now: () => now, schedule: fn => { callback = fn; return () => { callback = null } }
+  })
+  const initial = view.setQuery('Person')
+  finish({ ...page(), token: { ...token, expiresAt: 200 } }); await initial
+  const refresh = view.refresh()
+  assert.ok(callback, 'the visible results must retain their expiry timer during refresh')
+  now = 200; (callback as unknown as () => void)()
+  assert.equal(view.state.value.page, null)
+  assert.match(view.state.value.error, /到期/)
+  finish(page()); await refresh
+  assert.equal(view.state.value.page, null)
+  view.dispose()
+})
+
+test('refresh moves to the last valid page when library changes remove the current page', async () => {
+  let total = 11
+  const queries: MusicExplorationQuery[] = []
+  const view = createExplorationSearchView(async query => {
+    queries.push(query)
+    return { ...page(query.offset), total, items: (query.offset ?? 0) < total ? page().items : [] }
+  })
+  await view.setQuery('Person')
+  await view.page(10)
+  total = 1
+  await view.refresh()
+  assert.equal(queries[2].offset, 10)
+  assert.equal(queries[2].token, undefined)
+  assert.equal(queries[3].offset, 0)
+  assert.deepEqual(queries[3].token, token)
+  assert.equal(view.state.value.page?.offset, 0)
+  assert.equal(view.state.value.page?.items.length, 1)
+  view.dispose()
+})
+
+test('compiled search ignores unrelated snapshots and keeps results and selection during metadata refresh', async t => {
+  const snapshot = shallowRef({ epoch: 'one', explorationRevision: 1, catalogRevision: 1, libraryRevision: 1, entityMetadataRevision: 1, pluginsRevision: 1, sequence: 1 })
+  const query = ref('Same name')
+  const pending: Array<{ query: MusicExplorationQuery; resolve: (p: MusicExplorationPage) => void }> = []
+  const Search = component('../music-exploration/MusicExplorationSearch.vue', {
+    './explorationSearchView.ts': { createExplorationSearchView },
+    './MusicExplorationPanel.vue': { __esModule: true, default: { props: ['entityId'], setup: (p: any) => () => h('aside', p.entityId) } },
+    '../../stores/coreConnection.ts': { useCoreConnection: () => ({ state: snapshot, query: (_name: string, q: MusicExplorationQuery) => new Promise(resolve => pending.push({ query: q, resolve })) }) }
+  })
+  const ui = mount(t, () => h(Search, { query: query.value }))
+  assert.match(ui.text(), /正在查找/)
+  pending[0].resolve(page()); await settle()
+  ui.nodes().find(n => n.tag === 'button' && n.props['aria-pressed'] === false)!.props.onClick(); await settle()
+  snapshot.value = { ...snapshot.value, sequence: 2 }; await settle()
+  assert.equal(pending.length, 1, 'playback and other unrelated snapshots must not query again')
+  for (let revision = 2; revision <= 4; revision++) {
+    snapshot.value = { ...snapshot.value, libraryRevision: revision, entityMetadataRevision: revision }; await settle()
+    assert.match(ui.text(), /Same name/)
+    assert.match(ui.text(), /收起详情/)
+    assert.doesNotMatch(ui.text(), /正在查找|暂无匹配/)
+    assert.equal(ui.nodes().find(n => n.tag === 'section')!.props['aria-busy'], true)
+    pending.at(-1)!.resolve(page()); await settle()
+  }
+  snapshot.value = { ...snapshot.value, pluginsRevision: 2 }; await settle()
+  assert.doesNotMatch(ui.text(), /Same name|收起详情/)
+  assert.match(ui.text(), /正在查找/)
+  pending.at(-1)!.resolve(page()); await settle()
+  query.value = 'Other'; await settle()
+  assert.doesNotMatch(ui.text(), /Same name/)
+  pending.at(-1)!.resolve({ ...page(), items: [], total: 0 }); await settle()
+  assert.match(ui.text(), /暂无匹配的库内人物或作品/)
 })

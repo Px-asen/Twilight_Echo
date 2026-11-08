@@ -24,6 +24,7 @@ const turn = async () => {
 }
 function fixture(t: test.TestContext) {
   const props = reactive({ task: { id: 'download-1' } })
+  const snapshot = ref({ epoch: 'one', libraryRevision: 2, sequence: 1 })
   const calls: { name: string; payload: unknown }[] = []
   let query = async () => ({ indexed: false })
   let failure: Error | null = null
@@ -40,7 +41,7 @@ function fixture(t: test.TestContext) {
       },
       defineProps: () => props,
       useCoreConnection: () => ({
-        state: ref({ libraryRevision: 2 }),
+        state: snapshot,
         query: async (name: string, payload: unknown) => {
           calls.push({ name, payload })
           return query()
@@ -59,6 +60,7 @@ function fixture(t: test.TestContext) {
   return {
     entry,
     props,
+    snapshot,
     calls,
     query: (value: typeof query) => {
       query = value
@@ -111,4 +113,27 @@ test('download projection discards an old identity reply and failed commands rem
   await f.entry.act('play')
   assert.equal(f.entry.error.value, '')
   assert.equal(f.calls.at(-1)?.name, 'downloads.play')
+})
+
+test('download library refresh preserves the known state and ignores unrelated snapshots', async t => {
+  const f = fixture(t)
+  await turn()
+  f.snapshot.value = { ...f.snapshot.value, sequence: 2 }; await turn()
+  assert.equal(f.calls.length, 1)
+  let finish!: (value: { indexed: boolean }) => void
+  f.query(() => new Promise(resolve => { finish = resolve }))
+  f.snapshot.value.libraryRevision++; await turn()
+  assert.equal(f.entry.indexState.value, 'missing')
+  finish({ indexed: true }); await turn()
+  assert.equal(f.entry.indexState.value, 'indexed')
+  f.snapshot.value.libraryRevision++; await turn()
+  assert.equal(f.entry.indexState.value, 'indexed')
+  finish({ indexed: false }); await turn()
+  assert.equal(f.entry.indexState.value, 'missing')
+  f.props.task.id = 'download-2'; await turn()
+  assert.equal(f.entry.indexState.value, 'checking')
+  finish({ indexed: true }); await turn()
+  f.snapshot.value.epoch = 'two'; await turn()
+  assert.equal(f.entry.indexState.value, 'checking')
+  finish({ indexed: false }); await turn()
 })
