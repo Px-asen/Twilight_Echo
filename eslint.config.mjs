@@ -16,6 +16,7 @@ export default defineConfig(
       '**/.birdview/**',
       '**/.workbuddy/**',
       '**/.codex-tools/**',
+      '**/.worktrees/**',
       '**/dist/**',
       '**/dist.*/**',
       '**/out/**',

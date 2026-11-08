@@ -1,7 +1,7 @@
 'use strict'
 const { mkdirSync, writeFileSync, readFileSync, existsSync, createWriteStream } = require('node:fs')
 const { resolve, join } = require('node:path')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const { freemem, totalmem, cpus } = require('node:os')
 
 function parseArgs(args) {
@@ -10,6 +10,8 @@ function parseArgs(args) {
     output: resolve('.artifacts/memory-' + Date.now()),
     sizes: [1057, 10000, 100000],
     runs: 3,
+    scenario: 'full',
+    coreHost: 'electron',
     cycles: 50,
     soakSeconds: 1800,
     settleSeconds: 120,
@@ -33,10 +35,16 @@ function parseArgs(args) {
     if (!value) throw Error(`Missing value for ${key}`)
     if (key === '--build-root') options.buildRoot = resolve(value)
     else if (key === '--output') options.output = resolve(value)
+    else if (key === '--scenario') options.scenario = value
+    else if (key === '--core-host') options.coreHost = value
+    else if (key === '--electron-executable') options.electronExecutable = resolve(value)
     else if (key === '--sizes') options.sizes = value.split(',').map(Number)
     else if (numbers[key]) options[numbers[key]] = Number(value)
     else throw Error(`Unknown option ${key}`)
   }
+  if (!['full', 'steady'].includes(options.scenario)) throw Error('Scenario must be full or steady')
+  if (!['electron', 'node'].includes(options.coreHost))
+    throw Error('Core host must be electron or node')
   for (const n of [
     ...options.sizes,
     options.runs,
@@ -62,12 +70,14 @@ const STEADY_PHASES = [
   'returned-idle',
   'soak',
   'afterglow',
-  'restored'
+  'restored',
+  'paused'
 ]
 function acceptanceEligible(options, result) {
   return (
     result.status === 'complete' &&
     result.exitCode === 0 &&
+    options.scenario !== 'steady' &&
     !options.diagnosticNoSandbox &&
     options.cycles >= 50 &&
     options.soakSeconds >= 1800 &&
@@ -197,18 +207,23 @@ function summarize(run, samples, runtimeSamples = []) {
 async function runOne(options, size, iteration) {
   const directory = join(options.output, `${size}-${iteration}`)
   mkdirSync(directory, { recursive: true })
+  const temporary = join(directory, 'temporary')
+  mkdirSync(temporary)
   const config = { ...options, size, iteration, directory, root: resolve(__dirname, '..') }
   const configPath = join(directory, 'config.json')
   writeFileSync(configPath, JSON.stringify(config))
   const env = {
     ...process.env,
     TWILIGHT_DEV_USER_DATA_DIR: join(directory, 'profile'),
-    TWILIGHT_LOG_DIRECTORY: join(directory, 'logs')
+    TWILIGHT_LOG_DIRECTORY: join(directory, 'logs'),
+    TWILIGHT_CORE_HOST: options.coreHost,
+    TEMP: temporary,
+    TMP: temporary
   }
   delete env.ELECTRON_RUN_AS_NODE
   delete env.ELECTRON_RENDERER_URL
   const child = spawn(
-    require('electron'),
+    options.electronExecutable ?? require('electron'),
     [
       join(__dirname, 'memory-desktop-runner.cjs'),
       configPath,
@@ -292,7 +307,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (options.help) {
     console.log(
-      'pnpm benchmark:memory -- --build-root <directory containing out/ and resources/audio-engine/> --output <new report directory> --sizes 1057,10000,100000 --runs 3 --cycles 50 --soak-seconds 1800 --settle-seconds 120\nRuns are sequential; stops below 1 GiB available physical memory. No forced GC. GPU memory is reported separately. Test profiles contain synthetic data only.\n--diagnostic-no-sandbox is only for isolated harness troubleshooting; these runs are ineligible for production acceptance.'
+      'pnpm benchmark:memory -- --build-root <directory containing out/ and resources/audio-engine/> --output <new report directory> --sizes 1057,10000,100000 --runs 3 --cycles 50 --soak-seconds 1800 --settle-seconds 120\nRuns are sequential; stops below 1 GiB available physical memory. No forced GC. GPU memory is reported separately. Test profiles contain synthetic data only.\n--core-host electron|node selects the desktop worker runtime (default: electron). Node requires the staged out/desktop-core runtime under the selected build root.\n--scenario steady measures idle, sustained playback and paused residency without navigation screenshots; it does not replace full scenario acceptance.\n--diagnostic-no-sandbox is only for isolated harness troubleshooting; these runs are ineligible for production acceptance.'
     )
     return
   }
@@ -303,9 +318,31 @@ async function main() {
     throw Error(
       'Stage the native engine under <build-root>/resources/audio-engine before measuring'
     )
+  if (options.electronExecutable) {
+    const probe = spawnSync(options.electronExecutable, ['-p', 'process.versions.electron'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '', NODE_PATH: '' }
+    })
+    if (probe.status !== 0 || probe.stdout.trim() !== require('electron/package.json').version)
+      throw Error('The selected Electron executable must match the installed build version')
+  }
   if (existsSync(options.output))
     throw Error('Choose a new --output directory to preserve earlier evidence')
   mkdirSync(options.output, { recursive: true })
+  if (options.coreHost === 'node') {
+    const { createRequire } = require('node:module')
+    const { buildSync } = createRequire(require.resolve('vite/package.json'))('esbuild')
+    options.supervisionCodecPath = join(options.output, 'supervisionCodec.cjs')
+    buildSync({
+      entryPoints: [join(__dirname, '../src/main/server/supervisionCodec.ts')],
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      outfile: options.supervisionCodecPath
+    })
+  }
   const report = {
     version: 1,
     startedAt: new Date().toISOString(),
