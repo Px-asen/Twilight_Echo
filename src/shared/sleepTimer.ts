@@ -15,6 +15,21 @@ export interface SleepTimerState {
   triggerRevision?: number
   /** Authority executing the fade; clients only project this state. */
   shutdownOwner?: 'main' | 'core'
+  /** Optional portable-host schedule. Older desktop timers keep their original semantics. */
+  action?: 'pause'
+  schedule?: SleepTimerSchedule
+  finishCurrentTrack?: boolean
+  waitingForTrackEnd?: boolean
+}
+
+export interface SleepTimerSchedule {
+  id: string
+  clock: 'elapsed' | 'local'
+  deadlineMs: number
+  bootId: string
+  localDate?: string
+  hour?: number
+  minute?: number
 }
 
 export interface SleepTimerShutdownHandoff {
@@ -42,6 +57,17 @@ export function isSleepTimerShutdownHandoff(value: unknown): value is SleepTimer
 export function isSleepTimerState(value: unknown): value is SleepTimerState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const state = value as Record<string, unknown>
+  if (state.action !== undefined) {
+    const schedule = state.schedule as Partial<SleepTimerSchedule> | undefined
+    if (state.action !== 'pause' || state.mode !== 'minutes' || !schedule || typeof schedule !== 'object' ||
+        typeof schedule.id !== 'string' || !schedule.id || typeof schedule.bootId !== 'string' || !schedule.bootId ||
+        !['elapsed', 'local'].includes(String(schedule.clock)) || !Number.isSafeInteger(schedule.deadlineMs) ||
+        Number(schedule.deadlineMs) <= 0 || typeof state.finishCurrentTrack !== 'boolean' ||
+        (state.waitingForTrackEnd !== undefined && typeof state.waitingForTrackEnd !== 'boolean')) return false
+    if (schedule.clock === 'local' && (typeof schedule.localDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(schedule.localDate) ||
+        !Number.isInteger(schedule.hour) || Number(schedule.hour) < 0 || Number(schedule.hour) > 23 ||
+        !Number.isInteger(schedule.minute) || Number(schedule.minute) < 0 || Number(schedule.minute) > 59)) return false
+  }
   if (
     (state.mode !== 'minutes' && state.mode !== 'trackEnd' && state.mode !== 'queueEnd') ||
     typeof state.active !== 'boolean' ||

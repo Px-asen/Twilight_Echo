@@ -6269,7 +6269,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
       fillDsdTransportIdle(output, &renderDopMarkerIndex_);
       if (active->drained()) {
         ended_ = true;
-        renderState_.store(PipelineState::Stopped, std::memory_order_release);
+        renderState_.store(pauseAtTrackEnd_.load(std::memory_order_acquire) ? PipelineState::Paused : PipelineState::Stopped, std::memory_order_release);
       }
       spectrum_.tryResetCapture();
       recordPerformance();
@@ -6333,7 +6333,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     read = active->read(output);
     renderedFrames_ += dsdRenderedFrameUnits(read, output.format);
   } else {
-    DecodeStream* preload = queueTransition.allowed
+    DecodeStream* preload = queueTransition.allowed && !pauseAtTrackEnd_.load(std::memory_order_acquire)
         ? renderPreloadStream_.load(std::memory_order_acquire) : nullptr;
     const size_t bytesPerFrame = audioFormatBytesPerFrame(output.format);
     const size_t requestedFrames = bytesPerFrame > 0
@@ -6395,7 +6395,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     }
   } else if (active->drained()) {
     ended_ = true;
-    renderState_.store(PipelineState::Stopped, std::memory_order_release);
+    renderState_.store(pauseAtTrackEnd_.load(std::memory_order_acquire) ? PipelineState::Paused : PipelineState::Stopped, std::memory_order_release);
     spectrum_.tryResetCapture();
   } else {
     spectrum_.tryResetCapture();
@@ -6437,9 +6437,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   const AudioFormat decodeFormat = renderDecodeFormat_;
   const int channels = std::max(1, outputFormat.channelCount);
   DecodeStream* active = renderActiveStream_.load(std::memory_order_acquire);
-  DecodeStream* preload = queueTransition.allowed
+  DecodeStream* preload = queueTransition.allowed && !pauseAtTrackEnd_.load(std::memory_order_acquire)
       ? renderPreloadStream_.load(std::memory_order_acquire) : nullptr;
-  AutoMixGeneration* mix = queueTransition.allowed
+  AutoMixGeneration* mix = queueTransition.allowed && !pauseAtTrackEnd_.load(std::memory_order_acquire)
       ? renderAutoMix_.load(std::memory_order_acquire) : nullptr;
   if (mix != renderAutoMixObserved_) {
     ta_am_handoff_cancel(&renderAutoMixHandoff_);
@@ -6941,7 +6941,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     // Rate path ends when the source is drained and WSOLA could not emit more frames
     // (OLA tail already flushed / no full grain left).
     ended_ = true;
-    renderState_.store(PipelineState::Stopped, std::memory_order_release);
+    renderState_.store(pauseAtTrackEnd_.load(std::memory_order_acquire) ? PipelineState::Paused : PipelineState::Stopped, std::memory_order_release);
     spectrum_.tryResetCapture();
   } else {
     emptyOutputCount_.fetch_add(1, std::memory_order_relaxed);

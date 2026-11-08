@@ -928,10 +928,20 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       return keys(p, [])
     case 'sleep.configure':
       return (
-        keys(p, ['revision', 'mode', 'minutes']) &&
+        keys(p, ['revision', 'mode', 'minutes', 'action', 'endsAt', 'schedule', 'finishCurrentTrack']) &&
         uint(p.revision) &&
         oneOf(p.mode, ['minutes', 'trackEnd', 'queueEnd']) &&
-        optional(p.minutes, (v) => uint(v) && Number(v) >= 1 && Number(v) <= 720)
+        optional(p.minutes, (v) => uint(v) && Number(v) >= 1 && Number(v) <= 720) &&
+        optional(p.finishCurrentTrack, (v) => typeof v === 'boolean') &&
+        (p.action === undefined
+          ? p.schedule === undefined && p.endsAt === undefined && p.finishCurrentTrack === undefined
+          : p.action === 'pause' && p.mode === 'minutes' && uint(p.endsAt) && Number(p.endsAt) > 0 &&
+            record(p.schedule) && keys(p.schedule, ['id', 'clock', 'deadlineMs', 'bootId', 'localDate', 'hour', 'minute']) &&
+            text(p.schedule.id, 128) && text(p.schedule.bootId, 128) && uint(p.schedule.deadlineMs) &&
+            oneOf(p.schedule.clock, ['elapsed', 'local']) &&
+            (p.schedule.clock === 'elapsed' || (text(p.schedule.localDate, 10) &&
+              /^\d{4}-\d{2}-\d{2}$/.test(String(p.schedule.localDate)) && uint(p.schedule.hour) && Number(p.schedule.hour) < 24 &&
+              uint(p.schedule.minute) && Number(p.schedule.minute) < 60)))
       )
     case 'sleep.cancel':
       return keys(p, ['revision']) && uint(p.revision)

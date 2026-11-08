@@ -7,6 +7,7 @@ import {
 } from '../../shared/sleepTimer.ts'
 import { SleepTimerService } from './sleepTimer.ts'
 import { SleepTimerShutdown } from './sleepShutdown.ts'
+import { ScheduledPauseTimer } from './scheduledPause.ts'
 
 /** One clock and fade for every client; there is no window ownership handoff. */
 export class CoreSleepTimer {
@@ -17,9 +18,13 @@ export class CoreSleepTimer {
   private readonly persistence = new Set<Promise<void>>()
   private readonly timer: SleepTimerService
   private readonly fade: SleepTimerShutdown
+  private readonly scheduledPause?: ScheduledPauseTimer
   private readonly options: {
     settings(): SleepTimerSettings
     now(): number
+    monotonic?(): number
+    bootId?(): string
+    scheduledPauseOnly?: boolean
     timers: {
       setInterval(callback: () => void, ms: number): ReturnType<typeof setInterval>
       clearInterval(timer: ReturnType<typeof setInterval>): void
@@ -27,10 +32,12 @@ export class CoreSleepTimer {
       clearTimeout(timer: ReturnType<typeof setTimeout>): void
     }
     playback: {
-      read(): { state: string; volume: number }
+      read(): { state: string; volume: number; duration?: number }
       quiesce(): Promise<void>
       setGain(gain: number): Promise<void>
       stop(current: () => boolean): Promise<void>
+      pause?(current: () => boolean): Promise<void>
+      armTrackEnd?(enabled: boolean): Promise<boolean>
       resumeMaintenance(): void
       persist(): Promise<void>
     }
@@ -39,6 +46,20 @@ export class CoreSleepTimer {
   }
   constructor(options: CoreSleepTimer['options']) {
     this.options = options
+    const changed = () => {
+      if (!this.active) return
+      this.revision++
+      options.changed()
+      const write = options.playback.persist()
+      this.persistence.add(write)
+      void write.catch(options.failed).finally(() => this.persistence.delete(write))
+    }
+    if (options.playback.pause && options.playback.armTrackEnd && options.monotonic && options.bootId) {
+      this.scheduledPause = new ScheduledPauseTimer({ now: options.now, monotonic: options.monotonic,
+        bootId: options.bootId, setInterval: options.timers.setInterval, clearInterval: options.timers.clearInterval,
+        read: options.playback.read, pause: options.playback.pause, armTrackEnd: options.playback.armTrackEnd,
+        changed, failed: options.failed })
+    }
     this.fade = new SleepTimerShutdown({
       getPlaybackInfo: async () => options.playback.read(),
       quiesce: () => options.playback.quiesce(),
@@ -67,17 +88,20 @@ export class CoreSleepTimer {
     this.timer.claimShutdown({ trigger: (state) => this.fade.begin(state), update: () => {} })
   }
   state(): CoreSleepTimerState {
-    return { revision: this.revision, timer: this.active ? this.timer.snapshot() : this.restored }
+    return { revision: this.revision, timer: this.scheduledPause?.state() ?? (this.active ? this.timer.snapshot() : this.restored) }
   }
   persisted(): SleepTimerState | undefined {
     const timer = this.state().timer
     return timer?.active ? { ...timer } : undefined
   }
   restore(state: SleepTimerState | undefined): void {
+    if (state?.action === 'pause') { this.scheduledPause?.restore(state); return }
+    if (this.options.scheduledPauseOnly) return
     this.restored = isActiveSleepTimerState(state, this.options.now()) ? { ...state } : null
   }
   activate(): void {
     this.active = true
+    this.scheduledPause?.activate()
     if (isActiveSleepTimerState(this.restored, this.options.now()))
       this.timer.configure(this.restored)
     this.restored = null
@@ -97,6 +121,17 @@ export class CoreSleepTimer {
   }
   configure(request: CoreSleepTimerConfigure, signal: AbortSignal): Promise<void> {
     return this.run(request.revision, signal, async () => {
+      if (this.options.scheduledPauseOnly && request.action !== 'pause')
+        throw Object.assign(new Error('This host supports scheduled pause timers'), { code: 'UNSUPPORTED_CAPABILITY' })
+      if (request.action === 'pause') {
+        if (!this.scheduledPause) throw new Error('Scheduled pause is unavailable on this host')
+        this.timer.cancel()
+        await this.fade.cancel()
+        await this.scheduledPause.configure(request)
+        await this.flushPersistence()
+        return
+      }
+      if (this.scheduledPause?.state()) await this.scheduledPause.cancel()
       await this.fade.cancel()
       this.timer.configure(
         createSleepTimerState(
@@ -112,6 +147,7 @@ export class CoreSleepTimer {
   }
   cancel(revision: number, signal: AbortSignal): Promise<void> {
     return this.run(revision, signal, async () => {
+      if (this.scheduledPause?.state()) await this.scheduledPause.cancel()
       this.timer.cancel()
       await this.fade.cancel()
       this.options.playback.resumeMaintenance()
@@ -125,7 +161,11 @@ export class CoreSleepTimer {
     return this.fade.cancel()
   }
   triggered(): boolean {
-    return this.timer.snapshot()?.triggered === true
+    return this.scheduledPause?.state()?.triggered === true || this.timer.snapshot()?.triggered === true
+  }
+  checkDue(): Promise<void> { return this.scheduledPause?.check() ?? Promise.resolve() }
+  consumeTransport(name: string): Promise<boolean> {
+    return this.scheduledPause?.consumeTransport(name) ?? Promise.resolve(false)
   }
   boundary(event: 'trackEnd' | 'queueEnd', occurredAt?: number): void {
     if (this.active) this.timer.boundary(event, occurredAt)
@@ -139,6 +179,7 @@ export class CoreSleepTimer {
   }
   async shutdown(): Promise<void> {
     await this.pending
+    await this.scheduledPause?.shutdown()
     this.active = false
     this.restored = this.timer.snapshot()
     this.timer.cancel()

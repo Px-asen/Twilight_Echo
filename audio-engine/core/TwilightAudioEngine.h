@@ -154,6 +154,7 @@ class TwilightAudioEngine {
     return pipeline_->pullBridgeAudio(data, capacity, frames, info);
   }
   TAE_Result setPaused(bool paused);
+  TAE_Result setPauseAtTrackEnd(bool enabled);
   TAE_Result stop();
   TAE_Result seek(double positionSeconds);
   TAE_Result setVolume(double volume);
@@ -272,6 +273,7 @@ class TwilightAudioEngine {
   OutputConfig outputConfig_;
   bool outputRoutePending_ = false;
   bool pausedOutputReleased_ = false;
+  bool pauseAtTrackEnd_ = false;
   std::unique_ptr<AudioPipeline> pipeline_;
   TAE_EventCallback eventCallback_ = nullptr;
   void* eventUserData_ = nullptr;

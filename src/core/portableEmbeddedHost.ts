@@ -675,6 +675,7 @@ function createAudioEngine(rt: Runtime): PortableAudioEnginePort {
       await callPort(rt, 'audioEngine', 'play', { position: positionSeconds ?? 0, source })
       return { nativeStarted: true, fallbackReason: '' }
     },
+    async setPauseAtTrackEnd(enabled) { return (await callPort(rt, 'audioEngine', 'setPauseAtTrackEnd', { enabled })) === true },
     async pause() {
       await callPort(rt, 'audioEngine', 'pause')
     },
@@ -1140,6 +1141,7 @@ function projectSnapshot(rt: Runtime): Json {
   }
   setOpt(snapshot, 'error', rt.restoreError ?? rt.bootError ?? core.error ?? undefined)
   setOpt(snapshot, 'playback', projectPlayback(rt, core))
+  setOpt(snapshot, 'sleepTimer', core.sleepTimer ?? undefined)
   if (core.track) snapshot.track = wireTrack(rt, core.track as unknown as Json)
   if (core.queue) {
     const queue: Json = {
@@ -1659,6 +1661,8 @@ async function execute(
   const command = (coreName: string, corePayload: unknown = {}) =>
     coreRequest(rt, 'command', coreName, corePayload, wire)
   switch (name) {
+    case 'sleep.state':
+      return coreRequest(rt, 'query', 'sleep.state', payload, wire)
     case 'core.getSnapshot':
     case 'state.snapshot':
       return projectSnapshot(rt)
@@ -1692,6 +1696,12 @@ async function execute(
     }
   }
   if (kind !== 'command') throw wireFailure('INVALID_REQUEST', `Unsupported request: ${name}`, false)
+  if (rt.host.getSnapshot().sleepTimer?.timer?.triggered &&
+      ['playback.pause', 'playback.stop', 'playback.next', 'playback.previous', 'playback.replaceQueue', 'playback.selectQueueIndex', 'queue.select'].includes(name)) {
+    await command('playback.pause')
+    markDirty(rt)
+    return { snapshot: projectSnapshot(rt) }
+  }
   switch (name) {
     case 'playback.play':
       await command(
@@ -1782,6 +1792,10 @@ async function execute(
     case 'audio.setEq':
       await setEq(rt, payload)
       break
+    case 'sleep.configure':
+    case 'sleep.cancel':
+      await command(name, payload)
+      break
     case 'settings.edit':
       await editSettings(rt, wire, payload)
       break
@@ -1863,6 +1877,14 @@ function shutdownHost(): string {
   return out({ accepted: true })
 }
 
+let hostMonotonicMs = 0
+let hostBootId = ''
+function updateHostClock(input?: unknown): string {
+  const clock = parseInput(input)
+  hostMonotonicMs = num(clock.monotonicMs, hostMonotonicMs)
+  hostBootId = str(clock.bootId) || hostBootId
+  return out({ ok: true })
+}
 function bootHost(input?: unknown): string {
   let config: Json
   try {
@@ -1903,6 +1925,7 @@ function bootHost(input?: unknown): string {
     rt.host = createPortableMusicCoreHost({
       epoch,
       platform: 'android',
+      clock: { nowUnixMs: Date.now, nowMonotonicMs: () => hostMonotonicMs, bootId: () => hostBootId },
       sessionStore: createSessionStore(rt),
       audioEngine: createAudioEngine(rt),
       resourceAccess: createResourceAccess(rt),
@@ -2254,6 +2277,7 @@ export const portableEmbeddedHost = {
   createDefaultEqConfig,
   parseEmbeddedLrcLines,
   bootHost,
+  updateHostClock,
   shutdownHost,
   handleRequest,
   cancelRequest,

@@ -677,6 +677,7 @@ export class CoreApplication {
     identity: CoreClientIdentity
   ): Promise<unknown> {
     const playback = this.dependencies.playback
+    if (request.kind === 'command' && await this.dependencies.sleepTimer?.consumeTransport(request.name)) return
     if (
       request.name === 'liked.play' ||
       request.name === 'heart.refill' ||
@@ -1346,7 +1347,7 @@ export class CoreApplication {
       case 'sleep.cancel': {
         const timer = this.dependencies.sleepTimer
         if (!timer) throw failure('FAILED', 'Sleep timer unavailable')
-        if (request.name === 'sleep.state') return timer.state()
+        if (request.name === 'sleep.state') { await timer.checkDue(); return timer.state() }
         if (request.name === 'sleep.configure') return timer.configure(request.payload, signal)
         return timer.cancel(request.payload.revision, signal)
       }

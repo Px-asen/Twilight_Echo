@@ -173,6 +173,8 @@ TAE_API TAE_Result TAE_Load(TAE_EngineHandle engine, const char* source, double 
 TAE_API TAE_Result TAE_Pause(TAE_EngineHandle engine);
 /** Idempotent pause/resume for platform focus and transport controls. TAE_Pause remains a toggle. */
 TAE_API TAE_Result TAE_SetPaused(TAE_EngineHandle engine, int paused);
+/** One-shot host sleep boundary; preserves the current queue cursor and user volume. */
+TAE_API TAE_Result TAE_SetPauseAtTrackEnd(TAE_EngineHandle engine, int enabled);
 TAE_API TAE_Result TAE_Stop(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_Seek(TAE_EngineHandle engine, double position_seconds);
 TAE_API TAE_Result TAE_SetVolume(TAE_EngineHandle engine, double volume);

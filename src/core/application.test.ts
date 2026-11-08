@@ -91,6 +91,9 @@ function fixture(
     pause: async () => {
       calls.push('pause')
     },
+    pauseForSleep: async (current) => {
+      if (current()) calls.push('pause')
+    },
     stop: async () => {
       calls.push('stop')
     },

@@ -2000,8 +2000,9 @@ export class CorePlaybackSession {
       this.finishPreparation(intent)
     }
   }
-  private async pauseTransport(): Promise<void> {
+  private async pauseTransport(current = () => true): Promise<void> {
     await this.transport(async () => {
+      if (!current()) return
       try {
         if (this.options.cast?.active()) {
           if (this.options.cast.state().phase === 'ready')
@@ -2119,6 +2120,11 @@ export class CorePlaybackSession {
   stopForSleep(current: () => boolean): Promise<void> {
     if (this.outputClaim) return current() ? this.outputClaim.silence() : Promise.resolve()
     return this.stopTransport(current)
+  }
+  async pauseForSleep(current: () => boolean): Promise<void> {
+    if (!current()) return
+    await this.quiesceForSleep()
+    if (current()) await this.pauseTransport(current)
   }
   resumeAfterSleep(): void {
     this.startMaintenance()
