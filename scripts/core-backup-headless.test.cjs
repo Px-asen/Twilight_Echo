@@ -10,7 +10,7 @@ const test = require('node:test')
 const { buildSync } = createRequire(require.resolve('vite/package.json'))('esbuild')
 
 test(
-  'zero-window Core restores old journals and exports all ten personal domains through real private database ports',
+  'zero-window Core restores old journals and exports all eleven personal domains through real private database ports',
   { timeout: 90_000 },
   async () => {
     const root = resolve(__dirname, '..')
@@ -44,7 +44,7 @@ test(
       const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
       assert.deepEqual(result, {
         windows: 0,
-        domains: 10,
+        domains: 11,
         migratedHistory: true,
         queuedRestore: true,
         restartPaused: true,
@@ -78,6 +78,15 @@ const identity = { id: 'desktop:backup', role: 'desktop', permissions: ['playbac
 const repository = createPersonalBackupRepository()
 const importPath = join(profile, 'incoming.json'), exportPath = join(profile, 'export.json')
 const request = (kind, name, payload = {}) => supervisor.request(identity.id, { kind, name, payload, epoch: supervisor.getStatus().epoch, requestId: 'backup:' + ++serial })
+async function awaitCatalog() {
+  for (let i = 0; i < 500; i++) {
+    const status = await request('query', 'catalog.status')
+    if (status.state === 'failed') throw Error(status.error)
+    if (status.state === 'idle' && !status.localPending) return
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw Error('Catalog initialization did not finish before backup')
+}
 const makeSupervisor = () => new CoreSupervisor({
   configuration: { root: profile, libraryFilePath: join(profile, 'music-library.json'), coverCacheDir: join(profile, 'covers'), libraryStorage: 'sqlite', resumeMode: 'trackAndPosition' },
   entries: Object.fromEntries(Object.entries({ core: 'musicCore', audio: 'audioEngineService', database: 'libraryDatabaseService', scan: 'libraryScanService', analysis: 'audioAnalysisService' }).map(([name, file]) => [name, join(root, 'out/main', file + '.js')])),
@@ -132,6 +141,7 @@ async function main() {
   assert.notEqual(stateView.playback.state, 'playing')
   assert.equal(stateView.queue.occurrenceId, 'backup:second')
   assert.equal(stateView.queue.index, 1)
+  await awaitCatalog()
   assert.equal(await request('command', 'backup.export'), true)
   const exported = repository.readBackupFile(exportPath)
   assert.deepEqual(Object.keys(exported.data).sort(), [...PERSONAL_DOMAINS].sort())
@@ -153,10 +163,12 @@ async function main() {
   exported.data.statistics.tracks.song.seconds = 123
   repository.writePersonalBackupFile(importPath, exported)
   const preview = await request('command', 'backup.preview')
+  const restore = { id: preview.id, options: { domains: Object.keys(exported.data), conflict: 'use-backup', mappings: [] } }
+  await request('command', 'backup.repreview', restore)
   let enter, release
   const entered = new Promise(resolve => { enter = resolve })
   holdAuthorization = { enter, gate: new Promise(resolve => { release = resolve }) }
-  const pending = request('command', 'backup.stage', { id: preview.id, options: { domains: [...PERSONAL_DOMAINS], conflict: 'use-backup', mappings: [] } })
+  const pending = request('command', 'backup.stage', restore)
   const lostReply = assert.rejects(pending, error => error.code === 'OUTCOME_UNKNOWN')
   await entered
   await request('command', 'playback.pause')
@@ -166,6 +178,7 @@ async function main() {
   assert.equal(existsSync(join(profile, 'personal-restore-pending.json')), true)
   await supervisor.shutdown()
   supervisor = makeSupervisor(); await supervisor.start(); supervisor.connect(identity)
+  await awaitCatalog()
   assert.equal(await request('command', 'backup.export'), true)
   const restored = repository.readBackupFile(exportPath)
   assert.equal(restored.data.statistics.tracks.song.seconds, 123)
