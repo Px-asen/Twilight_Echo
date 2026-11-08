@@ -1996,6 +1996,9 @@ test('Core source edits, downloads and statistics use finite identities and vers
 
 test('liked playback and heart refill accept selection identities, never a caller-chosen liked playlist or tracks', () => {
   assert.equal(isCoreRequest(request('liked.play', { selectedId: 'ncm:7', play: false })), true)
+  assert.equal(isCoreRequest(request('liked.play', { shuffle: true, play: true })), true)
+  assert.equal(isCoreRequest(request('liked.play', { shuffle: 'true' })), false)
+  assert.equal(isCoreRequest(request('liked.play', { shuffle: true, selectedId: 'ncm:7' })), false)
   assert.equal(isCoreRequest(request('liked.play', { playlistId: 123 })), false)
   assert.equal(isCoreRequest(request('liked.play', { tracks: [] })), false)
   assert.equal(isCoreRequest(request('heart.refill', { id: 'q', revision: 3 })), true)

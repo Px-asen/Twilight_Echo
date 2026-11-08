@@ -2680,8 +2680,8 @@ export class CorePlaybackSession {
       await this.stagePages(
         liked.produce,
         {
-          mode: this.mode === 'heart' ? 'sequential' : this.mode,
-          order: 'original',
+          mode: command.shuffle ? 'shuffle' : this.mode === 'heart' ? 'sequential' : this.mode,
+          order: command.shuffle ? 'shuffle' : 'original',
           selectedIndex: liked.selectedIndex,
           play: command.play,
           onAdopt: () =>

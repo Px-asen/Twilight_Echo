@@ -4,7 +4,10 @@ import test from 'node:test'
 import { stripTypeScriptTypes } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { compileStyle } from '@vue/compiler-sfc'
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, effectScope, nextTick, reactive, ref, shallowRef, watch } from 'vue'
+import { createCorePlayerQueue } from '../../stores/player/corePlayerQueue.ts'
+import type { CorePlayerClient } from '../../stores/player/corePlayerTypes.ts'
+import { coreSnapshot } from '../../stores/coreTestFixtures.ts'
 import type { CoreLibraryRemovalResult } from '../../../../shared/coreLibraryMaintenance.ts'
 import type { Track, TrackArtistRef } from '../../types/music.ts'
 import type {
@@ -649,13 +652,210 @@ test('provider likes never fall back to application favorites', () => {
   assert.match(source, /Boolean\(activeExternalState\.value\?\.likedPlaylist\)/)
 })
 
-test('liked playback resolves the complete provider list instead of queueing only the first page', () => {
-  assert.match(source, /async function resolveDetailPlaybackQueue\(\): Promise<Track\[]>/)
+function createLikedPlaybackHarness(t: test.TestContext) {
+  const tracks = Array.from({ length: 2100 }, (_, index) => ({
+    ...createTrack(`ncm:${index + 1}`, 'ncm'),
+    ncmSongId: index + 1
+  }))
+  let release!: (tracks: Track[]) => void
+  let reject!: (error: Error) => void
+  const loading = new Promise<Track[]>((resolve, fail) => {
+    release = resolve
+    reject = fail
+  })
+  const commands: Array<{ name: string; payload: any }> = []
+  const core = {
+    state: shallowRef(coreSnapshot()),
+    query: async () => ({ items: [] }),
+    command: async (name: string, payload: unknown) => {
+      commands.push({ name, payload })
+    }
+  } as unknown as CorePlayerClient
+  const effect = effectScope()
+  const playbackStore = effect.run(() => createCorePlayerQueue(core, (error) => assert.fail(String(error))))!
+  t.after(() => {
+    release(tracks)
+    effect.stop()
+  })
+  const detailTracks = shallowRef(tracks.slice(0, 100))
+  let fullReads = 0
+  const scope = {
+    currentDetail: ref<{ type: string } | null>({ type: 'liked' }),
+    isExternalActive: ref(false),
+    libraryFavoritePlaylist: ref({ id: 123 }),
+    detailTracks,
+    visibleDetailTracks: computed(() => detailTracks.value),
+    streamingListTracks: computed(() => detailTracks.value),
+    streamingContextMenuTrack: ref(tracks[0]),
+    likedTracksHasMore: ref(true),
+    likedTracksLoadingMore: ref(false),
+    likedTracksLoadMoreError: ref(''),
+    likedCount: ref(2100),
+    likedTracksTotal: ref(2100),
+    likedTracksNextOffset: ref(100),
+    detailLoadToken: 1,
+    isActiveDetailLoad: (token: number) => token === 1,
+    fetchLikedTracks: () => {
+      fullReads++
+      return loading
+    },
+    fetchLikedTracksPage: async () => ({
+      tracks: (await loading).slice(100),
+      total: tracks.length,
+      nextOffset: tracks.length,
+      hasMore: false
+    }),
+    LIKED_TRACKS_PAGE_SIZE: 100,
+    streamingContentRef: ref(null),
+    nextTick,
+    syncLikedIds() {},
+    closeStreamingContextMenu() {},
+    friendlyStreamingError: String,
+    shuffleArray: (items: Track[]) => [...items].reverse(),
+    playTrack: playbackStore.playTrack,
+    playbackStore,
+    openLikedTracks: async () => {
+      await loading
+      scope.currentDetail.value = { type: 'liked' }
+    }
+  }
+  const contextStart = source.search(/(?:async )?function handleContextPlayTrack\(/)
+  const handlers = runInNewContext(
+    stripTypeScriptTypes(
+      source.slice(
+        source.indexOf('function playStreamingTrack('),
+        source.indexOf('function isDetailRowLiking(')
+      ) +
+        source.slice(contextStart, source.indexOf('function handleContextPlayNext(')) +
+        source.slice(
+          source.indexOf('async function loadMoreLikedTracks('),
+          source.indexOf('async function openPlaylist(')
+        ) +
+        source.slice(
+          source.indexOf('async function playLikedSongs('),
+          source.indexOf('async function retryCurrentView(')
+        )
+    ) +
+      '\n({ playTrackFromCurrentDetail, playAllDetailTracks, shufflePlayDetailTracks, handleContextPlayTrack, playLikedSongs, loadAllLikedTracks, loadMoreLikedTracks })',
+    scope
+  ) as {
+    playTrackFromCurrentDetail(track: Track): void | Promise<void>
+    playAllDetailTracks(): void | Promise<void>
+    shufflePlayDetailTracks(): void | Promise<void>
+    handleContextPlayTrack(): void | Promise<void>
+    playLikedSongs(): Promise<void>
+    loadAllLikedTracks(): Promise<void>
+    loadMoreLikedTracks(): Promise<void>
+  }
+  return {
+    tracks,
+    scope,
+    commands,
+    handlers,
+    release: () => release(tracks),
+    reject,
+    fullReads: () => fullReads
+  }
+}
+
+test('a delayed full liked-list read cannot replay an older click over the newer song (issue 213)', async (t) => {
+  const h = createLikedPlaybackHarness(t)
+  const first = h.handlers.playTrackFromCurrentDetail(h.tracks[0])
+  await h.handlers.playTrackFromCurrentDetail(h.tracks[1])
+  h.release()
+  await first
+  assert.deepEqual(
+    h.commands.map(({ payload }) => payload.selectedId),
+    ['ncm:1', 'ncm:2']
+  )
+  assert.equal(
+    h.fullReads(),
+    0,
+    'Core owns the complete liked queue; display reads must not defer Play'
+  )
+})
+
+for (const action of [
+  'playTrackFromCurrentDetail',
+  'playAllDetailTracks',
+  'shufflePlayDetailTracks',
+  'handleContextPlayTrack'
+] as const) {
+  test(`${action} submits liked playback immediately while display paging is in flight`, async (t) => {
+    const h = createLikedPlaybackHarness(t)
+    h.scope.likedTracksLoadingMore.value = true
+    await h.handlers[action](h.tracks[0])
+    assert.equal(h.commands.length, 1)
+    assert.equal(h.commands[0].name, 'liked.play')
+    if (action === 'shufflePlayDetailTracks') {
+      assert.equal(
+        h.commands[0].payload.shuffle,
+        true,
+        'shuffle must include the complete Core queue'
+      )
+      assert.equal(h.commands[0].payload.selectedId, undefined)
+    } else assert.equal(h.commands[0].payload.selectedId, 'ncm:1')
+    h.scope.detailTracks.value = h.tracks
+    h.scope.likedTracksHasMore.value = false
+    h.scope.likedTracksLoadingMore.value = false
+    await nextTick()
+    assert.equal(h.commands.length, 1, 'finishing display paging must not submit another queue')
+    assert.equal(h.fullReads(), 0)
+  })
+}
+
+for (const action of ['loadAllLikedTracks', 'loadMoreLikedTracks'] as const) {
+  test(`${action} completion updates the display without replacing active playback`, async (t) => {
+    const h = createLikedPlaybackHarness(t)
+    const loading = h.handlers[action]()
+    await h.handlers.playTrackFromCurrentDetail(h.tracks[1])
+    h.release()
+    await loading
+    assert.equal(h.scope.detailTracks.value.length, 2100)
+    assert.equal(h.scope.likedTracksHasMore.value, false)
+    assert.equal(h.commands.length, 1)
+    assert.equal(h.commands[0].name, 'liked.play')
+    assert.equal(h.commands[0].payload.selectedId, 'ncm:2')
+  })
+}
+
+test('the liked library card submits its intent before opening the display, without a late replay', async (t) => {
+  const h = createLikedPlaybackHarness(t)
+  h.scope.currentDetail.value = null
+  const playing = h.handlers.playLikedSongs()
+  assert.equal(h.commands.length, 1)
+  assert.equal(h.commands[0].name, 'liked.play')
+  assert.equal(h.commands[0].payload.selectedId, undefined)
+  h.scope.currentDetail.value = { type: 'liked' }
+  await h.handlers.playTrackFromCurrentDetail(h.tracks[1])
+  h.release()
+  await playing
+  assert.deepEqual(
+    h.commands.map(({ payload }) => payload.selectedId),
+    [undefined, 'ncm:2']
+  )
+})
+
+test('a rate-limited full display read cannot replay playback from its partial fallback', async (t) => {
+  const h = createLikedPlaybackHarness(t)
+  const loading = h.handlers.loadAllLikedTracks()
+  await h.handlers.playTrackFromCurrentDetail(h.tracks[1])
+  h.reject(new Error('NCM -460 rate limited'))
+  await loading
+  assert.match(h.scope.likedTracksLoadMoreError.value, /-460/)
+  assert.equal(h.scope.likedTracksHasMore.value, true)
+  assert.equal(h.scope.likedTracksLoadingMore.value, false)
+  assert.deepEqual(
+    h.commands.map(({ payload }) => payload.selectedId),
+    ['ncm:2']
+  )
+})
+
+test('loading the complete liked display is an explicit action independent of playback', () => {
+  assert.match(source, /async function loadAllLikedTracks\(\): Promise<void>/)
+  assert.match(source, /@load-all-liked="loadAllLikedTracks"/)
   assert.match(source, /const tracks = await fetchLikedTracks\(\)/)
-  assert.match(source, /async function playAllDetailTracks\(\): Promise<void>/)
-  assert.match(source, /const tracks = await resolveDetailPlaybackQueue\(\)/)
-  // 通过 playStreamingTrack 仍使用完整解析后的列表（同时携带心动模式上下文）。
-  assert.match(source, /playStreamingTrack\(tracks\[0\], tracks\)/)
+  assert.doesNotMatch(source, /resolveDetailPlaybackQueue/)
 })
 
 test('external favorite card opens and plays the selected folder instead of the provider default', async () => {
@@ -672,11 +872,9 @@ test('external favorite card opens and plays the selected folder instead of the 
       opened.push([playlist.id, force])
       scope.currentDetail.value = { type: 'playlist', playlist }
     },
-    resolveDetailPlaybackQueue: async () => {
-      assert.equal(scope.currentDetail.value?.playlist.id, selected.id)
-      return tracks
-    },
+    visibleDetailTracks: { value: tracks },
     playStreamingTrack: (first: Track, queue: Track[]) => {
+      assert.equal(scope.currentDetail.value?.playlist.id, selected.id)
       assert.equal(first, tracks[0])
       played.push(queue)
     }

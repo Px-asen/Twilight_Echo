@@ -4,6 +4,7 @@ import { createCorePlayerResource } from './corePlayerResource.ts'
 import type { TrackData } from '../../../../shared/track.ts'
 import type { CoreTrackView } from '../../../../shared/coreViews.ts'
 import type { CoreQueueReference } from '../../../../shared/coreProtocol.ts'
+import type { CoreLikedPlayback } from '../../../../shared/coreHeart.ts'
 import {
   isAuthorizedProviderQueueCover,
   type CoreQueueSubmitReply,
@@ -290,6 +291,9 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
       if (rethrow) throw error
     }
   }
+  async function playLikedTracks(options: Omit<CoreLikedPlayback, 'play'> = {}): Promise<void> {
+    await core.command('liked.play', { ...options, play: true })
+  }
   async function playTrackFromPosition(
     track: QueueTrack,
     position: number,
@@ -297,7 +301,7 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
     context?: { heartModePlaylistId?: number | null }
   ) {
     if (context?.heartModePlaylistId) {
-      await core.command('liked.play', { selectedId: track.id, play: true })
+      await playLikedTracks({ selectedId: track.id })
       return
     }
     if (!tracks && track.queueEntryId && reference.value) {
@@ -409,6 +413,7 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
       context?: { heartModePlaylistId?: number | null }
     ) => playTrackFromPosition(track, 0, tracks, context),
     playTrackFromPosition,
+    playLikedTracks,
     playLibraryQuery: async (
       query: LibraryQuery,
       selectedId?: string,

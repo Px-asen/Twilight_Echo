@@ -2553,10 +2553,10 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
   showStreamingContextMenu.value = true
 }
 
-async function handleContextPlayTrack(): Promise<void> {
+function handleContextPlayTrack(): void {
   const track = streamingContextMenuTrack.value
   if (!track) return
-  const list = currentDetail.value ? await resolveDetailPlaybackQueue() : streamingListTracks.value
+  const list = currentDetail.value ? visibleDetailTracks.value : streamingListTracks.value
   playStreamingTrack(track, list)
   closeStreamingContextMenu()
 }
@@ -2727,23 +2727,16 @@ onUnmounted(() => {
   window.removeEventListener('click', closeStreamingContextMenu)
 })
 
-function getHeartModePlaylistId(): number | null {
-  // 心动模式只允许在网易云“我喜欢的音乐”收藏歌单中启用：
-  // 外部流媒体提供商没有独立的收藏歌单上下文，本地/其他歌单同样不可用。
-  if (isExternalActive.value) return null
-  if (currentDetail.value?.type !== 'liked') return null
-  const id = likedPlaylist.value?.id
-  return id != null && Number.isFinite(Number(id)) && Number(id) > 0 ? Number(id) : null
-}
-
 function playStreamingTrack(track: Track, tracks: Track[]): void {
-  playTrack(track, tracks.length > 0 ? tracks : [track], {
-    heartModePlaylistId: getHeartModePlaylistId()
-  })
+  if (currentDetail.value?.type === 'liked' && !isExternalActive.value) {
+    void playbackStore.playLikedTracks({ selectedId: track.id })
+    return
+  }
+  playTrack(track, tracks.length > 0 ? tracks : [track])
 }
 
-async function playTrackFromCurrentDetail(track: Track): Promise<void> {
-  const tracks = await resolveDetailPlaybackQueue()
+function playTrackFromCurrentDetail(track: Track): void {
+  const tracks = visibleDetailTracks.value
   const resolvedTrack = tracks.find((item) => item.id === track.id) ?? track
   playStreamingTrack(resolvedTrack, tracks)
 }
@@ -2753,29 +2746,31 @@ function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
   const result = multiSelect.onRowClick(track, index, event)
   if (result !== 'play') return
   if (settingsStore.settings.value.trackActivationMode === 'doubleClick') return
-  void playTrackFromCurrentDetail(track)
+  playTrackFromCurrentDetail(track)
 }
 
 function playDetailTrack(track: Track, _index: number, event?: MouseEvent): void {
   if (event && multiSelect.shouldSuppressRowDoubleClick(event)) return
-  void playTrackFromCurrentDetail(track)
+  playTrackFromCurrentDetail(track)
 }
 
-async function resolveDetailPlaybackQueue(): Promise<Track[]> {
+// Display loading must never defer a playback command: Core already builds the
+// full liked queue and cancels its preparation when a newer transport intent wins.
+async function loadAllLikedTracks(): Promise<void> {
   if (
     currentDetail.value?.type !== 'liked' ||
     isExternalActive.value ||
     !likedTracksHasMore.value
   ) {
-    return visibleDetailTracks.value
+    return
   }
 
-  if (likedTracksLoadingMore.value) return visibleDetailTracks.value
+  if (likedTracksLoadingMore.value) return
   const token = detailLoadToken
   likedTracksLoadingMore.value = true
   try {
     const tracks = await fetchLikedTracks()
-    if (!isActiveDetailLoad(token) || currentDetail.value?.type !== 'liked') return []
+    if (!isActiveDetailLoad(token) || currentDetail.value?.type !== 'liked') return
     if (tracks.length > 0) {
       detailTracks.value = tracks
       likedCount.value = tracks.length
@@ -2784,7 +2779,6 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
       likedTracksHasMore.value = false
       likedTracksLoadMoreError.value = ''
       syncLikedIds(tracks)
-      return visibleDetailTracks.value
     }
   } catch (error) {
     if (isActiveDetailLoad(token)) {
@@ -2793,18 +2787,20 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
   } finally {
     if (isActiveDetailLoad(token)) likedTracksLoadingMore.value = false
   }
-
-  return visibleDetailTracks.value
 }
 
-async function playAllDetailTracks(): Promise<void> {
-  const tracks = await resolveDetailPlaybackQueue()
+function playAllDetailTracks(): void {
+  const tracks = visibleDetailTracks.value
   if (tracks.length === 0) return
   playStreamingTrack(tracks[0], tracks)
 }
 
-async function shufflePlayDetailTracks(): Promise<void> {
-  const tracks = await resolveDetailPlaybackQueue()
+function shufflePlayDetailTracks(): void {
+  if (currentDetail.value?.type === 'liked' && !isExternalActive.value) {
+    void playbackStore.playLikedTracks({ shuffle: true })
+    return
+  }
+  const tracks = visibleDetailTracks.value
   if (tracks.length === 0) return
   const shuffled = shuffleArray(tracks)
   playStreamingTrack(shuffled[0], shuffled)
@@ -3408,6 +3404,12 @@ function onStreamingContentScroll(event: Event): void {
 }
 
 async function playLikedSongs(): Promise<void> {
+  if (!isExternalActive.value) {
+    const playing = playbackStore.playLikedTracks()
+    if (currentDetail.value?.type !== 'liked') void openLikedTracks()
+    await playing
+    return
+  }
   // For external providers the liked view is a playlist detail; detect it so we
   // don't re-open it on every play click.
   const likedId = libraryFavoritePlaylist.value?.id
@@ -3419,7 +3421,7 @@ async function playLikedSongs(): Promise<void> {
   if (!isViewingLiked) {
     await openLikedTracks()
   }
-  const tracks = await resolveDetailPlaybackQueue()
+  const tracks = visibleDetailTracks.value
   if (tracks.length > 0) {
     playStreamingTrack(tracks[0], tracks)
   }
@@ -4068,7 +4070,7 @@ onMounted(async () => {
                   @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
                   @batch-delete="handleStreamingBatchDelete"
                   @clear-selection="clearSelection"
-                  @load-all-liked="resolveDetailPlaybackQueue"
+                  @load-all-liked="loadAllLikedTracks"
                   @load-more-liked="loadMoreDetailTracks"
                   @track-context-menu="onStreamingTrackContextMenu"
                 />
