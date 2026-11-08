@@ -31,6 +31,7 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     loudnormStatus: player.loudnormStatus,
     loudnormStatusSource: player.loudnormStatusSource,
     toggleExclusiveMode: player.toggleExclusiveMode,
+    setExclusiveAutoRelease: player.setExclusiveAutoRelease,
     setAudioOutput: player.setAudioOutput,
     setAudioDevice: player.setAudioDevice,
     setAudioOutputConfig: player.setAudioOutputConfig,

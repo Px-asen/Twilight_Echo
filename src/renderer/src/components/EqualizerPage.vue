@@ -4,6 +4,7 @@ import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import type { EqDisplayRange } from '@renderer/utils/eqViewport'
 import { mergeEqualizerPatch } from '@renderer/utils/equalizerSettingsPatch'
 import { useEqualizerHistory } from '@renderer/composables/useEqualizerHistory'
+import { useWorkspaceState } from '../composables/workspaceSession'
 import type { EqSnapshot } from '@renderer/composables/useEqualizerHistory'
 import { groupEqBandPatches } from '@renderer/utils/parametricEqSelection'
 import type { EqBandPatch } from '@renderer/utils/parametricEqSelection'
@@ -211,6 +212,29 @@ const showTargetResponse = ref(true)
 const showIndividualFilters = ref(true)
 const showCombinedFilter = ref(true)
 const showCorrectedResponse = ref(true)
+const workspaceState = useWorkspaceState('equalizer', () => ({
+  history: eqHistory.snapshot(),
+  activeTab: activeTab.value,
+  presetName: presetName.value,
+  editingPresetKey: editingPresetKey.value,
+  editingPresetName: editingPresetName.value,
+  selectedBandIndex: selectedBandIndex.value,
+  selectedBandIndices: selectedBandIndices.value,
+  spectrumVisible: spectrumVisible.value,
+  spectrumFrozen: spectrumFrozen.value,
+  opraQuery: opraQuery.value,
+  responseView: responseView.value,
+  displayRangeDb: displayRangeDb.value,
+  importedFrequencyResponse: importedFrequencyResponse.value,
+  showManualResponse: showManualResponse.value,
+  showOpraResponse: showOpraResponse.value,
+  showOpraEstimatedDeviation: showOpraEstimatedDeviation.value,
+  showMeasuredSource: showMeasuredSource.value,
+  showTargetResponse: showTargetResponse.value,
+  showIndividualFilters: showIndividualFilters.value,
+  showCombinedFilter: showCombinedFilter.value,
+  showCorrectedResponse: showCorrectedResponse.value
+}))
 
 // Display reference rate: use the actual device output rate when known so the
 // plotted curve matches the coefficients the engine builds for that rate.
@@ -1242,6 +1266,32 @@ onMounted(() => {
   void loadAutoPreampPreference()
   void loadAppSettings().then(() => {
     eqHistory.reset(audioProcessing.value)
+    workspaceState.restore((saved) => {
+      eqHistory.restore(saved.history, audioProcessing.value)
+      activeTab.value = saved.activeTab
+      presetName.value = saved.presetName
+      editingPresetKey.value = saved.editingPresetKey
+      editingPresetName.value = saved.editingPresetName
+      selectBand(
+        saved.selectedBandIndex,
+        saved.selectedBandIndices.filter((index) => audioProcessing.value.eqBands[index])
+      )
+      spectrumVisible.value = saved.spectrumVisible
+      spectrumFrozen.value = saved.spectrumFrozen
+      opraQuery.value = saved.opraQuery
+      responseView.value = saved.responseView
+      displayRangeDb.value = saved.displayRangeDb
+      importedFrequencyResponse.value = saved.importedFrequencyResponse
+      showManualResponse.value = saved.showManualResponse
+      showOpraResponse.value = saved.showOpraResponse
+      showOpraEstimatedDeviation.value = saved.showOpraEstimatedDeviation
+      showMeasuredSource.value = saved.showMeasuredSource
+      showTargetResponse.value = saved.showTargetResponse
+      showIndividualFilters.value = saved.showIndividualFilters
+      showCombinedFilter.value = saved.showCombinedFilter
+      showCorrectedResponse.value = saved.showCorrectedResponse
+      if (opraQuery.value) void searchOpraProfiles(opraQuery.value)
+    })
     historyLoading.value = false
   })
   void loadOpraStatus()
@@ -1291,7 +1341,12 @@ onBeforeUnmount(() =>
 defineExpose({
   busy: computed(
     () =>
-      historyLoading.value || historyBusy.value || clipboardBusy.value || !!opraApplyingEqId.value
+      historyLoading.value ||
+      historyBusy.value ||
+      clipboardBusy.value ||
+      frequencyResponseImporting.value ||
+      saving.value ||
+      !!opraApplyingEqId.value
   ),
   requestLeave: async () => {
     finishParametricEdits()

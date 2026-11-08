@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { findFlyoutExperience, usePluginFlyout } from '../stores/usePluginFlyout'
 import { useExtensionRegistry } from '../extensions/registry.ts'
-import EmbeddedExperience from './experience/EmbeddedExperience.vue'
+const EmbeddedExperience = defineAsyncComponent(
+  () => import('./experience/EmbeddedExperience.vue')
+)
 import MotionTransition from './MotionTransition.vue'
 import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer'
 

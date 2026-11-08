@@ -47,6 +47,7 @@ import { getPluginThemeKey } from '@renderer/extensions/themeSelection'
 import { useThemeStore } from '@renderer/stores/useThemeStore'
 import { createThemePreviewScheduler } from '@renderer/utils/themePreviewScheduler'
 import { readThemeStudioRecovery, storeThemeStudioRecovery } from './themeStudioRecovery'
+import { useWorkspaceState } from '../../composables/workspaceSession'
 
 export type { BuiltInThemePresetId } from '../../../../shared/theme.ts'
 export type ThemePreviewSurface = 'dashboard' | 'player' | 'equalizer'
@@ -95,11 +96,27 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
   const initializing = ref(true)
   let disposed = false
   let leaveApproved = false
+  let suspended = false
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined
   let originalTone: ThemeTone = 'pureWhite'
   const previewScheduler = createThemePreviewScheduler((profile: ThemeProfileV2) =>
     themeStore.preview(profile)
   )
+  const workspaceState = useWorkspaceState('theme-studio', () => ({
+    leaveApproved,
+    selectedKey: selectedKey.value,
+    tone: tone.value,
+    domain: domain.value,
+    studioSearchQuery: studioSearchQuery.value,
+    previewSurface: previewSurface.value,
+    draft: draft.value,
+    savedDraft: savedDraft.value,
+    history: history.value,
+    historyIndex: historyIndex.value,
+    selectedIconSlot: selectedIconSlot.value,
+    notice: notice.value,
+    localError: localError.value
+  }))
 
   const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
     { id: 'presets', label: '选择主题', icon: 'ph ph-grid-four' },
@@ -1078,15 +1095,9 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
         player.controls = value
       } else if (key === 'titleAlign' && (value === 'left' || value === 'center')) {
         player.titleAlign = value
-      } else if (
-        key === 'lyricsAlign' &&
-        ['follow', 'left', 'center', 'right'].includes(value)
-      ) {
+      } else if (key === 'lyricsAlign' && ['follow', 'left', 'center', 'right'].includes(value)) {
         player.lyricsAlign = value as NonNullable<ThemeModes['player']>['lyricsAlign']
-      } else if (
-        key === 'lyricHighlight' &&
-        ['minimal', 'surface', 'glow'].includes(value)
-      ) {
+      } else if (key === 'lyricHighlight' && ['minimal', 'surface', 'glow'].includes(value)) {
         player.lyricHighlight = value as NonNullable<ThemeModes['player']>['lyricHighlight']
       } else if (key === 'timeStyle' && ['pill', 'minimal', 'glass'].includes(value)) {
         player.timeStyle = value as NonNullable<ThemeModes['player']>['timeStyle']
@@ -1498,6 +1509,13 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     await clearStudioPreview()
   }
 
+  async function suspend(): Promise<void> {
+    clearTimeout(recoveryTimer)
+    preserveRecovery()
+    await clearStudioPreview()
+    suspended = true
+  }
+
   async function closeStudio(): Promise<void> {
     if (!(await prepareLeave())) return
     options.onBack()
@@ -1565,7 +1583,27 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
       } else {
         await selectBuiltIn(active.id)
       }
-      if (!disposed && recovery) {
+      const resumed =
+        !disposed &&
+        workspaceState.restore((saved) => {
+          if (saved.leaveApproved) return
+          selectedKey.value = saved.selectedKey
+          tone.value = saved.tone
+          domain.value = saved.domain
+          studioSearchQuery.value = saved.studioSearchQuery
+          previewSurface.value = saved.previewSurface
+          draft.value = saved.draft
+          savedDraft.value = saved.savedDraft
+          history.value = saved.history
+          historyIndex.value = saved.historyIndex
+          selectedIconSlot.value = saved.selectedIconSlot
+          notice.value = saved.notice
+          localError.value = saved.localError
+        })
+      if (resumed) {
+        await themeStore.setPreviewTone(tone.value)
+        if (draft.value) await themeStore.preview(draft.value)
+      } else if (!disposed && recovery) {
         selectedKey.value = recovery.selectedKey
         draft.value = cloneProfile(recovery.draft)
         savedDraft.value = recovery.savedDraft ?? ''
@@ -1593,10 +1631,11 @@ export function useThemeStudioEditor(options: ThemeStudioEditorOptions) {
     window.removeEventListener('resize', updateLivePreviewScale)
     previewResizeObserver?.disconnect()
     previewResizeObserver = null
-    void clearStudioPreview()
+    if (!suspended) void clearStudioPreview()
   })
 
   return {
+    suspend,
     releaseForTransfer,
     BUILT_IN_THEME_FONTS,
     BUILT_IN_THEME_PRESETS,

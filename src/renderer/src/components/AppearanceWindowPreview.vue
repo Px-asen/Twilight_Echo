@@ -48,6 +48,7 @@ import type { NavigationPageDefinition } from '../app/navigationPages'
 import type { AppBackgroundPage } from '../../../shared/appSettings'
 import { APPEARANCE_PARTS, resolveAppearancePart, type AppearancePart } from './appearanceParts'
 import { createEditorViewport } from '../editor/createEditorViewport'
+import { useWorkspaceState } from '../composables/workspaceSession'
 import {
   createAppearanceLayerView,
   projectAppearanceLayers,
@@ -299,9 +300,7 @@ const regionViews = computed(() =>
       .filter((region) => region.id !== 'card' && region.id !== 'controls')
       .map((region) => {
         const stageRect =
-          region.id === 'player-page' && playerStageRect.value
-            ? playerStageRect.value
-            : region.rect
+          region.id === 'player-page' && playerStageRect.value ? playerStageRect.value : region.rect
         return {
           ...region,
           rect: stageRect,
@@ -1932,6 +1931,23 @@ function rootChangeAffectsPreview(record: MutationRecord): boolean {
   // classes and every changed public data/style attribute still mirror.
   return contentClasses(record.oldValue) !== contentClasses(value)
 }
+const workspaceState = useWorkspaceState('appearance-preview', () => ({
+  navigationExpanded: navigationExpanded.value,
+  layeredView: layeredView.value,
+  viewAngles: viewAngles.value,
+  layerSpacing: layerSpacing.value,
+  playerTarget: playerTarget.value,
+  camera: engine.snapshot()
+}))
+workspaceState.restore((saved) => {
+  navigationExpanded.value = saved.navigationExpanded
+  playerTarget.value = saved.playerTarget
+  viewAngles.value = saved.viewAngles
+  layerSpacing.value = saved.layerSpacing
+  setLayeredView(saved.layeredView)
+  engine.restore(saved.camera)
+  syncCameraZoom()
+})
 onMounted(() => {
   startIntro()
   ready()

@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { cloneAppearance, type AppearanceDraft } from '../../../shared/appAppearance'
+import { cloneAppearance, type AppearanceDraft } from '../../../shared/appAppearance.ts'
 
 // A slider gesture is one history step. Keep memory bounded and never retain image pixels.
 export function useAppearanceHistory<Context = undefined>(
@@ -54,5 +54,15 @@ export function useAppearanceHistory<Context = undefined>(
     if (canRedo.value) restore(cursor.value + 1)
   }
   onBeforeUnmount(() => clearTimeout(timer))
-  return { canUndo, canRedo, undo, redo, reset }
+  function exportState() {
+    capture()
+    return { entries: [...entries.value], cursor: cursor.value }
+  }
+  function resume(saved: ReturnType<typeof exportState>): void {
+    clearTimeout(timer)
+    timer = undefined
+    entries.value = [...saved.entries]
+    cursor.value = saved.cursor
+  }
+  return { canUndo, canRedo, undo, redo, reset, snapshot: exportState, resume }
 }

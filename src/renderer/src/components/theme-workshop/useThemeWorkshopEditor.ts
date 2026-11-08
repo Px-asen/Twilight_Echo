@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { useWorkspaceState } from '../../composables/workspaceSession'
 import {
   copyWorkshopDraft,
   workshopProjectSummary,
@@ -32,6 +33,19 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
   let pendingCheckpoint = false
   let stopTrial: () => void = () => undefined
   let metadataValid: () => boolean = () => true
+  let suspended = false
+  const workspaceState = useWorkspaceState('theme-workshop-draft', () => ({
+    draft: draft.value,
+    candidate: candidate.value,
+    generation: generation.value,
+    savedGeneration,
+    saveState: saveState.value,
+    savedAt: savedAt.value,
+    cursor: cursor.value,
+    history: [...history],
+    error: error.value,
+    notice: notice.value
+  }))
   const previewProject = computed(() =>
     draft.value && candidate.value ? { ...draft.value, base: candidate.value } : draft.value
   )
@@ -209,9 +223,32 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
       busy.value = false
     }
   }
-  async function initialize(): Promise<void> {
+  async function initialize(): Promise<boolean> {
     ;[projects.value, sources.value] = await Promise.all([api.list(), api.sources()])
+    const resumed = workspaceState.restore((saved) => {
+      draft.value = saved.draft
+      candidate.value = saved.candidate
+      generation.value = saved.generation
+      savedGeneration = saved.savedGeneration
+      saveState.value = saved.saveState
+      savedAt.value = saved.savedAt
+      cursor.value = saved.cursor
+      history.splice(0, history.length, ...saved.history)
+      historyLength.value = history.length
+      error.value = saved.error
+      notice.value = saved.notice
+    })
+    if (resumed) return true
     if (projects.value[0]) adopt(await api.get(projects.value[0].id))
+    return false
+  }
+  async function suspend(): Promise<void> {
+    endGesture()
+    finishInput()
+    clearTimeout(timer)
+    if (metadataValid()) await persist().catch(() => undefined)
+    else await saving.catch(() => undefined)
+    suspended = true
   }
   function bindLifecycle(stop: () => void, valid: () => boolean): void {
     stopTrial = stop
@@ -223,7 +260,7 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
     endGesture()
     clearTimeout(timer)
     stopTrial()
-    void persist().catch(() => undefined)
+    if (!suspended) void persist().catch(() => undefined)
   })
   return {
     projects,
@@ -254,6 +291,7 @@ export function useThemeWorkshopEditor(api: ThemeWorkshopApi) {
     undo,
     run,
     initialize,
+    suspend,
     bindLifecycle
   }
 }

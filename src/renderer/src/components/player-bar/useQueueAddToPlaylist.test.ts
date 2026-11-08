@@ -407,7 +407,7 @@ test('the queue drawer row exposes the picker and the player bar mounts its dial
   assert.match(source, /<QueueAddToPlaylistDialog/)
   // The picker is teleported outside the bar, so outside-pointer dismissal has
   // to stand down while it is open or the drawer closes underneath it.
-  assert.match(source, /isDismissBlocked: \(\) => queueAddToPlaylist\.open\.value/)
+  assert.match(source, /isDismissBlocked: \(\) =>\s*queueAddToPlaylist\.open\.value/)
 })
 
 test('the queue picker syncs Core providers without the removed provider bridge', async () => {

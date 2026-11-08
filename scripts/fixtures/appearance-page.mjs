@@ -46,8 +46,10 @@ window.api = {
 const page = ref()
 const target = ref({ revision: 0 })
 const active = ref(true)
+const mounted = ref(true)
+const suspendReady = ref(false)
 const app = createApp({
-  setup: () => () => h(Page, { ref: page, navigationTarget: target.value, active: active.value })
+  setup: () => () => mounted.value ? h(Page, { ref: page, navigationTarget: target.value, active: active.value, onSuspendReady: value => { suspendReady.value = value } }) : null
 })
 const errors = []
 app.config.errorHandler = (error) => errors.push(error.stack ?? String(error))
@@ -191,6 +193,20 @@ window.runCustomization = async () => {
   window.allowLeave = false
   check(!(await page.value.requestLeave()), 'denied leave ignored')
   check(document.querySelector('.advanced-fixture'), 'denied leave unmounted editor')
+  window.allowLeave = true
+  active.value = false
+  await until(() => suspendReady.value, 'hidden workspace never became safe to suspend')
+  mounted.value = false
+  await tick()
+  check(!document.querySelector('.appearance-page') && !page.value, 'suspended workspace retained its component or DOM')
+  mounted.value = true
+  active.value = true
+  await until(ready, 'resumed workspace not ready')
+  await page.value.ready()
+  check(document.querySelector('.advanced-fixture'), 'resume forgot the selected advanced editor')
+  check(calls.filter(c => c.action === 'capture').length === captures + 1, 'resume created another project')
+  window.allowLeave = false
+  check(!(await page.value.requestLeave()), 'restored workspace bypassed rejected leave')
   window.allowLeave = true
   check(!errors.length, errors.join('\n'))
   document.querySelector('.appearance-theme-tools').open = false

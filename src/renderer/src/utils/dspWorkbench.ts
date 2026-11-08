@@ -136,6 +136,11 @@ export function createDspDraftHistory(initial: string) {
       entries = [value]
       cursor = 0
     },
+    snapshot: () => ({ entries: [...entries], cursor }),
+    restore(value: { entries: string[]; cursor: number }) {
+      entries = [...value.entries]
+      cursor = value.cursor
+    },
     push(value: string) {
       if (entries[cursor] === value) return
       entries = entries.slice(0, cursor + 1)

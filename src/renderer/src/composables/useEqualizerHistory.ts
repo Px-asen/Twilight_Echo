@@ -106,5 +106,33 @@ export function useEqualizerHistory(
     })
   }
 
-  return { activeSlot, busy, canUndo, canRedo, reset, commit, travel, switchSlot, copyToOther }
+  function snapshot() {
+    return JSON.parse(JSON.stringify({ slots: slots.value, activeSlot: activeSlot.value })) as {
+      slots: { A: Timeline; B: Timeline }
+      activeSlot: EqSlot
+    }
+  }
+  function restore(saved: ReturnType<typeof snapshot>, current: EqSnapshot): boolean {
+    if (
+      JSON.stringify(saved.slots[saved.activeSlot].present) !==
+      JSON.stringify(snapshotEqualizer(current))
+    )
+      return false
+    slots.value = saved.slots
+    activeSlot.value = saved.activeSlot
+    return true
+  }
+  return {
+    activeSlot,
+    busy,
+    canUndo,
+    canRedo,
+    reset,
+    commit,
+    travel,
+    switchSlot,
+    copyToOther,
+    snapshot,
+    restore
+  }
 }

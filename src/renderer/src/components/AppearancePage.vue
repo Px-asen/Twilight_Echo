@@ -46,6 +46,7 @@ import { readThemeStudioRecovery } from './theme-studio/themeStudioRecovery'
 import type { NavigationPageDefinition } from '../app/navigationPages'
 import { usePageDock, type PageDockAction } from '../app/pageDock'
 import { APPEARANCE_STUDIO_PARTS, appearanceSettingsTarget } from './appearanceSettingsTargets'
+import { provideWorkspaceSession } from '../composables/workspaceSession'
 
 const props = withDefaults(
   defineProps<{
@@ -60,7 +61,12 @@ const emit = defineEmits<{
   back: []
   tabChange: [tab: AppearanceWorkspaceTab]
   domainChange: [domain: ThemeStudioDomain]
+  suspendReady: [ready: boolean]
 }>()
+const workspaceSession = provideWorkspaceSession(
+  'appearance',
+  () => props.navigationTarget?.revision
+)
 const ThemeStudioPage = defineAsyncComponent(() => import('./ThemeStudioPage.vue'))
 const CustomThemeAdvancedPanel = defineAsyncComponent(
   () => import('./theme-workshop/CustomThemeAdvancedPanel.vue')
@@ -104,7 +110,7 @@ const busy = computed(
     !loaded.value ||
     switching.value ||
     applying.value ||
-    (tab.value === 'adjust' && appearanceSection.value?.previewBusy) ||
+    (tab.value === 'adjust' && (!appearanceSection.value || appearanceSection.value.previewBusy)) ||
     (tab.value !== 'adjust' && (!editorState.value || editorState.value.busy))
 )
 function activeThemeKey(): string {
@@ -182,6 +188,20 @@ const creatorPartInfo = computed(() =>
   APPEARANCE_PARTS.find((part) => part.id === selectedPart.value)
 )
 const creatorToolsRequested = ref(false)
+const workspaceState = () => ({
+  tab: tab.value,
+  selected: sourceKey.value,
+  category: category.value,
+  selectedPart: selectedPart.value,
+  dailyTone: dailyTone.value,
+  pendingCreatorTone: tone.value,
+  creatorToolsRequested: creatorToolsRequested.value,
+  sourceToCustomize: sourceToCustomize.value,
+  startCreating: startCreating.value,
+  scrollTop: pageRef.value?.scrollTop ?? 0
+})
+workspaceSession.register('workspace', workspaceState)
+const suspendedWorkspace = workspaceSession.read<ReturnType<typeof workspaceState>>('workspace')
 const creatorContextVisible = computed(
   () => selectedPart.value !== 'overview' || creatorToolsRequested.value
 )
@@ -740,7 +760,35 @@ useBackHandler(
   () => void requestClose(),
   '返回'
 )
-defineExpose({ requestClose, requestLeave })
+function ready(): Promise<void> {
+  if (!busy.value || sourceError.value) return Promise.resolve()
+  return new Promise((resolve) => {
+    const stop = watch(
+      [busy, sourceError],
+      () => {
+        if (busy.value && !sourceError.value) return
+        stop()
+        resolve()
+      },
+      { flush: 'post' }
+    )
+  })
+}
+defineExpose({ requestClose, requestLeave, ready })
+let suspensionRevision = 0
+watch(
+  [() => props.active, busy, appearanceSection],
+  async ([active, working, section]) => {
+    const revision = ++suspensionRevision
+    emit('suspendReady', false)
+    if (active || working || (tab.value === 'adjust' && !section)) return
+    await studio.value?.suspend?.()
+    await workshop.value?.suspend?.()
+    await appearanceSection.value?.suspend?.()
+    if (revision === suspensionRevision && !props.active && !busy.value) emit('suspendReady', true)
+  },
+  { immediate: true, flush: 'sync' }
+)
 let revision = 0
 let disposed = false
 let highlightTimer: ReturnType<typeof setTimeout> | undefined
@@ -934,7 +982,17 @@ onMounted(async () => {
     }
     if (disposed) return
     const target = props.navigationTarget
-    if (recovery) {
+    if (suspendedWorkspace) {
+      tab.value = suspendedWorkspace.tab
+      selected.value = suspendedWorkspace.selected
+      category.value = suspendedWorkspace.category
+      selectedPart.value = suspendedWorkspace.selectedPart
+      dailyTone.value = suspendedWorkspace.dailyTone
+      pendingCreatorTone.value = suspendedWorkspace.pendingCreatorTone
+      creatorToolsRequested.value = suspendedWorkspace.creatorToolsRequested
+      sourceToCustomize.value = suspendedWorkspace.sourceToCustomize
+      startCreating.value = suspendedWorkspace.startCreating
+    } else if (recovery) {
       tab.value = 'studio'
       selected.value = recovery.selectedKey
     } else if (
@@ -955,13 +1013,22 @@ onMounted(async () => {
     } else tab.value = 'adjust'
     loaded.value = true
     emit('tabChange', tab.value)
-    if (!recovery && target?.appearanceTab === 'workshop' && !savedProjects.value.length) {
+    if (
+      !suspendedWorkspace &&
+      !recovery &&
+      target?.appearanceTab === 'workshop' &&
+      !savedProjects.value.length
+    ) {
       await nextTick()
       await openAdvanced()
     }
-    if (target?.entry && !recovery) {
+    if (target?.entry && !recovery && !suspendedWorkspace) {
       await nextTick()
       await revealEntry(target.entry)
+    }
+    if (suspendedWorkspace) {
+      await nextTick()
+      if (pageRef.value) pageRef.value.scrollTop = suspendedWorkspace.scrollTop
     }
   } catch (cause) {
     sourceError.value = cause instanceof Error ? cause.message : String(cause)

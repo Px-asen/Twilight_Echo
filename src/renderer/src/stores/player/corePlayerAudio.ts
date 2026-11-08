@@ -62,9 +62,17 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
     core.state.value?.settingsRevision == null
       ? ''
       : `${core.state.value.epoch}:${core.state.value.audioRevision}:${core.state.value.settingsRevision}`
-  const output = createCorePlayerResource(key, () => core.query('audio.output', {}), failed)
-  const dsp = createCorePlayerResource(key, () => core.query('audio.dsp', {}), failed)
-  const dspStatus = createCorePlayerResource(key, () => core.query('audio.dsp.status', {}), failed)
+  const output = createCorePlayerResource(
+    key,
+    (signal) => core.query('audio.output', {}, signal),
+    failed
+  )
+  const dsp = createCorePlayerResource(key, (signal) => core.query('audio.dsp', {}, signal), failed)
+  const dspStatus = createCorePlayerResource(
+    key,
+    (signal) => core.query('audio.dsp.status', {}, signal),
+    failed
+  )
   const diagnostics = createCorePlayerResource(
     () => {
       const state = core.state.value
@@ -72,7 +80,7 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
         ? `${state.epoch}:${state.audioRevision}:${state.playback?.position}:${state.playback?.state}`
         : ''
     },
-    () => core.query('playback.diagnostics', {}),
+    (signal) => core.query('playback.diagnostics', {}, signal),
     failed
   )
   const audioProcessing = computed(() => dsp.value.value?.processing ?? emptyProcessing)
@@ -148,6 +156,7 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
     refreshDspGraphStatus: dspStatus.refresh,
     refreshAudioOutputState: () => Promise.all([output.refresh(), dsp.refresh(), dspStatus.refresh(), diagnostics.refresh()]).then(() => {}),
     toggleExclusiveMode: () => editOutput({ kind: 'exclusive', enabled: !exclusiveMode.value }),
+    setExclusiveAutoRelease: (enabled: boolean) => editOutput({ kind: 'autoRelease', enabled }),
     setAudioOutput: (output: AudioOutputId, device?: string) =>
       editOutput({ kind: 'backend', output, ...(device ? { device } : {}) }),
     setAudioDevice: (device: string) => editOutput({ kind: 'device', device }),

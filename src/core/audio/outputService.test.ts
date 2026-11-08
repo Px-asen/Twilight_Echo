@@ -21,6 +21,7 @@ function fixture(t: test.TestContext) {
   })
   const persistence = createCoreAudioPersistence(settings)
   const events: string[] = []
+  let nativeConfig: { releaseExclusiveOnPause?: boolean } = {}
   const info = createDefaultPlaybackInfo('wasapi', 'a', false, normalizeOutputConfig())
   info.volume = 0.5
   let revision = 0
@@ -40,7 +41,10 @@ function fixture(t: test.TestContext) {
       if (failRollback && device === 'a') throw new Error('old device disappeared')
       info.outputDevice = device
     },
-    SetOutputConfig: () => events.push('config'),
+    SetOutputConfig: (json: string) => {
+      nativeConfig = JSON.parse(json)
+      events.push('config')
+    },
     SetVolume: (volume: number) => {
       events.push(`volume:${volume}`)
       if (volume > 0) {
@@ -90,6 +94,7 @@ function fixture(t: test.TestContext) {
     settings,
     root,
     events,
+    nativeConfig: () => nativeConfig,
     changed: () => changed,
     persisted: () => JSON.parse(readFileSync(join(root, 'settings.json'), 'utf8')),
     failPersistence: () => {
@@ -194,9 +199,16 @@ test('config, exclusive policy and device profiles share the existing full setti
   assert.equal(f.settings.read().audioOutputConfig.preferredBufferSize, 512)
   assert.equal(f.settings.read().audioExclusiveMode, true)
   assert.equal(f.settings.read().audioExclusiveAutoRelease, true)
+  assert.equal(f.persisted().audioExclusiveAutoRelease, true)
+  assert.equal((await f.output.state()).exclusiveAutoRelease, true)
+  assert.equal(f.nativeConfig().releaseExclusiveOnPause, true)
   assert.equal(f.settings.read().audioDeviceProfiles.profiles[0].id, 'desk-dac')
   assert.equal((await f.output.profiles()).profiles.profiles.length, 1)
   assert(f.changed() > 0)
+  await edit({ kind: 'autoRelease', enabled: false })
+  assert.equal(f.persisted().audioExclusiveAutoRelease, false)
+  assert.equal((await f.output.state()).exclusiveAutoRelease, false)
+  assert.equal(f.nativeConfig().releaseExclusiveOnPause, false)
 })
 
 test('quit joins native configuration work started outside a client request before final persistence', async (t) => {

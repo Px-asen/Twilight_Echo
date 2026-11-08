@@ -15,12 +15,16 @@ export function createCorePlaybackBookmarks(core: Pick<CorePlayerClient, 'state'
         return state?.phase === 'ready' && state.bookmarksRevision !== null
           ? `${state.epoch}:${state.bookmarksRevision}` : ''
       },
-      async () => {
-        const state = await core.query('bookmarks.state', {})
+      async (signal) => {
+        const state = await core.query('bookmarks.state', {}, signal)
         const items: CoreBookmark[] = []
         let offset = 0
         for (;;) {
-          const page = await core.query('bookmarks.page', { revision: state.revision, scope: 'all', offset, limit: 200 })
+          const page = await core.query(
+            'bookmarks.page',
+            { revision: state.revision, scope: 'all', offset, limit: 200 },
+            signal
+          )
           items.push(...page.items)
           offset += page.items.length
           if (offset >= page.total) return { state, items }
