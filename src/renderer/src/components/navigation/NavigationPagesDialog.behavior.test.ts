@@ -114,6 +114,13 @@ await resizeViewport(760);await win.webContents.executeJavaScript('window.checkN
 await win.webContents.executeJavaScript('window.checkNavigationStyles()');await win.webContents.executeJavaScript('window.openNavigationEditor()');if(process.env.TWILIGHT_NAVIGATION_SCREENSHOTS)fs.writeFileSync(path.join(process.env.TWILIGHT_NAVIGATION_SCREENSHOTS,'editor-760-dark.png'),(await win.webContents.capturePage()).toPNG());await win.webContents.executeJavaScript('window.checkCustomNavigation()');
 console.log('NAVIGATION_PAGES_OK');app.exit(0)}catch(error){console.error(error.stack);app.exit(1)}})`
     )
+    await writeFile(join(directory, 'selection-runner.cjs'), selectionRunner)
+    const selectionResult = await promisify(execFile)(
+      require('electron'),
+      ['--no-sandbox', join(directory, 'selection-runner.cjs'), join(directory, 'index.html')],
+      { windowsHide: true, timeout: 30_000 }
+    )
+    assert.match(selectionResult.stdout, /NAVIGATION_SELECTION_OK/)
     const result = await promisify(execFile)(
       require('electron'),
       ['--no-sandbox', join(directory, 'runner.cjs'), join(directory, 'index.html')],
@@ -129,6 +136,47 @@ console.log('NAVIGATION_PAGES_OK');app.exit(0)}catch(error){console.error(error.
     await rm(target, { recursive: true, force: true })
   }
 })
+
+// Offscreen rendering fixes DPR at 1 on Windows. Use the native compositor so
+// this checks the painted pixels at 150%, not only DOM geometry or emulation.
+const selectionRunner = `const {app,BrowserWindow}=require('electron')
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
+app.setPath('userData',path.join(__dirname,'selection-profile'))
+app.commandLine.appendSwitch('force-device-scale-factor','1.5')
+app.whenReady().then(async()=>{
+  const win=new BrowserWindow({show:false,width:1024,height:768,useContentSize:true,webPreferences:{contextIsolation:false,backgroundThrottling:false}})
+  try{
+    await win.loadFile(process.argv.at(-1))
+    const scenarios=['pureWhite','dark'].flatMap(tone=>[
+      ...['playlists','artists','albums','allSongs','analytics'].map(id=>({tone,id})),
+      {tone,id:'analytics',style:'compact'},{tone,id:'analytics',style:'rail'}
+    ])
+    for(const scenario of scenarios){
+      const {rect,viewport,dpr}=await win.webContents.executeJavaScript('window.prepareSelectionTest('+JSON.stringify(scenario)+')')
+      const painted=await win.webContents.capturePage()
+      const {width,height}=painted.getSize(),pixels=painted.toBitmap()
+      assert.ok(Math.abs(width/viewport.width-dpr)<.01,'capture must retain native device pixels')
+      const pixel=(x,y)=>pixels.readUInt32LE((y*width+x)*4),colors=new Map()
+      for(let y=Math.ceil((rect.top+4)*dpr);y<(rect.bottom-4)*dpr;y++)for(let x=Math.ceil((rect.left+4)*dpr);x<(rect.right-4)*dpr;x++){
+        const color=pixel(x,y);colors.set(color,(colors.get(color)||0)+1)
+      }
+      const fill=[...colors].sort((a,b)=>b[1]-a[1])[0][0]
+      let left=width,top=height,right=-1,bottom=-1
+      for(let y=Math.max(0,Math.floor((rect.top-8)*dpr));y<Math.min(height,(rect.bottom+rect.height)*dpr);y++)for(let x=Math.max(0,Math.floor((rect.left-8)*dpr));x<Math.min(width,(rect.right+rect.width)*dpr);x++){
+        if(pixel(x,y)===fill){
+          left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y)
+        }
+      }
+      const actual={left,top,right:right+1,bottom:bottom+1},name=[scenario.tone,scenario.style||'expanded',scenario.id].join('-')
+      if(process.env.TWILIGHT_NAVIGATION_SCREENSHOTS){
+        fs.mkdirSync(process.env.TWILIGHT_NAVIGATION_SCREENSHOTS,{recursive:true})
+        fs.writeFileSync(path.join(process.env.TWILIGHT_NAVIGATION_SCREENSHOTS,'selection-150-'+name+'.png'),painted.toPNG())
+      }
+      for(const edge of ['left','top','right','bottom'])assert.ok(Math.abs(actual[edge]-rect[edge]*dpr)<=2,'painted selection escapes its button: '+JSON.stringify({name,edge,actual,expected:rect,dpr}))
+    }
+    console.log('NAVIGATION_SELECTION_OK');app.exit(0)
+  }catch(error){console.error(error.stack);app.exit(1)}
+})`
 
 const runtime = `import {createApp,h,nextTick,ref} from 'vue'
 import SideMenu from '@renderer/components/SideMenu.vue'
@@ -149,6 +197,23 @@ const dialog=()=>document.querySelector('dialog')
 const until=async(predicate,message)=>{const end=Date.now()+3000;while(!predicate()){if(Date.now()>end)throw new Error(message);await nextTick();await pause(10)}}
 const openEditor=async opener=>{opener.click();await until(()=>dialog()?.matches(':modal')&&!dialog().inert&&dialog().querySelectorAll('input[type=checkbox]').length===BUILTIN_NAVIGATION_PAGES.length,'native editor did not finish mounting');await nextTick()}
 const untilClosed=async()=>{const end=Date.now()+3000;while(dialog()){if(Date.now()>end)throw new Error('native dialog exit did not finish');await pause()}await nextTick()}
+window.prepareSelectionTest=async({tone,id='analytics',style='expanded'})=>{
+  document.documentElement.dataset.teMotion='off'
+  if(!app){
+    const ids=['local-home','search','playlists','artists','albums','allSongs','analytics','recent']
+    store.settings.value={navigationPages:{version:1,order:ids,hidden:BUILTIN_NAVIGATION_PAGES.filter(page=>!ids.includes(page.id)).map(page=>page.id)}}
+    mount()
+  }
+  document.documentElement.dataset.theme=tone
+  document.documentElement.dataset.teNavigationStyle=style
+  active.value=id;await nextTick();await pause(75)
+  expect(Math.abs(devicePixelRatio-1.5)<.01,'selection regression must run at 150% display scale: '+devicePixelRatio)
+  const marker=document.querySelector('.navigation-indicator'),target=document.querySelector('[data-page-id="'+id+'"]'),rect=target.getBoundingClientRect(),highlight=marker.getBoundingClientRect()
+  expect(['top','bottom','left','right'].every(edge=>Math.abs(highlight[edge]-rect[edge])<1),'selection does not match '+tone+' '+id+': '+JSON.stringify({highlight:highlight.toJSON(),button:rect.toJSON()}))
+  const label=target.querySelector('.item-label').getBoundingClientRect()
+  if(style!=='rail')expect(Math.abs((label.top+label.bottom-rect.top-rect.bottom)/2)<1,'selected label is not vertically centered')
+  return {rect:rect.toJSON(),viewport:{width:innerWidth,height:innerHeight},dpr:devicePixelRatio}
+}
 window.runNavigationTests=async()=>{
   window.writes=0;mount();await pause(350)
   queries.searchQuery.value='moon';await pause(200);key.value='albums';await nextTick();expect(queries.searchQuery.value==='','search leaked to a different page');queries.searchQuery.value='album';await nextTick();key.value='songs';await nextTick();expect(queries.searchQuery.value==='moon'&&queries.debouncedSearchQuery.value==='moon','page search did not restore')
