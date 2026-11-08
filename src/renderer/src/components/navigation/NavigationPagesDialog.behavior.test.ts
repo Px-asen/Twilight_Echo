@@ -206,7 +206,10 @@ window.prepareSelectionTest=async({tone,id='analytics',style='expanded'})=>{
   }
   document.documentElement.dataset.theme=tone
   document.documentElement.dataset.teNavigationStyle=style
-  active.value=id;await nextTick();await pause(75)
+  active.value=id;await nextTick();await document.fonts.ready
+  // Let layout observers and the native compositor present the same frame.
+  // A fixed delay can capture the preceding indicator size on busy CI hosts.
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
   expect(Math.abs(devicePixelRatio-1.5)<.01,'selection regression must run at 150% display scale: '+devicePixelRatio)
   const marker=document.querySelector('.navigation-indicator'),target=document.querySelector('[data-page-id="'+id+'"]'),rect=target.getBoundingClientRect(),highlight=marker.getBoundingClientRect()
   expect(['top','bottom','left','right'].every(edge=>Math.abs(highlight[edge]-rect[edge])<1),'selection does not match '+tone+' '+id+': '+JSON.stringify({highlight:highlight.toJSON(),button:rect.toJSON()}))
