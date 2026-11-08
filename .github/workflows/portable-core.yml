@@ -47,6 +47,7 @@ jobs:
           scripts/portable-core-scenarios.test.cjs
           scripts/portable-embedded-host.test.cjs
           scripts/portable-audio.test.cjs
+          scripts/portable-sleep.test.cjs
           scripts/core-portable-runtime.test.cjs
 
       - uses: actions/upload-artifact@v4
