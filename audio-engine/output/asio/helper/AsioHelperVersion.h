@@ -2,5 +2,5 @@
 #include <cstdint>
 
 namespace twilight::audio::asio_helper {
-inline constexpr uint32_t kProtocolVersion = 6;
+inline constexpr uint32_t kProtocolVersion = 7;
 }

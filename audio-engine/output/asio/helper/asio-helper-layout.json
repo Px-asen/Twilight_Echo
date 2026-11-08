@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "AudioFormatRecord": {
     "size": 20,
     "alignment": 4,
@@ -71,7 +71,7 @@
     "reserved": 58
   },
   "Request": {
-    "size": 564,
+    "size": 568,
     "alignment": 4,
     "command": 0,
     "deviceId": 4,
@@ -82,7 +82,8 @@
     "sampleFormatMappingInterpreted": 548,
     "nativeDsdControlOrder": 552,
     "dsdMinimumBufferFrames": 556,
-    "dsdCadenceConfirmCallbacks": 560
+    "dsdCadenceConfirmCallbacks": 560,
+    "bufferSizeInPcmFrames": 564
   },
   "Response": {
     "size": 148160,

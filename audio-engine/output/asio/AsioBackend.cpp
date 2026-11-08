@@ -643,6 +643,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     attempt.channelCount = routedOutputChannels(deviceInfo_, requestedFormat.channelCount);
     openConfig_.format = attempt;
     openConfig_.bufferSizeFrames = chooseBufferSize(deviceInfo_, attempt);
+    openConfig_.bufferSizeInPcmFrames = isNativeDsdRequest(attempt);
 
     std::string attemptError;
     result = AsioOpenResult{};

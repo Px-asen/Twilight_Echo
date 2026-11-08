@@ -127,6 +127,7 @@ class Server final {
         request.outputChannelStart < 0 || request.outputChannelStart > 255 ||
         request.bufferSizeFrames < 0 ||
         request.bufferSizeFrames > static_cast<int32_t>(kMaxFrames) ||
+        request.bufferSizeInPcmFrames < 0 || request.bufferSizeInPcmFrames > 1 ||
         request.dsdMinimumBufferFrames < 0 || request.dsdMinimumBufferFrames > static_cast<int32_t>(kMaxFrames) ||
         request.dsdCadenceConfirmCallbacks < 2 || request.dsdCadenceConfirmCallbacks > 8 ||
         std::memchr(request.deviceId, '\0', sizeof(request.deviceId)) == nullptr) {
@@ -137,6 +138,7 @@ class Server final {
     openConfig_.deviceId = readText(request.deviceId);
     openConfig_.format = decodeAudioFormat(request.format);
     openConfig_.bufferSizeFrames = request.bufferSizeFrames;
+    openConfig_.bufferSizeInPcmFrames = request.bufferSizeInPcmFrames != 0;
     openConfig_.outputChannelStart = request.outputChannelStart;
     openConfig_.dsdMinimumBufferFrames = request.dsdMinimumBufferFrames;
     openConfig_.dsdCadenceConfirmCallbacks = static_cast<uint32_t>(request.dsdCadenceConfirmCallbacks);
@@ -197,7 +199,8 @@ class Server final {
     }
     activeBufferSize_ = host_->activeBufferSize();
     activeChannelCount_ = openConfig_.format.channelCount;
-    if (activeBufferSize_ <= 0 || activeBufferSize_ > static_cast<long>(kMaxFrames) ||
+    nativeDsd_ = isDsdSampleFormat(openConfig_.format.sampleFormat);
+    if (activeBufferSize_ <= 0 || activeBufferSize_ > static_cast<long>(nativeDsd_ ? kMaxDsdSamples : kMaxFrames) ||
         activeChannelCount_ <= 0 || activeChannelCount_ > static_cast<int>(kMaxChannels)) {
       host_->close();
       opened_ = false;
@@ -219,7 +222,26 @@ class Server final {
       shared_->activeChannelFormats[channel] = record;
       response->channelFormats[channel] = record;
     }
-    nativeDsd_ = isDsdSampleFormat(openConfig_.format.sampleFormat);
+    size_t maximumCapacity = kChannelStride;
+    for (int channel = 0; channel < activeChannelCount_; ++channel) {
+      const size_t wireStride = asio::wireBytesForFrames(channelFormats_[channel], 1);
+      if (!asio::isSupportedChannelFormat(channelFormats_[channel]) || wireStride == 0) {
+        host_->close(); opened_ = false;
+        fail(response, FailureReason::ProtocolError, "ASIO driver returned an invalid channel format");
+        return false;
+      }
+      maximumCapacity = std::min(maximumCapacity, kChannelStride / wireStride);
+    }
+    const bool expanded = channelFormats_[0].dsdPacking == AsioDsdPacking::Ner8;
+    dsdGeometry_.reset(static_cast<size_t>(activeBufferSize_), openConfig_.format.sampleRate, expanded,
+                       openConfig_.dsdCadenceConfirmCallbacks, maximumCapacity);
+    const size_t capacity = nativeDsd_ ? dsdGeometry_.capacity() : static_cast<size_t>(activeBufferSize_);
+    if (capacity > maximumCapacity) {
+      host_->close(); opened_ = false;
+      fail(response, FailureReason::ProtocolError, "ASIO driver buffer exceeds the helper byte capacity");
+      return false;
+    }
+    geometryFailureReported_ = false;
     shared_->renderQueueCapacity = 0;
     shared_->renderQueueChannelStride = 0;
     exchangeAtomic(&shared_->renderQueueWrite, 0);
@@ -228,17 +250,13 @@ class Server final {
       size_t stride = 0;
       for (int channel = 0; channel < activeChannelCount_; ++channel)
         stride = std::max(stride, asio::wireBytesForFrames(channelFormats_[channel], activeBufferSize_));
-      stride = (stride + 63) & ~size_t{63};
+      stride = std::min((stride + 63) & ~size_t{63}, size_t{kChannelStride});
       if (stride > 0 && stride <= kChannelStride) {
         shared_->renderQueueChannelStride = static_cast<uint32_t>(stride);
         shared_->renderQueueCapacity = static_cast<uint32_t>(std::min<size_t>(
             kRenderQueueSlots, sizeof(shared_->renderQueueData) / (stride * activeChannelCount_)));
       }
     }
-    const bool expanded = channelFormats_[0].dsdPacking == AsioDsdPacking::Ner8;
-    dsdGeometry_.reset(static_cast<size_t>(activeBufferSize_), openConfig_.format.sampleRate, expanded,
-                       openConfig_.dsdCadenceConfirmCallbacks);
-    const size_t capacity = nativeDsd_ ? dsdGeometry_.capacity() : static_cast<size_t>(activeBufferSize_);
     exchangeAtomic(&shared_->activeRenderFrameCapacity, static_cast<LONG>(capacity));
     exchangeAtomic(&shared_->dsdBufferUnitConfirmed, nativeDsd_ && dsdGeometry_.confirmed());
     for (int channel = 0; channel < activeChannelCount_; ++channel) {
@@ -311,6 +329,19 @@ class Server final {
         std::chrono::steady_clock::now().time_since_epoch()).count());
     if (nativeDsd_) {
       dsdGeometry_.observe(timestampNs);
+      if (dsdGeometry_.exceedsCapacity()) {
+        // A byte-counting driver may need more storage than the same raw count
+        // interpreted as bits. Refuse that geometry instead of truncating audio.
+        for (int channel = 0; channel < activeChannelCount_; ++channel) {
+          if (auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex)))
+            asio::fillChannelIdle(output, channelFormats_[channel], activeBufferSize_);
+        }
+        if (!geometryFailureReported_) {
+          geometryFailureReported_ = true;
+          publishHostEvent(AsioHostEvent::HelperFailure, "ASIO DSD byte-frame buffer exceeds the helper byte capacity");
+        }
+        return;
+      }
       exchangeAtomic(&shared_->activeRenderFrameCapacity, static_cast<LONG>(dsdGeometry_.capacity()));
       exchangeAtomic(&shared_->dsdBufferUnitConfirmed, dsdGeometry_.confirmed());
     }
@@ -396,6 +427,7 @@ class Server final {
   AsioOpenConfig openConfig_;
   std::array<AsioChannelFormat, kMaxChannels> channelFormats_{};
   long activeBufferSize_ = 0;
+  bool geometryFailureReported_ = false;
   int activeChannelCount_ = 0;
   bool nativeDsd_ = false;
   asio::DsdBufferGeometry dsdGeometry_;

@@ -28,6 +28,7 @@ struct Behavior {
   bool wrongRateOnCreate = false;
   bool failPostChannels = false;
   bool changeRangeOnFailure = false;
+  bool scaledDsdBuffers = false;
   bool restoreFormatFails = false;
   bool restoreRateIgnored = false;
   bool dirty = false;
@@ -74,6 +75,12 @@ class Driver final : public AsioDriver {
   }
   AsioError getBufferSize(int32_t* min, int32_t* max, int32_t* preferred, int32_t* granularity) override {
     const bool dsd = b->ioMode == kAsioIoFormatDsd;
+    if (b->scaledDsdBuffers) {
+      const int32_t scale = dsd ? static_cast<int32_t>(b->rate / 44100) : 1;
+      *min = 8 * scale; *max = 2048 * scale;
+      *preferred = b->preferredSize * scale; *granularity = -1;
+      return kAsioOk;
+    }
     *min = b->minSize > 0 ? b->minSize : (dsd ? 1024 : 64);
     *max = dsd ? 8192 : 4096;
     *preferred = b->preferredSize > 0
@@ -116,8 +123,12 @@ class Driver final : public AsioDriver {
     b->attempts.emplace_back(frames, inputs);
     // A failed create still owns a partial allocation: callers must dispose it.
     b->storage.assign(count * 2, std::vector<uint8_t>(frames * 8, 0xcd));
-    if (frames != b->acceptedSize || (b->requiresDuplex && inputs != b->inputs) ||
+    if ((!b->scaledDsdBuffers && frames != b->acceptedSize) || (b->requiresDuplex && inputs != b->inputs) ||
         (b->createRequiresPivot && !b->pivoted)) return -995;
+    if (b->scaledDsdBuffers) {
+      const int32_t scale = b->ioMode == kAsioIoFormatDsd ? static_cast<int32_t>(b->rate / 44100) : 1;
+      b->preferredSize = frames / scale;
+    }
     for (int32_t i = 0; i < count; ++i) for (int j = 0; j < 2; ++j) buffers[i].buffers[j] = b->storage[i * 2 + j].data();
     b->created = true;
     if (b->wrongRateOnCreate) b->rate = 44100;
@@ -270,6 +281,61 @@ void testDriverDsdGeometry() {
   asio::writeInterleavedTypedChannelToPlanar(packed, 2, 1, 0, format, output.data());
   for (size_t i = 0; i < 16; ++i) assert(output[i] == ((packed[i / 8] >> (i % 8)) & 1));
   assert(output[16] == 0xa5 && asio::wireBytesForFrames(format, 2) == 16);
+
+  // Large bit-sample buffers fit as packed bytes; the same count interpreted
+  // as byte frames must fail explicitly when it exceeds transport capacity.
+  geometry.reset(524288, 11289600, false, 2, 262144);
+  for (uint64_t i = 1; i <= 5; ++i) geometry.observe(i * 46439909);
+  assert(geometry.confirmed() && !geometry.exceedsCapacity() && geometry.capacity() == 65536);
+  geometry.reset(524288, 11289600, false, 2, 262144);
+  for (uint64_t i = 1; i <= 5; ++i) geometry.observe(i * 371519274);
+  assert(geometry.exceedsCapacity() && geometry.capacity() == 65536);
+  geometry.reset(524288, 11289600, true, 2, 32768);
+  assert(geometry.exceedsCapacity());
+}
+
+void testNativeDsdPreservesPcmBufferPreference() {
+  auto b = std::make_shared<Behavior>();
+  b->scaledDsdBuffers = true;
+  b->preferredSize = 1024;
+  auto control = std::make_shared<AsioControlThread>();
+  AsioDriverSession session({.clsid = "{00000000-0000-0000-0000-000000000000}"}, control,
+      [b] { return new Driver(b); });
+  for (const auto [rate, preference] : {std::pair{11289600, 1024}, {2822400, 256},
+                                      {11289600, 2048}, {11289600, 32768}, {11289600, 1024}}) {
+    auto c = config(rate, AudioSampleFormat::DsdInt8Lsb1);
+    c.bufferSizeFrames = preference;
+    c.bufferSizeInPcmFrames = true;
+    AsioOpenResult result;
+    std::string error;
+    assert(session.open(c, &result, &error));
+    assert(session.createBuffers([](long) {}, {}, &error));
+    const int legalPreference = std::min(preference, 2048);
+    assert(session.activeBufferSize() == legalPreference * (rate / 44100));
+    assert(b->preferredSize == legalPreference);
+    session.close();
+    assert(session.lastCloseError().empty());
+    assert(b->ioMode == kAsioIoFormatPcm && b->rate == 48000);
+    assert(b->preferredSize == legalPreference);
+  }
+  // Direct host clients may still request raw DSD counts explicitly.
+  auto raw = config(11289600, AudioSampleFormat::DsdInt8Lsb1);
+  raw.bufferSizeFrames = 2048;
+  AsioOpenResult result;
+  std::string error;
+  assert(session.open(raw, &result, &error));
+  assert(session.createBuffers([](long) {}, {}, &error));
+  assert(session.activeBufferSize() == 2048);
+  session.close();
+
+  // A driver whose PCM and DSD ranges do not scale uniformly retains its
+  // original driver-count selection even when the UI preference flag is set.
+  auto unscaled = std::make_shared<Behavior>();
+  unscaled->acceptedSize = 2048;
+  auto c = config(11289600, AudioSampleFormat::DsdInt8Lsb1);
+  c.bufferSizeFrames = 2048;
+  c.bufferSizeInPcmFrames = true;
+  runSession(unscaled, c);
 }
 
 void testRestoreFailureRemainsVisible() {
@@ -319,6 +385,16 @@ void testStrictReadbackAndDeadline() {
 }
 
 void testLegalCandidates() {
+  const AsioBufferRange pcm{8, 2048, 1024, -1};
+  assert(nativeDsdBufferScale(pcm, {2048, 524288, 262144, -1}) == 256);
+  assert(nativeDsdBufferScale(pcm, pcm) == 1);
+  assert(nativeDsdBufferScale(pcm, {2048, 32768, 262144, -1}) == 1);
+  assert(nativeDsdBufferScale(pcm, {2048, 524288, 131072, -1}) == 1);
+  assert(nativeDsdBufferScale({}, {2048, 524288, 262144, -1}) == 1);
+  assert(nativeDsdBufferScale(pcm, {2048, 524288, 262144, 64}) == 1);
+  const auto dsd = bufferSizeCandidates({2048, 524288, 262144, -1}, 262144, 0,
+                                         asio::kMaximumDsdBufferSamples);
+  assert(!dsd.empty() && dsd.front() == 262144);
   assert(bufferSizeCandidates({0, 1024, 512, -1}, 256).empty());
   assert(bufferSizeCandidates({65536, 131072, 65536, -1}, 256).empty());
   for (const AsioBufferRange r : {AsioBufferRange{64, 8192, 512, -1}, {128, 3000, 1000, 192},
@@ -386,5 +462,6 @@ void testAllPcmWireTypes() {
 int main() {
   testStrictReadbackAndDeadline(); testLegalCandidates(); testAllPcmWireTypes(); testDriverDsdGeometry(); testLifecycle();
   testRestoreFailureRemainsVisible();
+  testNativeDsdPreservesPcmBufferPreference();
   std::cout << "ASIO driver compatibility behavior passed\n";
 }

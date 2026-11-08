@@ -1,4 +1,4 @@
-// Frozen protocol v6 layout: identical in the x64 parent and x86/x64 helpers.
+// Frozen protocol v7 layout: identical in the x64 parent and x86/x64 helpers.
 static_assert(std::is_standard_layout_v<AudioFormatRecord> && std::is_trivially_copyable_v<AudioFormatRecord>);
 static_assert(sizeof(AudioFormatRecord) == 20 && alignof(AudioFormatRecord) == 4);
 static_assert(offsetof(AudioFormatRecord, sampleRate) == 0);
@@ -62,7 +62,7 @@ static_assert(offsetof(DiagnosticsRecord, buildEnabled) == 56);
 static_assert(offsetof(DiagnosticsRecord, environmentDisabled) == 57);
 static_assert(offsetof(DiagnosticsRecord, reserved) == 58);
 static_assert(std::is_standard_layout_v<Request> && std::is_trivially_copyable_v<Request>);
-static_assert(sizeof(Request) == 564 && alignof(Request) == 4);
+static_assert(sizeof(Request) == 568 && alignof(Request) == 4);
 static_assert(offsetof(Request, command) == 0);
 static_assert(offsetof(Request, deviceId) == 4);
 static_assert(offsetof(Request, format) == 516);
@@ -73,6 +73,7 @@ static_assert(offsetof(Request, sampleFormatMappingInterpreted) == 548);
 static_assert(offsetof(Request, nativeDsdControlOrder) == 552);
 static_assert(offsetof(Request, dsdMinimumBufferFrames) == 556);
 static_assert(offsetof(Request, dsdCadenceConfirmCallbacks) == 560);
+static_assert(offsetof(Request, bufferSizeInPcmFrames) == 564);
 static_assert(std::is_standard_layout_v<Response> && std::is_trivially_copyable_v<Response>);
 static_assert(sizeof(Response) == 148160 && alignof(Response) == 8);
 static_assert(offsetof(Response, command) == 0);

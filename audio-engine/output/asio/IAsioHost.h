@@ -93,6 +93,9 @@ struct AsioOpenConfig {
   AsioNativeDsdControlOrder nativeDsdControlOrder = AsioNativeDsdControlOrder::Default;
   long dsdMinimumBufferFrames = 0;
   uint32_t dsdCadenceConfirmCallbacks = 2;
+  // UI preferences use the PCM buffer scale. Opt in so direct host callers
+  // that already supply native driver counts keep their existing contract.
+  bool bufferSizeInPcmFrames = false;
 };
 
 /**

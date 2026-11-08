@@ -1122,6 +1122,7 @@ void testNativeDsdRuntimeProven() {
   const AudioFormat request = sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
   assert(backend.open("asio:native-proven", request, &error));
   assert(rawHost->lastOpenConfig.format.sampleRate == 2822400);
+  assert(rawHost->lastOpenConfig.bufferSizeInPcmFrames);
   assert(rawHost->lastOpenConfig.format.bitDepth == 1);
   assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
   assert(backend.nativeDsdRuntimeFacts().state == NativeDsdRuntimeFactState::Candidate);

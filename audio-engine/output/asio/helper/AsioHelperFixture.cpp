@@ -73,10 +73,17 @@ class FixtureHost final : public IAsioHost {
     }
     opened_ = true;
     rate_ = config.format.sampleRate;
+    if (mode_.starts_with("large-dsd")) {
+      if (!config.bufferSizeInPcmFrames) {
+        if (error) *error = "fixture requires the PCM preference unit";
+        return false;
+      }
+      frames_ = config.bufferSizeFrames * 256;
+    } else frames_ = kFrames;
     closeError_.clear();
     if (result) {
       result->actualFormat = config.format;
-      result->bufferSizeFrames = kFrames;
+      result->bufferSizeFrames = frames_;
       result->latencyFrames = kFrames;
       result->driverName = "Twilight ASIO fixture";
       result->driverVersion = 1;
@@ -98,7 +105,9 @@ class FixtureHost final : public IAsioHost {
     buffersCreated_ = true;
     outputReadyCalls_.store(0, std::memory_order_release);
     for (auto& channel : buffers_) {
-      for (auto& buffer : channel) buffer.fill(0xcd);
+      const size_t bytes = mode_ == "large-dsd-bits" ? frames_ / 8
+          : mode_.starts_with("large-dsd") ? frames_ : kFrames * sizeof(double);
+      for (auto& buffer : channel) buffer.assign(bytes + 16, 0xcd);
     }
     return true;
   }
@@ -125,6 +134,16 @@ class FixtureHost final : public IAsioHost {
           std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
         if (bufferSwitch_) bufferSwitch_(bufferIndex);
+        if (mode_ == "large-dsd-bits" && eventCallback_ && buffers_[0][bufferIndex][0] != 0x96) {
+          bool exact = true;
+          for (size_t channel = 0; channel < 2; ++channel) {
+            const auto& bytes = buffers_[channel][bufferIndex];
+            for (size_t i = 0; i < static_cast<size_t>(frames_ / 8); ++i)
+              exact &= bytes[i] == (channel == 0 ? 0x31 : 0x52);
+            for (size_t i = frames_ / 8; i < bytes.size(); ++i) exact &= bytes[i] == 0xcd;
+          }
+          eventCallback_(AsioHostEvent::Xrun, exact ? "large-dsd-verified" : "large-dsd-corrupted");
+        }
         if (mode_ == "verify-dsd-queue" && eventCallback_) {
           const uint8_t first = buffers_[0][bufferIndex][0];
           if (first != 0x96) {
@@ -171,7 +190,9 @@ class FixtureHost final : public IAsioHost {
         }
         bufferIndex = 1 - bufferIndex;
         ++callbackCount;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const double period = mode_ == "large-dsd-bits" ? static_cast<double>(frames_) / rate_
+            : mode_ == "large-dsd-bytes" ? static_cast<double>(frames_) * 8 / rate_ : 0.005;
+        std::this_thread::sleep_for(std::chrono::duration<double>(period));
       }
     });
     return true;
@@ -204,12 +225,17 @@ class FixtureHost final : public IAsioHost {
   }
 
   AsioChannelFormat outputChannelFormat(long) const override {
-    if (mode_ == "verify-dsd-queue") {
+    if (mode_ == "verify-dsd-queue" || mode_.starts_with("large-dsd")) {
       AsioChannelFormat format;
       format.logicalFormat = AudioSampleFormat::DsdInt8Msb1;
       format.containerBits = 8;
       format.validBits = 1;
       format.dsdPacking = AsioDsdPacking::Msb1;
+      if (mode_ == "large-dsd-ner8") {
+        format.logicalFormat = AudioSampleFormat::DsdInt8Ner8;
+        format.validBits = 8;
+        format.dsdPacking = AsioDsdPacking::Ner8;
+      }
       return format;
     }
     if (mode_ == "verify-float64") {
@@ -236,7 +262,7 @@ class FixtureHost final : public IAsioHost {
   }
 
   long activeBufferSize() const override {
-    return kFrames;
+    return frames_;
   }
 
   std::string lastCloseError() const override {
@@ -274,13 +300,14 @@ class FixtureHost final : public IAsioHost {
   std::string closeError_;
   AsioBufferSwitchCallback bufferSwitch_;
   AsioEventCallback eventCallback_;
-  std::array<std::array<std::array<uint8_t, kFrames * sizeof(double) + 16>, 2>, 2> buffers_{};
+  std::array<std::array<std::vector<uint8_t>, 2>, 2> buffers_{};
   std::thread callbackThread_;
   std::atomic<bool> started_{false};
   std::atomic<int> outputReadyCalls_{0};
   bool opened_ = false;
   bool buffersCreated_ = false;
   int rate_ = 0;
+  long frames_ = kFrames;
 };
 
 struct Arguments {

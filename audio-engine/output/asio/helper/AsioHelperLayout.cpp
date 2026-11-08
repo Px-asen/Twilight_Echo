@@ -78,6 +78,7 @@ int main() {
   std::cout << ",\"nativeDsdControlOrder\":" << offsetof(Request, nativeDsdControlOrder);
   std::cout << ",\"dsdMinimumBufferFrames\":" << offsetof(Request, dsdMinimumBufferFrames);
   std::cout << ",\"dsdCadenceConfirmCallbacks\":" << offsetof(Request, dsdCadenceConfirmCallbacks);
+  std::cout << ",\"bufferSizeInPcmFrames\":" << offsetof(Request, bufferSizeInPcmFrames);
   std::cout << "}";
   std::cout << ",\"Response\":{\"size\":" << sizeof(Response) << ",\"alignment\":" << alignof(Response);
   std::cout << ",\"command\":" << offsetof(Response, command);

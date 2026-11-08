@@ -46,7 +46,7 @@ function main() {
     const layout = JSON.parse(
       run(join(dir, 'twilight_asio_helper_layout.exe'), [], testEnvironment, true)
     )
-    assert.deepEqual(layout, goldenLayout, `${arch} IPC layout differs from protocol v6`)
+    assert.deepEqual(layout, goldenLayout, `${arch} IPC layout differs from protocol v${goldenLayout.version}`)
     run(join(dir, 'twilight_asio_abi_checks.exe'))
   }
   run(join(x86, 'twilight_asio_abi_cross_dll_tests.exe'), [], {
