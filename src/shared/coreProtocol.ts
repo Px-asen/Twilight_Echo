@@ -1,4 +1,5 @@
 import type { CoreCastStart, CoreCastState, CoreCastDevice } from './coreCast.ts'
+import { validBrowsePayload, type CoreBrowseCommands, type CoreBrowseQueries } from './coreBrowse.ts'
 import type { ListeningSyncStatus } from './listeningSync.ts'
 import type { BridgePeer, CoreZoneState } from './audioBridge.ts'
 import type { ZonesView, ZoneTransport, ZoneHandoff } from './coreZones.ts'
@@ -295,7 +296,7 @@ export interface CoreSnapshot {
   heart: CoreHeartState | null
 }
 
-export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands {
+export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands, CoreBrowseCommands {
   'playlists.addSources': import('./remoteLibrary.ts').PlaylistSourceAppend
   'ratings.set': import('./musicRatings.ts').MusicRatingsSet
   'preferences.set': import('./musicPreferences.ts').MusicPreferencesSet
@@ -550,6 +551,7 @@ export interface CoreQueries
     CoreLibraryQueries,
     CorePlaylistQueries,
     CoreRemoteQueries,
+    CoreBrowseQueries,
     Pick<CoreThemeOperations, 'themes.list' | 'themes.bootstrap'> {
   'ratings.detail': { input: { entityId: string }; output: import('./musicRatings.ts').MusicRatingsDetail }
   'ratings.targets': { input: import('./musicRatings.ts').MusicRatingsTargetsQuery; output: import('./musicRatings.ts').MusicRatingsTargetsPage }
@@ -841,6 +843,15 @@ const OPERATIONS: Record<
   CoreOperation,
   { kind: CoreRequest['kind']; permission: CoreClientIdentity['permissions'][number] }
 > = {
+  'browse.open': { kind: 'command', permission: 'providers:call' },
+  'browse.append': { kind: 'command', permission: 'providers:call' },
+  'browse.release': { kind: 'command', permission: 'providers:call' },
+  'browse.snapshot.save': { kind: 'command', permission: 'providers:call' },
+  'browse.page': { kind: 'query', permission: 'providers:call' },
+  'browse.rows': { kind: 'query', permission: 'providers:call' },
+  'browse.context': { kind: 'query', permission: 'providers:call' },
+  'browse.snapshot': { kind: 'query', permission: 'providers:call' },
+  'browse.locate': { kind: 'query', permission: 'providers:call' },
   'opra.search': { kind: 'query', permission: 'settings:read' },
   'opra.profile': { kind: 'query', permission: 'settings:read' },
   'opra.status': { kind: 'query', permission: 'settings:read' },
@@ -1277,6 +1288,8 @@ export function isCoreRequest(value: unknown): value is CoreRequestEnvelope {
     typeof r.epoch === 'string' &&
     r.epoch.length > 0 &&
     r.epoch.length <= 128 &&
-    validCorePayload(r.name as CoreOperation, r.payload)
+    (typeof r.name === 'string' && r.name.startsWith('browse.')
+      ? validBrowsePayload(r.name, r.payload)
+      : validCorePayload(r.name as CoreOperation, r.payload))
   )
 }

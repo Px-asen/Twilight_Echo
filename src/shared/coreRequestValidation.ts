@@ -405,7 +405,20 @@ function edit(v: unknown): boolean {
 
 import { validDspLibraryPayload } from './dspLibrary.ts'
 import { validPluginManagementPayload } from './pluginManagement.ts'
+import { validBrowsePayload } from './coreBrowse.ts'
 export function validCorePayload(name: CoreOperation, payload: unknown): boolean {
+  switch (name) {
+    case 'browse.open':
+    case 'browse.append':
+    case 'browse.release':
+    case 'browse.snapshot.save':
+    case 'browse.page':
+    case 'browse.rows':
+    case 'browse.context':
+    case 'browse.snapshot':
+    case 'browse.locate':
+      return validBrowsePayload(name, payload)
+  }
   const budget =
     name === 'providers.call' || name === 'extensions.execute' || name === 'settings.edit'
       ? 512 * 1024
