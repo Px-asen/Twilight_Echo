@@ -349,6 +349,7 @@ export function createElectronCoreSupervisor(
       database: join(__dirname, 'libraryDatabaseService.js'),
       scan: join(__dirname, 'libraryScanService.js'),
       analysis: join(__dirname, 'audioAnalysisService.js'),
+      'model-install': join(__dirname, 'modelPackWorker.js'),
       plugin: join(__dirname, 'pluginHost.js')
     },
     fork: (entry, args, serviceName) => {

@@ -16,6 +16,7 @@ export default defineConfig(({ command }) => {
           input: {
             index: resolve(__dirname, 'src/main/index.ts'),
             musicCore: resolve(__dirname, 'src/main/coreProcess/entry.ts'),
+            modelPackWorker: resolve(__dirname, 'src/main/coreProcess/modelPackWorker.ts'),
             diagnosticWriter: resolve(__dirname, 'src/main/diagnostics/writerWorker.ts'),
             pluginHost: resolve(__dirname, 'src/main/plugins/host.ts'),
             audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts'),

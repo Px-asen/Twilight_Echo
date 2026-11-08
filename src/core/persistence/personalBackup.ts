@@ -4,6 +4,7 @@ import { join } from '../../shared/portablePath.ts'
 import { coreFs } from '../ports/index.ts'
 import { loadJsonFileWithBackup, writeJsonValueAtomic } from './jsonFile.ts'
 import { parseJsonWithNestingLimit } from '../../shared/jsonSafety.ts'
+import { personalRestoreFiles, personalRestoreNeedsReview } from './personalRestoreFiles.ts'
 import type { LocalMusicLibraryDocument } from '../../shared/localLibrary.ts'
 import type { Playlist } from '../../shared/playlists.ts'
 import { isVersionedDataEnvelope } from '../../shared/versionedPersistence.ts'
@@ -68,10 +69,7 @@ const jsonOptions = {
   maxBytes: PERSONAL_BACKUP_LIMIT * 3,
   validate: (v: unknown): v is Record<string, unknown> => isRecord(v)
 }
-const pendingName = 'personal-restore-pending.json'
-const journalName = 'personal-restore-journal.json'
-const rendererName = 'personal-restore-renderer.json'
-const reviewName = 'personal-restore-needs-review.json'
+const { pending: pendingName, journal: journalName, renderer: rendererName, review: reviewName } = personalRestoreFiles
 const allowedRestoreFiles = new Set([
   ...Object.values(files),
   'playback-queue.json',
@@ -506,7 +504,6 @@ export function createPersonalBackupRepository(
     removeArtifact(root, journalName)
     return path
   }
-  const personalRestoreNeedsReview = (root: string): boolean => coreFs.existsSync(join(root, reviewName)) || coreFs.existsSync(join(root, reviewName + '.bak'))
   function readPersonalRestoreReview(root: string): PersonalBackup | null {
     const loaded = loadJsonFileWithBackup(join(root, reviewName), {
       label: 'personal restore review', maxBytes: PERSONAL_BACKUP_LIMIT, validate: validatePersonalBackup
@@ -806,7 +803,7 @@ export function createPersonalBackupRepository(
     readRendererRestore,
     acknowledgeRendererRestore,
     deferStalePersonalRestore,
-    personalRestoreNeedsReview,
+    personalRestoreNeedsReview: (root: string) => personalRestoreNeedsReview(root, coreFs.existsSync),
     readPersonalRestoreReview,
     acknowledgePersonalRestoreReview,
     readBackupFile,

@@ -194,7 +194,7 @@ import type { MusicIdentityDetail, IdentificationCandidatesQuery, Identification
 
 export const CORE_PROTOCOL_VERSION = 1
 export type CoreEpoch = string
-export type CoreServiceKind = 'audio' | 'audio-test' | 'zone-audio' | 'database' | 'scan' | 'analysis' | 'plugin'
+export type CoreServiceKind = 'audio' | 'audio-test' | 'zone-audio' | 'database' | 'scan' | 'analysis' | 'plugin' | 'model-install'
 export type CorePhase = 'starting' | 'ready' | 'recovering' | 'failed' | 'stopped'
 export type CoreClientRole = 'desktop' | 'server-admin' | 'mini-player' | 'system' | 'remote' | 'plugin'
 

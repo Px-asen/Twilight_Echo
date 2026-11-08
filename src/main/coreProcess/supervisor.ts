@@ -305,7 +305,7 @@ export class CoreSupervisor extends EventEmitter {
     service: CoreServiceKind
   ): void {
     if (
-      !['audio', 'audio-test', 'zone-audio', 'database', 'scan', 'analysis', 'plugin'].includes(service) ||
+      !['audio', 'audio-test', 'zone-audio', 'database', 'scan', 'analysis', 'plugin', 'model-install'].includes(service) ||
       typeof leaseId !== 'string' ||
       leaseId.length > 128 ||
       this.peers.has(leaseId)
