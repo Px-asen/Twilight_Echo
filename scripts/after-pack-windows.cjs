@@ -3,9 +3,13 @@ const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { assertWindowsExecutableIcon } = require('./verify-windows-app-branding.cjs')
 const { prepareStemZipDecoder } = require('./prepare-automix-stem-zip-decoder.cjs')
+const { verifyPackagedDesktopCore } = require('./desktop-core-packaging.cjs')
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'win32') return
+  for (const name of ['twilight-crash-helper.exe', 'twilight-crash-helper-x86.exe'])
+    if (!existsSync(join(context.appOutDir, 'resources', 'audio-engine', name))) throw new Error(`Missing diagnostic helper: ${name}`)
+  verifyPackagedDesktopCore(join(context.appOutDir, 'resources'), context.packager.appInfo.version)
 
   await prepareStemZipDecoder({
     root: context.packager.projectDir,

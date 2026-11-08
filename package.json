@@ -8,6 +8,8 @@
   "homepage": "https://TwilightEcho.com",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "build:desktop-core": "node scripts/build-desktop-core.cjs",
+    "test:core:desktop-node": "node --test --test-concurrency=1 scripts/core-desktop-node.test.cjs",
     "build:server": "node scripts/build-server.cjs",
     "build:server-service": "node scripts/build-server-service.cjs",
     "test:server-service": "node scripts/build-server.cjs && node scripts/build-server-service.cjs && node --test --import ./scripts/register-renderer-aliases.mjs scripts/server-service.test.cjs scripts/server-service-integration.test.cjs scripts/server-service-management.test.cjs",

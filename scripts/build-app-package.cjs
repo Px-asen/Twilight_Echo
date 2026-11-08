@@ -8,6 +8,7 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
+const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -33,7 +34,7 @@ function run(args, environment = process.env) {
   })
 }
 
-function main(args = process.argv.slice(2)) {
+async function main(args = process.argv.slice(2)) {
   const windowsPackage = targetsWindows(args)
   if (windowsPackage && process.platform !== 'win32') {
     throw new Error('Windows packaging with native VST3/SMTC helpers must run on Windows x64.')
@@ -41,6 +42,7 @@ function main(args = process.argv.slice(2)) {
   let smtc = null
   let asio = null
   if (windowsPackage) {
+    await prepareWindowsDesktopCore({ root, args })
     asio = buildAsioHelper({ root, tests: false })
     smtc = prepareSmtcMsvc({ root, stage: false })
     prepareVst3Msvc({ root })
@@ -80,6 +82,10 @@ function main(args = process.argv.slice(2)) {
   }
 }
 
-if (require.main === module) main()
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  })
 
 module.exports = { electronBuilder, main, packageOutputDirectory, run }

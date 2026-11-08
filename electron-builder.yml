@@ -16,6 +16,8 @@ icon: build/icon.png
 afterPack: scripts/after-pack.cjs
 files:
   - out/**
+  # Pure Node cannot read app.asar; its runtime is staged as a separate resource.
+  - '!out/desktop-core/**'
   - package.json
   - THIRD-PARTY-NOTICES.txt
   - '!out/renderer/audio-engine/**'
@@ -26,7 +28,6 @@ files:
   - '!out/renderer/font/Outfit-**'
   - '!out/renderer/font/**/*.{ttf,otf,woff}'
   - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
-  - '!node_modules/**/*.map'
   - '!node_modules/**/*.ts'
   - '!node_modules/**/*.md'
   - '!node_modules/@neteasecloudmusicapienhanced/api/public/**'
@@ -119,6 +120,13 @@ extraResources:
     filter:
       - '**/*'
 win:
+  # Windows packaging stages its pinned Node runtime before electron-builder.
+  # macOS/Linux keep their existing Electron host and do not ship this runtime.
+  extraResources:
+    - from: out/desktop-core
+      to: core-node
+      filter:
+        - '**/*'
   executableName: TwilightEcho
   icon: build/icon.ico
   # Personal-project Windows packages are intentionally unsigned. Release integrity is provided

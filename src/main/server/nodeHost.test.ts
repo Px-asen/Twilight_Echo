@@ -10,6 +10,69 @@ import { serialize } from 'node:v8'
 import { createNodeServiceChannel, NodeSupervisedProcess } from './nodeHost.ts'
 import { SocketMessagePort } from './socketPort.ts'
 
+test(
+  'explicit desktop runtime preserves bootstrap resources and launch flags while Server keeps its default',
+  { timeout: 15000 },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'twilight-desktop-node-host-'))
+    t.after(async () => {
+      assert.equal(resolve(root, '..'), resolve(tmpdir()))
+      await rm(root, { recursive: true, force: true })
+    })
+    const bootstrap = join(root, 'bootstrap.cjs')
+    buildSync({
+      entryPoints: [resolve('src/main/server/bootstrap.ts')],
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      outfile: bootstrap,
+      banner: { js: 'const __entryUrl = require("node:url").pathToFileURL(__filename).href;' },
+      define: { 'import.meta.url': '__entryUrl' }
+    })
+    const entry = join(root, 'entry.cjs')
+    await writeFile(
+      entry,
+      `process.parentPort.on('message', event => process.parentPort.postMessage({ echo: event.data })); process.parentPort.postMessage({ resources: process.resourcesPath, execPath: process.execPath, execArgv: process.execArgv });`
+    )
+    const child = new NodeSupervisedProcess({
+      execPath: process.execPath,
+      execArgv: ['--max-old-space-size=64'],
+      bootstrap,
+      entry,
+      args: [],
+      cwd: root,
+      env: {
+        ...process.env,
+        TWILIGHT_DESKTOP_NODE_HOST: '1',
+        TWILIGHT_DESKTOP_RESOURCES_PATH: root
+      }
+    })
+    const exit = once(child, 'exit')
+    try {
+      const [reply] = await once(child, 'message')
+      assert.equal(reply.resources, root)
+      assert.equal(reply.execPath, process.execPath)
+      assert.deepEqual(reply.execArgv, ['--max-old-space-size=64'])
+      assert.equal(child.pid, child.child.pid)
+      assert.equal(child.stdout, child.child.stdout)
+      assert.equal(child.stderr, child.child.stderr)
+      const message = {
+        bytes: Buffer.from([1, 128, 255]),
+        values: new Float32Array([0.25, -0.5]),
+        big: 123n,
+        omitted: undefined,
+        map: new Map([['one', 1]])
+      }
+      const echoed = once(child, 'message')
+      child.postMessage(message)
+      assert.deepEqual((await echoed)[0].echo, message)
+    } finally {
+      child.kill()
+      await exit
+    }
+  }
+)
+
 const require = createRequire(import.meta.url)
 const { buildSync } = createRequire(require.resolve('vite/package.json'))('esbuild')
 

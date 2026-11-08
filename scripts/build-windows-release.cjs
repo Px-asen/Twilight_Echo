@@ -11,6 +11,7 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
+const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
 const {
   verifyReleaseCapabilityConsistency
 } = require('./verify-release-capability-consistency.cjs')
@@ -40,6 +41,7 @@ async function writeInstallerChecksum(installerPath = expectedInstaller) {
 }
 
 async function main() {
+  await prepareWindowsDesktopCore({ root, args: ['--win'] })
   const releaseEnvironment = {
     ...process.env,
     CSC_IDENTITY_AUTO_DISCOVERY: 'false',
