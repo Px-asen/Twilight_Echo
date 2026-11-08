@@ -126,7 +126,7 @@ test('production shell connects the title button, draft guard and full-window la
 // The workspace is a leave-decision probe; title bar, navigation, guard, runtime
 // host and preview forwarding above are production code, not copied substitutes.
 const runtime = `
-import {createApp,compile,computed,defineComponent,h,nextTick,ref} from 'vue';
+import {createApp,compile,computed,defineComponent,h,nextTick,ref,watch} from 'vue';
 import TitleBar from '__RENDERER__/components/TitleBar.vue';
 import AppearanceLayersHost from '__RENDERER__/components/AppearanceLayersHost.vue';
 import {useAppNavigation} from '__RENDERER__/app/useAppNavigation.ts';
@@ -147,15 +147,19 @@ const settings=ref({...cloneAppearance({}),navigationPages:{order:[],hidden:[]}}
 const navigationPages=ref([]);
 const AppearancePage=defineComponent({props:['active'],setup(_props,{expose,emit}){
  mounts++;const requestLeave=async()=>{leaveRequests++;return leaveAllowed};
- expose({requestLeave,requestClose:async()=>{if(await requestLeave())emit('back')}});
+ expose({ready:async()=>{},requestLeave,requestClose:async()=>{if(await requestLeave())emit('back')}});
+ watch(()=>_props.active,active=>emit('suspendReady',!active),{immediate:true,flush:'sync'});
  return()=>h('section',{id:'workspace'},'Workspace');
 }});
 let workspaceRetained;
 createApp({components:{TitleBar,AppearanceLayersHost,AppearancePage},setup(){
  __SETUP__
+ // The fixture renders the production page fragment without MotionTransition.
+ // Finish its leave gate after Vue has observed the hidden page.
+ watch(navigation.showAppearancePage,visible=>{if(!visible)nextTick(()=>appearanceLeavePending.value=false)});
  const noop=()=>{};
  window.shellNavigation=navigation;workspaceRetained=appearancePageRetained;
- return {...navigation,navigation,appearancePageRef,appearancePageRetained,pageDock,
+ return {...navigation,navigation,appearancePageRef,appearancePageRetained,pageDock,appearanceSuspendReady,
  appearanceFullWindowPreview,appearanceEditorOpen,appearanceChromePreview,settings,effectiveThemeLayers,
  showOnboarding:false,liquidGlassChromeActive:false,showPlayingPage:navigation.showPlayingPage,
  titleSurface:'default',titleMenuOpen:false,toggleMenu:navigation.createToggleMenuHandler(),
@@ -194,9 +198,9 @@ window.runShellTests=async()=>{
  appearanceFullWindowPreview.value=false;await previewAppearance(null);await settle();
  expect(!document.querySelector('style[data-appearance-layers]'),'return from preview left runtime mounted');
  nav.openEqualizerPage();await settle();
- expect(workspaceRetained.value&&document.querySelector('#workspace').style.display==='none'&&mounts===1,'tool switch destroyed workspace');
+ expect(!workspaceRetained.value&&!document.querySelector('#workspace')&&mounts===1,'hidden tool did not release workspace');
  nav.closeEqualizerPage();await settle();
- expect(nav.showAppearancePage.value&&mounts===1,'tool return remounted workspace');
+ expect(nav.showAppearancePage.value&&mounts===2,'tool return did not rehydrate workspace');
  leaveAllowed=true;document.querySelector('.appearance-btn').click();await settle();
  expect(!nav.showAppearancePage.value&&!document.querySelector('#workspace'),'confirmed close did not release workspace');
  expect(!appearanceChromePreview.value&&modes.at(-1)==='apply','discard did not restore confirmed runtime');

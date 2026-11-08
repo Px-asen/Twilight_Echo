@@ -1035,6 +1035,20 @@ TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double star
   return TAE_RESULT_OK;
 }
 
+TAE_Result TwilightAudioEngine::setPauseAtTrackEnd(bool enabled) {
+  std::lock_guard transportLock(transportMutex_);
+  const ClockWake wake(*this);
+  pauseAtTrackEnd_ = enabled;
+  if (pipeline_) {
+    pipeline_->setPauseAtTrackEnd(enabled);
+    if (enabled) {
+      pipeline_->cancelAutoMix("sleep_timer");
+      pipeline_->resetPreloadOverlap();
+    }
+  }
+  return TAE_RESULT_OK;
+}
+
 TAE_Result TwilightAudioEngine::setPaused(bool paused) {
   std::lock_guard transportLock(transportMutex_);
   {
@@ -2682,7 +2696,7 @@ void TwilightAudioEngine::clockLoop() {
       pipeline_->pollAutoMix();
       // A-B loop enforcement (seek is not RT-safe — runs on clock thread).
       std::string loopError;
-      if (pipeline_->enforceLoopRange(&loopError)) {
+      if (!pauseAtTrackEnd_ && pipeline_->enforceLoopRange(&loopError)) {
         // Refresh status after an in-loop seek so UI sees the jump promptly.
         pipelineStatus = pipeline_->status();
       } else {
@@ -2841,7 +2855,7 @@ void TwilightAudioEngine::clockLoop() {
         recordNaturalBoundaryLocked();
         // A coordinated member cannot choose the EOF/reopen fallback. Only the
         // group's owner may re-arm it after every DAC presents the common tail.
-        if (!pipeline_ || !pipeline_->bridgeGroupOwned()) autoNextItem = queue_.advanceAfterEnd();
+        if (!pauseAtTrackEnd_ && (!pipeline_ || !pipeline_->bridgeGroupOwned())) autoNextItem = queue_.advanceAfterEnd();
         if (autoNextItem && !autoNextItem->source.empty()) {
           info_.queueIndex = queue_.currentIndex();
           info_.playMode = queue_.playModeId();
@@ -2853,7 +2867,7 @@ void TwilightAudioEngine::clockLoop() {
           info_.upcomingTrack = queue_.upcoming().value_or(QueueItem{});
         } else {
           releaseAtEnd = shouldReleaseOutputLocked();
-          info_.state = PlaybackState::Stopped;
+          info_.state = pauseAtTrackEnd_ ? PlaybackState::Paused : PlaybackState::Stopped;
           if (info_.durationSeconds > 0.0) info_.positionSeconds = info_.durationSeconds;
         }
       }
@@ -2894,7 +2908,8 @@ void TwilightAudioEngine::clockLoop() {
       continue;
     }
     if (releaseAtEnd) {
-      if (pipeline_) pipeline_->stop();
+      if (pauseAtTrackEnd_) releasePausedOutput();
+      else if (pipeline_) pipeline_->stop();
       std::lock_guard lock(mutex_);
       markOutputReleasedLocked();
       if (stateEvents) payload = playbackInfoToJson(info_);
@@ -3490,6 +3505,11 @@ TAE_Result TAE_Pause(TAE_EngineHandle engine) {
   return fromHandle(engine)->pause();
 }
 
+TAE_Result TAE_SetPauseAtTrackEnd(TAE_EngineHandle engine, int enabled) {
+  if (engine == nullptr) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->setPauseAtTrackEnd(enabled != 0);
+}
+
 TAE_Result TAE_SetPaused(TAE_EngineHandle engine, int paused) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setPaused(paused != 0);
@@ -3926,6 +3946,9 @@ const char* TAE_GetVersion(void) {
 
 void TAE_SetDiagnosticContext(const char* context_json) {
   twilight::audio::DiagnosticLog::setContext(context_json ? context_json : "{}");
+}
+void TAE_SetDebugCapture(const char* session_id, const char* directory) {
+  twilight::audio::DiagnosticLog::setDebugCapture(session_id ? session_id : "", directory ? directory : "");
 }
 
 }  // extern "C"

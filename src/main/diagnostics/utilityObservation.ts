@@ -3,6 +3,8 @@ import { StringDecoder } from 'node:string_decoder'
 import { diagnosticContext, forwardDiagnosticEvent, writeDiagnostic } from './logger.ts'
 import { sanitizeDiagnosticText, summarizeDiagnosticArguments } from './sanitize.ts'
 import type { DiagnosticEvent } from '../../shared/diagnostics.ts'
+import { registerDiagnosticProcess } from './processEvidence.ts'
+const observed = new WeakSet<object>()
 const states = new Map<
   string,
   {
@@ -21,6 +23,9 @@ export function utilityDiagnosticStatuses() {
 }
 
 export function observeUtilityProcess(child: any, role: string): void {
+  if (observed.has(child)) return
+  observed.add(child)
+  const evidence = registerDiagnosticProcess(child, role)
   const state = {
     role,
     processId: child.pid ?? null,
@@ -28,16 +33,17 @@ export function observeUtilityProcess(child: any, role: string): void {
     journalUnavailable: false,
     updatedAt: new Date().toISOString()
   }
-  states.set(role, state)
+  states.set(evidence.instanceId, state)
   if (states.size > 64) states.delete(states.keys().next().value!)
   const pending = new Map<
     string,
     { started: number; method: string; context: ReturnType<typeof diagnosticContext> }
   >()
   writeDiagnostic('process', 'utility.spawn', { role })
-  child.once('spawn', () =>
+  child.once('spawn', () => {
+    state.processId = child.pid ?? state.processId
     writeDiagnostic('process', 'utility.ready', { role, processId: child.pid })
-  )
+  })
   child.once('exit', (code: number | null, signal?: string) => {
     state.alive = false
     state.updatedAt = new Date().toISOString()
@@ -46,7 +52,8 @@ export function observeUtilityProcess(child: any, role: string): void {
       'utility.exit',
       {
         role,
-        processId: child.pid,
+        processId: state.processId,
+        instanceId: evidence.instanceId,
         code,
         signal,
         unfinished: [...pending.entries()].slice(0, 64).map(([requestId, item]) => ({
@@ -71,7 +78,7 @@ export function observeUtilityProcess(child: any, role: string): void {
           writeDiagnostic(
             `rpc.${role}`,
             'dispatch',
-            { method, arguments: summarizeDiagnosticArguments(message.args ?? []) },
+            { method, arguments: summarizeDiagnosticArguments(message.args ?? [], method) },
             'debug',
             context
           )

@@ -5,6 +5,8 @@ export interface PartGroup {
   id: string
   title: string
   count: number
+  total?: number
+  playing?: boolean
   tracks: Array<{ track: Track; index: number }>
 }
 export interface PartGroupState {

@@ -56,6 +56,7 @@ import type { WorkshopDiagnostic } from '../../../../shared/themeWorkshopDiagnos
 import { useThemeStore } from '@renderer/stores/useThemeStore'
 import { useExtensionRegistry } from '@renderer/extensions/registry'
 import { useEscapeToClose } from '../../app/useDismissLayer'
+import { useWorkspaceState } from '../../composables/workspaceSession'
 
 const api = window.api.themeWorkshop
 const props = withDefaults(
@@ -349,6 +350,28 @@ const sourceDetails = ref<HTMLDetailsElement>()
 const metadataProblems = ref<WorkshopDiagnostic[]>([])
 const designerProblem = ref('')
 const sharedPreviewWarning = ref('')
+const workspaceState = useWorkspaceState('theme-workshop-controls', () => ({
+  metadataBuffer: metadataBuffer.value,
+  metadataProblems: metadataProblems.value,
+  designerProblem: designerProblem.value,
+  mode: mode.value,
+  tone: tone.value,
+  group: group.value,
+  search: search.value,
+  projectSearch: projectSearch.value,
+  modifiedOnly: modifiedOnly.value,
+  surface: surface.value,
+  previewState: previewState.value,
+  editTarget: editTarget.value,
+  width: width.value,
+  zoom: zoom.value,
+  appliedProjectSignature: appliedProjectSignature.value,
+  canvasEditing: canvasEditing.value,
+  selectedLayer: selectedLayer.value,
+  layerSurface: layerSurface.value,
+  creating: creating.value,
+  guideStep: guideStep.value
+}))
 async function inspectPreview(): Promise<WorkshopDiagnostic[]> {
   if (!props.controlsOnly) return preview.value?.inspect() ?? []
   const unavailable = (): WorkshopDiagnostic[] => {
@@ -942,9 +965,32 @@ onMounted(() => {
   editor.bindLifecycle(trialRuntime.stop, () => !bufferProblems.value.length)
   window.addEventListener('keydown', keydown, true)
   void run(async () => {
-    await editor.initialize()
+    const resumed = await editor.initialize()
     if (disposed) return
-    if (props.initialSourceKey) {
+    if (resumed) {
+      workspaceState.restore((saved) => {
+        metadataBuffer.value = saved.metadataBuffer
+        metadataProblems.value = saved.metadataProblems
+        designerProblem.value = saved.designerProblem
+        mode.value = saved.mode
+        tone.value = saved.tone
+        group.value = saved.group
+        search.value = saved.search
+        projectSearch.value = saved.projectSearch
+        modifiedOnly.value = saved.modifiedOnly
+        surface.value = saved.surface
+        previewState.value = saved.previewState
+        editTarget.value = saved.editTarget
+        width.value = saved.width
+        zoom.value = saved.zoom
+        appliedProjectSignature.value = saved.appliedProjectSignature
+        canvasEditing.value = saved.canvasEditing
+        selectedLayer.value = saved.selectedLayer
+        layerSurface.value = saved.layerSurface
+        creating.value = saved.creating
+        guideStep.value = saved.guideStep
+      })
+    } else if (props.initialSourceKey) {
       const source = sources.value.find(
         (entry) => `${entry.pluginId}:${entry.themeId}` === props.initialSourceKey
       )
@@ -953,7 +999,7 @@ onMounted(() => {
     } else if (props.initialProjectId) {
       await selectKey(props.initialProjectId)
     }
-    if (!disposed && props.startCreating) startProjectGuide()
+    if (!disposed && !resumed && props.startCreating) startProjectGuide()
   }).then(async () => {
     initializing.value = false
     if (disposed || error.value) {
@@ -1098,6 +1144,7 @@ const customGroups = computed(() =>
   )
 )
 defineExpose({
+  suspend: editor.suspend,
   prepareLeave,
   state,
   projects,

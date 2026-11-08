@@ -2,6 +2,16 @@ import { computed, readonly, ref, shallowRef } from 'vue'
 import type { Track } from '../../types/music.ts'
 
 type PlaylistId = string | number
+export interface NcmPlaylistDraft {
+  name: string
+  showCreate: boolean
+  showAdd: boolean
+  createdId: PlaylistId | null
+  seedIds: number[]
+  addIds: number[]
+  createError: string
+  addError: string
+}
 interface PlaylistEditorPorts {
   canManage(): boolean
   captureContext(): () => boolean
@@ -43,6 +53,8 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
   const addBusy = ref(false)
   const addError = ref('')
   const addTracks = shallowRef<Track[]>([])
+  const addIds = shallowRef<number[]>([])
+  const pending = new Set<Promise<unknown>>()
   let seedIds: number[] = []
   let createdId: PlaylistId | null = null
   let createdContext: (() => boolean) | null = null
@@ -54,6 +66,7 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
     showCreate.value = showAdd.value = createBusy.value = addBusy.value = created.value = false
     name.value = createError.value = addError.value = ''
     addTracks.value = []
+    addIds.value = []
     seedIds = []
     createdId = null
     createdContext = null
@@ -77,6 +90,7 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
     if (selected.length === 0) return false
     reset()
     addTracks.value = selected
+    addIds.value = selected.map(track => track.ncmSongId!)
     showAdd.value = showDialog
     return true
   }
@@ -110,7 +124,10 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
         name.value = requestedName
       }
       // Retry adds to the acknowledged playlist; it never creates it again.
-      if (ids.length) await ports.add(createdId, ids)
+      for (let start = 0; start < ids.length; start += 200) {
+        if (!isCurrent()) return false
+        await ports.add(createdId, ids.slice(start, start + 200))
+      }
       if (!isCurrent()) return false
       reset()
       return true
@@ -126,14 +143,17 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
   }
 
   async function confirmAdd(id: PlaylistId): Promise<boolean> {
-    if (!canOpen() || addTracks.value.length === 0) return false
+    if (!canOpen() || addIds.value.length === 0) return false
     const isCurrent = capture()
     const token = revision
-    const ids = addTracks.value.map((track) => track.ncmSongId!)
+    const ids = [...addIds.value]
     addBusy.value = true
     addError.value = ''
     try {
-      await ports.add(id, ids)
+      for (let start = 0; start < ids.length; start += 200) {
+        if (!isCurrent()) return false
+        await ports.add(id, ids.slice(start, start + 200))
+      }
       if (!isCurrent()) return false
       reset()
       return true
@@ -143,6 +163,11 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
     } finally {
       if (!disposed && revision === token) addBusy.value = false
     }
+  }
+  function trackPending<T>(operation: Promise<T>): Promise<T> {
+    pending.add(operation)
+    void operation.finally(() => pending.delete(operation)).catch(() => {})
+    return operation
   }
 
   return {
@@ -155,10 +180,41 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
     addBusy: readonly(addBusy),
     addError: readonly(addError),
     addTracks: computed<readonly Track[]>(() => addTracks.value),
+    addCount: computed(() => addIds.value.length),
     openCreate,
     openAdd,
-    confirmCreate,
-    confirmAdd,
+    openCreateIds(ids: number[]): boolean {
+      if (!openCreate()) return false
+      seedIds = [...new Set(ids)]
+      return true
+    },
+    openAddIds(ids: number[], showDialog = true): boolean {
+      if (!canOpen() || !ids.length) return false
+      reset()
+      addIds.value = [...new Set(ids)]
+      showAdd.value = showDialog
+      return true
+    },
+    confirmCreate: () => trackPending(confirmCreate()),
+    confirmAdd: (id: PlaylistId) => trackPending(confirmAdd(id)),
+    whenIdle: () => Promise.allSettled([...pending]),
+    captureDraft(): NcmPlaylistDraft {
+      return { name: name.value, showCreate: showCreate.value, showAdd: showAdd.value,
+        createdId, seedIds: [...seedIds], addIds: [...addIds.value], createError: createError.value, addError: addError.value }
+    },
+    restoreDraft(draft: NcmPlaylistDraft): void {
+      reset()
+      name.value = draft.name
+      showCreate.value = draft.showCreate
+      showAdd.value = draft.showAdd
+      createdId = draft.createdId
+      created.value = createdId !== null
+      createdContext = createdId !== null ? ports.captureContext() : null
+      seedIds = [...draft.seedIds]
+      addIds.value = [...draft.addIds]
+      createError.value = draft.createError
+      addError.value = draft.addError
+    },
     reset,
     closeCreate(): void {
       if (!createBusy.value && showCreate.value) reset()
@@ -167,7 +223,10 @@ export function createNcmPlaylistEditor(ports: PlaylistEditorPorts) {
       if (!addBusy.value && showAdd.value) reset()
     },
     convertAddToCreate(): void {
-      if (showAdd.value) openCreate(addTracks.value)
+      if (showAdd.value) {
+        const ids = [...addIds.value]
+        if (openCreate()) seedIds = ids
+      }
     },
     dispose(): void {
       if (!disposed) {

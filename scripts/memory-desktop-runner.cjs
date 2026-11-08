@@ -19,7 +19,7 @@ const profile = join(config.directory, 'profile'),
 mkdirSync(profile, { recursive: true })
 mkdirSync(sampleDir, { recursive: true })
 app.setPath('userData', profile)
-app.getAppPath = () => config.root
+app.getAppPath = () => config.buildRoot
 const report = {
   status: 'running',
   startedAt: Date.now(),
@@ -33,8 +33,10 @@ const report = {
     theme: 'pureWhite',
     gpuEnabled: true,
     forcedGc: false,
+    scenario: config.scenario ?? 'full',
+    coreHost: config.coreHost ?? 'electron',
     sandbox: !config.diagnosticNoSandbox,
-    acceptanceEligible: !config.diagnosticNoSandbox,
+    acceptanceEligible: !config.diagnosticNoSandbox && config.scenario !== 'steady',
     provider: 'deterministic fixture through real plugin host',
     library: 'synthetic metadata; one real silent WAV'
   }
@@ -194,22 +196,38 @@ utilityProcess.fork = (entry, args, options = {}) => {
       TWILIGHT_MEMORY_SAMPLE_DIR: sampleDir
     }
   })
+  const send = child.postMessage.bind(child)
+  observeChild(child, options.serviceName ?? basename(entry), child, (transform) => {
+    child.postMessage = (message, ports) => {
+      transform(message)
+      return send(message, ports)
+    }
+  })
+  return child
+}
+require('./memory-node-observer.cjs').observeNodeSpawns({
+  childProcess: require('node:child_process'),
+  scriptsRoot: join(config.root, 'scripts'),
+  sampleDir,
+  observe: observeChild,
+  codec: config.coreHost === 'node' ? require(config.supervisionCodecPath) : undefined
+})
+function observeChild(child, role, peer, intercept, decode = (value) => value) {
   children.add(child)
   child.once('spawn', () => {
-    report.roles[child.pid] = options.serviceName ?? basename(entry)
+    report.roles[child.pid] = role
   })
   child.once('exit', (code) => {
     children.delete(child)
     report.events.push({
       timestamp: Date.now(),
       event: 'utility-exit',
-      role: options.serviceName,
+      role,
       code
     })
   })
-  const send = child.postMessage.bind(child)
-  child.postMessage = (message, ports) => {
-    if (options.serviceName === 'twilight-core' && message.kind === 'core:initialize') {
+  intercept((message) => {
+    if (role === 'twilight-core' && message.kind === 'core:initialize') {
       epoch = message.configuration.epoch
       message.configuration.plugins.bundledPlugins = [
         {
@@ -219,12 +237,12 @@ utilityProcess.fork = (entry, args, options = {}) => {
         }
       ]
     }
-    return send(message, ports)
-  }
-  if (options.serviceName === 'twilight-core') {
-    core = child
-    child.on('message', (message) => {
-      if (message.kind === 'core:initialized') child.postMessage({ kind: 'core:connect', identity })
+  })
+  if (role === 'twilight-core') {
+    core = peer
+    child.on('message', (wire) => {
+      const message = decode(wire)
+      if (message.kind === 'core:initialized') peer.postMessage({ kind: 'core:connect', identity })
       if (message.kind === 'core:fatal') void finish(Error(message.error))
       if (message.kind !== 'core:client-message' || message.clientId !== identity.id) return
       const item = message.message
@@ -241,7 +259,6 @@ utilityProcess.fork = (entry, args, options = {}) => {
       }
     })
   }
-  return child
 }
 function request(kind, name, payload = {}) {
   return new Promise((resolve, reject) => {
@@ -496,26 +513,43 @@ async function main() {
   save()
   await phase('idle', async () => {
     await navigate('allSongs')
-    await screenshot('library')
+    if (config.scenario !== 'steady') await screenshot('library')
   })
-  await phase('playing', async () => {
-    const staged = await request('command', 'queue.submit', {
-      kind: 'begin',
-      selectedIndex: 0,
-      play: true
-    })
-    await request('command', 'queue.submit', {
-      kind: 'append',
-      id: staged.id,
-      sequence: 1,
-      items: [{ kind: 'local', id: 'memory-local-0' }]
-    })
-    await request('command', 'queue.submit', { kind: 'commit', id: staged.id, sequence: 2 })
-    await until(
-      () => snapshot?.playback?.state === 'playing' && snapshot.playback.position > 0.2,
-      'native playback'
+  await phase(
+    'playing',
+    async () => {
+      const staged = await request('command', 'queue.submit', {
+        kind: 'begin',
+        selectedIndex: 0,
+        play: true
+      })
+      await request('command', 'queue.submit', {
+        kind: 'append',
+        id: staged.id,
+        sequence: 1,
+        items: [{ kind: 'local', id: 'memory-local-0' }]
+      })
+      await request('command', 'queue.submit', { kind: 'commit', id: staged.id, sequence: 2 })
+      await until(
+        () => snapshot?.playback?.state === 'playing' && snapshot.playback.position > 0.2,
+        'native playback'
+      )
+      if (config.scenario === 'steady') report.steadyPlaybackStart = snapshot.playback
+    },
+    config.scenario === 'steady' ? config.soakSeconds * 1000 : undefined
+  )
+  if (config.scenario === 'steady') {
+    report.steadyPlaybackEnd = snapshot.playback
+    assert.equal(snapshot.playback.state, 'playing')
+    assert.ok(
+      snapshot.playback.position - report.steadyPlaybackStart.position >= config.soakSeconds * 0.9,
+      'native playback must advance throughout the steady phase'
     )
-  })
+    await phase('paused', () => request('command', 'playback.pause'))
+    assert.equal(snapshot.playback.state, 'paused')
+    await finish()
+    return
+  }
   await phase('bulk-favorites', async () => {
     const assets = join(config.buildRoot, 'out/renderer/assets')
     const file = readdirSync(assets).find(
@@ -642,7 +676,8 @@ async function main() {
     await rendered('.song-list')
     await screenshot('restored')
   })
-  await request('command', 'playback.pause')
+  await phase('paused', () => request('command', 'playback.pause'))
+  assert.equal(snapshot.playback.state, 'paused')
   await finish()
 }
 main().catch(finish)

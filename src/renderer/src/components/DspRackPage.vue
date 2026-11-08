@@ -3,6 +3,7 @@ import { createCoreAudioUi } from '@renderer/stores/player/coreAudioUi.ts'
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useWorkspaceState } from '../composables/workspaceSession'
 import {
   createDspFactoryScene,
   graphHasEnabledProcessing,
@@ -109,6 +110,17 @@ const savedKey = computed(() =>
 )
 const dirty = computed(() => !!state.value && serialize() !== savedKey.value)
 const history = createDspDraftHistory(serialize())
+const workspaceState = useWorkspaceState('dsp-rack', () => ({
+  selectedSceneId: selectedSceneId.value,
+  selectedNodeId: selectedNodeId.value,
+  editor: editor.value,
+  narrowView: narrowView.value,
+  factoryTemplate: factoryTemplate.value,
+  snapshotA: snapshotA.value,
+  savedKey: savedKey.value,
+  history: history.snapshot(),
+  auditionOpen: auditionOpen.value
+}))
 const historyRevision = ref(0)
 const canUndo = computed(() => {
   void historyRevision.value
@@ -389,54 +401,47 @@ async function ensureOutputSampleRateSynced(): Promise<void> {
   const unwrap = <T,>(val: T | { value: T } | undefined): T | undefined =>
     val && typeof val === 'object' && 'value' in val ? (val as { value: T }).value : val
   const storeRef = outputStore as unknown as Record<string, unknown>
-  const playback = unwrap(storeRef.playbackInfo as {
-    state?: string
-    isDsd?: boolean
-    sourceSampleRate?: number
-    decodedSampleRate?: number
-    actualSampleRate?: number
-    outputSampleRate?: number
-  })
+  const playback = unwrap(
+    storeRef.playbackInfo as {
+      state?: string
+      isDsd?: boolean
+      sourceSampleRate?: number
+      decodedSampleRate?: number
+      actualSampleRate?: number
+      outputSampleRate?: number
+    }
+  )
   const outInfo = outputInfo.value
   const playbackActive =
     playback?.state === 'playing' || playback?.state === 'paused' || isPlaying.value
   if (!playbackActive || outInfo?.isDsd || playback?.isDsd) return
-  const outConfig = unwrap(storeRef.audioOutputConfig as {
-    playbackPolicy?: string
-    dsdMuteTimeoutFrames?: number
-  })
+  const outConfig = unwrap(
+    storeRef.audioOutputConfig as {
+      playbackPolicy?: string
+      dsdMuteTimeoutFrames?: number
+    }
+  )
   if (outConfig?.playbackPolicy === 'continuity-first') return
 
   const activeScene =
-    savedScenes.value.find((scene) => scene.id === activeSceneId.value) ??
-    selectedScene.value
-  const outStage =
-    activeScene?.graph.outputStage ??
-    state.value?.effectiveGraph?.outputStage
+    savedScenes.value.find((scene) => scene.id === activeSceneId.value) ?? selectedScene.value
+  const outStage = activeScene?.graph.outputStage ?? state.value?.effectiveGraph?.outputStage
   if (!outStage) return
 
-  const sourceRate =
-    playback?.sourceSampleRate ||
-    playback?.decodedSampleRate ||
-    0
+  const sourceRate = playback?.sourceSampleRate || playback?.decodedSampleRate || 0
   if (sourceRate <= 0) return
 
   const currentDevice = unwrap(storeRef.audioDevice as string) ?? 'auto'
   const deviceOptions =
     unwrap(storeRef.audioDeviceOptions as Array<{ id: string; sampleRates?: number[] }>) ?? []
-  const currentDeviceOption =
-    deviceOptions.find((d) => d.id === currentDevice) ?? deviceOptions[0]
+  const currentDeviceOption = deviceOptions.find((d) => d.id === currentDevice) ?? deviceOptions[0]
   const bypassed =
     !audioProcessing.value.dspEnabled ||
     audioProcessing.value.directMode ||
     !!state.value?.effectiveBypassReason
   const resolvedTarget = bypassed
     ? 'device'
-    : resolveEffectiveTargetSampleRate(
-        outStage,
-        sourceRate,
-        currentDeviceOption?.sampleRates
-      )
+    : resolveEffectiveTargetSampleRate(outStage, sourceRate, currentDeviceOption?.sampleRates)
   const desiredRate =
     typeof resolvedTarget === 'number' && resolvedTarget > 0 ? resolvedTarget : sourceRate
   const actualRate =
@@ -446,10 +451,7 @@ async function ensureOutputSampleRateSynced(): Promise<void> {
     playback?.outputSampleRate ||
     0
   const backend =
-    unwrap(storeRef.audioOutput as string) ??
-    outInfo?.actualBackend ??
-    outInfo?.backend ??
-    ''
+    unwrap(storeRef.audioOutput as string) ?? outInfo?.actualBackend ?? outInfo?.backend ?? ''
   const isExclusiveOrAsio =
     backend === 'asio' ||
     Boolean(unwrap(storeRef.exclusiveMode as boolean)) ||
@@ -462,10 +464,12 @@ async function ensureOutputSampleRateSynced(): Promise<void> {
   try {
     await outputStore.setOutputStage?.(outStage)
     await outputStore.refreshAudioOutputState?.().catch(() => undefined)
-    const refreshedPlayback = unwrap(storeRef.playbackInfo as {
-      actualSampleRate?: number
-      outputSampleRate?: number
-    })
+    const refreshedPlayback = unwrap(
+      storeRef.playbackInfo as {
+        actualSampleRate?: number
+        outputSampleRate?: number
+      }
+    )
     const refreshedRate =
       outputInfo.value?.actualSampleRate ||
       outputInfo.value?.outputSampleRate ||
@@ -674,9 +678,7 @@ async function selectCorrectionAsset(assetId: string): Promise<void> {
     checkpoint()
     return
   }
-  await run(async () =>
-    applyCorrection(assetId, await coreAudio.getDspCorrectionProfile(assetId))
-  )
+  await run(async () => applyCorrection(assetId, await coreAudio.getDspCorrectionProfile(assetId)))
 }
 async function removeAsset(id: string): Promise<void> {
   if (
@@ -756,6 +758,19 @@ function keydown(event: KeyboardEvent): void {
 onMounted(async () => {
   try {
     adopt(await coreAudio.getDspSceneState())
+    workspaceState.restore((saved) => {
+      selectedSceneId.value = saved.selectedSceneId
+      selectedNodeId.value = saved.selectedNodeId
+      editor.value = saved.editor
+      narrowView.value = saved.narrowView
+      factoryTemplate.value = saved.factoryTemplate
+      snapshotA.value = saved.snapshotA
+      if (saved.savedKey === savedKey.value) history.restore(saved.history)
+      repairSelection()
+      auditionOpen.value = saved.auditionOpen
+      auditionMounted.value = saved.auditionOpen
+      historyRevision.value++
+    })
     await refreshLibrary()
     await ensureOutputSampleRateSynced().catch(() => undefined)
   } catch (cause) {

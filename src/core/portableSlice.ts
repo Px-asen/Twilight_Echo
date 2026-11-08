@@ -1,3 +1,5 @@
+import { CoreSleepTimer } from './playback/sleepService.ts'
+import { isSleepTimerState, type SleepTimerState } from '../shared/sleepTimer.ts'
 import { CoreApplication } from './application.ts'
 import { defaultPortableDspSettings, normalizePortableDspSettings, type PortableDspSettings, type PortableDspScene } from '../shared/portableAudio.ts'
 import { CoreBookmarksService } from './bookmarks/service.ts'
@@ -382,6 +384,7 @@ export interface PortableCancelHandle {
 export interface PortableClockPort {
   nowUnixMs(): number
   nowMonotonicMs(): number
+  bootId?(): string
 }
 
 export interface PortableSchedulerPort {
@@ -419,6 +422,7 @@ export interface PortableAudioEnginePort {
     positionSeconds?: number
   ): Promise<AudioEnginePlayResult>
   pause(): Promise<void>
+  setPauseAtTrackEnd?(enabled: boolean): Promise<boolean>
   stop(): Promise<void>
   seek(positionSeconds: number): Promise<void>
   setVolume(volume: number): Promise<void>
@@ -703,6 +707,8 @@ const PORTABLE_ENVELOPE_SCHEMA = 'portable-core/1'
 interface PersistedEnvelope {
   schema?: typeof PORTABLE_ENVELOPE_SCHEMA
   session: PlaybackSessionData<TrackData> | null
+  /** A timer can be armed before any song is selected. Session-backed timers stay in the session. */
+  sleepTimer?: SleepTimerState
   queues: Array<{
     id: string
     revision: number
@@ -2046,6 +2052,7 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
       const parsed = JSON.parse(stored.payloadJson) as PersistedEnvelope
       queueStore.importState(parsed)
       currentSessionData = parsed.session ?? null
+      if (!currentSessionData && isSleepTimerState(parsed.sleepTimer)) sleepTimer.restore(parsed.sleepTimer)
       sessionDataRevision = currentSessionData ? initialRev : 0
       if (parsed.settings) {
         currentSettings = normalizeAppSettings(
@@ -2110,6 +2117,7 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
         const envelope: PersistedEnvelope = {
           schema: PORTABLE_ENVELOPE_SCHEMA,
           session: currentSessionData,
+          ...(!currentSessionData && sleepTimer.persisted() ? { sleepTimer: sleepTimer.persisted() } : {}),
           queues: exported.queues,
           tracks: exported.tracks,
           settings: currentSettings,
@@ -2510,7 +2518,37 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
     }
   })
 
+  const sleepTimer = new CoreSleepTimer({
+    scheduledPauseOnly: true,
+    settings: () => currentSettings.sleepTimer,
+    now: () => clock.nowUnixMs(), monotonic: () => clock.nowMonotonicMs(), bootId: () => clock.bootId?.() ?? '',
+    timers: {
+      setTimeout: (callback, ms) => scheduler.schedule(ms, callback) as unknown as ReturnType<typeof setTimeout>,
+      clearTimeout: (handle) => (handle as unknown as PortableCancelHandle).cancel(),
+      setInterval: (callback, ms) => {
+        let cancelled = false
+        let scheduled: PortableCancelHandle
+        const tick = () => { if (!cancelled) { callback(); if (!cancelled) scheduled = scheduler.schedule(ms, tick) } }
+        scheduled = scheduler.schedule(ms, tick)
+        return { cancel: () => { cancelled = true; scheduled.cancel() } } as unknown as ReturnType<typeof setInterval>
+      },
+      clearInterval: (handle) => (handle as unknown as PortableCancelHandle).cancel()
+    },
+    playback: {
+      read: () => playbackSession.snapshot().playback ?? { state: 'stopped', volume: 0 },
+      quiesce: () => playbackSession.quiesceForSleep(),
+      setGain: async () => { throw new Error('Portable sleep fade is unavailable') },
+      stop: (current) => playbackSession.stopForSleep(current),
+      pause: (current) => playbackSession.pauseForSleep(current),
+      armTrackEnd: (enabled) => options.audioEngine.setPauseAtTrackEnd?.(enabled) ?? Promise.resolve(false),
+      resumeMaintenance: () => playbackSession.resumeAfterSleep(),
+      persist: async () => { await playbackSession.flush(); if (!currentSessionData) await persistEnvelope() }
+    },
+    changed: () => appInstance?.changed(),
+    failed: (error) => options.onFatalError?.(error instanceof Error ? error : new Error(String(error)))
+  })
   const playbackSession = new CorePlaybackSession({
+    sleepTimer,
     engine: engineAdapter,
     queues: {
       buildQueue: (cmd) => queueStore.buildQueue(cmd),
@@ -2585,6 +2623,7 @@ export function createPortableMusicCoreHost(options: PortableHostOptions): Porta
   const application = new CoreApplication({
     epoch,
     playback: playbackSession,
+    sleepTimer,
     queueSubmission,
     playlistSubmission,
     resolvePlaylistInputs,

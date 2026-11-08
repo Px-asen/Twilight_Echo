@@ -23,6 +23,7 @@ export function createNodeCoreSupervisor(options: {
       database: entry('libraryDatabaseService'),
       scan: entry('libraryScanService'),
       analysis: entry('audioAnalysisService'),
+      'model-install': entry('modelPackWorker'),
       plugin: entry('pluginHost')
     },
     channel: createNodeServiceChannel,

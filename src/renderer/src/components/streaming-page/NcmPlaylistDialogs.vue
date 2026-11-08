@@ -15,6 +15,7 @@ const props = defineProps<{
   addBusy: boolean
   addError: string
   addTracks: readonly Track[]
+  addCount?: number
   ownedUserPlaylists: MediaProviderPlaylistSummary[]
 }>()
 
@@ -110,7 +111,7 @@ useFocusTrap(addDialogRef, () => props.showAdd)
           aria-label="添加到歌单"
         >
           <h3>添加到网易云歌单</h3>
-          <p class="ncm-playlist-dialog-hint">已选 {{ addTracks.length }} 首，选择目标歌单</p>
+          <p class="ncm-playlist-dialog-hint">已选 {{ addCount ?? addTracks.length }} 首，选择目标歌单</p>
           <div class="ncm-playlist-picker">
             <button
               type="button"

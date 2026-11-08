@@ -245,8 +245,15 @@ export function createEditorViewport(options: {
       goal: { ...goal },
       selected,
       zoom,
+      offset: { ...offset },
       pending: !!frame
     }),
+    restore(value: { selected?: string; zoom: number; offset: EditorPoint }): void {
+      selected = value.selected
+      zoom = value.zoom
+      offset = { ...value.offset }
+      move(desired(), false)
+    },
     dispose(): void {
       disposed = true
       stop()

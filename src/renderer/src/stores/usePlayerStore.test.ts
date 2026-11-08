@@ -255,7 +255,10 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
     'utf8'
   )
 
-  assert.match(playerBarSource, /import HiFiSidebar from '\.\/player-bar\/HiFiSidebar\.vue'/)
+  assert.match(
+    playerBarSource,
+    /const HiFiSidebar = defineAsyncComponent\(\(\) => import\('\.\/player-bar\/HiFiSidebar\.vue'\)\)/
+  )
   assert.match(playerBarSource, /<HiFiSidebar/)
   assert.match(playerBarSource, /class="hifi-overlay"/)
   assert.match(playerBarSource, /title="HiFi 控制台"/)

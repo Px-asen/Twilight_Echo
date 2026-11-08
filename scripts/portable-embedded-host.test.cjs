@@ -502,6 +502,8 @@ test('CUE wire import accepts saved fragments and rejects malformed ranges befor
 })
 
 function assertNoNulls(value, at = 'snapshot') {
+  // CoreSleepTimerState.timer is explicitly nullable in Kotlin; null means no active timer.
+  if (at === 'snapshot.sleepTimer.timer' && value === null) return
   if (value === null) assert.fail(`${at} is null; the Kotlin decoder rejects nulls for required fields`)
   if (Array.isArray(value)) value.forEach((item, index) => assertNoNulls(item, `${at}[${index}]`))
   else if (typeof value === 'object') for (const [key, item] of Object.entries(value)) assertNoNulls(item, `${at}.${key}`)

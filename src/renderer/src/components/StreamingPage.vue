@@ -7,6 +7,7 @@ import {
   markRaw,
   nextTick,
   onMounted,
+  onBeforeUnmount,
   onUnmounted,
   reactive,
   ref,
@@ -16,7 +17,7 @@ import {
 import type { ProviderHomeSectionPresentation } from '../../../shared/providerHome'
 import { useBackHandler } from '../app/useBackStack'
 import type { Track, TrackArtistRef } from '../types/music'
-import { copyTrackNames } from '../composables/copyTrackNames'
+import { copyTrackNamePages } from '../composables/copyTrackNames'
 import {
   useNcmStore,
   captureNcmSession,
@@ -70,11 +71,20 @@ import {
   filterNcmAlbums,
   formatNcmAlbumClassification
 } from './streaming-page/ncmAlbumClassification'
-import { useStreamingTrackView } from '@renderer/components/streaming-page/useStreamingTrackView'
 import {
-  usePlaylistTrackPaging,
-  type PlaylistTrackPagingSnapshot
-} from './streaming-page/usePlaylistTrackPaging'
+  browseSnapshotValue,
+  createBrowseWindow,
+  produceBrowseSelection,
+  saveBrowsePage,
+  restoreBrowsePage,
+  type BrowseSelection
+} from '../stores/browseSessions.ts'
+import type { BrowsePartState, BrowseSession } from '../../../shared/coreBrowse.ts'
+import type {
+  StreamingTrackSort,
+  StreamingSortDirection
+} from './streaming-page/streamingTrackView.ts'
+import { usePlaylistTrackPaging } from './streaming-page/usePlaylistTrackPaging'
 import StreamingContentHeader from './streaming-page/StreamingContentHeader.vue'
 import StreamingSearchControls from './streaming-page/StreamingSearchControls.vue'
 import StreamingPlaceholder from './streaming-page/StreamingPlaceholder.vue'
@@ -82,10 +92,7 @@ import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
 import StreamingLoadingStage from './streaming-page/StreamingLoadingStage.vue'
 import CreateAggregatePlaylistDialog from './aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import NcmPlaylistDialogs from './streaming-page/NcmPlaylistDialogs.vue'
-import {
-  appendNcmPlaylistTracks,
-  createNcmPlaylistEditor
-} from './streaming-page/ncmPlaylistEditor.ts'
+import { createNcmPlaylistEditor } from './streaming-page/ncmPlaylistEditor.ts'
 import ProviderDownloadsPanel from './streaming-page/ProviderDownloadsPanel.vue'
 import StreamingContextMenu from './streaming-page/StreamingContextMenu.vue'
 import {
@@ -105,9 +112,7 @@ import {
   type StreamingMetadataNavigationRequest
 } from '../utils/streamingArtistResolution'
 import { getTopTracks, waitForListeningStatsReady } from '../stores/useListeningStatsStore'
-import { shuffleArray } from '../utils/playerQueueUtils'
 import {
-  appendUniqueTracks,
   streamingFavoriteLabel,
   getPersonalizedStreamKey,
   mergePlaylistSummaries,
@@ -177,7 +182,8 @@ type DetailView =
 // Loaded-detail state captured when navigating one level deeper, so walking
 // back restores the level underneath instead of refetching it.
 interface DetailSnapshot {
-  tracks: Track[]
+  view: DetailView | null
+  browse: ReturnType<ReturnType<typeof createBrowseWindow>['capture']>
   users: NcmUserSummary[]
   artistAlbumsList: MediaProviderAlbumSummary[]
   artistPlaylistsList: MediaProviderPlaylistSummary[]
@@ -187,12 +193,12 @@ interface DetailSnapshot {
   artistAlbumReleaseType: string
   liked: number | null
   likedPaging: { nextOffset: number; total: number | null; hasMore: boolean }
-  playlistPaging?: PlaylistTrackPagingSnapshot
 }
 
 interface DetailStackEntry {
   view: DetailView
-  snapshot?: DetailSnapshot
+  snapshot?: { id: Promise<string>; sessionId?: string }
+  refresh?: boolean
   fromPlayback?: boolean
 }
 
@@ -267,6 +273,7 @@ function saveStreamingScrollPosition(): void {
 }
 
 function restoreStreamingScrollPosition(): void {
+  if (restoringPage || restoringBrowse) return
   const saved = savedScrollPositions.get(streamingViewKey.value)
   if (saved == null) return
   savedScrollPositions.delete(streamingViewKey.value)
@@ -284,15 +291,67 @@ function beginDetailTransition(): void {
 // shallowRef + whole-array replacement only: liked songs / playlists can hold
 // thousands of tracks and deep reactivity over them is pure overhead.
 const detailTracks = shallowRef<Track[]>([])
+const detailBrowse = createBrowseWindow(
+  undefined,
+  () => browseState.value.session?.providerId === 'bili' && currentDetail.value?.type !== 'artist',
+  4
+)
+const browseState = detailBrowse.state
+watch(
+  browseState,
+  (value) => {
+    detailTracks.value = value.tracks
+  },
+  { flush: 'sync' }
+)
 const playlistTrackPaging = usePlaylistTrackPaging(detailTracks, (error) =>
   friendlyStreamingError(error, '继续加载歌单失败')
 )
-const {
-  query: detailQuery,
-  sort: detailSort,
-  direction: detailSortDirection,
-  tracks: visibleDetailTracks
-} = useStreamingTrackView(detailTracks, () => currentDetail.value)
+const detailQuery = ref('')
+const detailSort = ref<StreamingTrackSort>('default')
+const detailSortDirection = ref<StreamingSortDirection>('asc')
+const visibleDetailTracks = detailTracks
+let restoringBrowse = false
+watch([detailQuery, detailSort, detailSortDirection], () => {
+  if (restoringBrowse || !browseState.value.session) return
+  void detailBrowse
+    .setQuery({
+      query: detailQuery.value,
+      sort: detailSort.value,
+      direction: detailSortDirection.value
+    })
+    .catch(reportBrowseError)
+})
+function reportBrowseError(error: unknown): void {
+  detailError.value = friendlyStreamingError(error, '读取列表失败')
+}
+async function setDetailTracks(
+  tracks: readonly Track[],
+  providerId = activeProvider.value
+): Promise<void> {
+  releaseUnretainedBrowse()
+  await detailBrowse.seed(providerId, tracks)
+}
+function releaseUnretainedBrowse(): void {
+  const id = browseState.value.session?.id
+  if (
+    id &&
+    !Object.values(recommendationSessions.value).some((session) => session.id === id) &&
+    !detailStack.value.some((entry) => entry.snapshot?.sessionId === id)
+  )
+    void useCoreConnection()
+      .command('browse.release', { ids: [id] })
+      .catch(() => {})
+}
+function loadBrowseRange(start: number, end: number): void {
+  if (restoringPage || restoringBrowse) return
+  const state = browseState.value
+  if (state.loading || (start >= state.offset && end <= state.offset + state.rows.length)) return
+  void detailBrowse.load(start).catch(reportBrowseError)
+}
+function changeBrowseGroups(groups: Record<string, BrowsePartState>): void {
+  void detailBrowse.setGroups(groups).catch(reportBrowseError)
+}
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = shallowRef<MediaProviderAlbumSummary[]>([])
 const artistPlaylists = shallowRef<MediaProviderPlaylistSummary[]>([])
@@ -309,6 +368,7 @@ let detailLoadToken = 0
 
 const homeSectionDefinitions = ref<HomeSectionDefinition[]>([])
 const recommendationTracks = shallowRef<Record<string, Track[]>>({})
+const recommendationSessions = shallowRef<Record<string, BrowseSession>>({})
 const recommendationErrors = shallowRef<Record<string, string>>({})
 const recommendPlaylists = shallowRef<MediaProviderPlaylistSummary[]>([])
 const recommendationProviderId = ref('')
@@ -337,6 +397,19 @@ const settingsStore = useSettingsStore()
 const musicStore = useMusicStore()
 const mediaProviders = useMediaProviders()
 const core = useCoreConnection()
+async function captureBrowseContexts() {
+  await core.attach()
+  return core.query('browse.context', {
+    providerIds: [
+      ...new Set([
+        activeProvider.value,
+        ...providerStore.providers.value.map((provider) => provider.id)
+      ])
+    ].filter(Boolean)
+  })
+}
+let browseContexts = captureBrowseContexts()
+void browseContexts.catch(() => {})
 const localSearchSource = useLibraryUnifiedSearch(() => {
   if (searchType.value !== 'playlists' && ['all', 'local'].includes(searchSource.value))
     refreshSearch()
@@ -549,15 +622,33 @@ async function loadRecommendations(force = false): Promise<void> {
     const nextTracks: Record<string, Track[]> = {}
     const nextErrors: Record<string, string> = {}
     let firstFailure: unknown = null
-    sectionResults.forEach((result, index) => {
+    const nextSessions: Record<string, BrowseSession> = {}
+    for (const [index, result] of sectionResults.entries()) {
       const section = definitions[index]
-      if (result.status === 'fulfilled') nextTracks[section.key] = result.value
-      else {
+      if (result.status === 'fulfilled') {
+        const window = createBrowseWindow(core, () => false, 1)
+        try {
+          await window.seed(providerId, result.value)
+          if (window.state.value.session) nextSessions[section.key] = window.state.value.session
+          nextTracks[section.key] = window.state.value.tracks.slice(0, 24)
+        } finally {
+          window.dispose()
+        }
+      } else {
         nextTracks[section.key] = []
         nextErrors[section.key] = friendlyStreamingError(result.reason, '此分区暂时不可用')
         firstFailure ??= result.reason
       }
-    })
+    }
+    if (requestId !== recommendationRequestId || providerId !== activeProvider.value) {
+      await core.command('browse.release', {
+        ids: Object.values(nextSessions).map((session) => session.id)
+      })
+      return
+    }
+    const oldIds = Object.values(recommendationSessions.value).map((session) => session.id)
+    if (oldIds.length) void core.command('browse.release', { ids: oldIds }).catch(() => {})
+    recommendationSessions.value = nextSessions
     if (playlistsResult.status === 'rejected') firstFailure ??= playlistsResult.reason
     const hasContent =
       Object.values(nextTracks).some((tracks) => tracks.length > 0) ||
@@ -597,9 +688,11 @@ const recSections = computed<RecSection[]>(() =>
 async function openRecSection(section: RecSection): Promise<void> {
   detailLoadToken++
   beginDetailTransition()
-  pushDetail({ type: 'rec', section })
+  pushDetail({ type: 'rec', section: { ...section, tracks: [] } })
   playlistTrackPaging.reset()
-  detailTracks.value = section.tracks
+  const session = recommendationSessions.value[section.key]
+  if (session) await detailBrowse.restore(session)
+  else await setDetailTracks(section.tracks)
   detailLoading.value = false
   detailError.value = ''
 }
@@ -613,36 +706,64 @@ async function loadMorePersonalizedStream(key: PersonalizedStreamKey): Promise<v
   const homeRequestId = recommendationRequestId
   personalizedStreamLoading[key] = true
   try {
-    const current =
-      providerId === activeProvider.value ? (recommendationTracks.value[key] ?? []) : []
-    const existing = current
+    const session = recommendationSessions.value[key]
     const incoming = await providerStore.callProvider<Track[]>(providerId, method)
-    let additions = appendUniqueTracks(existing, incoming)
+    const additions: Track[] = []
+    for (const track of incoming) {
+      if (
+        !session ||
+        (await core.query('browse.locate', { id: session.id, trackId: track.id, complete: true }))
+          .position < 0
+      )
+        additions.push(track)
+    }
     if (
+      !additions.length &&
       key === 'radar' &&
-      additions.length === 0 &&
       providerInfo.supportedMethods.includes('fetchPersonalFm')
     ) {
-      additions = appendUniqueTracks(
-        existing,
-        await providerStore.callProvider<Track[]>(providerId, 'fetchPersonalFm')
-      )
+      for (const track of await providerStore.callProvider<Track[]>(
+        providerId,
+        'fetchPersonalFm'
+      )) {
+        if (
+          !session ||
+          (await core.query('browse.locate', { id: session.id, trackId: track.id, complete: true }))
+            .position < 0
+        )
+          additions.push(track)
+      }
     }
-    if (additions.length === 0) {
+    if (!additions.length) {
       personalizedStreamRetryAfter[key] = Date.now() + PERSONALIZED_STREAM_RETRY_COOLDOWN_MS
       return
     }
-
-    const merged = [...current, ...appendUniqueTracks(current, additions)]
-    if (providerId !== activeProvider.value || homeRequestId !== recommendationRequestId) {
-      return
+    if (providerId !== activeProvider.value || homeRequestId !== recommendationRequestId) return
+    let next = session ?? ((await core.command('browse.open', { providerId })) as BrowseSession)
+    for (let start = 0; start < additions.length; start += 200) {
+      next = (await core.command('browse.append', {
+        id: next.id,
+        items: additions
+          .slice(start, start + 200)
+          .map((track) => ({
+            ...track,
+            filePath: track.filePath ?? '',
+            fileName: track.fileName ?? '',
+            cover: track.cover ?? null,
+            lyrics: track.lyrics ?? null
+          })),
+        complete: true
+      })) as BrowseSession
     }
-    recommendationTracks.value = { ...recommendationTracks.value, [key]: merged }
-
+    recommendationSessions.value = { ...recommendationSessions.value, [key]: next }
+    recommendationTracks.value = {
+      ...recommendationTracks.value,
+      [key]: [...(recommendationTracks.value[key] ?? []), ...additions].slice(0, 24)
+    }
     const detail = currentDetail.value
     if (detail?.type === 'rec' && detail.section.key === key) {
-      replaceTopDetail({ type: 'rec', section: { ...detail.section, tracks: merged } })
-      detailTracks.value = merged
+      const saved = detailBrowse.capture()
+      await detailBrowse.restore(next, saved.offset, saved.query, saved.groups)
     }
   } catch {
     personalizedStreamRetryAfter[key] = Date.now() + PERSONALIZED_STREAM_RETRY_COOLDOWN_MS
@@ -697,7 +818,6 @@ const {
   fetchUserLibrary,
   fetchUserPlaylistsByUid,
   fetchPlaylistTracks,
-  fetchLikedTracks,
   fetchLikedTracksPage,
   cloudSongs,
   cloudTotal,
@@ -792,7 +912,27 @@ function playHomeTrack(track: Track, trackQueue: Track[]): void {
   if (streamKey) {
     void startPersonalizedStream(streamKey, getTrackSource(track), track.id)
   } else {
-    void playTrack(track, trackQueue)
+    const session = section && recommendationSessions.value[section.key]
+    if (session)
+      void (async () => {
+        const { position } = await core.query('browse.locate', {
+          id: session.id,
+          trackId: track.id,
+          complete: true
+        })
+        if (position < 0) return
+        await playbackStore.playTrackPages(
+          (append) =>
+            produceBrowseSelection(
+              { id: session.id, query: {}, count: session.total ?? session.loaded },
+              append
+            ),
+          position
+        )
+      })().catch((error) =>
+        setStreamingBatchRemovalError(friendlyStreamingError(error, '播放推荐失败'))
+      )
+    else void playTrack(track, trackQueue)
   }
 }
 
@@ -955,7 +1095,9 @@ const {
   refreshSearch,
   performSearch,
   onPageChange,
-  onSearchTrackClick
+  onSearchTrackClick,
+  capture: captureSearch,
+  restore: restoreSearch
 } = useStreamingSearch({
   searchAlbums: albumSearch.searchAlbums,
   searchLocalAlbums: albumSearch.searchLocalAlbums,
@@ -1053,15 +1195,7 @@ watch(providerFavoriteChange, (change) => {
   const key = providerFavoriteTrackKey('bili', change.trackId)
   const matches = (track: Track): boolean => providerFavoriteTrackKey('bili', track.id) === key
   for (const entry of detailStack.value) {
-    if (entry.view.type !== 'playlist' || !entry.snapshot?.tracks.some(matches)) continue
-    entry.snapshot.tracks = entry.snapshot.tracks.filter((track) => !matches(track))
-    if (entry.snapshot.playlistPaging?.active) {
-      // Deleting a video shifts every subsequent source page. Resume from
-      // page one and let paging deduplicate the surviving snapshot tracks.
-      entry.snapshot.playlistPaging.nextOffset = 0
-      entry.snapshot.playlistPaging.hasMore = true
-      entry.snapshot.playlistPaging.error = ''
-    }
+    if (entry.view.type === 'playlist' && entry.snapshot) entry.refresh = true
   }
   if (currentDetail.value?.type === 'playlist' && detailTracks.value.some(matches)) {
     void openPlaylist(currentDetail.value.playlist, true, true)
@@ -1242,7 +1376,7 @@ const filteredArtistAlbums = computed(() =>
 )
 const artistDetailTabs = computed<Array<{ key: ArtistDetailTab; label: string; count: number }>>(
   () => [
-    { key: 'songs', label: '全部歌曲', count: detailTracks.value.length },
+    { key: 'songs', label: '全部歌曲', count: browseState.value.total },
     { key: 'albums', label: '专辑', count: currentArtistAlbums.value.length },
     { key: 'playlists', label: '创建的歌单', count: currentArtistPlaylists.value.length }
   ]
@@ -1292,15 +1426,7 @@ const showDetailOverlayLoading = computed(() => {
   }
   return detailLoading.value && !showDetailInitialLoading.value
 })
-const detailTrackCountLabel = computed(() => {
-  if (playlistTrackPaging.active.value && playlistTrackPaging.hasMore.value) {
-    return `已加载 ${detailTracks.value.length} 首`
-  }
-  if (currentDetail.value?.type === 'liked' && likedTracksTotal.value != null) {
-    return `${detailTracks.value.length} / ${likedTracksTotal.value} 首`
-  }
-  return `${detailTracks.value.length} 首`
-})
+const detailTrackCountLabel = computed(() => `${browseState.value.total} 首`)
 
 const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
   if (!currentDetail.value) return null
@@ -1323,12 +1449,13 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     }
   }
   if (currentDetail.value.type === 'rec') {
-    const firstTrack = currentDetail.value.section.tracks[0]
+    const firstTrack =
+      detailTracks.value[0] ?? recommendationTracks.value[currentDetail.value.section.key]?.[0]
     return {
       title: currentDetail.value.section.title,
       cover: firstTrack?.cover ?? null,
       coverSource: firstTrack?.coverSource ?? null,
-      desc: `共 ${currentDetail.value.section.tracks.length} ${trackUnitLabel.value}`,
+      desc: `共 ${browseState.value.total} ${trackUnitLabel.value}`,
       icon: currentDetail.value.section.icon
     }
   }
@@ -1349,7 +1476,7 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
         currentDetail.value.providerId === NCM_PROVIDER_ID
           ? formatNcmAlbumClassification(currentDetail.value.album)
           : '',
-        `共 ${detailTracks.value.length || currentDetail.value.album.trackCount} 首歌曲`
+        `共 ${browseState.value.total || currentDetail.value.album.trackCount} 首歌曲`
       ]
         .filter(Boolean)
         .join(' · '),
@@ -1357,7 +1484,7 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     }
   }
   if (currentDetail.value.type === 'artist') {
-    const songCount = detailTracks.value.length
+    const songCount = browseState.value.total
     const albumCount = artistAlbums.value.length
     const playlistCount = artistPlaylists.value.length
     const descParts: string[] = []
@@ -1466,6 +1593,7 @@ function selectProvider(provider: string, persist = true): void {
 }
 
 function clearDetailState(): void {
+  detailBrowse.reset()
   detailTracks.value = []
   detailUsers.value = []
   artistAlbums.value = []
@@ -1483,7 +1611,8 @@ function clearDetailState(): void {
 
 function captureDetailState(): DetailSnapshot {
   return markRaw({
-    tracks: detailTracks.value,
+    view: currentDetail.value,
+    browse: detailBrowse.capture(),
     users: detailUsers.value,
     artistAlbumsList: artistAlbums.value,
     artistPlaylistsList: artistPlaylists.value,
@@ -1492,7 +1621,6 @@ function captureDetailState(): DetailSnapshot {
     artistTab: activeArtistTab.value,
     artistAlbumReleaseType: artistAlbumReleaseType.value,
     liked: likedCount.value,
-    playlistPaging: playlistTrackPaging.snapshot(),
     likedPaging: {
       nextOffset: likedTracksNextOffset.value,
       total: likedTracksTotal.value,
@@ -1501,13 +1629,67 @@ function captureDetailState(): DetailSnapshot {
   })
 }
 
-function applyDetailState(snapshot: DetailSnapshot | undefined): void {
-  if (!snapshot) {
+function retainDetailState(): NonNullable<DetailStackEntry['snapshot']> {
+  const value = browseSnapshotValue(captureDetailState())
+  const providerId = activeProvider.value
+  const id = browseContexts
+    .then((contexts) =>
+      core.command('browse.snapshot.save', {
+        providerIds: [providerId],
+        contexts,
+        value: value as unknown as Record<string, unknown>
+      })
+    )
+    .then((result) => (result as { id: string }).id)
+  void id.catch(() => {})
+  return markRaw({ id, sessionId: value.browse.session?.id })
+}
+
+function releaseDetailEntry(entry: DetailStackEntry | undefined): void {
+  if (!entry?.snapshot) return
+  const snapshot = entry.snapshot
+  const retained = Object.values(recommendationSessions.value).some(
+    (session) => session.id === snapshot.sessionId
+  )
+  void snapshot.id
+    .then((id) =>
+      core.command('browse.release', {
+        ids: [id, ...(snapshot.sessionId && !retained ? [snapshot.sessionId] : [])]
+      })
+    )
+    .catch(() => {})
+}
+
+async function applyDetailState(saved: DetailStackEntry['snapshot'] | undefined): Promise<void> {
+  if (!saved) {
     clearDetailState()
     return
   }
-  detailTracks.value = snapshot.tracks
-  playlistTrackPaging.restore(snapshot.playlistPaging)
+  const token = detailLoadToken
+  detailLoading.value = true
+  const snapshotId = await saved.id
+  const snapshot = (await core.query('browse.snapshot', { id: snapshotId }))
+    .value as unknown as DetailSnapshot
+  if (token !== detailLoadToken) return
+  restoringBrowse = true
+  if (snapshot.view) replaceTopDetail(snapshot.view)
+  detailQuery.value = snapshot.browse.query.query ?? ''
+  detailSort.value =
+    snapshot.browse.query.sort === 'random' ? 'default' : (snapshot.browse.query.sort ?? 'default')
+  detailSortDirection.value = snapshot.browse.query.direction ?? 'asc'
+  await nextTick()
+  try {
+    if (snapshot.browse.session)
+      await detailBrowse.restore(
+        snapshot.browse.session,
+        snapshot.browse.offset,
+        snapshot.browse.query,
+        snapshot.browse.groups
+      )
+  } finally {
+    restoringBrowse = false
+  }
+  if (token !== detailLoadToken) return
   detailUsers.value = snapshot.users
   artistAlbums.value = snapshot.artistAlbumsList
   artistPlaylists.value = snapshot.artistPlaylistsList
@@ -1523,6 +1705,9 @@ function applyDetailState(snapshot: DetailSnapshot | undefined): void {
   detailError.value = ''
   followActionLoading.value = false
   followActionError.value = ''
+  await nextTick()
+  restoreStreamingScrollPosition()
+  await core.command('browse.release', { ids: [snapshotId] })
 }
 
 // Navigates one level deeper. The outgoing level's loaded data is snapshotted
@@ -1531,11 +1716,20 @@ function pushDetail(view: DetailView, fromPlayback = false): void {
   detailNavigationToken += 1
   const top = detailStack.value[detailStack.value.length - 1]
   if (fromPlayback && top?.fromPlayback) {
+    releaseDetailEntry(top)
+    const sessionId = browseState.value.session?.id
+    if (sessionId) void core.command('browse.release', { ids: [sessionId] }).catch(() => {})
     top.view = view
     top.snapshot = undefined
     return
   }
-  if (top) top.snapshot = captureDetailState()
+  if (top) {
+    top.snapshot = retainDetailState()
+    if (top.view.type === 'rec')
+      top.view = { ...top.view, section: { ...top.view.section, tracks: [] } }
+    if (top.view.type === 'user_list') top.view = { ...top.view, users: [] }
+    if (top.view.type === 'user_playlists') top.view = { ...top.view, playlists: [] }
+  }
   detailStack.value.push({ view, fromPlayback })
 }
 
@@ -1546,7 +1740,7 @@ function replaceTopDetail(view: DetailView): void {
 }
 
 // Pops exactly one level and restores the level underneath, if any.
-function popDetail(): void {
+async function popDetail(): Promise<void> {
   detailNavigationToken += 1
   if (detailStack.value.length === 0) return
   detailLoadToken++
@@ -1554,21 +1748,33 @@ function popDetail(): void {
   const el = streamingContentRef.value
   if (el) el.scrollTop = 0
   detailStack.value.pop()
+  const leaving = browseState.value.session?.id
+  detailBrowse.reset()
+  if (
+    leaving &&
+    !Object.values(recommendationSessions.value).some((session) => session.id === leaving)
+  )
+    void core.command('browse.release', { ids: [leaving] }).catch(() => {})
   const top = detailStack.value[detailStack.value.length - 1]
-  applyDetailState(top?.snapshot)
+  if (top?.refresh && top.view.type === 'playlist') {
+    releaseDetailEntry(top)
+    top.refresh = false
+    await openPlaylist(top.view.playlist, true, true)
+  } else await applyDetailState(top?.snapshot)
   if (top) top.snapshot = undefined
 }
 
 // Drops matching entries wherever they sit in the stack (e.g. a playlist that
 // was just deleted), restoring the new top when the visible level went away.
-function removeDetailEntries(predicate: (view: DetailView) => boolean): void {
+async function removeDetailEntries(predicate: (view: DetailView) => boolean): Promise<void> {
   if (!detailStack.value.some((entry) => predicate(entry.view))) return
   const removedTop = currentDetail.value ? predicate(currentDetail.value) : false
+  for (const entry of detailStack.value) if (predicate(entry.view)) releaseDetailEntry(entry)
   detailStack.value = detailStack.value.filter((entry) => !predicate(entry.view))
   if (!removedTop) return
   detailLoadToken++
   const top = detailStack.value[detailStack.value.length - 1]
-  applyDetailState(top?.snapshot)
+  await applyDetailState(top?.snapshot)
   if (top) top.snapshot = undefined
 }
 
@@ -1581,6 +1787,13 @@ function resetDetail(options?: { animate?: boolean; keepNavigationRequest?: bool
     const el = streamingContentRef.value
     if (el) el.scrollTop = 0
   }
+  for (const entry of detailStack.value) releaseDetailEntry(entry)
+  const sessionId = browseState.value.session?.id
+  if (
+    sessionId &&
+    !Object.values(recommendationSessions.value).some((session) => session.id === sessionId)
+  )
+    void core.command('browse.release', { ids: [sessionId] }).catch(() => {})
   detailStack.value = []
   clearDetailState()
 }
@@ -1615,6 +1828,11 @@ function ensureVisibleSidebarSelection(): void {
 
 function beginDetailLoad(): number {
   const token = ++detailLoadToken
+  releaseUnretainedBrowse()
+  detailBrowse.reset()
+  detailQuery.value = ''
+  detailSort.value = 'default'
+  detailSortDirection.value = 'asc'
   detailTracks.value = []
   detailUsers.value = []
   artistAlbums.value = []
@@ -1747,14 +1965,18 @@ async function openLikedTracks(force = false): Promise<void> {
   const token = beginDetailLoad()
 
   try {
-    const page = await fetchLikedTracksPage(0, LIKED_TRACKS_PAGE_SIZE, force)
+    await detailBrowse.open({
+      providerId: NCM_PROVIDER_ID,
+      method: 'fetchLikedTracksPage',
+      args: [0, 200, force],
+      paging: { offsetArg: 0, limitArg: 1 }
+    })
     if (!isActiveDetailLoad(token)) return
-    detailTracks.value = page.tracks
-    likedCount.value = page.total
-    likedTracksTotal.value = page.total
-    likedTracksNextOffset.value = page.nextOffset
-    likedTracksHasMore.value = page.hasMore
-    syncLikedIds(page.tracks)
+    likedCount.value = browseState.value.total
+    likedTracksTotal.value = browseState.value.total
+    likedTracksNextOffset.value = browseState.value.total
+    likedTracksHasMore.value = false
+    syncLikedIds(detailTracks.value)
     await nextTick()
     void ensureLikedTracksScrollable()
   } catch (error) {
@@ -1830,18 +2052,19 @@ async function openPlaylist(
       isExternalActive.value &&
       providerStore.getProvider(providerId)?.supportedMethods?.includes('fetchPlaylistTracksPage')
     ) {
-      await playlistTrackPaging.open(
-        (offset, refresh) =>
-          providerStore.fetchPlaylistTracksPage(providerId, playlist.id, offset, 20, refresh),
-        force
-      )
+      await detailBrowse.open({
+        providerId,
+        method: 'fetchPlaylistTracksPage',
+        args: [playlist.id, 0, 200, force],
+        paging: { offsetArg: 1, limitArg: 2 }
+      })
       return
     }
-    const tracks = isExternalActive.value
-      ? await providerStore.fetchPlaylistTracks(activeProvider.value, playlist.id, force)
-      : await fetchPlaylistTracks(playlist.id, force)
-    if (!isActiveDetailLoad(token)) return
-    detailTracks.value = tracks
+    await detailBrowse.open({
+      providerId,
+      method: 'fetchPlaylistTracks',
+      args: [playlist.id, force]
+    })
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = friendlyStreamingError(error, '加载列表失败')
@@ -2006,9 +2229,12 @@ async function openAlbum(
   const token = beginDetailLoad()
 
   try {
-    const tracks = await albumSearch.loadAlbumTracks({ id: album.id, providerId })
-    if (!isActiveDetailLoad(token)) return
-    detailTracks.value = tracks
+    if (providerId === 'local')
+      await setDetailTracks(
+        await albumSearch.loadAlbumTracks({ id: album.id, providerId }),
+        providerId
+      )
+    else await detailBrowse.open({ providerId, method: 'fetchAlbumTracks', args: [album.id] })
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = friendlyStreamingError(error, '加载专辑失败')
@@ -2048,7 +2274,7 @@ async function openArtist(
         provider.fetchArtistFollowState?.(artist.id).catch(() => null) ?? Promise.resolve(null)
       ])
       if (!isActiveDetailLoad(token)) return
-      detailTracks.value = tracks
+      await setDetailTracks(tracks)
       artistAlbums.value = albums
       artistPlaylists.value = playlists
       artistIntro.value = intro
@@ -2111,7 +2337,7 @@ async function openArtist(
     if (currentDetail.value?.type === 'artist') {
       currentDetail.value.artist = resolvedArtist
     }
-    detailTracks.value = tracks
+    await setDetailTracks(tracks)
     artistAlbums.value = albums
     artistPlaylists.value = mergePlaylistSummaries(artistOwnedPlaylists, userOwnedPlaylists)
     artistIntro.value = intro
@@ -2311,7 +2537,7 @@ async function openRanking(): Promise<void> {
       tracks = await fetchPlayRecords(1)
     }
     if (!isActiveDetailLoad(token)) return
-    detailTracks.value = tracks
+    await setDetailTracks(tracks)
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = friendlyStreamingError(error, '加载听歌排行失败')
@@ -2380,7 +2606,7 @@ async function toggleCurrentDetailFollow(): Promise<void> {
 
 function goBack(): void {
   clearSelection()
-  popDetail()
+  void popDetail().catch(reportBrowseError)
 }
 
 watch(
@@ -2419,6 +2645,24 @@ const multiSelectEnabled = computed(
 
 const multiSelect = useTrackMultiSelect({
   tracks: streamingListTracks,
+  querySelection: () =>
+    currentDetail.value && browseState.value.session
+      ? {
+          total: browseState.value.total,
+          ...(browseState.value.session.total === null && !browseState.value.session.complete
+            ? { prepareAll: detailBrowse.completeCount, onError: reportBrowseError }
+            : {}),
+          positionForKey: (key) => {
+            const index = detailTracks.value.findIndex((track) => track.id === key)
+            return index < 0 ? null : browseState.value.positions[index]
+          }
+        }
+      : null,
+  selectionOrder: (track, index) => {
+    if (!currentDetail.value || !browseState.value.session) return index
+    const local = detailTracks.value.findIndex((item) => item.id === track.id)
+    return local < 0 ? index : browseState.value.positions[local]
+  },
   root: streamingContentRef,
   resetSources: [
     currentDetail,
@@ -2429,13 +2673,45 @@ const multiSelect = useTrackMultiSelect({
     detailSort,
     detailSortDirection,
     isSearching,
-    () => detailTracks.value.length
+    () => browseState.value.session?.id
   ],
   enabled: multiSelectEnabled
 })
 
 const { selectedIds, selectedCount, hasSelection, isSelected, clearSelection, getSelectedTracks } =
   multiSelect
+type ActionSelection =
+  | { browse: BrowseSelection; count: number }
+  | { tracks: Track[]; count: number }
+function captureTrackSelection(context = false): ActionSelection {
+  if (context && !streamingContextUsesSelection.value) {
+    const track = streamingContextMenuTrack.value
+    return { tracks: track ? [track] : [], count: track ? 1 : 0 }
+  }
+  const ranges = multiSelect.getSelectedRanges()
+  const session = browseState.value.session
+  if (currentDetail.value && session && ranges)
+    return {
+      browse: {
+        id: session.id,
+        query: detailBrowse.query,
+        ranges: ranges.map((range) => [...range] as [number, number]),
+        count: selectedCount.value
+      },
+      count: selectedCount.value
+    }
+  const tracks = getSelectedTracks()
+  return { tracks, count: tracks.length }
+}
+async function produceSelection(
+  selected: ActionSelection,
+  append: (tracks: Track[]) => Promise<void>
+): Promise<void> {
+  if ('browse' in selected) await produceBrowseSelection(selected.browse, append)
+  else
+    for (let offset = 0; offset < selected.tracks.length; offset += 200)
+      await append(selected.tracks.slice(offset, offset + 200))
+}
 
 watch(
   [streamingListTracks, musicStore.playlistsRevision],
@@ -2455,12 +2731,35 @@ function isStreamingTrackFavorited(track: Track): boolean {
   return musicStore.isFavoriteTrack(track)
 }
 
-const selectionAllFavorited = computed(() => {
-  const selected = getSelectedTracks()
-  return selected.length > 0 && selected.every(isStreamingTrackFavorited)
-})
+const selectionAllFavorited = ref(false)
+watch(
+  [multiSelect.selectionVersion, musicStore.playlistsRevision],
+  async (_value, _old, onCleanup) => {
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
+    })
+    const selected = captureTrackSelection()
+    let all = selected.count > 0
+    await produceSelection(selected, async (tracks) => {
+      if (cancelled) return
+      const app = tracks.filter((track) => track.ncmSongId == null)
+      const summary = await musicStore.readFavoriteTrackPages(async (append) => {
+        await append(app)
+      })
+      if (
+        summary.favoriteCount !== summary.count ||
+        tracks.some((track) => track.ncmSongId != null && !isStreamingTrackFavorited(track))
+      )
+        all = false
+    }).catch(() => {
+      all = false
+    })
+    if (!cancelled) selectionAllFavorited.value = all
+  }
+)
 const selectionFavoriteLabel = computed(() =>
-  streamingFavoriteLabel(getSelectedTracks(), selectionAllFavorited.value)
+  streamingFavoriteLabel(detailTracks.value.slice(0, 1), selectionAllFavorited.value)
 )
 
 const showStreamingContextMenu = ref(false)
@@ -2477,11 +2776,18 @@ const streamingContextActionTracks = computed(() => {
   if (!track) return []
   return streamingContextUsesSelection.value ? getSelectedTracks() : [track]
 })
-const streamingContextActionCount = computed(() => streamingContextActionTracks.value.length)
+const streamingContextActionCount = computed(() =>
+  streamingContextUsesSelection.value
+    ? selectedCount.value
+    : streamingContextMenuTrack.value
+      ? 1
+      : 0
+)
 const streamingContextActionLabel = computed(() =>
   streamingContextActionCount.value > 1 ? ` (${streamingContextActionCount.value})` : ''
 )
 const streamingContextAllFavorited = computed(() => {
+  if (streamingContextUsesSelection.value) return selectionAllFavorited.value
   const tracks = streamingContextActionTracks.value
   return tracks.length > 0 && tracks.every(isStreamingTrackFavorited)
 })
@@ -2500,6 +2806,8 @@ function closeStreamingContextMenu(): void {
 const showStreamingAggregateSubmenu = ref(false)
 const showCreateAggregateDialog = ref(false)
 const createAggregateTracks = ref<Track[]>([])
+const createAggregateSelection = shallowRef<ActionSelection | null>(null)
+const aggregateDraftName = ref('')
 
 const aggregatePlaylistOptions = computed(() =>
   musicStore.aggregatePlaylists.value.map((playlist) => ({
@@ -2509,13 +2817,15 @@ const aggregatePlaylistOptions = computed(() =>
 )
 
 async function handleContextAddToAggregatePlaylist(playlistId: string): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const selected = captureTrackSelection(true)
   const playlistName =
     musicStore.aggregatePlaylists.value.find((playlist) => playlist.id === playlistId)?.name ?? ''
   closeStreamingContextMenu()
-  if (tracks.length === 0) return
+  if (selected.count === 0) return
   try {
-    const added = await musicStore.addTracksToPlaylistById(playlistId, tracks)
+    const added = await musicStore.addTrackPagesToPlaylistById(playlistId, (append) =>
+      produceSelection(selected, append)
+    )
     pushNotice({
       kind: added > 0 ? 'success' : 'info',
       message:
@@ -2527,13 +2837,24 @@ async function handleContextAddToAggregatePlaylist(playlistId: string): Promise<
 }
 
 function handleContextCreateAggregatePlaylist(): void {
-  createAggregateTracks.value = streamingContextActionTracks.value
+  aggregateDraftName.value = ''
+  createAggregateSelection.value = captureTrackSelection(true)
   closeStreamingContextMenu()
   showCreateAggregateDialog.value = true
+}
+async function createSelectedAggregatePlaylist(
+  name: string
+): Promise<{ playlistId: string; addedCount: number }> {
+  const selected = createAggregateSelection.value ?? { tracks: [], count: 0 }
+  const playlistId = await musicStore.createAggregatePlaylistWithTrackPages(name, (append) =>
+    produceSelection(selected, append)
+  )
+  return { playlistId, addedCount: selected.count }
 }
 
 function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): void {
   createAggregateTracks.value = []
+  createAggregateSelection.value = null
   pushNotice({
     kind: 'success',
     message: addedCount > 0 ? `已创建聚合歌单并加入 ${addedCount} 首` : '已创建聚合歌单'
@@ -2553,12 +2874,12 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
   showStreamingContextMenu.value = true
 }
 
-function handleContextPlayTrack(): void {
+async function handleContextPlayTrack(): Promise<void> {
   const track = streamingContextMenuTrack.value
-  if (!track) return
-  const list = currentDetail.value ? visibleDetailTracks.value : streamingListTracks.value
-  playStreamingTrack(track, list)
   closeStreamingContextMenu()
+  if (!track) return
+  if (currentDetail.value) await playTrackFromCurrentDetail(track)
+  else playStreamingTrack(track, streamingListTracks.value)
 }
 
 function handleContextPlayNext(): void {
@@ -2570,25 +2891,25 @@ function handleContextPlayNext(): void {
 }
 
 async function handleContextFavorite(): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
   await favoriteStreamingTracks(tracks)
 }
 
 async function handleContextCopyTrackNames(): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const selected = captureTrackSelection(true)
   closeStreamingContextMenu()
-  await copyTrackNames(tracks)
+  await copyTrackNamePages((append) => produceSelection(selected, append))
 }
 
 function handleContextAddToPlaylist(): void {
-  const tracks = streamingContextActionTracks.value
+  const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
   openAddToNcmPlaylistDialog(tracks)
 }
 
 function handleContextCreatePlaylist(): void {
-  const tracks = streamingContextActionTracks.value
+  const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
   openCreateNcmPlaylistDialog(tracks)
 }
@@ -2596,10 +2917,10 @@ function handleContextCreatePlaylist(): void {
 async function handleContextAddToOwnedPlaylist(
   playlist: MediaProviderPlaylistSummary
 ): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
   if (!canManageNcmPlaylists.value) return
-  if (!ncmPlaylistEditor.openAdd(tracks, false)) {
+  if (!(await openAddToNcmPlaylistDialog(tracks, false))) {
     if (addToNcmPlaylistBusy.value || createNcmPlaylistBusy.value) return
     setStreamingBatchRemovalError('所选曲目没有可写入网易云歌单的歌曲 ID')
     return
@@ -2613,7 +2934,7 @@ async function handleContextAddToOwnedPlaylist(
 }
 
 async function handleContextRemoveFromPlaylist(): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
   await removeStreamingTracks(tracks)
 }
@@ -2653,7 +2974,10 @@ const showDownloadPanel = ref(false)
 const downloadQualityMenuOpen = ref(false)
 let stopDownloadListener: (() => void) | null = null
 const contextMenuDownloadProviderId = computed<string | null>(() => {
-  const tracks = streamingContextActionTracks.value
+  const tracks =
+    streamingContextUsesSelection.value && currentDetail.value
+      ? detailTracks.value
+      : streamingContextActionTracks.value
   if (tracks.length === 0) return null
   const providerId = getTrackSource(tracks[0])
   if (providerId === 'local') return null
@@ -2674,32 +2998,34 @@ onUnmounted(() => {
 })
 
 async function handleContextDownload(quality: ProviderDownloadQuality): Promise<void> {
-  const tracks = streamingContextActionTracks.value
+  const selected = captureTrackSelection(true)
   const providerId = contextMenuDownloadProviderId.value
   closeStreamingContextMenu()
   downloadQualityMenuOpen.value = false
   if (!providerId) return
-  for (const track of tracks) {
-    try {
-      await core.command('downloads.create', {
-        providerId,
-        track: {
-          id: track.id,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          cover: track.cover ?? undefined,
-          provider: track.source ?? providerId
-        },
-        quality
-      })
-    } catch (error) {
-      pushNotice({
-        kind: 'error',
-        message: friendlyStreamingError(error, `下载「${track.title}」失败`)
-      })
+  await produceSelection(selected, async (tracks) => {
+    for (const track of tracks) {
+      try {
+        await core.command('downloads.create', {
+          providerId,
+          track: {
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            cover: track.cover ?? undefined,
+            provider: track.source ?? providerId
+          },
+          quality
+        })
+      } catch (error) {
+        pushNotice({
+          kind: 'error',
+          message: friendlyStreamingError(error, `下载「${track.title}」失败`)
+        })
+      }
     }
-  }
+  })
   showDownloadPanel.value = true
 }
 
@@ -2735,10 +3061,12 @@ function playStreamingTrack(track: Track, tracks: Track[]): void {
   playTrack(track, tracks.length > 0 ? tracks : [track])
 }
 
-function playTrackFromCurrentDetail(track: Track): void {
-  const tracks = visibleDetailTracks.value
-  const resolvedTrack = tracks.find((item) => item.id === track.id) ?? track
-  playStreamingTrack(resolvedTrack, tracks)
+async function playTrackFromCurrentDetail(track: Track): Promise<void> {
+  try {
+    await playBrowseTracks(track)
+  } catch (error) {
+    setStreamingBatchRemovalError(friendlyStreamingError(error, '播放曲目失败'))
+  }
 }
 
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
@@ -2754,56 +3082,65 @@ function playDetailTrack(track: Track, _index: number, event?: MouseEvent): void
   playTrackFromCurrentDetail(track)
 }
 
-// Display loading must never defer a playback command: Core already builds the
-// full liked queue and cancels its preparation when a newer transport intent wins.
 async function loadAllLikedTracks(): Promise<void> {
-  if (
-    currentDetail.value?.type !== 'liked' ||
-    isExternalActive.value ||
-    !likedTracksHasMore.value
-  ) {
-    return
-  }
-
-  if (likedTracksLoadingMore.value) return
+  if (currentDetail.value?.type !== 'liked' || isExternalActive.value || likedTracksLoadingMore.value) return
   const token = detailLoadToken
   likedTracksLoadingMore.value = true
+  likedTracksLoadMoreError.value = ''
   try {
-    const tracks = await fetchLikedTracks()
-    if (!isActiveDetailLoad(token) || currentDetail.value?.type !== 'liked') return
-    if (tracks.length > 0) {
-      detailTracks.value = tracks
-      likedCount.value = tracks.length
-      likedTracksTotal.value = tracks.length
-      likedTracksNextOffset.value = tracks.length
-      likedTracksHasMore.value = false
-      likedTracksLoadMoreError.value = ''
-      syncLikedIds(tracks)
-    }
+    // Core retains the complete session; only the visible window enters the renderer.
+    await detailBrowse.load(browseState.value.offset)
   } catch (error) {
-    if (isActiveDetailLoad(token)) {
-      likedTracksLoadMoreError.value = friendlyStreamingError(error, '加载完整收藏列表失败')
-    }
+    if (isActiveDetailLoad(token))
+      likedTracksLoadMoreError.value = friendlyStreamingError(error, '加载收藏列表失败')
   } finally {
     if (isActiveDetailLoad(token)) likedTracksLoadingMore.value = false
   }
 }
 
-function playAllDetailTracks(): void {
-  const tracks = visibleDetailTracks.value
-  if (tracks.length === 0) return
-  playStreamingTrack(tracks[0], tracks)
-}
-
-function shufflePlayDetailTracks(): void {
+async function playBrowseTracks(track?: Track, random = false): Promise<void> {
   if (currentDetail.value?.type === 'liked' && !isExternalActive.value) {
-    void playbackStore.playLikedTracks({ shuffle: true })
+    await playbackStore.playLikedTracks(
+      random ? { shuffle: true } : { selectedId: track?.id ?? visibleDetailTracks.value[0]?.id }
+    )
     return
   }
-  const tracks = visibleDetailTracks.value
-  if (tracks.length === 0) return
-  const shuffled = shuffleArray(tracks)
-  playStreamingTrack(shuffled[0], shuffled)
+  const session = browseState.value.session
+  if (!session || !browseState.value.total) return
+  const token = detailLoadToken
+  const check = (): void => {
+    if (token !== detailLoadToken) throw new Error('页面已切换，播放操作已取消')
+  }
+  const selectedIndex = track ? await detailBrowse.locate(track.id) : 0
+  check()
+  if (selectedIndex < 0) return
+  await playbackStore.playTrackPages(
+    (append) =>
+      detailBrowse.produce(
+        (tracks) => append(tracks),
+        undefined,
+        undefined,
+        random ? { sort: 'random', seed: Math.floor(Math.random() * 0x100000000) } : {}
+      ),
+    selectedIndex,
+    check
+  )
+}
+
+async function playAllDetailTracks(): Promise<void> {
+  try {
+    await playBrowseTracks()
+  } catch (error) {
+    setStreamingBatchRemovalError(friendlyStreamingError(error, '播放列表失败'))
+  }
+}
+
+async function shufflePlayDetailTracks(): Promise<void> {
+  try {
+    await playBrowseTracks(undefined, true)
+  } catch (error) {
+    setStreamingBatchRemovalError(friendlyStreamingError(error, '播放列表失败'))
+  }
 }
 
 function isDetailRowLiking(track: Track): boolean {
@@ -2987,68 +3324,71 @@ function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
   onSearchTrackClick(track)
 }
 
-async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
-  if (tracks.length === 0) return
-  const appTracks = tracks.filter((track) => track.ncmSongId == null)
+async function favoriteStreamingTracks(input: Track[] | ActionSelection): Promise<void> {
+  const selected: ActionSelection = Array.isArray(input)
+    ? { tracks: input, count: input.length }
+    : input
+  if (!selected.count) return
+  let allLiked = true,
+    succeeded = 0,
+    failed = 0,
+    unchanged = 0
+  const isCurrent = captureNcmSession()
   try {
-    for (let offset = 0; offset < appTracks.length; offset += 200)
-      await musicStore.getFavoriteTrackStates(appTracks.slice(offset, offset + 200))
+    await produceSelection(selected, async (tracks) => {
+      const appTracks = tracks.filter((track) => track.ncmSongId == null)
+      const summary = await musicStore.readFavoriteTrackPages(async (append) => {
+        await append(appTracks)
+      })
+      if (
+        summary.favoriteCount !== summary.count ||
+        tracks.some((track) => track.ncmSongId != null && !isStreamingTrackFavorited(track))
+      )
+        allLiked = false
+    })
+    await produceSelection(selected, async (tracks) => {
+      for (const track of tracks) {
+        if (track.ncmSongId != null) {
+          if (!isCurrent()) throw new Error('账号已改变，收藏操作已停止')
+          if (likingTracks.value.has(track.ncmSongId)) {
+            unchanged++
+            continue
+          }
+          likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
+          try {
+            await likeTrack(track.ncmSongId, !allLiked)
+            succeeded++
+          } catch {
+            failed++
+          } finally {
+            const next = new Set(likingTracks.value)
+            next.delete(track.ncmSongId)
+            likingTracks.value = next
+          }
+        } else {
+          try {
+            if (await musicStore.setFavoriteTracks([track], !allLiked)) succeeded++
+            else unchanged++
+          } catch {
+            failed++
+          }
+        }
+      }
+    })
+    const action = allLiked ? '取消收藏' : '收藏'
+    pushNotice({
+      kind: failed ? 'error' : succeeded ? 'success' : 'info',
+      message: failed
+        ? `${action}完成 ${succeeded}/${selected.count} 首，${failed} 首失败`
+        : `已${action} ${succeeded} 首歌曲${unchanged ? `，${unchanged} 首无需改动` : ''}`
+    })
   } catch (error) {
-    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '读取收藏状态失败') })
-    return
-  }
-  const allLiked = tracks.every(isStreamingTrackFavorited)
-  const actionLabel = streamingFavoriteLabel(tracks, allLiked)
-  let succeeded = 0
-  let failed = 0
-  // The local favorites playlist can decline a write when an equivalent entry is
-  // already there. Reporting that as success is how a silently dropped favorite
-  // used to look like it worked.
-  let unchanged = 0
-  for (const track of tracks) {
-    if (track.ncmSongId != null) {
-      if (likingTracks.value.has(track.ncmSongId)) continue
-      likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
-      try {
-        await likeTrack(track.ncmSongId, !allLiked)
-        succeeded++
-      } catch {
-        failed++
-      } finally {
-        const next = new Set(likingTracks.value)
-        next.delete(track.ncmSongId)
-        likingTracks.value = next
-      }
-    } else {
-      try {
-        if (await musicStore.setFavoriteTracks([track], !allLiked)) succeeded++
-        else unchanged++
-        await musicStore.getFavoriteTrackStates([track])
-      } catch {
-        failed++
-      }
-    }
-  }
-  if (failed > 0) {
-    pushNotice({
-      kind: 'error',
-      message: `${actionLabel}完成 ${succeeded}/${succeeded + failed} 首，${failed} 首失败`
-    })
-  } else if (unchanged > 0 && succeeded === 0) {
-    pushNotice({
-      kind: 'info',
-      message: allLiked ? '这些歌曲不在收藏中' : '这些歌曲已在收藏中'
-    })
-  } else if (tracks.length > 1) {
-    pushNotice({
-      kind: 'success',
-      message: `已${actionLabel} ${succeeded} 首歌曲${unchanged > 0 ? `，${unchanged} 首无需改动` : ''}`
-    })
+    setStreamingBatchRemovalError(friendlyStreamingError(error, '修改收藏失败'))
   }
 }
 
 async function handleStreamingBatchFavorite(): Promise<void> {
-  await favoriteStreamingTracks(getSelectedTracks())
+  await favoriteStreamingTracks(captureTrackSelection())
 }
 
 const ncmPlaylistEditor = createNcmPlaylistEditor({
@@ -3077,7 +3417,6 @@ const {
   convertAddToCreate: convertAddToCreatePlaylist
 } = ncmPlaylistEditor
 watch([activeProvider, isLoggedIn, () => profile.value?.userId], () => ncmPlaylistEditor.reset())
-onUnmounted(ncmPlaylistEditor.dispose)
 
 const deletingNcmPlaylistId = ref<string | number | null>(null)
 
@@ -3114,8 +3453,20 @@ watch([currentDetail, isLoggedIn], ([detail, loggedIn]) => {
   })
 })
 
-function openCreateNcmPlaylistDialog(seedTracks: Track[] = []): void {
-  ncmPlaylistEditor.openCreate(seedTracks)
+async function collectNcmIds(selected: ActionSelection): Promise<number[]> {
+  const ids = new Set<number>()
+  await produceSelection(selected, async (tracks) => {
+    for (const track of tracks)
+      if (track.ncmSongId != null && Number.isSafeInteger(track.ncmSongId) && track.ncmSongId > 0)
+        ids.add(track.ncmSongId)
+  })
+  return [...ids]
+}
+async function openCreateNcmPlaylistDialog(input: Track[] | ActionSelection = []): Promise<void> {
+  const selected = Array.isArray(input) ? { tracks: input, count: input.length } : input
+  const current = captureNcmSession()
+  const ids = await collectNcmIds(selected)
+  if (current()) ncmPlaylistEditor.openCreateIds(ids)
 }
 
 async function confirmCreateNcmPlaylist(): Promise<void> {
@@ -3133,7 +3484,7 @@ async function handleDeleteNcmPlaylist(playlist: MediaProviderPlaylistSummary): 
   deletingNcmPlaylistId.value = playlist.id
   try {
     await deleteNcmPlaylist(playlist.id)
-    removeDetailEntries(
+    await removeDetailEntries(
       (view) => view.type === 'playlist' && String(view.playlist.id) === String(playlist.id)
     )
   } catch (error) {
@@ -3143,13 +3494,21 @@ async function handleDeleteNcmPlaylist(playlist: MediaProviderPlaylistSummary): 
   }
 }
 
-function openAddToNcmPlaylistDialog(tracks: Track[] = getSelectedTracks()): void {
-  if (!canManageNcmPlaylists.value) return
-  if (!ncmPlaylistEditor.openAdd(tracks)) {
-    if (!addToNcmPlaylistBusy.value && !createNcmPlaylistBusy.value) {
+async function openAddToNcmPlaylistDialog(
+  input: Track[] | ActionSelection = captureTrackSelection(),
+  showDialog = true
+): Promise<boolean> {
+  if (!canManageNcmPlaylists.value) return false
+  const selected = Array.isArray(input) ? { tracks: input, count: input.length } : input
+  const current = captureNcmSession()
+  const ids = await collectNcmIds(selected)
+  if (!current()) return false
+  if (!ncmPlaylistEditor.openAddIds(ids, showDialog)) {
+    if (!addToNcmPlaylistBusy.value && !createNcmPlaylistBusy.value)
       setStreamingBatchRemovalError('所选曲目没有可写入网易云歌单的歌曲 ID')
-    }
+    return false
   }
+  return true
 }
 
 async function confirmAddTracksToNcmPlaylist(
@@ -3159,22 +3518,15 @@ async function confirmAddTracksToNcmPlaylist(
   const token = detailLoadToken
   const isCurrentSession = captureNcmSession()
   const providerId = activeProvider.value
-  const selected = addToNcmPlaylistTracks.value.map((track) => ({ ...track }))
   if (!(await ncmPlaylistEditor.confirmAdd(playlistId))) return
   if (!isCurrentSession() || activeProvider.value !== providerId) return
   for (const entry of detailStack.value) {
     if (
-      entry.view.type !== 'playlist' ||
-      String(entry.view.playlist.id) !== String(playlistId) ||
-      !entry.snapshot
+      entry.view.type === 'playlist' &&
+      String(entry.view.playlist.id) === String(playlistId) &&
+      entry.snapshot
     )
-      continue
-    const before = entry.snapshot.tracks.length
-    entry.snapshot.tracks = appendNcmPlaylistTracks(entry.snapshot.tracks, selected)
-    entry.view.playlist = {
-      ...entry.view.playlist,
-      trackCount: (entry.view.playlist.trackCount ?? before) + entry.snapshot.tracks.length - before
-    }
+      entry.refresh = true
   }
   const matchesTarget = (): boolean =>
     isCurrentSession() &&
@@ -3191,7 +3543,7 @@ async function confirmAddTracksToNcmPlaylist(
   try {
     const tracks = await fetchPlaylistTracks(playlistId, true)
     if (!matchesTarget() || !isActiveDetailLoad(refreshToken)) return
-    detailTracks.value = tracks
+    await setDetailTracks(tracks)
     if (currentDetail.value?.type === 'playlist')
       replaceTopDetail({
         ...currentDetail.value,
@@ -3206,168 +3558,116 @@ async function confirmAddTracksToNcmPlaylist(
   }
 }
 
-async function removeStreamingTracks(selected: Track[]): Promise<void> {
-  if (selected.length === 0) return
-
-  if (canMutateCurrentNcmPlaylist.value && currentDetail.value?.type === 'playlist') {
-    const playlistId = currentDetail.value.playlist.id
-    const playlistName = currentDetail.value.playlist.name
-    const token = detailLoadToken
-    const providerId = activeProvider.value
-    const isCurrentSession = captureNcmSession()
-    const isTargetPlaylist = (): boolean =>
-      isCurrentSession() &&
-      activeProvider.value === providerId &&
-      currentDetail.value?.type === 'playlist' &&
-      String(currentDetail.value.playlist.id) === String(playlistId)
-    const trackIds = [
-      ...new Set(
-        selected
-          .map((track) => track.ncmSongId)
-          .filter((id): id is number => id != null && Number.isFinite(id) && id > 0)
-      )
-    ]
-    if (trackIds.length === 0) {
-      setStreamingBatchRemovalError('所选曲目没有可从网易云歌单移除的歌曲 ID')
-      return
-    }
-    if (!window.confirm(`确定从歌单「${playlistName}」移除所选 ${trackIds.length} 首歌曲？`)) {
-      return
-    }
-    try {
-      await removeNcmTracksFromPlaylist(playlistId, trackIds)
-      const removedSongIds = new Set(trackIds)
-      // Update only cached snapshots for this account/playlist. Navigation may
-      // have moved the source entry below another detail while the write ran.
-      if (isCurrentSession() && activeProvider.value === providerId) {
-        for (const entry of detailStack.value) {
-          if (
-            entry.view.type !== 'playlist' ||
-            String(entry.view.playlist.id) !== String(playlistId) ||
-            !entry.snapshot
-          )
-            continue
-          const before = entry.snapshot.tracks.length
-          entry.snapshot.tracks = entry.snapshot.tracks.filter(
-            (track) => track.ncmSongId == null || !removedSongIds.has(track.ncmSongId)
-          )
-          entry.view.playlist = {
-            ...entry.view.playlist,
-            trackCount: Math.max(
-              0,
-              (entry.view.playlist.trackCount ?? before) - (before - entry.snapshot.tracks.length)
-            )
-          }
-        }
-      }
-      if (!isTargetPlaylist()) return
-      if (!isActiveDetailLoad(token)) {
-        // A -> B -> A: refresh the newly opened view, never apply the old
-        // operation's optimistic state to a different detail generation.
-        const refreshToken = ++detailLoadToken
-        detailLoading.value = true
-        detailError.value = ''
-        try {
-          const tracks = await fetchPlaylistTracks(playlistId, true)
-          if (isTargetPlaylist() && isActiveDetailLoad(refreshToken)) {
-            detailTracks.value = tracks
-            if (currentDetail.value?.type === 'playlist') {
-              replaceTopDetail({
-                ...currentDetail.value,
-                playlist: { ...currentDetail.value.playlist, trackCount: tracks.length }
-              })
-            }
-          }
-        } catch (error) {
-          if (isTargetPlaylist() && isActiveDetailLoad(refreshToken)) {
-            detailError.value = friendlyStreamingError(error, '歌曲已移除，刷新歌单失败')
-          }
-        } finally {
-          if (isTargetPlaylist() && isActiveDetailLoad(refreshToken)) detailLoading.value = false
-        }
+async function removeStreamingTracks(input: Track[] | ActionSelection): Promise<void> {
+  const selected: ActionSelection = Array.isArray(input)
+    ? { tracks: input, count: input.length }
+    : input
+  if (!selected.count) return
+  const token = detailLoadToken,
+    provider = activeProvider.value,
+    isCurrent = captureNcmSession()
+  const target =
+    currentDetail.value?.type === 'playlist' ? { ...currentDetail.value.playlist } : null
+  try {
+    if (canMutateCurrentNcmPlaylist.value && target) {
+      const ids = await collectNcmIds(selected)
+      if (!ids.length) {
+        setStreamingBatchRemovalError('所选曲目没有可从网易云歌单移除的歌曲 ID')
         return
       }
-      if (currentDetail.value?.type !== 'playlist') return
-      const before = detailTracks.value.length
-      detailTracks.value = detailTracks.value.filter(
-        (track) => track.ncmSongId == null || !removedSongIds.has(track.ncmSongId)
+      if (!window.confirm(`确定从歌单「${target.name}」移除所选 ${ids.length} 首歌曲？`)) return
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        if (!isCurrent() || provider !== activeProvider.value)
+          throw new Error('账号已改变，移除操作已停止')
+        await removeNcmTracksFromPlaylist(target.id, ids.slice(offset, offset + 200))
+      }
+      for (const entry of detailStack.value) {
+        if (
+          entry.view.type === 'playlist' &&
+          String(entry.view.playlist.id) === String(target.id) &&
+          entry.snapshot
+        )
+          entry.refresh = true
+      }
+      if (
+        isCurrent() &&
+        provider === activeProvider.value &&
+        currentDetail.value?.type === 'playlist' &&
+        String(currentDetail.value.playlist.id) === String(target.id)
       )
-      replaceTopDetail({
-        ...currentDetail.value,
-        playlist: {
-          ...currentDetail.value.playlist,
-          trackCount: Math.max(
-            0,
-            (currentDetail.value.playlist.trackCount ?? before) -
-              (before - detailTracks.value.length)
-          )
-        }
-      })
-      clearSelection()
+        await openPlaylist(currentDetail.value.playlist, true, true)
+      if (token === detailLoadToken) clearSelection()
       pushNotice({
         kind: 'success',
-        message: `已从歌单「${playlistName}」移除 ${trackIds.length} 首歌曲`
+        message: `已从歌单「${target.name}」移除 ${ids.length} 首歌曲`
       })
-    } catch (error) {
-      if (isTargetPlaylist() && isActiveDetailLoad(token)) {
-        setStreamingBatchRemovalError(friendlyStreamingError(error, '从歌单移除失败'))
+      return
+    }
+    let localCount = 0
+    await produceSelection(selected, async (tracks) => {
+      localCount += tracks.filter((track) => getTrackSource(track) === 'local').length
+    })
+    const providerCount = selected.count - localCount
+    const consequences = [
+      localCount ? `${localCount} 首将从本地曲库移除` : '',
+      providerCount ? `${providerCount} 首将取消收藏` : ''
+    ]
+      .filter(Boolean)
+      .join('，')
+    if (!window.confirm(`确定删除所选 ${selected.count} 首歌曲？${consequences}。此操作不可撤销。`))
+      return
+    let removed = 0,
+      failures = 0
+    const messages: string[] = []
+    await produceSelection(selected, async (tracks) => {
+      const result = await executeStreamingBatchRemoval(tracks, {
+        removeLocalTracks: musicStore.removeLocalTracks,
+        removeProviderTrack: (track) =>
+          removeStreamingProviderFavorite(track, {
+            providers: mediaProviders,
+            removeNcmFavorite: (songId) => likeTrack(songId, false),
+            removeSnapshotFavorite: async (track) => {
+              await musicStore.setFavoriteTracks([track], false)
+            }
+          })
+      })
+      removed += result.removedTrackIds.length
+      failures += result.failures.length
+      for (const failure of result.failures) if (messages.length < 3) messages.push(failure.message)
+      if (isSearching.value && token === detailLoadToken) {
+        const removedIds = new Set(result.removedTrackIds)
+        searchResults.value = searchResults.value.filter((track) => !removedIds.has(track.id))
+      }
+    })
+    if (token === detailLoadToken) {
+      clearSelection()
+      if (target && currentDetail.value?.type === 'playlist') await openPlaylist(target, true, true)
+      else if (currentDetail.value?.type === 'liked') {
+        await detailBrowse.open({
+          providerId: NCM_PROVIDER_ID,
+          method: 'fetchLikedTracksPage',
+          args: [0, 200, true],
+          paging: { offsetArg: 0, limitArg: 1 }
+        })
       }
     }
-    return
-  }
-
-  const localCount = selected.filter((track) => getTrackSource(track) === 'local').length
-  const providerCount = selected.length - localCount
-  const consequences = [
-    localCount > 0 ? `${localCount} 首将从本地曲库移除` : '',
-    providerCount > 0 ? `${providerCount} 首将取消收藏` : ''
-  ]
-    .filter(Boolean)
-    .join('，')
-  if (
-    !window.confirm(`确定删除所选 ${selected.length} 首歌曲？${consequences}。此操作不可撤销。`)
-  ) {
-    return
-  }
-
-  try {
-    const result = await executeStreamingBatchRemoval(selected, {
-      removeLocalTracks: musicStore.removeLocalTracks,
-      removeProviderTrack: (track) =>
-        removeStreamingProviderFavorite(track, {
-          providers: mediaProviders,
-          removeNcmFavorite: (songId) => likeTrack(songId, false),
-          removeSnapshotFavorite: async (track) => {
-            await musicStore.setFavoriteTracks([track], false)
-          }
-        })
+    pushNotice({
+      kind: failures ? 'error' : 'success',
+      message: failures
+        ? `已删除 ${removed}/${selected.count} 首；${failures} 首失败：${messages.join('；')}`
+        : `已删除 ${removed} 首歌曲`
     })
-    const removed = new Set(result.removedTrackIds)
-    detailTracks.value = detailTracks.value.filter((track) => !removed.has(track.id))
-    if (isSearching.value) {
-      searchResults.value = searchResults.value.filter((track) => !removed.has(track.id))
-    }
-    if (result.failures.length > 0) {
-      setStreamingBatchRemovalError(
-        `已删除 ${removed.size}/${selected.length} 首；失败：${result.failures
-          .map((failure) => failure.message)
-          .join('；')}`
-      )
-    } else if (removed.size > 0) {
-      pushNotice({ kind: 'success', message: `已删除 ${removed.size} 首歌曲` })
-    }
-    clearSelection()
   } catch (error) {
     setStreamingBatchRemovalError(friendlyStreamingError(error, '移除曲目失败'))
   }
 }
 
 async function handleStreamingBatchDelete(): Promise<void> {
-  await removeStreamingTracks(getSelectedTracks())
+  await removeStreamingTracks(captureTrackSelection())
 }
 
 function handleStreamingBatchAddToPlaylist(): void {
-  openAddToNcmPlaylistDialog(getSelectedTracks())
+  void openAddToNcmPlaylistDialog(captureTrackSelection())
 }
 
 // Batch-action failures go to the app notice channel — never into searchError/detailError,
@@ -3421,10 +3721,7 @@ async function playLikedSongs(): Promise<void> {
   if (!isViewingLiked) {
     await openLikedTracks()
   }
-  const tracks = visibleDetailTracks.value
-  if (tracks.length > 0) {
-    playStreamingTrack(tracks[0], tracks)
-  }
+  await playBrowseTracks()
 }
 
 async function retryCurrentView(): Promise<void> {
@@ -3504,6 +3801,7 @@ watch(
 )
 
 let lastMetadataNavigationKey = 0
+let restoringPage = false
 let playbackNavigationInFlight = 0
 let playbackNavigationSyncToken: number | null = null
 
@@ -3566,7 +3864,10 @@ watch(
 // first provider that can back the current streaming surface, so we only act
 // on real changes.
 watch(activeProvider, async (provider, oldProvider) => {
+  if (restoringPage) return
   if (provider === oldProvider || props.active === false) return
+  browseContexts = captureBrowseContexts()
+  void browseContexts.catch(() => {})
   // Preserve the request that initiated an internal source switch.
   const keepNavigationRequest =
     provider === detailNavigationProvider || playbackNavigationSyncToken === detailNavigationToken
@@ -3620,6 +3921,7 @@ watch(activeProvider, async (provider, oldProvider) => {
 })
 
 watch(activeTab, async (tab) => {
+  if (restoringPage) return
   if (props.active === false) return
   if (tab === 'home') {
     if (!providerSupportsHome(activeProvider.value)) {
@@ -3664,6 +3966,7 @@ watch(activeTab, async (tab) => {
 })
 
 watch(activeLoggedIn, async () => {
+  if (restoringPage) return
   if (props.active === false) return
   if (!isExternalActive.value) return
   recommendationRequestId += 1
@@ -3680,6 +3983,7 @@ watch(activeLoggedIn, async () => {
 watch(
   () => isLoggedIn.value,
   async (loggedIn) => {
+    if (restoringPage) return
     if (!loggedIn) {
       resetDetail()
       likedCount.value = null
@@ -3755,11 +4059,167 @@ watch(
 onMounted(async () => {
   // Explicit playback navigation performs its own provider readiness check.
   if (props.metadataNavigationRequest) return
+  if (await restorePageState()) return
   await providerStore.syncProviders().catch(() => undefined)
   // syncProviders may have resolved the preferred external provider, in which
   // case the activeProvider watcher above already handles the initial load.
   if (props.active !== false) await refreshStreamingSurface()
 })
+
+function pageCacheKey(): string {
+  return `streaming:${props.initialTab ?? 'home'}`
+}
+function pageEpoch(): string {
+  return `${core.state.value?.epoch ?? ''}:${props.rootNavigationRevision ?? 0}`
+}
+
+onBeforeUnmount(() => {
+  saveStreamingScrollPosition()
+  detailLoadToken++
+  detailNavigationToken++
+  recommendationRequestId++
+  const detail = captureDetailState()
+  const history = detailStack.value.map((entry) => ({
+    view: entry.view,
+    fromPlayback: entry.fromPlayback,
+    refresh: entry.refresh,
+    snapshot: entry.snapshot && { id: entry.snapshot.id, sessionId: entry.snapshot.sessionId }
+  }))
+  const value = {
+    provider: preferredProvider.value,
+    fallbackProvider: fallbackProvider.value,
+    detail,
+    scroll: [...savedScrollPositions],
+    search: captureSearch(),
+    discovery: discovery.capture(),
+    home: {
+      definitions: homeSectionDefinitions.value,
+      tracks: recommendationTracks.value,
+      errors: recommendationErrors.value,
+      playlists: recommendPlaylists.value,
+      providerId: recommendationProviderId.value,
+      sessions: recommendationSessions.value
+    },
+    external: { ...externalStates },
+    lastMetadataNavigationKey,
+    aggregate: {
+      show: showCreateAggregateDialog.value,
+      name: aggregateDraftName.value,
+      selection: createAggregateSelection.value
+    }
+  }
+  const pending = Promise.all([
+    Promise.all(
+      history.map(async (entry) => ({
+        ...entry,
+        snapshot: entry.snapshot ? { ...entry.snapshot, id: await entry.snapshot.id } : undefined
+      }))
+    ),
+    ncmPlaylistEditor.whenIdle()
+  ])
+    .then(
+      ([stack]) =>
+        ({
+          ...value,
+          stack,
+          draft: ncmPlaylistEditor.captureDraft(),
+          ownedIds: [
+            ...(detail.browse.session ? [detail.browse.session.id] : []),
+            ...Object.values(value.home.sessions).map((session) => session.id),
+            ...stack.flatMap((entry) =>
+              entry.snapshot
+                ? [
+                    entry.snapshot.id,
+                    ...(entry.snapshot.sessionId ? [entry.snapshot.sessionId] : [])
+                  ]
+                : []
+            )
+          ]
+        }) as unknown as Record<string, unknown>
+    )
+    .finally(() => ncmPlaylistEditor.dispose())
+  saveBrowsePage(
+    pageCacheKey(),
+    pageEpoch(),
+    providerStore.providers.value.map((provider) => provider.id),
+    pending,
+    core,
+    browseContexts
+  )
+  detailBrowse.dispose()
+})
+
+async function restorePageState(): Promise<boolean> {
+  const cached = await restoreBrowsePage(pageCacheKey(), pageEpoch())
+  if (!cached) return false
+  const value = cached as unknown as {
+    provider: string
+    fallbackProvider: string | null
+    detail: DetailSnapshot
+    stack: Array<
+      Omit<DetailStackEntry, 'snapshot'> & { snapshot?: { id: string; sessionId?: string } }
+    >
+    scroll: Array<[string, number]>
+    search: ReturnType<typeof captureSearch>
+    discovery: ReturnType<typeof discovery.capture>
+    home: {
+      definitions: HomeSectionDefinition[]
+      tracks: Record<string, Track[]>
+      errors: Record<string, string>
+      playlists: MediaProviderPlaylistSummary[]
+      providerId: string
+      sessions: Record<string, BrowseSession>
+    }
+    external: Record<string, ExternalProviderState>
+    lastMetadataNavigationKey: number
+    draft: ReturnType<typeof ncmPlaylistEditor.captureDraft>
+    aggregate: { show: boolean; name: string; selection: ActionSelection | null }
+  }
+  restoringPage = true
+  try {
+    preferredProvider.value = value.provider
+    fallbackProvider.value = value.fallbackProvider
+    Object.assign(externalStates, value.external)
+    homeSectionDefinitions.value = value.home.definitions
+    recommendationTracks.value = value.home.tracks
+    recommendationErrors.value = value.home.errors
+    recommendPlaylists.value = value.home.playlists
+    recommendationProviderId.value = value.home.providerId
+    recommendationSessions.value = value.home.sessions
+    await nextTick()
+    detailStack.value = value.stack.map((entry) => ({
+      ...entry,
+      snapshot: entry.snapshot
+        ? markRaw({ ...entry.snapshot, id: Promise.resolve(entry.snapshot.id) })
+        : undefined
+    }))
+    for (const [key, scroll] of value.scroll) savedScrollPositions.set(key, scroll)
+    discovery.restore(value.discovery)
+    await restoreSearch(value.search)
+    lastMetadataNavigationKey = value.lastMetadataNavigationKey
+    const snapshot = (await core.command('browse.snapshot.save', {
+      providerIds: [activeProvider.value],
+      value: browseSnapshotValue(value.detail) as unknown as Record<string, unknown>
+    })) as { id: string }
+    await applyDetailState({
+      id: Promise.resolve(snapshot.id),
+      sessionId: value.detail.browse.session?.id
+    })
+    ncmPlaylistEditor.restoreDraft(value.draft)
+    showCreateAggregateDialog.value = value.aggregate.show
+    aggregateDraftName.value = value.aggregate.name
+    createAggregateSelection.value = value.aggregate.selection
+    await nextTick()
+    restoringPage = false
+    restoreStreamingScrollPosition()
+    return true
+  } catch (error) {
+    detailError.value = friendlyStreamingError(error, '恢复页面失败')
+    return false
+  } finally {
+    restoringPage = false
+  }
+}
 </script>
 
 <template>
@@ -4036,10 +4496,16 @@ onMounted(async () => {
                   :icon="detailHeaderInfo.icon"
                   :track-count-label="detailTrackCountLabel"
                   :tracks="visibleDetailTracks"
+                  :browse-rows="browseState.rows"
+                  :browse-offset="browseState.offset"
+                  :browse-total="browseState.rowTotal"
+                  :duration="browseState.session?.duration"
+                  @browse-range="loadBrowseRange"
+                  @browse-groups="changeBrowseGroups"
                   v-model:query="detailQuery"
                   v-model:sort="detailSort"
                   v-model:direction="detailSortDirection"
-                  :total-tracks="detailTracks.length"
+                  :total-tracks="browseState.total"
                   :refreshing="detailLoading"
                   @refresh="retryCurrentView"
                   :current-track-id="currentTrack?.id ?? null"
@@ -4106,6 +4572,9 @@ onMounted(async () => {
                 :tabs="socialStageKind === 'artist' ? artistDetailTabs : []"
                 :active-tab="socialStageKind === 'artist' ? activeArtistTab : ''"
                 :tracks="detailTracks"
+                :track-offset="browseState.offset"
+                :track-total="browseState.total"
+                @browse-range="loadBrowseRange"
                 :current-track-id="currentTrack?.id ?? null"
                 :track-activation-mode="settingsStore.settings.value.trackActivationMode"
                 :is-external="isExternalActive"
@@ -4245,6 +4714,9 @@ onMounted(async () => {
       <CreateAggregatePlaylistDialog
         :show="showCreateAggregateDialog"
         :tracks="createAggregateTracks"
+        :track-count="createAggregateSelection?.count ?? 0"
+        :create-with-tracks="createSelectedAggregatePlaylist"
+        v-model:draft-name="aggregateDraftName"
         @close="showCreateAggregateDialog = false"
         @created="onAggregatePlaylistCreated"
       />
@@ -4259,6 +4731,7 @@ onMounted(async () => {
         :add-busy="addToNcmPlaylistBusy"
         :add-error="addToNcmPlaylistError"
         :add-tracks="addToNcmPlaylistTracks"
+        :add-count="ncmPlaylistEditor.addCount.value"
         :owned-user-playlists="ownedUserPlaylists"
         @close-create="closeCreateNcmPlaylistDialog"
         @confirm-create="confirmCreateNcmPlaylist"

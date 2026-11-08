@@ -8,7 +8,6 @@ import { parseCorrectionProfileFile } from './correctionProfile.ts'
 import { DspAssetLibrary } from './dspAssetLibrary.ts'
 
 const { mkdir, mkdtemp, readFile, rm, stat, writeFile } = coreFsPromises
-const { yauzl, extractZip } = coreArchive
 
 const MAX_PROFILE_ARCHIVE_BYTES = 512 * 1024 * 1024
 const MAX_PROFILE_FILES = 1024
@@ -117,7 +116,7 @@ export async function importDspProfileArchive(
   await inspectProfileArchive(source, maxBytes)
   const temporaryRoot = await mkdtemp(join(temporaryDirectory, 'twilight-dsp-profile-'))
   try {
-    await extractZip(source, { dir: temporaryRoot })
+    await coreArchive.extractZip(source, { dir: temporaryRoot })
     const manifestPath = resolve(temporaryRoot, 'manifest.json')
     const manifestInfo = await stat(manifestPath)
     if (!manifestInfo.isFile() || manifestInfo.size > MAX_PROFILE_MANIFEST_BYTES) {
@@ -227,7 +226,7 @@ function isArchiveAsset(value: unknown): value is ProfileArchiveManifest['assets
 
 async function inspectProfileArchive(source: string, maxBytes = MAX_PROFILE_ARCHIVE_BYTES): Promise<void> {
   await new Promise<void>((resolveInspect, rejectInspect) => {
-    yauzl.open(
+    coreArchive.yauzl.open(
       source,
       { lazyEntries: true, validateEntrySizes: false },
       (error: Error | null, zipFile?: ZipFile) => {

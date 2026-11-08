@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { provideWorkspaceSession } from '../composables/workspaceSession'
 import DspRackPage from './DspRackPage.vue'
 import DspSignalOverview from './dsp-rack/DspSignalOverview.vue'
 import AppBackgroundLayer from './AppBackgroundLayer.vue'
@@ -13,6 +14,8 @@ import {
 } from '@renderer/composables/useDspEditorWindow'
 const EqualizerPage = defineAsyncComponent(() => import('./EqualizerPage.vue'))
 const props = defineProps<{ active: boolean; initialTab: DspWorkspaceTab }>()
+const emit = defineEmits<{ suspendReady: [ready: boolean] }>()
+const workspaceSession = provideWorkspaceSession('audio')
 const rack = ref<InstanceType<typeof DspRackPage> | null>(null)
 const equalizer = ref<InstanceType<typeof EqualizerPage> | null>(null)
 const tab = ref<DspWorkspaceTab>(props.initialTab)
@@ -28,6 +31,21 @@ const switching = ref(false)
 const signalDialog = ref<HTMLDialogElement | null>(null)
 const signalButton = ref<HTMLButtonElement | null>(null)
 const signalOpen = ref(false)
+const workspaceState = () => ({
+  tab: tab.value,
+  initialTab: props.initialTab,
+  scrollTop: contentRef.value?.scrollTop ?? 0
+})
+workspaceSession.register('workspace', workspaceState)
+const suspendedWorkspace = workspaceSession.read<ReturnType<typeof workspaceState>>('workspace')
+if (suspendedWorkspace?.initialTab === props.initialTab) tab.value = suspendedWorkspace.tab
+watch(
+  contentRef,
+  (element) => {
+    if (element && suspendedWorkspace) element.scrollTop = suspendedWorkspace.scrollTop
+  },
+  { flush: 'post' }
+)
 const { audioProcessing, audioEngineReady, dspGraphStatus } = storeToRefs(useAudioOutputDspStore())
 const outputStore = useAudioOutputDspStore()
 const effectiveStatus = computed(() => status.value ?? dspGraphStatus?.value ?? null)
@@ -172,6 +190,29 @@ function beforeUnload(event: BeforeUnloadEvent): void {
 window.addEventListener('beforeunload', beforeUnload)
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 defineExpose({ requestLeave: leave })
+watch(
+  [
+    () => props.active,
+    detached,
+    masterBusy,
+    switching,
+    () => rack.value?.busy,
+    () => rack.value?.loading,
+    () => equalizer.value?.busy
+  ],
+  () =>
+    emit(
+      'suspendReady',
+      !props.active &&
+        !detached.value &&
+        !masterBusy.value &&
+        !switching.value &&
+        !rack.value?.busy &&
+        !rack.value?.loading &&
+        !equalizer.value?.busy
+    ),
+  { immediate: true, flush: 'sync' }
+)
 </script>
 
 <template>

@@ -111,14 +111,18 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
   }
   const page = createCorePlayerResource(
     pageKey,
-    () => {
+    (signal) => {
       const queue = reference.value!
-      return core.query('queue.page', {
-        id: queue.id,
-        revision: queue.revision,
-        offset: Math.floor(Math.max(0, queue.index) / LIBRARY_PAGE_SIZE) * LIBRARY_PAGE_SIZE,
-        limit: LIBRARY_PAGE_SIZE
-      })
+      return core.query(
+        'queue.page',
+        {
+          id: queue.id,
+          revision: queue.revision,
+          offset: Math.floor(Math.max(0, queue.index) / LIBRARY_PAGE_SIZE) * LIBRARY_PAGE_SIZE,
+          limit: LIBRARY_PAGE_SIZE
+        },
+        signal
+      )
     },
     failed
   )
@@ -413,6 +417,14 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
       context?: { heartModePlaylistId?: number | null }
     ) => playTrackFromPosition(track, 0, tracks, context),
     playTrackFromPosition,
+    playTrackPages: async (
+      produce: (append: (tracks: readonly QueueTrack[]) => Promise<void>) => Promise<unknown>,
+      selectedIndex = 0,
+      guard: () => void = () => {}
+    ): Promise<void> => submitInputs(
+      append => produce(tracks => append(tracks.map(track => coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)))),
+      selectedIndex, 0, true, guard
+    ),
     playLikedTracks,
     playLibraryQuery: async (
       query: LibraryQuery,

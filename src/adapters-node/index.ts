@@ -1,15 +1,3 @@
-import * as nodeFs from 'node:fs'
-import * as nodeFsPromises from 'node:fs/promises'
-import { Readable, Writable, PassThrough, Transform, Duplex } from 'node:stream'
-import { finished as nodeFinished, pipeline as nodePipeline } from 'node:stream/promises'
-import * as nodeOs from 'node:os'
-import * as nodeHttp from 'node:http'
-import * as nodeHttps from 'node:https'
-import * as nodeNet from 'node:net'
-import * as nodeDgram from 'node:dgram'
-import * as nodeTls from 'node:tls'
-import * as nodeZlib from 'node:zlib'
-import * as nodeCrypto from 'node:crypto'
 import { createRequire as nodeCreateRequire } from 'node:module'
 import {
   registerCorePorts,
@@ -48,26 +36,24 @@ function lazyLoad<T>(loader: () => T): () => T {
 }
 
 export function createNodeCorePorts(): CorePorts {
-  const fsPromisesPort: CoreFsPromisesPort = nodeFsPromises as unknown as CoreFsPromisesPort
-  const fsPort: CoreFsPort = nodeFs as unknown as CoreFsPort
-  const streamPort: CoreStreamPort = {
-    Readable: Readable as unknown as CoreStreamPort['Readable'],
-    Writable: Writable as unknown as CoreStreamPort['Writable'],
-    PassThrough: PassThrough as unknown as CoreStreamPort['PassThrough'],
-    Transform: Transform as unknown as CoreStreamPort['Transform'],
-    Duplex: Duplex as unknown as CoreStreamPort['Duplex'],
-    pipeline: nodePipeline as unknown as CoreStreamPort['pipeline'],
-    finished: nodeFinished as unknown as CoreStreamPort['finished']
-  }
-  const osPort: CoreOsPort = nodeOs as unknown as CoreOsPort
+  // Each utility process registers these ports, but local playback does not need
+  // every network, TLS and compression module to remain loaded in each process.
+  const fsPromisesPort = lazyLoad(() => nodeRequire('node:fs/promises') as CoreFsPromisesPort)
+  const fsPort = lazyLoad(() => nodeRequire('node:fs') as CoreFsPort)
+  const streamPort = lazyLoad((): CoreStreamPort => {
+    const { Readable, Writable, PassThrough, Transform, Duplex } = nodeRequire('node:stream')
+    const { pipeline, finished } = nodeRequire('node:stream/promises')
+    return { Readable, Writable, PassThrough, Transform, Duplex, pipeline, finished }
+  })
+  const osPort = lazyLoad(() => nodeRequire('node:os') as CoreOsPort)
   const processPort: CoreProcessPort = process as unknown as CoreProcessPort
-  const httpPort: CoreHttpPort = nodeHttp as unknown as CoreHttpPort
-  const httpsPort: CoreHttpsPort = nodeHttps as unknown as CoreHttpsPort
-  const netPort: CoreNetPort = nodeNet as unknown as CoreNetPort
-  const dgramPort: CoreDgramPort = nodeDgram as unknown as CoreDgramPort
-  const tlsPort: CoreTlsPort = nodeTls as unknown as CoreTlsPort
-  const zlibPort: CoreZlibPort = nodeZlib as unknown as CoreZlibPort
-  const cryptoPort: CoreCryptoPort = nodeCrypto as unknown as CoreCryptoPort
+  const httpPort = lazyLoad(() => nodeRequire('node:http') as CoreHttpPort)
+  const httpsPort = lazyLoad(() => nodeRequire('node:https') as CoreHttpsPort)
+  const netPort = lazyLoad(() => nodeRequire('node:net') as CoreNetPort)
+  const dgramPort = lazyLoad(() => nodeRequire('node:dgram') as CoreDgramPort)
+  const tlsPort = lazyLoad(() => nodeRequire('node:tls') as CoreTlsPort)
+  const zlibPort = lazyLoad(() => nodeRequire('node:zlib') as CoreZlibPort)
+  const cryptoPort = lazyLoad(() => nodeRequire('node:crypto') as CoreCryptoPort)
   const modulePort: CoreModulePort = {
     createRequire: nodeCreateRequire as unknown as CoreModulePort['createRequire']
   }
@@ -178,18 +164,40 @@ export function createNodeCorePorts(): CorePorts {
   }
 
   return {
-    fs: fsPort,
-    fsPromises: fsPromisesPort,
-    stream: streamPort,
-    os: osPort,
+    get fs() {
+      return fsPort()
+    },
+    get fsPromises() {
+      return fsPromisesPort()
+    },
+    get stream() {
+      return streamPort()
+    },
+    get os() {
+      return osPort()
+    },
     process: processPort,
-    http: httpPort,
-    https: httpsPort,
-    net: netPort,
-    dgram: dgramPort,
-    tls: tlsPort,
-    zlib: zlibPort,
-    crypto: cryptoPort,
+    get http() {
+      return httpPort()
+    },
+    get https() {
+      return httpsPort()
+    },
+    get net() {
+      return netPort()
+    },
+    get dgram() {
+      return dgramPort()
+    },
+    get tls() {
+      return tlsPort()
+    },
+    get zlib() {
+      return zlibPort()
+    },
+    get crypto() {
+      return cryptoPort()
+    },
     module: modulePort,
     archive: archivePort,
     audioMetadata: audioMetadataPort,

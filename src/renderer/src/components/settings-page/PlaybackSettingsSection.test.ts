@@ -15,7 +15,7 @@ const settingsCss = readFileSync(new URL('./SettingsPage.css', import.meta.url),
 const require = createRequire(import.meta.url)
 
 test('automatic exclusive release uses the persisted setting and an accessible dependent switch', () => {
-  assert.match(source, /audioExclusiveAutoRelease: !settings\.value\.audioExclusiveAutoRelease/)
+  assert.match(source, /setExclusiveAutoRelease\(!settings\.value\.audioExclusiveAutoRelease\)/)
   assert.match(source, /aria-label="独占模式自动启停"/)
   assert.match(source, /:aria-checked="settings\.audioExclusiveAutoRelease"/)
   assert.match(
@@ -52,7 +52,7 @@ test('released output replaces playback proof and the HiFi occupancy label', () 
   assert.match(sidebar, /if \(props\.outputReleased\) return `\$\{backend\} · RELEASED`/)
 })
 
-test('production AutoMix modes, stem installation and playback policy survive settings reload and component reopen', async () => {
+test('production playback policies and exclusive auto release apply and survive settings reload and component reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-playback-policy-'))
   try {
     await writeFile(join(directory, 'entry.ts'), policyRuntime)
@@ -147,22 +147,43 @@ import {defineStore} from 'pinia'
 import {normalizeOutputConfig} from '@shared/audioOutputConfig.ts'
 import {DEFAULT_DSP_OUTPUT_STAGE} from '@shared/dspGraph.ts'
 import {DEFAULT_AUDIO_PROCESSING} from '@core/audio/audioEngineHelpers.ts'
+import {createCorePlayerAudio} from '@renderer/stores/player/corePlayerAudio.ts'
+import {validCorePayload} from '@shared/coreRequestValidation.ts'
 export const persisted=ref(normalizeOutputConfig({pcmToDsdMode:'dsd128',dsdMutePreRollFrames:1024}))
 export const engine=ref({...persisted.value})
-export const appSettings=ref({autoMixMode:'off',autoMixStemMode:'auto',autoMixStemDevice:'auto',autoMixStemCacheMiB:512,audioOutputConfig:{...persisted.value},sleepTimer:{defaultMinutes:30,fadeSeconds:0}})
+export const appSettings=ref({autoMixMode:'off',autoMixStemMode:'auto',autoMixStemDevice:'auto',autoMixStemCacheMiB:512,audioExclusiveAutoRelease:false,audioOutputConfig:{...persisted.value},sleepTimer:{defaultMinutes:30,fadeSeconds:0}})
 export const stemCapabilities=ref({status:'missing',cpu:false,gpu:false,packs:[]})
 export const rejectSettings=ref(false)
 export const audioOutputConfig=ref(normalizeOutputConfig())
 watch(()=>appSettings.value.audioOutputConfig,value=>{audioOutputConfig.value=normalizeOutputConfig(value)},{immediate:true})
 const audioProcessing=ref(structuredClone(DEFAULT_AUDIO_PROCESSING))
-const exclusiveMode=ref(false)
+export const exclusiveMode=ref(false)
+export const exclusiveAvailable=ref(true)
+export const releasePolicy={persisted:false,applied:false,revision:7,edits:[],fail:false,hold:null}
+const releaseClient={state:ref({epoch:'test',settingsRevision:0,audioRevision:0}),query:async(name,payload)=>{
+ if(!validCorePayload(name,payload))throw Error('Unknown or malformed Core operation')
+ if(name==='audio.output')return {revision:releasePolicy.revision,output:{output:'wasapi',device:'auto',exclusiveMode:exclusiveMode.value,exclusiveAvailable:exclusiveAvailable.value,outputOptions:[],deviceOptions:[]},config:{...audioOutputConfig.value},applyStatus:{state:'idle'},exclusiveAutoRelease:releasePolicy.persisted}
+ return null
+},command:async(name,payload)=>{
+ if(!validCorePayload(name,payload))throw Error('Unknown or malformed Core operation')
+ if(name!=='audio.output.edit'||payload.edit.kind!=='autoRelease')throw Error('Unexpected audio command')
+ if(payload.revision!==releasePolicy.revision)throw Error('STALE_REVISION')
+ releasePolicy.edits.push(payload.edit.enabled)
+ if(releasePolicy.hold)await releasePolicy.hold
+ if(releasePolicy.fail)throw Error('exclusive policy rejected')
+ releasePolicy.applied=payload.edit.enabled;releasePolicy.persisted=payload.edit.enabled;releasePolicy.revision++
+ appSettings.value={...appSettings.value,audioExclusiveAutoRelease:releasePolicy.persisted}
+}}
 const audioOutputConfigApplyStatus=ref({state:'idle',requestedRevision:0,appliedRevision:0,failedRevision:0,error:''})
 const controller={setAudioOutputConfig:async patch=>{engine.value=normalizeOutputConfig({...audioOutputConfig.value,...patch});persisted.value={...engine.value};audioOutputConfig.value={...engine.value};appSettings.value={...appSettings.value,audioOutputConfig:{...engine.value}}},setAudioProcessing:async patch=>{audioProcessing.value={...audioProcessing.value,...patch}},toggleExclusiveMode:async()=>{},setAudioOutput:async()=>{},setAudioDevice:async()=>{},toggleGapless:async()=>{}}
-export const useAudioOutputDspStore=defineStore('policy-output',()=>({exclusiveMode,audioOutput:ref('wasapi'),audioDevice:ref('auto'),audioOutputOptions:ref([]),audioDeviceOptions:ref([]),audioOutputDeviceOptions:ref([]),audioProcessing,audioOutputConfig,audioOutputConfigApplyStatus,dspOutputStage:ref(structuredClone(DEFAULT_DSP_OUTPUT_STAGE)),dspGraphStatus:ref(null),playbackInfo:ref(null),outputInfo:ref(null),audioEngineError:ref(null),...controller,refreshAudioOutputState:async()=>{}}))
-export const useSettingsStore=()=>({settings:appSettings,updateSettings:async patch=>{if(rejectSettings.value)throw Error('settings failure');appSettings.value={...appSettings.value,...patch}}})
+export const useAudioOutputDspStore=defineStore('policy-output',()=>{
+ const audio=createCorePlayerAudio(releaseClient,error=>{throw error})
+ return {exclusiveMode,audioOutput:ref('wasapi'),audioDevice:ref('auto'),audioOutputOptions:ref([{id:'wasapi',label:'WASAPI',get supportsExclusive(){return exclusiveAvailable.value}}]),audioDeviceOptions:ref([]),audioOutputDeviceOptions:ref([]),audioProcessing,audioOutputConfig,audioOutputConfigApplyStatus,dspOutputStage:ref(structuredClone(DEFAULT_DSP_OUTPUT_STAGE)),dspGraphStatus:ref(null),playbackInfo:ref(null),outputInfo:ref(null),audioEngineError:ref(null),...controller,setExclusiveAutoRelease:enabled=>audio.setExclusiveAutoRelease(enabled),refreshAudioOutputState:async()=>{}}
+})
+export const useSettingsStore=()=>({settings:appSettings,updateSettings:async patch=>{if(!validCorePayload('settings.edit',{revision:0,patch}))throw Error('Unknown or malformed Core operation');if(rejectSettings.value)throw Error('settings failure');appSettings.value={...appSettings.value,...patch}}})
 export const usePlayerStore=()=>({volume:ref(.7),setVolume:()=>{},setUnityVolume:()=>{}})
-export const useCoreConnection=()=>({query:(...args)=>window.policyCore.query(...args),command:(...args)=>window.policyCore.command(...args)})
-export const reload=()=>{appSettings.value={...appSettings.value,audioOutputConfig:JSON.parse(JSON.stringify(persisted.value))}}
+export const useCoreConnection=()=>({state:ref(null),query:(...args)=>window.policyCore.query(...args),command:(...args)=>window.policyCore.command(...args)})
+export const reload=()=>{appSettings.value={...appSettings.value,audioExclusiveAutoRelease:releasePolicy.persisted,audioOutputConfig:JSON.parse(JSON.stringify(persisted.value))}}
 `
 
 const policyRuntime = `
@@ -170,7 +191,7 @@ import {createApp,h,nextTick,ref} from 'vue'
 import {createPinia} from 'pinia'
 import {setLanguagePreference} from '@renderer/app/useLocale.ts'
 import PlaybackSettingsSection from '@renderer/components/settings-page/PlaybackSettingsSection.vue'
-import {reload,audioOutputConfig,persisted,engine,appSettings,stemCapabilities,rejectSettings} from 'policy-state'
+import {reload,audioOutputConfig,persisted,engine,appSettings,stemCapabilities,rejectSettings,exclusiveMode,exclusiveAvailable,releasePolicy} from 'policy-state'
 const expect=(value,message)=>{if(!value)throw Error(message)}
 const settle=async()=>{await nextTick();await new Promise(resolve=>requestAnimationFrame(resolve));await nextTick()}
 window.runPolicyTests=async()=>{
@@ -178,6 +199,7 @@ window.runPolicyTests=async()=>{
  let detectionCalls=0
  let installStatus={phase:'idle',completedBytes:0,totalBytes:0},installResult={phase:'cancelled',completedBytes:0,totalBytes:0},finishInstall=()=>{},holdInstall=false
  window.policyCore={query:async name=>{
+  if(name==='audio.recovery')return null
   if(name==='automix.capabilities'){detectionCalls++;return JSON.parse(JSON.stringify(stemCapabilities.value))}
   if(name==='automix.install.status')return {...installStatus}
   throw Error('Unexpected Core query '+name)
@@ -320,6 +342,30 @@ window.runPolicyTests=async()=>{
  appSettings.value={...appSettings.value,audioOutputConfig:{preferredBufferSize:8192}};await settle()
  expect(audioOutputConfig.value.preferredBufferSize===8192,'reload changed the persisted buffer preference')
  expect(policy().value==='bit-perfect-first'&&audioOutputConfig.value.continuitySampleRate===48000,'legacy configuration defaults changed')
- app.unmount();return 'PLAYBACK_POLICY_OK: both directions, settings reload, component reopen, target rate, DSD fields and legacy defaults verified'
+ const releaseSwitch=()=>document.querySelector('button[aria-label="独占模式自动启停"]')
+ expect(releaseSwitch().disabled,'auto release must require exclusive mode')
+ exclusiveMode.value=true;await settle()
+ expect(!releaseSwitch().disabled,'exclusive output must enable the auto release switch')
+ releaseSwitch().click();await settle()
+ expect(releasePolicy.persisted&&releasePolicy.applied&&releaseSwitch().getAttribute('aria-checked')==='true','auto release click must reach the validated output command, apply and persist')
+ open.value=false;await settle();reload();open.value=true;await settle()
+ expect(releaseSwitch().getAttribute('aria-checked')==='true','auto release must survive settings reload and component reopen')
+ let finishRelease
+ releasePolicy.hold=new Promise(resolve=>{finishRelease=resolve})
+ releaseSwitch().click();await settle()
+ expect(releaseSwitch().disabled&&releaseSwitch().getAttribute('aria-checked')==='true','pending output edit must disable the switch and retain confirmed state')
+ releaseSwitch().click();await settle()
+ expect(releasePolicy.edits.length===2,'pending auto release must not submit duplicate commands')
+ finishRelease();releasePolicy.hold=null;await settle()
+ expect(!releasePolicy.persisted&&!releasePolicy.applied&&releaseSwitch().getAttribute('aria-checked')==='false'&&!releaseSwitch().disabled,'turning auto release off must apply and persist')
+ releasePolicy.fail=true;releaseSwitch().click();await settle()
+ expect(!releasePolicy.persisted&&!releasePolicy.applied&&releaseSwitch().getAttribute('aria-checked')==='false'&&!releaseSwitch().disabled,'failed output edit must retain the saved policy and allow retry')
+ expect(document.querySelector('.engine-error')?.textContent.includes('exclusive policy rejected'),'output error must be visible')
+ releasePolicy.fail=false;releaseSwitch().click();await settle()
+ expect(releasePolicy.persisted&&releasePolicy.applied&&releaseSwitch().getAttribute('aria-checked')==='true','retry must apply auto release')
+ expect(!document.querySelector('.engine-error')?.textContent.includes('exclusive policy rejected'),'successful retry must clear the old output error')
+ exclusiveAvailable.value=false;await settle()
+ expect(releaseSwitch().disabled,'unsupported output must disable auto release')
+ app.unmount();return 'PLAYBACK_POLICY_OK: playback policies and exclusive auto release apply, persist, reopen, reject and retry correctly'
 }
 `

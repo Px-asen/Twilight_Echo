@@ -3,12 +3,39 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <new>
 #include <vector>
 using namespace twilight::audio;
+
+namespace {
+// Track live C++ allocations, rather than RSS, which may keep freed heap pages.
+struct alignas(std::max_align_t) AllocationHeader { size_t size; };
+size_t liveAllocationBytes = 0;
+}
+
+void* operator new(size_t size) {
+  auto* allocation = static_cast<AllocationHeader*>(std::malloc(sizeof(AllocationHeader) + (size ? size : 1)));
+  if (!allocation) throw std::bad_alloc();
+  allocation->size = size;
+  liveAllocationBytes += size;
+  return allocation + 1;
+}
+void* operator new[](size_t size) { return ::operator new(size); }
+void operator delete(void* pointer) noexcept {
+  if (!pointer) return;
+  auto* allocation = static_cast<AllocationHeader*>(pointer) - 1;
+  liveAllocationBytes -= allocation->size;
+  std::free(allocation);
+}
+void operator delete[](void* pointer) noexcept { ::operator delete(pointer); }
+void operator delete(void* pointer, size_t) noexcept { ::operator delete(pointer); }
+void operator delete[](void* pointer, size_t) noexcept { ::operator delete(pointer); }
 
 void writeImpulse(const std::filesystem::path& path, const std::vector<float>& impulse) {
   std::ofstream file(path, std::ios::binary);
@@ -111,6 +138,48 @@ int main() {
   std::vector<float> changed(512, 0); changed[0] = .5f;
   const auto reloaded = render(clone, changed, {64});
   assert(std::abs(reloaded[64] - .4f) < .00002);
+
+  // Returning to the original format must release inactive resampled IRs.
+  // The immutable preparation index may retain a few weak keys, not samples.
+  const auto beforeRateChanges = liveAllocationBytes;
+  for (int rate : {16000, 32000, 48000, 96000}) {
+    auto nextFormat = format; nextFormat.sampleRate = rate;
+    clone.prepare(nextFormat);
+    assert(clone.isActive());
+  }
+  clone.prepare(format);
+  const auto afterRateChanges = liveAllocationBytes;
+  std::cout << "convolver retained bytes after rate cycle: "
+            << static_cast<int64_t>(afterRateChanges) - static_cast<int64_t>(beforeRateChanges) << '\n';
+  assert(afterRateChanges < beforeRateChanges + 64 * 1024);
+  const auto returned = render(clone, changed, {64});
+  for (size_t i = 0; i < returned.size(); ++i) assert(std::abs(returned[i] - reloaded[i]) < .00002);
+
+  // A disabled node retains its source IR for re-enable; delay storage belongs
+  // to the active configuration and must be released on disable and unload.
+  auto highRate = format; highRate.sampleRate = 96000; highRate.channelCount = 8;
+  clone.prepare(highRate);
+  config.convolverEnabled = false;
+  clone.configure(config);
+  const auto beforeDelay = liveAllocationBytes;
+  config.convolverEnabled = true;
+  config.convolverDelayMs = 250;
+  clone.configure(config);
+  assert(clone.isActive());
+  config.convolverEnabled = false;
+  clone.configure(config);
+  const auto disabledWithDelay = liveAllocationBytes;
+  assert(disabledWithDelay < beforeDelay + 64 * 1024);
+  config.convolverEnabled = true;
+  clone.configure(config);
+  assert(clone.isActive());
+  clone.unloadImpulseResponse();
+  const auto unloaded = liveAllocationBytes;
+  assert(clone.loadImpulseResponse(path.string(), &error));
+  assert(clone.isActive());
+  clone.unloadImpulseResponse();
+  assert(!clone.isActive());
+  assert(liveAllocationBytes < unloaded + 64 * 1024);
   std::filesystem::remove(path);
   std::cout << "convolver reference, tier boundaries, fragmentation, reset and periodic budget tests passed\n";
 }

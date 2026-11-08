@@ -1,3 +1,5 @@
+const { archiveJavaScriptSymbols } = require('./diagnostic-symbols.cjs')
+const { buildCrashHelpers } = require('./build-crash-helper.cjs')
 const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -8,6 +10,7 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
+const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -33,7 +36,7 @@ function run(args, environment = process.env) {
   })
 }
 
-function main(args = process.argv.slice(2)) {
+async function main(args = process.argv.slice(2)) {
   const windowsPackage = targetsWindows(args)
   if (windowsPackage && process.platform !== 'win32') {
     throw new Error('Windows packaging with native VST3/SMTC helpers must run on Windows x64.')
@@ -41,9 +44,11 @@ function main(args = process.argv.slice(2)) {
   let smtc = null
   let asio = null
   if (windowsPackage) {
+    buildCrashHelpers({ root })
+    await prepareWindowsDesktopCore({ root, args })
     asio = buildAsioHelper({ root, tests: false })
     smtc = prepareSmtcMsvc({ root, stage: false })
-    prepareVst3Msvc({ root })
+    prepareVst3Msvc({ root, force: true })
   }
   const staging = windowsPackage
     ? preparePackagedAudioStaging(root, {
@@ -53,6 +58,7 @@ function main(args = process.argv.slice(2)) {
         }
       })
     : null
+  archiveJavaScriptSymbols(path.join(root, 'out'))
   let result
   try {
     if (staging) verifyAsioHelperPair(staging.nativeDir)
@@ -80,6 +86,10 @@ function main(args = process.argv.slice(2)) {
   }
 }
 
-if (require.main === module) main()
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  })
 
 module.exports = { electronBuilder, main, packageOutputDirectory, run }

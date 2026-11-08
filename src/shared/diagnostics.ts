@@ -8,6 +8,7 @@ export const DIAGNOSTICS_RETENTION_DAYS = 7
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 export interface DiagnosticContext {
+  debugSessionId?: string
   operationId?: string
   requestId?: string
   serviceGeneration?: number
@@ -42,6 +43,47 @@ export interface DiagnosticStatus {
   lastWriteAt: string | null
   error: string | null
   warnings?: string[]
+  debug?: DebugSessionStatus | null
+}
+export interface DebugSessionStatus {
+  id: string
+  startedAt: string
+  endedAt?: string
+  state: 'active' | 'restart-required' | 'stopping' | 'ended'
+  captureCrashes: boolean
+  directory: string
+  bytes: number
+  maxTotalBytes: number
+  droppedEvents: number
+  warnings: string[]
+  crashes?: {
+    electron: 'disabled' | 'pending' | 'active' | 'stopped' | 'failed'
+    native: 'disabled' | 'windows-helper' | 'unsupported'
+    dumps: number
+    dumpBytes: number
+    collectors: {
+      processId: number
+      status: 'attached' | 'failed'
+      architecture?: string
+      stage?: string
+      errorCode?: number
+    }[]
+  }
+  pendingExport?: { destination: string; includeCrashes: boolean; error?: string }
+  processes?: {
+    role: string
+    processId: number | null
+    alive: boolean
+    debugSessionId?: string
+    updatedAt: string
+    captureState?: 'pending' | 'active' | 'inactive' | 'timeout' | 'exited'
+    error?: string
+  }[]
+}
+export interface DiagnosticExportOptions {
+  debugSessionId?: string
+  includeCrashes?: boolean
+  stopDebug?: boolean
 }
 export interface DiagnosticRendererEvent {
   timestamp?: string
@@ -57,7 +99,11 @@ export interface DiagnosticsApi {
   getStatus(): Promise<DiagnosticStatus>
   markProblem(note?: string): Promise<{ markerId: string }>
   openDirectory(): Promise<void>
-  exportBundle(): Promise<{ filePath: string | null }>
+  startDebug(options: { captureCrashes: boolean }): Promise<DebugSessionStatus>
+  stopDebug(): Promise<DebugSessionStatus | null>
+  exportBundle(
+    options?: DiagnosticExportOptions
+  ): Promise<{ filePath: string | null; restarting?: boolean }>
   clearHistory(): Promise<DiagnosticStatus>
   record(events: DiagnosticRendererEvent[]): void
 }

@@ -1757,7 +1757,8 @@ export class AudioEngineManager extends EventEmitter {
         revision: this.dsp.dspGraphRevision
       },
       dspSceneState: this.getDspSceneState(),
-      nativeError: this.lastNativeError
+      nativeError: this.lastNativeError,
+      serviceEvidence: this.audioServiceBinding?.getDiagnosticEvidence?.()
     }
   }
 

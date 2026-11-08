@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createConnection, createServer, type Socket } from 'node:net'
 import type { CoreSupervisorOptions, SupervisedProcess } from '../coreProcess/supervisor.ts'
 import type { ServiceMessagePort } from '../services/servicePort.ts'
+import { decodeSupervisionMessage, encodeSupervisionMessage } from './supervisionCodec.ts'
 
 /** Only socket ownership crosses Node IPC. Both business endpoints leave the parent. */
 class TransferEndpoint implements ServiceMessagePort {
@@ -85,25 +86,52 @@ export function createNodeServiceChannel(): ReturnType<CoreSupervisorOptions['ch
 export class NodeSupervisedProcess extends EventEmitter implements SupervisedProcess {
   private sending = Promise.resolve()
   readonly child: ChildProcess
+  private readonly stableSupervision: boolean
   constructor(options: {
     bootstrap: string
     entry: string
     args: string[]
     cwd: string
     env?: NodeJS.ProcessEnv
+    /** Desktop hosts supply their packaged Node; standalone Server keeps its current runtime. */
+    execPath?: string
+    execArgv?: string[]
   }) {
     super()
-    this.child = spawn(process.execPath, [options.bootstrap, options.entry, ...options.args], {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      serialization: 'advanced',
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      windowsHide: true
+    this.stableSupervision = options.env?.TWILIGHT_DESKTOP_NODE_HOST === '1'
+    this.child = spawn(
+      options.execPath ?? process.execPath,
+      [...(options.execArgv ?? []), options.bootstrap, options.entry, ...options.args],
+      {
+        cwd: options.cwd,
+        env: options.env ?? process.env,
+        serialization: this.stableSupervision ? 'json' : 'advanced',
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        windowsHide: true
+      }
+    )
+    this.child.on('message', (message) => {
+      try {
+        this.emit('message', this.stableSupervision ? decodeSupervisionMessage(message) : message)
+      } catch (error) {
+        this.emit('error', error)
+      }
     })
-    this.child.on('message', (message) => this.emit('message', message))
     this.child.on('error', (error) => this.emit('error', error))
     this.child.on('spawn', () => this.emit('spawn'))
     this.child.on('exit', (code, signal) => this.emit('exit', code, signal))
+  }
+
+  get pid(): number | undefined {
+    return this.child.pid
+  }
+
+  get stdout() {
+    return this.child.stdout
+  }
+
+  get stderr() {
+    return this.child.stderr
   }
 
   postMessage(message: unknown, ports: ServiceMessagePort[] = []): void {
@@ -113,12 +141,18 @@ export class NodeSupervisedProcess extends EventEmitter implements SupervisedPro
       .then(async () => {
         const socket = ports.length ? await (ports[0] as TransferEndpoint).take() : undefined
         await new Promise<void>((resolve, reject) => {
-          this.child.send({ message, socket: !!socket }, socket, { keepOpen: false }, (error) => {
-            if (error) {
-              socket?.destroy()
-              reject(error)
-            } else resolve()
-          })
+          const payload = this.stableSupervision ? encodeSupervisionMessage(message) : message
+          this.child.send(
+            { message: payload, socket: !!socket },
+            socket,
+            { keepOpen: false },
+            (error) => {
+              if (error) {
+                socket?.destroy()
+                reject(error)
+              } else resolve()
+            }
+          )
         })
       })
       .catch((error) => {

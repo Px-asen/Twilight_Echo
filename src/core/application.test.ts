@@ -91,6 +91,9 @@ function fixture(
     pause: async () => {
       calls.push('pause')
     },
+    pauseForSleep: async (current) => {
+      if (current()) calls.push('pause')
+    },
     stop: async () => {
       calls.push('stop')
     },
@@ -2173,4 +2176,121 @@ test('recent history views require statistics permission as well as ordinary lib
   })
   assert.equal(reply.ok, false)
   if (!reply.ok) assert.equal(reply.error.code, 'FORBIDDEN')
+})
+
+test('optional Core status queries keep heavy services unloaded while durable restore still initializes', async t => {
+  const loaded: string[] = [], stopped: string[] = []
+  let restored = false
+  const unavailable = async (name: string): Promise<never> => { loaded.push(name); throw new Error(`Unexpected load: ${name}`) }
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    initializePersonalRestore: async () => { restored = true },
+    personalRestoreAvailable: () => true,
+    pluginMarketplaceStatus: () => ({ sourceUrl: 'fixture', configuredSourceUrl: 'fixture', sourceKind: 'custom', loadedFrom: 'remote',
+      lastFetchedAt: null, expiresAt: null, loadedAt: 'fixture', stale: false, expired: false, originVerified: false,
+      officialSource: false, cacheFormat: null, trustStoreError: null, error: null }),
+    lazyServices: {
+      personalBackup: () => unavailable('backup'),
+      settingsBackup: () => unavailable('settings backup'),
+      cloudTransfers: () => unavailable('cloud'),
+      libraryHealth: () => unavailable('health'),
+      imports: () => unavailable('imports'),
+      importPreviews: () => unavailable('previews'),
+      pluginMarketplace: () => unavailable('market'),
+      duplicates: async () => {
+        loaded.push('duplicates')
+        return { start: () => ({ id: 'job' }), snapshot: () => null,
+          shutdown: async () => { stopped.push('duplicates') } } as unknown as NonNullable<CoreApplicationDependencies['duplicates']>
+      }
+    }
+  })
+  await f.application.initialize()
+  assert.equal(restored, true)
+  f.connect('desktop', ['library:read', 'library:write', 'settings:read', 'downloads:read', 'plugins:read'])
+  assert.equal(f.application.snapshot().personalBackupRecovery, true)
+  for (const [name, payload] of [
+    ['library.duplicates.status', {}], ['library.health.status', {}],
+    ['ncm.cloud.state', {}], ['ncm.cloud.page', { revision: 0 }],
+    ['imports.previews', {}], ['imports.status', { id: 'none' }], ['plugins.index.status', {}]
+  ] as const) assert.equal((await f.request('desktop', name, payload)).ok, true, name)
+  assert.deepEqual(loaded, [])
+  f.connect('remote', ['library:write'], 'remote')
+  assert.equal((await f.request('remote', 'library.duplicates.start')).ok, false)
+  assert.deepEqual(loaded, [])
+  assert.equal((await f.request('desktop', 'library.duplicates.start')).ok, true)
+  assert.deepEqual(loaded, ['duplicates'])
+  await f.application.shutdown()
+  assert.deepEqual(stopped, ['duplicates'])
+})
+
+test('pending imports retain automatic startup and later reconciles instantiate only when work appears', async t => {
+  let pending = false, loads = 0, activations = 0, reconciles = 0, rematches = 0
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    shouldActivateImports: () => pending,
+    lazyServices: { imports: async () => {
+      loads++
+      return { activate: () => { activations++; reconciles++ }, reconcile: () => { reconciles++ },
+        rematch: () => { rematches++ }, shutdown: async () => {} } as unknown as NonNullable<CoreApplicationDependencies['imports']>
+    } }
+  })
+  await f.application.initialize(); assert.equal(loads, 0)
+  pending = true
+  await f.application.reconcileImports()
+  assert.equal(loads, 1); assert.equal(activations, 1); assert.equal(reconciles, 1)
+  await f.application.reconcileImports(true)
+  assert.equal(loads, 1); assert.equal(rematches, 1)
+  const restored = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    shouldActivateImports: () => true,
+    lazyServices: { imports: async () => ({ activate: () => { activations++ }, reconcile: () => {}, shutdown: async () => {} }) as unknown as NonNullable<CoreApplicationDependencies['imports']> }
+  })
+  await restored.application.initialize(); assert.equal(activations, 2)
+})
+
+test('shutdown waits for a loading optional owner and prevents its pending command from starting work', async t => {
+  let release!: () => void, entered!: () => void, starts = 0, shutdowns = 0
+  const entering = new Promise<void>(resolve => { entered = resolve })
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    lazyServices: { duplicates: async () => {
+      entered(); await new Promise<void>(resolve => { release = resolve })
+      return { start: () => { starts++; return null }, shutdown: async () => { shutdowns++ } } as unknown as NonNullable<CoreApplicationDependencies['duplicates']>
+    } }
+  })
+  await f.application.initialize(); f.connect('desktop')
+  const request = f.request('desktop', 'library.duplicates.start'); await entering
+  let complete = false
+  const closing = f.application.shutdown().then(() => { complete = true })
+  await new Promise<void>(resolve => setImmediate(resolve)); assert.equal(complete, false)
+  release(); assert.equal((await request).ok, false); await closing
+  assert.equal(starts, 0); assert.equal(shutdowns, 1)
+})
+
+test('browse services load on demand, invalidate the logging-out provider, and release only disconnected owners', async t => {
+  const events: string[] = []
+  let loads = 0
+  const plugins = Object.assign(new (await import('node:events')).EventEmitter(), {
+    initialize: async () => {}, broadcastEvent: async () => {}, destroy: async () => {},
+    listProviders: () => [], listExtensions: () => [],
+    callProvider: async (provider: string, method: string) => { events.push(`provider:${provider}:${method}`); return null }
+  }) as unknown as NonNullable<CoreApplicationDependencies['plugins']>
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    plugins,
+    lazyServices: { browse: async () => {
+      loads++
+      return { execute: async (owner: string) => { events.push(`browse:${owner}`); return {} },
+        invalidateProvider: async (provider: string) => { events.push(`invalidate:${provider}`) },
+        disconnect: async (owner: string) => { events.push(`disconnect:${owner}`) },
+        shutdown: async () => {} } as unknown as NonNullable<CoreApplicationDependencies['browse']>
+    } }
+  })
+  await f.application.initialize()
+  f.connect('unused', ['providers:call']); f.application.disconnect('unused'); assert.equal(loads, 0)
+  f.connect('first', ['providers:call']); f.connect('second', ['providers:call'])
+  assert.equal((await f.request('second', 'providers.call', { providerId: 'fixture', method: 'logout', args: [] })).ok, true)
+  assert.deepEqual(events, ['invalidate:fixture', 'provider:fixture:logout'])
+  events.length = 0
+  assert.equal((await f.request('first', 'browse.open', { providerId: 'fixture' })).ok, true)
+  assert.equal(loads, 1)
+  assert.equal((await f.request('second', 'providers.call', { providerId: 'fixture', method: 'logout', args: [] })).ok, true)
+  assert.deepEqual(events, ['browse:first', 'invalidate:fixture', 'provider:fixture:logout'])
+  f.application.disconnect('first')
+  assert.equal(events.at(-1), 'disconnect:first')
 })

@@ -89,6 +89,7 @@ const { volume } = playbackQueueStore
 
 const {
   toggleExclusiveMode,
+  setExclusiveAutoRelease,
   setAudioOutput,
   setAudioDevice,
   setAudioOutputConfig,
@@ -346,10 +347,9 @@ async function toggleExclusiveAutoRelease(): Promise<void> {
   if (!exclusiveAvailable.value || !exclusiveMode.value || exclusiveAutoReleaseApplying.value)
     return
   exclusiveAutoReleaseApplying.value = true
+  actionError.value = ''
   try {
-    await updateSettings({
-      audioExclusiveAutoRelease: !settings.value.audioExclusiveAutoRelease
-    })
+    await setExclusiveAutoRelease(!settings.value.audioExclusiveAutoRelease)
   } catch (error) {
     actionError.value = error instanceof Error ? error.message : String(error)
   } finally {

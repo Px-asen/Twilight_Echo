@@ -7,6 +7,7 @@ import * as vue from 'vue'
 import * as appearance from '../../../shared/appAppearance.ts'
 import * as glass from '../../../shared/liquidGlass.ts'
 import { useAppearanceDraft } from './useAppearanceDraft.ts'
+import { useWorkspaceState } from './workspaceSession.ts'
 import { persistAppearanceLayers } from './appearanceLayersPersistence.ts'
 import type { AppBackgroundImagePalette } from '../../../shared/appSettings.ts'
 import * as transparentRecipe from '../utils/transparentAppearanceRecipe.ts'
@@ -86,6 +87,7 @@ function fixture(
       appearanceFullWindowPreview: vue.ref(false)
     },
     './useAppearanceDraft.ts': { useAppearanceDraft },
+    './workspaceSession': { useWorkspaceState },
     '../utils/backgroundImagePalette.ts': {
       analyzeBackgroundImage: options.analyze ?? (async (image: string) => palette(image))
     },

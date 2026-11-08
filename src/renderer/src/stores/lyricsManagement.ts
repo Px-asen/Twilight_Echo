@@ -32,9 +32,9 @@ export function createCoreLyricsManagement(
     }
     const projection = createCorePlayerResource(
       key,
-      async () => ({
-        state: await core.query('lyrics.state', {}),
-        content: await core.query('lyrics.current', {})
+      async (signal) => ({
+        state: await core.query('lyrics.state', {}, signal),
+        content: await core.query('lyrics.current', {}, signal)
       }),
       failed
     )

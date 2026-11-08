@@ -155,6 +155,7 @@ class AudioPipeline {
   /** A-B loop; end <= start or non-finite clears. Enforced on control/status path. */
   void setLoopRange(double startSeconds, double endSeconds);
   void clearLoopRange();
+  void setPauseAtTrackEnd(bool enabled) { pauseAtTrackEnd_.store(enabled, std::memory_order_release); }
   /** If loop is active and position crossed end, seek to start. Returns true if seek ran. */
   bool enforceLoopRange(std::string* error);
   void setDspConfig(const std::string& dspConfigJson);
@@ -561,6 +562,7 @@ class AudioPipeline {
   PipelineState state_ = PipelineState::Stopped;
   bool dspActive_ = false;
   bool outputPerfect_ = false;
+  std::atomic<bool> pauseAtTrackEnd_{false};
   bool gaplessEnabled_ = true;
   bool dopPathActive_ = false;
   bool nativeDsdPathActive_ = false;

@@ -85,6 +85,24 @@ test(
           )}<style>body{margin:0}#caption{position:fixed;inset:0 0 auto;height:var(--te-titlebar-inset);z-index:9999;background:var(--te-app-bg)}#app{height:100vh}</style></head><body><div id="caption">Twilight Echo</div><div id="app"></div><script src="bundle/${files.find((f) => f.endsWith('.js'))}"></script></body></html>`
       )
       await writeFile(join(directory, 'runner.cjs'), runner)
+      const { buildSync } = createRequire(require.resolve('vite/package.json'))('esbuild')
+      buildSync({
+        stdin: {
+          contents: `import './src/adapters-node/index.ts'; export { CoreBrowseService } from './src/core/browse/service.ts'`,
+          resolveDir: workspace
+        },
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external',
+        define: { 'import.meta.url': '__entryUrl' },
+        banner: { js: 'const __entryUrl = require("node:url").pathToFileURL(__filename).href;' },
+        outfile: join(directory, 'browse.cjs')
+      })
+      await writeFile(
+        join(directory, 'preload.cjs'),
+        `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('browseFixture',(name,payload)=>ipcRenderer.invoke('fixture:browse',name,payload))`
+      )
       const env = { ...process.env }
       delete env.ELECTRON_RUN_AS_NODE
       const result = await promisify(execFile)(
@@ -92,9 +110,13 @@ test(
         ['--no-sandbox', join(directory, 'runner.cjs'), directory],
         { windowsHide: true, timeout: 80_000, env, maxBuffer: 1024 * 1024 }
       )
-      assert.match(result.stdout, /STREAMING_LAYOUT_OK/)
-      assert.match(result.stdout, /STREAMING_LOCATE_OK/)
-      assert.match(result.stdout, /STREAMING_PEOPLE_OK/)
+      if (!process.env.TWILIGHT_STREAMING_RESTORE_ONLY) {
+        assert.match(result.stdout, /STREAMING_LAYOUT_OK/)
+        assert.match(result.stdout, /STREAMING_LOCATE_OK/)
+        assert.match(result.stdout, /STREAMING_PEOPLE_OK/)
+      }
+      assert.match(result.stdout, /STREAMING_RESTORE_OK/)
+      console.log(result.stdout.split('\n').find((line) => line.startsWith('STREAMING_RESTORE_OK')))
     } finally {
       assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep))
       await rm(directory, { recursive: true, force: true })
@@ -104,7 +126,9 @@ test(
 
 const fixtureAccess = `
 defineExpose({
-  showFixtureDetail(kind: string, tracks: Track[], cover: string) {
+  fixtureState() { return { users: detailUsers.value.length, error: detailError.value, loading: restoringPage || detailLoading.value || browseState.value.loading, total: browseState.value.total, resident: detailTracks.value.length, offset: browseState.value.offset, draft: aggregateDraftName.value, stack: detailStack.value.map(entry => ({ type: entry.view.type, saved: !!entry.snapshot })) } },
+  fixtureDraft(value: string) { aggregateDraftName.value = value },
+  async showFixtureDetail(kind: string, tracks: Track[], cover: string) {
     resetDetail({ animate: false })
     beginDetailTransition()
     const view: DetailView = kind === 'liked' ? { type: 'liked' }
@@ -112,7 +136,7 @@ defineExpose({
       : kind === 'album' ? { type: 'album', providerId: 'ncm', album: { id: 'fixture', name: '测试专辑', cover, trackCount: tracks.length } }
       : { type: 'playlist', playlist: { id: 'fixture', name: '测试歌单', cover, trackCount: tracks.length } }
     pushDetail(view)
-    detailTracks.value = tracks
+    await setDetailTracks(tracks)
   },
   showFixturePeople(users: NcmUserSummary[], listType: 'follows' | 'followers' = 'follows', loading = false, error = '') {
     resetDetail({ animate: false })
@@ -142,8 +166,13 @@ window.api={
   connect:async()=>({ok:true,value:{connectionId:'layout',snapshot:coreSnapshot()}}),
   onMessage:()=>noop,onStatus:()=>noop,disconnect:async()=>{},cancel:async()=>{},
   request:async(_id,request)=>{
+   if(request.name.startsWith('browse.')) {
+     try { return {ok:true,value:await window.browseFixture(request.name,request.payload)} }
+     catch(error) { errors.push(request.name+': '+String(error)); throw error }
+   }
    const pages={
     'providers.list':[],
+    'catalog.query':{revision:0,total:0,offset:0,items:[]},
     'playlists.state':{revision:0,ordinary:0,aggregate:0,likedPlaylistId:null},
     'playlists.catalog':{revision:0,total:0,offset:0,items:[]},
     'library.metadata':{revision:0,trackCount:0,folders:[],exclusions:[]},
@@ -160,7 +189,7 @@ window.api={
  providerDownloads:{list:async()=>[],onChanged:()=>noop},
  ncmCloud:{onProgress:()=>noop}
 };
-window.layoutPlayer={currentTrack:ref(null),personalizedStreamSession:ref(null),personalizedStreamRemaining:ref(0),queue:ref([]),playTrack:noop,startPersonalizedStream:noop,appendPersonalizedStreamTracks:noop,formatTime:seconds=>Math.floor(seconds/60)+':00'};
+window.layoutPlayer={currentTrack:ref(null),personalizedStreamSession:ref(null),personalizedStreamRemaining:ref(0),queue:ref([]),playTrack:noop,playTrackPages:async(produce)=>{window.playedCount=0;await produce(async tracks=>{window.playedCount+=tracks.length})},startPersonalizedStream:noop,appendPersonalizedStreamTracks:noop,formatTime:seconds=>Math.floor(seconds/60)+':00'};
 const errors=[];
 const page=ref(null),tab=ref('library');
 let app;
@@ -171,7 +200,33 @@ const tracks=Array.from({length:100},(_,i)=>({id:'fixture-'+i,title:'歌曲 '+i,
 const names=['Porter Robinson','C418','Ludicin','ReeK','Ophidian','n-buna','ヨルシカ','重音テト','Betwixt & Between','MIMI','25時、ナイトコードで。','花譜','Sad Keyboard Guy','void (Mournfinale)'];
 const portraits=['#c85f92','#527e8a','#bd8c58','#65628a'].map(color=>{paint.fillStyle=color;paint.fillRect(0,0,256,256);paint.fillStyle='#e9dbca';paint.beginPath();paint.ellipse(128,91,41,48,0,0,Math.PI*2);paint.fill();paint.fillStyle='#e1c4ae';paint.beginPath();paint.ellipse(128,248,85,92,0,0,Math.PI*2);paint.fill();return canvas.toDataURL()});
 const people=Array.from({length:80},(_,i)=>({id:i+1,name:names[i%names.length],picUrl:i%3===1?null:portraits[i%portraits.length],musicSize:0,userType:0}));
-const mount=async()=>{app?.unmount();app=createApp({render:()=>h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');await pause(250)};
+const mount=async(wait=250)=>{app?.unmount();app=createApp({render:()=>h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');if(wait)await pause(wait);else await nextTick()};
+window.checkStreamingRestoration=async()=>{
+ document.documentElement.dataset.teMotion='off';tab.value='library';await mount();
+ const many=Array.from({length:4201},(_,i)=>({...tracks[i%tracks.length],id:'fixture-'+i,title:'歌曲 '+i,ncmSongId:i+1,cover:null}));
+ await page.value.showFixtureDetail('playlist',many,cover);await nextTick();
+ const wait=async(predicate,label)=>{const deadline=performance.now()+3000;while(!predicate()){expect(performance.now()<deadline,label+': '+JSON.stringify(page.value?.fixtureState()));await pause(5)}};
+ const scroll=document.querySelector('.streaming-content');scroll.scrollTop=64*3000;scroll.dispatchEvent(new Event('scroll'));
+ await wait(()=>page.value.fixtureState().offset>2000&&!page.value.fixtureState().loading,'deep page');
+ page.value.fixtureDraft('未保存的歌单');
+ const offset=scroll.scrollTop,samples=[];
+ for(let i=0;i<50;i++){
+   const start=performance.now();await mount(0);
+   await wait(()=>page.value.fixtureState().total===4201&&!page.value.fixtureState().loading&&page.value.fixtureState().offset>2000,'cached page restore');
+   await nextTick();
+   expect(page.value.fixtureState().resident<=1000,'page exceeded resident budget');
+   expect(page.value.fixtureState().draft==='未保存的歌单','draft was lost');
+   expect(Math.abs(document.querySelector('.streaming-content').scrollTop-offset)<2,'scroll anchor was lost');
+   samples.push(performance.now()-start);
+ }
+ document.querySelector('.streaming-content').scrollTop=0;document.querySelector('.streaming-content').dispatchEvent(new Event('scroll'));
+ await wait(()=>!page.value.fixtureState().loading,'top page');
+ const play=[...document.querySelectorAll('button')].find(button=>button.textContent.includes('播放全部'));expect(play,'play all button');play.click();
+ await wait(()=>window.playedCount===4201,'play all must cover 4201 tracks');
+ expect(errors.length===0,errors.join(';'));samples.sort((a,b)=>a-b);
+ const p95=samples[Math.ceil(samples.length*.95)-1];expect(p95<=300,'cached UI restore p95 exceeded: '+p95);
+ return {cycles:50,tracks:4201,p95Ms:p95,played:window.playedCount};
+};
 window.checkStreamingLayout=async(kind,tone,search=false,caption=40,custom=false)=>{
  document.documentElement.dataset.theme=tone;
  if(custom)document.documentElement.dataset.teShellLayout='custom';else delete document.documentElement.dataset.teShellLayout;
@@ -179,7 +234,7 @@ window.checkStreamingLayout=async(kind,tone,search=false,caption=40,custom=false
  Object.assign(document.querySelector('#app').style,{position:custom?'relative':'static',top:custom?caption+'px':'0',height:custom?'calc(100vh - '+caption+'px)':'100vh'});
  tab.value=search?'search':'library';await mount();
  expect(errors.length===0,errors.join(';'));
- page.value.showFixtureDetail(kind,tracks,cover);await nextTick();await pause(450);
+ await page.value.showFixtureDetail(kind,tracks,cover);await nextTick();await pause(450);
  const scroll=document.querySelector('.streaming-content');
  scroll.scrollTop=500;scroll.dispatchEvent(new Event('scroll'));await pause(80);
  scroll.scrollTop=0;scroll.dispatchEvent(new Event('scroll'));await pause(80);
@@ -237,7 +292,7 @@ window.checkStreamingPeople=async(tone)=>{
  expect(document.querySelector('.social-stage').dataset.kind==='user_playlists','person click did not open the user');
  expect(document.querySelector('.stage-title').textContent===people[0].name+' 的歌单','person click opened the wrong user');
  page.value.backFixtureDetail();await nextTick();await pause(450);
- expect(document.querySelectorAll('button.stage-person-card').length===80&&document.querySelector('.stage-title').textContent==='关注','back navigation did not restore the people grid');
+ expect(document.querySelectorAll('button.stage-person-card').length===80&&document.querySelector('.stage-title').textContent==='关注','back navigation did not restore the people grid: '+JSON.stringify({state:page.value.fixtureState(),cards:document.querySelectorAll('button.stage-person-card').length,title:document.querySelector('.stage-title')?.textContent,errors,body:document.body.innerText.slice(-800)}));
  expect(errors.length===0,errors.join(';'));
  return {tone,width:innerWidth,...loaded};
 };
@@ -283,7 +338,7 @@ window.checkStreamingLocate=async()=>{
  const waitFor=async(predicate,label)=>{for(let i=0;i<100;i++){if(predicate())return;await pause(20)}throw new Error(label)};
  for(const [kind,mode] of [['liked','full'],['playlist','full'],['album','full'],['artist','full'],['liked','reduced'],['liked','off']]){
   document.documentElement.dataset.teMotion=mode;
-  page.value.showFixtureDetail(kind,tracks,cover);await nextTick();await pause(500);
+  await page.value.showFixtureDetail(kind,tracks,cover);await nextTick();await pause(500);
   const root=document.querySelector('.streaming-content');
   root.style.scrollBehavior='smooth';root.scrollTo({top:700,behavior:'instant'});root.dispatchEvent(new Event('scroll'));await pause(100);
   expect(shown(),kind+' '+mode+' locator missing before click');
@@ -307,7 +362,7 @@ window.checkStreamingLocate=async()=>{
   root.scrollTo=nativeScrollTo;root.style.scrollBehavior='auto';
  }
  document.documentElement.dataset.teMotion='off';
- page.value.showFixtureDetail('liked',tracks,cover);await nextTick();await pause(500);
+ await page.value.showFixtureDetail('liked',tracks,cover);await nextTick();await pause(500);
  scroll.scrollTop=700;scroll.dispatchEvent(new Event('scroll'));await pause(100);
  expect(shown(),'liked screenshot must show locator');
  expect(errors.length===0,errors.join(';'));
@@ -316,11 +371,15 @@ window.checkStreamingLocate=async()=>{
 `
 
 const runner = `
-const {app,BrowserWindow}=require('electron');const path=require('node:path');const fs=require('node:fs');
+const {app,BrowserWindow,ipcMain}=require('electron');const path=require('node:path');const fs=require('node:fs');
 const directory=process.argv.at(-1);app.setPath('userData',path.join(directory,'profile'));
-app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{backgroundThrottling:false,offscreen:true}});
+const {CoreBrowseService}=require('./browse.cjs');
+const browse=new CoreBrowseService({files:require('node:fs/promises'),root:path.join(directory,'browse-cache'),newId:()=>require('node:crypto').randomUUID(),providerContext:()=> 'fixture-account',callProvider:async()=>[]});
+ipcMain.handle('fixture:browse',(_event,name,payload)=>browse.execute('fixture',{name,payload},new AbortController().signal));
+app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{backgroundThrottling:false,offscreen:true,preload:path.join(directory,'preload.cjs')}});
 try{await win.loadFile(path.join(directory,'index.html'));
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.mkdirSync(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,{recursive:true});
+if(process.env.TWILIGHT_STREAMING_RESTORE_ONLY){console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingRestoration()')));app.exit(0);return;}
 for(const width of [1480,520,360])for(const tone of ['pureWhite','dark']){
  win.setContentSize(width,900);console.log(JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingPeople('+JSON.stringify(tone)+')')));
  if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,tone+'-'+width+'-people.png'),(await win.webContents.capturePage()).toPNG())}
@@ -334,6 +393,7 @@ win.setContentSize(1280,900);await win.webContents.executeJavaScript("window.che
 await win.webContents.executeJavaScript("window.checkStreamingLayout('playlist','pureWhite',false,56,true)");
 win.setContentSize(1280,900);
 console.log(await win.webContents.executeJavaScript('window.checkStreamingLocate()'));
+console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingRestoration()')));
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'liked-floating-locator.png'),(await win.webContents.capturePage()).toPNG())}
 console.log('STREAMING_LAYOUT_OK');app.exit(0)}catch(error){if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'failure.png'),(await win.webContents.capturePage()).toPNG());console.error(error.stack);app.exit(1)}});
 `

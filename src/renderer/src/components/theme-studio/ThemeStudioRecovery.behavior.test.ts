@@ -101,6 +101,7 @@ export const useThemeStore=()=>store;
 const runtime = `
 import {createApp,h,nextTick} from 'vue';
 import {useThemeStudioEditor} from '__RENDERER__/components/theme-studio/useThemeStudioEditor.ts';
+import {provideWorkspaceSession} from '__RENDERER__/composables/workspaceSession.ts';
 import {readThemeStudioRecovery,storeThemeStudioRecovery} from '__RENDERER__/components/theme-studio/themeStudioRecovery.ts';
 import {THEME_TOKEN_DEFINITIONS} from '__RENDERER__/../../shared/theme.ts';
 window.commits={saveAttempts:0,saved:[],activations:[],settings:0};window.previews={tones:[],selections:[],drafts:[]};
@@ -111,9 +112,10 @@ const json=value=>JSON.stringify(value);
 const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(resolve,15));await nextTick()};
 const until=async(predicate,message)=>{const deadline=Date.now()+3000;while(!predicate()){if(Date.now()>deadline)throw Error(message);await settle()}};
 const footprint=()=>json(window.commits);
-async function mount(){
+async function mount(retained){
   const host=document.createElement('div');document.body.append(host);let editor;
-  const app=createApp({setup(){editor=useThemeStudioEditor({editable:true,initialKey,onBack:()=>{}});return()=>h('div')}});
+  const Child={setup(){editor=useThemeStudioEditor({editable:true,initialKey,onBack:()=>{}});return()=>h('div')}};
+  const app=createApp({setup(){if(retained)provideWorkspaceSession(retained,1);return()=>h(Child)}});
   app.mount(host);await until(()=>editor.ready.value,'theme editor did not become ready');
   return {editor,unmount:async()=>{app.unmount();host.remove();await settle()}};
 }
@@ -171,6 +173,24 @@ window.fixture=async()=>{
     expect(session.editor.ready.value&&session.editor.isDirty.value&&!session.editor.localError.value&&!readThemeStudioRecovery()&&footprint()===before,'blocked/full storage interrupts editing or commits theme');
     await session.unmount();
   }finally{Object.defineProperty(prototype,'getItem',get);Object.defineProperty(prototype,'setItem',set);storeThemeStudioRecovery(null)}
+
+  session=await mount('retained-theme');
+  const beforeRetention=footprint();
+  session.editor.updateToken(token,'#111111');session.editor.updateToken(token,'#222222');
+  session.editor.undo();await nextTick();
+  const reversibleDraft=json(session.editor.draft.value);
+  expect(session.editor.canUndo.value&&session.editor.canRedo.value,'retention fixture lacks both history directions');
+  await session.editor.suspend();await session.unmount();
+  expect(footprint()===beforeRetention,'suspending theme persisted unapplied edits');
+  session=await mount('retained-theme');
+  expect(json(session.editor.draft.value)===reversibleDraft&&session.editor.canUndo.value&&session.editor.canRedo.value,'workspace rehydration lost draft or undo/redo history');
+  session.editor.redo();await nextTick();
+  expect(session.editor.draft.value.overrides[session.editor.tone.value]['color.primary.500']==='#222222','restored redo does not recover the next edit');
+  const savedConfirm=window.confirm;window.confirm=()=>true;
+  expect(await session.editor.prepareLeave(),'restored theme cannot leave after approval');window.confirm=savedConfirm;
+  await session.unmount();session=await mount('retained-theme');
+  expect(!session.editor.isDirty.value,'explicitly discarded session restored the rejected draft');
+  await session.unmount();storeThemeStudioRecovery(null);
 };
 `
 

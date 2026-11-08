@@ -11,6 +11,7 @@ import * as graph from '../../../../shared/dspGraph.ts'
 import * as params from '../../utils/dspNodeParams.ts'
 import * as draft from '../../utils/dspSceneDraft.ts'
 import * as workbench from '../../utils/dspWorkbench.ts'
+import { useWorkspaceState } from '../../composables/workspaceSession.ts'
 
 const source = readFileSync(new URL('../DspRackPage.vue', import.meta.url), 'utf8')
 const script = stripTypeScriptTypes(
@@ -229,6 +230,7 @@ function setup() {
     ...params,
     ...draft,
     ...workbench,
+    useWorkspaceState,
     cloneScene: draft.cloneDspScene,
     computed,
     ref,

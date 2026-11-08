@@ -605,6 +605,12 @@ Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativePau
 }
 
 JNIEXPORT jint JNICALL
+Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSetPauseAtTrackEnd(
+    JNIEnv*, jobject, jlong handle, jboolean enabled) {
+  return static_cast<jint>(TAE_SetPauseAtTrackEnd(toEngineHandle(handle), enabled == JNI_TRUE));
+}
+
+JNIEXPORT jint JNICALL
 Java_com_twilightecho_android_nativeintegration_TwilightAudioEngineJni_nativeSetPaused(
     JNIEnv*, jobject, jlong handle, jboolean paused) {
   return static_cast<jint>(TAE_SetPaused(toEngineHandle(handle), paused == JNI_TRUE));

@@ -80,6 +80,7 @@ const {
   closeStudio: closeEditorStudio,
   prepareLeave: prepareEditorLeave,
   releaseForTransfer,
+  suspend,
   contrastWarnings,
   deleteSelected,
   domain,
@@ -513,6 +514,7 @@ async function discard(): Promise<void> {
   await selectKey(key)
 }
 defineExpose({
+  suspend,
   prepareLeave,
   state,
   perform,

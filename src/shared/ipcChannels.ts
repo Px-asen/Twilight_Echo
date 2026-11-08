@@ -10,6 +10,8 @@ export const IPC = {
     historyCommand: 'app:history-command'
   },
   diagnostics: {
+    startDebug: 'diagnostics:startDebug',
+    stopDebug: 'diagnostics:stopDebug',
     status: 'diagnostics:getStatus',
     marker: 'diagnostics:markProblem',
     directory: 'diagnostics:openDirectory',

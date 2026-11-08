@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { InstalledExperience } from '../../../../shared/pluginExperience.ts'
 import { usePluginFlyout } from '../../stores/usePluginFlyout'
-import EmbeddedExperience from './EmbeddedExperience.vue'
+const EmbeddedExperience = defineAsyncComponent(() => import('./EmbeddedExperience.vue'))
 
 const props = defineProps<{ experiences: InstalledExperience[] }>()
 const flyout = usePluginFlyout()

@@ -9,6 +9,7 @@ import AppearancePopover from './AppearancePopover.vue'
 import AppearanceSurfaceInspector from './AppearanceSurfaceInspector.vue'
 import { APPEARANCE_PARTS, type AppearancePart } from './appearanceParts'
 import { useAppearanceHistory } from '../composables/useAppearanceHistory'
+import { useWorkspaceState } from '../composables/workspaceSession'
 import type { AppearanceHistoryActions } from './appearanceEditor'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useEscapeToClose } from '../app/useDismissLayer'
@@ -457,6 +458,21 @@ const history = useAppearanceHistory(
   },
   { read: () => draftColorMode.value, write: setColorMode }
 )
+useWorkspaceState('appearance-adjustment', () => ({
+  history: history.snapshot(),
+  selectedRegion: selectedRegion.value,
+  characterPart: characterPart.value,
+  inspectorCollapsed: inspectorCollapsed.value,
+  detailedOpen: detailedOpen.value,
+  quickTab: quickTab.value
+})).restore((saved) => {
+  history.resume(saved.history)
+  selectedRegion.value = saved.selectedRegion
+  characterPart.value = saved.characterPart
+  inspectorCollapsed.value = saved.inspectorCollapsed
+  detailedOpen.value = saved.detailedOpen
+  quickTab.value = saved.quickTab
+})
 // The character editor owns the daily appearance draft; empty history never changes its task.
 const themeHistorySelected = computed(() => !props.characterEditor && props.themePanelOpen)
 const canUndoSelected = computed(() =>
@@ -533,6 +549,7 @@ watch(
   { immediate: true }
 )
 defineExpose({
+  suspend: () => fullPreview(false),
   focusPart,
   revealArea,
   replaceDraft: (draft: AppearanceDraft) => {
@@ -1515,10 +1532,7 @@ watch(tone, (value) => emit('toneChange', value === 'dark' ? 'dark' : 'pureWhite
           <option v-for="option in fontFamilyOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>
-          <option
-            v-if="settings.fontFamily.startsWith('local:')"
-            :value="settings.fontFamily"
-          >
+          <option v-if="settings.fontFamily.startsWith('local:')" :value="settings.fontFamily">
             {{ settings.fontFamily.slice(6) }}
           </option>
         </select></label

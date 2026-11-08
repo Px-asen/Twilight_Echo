@@ -8,11 +8,11 @@ import { RemoteMediaResolver } from '../../core/remote/media.ts'
 import { CoreCastService } from '../../core/cast/service.ts'
 import { createCastPcmSegments } from '../../adapters-node/castPcmSegments.ts'
 import { discoverDlnaDevices } from '../../adapters-node/dlnaDiscovery.ts'
-import { CoreNcmCloudTransferService } from '../../core/ncm/cloudTransferService.ts'
 import { RemoteHttpServer } from '../../core/cast/httpServer.ts'
 import { createCastBackend } from '../../core/cast/backend.ts'
 import { stat, access, readFile } from 'node:fs/promises'
 import * as transferFiles from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { CoreLibraryMaintenance } from '../../core/library/maintenanceService.ts'
 import { CoreGenresService } from '../../core/library/genresService.ts'
 import { CoreMusicRatingsService } from '../../core/library/ratingsService.ts'
@@ -20,9 +20,11 @@ import { CoreMusicPreferencesService } from '../../core/library/preferencesServi
 import { CoreMusicTagsService } from '../../core/library/tagsService.ts'
 import { CoreMusicFocusService } from '../../core/library/focusService.ts'
 import { createPreferencesPlaylistRepository } from '../../core/playlists/preferencesRepository.ts'
-import { CoreDuplicatesService } from '../../core/library/duplicatesService.ts'
-import { createPersonalBackupRepository } from '../../core/persistence/personalBackup.ts'
-import { CorePersonalBackupService } from '../../core/persistence/personalBackupService.ts'
+import type { CoreDuplicatesService } from '../../core/library/duplicatesService.ts'
+import { hasPendingPersonalRestore, personalRestoreNeedsReview } from '../../core/persistence/personalRestoreFiles.ts'
+import { DEFAULT_PLUGIN_INDEX_URL, LEGACY_GITHUB_PLUGIN_INDEX_URL } from '../../shared/pluginDistribution.ts'
+import { pathToFileURL } from 'node:url'
+import type { TwilightPluginIndexStatus } from '../../shared/pluginTypes.ts'
 import { recoverLocalLibraryRemovalFromDatabase } from '../library/removal.ts'
 import { LibraryPlaylistRepairService } from '../../core/library/playlistRepairService.ts'
 import { findLibraryPlaylistRelocations } from '../../core/playlists/repairFolder.ts'
@@ -30,7 +32,6 @@ import { DspAuditionManager } from '../../core/audio/dspAuditionManager.ts'
 import { CoreAuditionService } from '../../core/audio/auditionService.ts'
 import { CoreOutputTestService } from '../../core/audio/outputTestService.ts'
 import { CoreSettingsService } from '../../core/settings/service.ts'
-import { CoreSettingsBackupService } from '../../core/settings/backupService.ts'
 import { CoreThemeService } from '../../core/settings/themeService.ts'
 import { createSettingsImportEffects } from '../../core/settings/importEffects.ts'
 import { ThemeLibraryRepository } from '../../core/persistence/themeLibraryRepository.ts'
@@ -86,15 +87,9 @@ import {
   isPlaybackBookmarksDocument,
   type PlaybackBookmarksDocument
 } from '../../shared/playbackBookmarks.ts'
-import { CorePlaylistImportJobs } from '../../core/playlists/importJobs.ts'
-import { CorePlaylistPreviews } from '../../core/playlists/previews.ts'
-import { createPlaylistReader, type PlaylistReadProvider } from '../../core/playlists/reader.ts'
-import {
-  readOfficialPlaylistPage,
-  resolveNeteaseShortPlaylistLink
-} from '../../core/playlists/platformReader.ts'
-import { readPlaylistImportFile } from '../../core/playlists/readFile.ts'
-import { createImportLocalCandidates } from '../../core/playlists/importLocalCandidates.ts'
+import type { CorePlaylistImportJobs } from '../../core/playlists/importJobs.ts'
+import type { CorePlaylistPreviews } from '../../core/playlists/previews.ts'
+import type { PlaylistReadProvider } from '../../core/playlists/reader.ts'
 import type { ImportProvider } from '../../core/playlists/importResolver.ts'
 import { isPluginProviderEnabled } from '../../shared/providerAvailability.ts'
 import {
@@ -133,9 +128,9 @@ import {
   createCoreAudioPersistence,
   initialAudioSettings
 } from '../../core/audio/settings.ts'
-import { CoreApplication } from '../../core/application.ts'
+import { CoreApplication, type CoreLazyServices } from '../../core/application.ts'
+import type { CoreServiceFactories } from '../../core/serviceRegistry.ts'
 import { CoreInboxService } from '../../core/library/inboxService.ts'
-import { CoreLibraryHealthService } from '../../core/library/libraryHealthService.ts'
 import { CoreAnalysisService } from '../../core/audio/analysisService.ts'
 import { CoreLibraryLoudnessService } from '../../core/audio/libraryLoudnessService.ts'
 import { CorePlaybackSession, type CoreSessionRepository, type CorePlaybackSessionOptions } from '../../core/playback/session.ts'
@@ -151,7 +146,7 @@ import { createQueueInputResolver } from '../../core/playback/queueInputResolver
 import { authorizeNativeSource } from '../../core/playback/sourceResolver.ts'
 import { CoreSleepTimer } from '../../core/playback/sleepService.ts'
 import { CoreAutoMixService, type CoreAutoMixOptions } from '../../core/audio/autoMixService.ts'
-import { CoreModelPackService } from '../../core/audio/modelPackService.ts'
+import { ModelPackWorkerClient } from './modelPackWorkerClient.ts'
 import { OpraCatalog } from '../../core/audio/opraCatalog.ts'
 import { CoreVisualizationService } from '../../core/audio/visualizationService.ts'
 import { createPlaybackSourceRecovery } from '../../core/playback/sourceRecovery.ts'
@@ -186,7 +181,7 @@ import { CoreAudioRecoveryService } from '../../core/audio/recoveryService.ts'
 import { LibraryDatabaseServiceClient } from '../library/libraryDatabaseServiceClient.ts'
 import { createPlaybackSessionStoreBundle } from '../persistence/playbackSessionRepository.ts'
 import { createCorePlaybackRepository } from '../persistence/corePlaybackRepository.ts'
-import { initializeUtilityDiagnostics } from '../diagnostics/utility.ts'
+import { initializeUtilityDiagnostics, setUtilityDiagnosticSnapshotProvider, publishUtilityDiagnosticSnapshot } from '../diagnostics/utility.ts'
 import type {
   CoreChildMessage,
   CoreParentMessage,
@@ -198,7 +193,6 @@ import { CorePlatformClient } from './platformClient.ts'
 import type { CorePlatformOperations } from '../../shared/corePlatform.ts'
 import { CorePluginExperiences } from '../../core/plugins/experiences.ts'
 import { createLegacyMusicLookupProvider } from '../../core/plugins/legacyMusicLookupProvider.ts'
-import { CorePluginMarketplace } from '../../core/plugins/marketplace.ts'
 import { CorePluginManagement } from '../../core/plugins/management.ts'
 import { TwilightPluginManager } from '../../core/plugins/manager.ts'
 import { providerPlaybackIdentities } from '../../core/audio/providerPlaybackIdentity.ts'
@@ -223,7 +217,6 @@ let database: LibraryDatabaseServiceClient | null = null
 let audio: AudioEngineManager | null = null
 let analysis: AudioAnalysisServiceClient | null = null
 let plugins: TwilightPluginManager | undefined
-let pluginMarketplace: CorePluginMarketplace | undefined
 let pluginManagement: CorePluginManagement | undefined
 let pluginExperiences: CorePluginExperiences | undefined
 let imports: CorePlaylistImportJobs | undefined
@@ -267,6 +260,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   let tags: CoreMusicTagsService | undefined = undefined
   let exploration: CoreMusicExplorationService | undefined = undefined
   let focus: CoreMusicFocusService | undefined = undefined
+  const lazyServices: CoreServiceFactories<CoreLazyServices> = {}
+  let pluginMarketplaceStatus: (() => Promise<TwilightPluginIndexStatus>) | undefined
   launcher = new CoreServiceLauncher(config.epoch, send)
   platform = new CorePlatformClient(config.epoch, send)
   database = new LibraryDatabaseServiceClient({
@@ -293,17 +288,23 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   } catch (error) {
     console.warn('[core.removal] Recovery skipped due to error:', error)
   }
-  const personalBackupRepository = createPersonalBackupRepository()
-  try {
-    await personalBackupRepository.applyPendingPersonalRestoreFromDatabase(config.root, database)
-  } catch (error) {
-    if (
-      (error as { code?: string }).code === 'STALE_REVISION' &&
-      personalBackupRepository.deferStalePersonalRestore(config.root)
-    ) {
-      console.warn('[core.backup] Music data changed after preview; restore awaits a fresh review in Settings')
-    } else {
-      console.warn('[core.backup] Pending personal restore failed and was skipped:', error)
+  if (hasPendingPersonalRestore(config.root, existsSync)) {
+    const { createPersonalBackupRepository } =
+      await import('../../core/persistence/personalBackup.ts')
+    const personalBackupRepository = createPersonalBackupRepository()
+    try {
+      await personalBackupRepository.applyPendingPersonalRestoreFromDatabase(config.root, database)
+    } catch (error) {
+      if (
+        (error as { code?: string }).code === 'STALE_REVISION' &&
+        personalBackupRepository.deferStalePersonalRestore(config.root)
+      ) {
+        console.warn(
+          '[core.backup] Music data changed after preview; restore awaits a fresh review in Settings'
+        )
+      } else {
+        console.warn('[core.backup] Pending personal restore failed and was skipped:', error)
+      }
     }
   }
   const initialLibrary = await database.getMetadata()
@@ -400,14 +401,26 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     dspAssetPathResolver: (id) => dspAssets.getKnownPath(id),
     vst3StateAssetResolver: (id) => dspAssets.resolveVst3State(id),
     vst3ModuleResolver: (id, classId) => vst3.resolveAvailableModule(id, classId),
-    audioServiceFactory: () =>
-      new AudioEngineServiceBinding({
+    audioServiceFactory: () => {
+      const binding = new AudioEngineServiceBinding({
         serviceEntry: 'audio',
         launch: () => launcher!.launch('audio')
       })
+      binding.on('ready', publishUtilityDiagnosticSnapshot)
+      binding.on('crash', publishUtilityDiagnosticSnapshot)
+      return binding
+    }
   })
   // EventEmitter error events are reported as state/failure, never unhandled process exceptions.
   audio.on('error', (error) => console.error('[core.audio]', error))
+  setUtilityDiagnosticSnapshotProvider(() => ({
+    audio: audio?.getCachedDiagnosticSnapshot(),
+    nativeRuntime: audio?.getNativeRuntimeIdentity(),
+    settings: settings.read(),
+    services: { database: Boolean(database), analysis: Boolean(analysis), plugins: Boolean(plugins) },
+    directories: { profile: config.root, library: config.libraryFilePath, covers: config.coverCacheDir,
+      musicCache: config.musicCachePath, plugins: join(config.root, 'plugins') }
+  }))
   const output: CoreAudioOutputService = new CoreAudioOutputService({
     engine: audio,
     settings,
@@ -900,7 +913,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     },
     changed: () => {
       application?.changed()
-      queueMicrotask(() => imports?.reconcile())
+      queueMicrotask(() => void application?.reconcileImports().catch(error => console.error('[core.imports]', error)))
       queueMicrotask(() => presentation.refresh())
       catalog?.invalidate()
     }
@@ -1225,7 +1238,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       const revision = status?.revision
       if (revision !== undefined && revision !== scanRevision) {
         scanRevision = revision
-        imports?.rematch()
+        void application?.reconcileImports(true).catch(error => console.error('[core.imports]', error))
       }
       if (status?.state === 'completed' && status.jobId !== metadataScanJob) {
         metadataScanJob = status.jobId
@@ -1518,59 +1531,92 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       return false
     }
   }
-  const importPreviews = new CorePlaylistPreviews({
-    now: Date.now,
-    newId: randomUUID,
-    reader: createPlaylistReader({
-      providers: () =>
-        plugins?.listProviders().map(
-          (provider): PlaylistReadProvider => ({
-            id: provider.id,
-            isEnabled: () => isPluginProviderEnabled(provider.health),
-            ...(provider.supportedMethods?.includes('readPlaylistImportPage')
-              ? {
-                  readPlaylistImportPage: async (
-                    id: string,
-                    offset: number,
-                    limit: number,
-                    options: { signal: AbortSignal }
-                  ) =>
-                    (await plugins!.callProvider(
-                      provider.id,
-                      'readPlaylistImportPage',
-                      [id, offset, limit],
-                      options
-                    )) as import('../../shared/externalPlaylist.ts').PlaylistImportPage
-                }
-              : {})
-          })
-        ) ?? [],
-      resolveShortLink: (input, signal) => resolveNeteaseShortPlaylistLink(input, fetch, signal),
-      readPage: (request, signal) => readOfficialPlaylistPage(request, fetch, signal)
-    }),
-    chooseFile: (signal) => platform!.call('playlists.chooseImportFile', {}, signal),
-    readFile: readPlaylistImportFile,
-    save: (playlist, command, signal) => playlists.savePreview(playlist, command, signal),
-    changed: () => application?.changed(),
-    reconcile: (id) => (id ? imports?.start(id) : imports?.reconcile())
-  })
-  imports = new CorePlaylistImportJobs({
-    providers: { list: importProviders, get: (id) => importProviders().find((p) => p.id === id) },
-    localCandidates: createImportLocalCandidates({ database, authorizeLocal }),
-    authorizeLocal,
-    now: Date.now,
-    read: (id) => importPreviews.read(id) ?? playlists.readExternal(id),
-    ids: () => [...importPreviews.ids(), ...playlists.externalIds()],
-    apply: (id, generation, updates) =>
-      importPreviews.has(id)
-        ? importPreviews.apply(id, generation, updates)
-        : playlists.applyImportResolutions(id, generation, updates),
-    delay: async (ms, signal) => {
-      await delay(ms, undefined, { signal })
-    },
-    changed: () => application?.changed(),
-    failed: (error) => console.error('[core.imports]', error)
-  })
+  let importRuntime:
+    | Promise<{ imports: CorePlaylistImportJobs; previews: CorePlaylistPreviews }>
+    | undefined
+  const loadImportRuntime = () =>
+    (importRuntime ??= (async () => {
+      const [
+        { CorePlaylistPreviews },
+        { CorePlaylistImportJobs },
+        { createPlaylistReader },
+        { readOfficialPlaylistPage, resolveNeteaseShortPlaylistLink },
+        { readPlaylistImportFile },
+        { createImportLocalCandidates }
+      ] = await Promise.all([
+        import('../../core/playlists/previews.ts'),
+        import('../../core/playlists/importJobs.ts'),
+        import('../../core/playlists/reader.ts'),
+        import('../../core/playlists/platformReader.ts'),
+        import('../../core/playlists/readFile.ts'),
+        import('../../core/playlists/importLocalCandidates.ts')
+      ])
+      const importPreviews = new CorePlaylistPreviews({
+        now: Date.now,
+        newId: randomUUID,
+        reader: createPlaylistReader({
+          providers: () =>
+            plugins?.listProviders().map(
+              (provider): PlaylistReadProvider => ({
+                id: provider.id,
+                isEnabled: () => isPluginProviderEnabled(provider.health),
+                ...(provider.supportedMethods?.includes('readPlaylistImportPage')
+                  ? {
+                      readPlaylistImportPage: async (
+                        id: string,
+                        offset: number,
+                        limit: number,
+                        options: { signal: AbortSignal }
+                      ) =>
+                        (await plugins!.callProvider(
+                          provider.id,
+                          'readPlaylistImportPage',
+                          [id, offset, limit],
+                          options
+                        )) as import('../../shared/externalPlaylist.ts').PlaylistImportPage
+                    }
+                  : {})
+              })
+            ) ?? [],
+          resolveShortLink: (input, signal) => resolveNeteaseShortPlaylistLink(input, fetch, signal),
+          readPage: (request, signal) => readOfficialPlaylistPage(request, fetch, signal)
+        }),
+        chooseFile: (signal) => platform!.call('playlists.chooseImportFile', {}, signal),
+        readFile: readPlaylistImportFile,
+        save: (playlist, command, signal) => playlists.savePreview(playlist, command, signal),
+        changed: () => application?.changed(),
+        reconcile: (id) =>
+          id
+            ? imports?.start(id)
+            : void application
+                ?.reconcileImports()
+                .catch((error) => console.error('[core.imports]', error))
+      })
+      imports = new CorePlaylistImportJobs({
+        providers: { list: importProviders, get: (id) => importProviders().find((p) => p.id === id) },
+        localCandidates: createImportLocalCandidates({ database: database!, authorizeLocal }),
+        authorizeLocal,
+        now: Date.now,
+        read: (id) => importPreviews.read(id) ?? playlists.readExternal(id),
+        ids: () => [...importPreviews.ids(), ...playlists.externalIds()],
+        apply: (id, generation, updates) =>
+          importPreviews.has(id)
+            ? importPreviews.apply(id, generation, updates)
+            : playlists.applyImportResolutions(id, generation, updates),
+        delay: async (ms, signal) => {
+          await delay(ms, undefined, { signal })
+        },
+        changed: () => application?.changed(),
+        failed: (error) => console.error('[core.imports]', error)
+      })
+
+      return { imports, previews: importPreviews }
+    })().catch((error) => {
+      importRuntime = undefined
+      throw error
+    }))
+  lazyServices.imports = async () => (await loadImportRuntime()).imports
+  lazyServices.importPreviews = async () => (await loadImportRuntime()).previews
   let providerInventory = ''
   let identificationInventoryRevision = 0
   const pluginTheme = async (pluginId: string, themeId: string) => {
@@ -1604,18 +1650,21 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     changed: (snapshot) => send({ kind: 'core:themes', epoch: config.epoch, snapshot }),
     now: () => new Date().toISOString()
   })
-  const cloudTransfers = new CoreNcmCloudTransferService({
-    chooseUploadFiles: (_client, signal) => platform!.call('ncm.chooseUploadFiles', {}, signal),
-    chooseDownloadFile: (_client, fileName, signal) =>
-      platform!.call('ncm.chooseDownloadFile', { fileName }, signal),
-    callProvider: async <T>(method, args, signal, idempotencyKey): Promise<T> => {
-      if (!plugins) throw new Error('网易云 Provider 尚未就绪')
-      return (await plugins.callProvider('ncm', method, args, { signal, idempotencyKey })) as T
-    },
-    now: Date.now,
-    newId: randomUUID,
-    changed: () => application?.changed()
-  })
+  lazyServices.cloudTransfers = async () => {
+    const { CoreNcmCloudTransferService } = await import('../../core/ncm/cloudTransferService.ts')
+    return new CoreNcmCloudTransferService({
+      chooseUploadFiles: (_client, signal) => platform!.call('ncm.chooseUploadFiles', {}, signal),
+      chooseDownloadFile: (_client, fileName, signal) =>
+        platform!.call('ncm.chooseDownloadFile', { fileName }, signal),
+      callProvider: async <T,>(method, args, signal, idempotencyKey): Promise<T> => {
+        if (!plugins) throw new Error('网易云 Provider 尚未就绪')
+        return (await plugins.callProvider('ncm', method, args, { signal, idempotencyKey })) as T
+      },
+      now: Date.now,
+      newId: randomUUID,
+      changed: () => application?.changed()
+    })
+  }
   if (plugins) {
     pluginExperiences = new CorePluginExperiences(plugins, database!, () => {
       const state = scan.snapshot()?.state
@@ -1627,14 +1676,32 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     })
   }
   if (plugins && config.plugins?.index) {
-    pluginMarketplace = new CorePluginMarketplace({
-      appVersion: config.plugins.appVersion,
-      localIndexPath: config.plugins.index.localPath,
-      remoteIndexUrl: config.plugins.index.remoteUrl,
-      cacheIndexPath: join(config.root, 'plugin-index', 'cache', 'plugins.json'),
-      packageStagingDir: join(config.root, 'plugin-index', 'staging'),
-      bundledPluginIds: config.plugins.bundledPlugins?.map((plugin) => plugin.id)
-    }, plugins)
+    const pluginConfig = config.plugins
+    const index = pluginConfig.index!
+    const sourceUrl = index.remoteUrl?.trim() || pathToFileURL(index.localPath).href
+    const loadedAt = new Date().toISOString()
+    pluginMarketplaceStatus = async () => {
+      const { loadTrustedPluginPublisherRegistry } = await import('../../core/plugins/indexTrust.ts')
+      return { sourceUrl, configuredSourceUrl: sourceUrl,
+        sourceKind: !index.remoteUrl?.trim() ? 'bundled' : sourceUrl === DEFAULT_PLUGIN_INDEX_URL ? 'official' : sourceUrl === LEGACY_GITHUB_PLUGIN_INDEX_URL ? 'github' : 'custom',
+        loadedFrom: index.remoteUrl?.trim() ? 'remote' : 'bundled', lastFetchedAt: null, expiresAt: null, loadedAt,
+        stale: false, expired: false, originVerified: false, officialSource: sourceUrl === DEFAULT_PLUGIN_INDEX_URL,
+        cacheFormat: null, trustStoreError: loadTrustedPluginPublisherRegistry(join(dirname(index.localPath), 'trusted-publishers.json')).error, error: null }
+    }
+    lazyServices.pluginMarketplace = async () => {
+      const { CorePluginMarketplace } = await import('../../core/plugins/marketplace.ts')
+      return new CorePluginMarketplace(
+        {
+          appVersion: pluginConfig.appVersion,
+          localIndexPath: index.localPath,
+          remoteIndexUrl: index.remoteUrl,
+          cacheIndexPath: join(config.root, 'plugin-index', 'cache', 'plugins.json'),
+          packageStagingDir: join(config.root, 'plugin-index', 'staging'),
+          bundledPluginIds: pluginConfig.bundledPlugins?.map((plugin) => plugin.id)
+        },
+        plugins!
+      )
+    }
   }
   if (plugins && config.plugins) {
     pluginManagement = new CorePluginManagement({ files: transferFiles, manager: plugins, uploadRoot: join(config.root, 'plugin-upload-staging'),
@@ -1677,7 +1744,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     if (inventory !== providerInventory) {
       providerInventory = inventory
       identificationInventoryRevision++
-      imports?.rematch()
+      void application?.reconcileImports(true).catch(error => console.error('[core.imports]', error))
       metadata.refresh(true)
       metadata.entities?.refreshIdentification()
       presentation.refresh()
@@ -1811,7 +1878,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     newId: randomUUID,
     changed: () => application?.changed(),
     failed: (error) => console.error('[core.metadata]', error),
-    libraryChanged: () => imports?.rematch()
+    libraryChanged: () => void application?.reconcileImports(true).catch(error => console.error('[core.imports]', error))
   })
   // Run only after the services captured by settings.changed are constructed,
   // and before application.initialize activates scanning and metadata tasks.
@@ -1824,17 +1891,21 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         console.warn('[dev.metadata] One-time setup needs attention:', result)
     } else console.warn('[dev.metadata] One-time setup deferred: deployment metadata policy is disabled.')
   }
-  const duplicates = new CoreDuplicatesService({
-    readCandidates: (after, limit, revision) =>
-      database!.readDuplicateCandidates(after, limit, revision),
-    authorizeFile: (path, signal) => platform!.call('paths.authorizeAudioFile', { path }, signal),
-    hashContent: (path, signal) => analysis!.hashContent(path, signal),
-    pathKey,
-    fileName: basename,
-    yieldControl: () => new Promise<void>((done) => setImmediate(done)),
-    newId: randomUUID,
-    changed: () => application?.changed()
-  })
+  let duplicates: CoreDuplicatesService | undefined
+  lazyServices.duplicates = async () => {
+    const { CoreDuplicatesService } = await import('../../core/library/duplicatesService.ts')
+    return (duplicates = new CoreDuplicatesService({
+      readCandidates: (after, limit, revision) =>
+        database!.readDuplicateCandidates(after, limit, revision),
+      authorizeFile: (path, signal) => platform!.call('paths.authorizeAudioFile', { path }, signal),
+      hashContent: (path, signal) => analysis!.hashContent(path, signal),
+      pathKey,
+      fileName: basename,
+      yieldControl: () => new Promise<void>((done) => setImmediate(done)),
+      newId: randomUUID,
+      changed: () => application?.changed()
+    }))
+  }
   const resolveQueueInput = createQueueInputResolver({
         database,
         authorizeLocal: (source, signal) =>
@@ -1923,7 +1994,79 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     changed: () => { application?.changed(); metadata.entities?.refreshIdentification(); genres?.invalidate() },
     failed: error => console.error('[core.catalog]', error)
   })
+  lazyServices.settingsBackup = async () => {
+    const { CoreSettingsBackupService } = await import('../../core/settings/backupService.ts')
+    return new CoreSettingsBackupService({
+      settings: settingsService,
+      normalize: (patch) => settings.normalize(patch),
+      themes,
+      validateThemeAssets: (id, assets, signal) =>
+        platform!.call('themes.validateAssets', { id, assets }, signal),
+      pluginTheme,
+      themesChanged: () => {}
+    })
+  }
+  lazyServices.personalBackup = async () => {
+    const { CorePersonalBackupService } =
+      await import('../../core/persistence/personalBackupService.ts')
+    return new CorePersonalBackupService({
+      root: config.root,
+      database: database!,
+      flush: async () => {
+        await Promise.all([
+          statistics.flush(),
+          recordingVersions.flush(),
+          playlists.flush(),
+          bookmarks.flush(),
+          lyrics.flush(),
+          workspace.flush(),
+          streams.flush()
+        ])
+        await playback.flush()
+      },
+      personalData: () => ({
+        statistics: statistics.exportData(),
+        versions: recordingVersions.snapshot()
+      }),
+      chooseFile: (kind, signal) => platform!.call('backup.chooseFile', { kind }, signal),
+      chooseFolder: (signal) => platform!.call('backup.chooseFolder', {}, signal),
+      authorizeRoots: async (roots) =>
+        (await platform!.call('settings.authorizePaths', { libraryFolders: roots })).libraryFolders!,
+      newId: randomUUID
+    })
+  }
+  if (metadata.entities)
+    lazyServices.libraryHealth = async () => {
+      const { CoreLibraryHealthService } = await import('../../core/library/libraryHealthService.ts')
+      return new CoreLibraryHealthService({
+        database: database!,
+        metadata: metadata.entities!,
+        now: Date.now,
+        newId: randomUUID,
+        language: () =>
+          settings.read().musicIdentification.language ??
+          (resolveLocale(settings.read().language, Intl.DateTimeFormat().resolvedOptions().locale) ===
+          'en-US'
+            ? 'en'
+            : 'zh-Hans'),
+        changed: () => application?.changed()
+      })
+    }
+  lazyServices.browse = async () => {
+    const { CoreBrowseService } = await import('../../core/browse/service.ts')
+    return new CoreBrowseService({
+      files: transferFiles,
+      root: join(config.root, 'browse-cache'),
+      newId: randomUUID,
+      providerContext: (id) => plugins?.providerMetadataContext(id) ?? 'unavailable',
+      callProvider: (id, method, args, options) => plugins!.callProvider(id, method, args, options)
+    })
+  }
   application = new CoreApplication({
+    lazyServices,
+    pluginMarketplaceStatus,
+    initializePersonalRestore: async () => { await database!.corePersonalRestore() },
+    personalRestoreAvailable: () => personalRestoreNeedsReview(config.root, existsSync),
     bridge, zones,
     catalog,
     genres,
@@ -1980,7 +2123,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         return () => clearInterval(timer)
       }
     }),
-    modelPack: new CoreModelPackService({
+    modelPack: new ModelPackWorkerClient({
+      launch: () => launcher!.launch('model-install'),
       root: config.root,
       chooseArchive: (signal) => platform!.call('automix.chooseArchive', {}, signal),
       decode: (request, signal) =>
@@ -1997,52 +2141,12 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         await autoMix.capabilities(true)
       }
     }),
-    settingsBackup: new CoreSettingsBackupService({
-      settings: settingsService,
-      normalize: (patch) => settings.normalize(patch),
-      themes,
-      validateThemeAssets: (id, assets, signal) =>
-        platform!.call('themes.validateAssets', { id, assets }, signal),
-      pluginTheme,
-      themesChanged: () => {}
-    }),
-    cloudTransfers,
-    personalBackup: new CorePersonalBackupService({
-      root: config.root,
-      database,
-      flush: async () => {
-        await Promise.all([
-          statistics.flush(),
-          recordingVersions.flush(),
-          playlists.flush(),
-          bookmarks.flush(),
-          lyrics.flush(),
-          workspace.flush(),
-          streams.flush()
-        ])
-        await playback.flush()
-      },
-      personalData: () => ({
-        statistics: statistics.exportData(),
-        versions: recordingVersions.snapshot()
-      }),
-      chooseFile: (kind, signal) => platform!.call('backup.chooseFile', { kind }, signal),
-      chooseFolder: (signal) => platform!.call('backup.chooseFolder', {}, signal),
-      authorizeRoots: async (roots) =>
-        (await platform!.call('settings.authorizePaths', { libraryFolders: roots }))
-          .libraryFolders!,
-      newId: randomUUID
-    }),
-    duplicates,
-    libraryHealth: metadata.entities ? new CoreLibraryHealthService({
-      database, metadata: metadata.entities, now: Date.now, newId: randomUUID,
-      language: () => settings.read().musicIdentification.language ??
-        (resolveLocale(settings.read().language, Intl.DateTimeFormat().resolvedOptions().locale) === 'en-US' ? 'en' : 'zh-Hans'),
-      changed: () => application?.changed()
-    }) : undefined,
     inbox: new CoreInboxService({
       database,
-      duplicates: (id) => duplicates.evidence(id),
+      duplicates: (id) => {
+        if (!duplicates) throw new Error('Duplicate inspection is not complete')
+        return duplicates.evidence(id)
+      },
       newId: randomUUID,
       changed: () => application?.changed()
     }),
@@ -2096,7 +2200,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       newId: randomUUID,
       changed: () => {
         application?.changed()
-        imports?.rematch()
+        void application?.reconcileImports(true).catch(error => console.error('[core.imports]', error))
       }
     }),
     autoMix,
@@ -2130,13 +2234,12 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     statistics,
     listeningSync,
     plugins,
-    pluginMarketplace,
     pluginManagement,
     pluginExperiences,
     playlists,
     recordingVersions,
-    imports,
-    importPreviews,
+    shouldActivateImports: () => playlists.externalIds().some(id =>
+      playlists.readExternal(id)?.entries.some(entry => entry.resolution.state === 'pending')),
     bookmarks,
     lyrics,
     workspace,

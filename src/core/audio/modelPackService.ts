@@ -16,7 +16,7 @@ const { createReadStream, createWriteStream } = coreFs
 const { mkdir, mkdtemp, rm, stat } = coreFsPromises
 const { Readable, pipeline } = coreStream
 
-interface Options {
+export interface CoreModelPackOptions {
   root: string
   chooseArchive(signal: AbortSignal): Promise<string | null>
   decode(request: CoreModelPackDecode, signal: AbortSignal): Promise<void>
@@ -34,8 +34,8 @@ export class CoreModelPackService {
   private readonly installer: AutoMixStemInstaller
   private pending: Promise<void> | null = null
   private stopped = false
-  private readonly options: Options
-  constructor(options: Options) {
+  private readonly options: CoreModelPackOptions
+  constructor(options: CoreModelPackOptions) {
     this.options = options
     const root = join(options.root, 'automix-stem-packs')
     this.installer = new AutoMixStemInstaller({
@@ -71,6 +71,9 @@ export class CoreModelPackService {
   cancel(): CoreModelPackStatus {
     return this.installer.cancel()
   }
+  async waitForIdle(): Promise<void> {
+    await this.pending
+  }
   async shutdown(): Promise<void> {
     this.stopped = true
     await this.installer.shutdown()
@@ -83,7 +86,7 @@ export function decodeWithPlatform(
   root: string,
   input: PortableReadableStream,
   bytes: number,
-  decode: Options['decode'],
+  decode: CoreModelPackOptions['decode'],
   signal: AbortSignal,
   progress?: (bytes: number) => void
 ): PortableReadableStream {

@@ -6,7 +6,15 @@ import PlaybackModeIcon from '@renderer/components/icons/PlaybackModeIcon.vue'
 import PlayerControlIcon from '@renderer/components/player-bar/PlayerControlIcon.vue'
 import { clampVolumePercent, createVolumeWheelStepper } from './player-bar/volumeWheel'
 import type { Track, TrackArtistRef } from '@renderer/types/music'
-import { ref, computed, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
+import {
+  ref,
+  computed,
+  defineAsyncComponent,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  type ComponentPublicInstance
+} from 'vue'
 import { useCoreConnection } from '../stores/coreConnection.ts'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
@@ -32,7 +40,7 @@ import { resolveReasonCode } from '../../../shared/audio/reasonCodes.ts'
 import { useLocale } from '../app/useLocale.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
-import HiFiSidebar from './player-bar/HiFiSidebar.vue'
+const HiFiSidebar = defineAsyncComponent(() => import('./player-bar/HiFiSidebar.vue'))
 import sequentialIcon from '../assets/icons/sequential-playback.svg'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
 import { usePlaybarAutoHide } from './player-bar/usePlaybarAutoHide.ts'
@@ -48,10 +56,16 @@ import type { AppearanceDraft } from '../../../shared/appAppearance.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
 import { useQueueAddToPlaylist } from './player-bar/useQueueAddToPlaylist'
-import QueueAddToPlaylistDialog from './player-bar/QueueAddToPlaylistDialog.vue'
-import LibraryQueueDrawer from './player-bar/LibraryQueueDrawer.vue'
-import QueueSavePlaylistDialog from './player-bar/QueueSavePlaylistDialog.vue'
-import CompactPlayerBarVisualizer from './player-bar/CompactPlayerBarVisualizer.vue'
+const QueueAddToPlaylistDialog = defineAsyncComponent(
+  () => import('./player-bar/QueueAddToPlaylistDialog.vue')
+)
+const LibraryQueueDrawer = defineAsyncComponent(() => import('./player-bar/LibraryQueueDrawer.vue'))
+const QueueSavePlaylistDialog = defineAsyncComponent(
+  () => import('./player-bar/QueueSavePlaylistDialog.vue')
+)
+const CompactPlayerBarVisualizer = defineAsyncComponent(
+  () => import('./player-bar/CompactPlayerBarVisualizer.vue')
+)
 import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 import { syncPluginProviders } from '../providers'
 import type {
@@ -693,6 +707,12 @@ const queueAddToPlaylistProvider = computed(() =>
         error: queueAddToPlaylist.providerError.value
       }
 )
+
+// Preserve the dialog's close transition and local state after its first use.
+const queuePlaylistDialogMounted = ref(false)
+watch(queueAddToPlaylist.open, (open) => {
+  if (open) queuePlaylistDialogMounted.value = true
+})
 
 const queueSavePlaylistOpen = ref(false)
 const playbackQueueLength = computed(() =>
@@ -1734,7 +1754,7 @@ onBeforeUnmount(() => {
     />
 
     <QueueAddToPlaylistDialog
-      v-if="!preview"
+      v-if="!preview && queuePlaylistDialogMounted"
       :open="queueAddToPlaylist.open.value"
       :target-label="queueAddToPlaylist.targetLabel.value"
       :local-playlists="queueAddToPlaylist.localPlaylists.value"

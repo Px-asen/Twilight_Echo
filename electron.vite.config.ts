@@ -12,10 +12,12 @@ export default defineConfig(({ command }) => {
     main: {
       define: autoMixDefine,
       build: {
+        sourcemap: 'hidden',
         rollupOptions: {
           input: {
             index: resolve(__dirname, 'src/main/index.ts'),
             musicCore: resolve(__dirname, 'src/main/coreProcess/entry.ts'),
+            modelPackWorker: resolve(__dirname, 'src/main/coreProcess/modelPackWorker.ts'),
             diagnosticWriter: resolve(__dirname, 'src/main/diagnostics/writerWorker.ts'),
             pluginHost: resolve(__dirname, 'src/main/plugins/host.ts'),
             audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts'),
@@ -26,7 +28,7 @@ export default defineConfig(({ command }) => {
         }
       }
     },
-    preload: {},
+    preload: { build: { sourcemap: 'hidden' } },
     renderer: {
       define: autoMixDefine,
       resolve: {

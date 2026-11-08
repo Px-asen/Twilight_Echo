@@ -291,6 +291,7 @@ function setCustomFontFamily(event: Event): void {
     void updateSettings({ fontFamily }).catch(() => undefined)
 }
 defineExpose({
+  suspend: () => backgroundEditor.value?.suspend(),
   reveal,
   findSetting,
   showPanel,

@@ -1,3 +1,5 @@
+const { archiveJavaScriptSymbols } = require('./diagnostic-symbols.cjs')
+const { buildCrashHelpers } = require('./build-crash-helper.cjs')
 const { spawnSync } = require('node:child_process')
 const { createHash } = require('node:crypto')
 const { createReadStream } = require('node:fs')
@@ -11,6 +13,7 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
+const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
 const {
   verifyReleaseCapabilityConsistency
 } = require('./verify-release-capability-consistency.cjs')
@@ -40,6 +43,8 @@ async function writeInstallerChecksum(installerPath = expectedInstaller) {
 }
 
 async function main() {
+  buildCrashHelpers({ root })
+  await prepareWindowsDesktopCore({ root, args: ['--win'] })
   const releaseEnvironment = {
     ...process.env,
     CSC_IDENTITY_AUTO_DISCOVERY: 'false',
@@ -55,7 +60,7 @@ async function main() {
     'Windows release is intentionally unsigned; publish the generated SHA-256 and expect SmartScreen warnings.'
   )
   const smtc = prepareSmtcMsvc({ root, environment: releaseEnvironment, stage: false })
-  prepareVst3Msvc({ root, environment: releaseEnvironment })
+  prepareVst3Msvc({ root, environment: releaseEnvironment, force: true })
   const asio = buildAsioHelper({ root, environment: releaseEnvironment, tests: false })
   const staging = preparePackagedAudioStaging(root, {
     nativeOverrides: {
@@ -63,6 +68,7 @@ async function main() {
       'twilight-asio-helper-x86.exe': asio.artifactPath
     }
   })
+  archiveJavaScriptSymbols(path.join(root, 'out'))
   let build
   try {
     verifyAsioHelperPair(staging.nativeDir)

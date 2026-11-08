@@ -34,7 +34,7 @@ function createAlbumPlaylistHarness() {
   assert.ok(owned)
   const watcher = source.slice(
     source.indexOf('watch([currentDetail, isLoggedIn]'),
-    source.indexOf('function openCreateNcmPlaylistDialog(')
+    source.indexOf('async function collectNcmIds(')
   )
   assert.ok(watcher.startsWith('watch('))
   const notices: Array<{ message: string }> = []
@@ -153,6 +153,13 @@ test('album search detail opens the result source, retries in place and ignores 
         return new Promise<Track[]>((resolve) => {
           finishRemote = resolve
         })
+      }
+    },
+    detailBrowse: {
+      open: async (source: { providerId: string; args: string[] }) => {
+        const request = token
+        const tracks = await scope.albumSearch.loadAlbumTracks({ providerId: source.providerId, id: source.args[0] })
+        if (request === token) scope.detailTracks.value = tracks
       }
     },
     detailTracks: { value: [] as Track[] },
@@ -333,6 +340,15 @@ function createTrackMetadataNavigationHarness() {
   const methods = ['fetchArtistTopSongs', 'searchArtists', 'fetchAlbumTracks']
   const scope = {
     getTrackSource,
+    restoringPage: false,
+    core: { command: async () => undefined, query: async () => [] },
+    browseContexts: Promise.resolve([]),
+    captureBrowseContexts: async () => [],
+    browseState: ref({ session: null }),
+    detailBrowse: { reset() {} },
+    recommendationSessions: ref({}),
+    retainDetailState: () => ({}),
+    releaseDetailEntry() {},
     findStreamingArtistById,
     matchStreamingArtistsByName,
     nextTick,
@@ -342,6 +358,7 @@ function createTrackMetadataNavigationHarness() {
     props: reactive({ active: true }),
     NCM_PROVIDER_ID: 'ncm',
     providerStore: {
+      providers: ref([]),
       syncProviders: async (): Promise<void> => undefined,
       getProvider: (id: string) => ({ supportedMethods: id === 'ncm' ? methods : [] })
     },
@@ -416,8 +433,8 @@ function createTrackMetadataNavigationHarness() {
     source.indexOf('function resetLikedTracksPaging(')
   )
   const back = source.slice(
-    source.indexOf('function popDetail('),
-    source.indexOf('function removeDetailEntries(')
+    source.indexOf('async function popDetail('),
+    source.indexOf('async function removeDetailEntries(')
   )
   const providerWatcher = source.slice(
     source.indexOf('watch(activeProvider,'),
@@ -647,9 +664,17 @@ test('ranking detail uses cross-source listening stats before provider play reco
 })
 
 test('provider likes never fall back to application favorites', () => {
-  assert.match(source, /fetchLikedTracksPage\(0, LIKED_TRACKS_PAGE_SIZE, force\)/)
+  assert.match(source, /method: 'fetchLikedTracksPage',\s*args: \[0, 200, force\]/)
   assert.doesNotMatch(source, /unifiedFavoriteTracks|summarizeUnifiedFavoriteTracks/)
   assert.match(source, /Boolean\(activeExternalState\.value\?\.likedPlaylist\)/)
+})
+
+test('liked playback submits the complete provider session while preserving heart mode', () => {
+  assert.match(source, /async function playBrowseTracks/)
+  assert.match(source, /playbackStore\.playLikedTracks/)
+  assert.match(source, /playbackStore\.playTrackPages/)
+  assert.match(source, /detailBrowse\.produce/)
+  assert.match(source, /async function playAllDetailTracks/)
 })
 
 function createLikedPlaybackHarness(t: test.TestContext) {
@@ -677,13 +702,19 @@ function createLikedPlaybackHarness(t: test.TestContext) {
     release(tracks)
     effect.stop()
   })
-  const detailTracks = shallowRef(tracks.slice(0, 100))
+  const detailTracks = shallowRef<Track[]>(tracks.slice(0, 100))
   let fullReads = 0
   const scope = {
     currentDetail: ref<{ type: string } | null>({ type: 'liked' }),
     isExternalActive: ref(false),
     libraryFavoritePlaylist: ref({ id: 123 }),
     detailTracks,
+    browseState: ref({ offset: 0 }),
+    detailBrowse: {
+      load: async () => {
+        detailTracks.value = (await loading).slice(0, 800)
+      }
+    },
     visibleDetailTracks: computed(() => detailTracks.value),
     streamingListTracks: computed(() => detailTracks.value),
     streamingContextMenuTrack: ref(tracks[0]),
@@ -811,8 +842,8 @@ for (const action of ['loadAllLikedTracks', 'loadMoreLikedTracks'] as const) {
     await h.handlers.playTrackFromCurrentDetail(h.tracks[1])
     h.release()
     await loading
-    assert.equal(h.scope.detailTracks.value.length, 2100)
-    assert.equal(h.scope.likedTracksHasMore.value, false)
+    assert.equal(h.scope.detailTracks.value.length, action === 'loadAllLikedTracks' ? 800 : 2100)
+    if (action === 'loadMoreLikedTracks') assert.equal(h.scope.likedTracksHasMore.value, false)
     assert.equal(h.commands.length, 1)
     assert.equal(h.commands[0].name, 'liked.play')
     assert.equal(h.commands[0].payload.selectedId, 'ncm:2')
@@ -851,10 +882,11 @@ test('a rate-limited full display read cannot replay playback from its partial f
   )
 })
 
-test('loading the complete liked display is an explicit action independent of playback', () => {
+test('loading the liked display keeps a bounded window independent of playback', () => {
   assert.match(source, /async function loadAllLikedTracks\(\): Promise<void>/)
   assert.match(source, /@load-all-liked="loadAllLikedTracks"/)
-  assert.match(source, /const tracks = await fetchLikedTracks\(\)/)
+  assert.match(source, /await detailBrowse\.load\(browseState\.value\.offset\)/)
+  assert.doesNotMatch(source, /const tracks = await fetchLikedTracks\(\)/)
   assert.doesNotMatch(source, /resolveDetailPlaybackQueue/)
 })
 
@@ -873,10 +905,9 @@ test('external favorite card opens and plays the selected folder instead of the 
       scope.currentDetail.value = { type: 'playlist', playlist }
     },
     visibleDetailTracks: { value: tracks },
-    playStreamingTrack: (first: Track, queue: Track[]) => {
+    playBrowseTracks: async () => {
       assert.equal(scope.currentDetail.value?.playlist.id, selected.id)
-      assert.equal(first, tracks[0])
-      played.push(queue)
+      played.push(tracks)
     }
   }
   const openSource = source.slice(
@@ -983,14 +1014,14 @@ test('private FM and radar start the Core session without renderer queue ownersh
   assert.match(homeSource, /@click="playPersonalizedStream\(radarSection\)"/)
 })
 
-test('each streaming destination stays mounted across page switches', () => {
+test('streaming destinations unload and restore Core-owned navigation state', () => {
   const appSource = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
-  assert.match(appSource, /v-for="tab in streamingPageTabs"/)
-  assert.match(source, /v-show="active !== false"/)
-  assert.doesNotMatch(appSource.match(/<StreamingPage\b[\s\S]*?\/>/)?.[0] ?? '', /v-if=/)
-  assert.match(appSource, /:active="showStreamingSurface && streamingTab === tab"/)
+  assert.match(appSource, /v-if="showStreamingSurface"/)
+  assert.doesNotMatch(appSource, /streamingPageTabs|MAX_RETAINED_STREAMING_TABS/)
+  assert.match(source, /saveBrowsePage\(\s*pageCacheKey/)
+  assert.match(source, /restoreBrowsePage\(pageCacheKey/)
+  assert.match(source, /detailBrowse\.dispose\(\)/)
   assert.doesNotMatch(source, /<ProviderSidebar/)
-  assert.match(source, /async function refreshStreamingSurface/)
 })
 
 test('streaming page supports multi-select batch favorite and delete on track lists', () => {
@@ -1029,7 +1060,7 @@ test('streaming page supports multi-select batch favorite and delete on track li
   assert.match(detailSource, /batchAddToPlaylist/)
   assert.match(detailSource, /trackContextMenu/)
   assert.match(detailSource, /从歌单移除/)
-  assert.match(source, /executeStreamingBatchRemoval\(selected/)
+  assert.match(source, /executeStreamingBatchRemoval\(tracks/)
   assert.doesNotMatch(source, /musicStore\.removeTrack\(track\.id\)/)
 })
 
@@ -1134,6 +1165,11 @@ function createFmHarness() {
     currentTrack: { value: current },
     activeProvider: { value: 'kugou' },
     recommendationTracks: { value: { fm: [current] } },
+    recommendationSessions: { value: { fm: { id: 'fm-session' } } },
+    core: {
+      query: async (_name: string, input: { trackId: string }) => ({ position: scope.recommendationTracks.value.fm.findIndex(track => track.id === input.trackId) }),
+      command: async () => ({ id: 'fm-session' })
+    },
     recommendationRequestId: 1,
     currentDetail: { value: null },
     playbackStore: { queue: { value: [current] } },
@@ -1181,6 +1217,12 @@ test('guest home skips private daily recommendations while retaining public char
     recommendationRequestId: 0,
     homeSectionDefinitions: { value: [] },
     recommendationTracks: { value: {} as Record<string, Track[]> },
+    recommendationSessions: { value: {} },
+    core: { command: async () => undefined },
+    createBrowseWindow: () => {
+      const state = { value: { tracks: [] as Track[], session: { id: 'section' } } }
+      return { state, seed: async (_id: string, tracks: Track[]) => { state.value.tracks = tracks }, dispose() {} }
+    },
     recommendationErrors: { value: {} },
     recommendPlaylists: { value: [] },
     recsLoading: { value: false },

@@ -1,4 +1,4 @@
-import type { SleepTimerMode, SleepTimerState } from './sleepTimer.ts'
+import type { SleepTimerMode, SleepTimerState, SleepTimerSchedule } from './sleepTimer.ts'
 
 export interface CoreSleepTimerState {
   revision: number
@@ -8,4 +8,8 @@ export interface CoreSleepTimerConfigure {
   revision: number
   mode: SleepTimerMode
   minutes?: number
+  action?: 'pause'
+  endsAt?: number
+  schedule?: SleepTimerSchedule
+  finishCurrentTrack?: boolean
 }

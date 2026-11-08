@@ -2695,3 +2695,20 @@ test('whole-file analysis tasks can override the pool default deadline', async (
     analysis.destroy()
   }
 })
+
+test('a native crash retains the loaded identity and pending request without exposing stale live capabilities', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({ serviceEntry: 'audio', restartDelayMs: 100000, launch: () => child })
+  try {
+    const pending = binding.callAsync('EnumerateDevices', [])
+    const rejected = assert.rejects(pending, /3221225727/)
+    child.emit('message', { kind: 'ready', capabilities: { ...createAudioServiceCapabilities(['ApplyDspState', 'GetDspGraphStatus']), nativeRuntime: { addonPath: 'D:/app/audio.node' } } })
+    child.emit('exit', 3221225727)
+    await rejected
+    const evidence = binding.getDiagnosticEvidence() as any
+    assert.equal(evidence.lastKnownCapabilities.value.nativeRuntime.addonPath, 'D:/app/audio.node')
+    assert.equal(evidence.lastFailure.pending[0].method, 'EnumerateDevices')
+    assert.equal(evidence.alive, false)
+    assert.equal(JSON.parse(binding.GetEngineCapabilities()).audioServiceProtocolVersion, null)
+  } finally { binding.destroy() }
+})

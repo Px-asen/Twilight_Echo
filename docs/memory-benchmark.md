@@ -22,6 +22,20 @@ pnpm run benchmark:memory -- --build-root . --output .artifacts/memory-after
 
 Use `--sizes`, `--runs`, `--cycles`, `--soak-seconds` and `--settle-seconds` for shorter development probes. Shortened runs are explicitly ineligible for the full acceptance workload. Normal runs never force garbage collection or trim working sets. Fixture construction happens before the application startup phase.
 
+Select `--core-host node` to measure the packaged desktop Node workers. The selected build root must include `out/desktop-core`, staged by `scripts/build-desktop-core.cjs`; the default remains `--core-host electron`. The runner decodes the desktop supervision protocol for fixture injection and samples each actual Node child. It does not route service business traffic through the parent.
+
+`--electron-executable <absolute path>` can select an explicitly installed copy of the same Electron version. Both sides must use the same supported execution environment. Moving an executable to escape a Windows integrity restriction is not production acceptance.
+
+After both full workloads complete, `node scripts/compare-memory.cjs <before/report.json> <after/report.json>` reports repetition medians and ranges per size, phase and process role. It rejects incomplete or pressure-aborted runs and different window/DPI/compositor settings. GPU is separate. The full workload now includes a measured paused phase after restoration.
+
+For ordinary idle and playback residency, select the steady scenario:
+
+```powershell
+pnpm run benchmark:memory -- --scenario steady --sizes 1057 --runs 3 --settle-seconds 45 --soak-seconds 60 --output .artifacts/memory-steady
+```
+
+This scenario opens the library, waits for `settle-seconds`, plays the same native silent WAV for `soak-seconds`, then pauses for `settle-seconds`. It records the same process, heap and GPU counters and checks playback advancement. It does not take navigation screenshots or exercise other pages, Afterglow or restoration. Use matching settings and builds for before/after comparisons. It remains ineligible for the existing full-scenario acceptance, whose default workload is unchanged.
+
 Every run stops if available physical memory falls below 1 GiB. The report retains the interrupted phase and the reason. Release unrelated memory pressure before retrying into a new output directory. Do not compare a pressure-aborted run with a complete run.
 
 ## Read the report
@@ -34,6 +48,8 @@ Every run stops if available physical memory falls below 1 GiB. The report retai
 - PNG captures of the actual library, streaming home/detail, playing page, DSP workspace and restored UI. Navigation checks visibility and finite transition completion, then captures after foreground painting.
 
 All byte fields use bytes; divide by 1,048,576 for MiB. Summaries use the median of the final 30 seconds or final half of a phase, whichever is shorter. A stable phase needs at least three valid Windows samples. Peaks are sampled peaks, not guaranteed maxima between samples; the sampler can miss a short cold-start phase. Processes in the same role are added within each timestamp before taking the median, with zero for processes that have exited. Runtime heap summaries keep each process ID. Shared pages and GPU memory are not added to private working set. V8 external memory can include ArrayBuffers; these fields are not additive.
+
+Windows process membership uses both parent PIDs and process creation times. A process born before its apparent parent is excluded: Windows can reuse a departed parent's PID for an unrelated application. Each process sample records `createdAt`, and sampling stops if the root PID is reused. Earlier reports without this check require an ancestry audit before being used as a baseline.
 
 The `events` array records complete navigation round trips, including sidebar operations, application animations and readiness polling at 100 ms intervals. The last streaming and player/DSP cycle also includes screenshot time. These are scenario durations, not input-to-frame latency or an audio latency measurement. Compare the same cycle positions. `bulk.durationMs` measures the renderer's complete paged query. The desktop workload never forces GC.
 

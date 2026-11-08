@@ -10,7 +10,7 @@ import {
   ref,
   watch
 } from 'vue'
-import ImportDialog from '@renderer/components/ImportDialog.vue'
+const ImportDialog = defineAsyncComponent(() => import('@renderer/components/ImportDialog.vue'))
 import ThemeIcon from '@renderer/components/ThemeIcon.vue'
 import { useMusicStore } from '@renderer/stores/useMusicStore'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
@@ -153,6 +153,10 @@ const scanningLabel = computed(() => {
   return status.total > 0 ? phase + '中 ' + (status.current || 0) + '/' + status.total : '正在扫描…'
 })
 const showImportDialog = ref(false)
+const importDialogMounted = ref(false)
+watch(showImportDialog, (show) => {
+  if (show) importDialogMounted.value = true
+})
 const showPagesEditor = ref(false)
 function selectPage(page: NavigationPageDefinition): void {
   showPagesEditor.value = false
@@ -320,7 +324,11 @@ function setPressOrigin(event: PointerEvent): void {
       <span v-if="scanning" class="scanning-text" aria-live="polite">{{ scanningLabel }}</span>
     </div>
   </div>
-  <ImportDialog v-if="!preview" :show="showImportDialog" @close="showImportDialog = false" />
+  <ImportDialog
+    v-if="!preview && importDialogMounted"
+    :show="showImportDialog"
+    @close="showImportDialog = false"
+  />
   <NativeDialogTransition>
     <NavigationPagesDialog
       v-if="showPagesEditor"

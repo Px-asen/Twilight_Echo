@@ -14,6 +14,30 @@ const edited = (gain: number): EqSnapshot => ({
   eqBands: [{ ...initial.eqBands[0], gain }]
 })
 
+test('workspace restore retains both A/B histories without applying audio and rejects a changed engine snapshot', async () => {
+  const original = useEqualizerHistory(initial, async () => {})
+  await original.commit(edited(3))
+  await original.switchSlot('B')
+  await original.commit(edited(6))
+  await original.travel('undo')
+  const serialized = JSON.stringify(original.snapshot())
+  const applied: EqSnapshot[] = []
+  const resumed = useEqualizerHistory(initial, async (value) => {
+    applied.push(value)
+  })
+  assert.equal(resumed.restore(JSON.parse(serialized), initial), true)
+  assert.equal(resumed.activeSlot.value, 'B')
+  assert.equal(resumed.canRedo.value, true)
+  assert.equal(applied.length, 0)
+  await resumed.travel('redo')
+  assert.deepEqual(applied.at(-1), edited(6))
+  await resumed.switchSlot('A')
+  assert.deepEqual(applied.at(-1), edited(3))
+  const changed = useEqualizerHistory(edited(9), async () => {})
+  assert.equal(changed.restore(JSON.parse(serialized), edited(9)), false)
+  assert.equal(changed.canUndo.value, false)
+})
+
 test('one committed gesture restores exact EQ parameters, bypass, routing and preamp', async () => {
   const applied: EqSnapshot[] = []
   const history = useEqualizerHistory(initial, async (value) => {

@@ -14,32 +14,36 @@ export function createCorePlayerPersonal(core: CorePlayerClient, failed: (error:
   }
   const lyrics = createCorePlayerResource(
     () => key('lyrics'),
-    async () => ({
-      state: await core.query('lyrics.state', {}),
-      content: await core.query('lyrics.current', {})
+    async (signal) => ({
+      state: await core.query('lyrics.state', {}, signal),
+      content: await core.query('lyrics.current', {}, signal)
     }),
     failed
   )
   const bookmarks = createCorePlayerResource(
     () => key('bookmarks'),
-    async () => {
-      const state = await core.query('bookmarks.state', {})
+    async (signal) => {
+      const state = await core.query('bookmarks.state', {}, signal)
       return {
         ...state,
-        page: await core.query('bookmarks.page', {
-          revision: state.revision,
-          scope: 'current',
-          offset: 0,
-          limit: 200
-        })
+        page: await core.query(
+          'bookmarks.page',
+          {
+            revision: state.revision,
+            scope: 'current',
+            offset: 0,
+            limit: 200
+          },
+          signal
+        )
       }
     },
     failed
   )
   const workspace = createCorePlayerResource(
     () => key('workspace'),
-    async () => {
-      const state = await core.query('workspace.state', {})
+    async (signal) => {
+      const state = await core.query('workspace.state', {}, signal)
       const page = {
         revision: state.revision,
         contentRevision: state.contentRevision,
@@ -48,8 +52,8 @@ export function createCorePlayerPersonal(core: CorePlayerClient, failed: (error:
       }
       return {
         state,
-        sessions: await core.query('workspace.sessions', page),
-        history: await core.query('workspace.history', page)
+        sessions: await core.query('workspace.sessions', page, signal),
+        history: await core.query('workspace.history', page, signal)
       }
     },
     failed

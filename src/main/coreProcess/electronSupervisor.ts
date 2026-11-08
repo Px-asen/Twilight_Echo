@@ -40,6 +40,12 @@ import { CoreSupervisor, type CoreSupervisorOptions, type SupervisedProcess } fr
 import type { ServiceMessagePort } from '../services/servicePort.ts'
 import { observeUtilityProcess } from '../diagnostics/utilityObservation.ts'
 import { audioServiceEnv } from '../audio/audioServiceEnvironment.ts'
+import { createNodeServiceChannel, NodeSupervisedProcess } from '../server/nodeHost.ts'
+import {
+  desktopCoreHost,
+  desktopNodeEnvironment,
+  resolveDesktopNodeRuntime
+} from './desktopNodeRuntime.ts'
 import {
   resolveAuthorizedAudioSource,
   resolveAuthorizedLibraryDirectory,
@@ -79,8 +85,19 @@ import {
 } from '../security/localPaths.ts'
 
 export function createElectronCoreSupervisor(
-  configuration: CoreSupervisorOptions['configuration']
+  configuration: CoreSupervisorOptions['configuration'],
+  dependencies: {
+    observeNodeProcess?: (child: NodeSupervisedProcess, serviceName: string) => void
+  } = {}
 ): CoreSupervisor {
+  const nodeRuntime =
+    desktopCoreHost() === 'node'
+      ? resolveDesktopNodeRuntime({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          resourcesPath: process.resourcesPath
+        })
+      : null
   const castOutput = new CastOutputSupervisor((target) =>
     target.protocol === 'dlna'
       ? dlnaStop(target.controlUrl)
@@ -342,17 +359,40 @@ export function createElectronCoreSupervisor(
         await trashLocalFileWithRetry(await resolveAuthorizedAudioFile(path))
       }
     },
-    entries: {
+    entries: nodeRuntime?.entries ?? {
       core: join(__dirname, 'musicCore.js'),
       audio: join(__dirname, 'audioEngineService.js'),
       'audio-test': join(__dirname, 'audioEngineService.js'),
       database: join(__dirname, 'libraryDatabaseService.js'),
       scan: join(__dirname, 'libraryScanService.js'),
       analysis: join(__dirname, 'audioAnalysisService.js'),
+      'model-install': join(__dirname, 'modelPackWorker.js'),
       plugin: join(__dirname, 'pluginHost.js')
     },
     fork: (entry, args, serviceName) => {
       const maxOldSpaceMb = serviceName === 'twilight-core' ? 256 : 128
+      if (nodeRuntime) {
+        const env = desktopNodeEnvironment(
+          nodeRuntime,
+          ['twilight-audio', 'twilight-audio-test', 'twilight-zone-audio'].includes(serviceName)
+            ? audioServiceEnv()
+            : process.env
+        )
+        if (serviceName === 'twilight-plugin' && configuration.plugins?.proxy)
+          Object.assign(env, buildPluginProxyEnv(configuration.plugins.proxy))
+        const child = new NodeSupervisedProcess({
+          execPath: nodeRuntime.executable,
+          execArgv: [`--max-old-space-size=${maxOldSpaceMb}`],
+          bootstrap: nodeRuntime.bootstrap,
+          entry,
+          args,
+          cwd: nodeRuntime.root,
+          env
+        })
+        observeUtilityProcess(child, serviceName)
+        dependencies.observeNodeProcess?.(child, serviceName)
+        return child
+      }
       const child = utilityProcess.fork(entry, args, {
         serviceName,
         stdio: 'pipe',
@@ -368,10 +408,12 @@ export function createElectronCoreSupervisor(
       return child as unknown as SupervisedProcess
     },
     channel: () =>
-      new MessageChannelMain() as unknown as {
-        port1: ServiceMessagePort
-        port2: ServiceMessagePort
-      }
+      nodeRuntime
+        ? createNodeServiceChannel()
+        : (new MessageChannelMain() as unknown as {
+            port1: ServiceMessagePort
+            port2: ServiceMessagePort
+          })
   })
   supervisor.on('settings', (state: CoreSettingsState) => {
     if (!projectedLaunchSettings) {

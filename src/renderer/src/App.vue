@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import DebugSessionNotice from './components/DebugSessionNotice.vue'
 import NativeDialogTransition from '@renderer/components/NativeDialogTransition.vue'
 import MotionTransition from '@renderer/components/MotionTransition.vue'
 import { useSharedArtwork } from './app/motion/useSharedArtwork'
 import { mountWorkshopDecorations } from '@renderer/components/theme-workshop/workshopDecorations'
 import {
   ref,
-  shallowRef,
   provide,
   computed,
   onMounted,
@@ -134,10 +134,40 @@ import type { TrackArtistRef } from './types/music'
 type TitleSurface = 'default' | 'settings' | 'streaming'
 let idleLoginCheck: IdleTaskHandle | null = null
 
-const appearancePageRef = ref<(AppearanceWorkspace & { requestClose: () => Promise<void> }) | null>(
-  null
-)
+const appearancePageRef = ref<
+  (AppearanceWorkspace & { requestClose: () => Promise<void>; ready: () => Promise<void> }) | null
+>(null)
 const audioWorkspaceRef = ref<DspWorkspace | null>(null)
+const appearanceGuardRequested = ref(false)
+const appearanceSuspendReady = ref(true)
+const audioSuspendReady = ref(true)
+const appearanceLeavePending = ref(false)
+const appearanceGuardWorkspace: AppearanceWorkspace = {
+  async requestLeave() {
+    appearanceGuardRequested.value = true
+    try {
+      await nextTick()
+      if (!appearancePageRef.value)
+        await new Promise<void>((resolve) => {
+          const stop = watch(
+            appearancePageRef,
+            (value) => {
+              if (value) {
+                stop()
+                resolve()
+              }
+            },
+            { flush: 'post' }
+          )
+        })
+      const page = appearancePageRef.value!
+      await page.ready()
+      return await page.requestLeave()
+    } finally {
+      appearanceGuardRequested.value = false
+    }
+  }
+}
 const navigation = guardDspNavigation(
   guardAppearanceNavigation(
     useAppNavigation({
@@ -156,14 +186,15 @@ const navigation = guardDspNavigation(
         )
       }
     }),
-    () => appearancePageRef.value
+    () => appearanceGuardWorkspace
   ),
   () => audioWorkspaceRef.value
 )
-const audioWorkspaceRetained = computed(() =>
-  [navigation.session.value.overlay, ...navigation.session.value.overlayHistory].some(
-    (overlay) => overlay === 'equalizer' || overlay === 'dsp'
-  )
+const audioWorkspaceRetained = computed(
+  () =>
+    navigation.showEqualizerPage.value ||
+    navigation.showDspRackPage.value ||
+    !audioSuspendReady.value
 )
 const audioWorkspaceInitialTab = computed(() =>
   [
@@ -176,7 +207,16 @@ const audioWorkspaceInitialTab = computed(() =>
 const appearancePageRetained = computed(
   () =>
     navigation.showAppearancePage.value ||
-    navigation.session.value.overlayHistory.includes('appearance')
+    appearanceGuardRequested.value ||
+    !appearanceSuspendReady.value ||
+    appearanceLeavePending.value
+)
+watch(
+  navigation.showAppearancePage,
+  (visible, wasVisible) => {
+    if (visible || wasVisible) appearanceLeavePending.value = true
+  },
+  { flush: 'sync' }
 )
 const pageDock = providePageDock(() => (navigation.showAppearancePage.value ? 'appearance' : ''))
 const navigationPersistence = createNavigationSessionPersistence(navigation)
@@ -245,6 +285,10 @@ const settingsOverlayVisible = computed(
 function retainSettingsOverlay(): void {
   settingsOverlayLeaves.value += 1
 }
+function releaseAppearanceOverlay(): void {
+  releaseSettingsOverlay()
+  appearanceLeavePending.value = false
+}
 function releaseSettingsOverlay(): void {
   settingsOverlayLeaves.value = Math.max(0, settingsOverlayLeaves.value - 1)
 }
@@ -252,21 +296,28 @@ const { pushNotice, dismissNotice } = useAppNoticeStore()
 const audioRecoveryCore = useCoreConnection()
 let audioFailureNotice: number | undefined
 let audioFailureNoticeRevision = 0
-watch(() => audioRecoveryCore.state.value?.audioRecovery?.error, error => {
-  if (!error) {
-    if (audioFailureNotice !== undefined) dismissNotice(audioFailureNotice)
-    if (audioFailureNotice !== undefined) audioFailureNoticeRevision++
-    audioFailureNotice = undefined
-    return
-  }
-  audioFailureNotice = pushNotice({
-    kind: 'warning',
-    message: '音频暂不可用，曲库和设置仍可使用。',
-    sticky: true,
-    dedupeKey: `audio-unavailable:${audioRecoveryCore.state.value?.epoch}:${audioFailureNoticeRevision}`,
-    action: { label: '处理音频故障', run: () => openSettingsPage('playback', { anchor: 'audio-troubleshooting' }) }
-  })
-}, { immediate: true })
+watch(
+  () => audioRecoveryCore.state.value?.audioRecovery?.error,
+  (error) => {
+    if (!error) {
+      if (audioFailureNotice !== undefined) dismissNotice(audioFailureNotice)
+      if (audioFailureNotice !== undefined) audioFailureNoticeRevision++
+      audioFailureNotice = undefined
+      return
+    }
+    audioFailureNotice = pushNotice({
+      kind: 'warning',
+      message: '音频暂不可用，曲库和设置仍可使用。',
+      sticky: true,
+      dedupeKey: `audio-unavailable:${audioRecoveryCore.state.value?.epoch}:${audioFailureNoticeRevision}`,
+      action: {
+        label: '处理音频故障',
+        run: () => openSettingsPage('playback', { anchor: 'audio-troubleshooting' })
+      }
+    })
+  },
+  { immediate: true }
+)
 const playlistRecoveryStore = useMusicStore()
 const stopPlaylistPersistenceNotifications = startPlaylistPersistenceNotifications(
   playlistRecoveryStore.playlistPersistenceStatus,
@@ -320,11 +371,6 @@ const togglePluginPage = navigation.createTogglePluginHandler()
 const streamingMetadataRequest = ref<StreamingMetadataNavigationRequest | null>(null)
 let streamingMetadataRequestKey = 0
 const streamingMetadataTab = ref<StreamingPageTab>('home')
-// Retain up to 2 recent StreamingPage sub-tabs so contextual back/forward stays
-// instant, and unload all retained streaming tabs upon returning to Local Library.
-const MAX_RETAINED_STREAMING_TABS = 2
-const streamingPageTabs = shallowRef<StreamingPageTab[]>([])
-let streamingTabLru: StreamingPageTab[] = []
 const streamingRootNavigationRevisions = ref<Partial<Record<StreamingPageTab, number>>>({})
 
 function selectSidebarPage(target: NavigationPageTarget): void {
@@ -335,31 +381,6 @@ function selectSidebarPage(target: NavigationPageTarget): void {
   }
   navigation.selectSidebarPage(target)
 }
-watch(
-  [() => pageTarget.value.kind, showStreamingPage, streamingTab],
-  ([kind, visible, tab]) => {
-    if (kind === 'local') {
-      streamingTabLru = []
-      if (streamingPageTabs.value.length > 0) streamingPageTabs.value = []
-      return
-    }
-    if (!visible) return
-    streamingTabLru = [...streamingTabLru.filter((item) => item !== tab), tab]
-    if (streamingTabLru.length > MAX_RETAINED_STREAMING_TABS) {
-      streamingTabLru = streamingTabLru.slice(-MAX_RETAINED_STREAMING_TABS)
-    }
-    const allowed = new Set(streamingTabLru)
-    const next = streamingPageTabs.value.filter((item) => allowed.has(item))
-    if (!next.includes(tab)) next.push(tab)
-    if (
-      next.length !== streamingPageTabs.value.length ||
-      next.some((item, index) => item !== streamingPageTabs.value[index])
-    ) {
-      streamingPageTabs.value = next
-    }
-  },
-  { immediate: true }
-)
 const showOnboarding = ref(false)
 const onboardingSaving = ref(false)
 const onboardingSaveError = ref('')
@@ -1001,6 +1022,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
 </script>
 
 <template>
+  <DebugSessionNotice />
   <AppearanceLayersHost
     v-if="appearanceFullWindowPreview || (!appearancePageRetained && !appearanceEditorOpen)"
     :settings="
@@ -1151,29 +1173,30 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             @open-album="handlePlayingAlbumClick"
           />
         </MotionTransition>
-        <StreamingPage
-          v-for="tab in streamingPageTabs"
-          :key="tab"
-          :active="showStreamingSurface && streamingTab === tab"
-          :menu-open="menuOpen && showLocalSidebar"
-          :has-player="hasPlayerBar"
-          :initial-tab="tab"
-          :page-transition-name="songlistTransitionName"
-          :root-navigation-revision="streamingRootNavigationRevisions[tab] ?? 0"
-          :metadata-navigation-request="
-            showStreamingSurface && tab === streamingMetadataTab && streamingTab === tab
-              ? streamingMetadataRequest
-              : null
-          "
-          @navigate-tab="enterStreamingMode($event)"
-          @select-view="onSelectView"
-          @recent="navigation.navigate({ kind: 'recent', scope: 'platform', providerId: $event })"
-          @login="handleStreamingLogin"
-        />
+        <MotionTransition :name="songlistTransitionName">
+          <StreamingPage
+            v-if="showStreamingSurface"
+            :key="streamingTab"
+            :active="true"
+            :menu-open="menuOpen && showLocalSidebar"
+            :has-player="hasPlayerBar"
+            :initial-tab="streamingTab"
+            :page-transition-name="songlistTransitionName"
+            :root-navigation-revision="streamingRootNavigationRevisions[streamingTab] ?? 0"
+            :metadata-navigation-request="
+              showStreamingSurface && streamingTab === streamingMetadataTab
+                ? streamingMetadataRequest
+                : null
+            "
+            @navigate-tab="enterStreamingMode($event)"
+            @select-view="onSelectView"
+            @recent="navigation.navigate({ kind: 'recent', scope: 'platform', providerId: $event })"
+            @login="handleStreamingLogin"
+          />
+        </MotionTransition>
         <MotionTransition :name="songlistTransitionName">
           <RecentPlaybackPage
-            v-if="pageTarget.kind === 'recent'"
-            v-show="showRecentPage"
+            v-if="showRecentPage"
             :active="showRecentPage"
             :target="pageTarget.kind === 'recent' ? pageTarget : undefined"
             :has-player="hasPlayerBar"
@@ -1197,6 +1220,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           ref="audioWorkspaceRef"
           :active="showDspRackPage || showEqualizerPage"
           :initial-tab="audioWorkspaceInitialTab"
+          @suspend-ready="audioSuspendReady = $event"
         />
         <MotionTransition :name="songlistTransitionName">
           <PluginExtensionPage
@@ -1240,14 +1264,15 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     <MotionTransition
       name="settings-page"
       @before-leave="retainSettingsOverlay"
-      @after-leave="releaseSettingsOverlay"
-      @leave-cancelled="releaseSettingsOverlay"
+      @after-leave="releaseAppearanceOverlay"
+      @leave-cancelled="releaseAppearanceOverlay"
     >
       <AppearancePage
         v-if="appearancePageRetained"
         v-show="showAppearancePage"
         ref="appearancePageRef"
         :active="showAppearancePage"
+        @suspend-ready="appearanceSuspendReady = $event"
         :pages="navigationPages"
         :initial-domain="themeStudioInitialDomain"
         :navigation-target="appearanceNavigationTarget"

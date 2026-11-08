@@ -119,6 +119,10 @@ void testNativeSanitizationAndEmptyOutputEvidence() {
   assert(safe.find("\"count\":42") != std::string::npos);
   assert(safe.find("\"stage\":\"reading\"") != std::string::npos);
   assert(sanitizeNativeDiagnosticJson("{\"streamToken\":17,\"authToken\":\"secret\"}").find("\"streamToken\":17") != std::string::npos);
+  const std::string path = R"({"path":"D:\\Music Folder\\test.flac","password":"do-not-save"})";
+  assert(sanitizeNativeDiagnosticJson(path).find("Music Folder") == std::string::npos);
+  assert(sanitizeNativeDiagnosticJson(path, true).find("Music Folder") != std::string::npos);
+  assert(sanitizeNativeDiagnosticJson(path, true).find("do-not-save") == std::string::npos);
   twilight::audio::EmptyOutputDetector detector;
   assert(!detector.sample(true, true, false, false, 1, 10, 100));
   assert(!detector.sample(true, true, false, false, 1, 20, 100));

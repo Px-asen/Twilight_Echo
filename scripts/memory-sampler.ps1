@@ -1,23 +1,26 @@
 param([Parameter(Mandatory=$true)][int]$RootProcessId, [Parameter(Mandatory=$true)][string]$OutputPath, [Parameter(Mandatory=$true)][string]$StopPath)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'memory-process-tree.ps1')
 # CIM numeric properties avoid localized Performance Monitor counter names.
 $gpuClass = 'Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory'
 $gpuAvailable = $null -ne (Get-CimClass -Namespace root/cimv2 -ClassName $gpuClass -ErrorAction SilentlyContinue)
+$rootCreationDate = $null
 while (-not (Test-Path -LiteralPath $StopPath)) {
   if (-not (Get-Process -Id $RootProcessId -ErrorAction SilentlyContinue)) { break }
+  $identities = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate)
+  $rootIdentity = $identities | Where-Object { $_.ProcessId -eq $RootProcessId }
+  if ($null -eq $rootIdentity) { break }
+  if ($null -eq $rootCreationDate) { $rootCreationDate = $rootIdentity.CreationDate }
+  elseif ($rootCreationDate -ne $rootIdentity.CreationDate) { break }
+  $byId = @{}
+  foreach ($identity in $identities) { $byId[[int]$identity.ProcessId] = $identity }
   $all = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process)
-  $ids = [System.Collections.Generic.HashSet[int]]::new()
-  [void]$ids.Add($RootProcessId)
-  do {
-    $changed = $false
-    foreach ($p in $all) {
-      if ($ids.Contains([int]$p.CreatingProcessID) -and $p.IDProcess -gt 0) {
-        if ($ids.Add([int]$p.IDProcess)) { $changed = $true }
-      }
-    }
-  } while ($changed)
-  $processes = @($all | Where-Object { $ids.Contains([int]$_.IDProcess) } | ForEach-Object {
-    @{ pid=[int]$_.IDProcess; parentPid=[int]$_.CreatingProcessID; privateWorkingSetBytes=[long]$_.WorkingSetPrivate; privateCommitBytes=[long]$_.PrivateBytes; workingSetBytes=[long]$_.WorkingSet }
+  $ids = Get-MemoryProcessIds -RootProcessId $RootProcessId -Processes $identities
+  $processes = @($all | Where-Object {
+    $ids.Contains([int]$_.IDProcess) -and
+      $byId[[int]$_.IDProcess].ParentProcessId -eq $_.CreatingProcessID
+  } | ForEach-Object {
+    @{ pid=[int]$_.IDProcess; parentPid=[int]$_.CreatingProcessID; createdAt=$byId[[int]$_.IDProcess].CreationDate.ToUniversalTime().ToString('o'); privateWorkingSetBytes=[long]$_.WorkingSetPrivate; privateCommitBytes=[long]$_.PrivateBytes; workingSetBytes=[long]$_.WorkingSet }
   })
   $gpu = @()
   if ($gpuAvailable) {

@@ -4133,6 +4133,37 @@ void testQueueCursorSelectsSameFileCueWithoutReloadingContent() {
   assert(decoderSeekObserved(0.1));
 }
 
+void testSleepPauseAtTrackEndBlocksNativeSuccessors() {
+  for (const double volume : {1.0, 0.42}) {
+    for (const std::string mode : {"sequential", "repeat"}) {
+      for (const double overlap : {0.0, 0.05}) {
+        EngineHarness harness;
+        auto& engine = harness.engine();
+        assert(engine.setVolume(volume) == TAE_RESULT_OK);
+        assert(engine.setDspConfig("{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":" + std::to_string(overlap) + "}") == TAE_RESULT_OK);
+        const std::string item = "\"source\":\"sleep-boundary.flac\",\"cueRange\":{\"startSeconds\":0,\"endSeconds\":0.08}";
+        assert(engine.loadQueue("[{\"id\":\"one\"," + item + "},{\"id\":\"two\"," + item + "}]", 0) == TAE_RESULT_OK);
+        assert(engine.setPlayMode(mode) == TAE_RESULT_OK);
+        assert(engine.play("sleep-boundary.flac", 0.0) == TAE_RESULT_OK);
+        const auto backend = waitForLatestStartedBackendState();
+        assert(backend);
+        assert(waitUntil([&] { return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true"); }));
+        assert(engine.setPauseAtTrackEnd(true) == TAE_RESULT_OK);
+        renderBackendFrames(backend, 4000);
+        renderBackendFrames(backend, 256);
+        assert(waitUntil([&] { return jsonContains(engine.getPlaybackInfoJson(), "\"state\":\"paused\""); }));
+        assertLatestPlaybackContains(engine, "\"queueIndex\":0");
+        assertLatestPlaybackContains(engine, "\"trackSerial\":1");
+        assert(playbackJsonNumber(engine.getPlaybackInfoJson(), "position") >= 0.079);
+        assert(std::abs(playbackJsonNumber(engine.getPlaybackInfoJson(), "volume") - volume) < 0.001);
+        assert(engine.setPauseAtTrackEnd(false) == TAE_RESULT_OK);
+        assert(engine.play("sleep-boundary.flac", 0.0) == TAE_RESULT_OK);
+        assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+      }
+    }
+  }
+}
+
 void testNaturalBoundariesCountIdenticalOccurrencesAndLogicalCycles() {
   EngineHarness harness;
   auto& engine = harness.engine();
@@ -6130,6 +6161,7 @@ int main() {
     return 0;
   }
   if (std::getenv("TAE_RUNTIME_SLEEP_BOUNDARY_ONLY")) {
+    RUN_RUNTIME_CASE(testSleepPauseAtTrackEndBlocksNativeSuccessors());
     RUN_RUNTIME_CASE(testNaturalBoundariesCountIdenticalOccurrencesAndLogicalCycles());
     RUN_RUNTIME_CASE(testNaturalSameIndexRepeatBoundaries(false));
     RUN_RUNTIME_CASE(testNaturalSameIndexRepeatBoundaries(true));

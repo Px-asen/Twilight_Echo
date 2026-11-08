@@ -227,6 +227,7 @@ function fixture(t: test.TestContext, extra: Partial<CoreSupervisorOptions> = {}
       'audio-test': '/registered/audio',
       scan: '/registered/scan',
       analysis: '/registered/analysis',
+      'model-install': '/registered/modelPackWorker',
       plugin: '/registered/plugin'
     },
     configuration: {

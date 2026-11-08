@@ -66,7 +66,7 @@ export function createCorePlayerStore(
           ? `${state.epoch}:${state.presentationRevision}:${state.queue?.occurrenceId}`
           : ''
       },
-      () => core.query('player.presentation', {}),
+      (signal) => core.query('player.presentation', {}, signal),
       failed
     )
     const visible = ref(typeof document === 'undefined' || !document.hidden)

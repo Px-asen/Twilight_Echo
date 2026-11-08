@@ -88,6 +88,8 @@ import type { CorePluginExperiences } from './plugins/experiences.ts'
 import type { CorePluginMarketplace } from './plugins/marketplace.ts'
 import type { TwilightPluginManager } from './plugins/manager.ts'
 import type { CorePluginManagement } from './plugins/management.ts'
+import { CoreServiceRegistry, type CoreServiceFactories } from './serviceRegistry.ts'
+import type { CoreBrowseService } from './browse/service.ts'
 
 interface Client {
   identity: CoreClientIdentity
@@ -96,6 +98,12 @@ interface Client {
   seen: Set<string>
 }
 export interface CoreApplicationDependencies {
+  lazyServices?: CoreServiceFactories<CoreLazyServices>
+  initializePersonalRestore?(): Promise<void>
+  personalRestoreAvailable?(): boolean
+  pluginMarketplaceStatus?(): ReturnType<CorePluginMarketplace['status']> | Promise<ReturnType<CorePluginMarketplace['status']>>
+  shouldActivateImports?(): boolean
+  browse?: CoreBrowseService
   opra?: Pick<OpraCatalog, 'search' | 'getProfile' | 'getStatus' | 'refresh'>
   playlistSources?: CorePlaylistSourceEdits
   revealAudioFile?(path: string): Promise<void>
@@ -121,7 +129,7 @@ export interface CoreApplicationDependencies {
   queueSubmission?: CoreQueueSubmission
   themes?: CoreThemeService
   visualization?: CoreVisualizationService
-  modelPack?: CoreModelPackService
+  modelPack?: Pick<CoreModelPackService, 'state' | 'start' | 'cancel' | 'shutdown'>
   settingsBackup?: CoreSettingsBackupService
   cloudTransfers?: CoreNcmCloudTransferService
   personalBackup?: CorePersonalBackupService
@@ -196,6 +204,11 @@ export interface CoreApplicationDependencies {
   ready(): void
 }
 
+export type CoreLazyServices = {
+  [Name in 'duplicates' | 'libraryHealth' | 'personalBackup' | 'settingsBackup' | 'cloudTransfers' | 'imports' | 'importPreviews' | 'browse' | 'pluginMarketplace']:
+    NonNullable<CoreApplicationDependencies[Name]>
+}
+
 /** Portable business endpoint; main is a capability gateway, never a second state owner. */
 export class CoreApplication {
   private readonly clients = new Map<string, Client>()
@@ -237,8 +250,11 @@ export class CoreApplication {
   private shuttingDown = false
   private readonly work = new Set<Promise<void>>()
   private readonly dependencies: CoreApplicationDependencies
+  private readonly services: CoreServiceRegistry<CoreLazyServices>
+  private importsActivated = false
   constructor(dependencies: CoreApplicationDependencies) {
     this.dependencies = dependencies
+    this.services = new CoreServiceRegistry(dependencies, dependencies.lazyServices)
     dependencies.plugins?.on('changed', this.pluginsChanged)
     dependencies.plugins?.on('notice', this.pluginNotice)
     dependencies.plugins?.on('experience-event', this.pluginExperienceEvent)
@@ -330,7 +346,9 @@ export class CoreApplication {
     if (!this.initialized || this.migrationRequired || this.phase === 'ready') return
     return (this.readiness ??= (async () => {
       await Promise.all([
-        this.dependencies.personalBackup?.initialize(),
+        this.dependencies.initializePersonalRestore
+          ? this.dependencies.initializePersonalRestore()
+          : this.dependencies.personalBackup?.initialize(),
         this.dependencies.statistics.initialize()
       ])
       if (this.shuttingDown) return
@@ -369,13 +387,29 @@ export class CoreApplication {
       this.dependencies.genres?.activate()
       this.dependencies.metadata?.activate()
       this.dependencies.lyrics?.activate()
-      this.dependencies.imports?.activate()
+      await this.reconcileImports()
       this.changed()
       this.dependencies.ready()
       await this.dependencies.plugins?.broadcastEvent('app:ready', {})
     })().finally(() => {
       this.readiness = null
     }))
+  }
+  async reconcileImports(rematch = false): Promise<void> {
+    if (this.phase !== 'ready' || this.shuttingDown) return
+    if (!this.dependencies.imports && !this.dependencies.shouldActivateImports?.()) return
+    const active = this.importsActivated
+    const jobs = await this.loadImports()
+    if (rematch) jobs?.rematch()
+    else if (active) jobs?.reconcile()
+  }
+  private async loadImports(signal?: AbortSignal): Promise<CorePlaylistImportJobs | undefined> {
+    const jobs = await this.services.get('imports', signal)
+    if (jobs && !this.importsActivated) {
+      jobs.activate()
+      this.importsActivated = true
+    }
+    return jobs
   }
   private async initializeAudio(name: string, action: () => Promise<void>): Promise<void> {
     try {
@@ -445,7 +479,7 @@ export class CoreApplication {
           : null,
       cloudTransfers:
         !identity || identity.permissions.includes('downloads:read')
-          ? (this.dependencies.cloudTransfers?.state() ?? null)
+          ? (this.dependencies.cloudTransfers?.state() ?? (this.services.has('cloudTransfers') ? { revision: 0, active: 0, total: 0 } : null))
           : null,
       inbox:
         !identity || identity.permissions.includes('library:read')
@@ -478,7 +512,7 @@ export class CoreApplication {
           : null,
       personalBackupRecovery:
         !identity || identity.permissions.includes('settings:read')
-          ? (this.dependencies.personalBackup?.recoveryAvailable() ?? false) : null,
+          ? (this.dependencies.personalBackup?.recoveryAvailable() ?? this.dependencies.personalRestoreAvailable?.() ?? false) : null,
       sleepTimer:
         !identity || identity.permissions.includes('playback:read')
           ? (this.dependencies.sleepTimer?.state() ?? null)
@@ -576,6 +610,7 @@ export class CoreApplication {
     void this.dependencies.playlistSubmission?.disconnect(clientId)
     void this.dependencies.zones?.disconnectDspUploads(clientId).catch(error => console.error('[core.dsp.upload]', error))
     void this.dependencies.pluginManagement?.disconnect(clientId).catch(error => console.error('[core.plugins.upload]', error))
+    void this.dependencies.browse?.disconnect(clientId).catch(error => console.error('[core.browse]', error))
     for (const controller of client.requests.values())
       controller.abort(new Error('Core client disconnected'))
   }
@@ -677,6 +712,7 @@ export class CoreApplication {
     identity: CoreClientIdentity
   ): Promise<unknown> {
     const playback = this.dependencies.playback
+    if (request.kind === 'command' && await this.dependencies.sleepTimer?.consumeTransport(request.name)) return
     if (
       request.name === 'liked.play' ||
       request.name === 'heart.refill' ||
@@ -699,6 +735,19 @@ export class CoreApplication {
       signal.throwIfAborted()
     }
     switch (request.name) {
+      case 'browse.context':
+      case 'browse.open':
+      case 'browse.append':
+      case 'browse.release':
+      case 'browse.snapshot.save':
+      case 'browse.page':
+      case 'browse.rows':
+      case 'browse.snapshot':
+      case 'browse.locate': {
+        const browse = await this.services.get('browse', signal)
+        if (!browse) throw failure('NOT_READY', 'Browse sessions are unavailable')
+        return browse.execute(identity.id, request, signal)
+      }
       case 'exploration.query':
       case 'exploration.lookup':
       case 'exploration.detail':
@@ -1095,7 +1144,7 @@ export class CoreApplication {
       case 'settings.restore': {
         if (identity.role !== 'desktop')
           throw failure('FORBIDDEN', 'Settings backup requires the desktop window')
-        const backup = this.dependencies.settingsBackup
+        const backup = await this.services.get('settingsBackup', signal)
         if (!backup) throw failure('FAILED', 'Settings backup unavailable')
         return request.name === 'settings.backup'
           ? backup.export()
@@ -1107,10 +1156,17 @@ export class CoreApplication {
       case 'ncm.cloud.cancel':
       case 'ncm.cloud.state':
       case 'ncm.cloud.page': {
-        const transfers = this.dependencies.cloudTransfers
-        if (!transfers) throw failure('FAILED', 'NCM cloud transfers unavailable')
         if (request.kind === 'command' && identity.role !== 'desktop')
           throw failure('FORBIDDEN', 'Cloud transfers require the desktop window')
+        if (!this.dependencies.cloudTransfers && this.services.has('cloudTransfers')) {
+          if (request.name === 'ncm.cloud.state') return { revision: 0, active: 0, total: 0 }
+          if (request.name === 'ncm.cloud.page') {
+            if (request.payload.revision !== 0) throw failure('STALE_REVISION', 'Cloud transfer tasks changed; read a new page')
+            return { revision: 0, active: 0, total: 0, offset: request.payload.offset ?? 0, items: [] }
+          }
+        }
+        const transfers = await this.services.get('cloudTransfers', signal)
+        if (!transfers) throw failure('FAILED', 'NCM cloud transfers unavailable')
         switch (request.name) {
           case 'ncm.cloud.chooseUploadFiles':
             return transfers.chooseUploadFiles(identity.id, signal)
@@ -1140,10 +1196,12 @@ export class CoreApplication {
       case 'library.health.status':
       case 'library.health.page':
       case 'library.health.repair': {
-        const health = this.dependencies.libraryHealth
-        if (!health) throw failure('FAILED', '音乐库体检服务不可用')
         if (request.kind === 'command' && identity.role !== 'desktop')
           throw failure('FORBIDDEN', '音乐库体检操作需要桌面窗口')
+        if (request.name === 'library.health.status' && !this.dependencies.libraryHealth && this.services.has('libraryHealth'))
+          return { phase: 'idle', inspected: 0, report: null, repair: null, error: '' }
+        const health = await this.services.get('libraryHealth', signal)
+        if (!health) throw failure('FAILED', '音乐库体检服务不可用')
         switch (request.name) {
           case 'library.health.start': return health.start()
           case 'library.health.status': return health.state()
@@ -1228,7 +1286,7 @@ export class CoreApplication {
       case 'backup.chooseFolder': {
         if (identity.role !== 'desktop')
           throw failure('FORBIDDEN', 'Personal backup requires the desktop window')
-        const backup = this.dependencies.personalBackup
+        const backup = await this.services.get('personalBackup', signal)
         if (!backup) throw failure('FAILED', 'Personal backup unavailable')
         switch (request.name) {
           case 'backup.export':
@@ -1255,7 +1313,10 @@ export class CoreApplication {
       case 'library.duplicates.groups':
       case 'library.duplicates.items':
       case 'library.duplicates.unavailable': {
-        const duplicates = this.dependencies.duplicates
+        if (request.kind === 'command' && identity.role !== 'desktop')
+          throw failure('FORBIDDEN', 'Duplicate inspection requires the desktop window')
+        if (request.name === 'library.duplicates.status' && !this.dependencies.duplicates && this.services.has('duplicates')) return null
+        const duplicates = await this.services.get('duplicates', signal)
         if (!duplicates) throw failure('FAILED', 'Duplicate inspection unavailable')
         switch (request.name) {
           case 'library.duplicates.start':
@@ -1346,7 +1407,7 @@ export class CoreApplication {
       case 'sleep.cancel': {
         const timer = this.dependencies.sleepTimer
         if (!timer) throw failure('FAILED', 'Sleep timer unavailable')
-        if (request.name === 'sleep.state') return timer.state()
+        if (request.name === 'sleep.state') { await timer.checkDue(); return timer.state() }
         if (request.name === 'sleep.configure') return timer.configure(request.payload, signal)
         return timer.cancel(request.payload.revision, signal)
       }
@@ -1940,7 +2001,10 @@ export class CoreApplication {
       case 'imports.previewConfigure':
       case 'imports.previewSave':
       case 'imports.previewDiscard': {
-        const previews = this.dependencies.importPreviews
+        if (request.name === 'imports.previews' && !this.dependencies.importPreviews && this.services.has('importPreviews'))
+          return { total: 0, items: [] }
+        if (request.kind === 'command') await this.loadImports(signal)
+        const previews = await this.services.get('importPreviews', signal)
         if (!previews) throw failure('FAILED', 'Playlist preview runtime unavailable')
         if (request.name === 'imports.previewFile' && identity.role !== 'desktop')
           throw failure('FORBIDDEN', 'File selection requires a desktop window')
@@ -1959,8 +2023,9 @@ export class CoreApplication {
         const { id, revision, entryId, input } = request.payload
         const track = input ? (await resolve([input], signal))[0] : null
         if (request.name === 'imports.previewBind') {
-          if (!this.dependencies.importPreviews) throw failure('NOT_READY', 'Import previews are unavailable')
-          return this.dependencies.importPreviews.bind(id, revision, entryId, track)
+          const previews = await this.services.get('importPreviews', signal)
+          if (!previews) throw failure('NOT_READY', 'Import previews are unavailable')
+          return previews.bind(id, revision, entryId, track)
         }
         if (!this.dependencies.playlists) throw failure('NOT_READY', 'Playlists are unavailable')
         return this.dependencies.playlists.edit(revision, { kind: 'importBind', id, entryId, track }, signal)
@@ -1983,13 +2048,15 @@ export class CoreApplication {
         if (track.source && track.source !== 'local') throw failure('FAILED', '此曲目没有本地文件')
         return this.dependencies.revealAudioFile(track.filePath)
       }
-      case 'imports.retry':
-        if (!this.dependencies.imports) throw failure('FAILED', 'Playlist matching unavailable')
-        return this.dependencies.imports.start(
+      case 'imports.retry': {
+        const imports = await this.loadImports(signal)
+        if (!imports) throw failure('FAILED', 'Playlist matching unavailable')
+        return imports.start(
           request.payload.id,
           request.payload.force,
           request.payload.entries
         )
+      }
       case 'imports.cancel':
         await this.dependencies.importPreviews?.cancel(request.payload.id)
         return this.dependencies.imports?.stop(request.payload.id)
@@ -2071,6 +2138,8 @@ export class CoreApplication {
       case 'providers.call': {
         if (!this.dependencies.plugins) throw failure('FAILED', 'Provider runtime unavailable')
         const { providerId, method, args, idempotencyKey } = request.payload
+        if (method === 'logout')
+          await (await this.services.get('browse', signal))?.invalidateProvider(providerId)
         if (providerId === 'ncm' && method === 'logout')
           await this.dependencies.cloudTransfers?.observeAccount(null)
         const result = await this.dependencies.plugins.callProvider(providerId, method, args, {
@@ -2154,14 +2223,16 @@ export class CoreApplication {
         return this.dependencies.plugins.installFromPath(request.payload.path)
       case 'plugins.index.list':
       case 'plugins.index.refresh':
-        if (!this.dependencies.pluginMarketplace) throw failure('FAILED', 'Plugin market unavailable')
-        return this.dependencies.pluginMarketplace.list(request.name === 'plugins.index.refresh')
       case 'plugins.index.status':
-        if (!this.dependencies.pluginMarketplace) throw failure('FAILED', 'Plugin market unavailable')
-        return this.dependencies.pluginMarketplace.status()
-      case 'plugins.index.install':
-        if (!this.dependencies.pluginMarketplace) throw failure('FAILED', 'Plugin market unavailable')
-        return this.dependencies.pluginMarketplace.install(request.payload.id)
+      case 'plugins.index.install': {
+        if (request.name === 'plugins.index.status' && !this.dependencies.pluginMarketplace && this.dependencies.pluginMarketplaceStatus)
+          return this.dependencies.pluginMarketplaceStatus()
+        const market = await this.services.get('pluginMarketplace', signal)
+        if (!market) throw failure('FAILED', 'Plugin market unavailable')
+        if (request.name === 'plugins.index.status') return market.status()
+        if (request.name === 'plugins.index.install') return market.install(request.payload.id)
+        return market.list(request.name === 'plugins.index.refresh')
+      }
       case 'plugins.list':
         return this.dependencies.plugins?.list() ?? []
       case 'providers.list':
@@ -2459,6 +2530,7 @@ export class CoreApplication {
     await this.dependencies.remote?.shutdown()
     if (this.phase === 'stopped') return
     this.shuttingDown = true
+    await this.services.close()
     this.dependencies.plugins?.off('changed', this.pluginsChanged)
     this.dependencies.plugins?.off('notice', this.pluginNotice)
     this.dependencies.plugins?.off('experience-event', this.pluginExperienceEvent)
@@ -2488,6 +2560,7 @@ export class CoreApplication {
         this.dependencies.libraryHealth?.shutdown(),
         this.dependencies.personalBackup?.shutdown(),
         this.dependencies.settingsBackup?.shutdown(),
+        this.dependencies.browse?.shutdown(),
         this.dependencies.pluginExperiences?.shutdown(),
         this.dependencies.themes?.shutdown(),
         this.dependencies.libraryMaintenance?.shutdown()

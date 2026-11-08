@@ -863,6 +863,19 @@ napi_value SetDiagnosticContext(napi_env env, napi_callback_info info) {
   TAE_SetDiagnosticContext(context.c_str());
   napi_value result; napi_get_undefined(env, &result); return result;
 }
+napi_value SetDebugCapture(napi_env env, napi_callback_info info) {
+  size_t argc = 2; napi_value argv[2]; napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const auto id = argc > 0 ? getStringArg(env, argv[0]) : "";
+  const auto directory = argc > 1 ? getStringArg(env, argv[1]) : "";
+  TAE_SetDebugCapture(id.c_str(), directory.c_str());
+#ifdef _WIN32
+  // Native helpers inherit the process environment, not the JavaScript context.
+  const auto wideId = utf8ToWide(id), wideDirectory = utf8ToWide(directory);
+  SetEnvironmentVariableW(L"TWILIGHT_DEBUG_SESSION_ID", wideId.empty() ? nullptr : wideId.c_str());
+  SetEnvironmentVariableW(L"TWILIGHT_DEBUG_DIRECTORY", wideDirectory.empty() ? nullptr : wideDirectory.c_str());
+#endif
+  napi_value result; napi_get_undefined(env, &result); return result;
+}
 
 napi_value GetDiagnosticLog(napi_env env, napi_callback_info info) {
   ensureEngine();
@@ -1296,6 +1309,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "GetPlaybackInfo", GetPlaybackInfo);
   define(env, exports, "GetDiagnosticLog", GetDiagnosticLog);
   define(env, exports, "SetDiagnosticContext", SetDiagnosticContext);
+  define(env, exports, "SetDebugCapture", SetDebugCapture);
   define(env, exports, "GetQueue", GetQueue);
   define(env, exports, "GetUpcomingTrack", GetUpcomingTrack);
   define(env, exports, "GetDspConfig", GetDspConfig);

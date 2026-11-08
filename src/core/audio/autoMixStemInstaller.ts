@@ -17,7 +17,6 @@ import { STEM_CHECKPOINT_SHA256, STEM_MODEL_VERSION } from './autoMixStemService
 const { createReadStream, createWriteStream, readFileSync } = coreFs
 const { mkdir, mkdtemp, readFile, rename, rm, statfs, writeFile } = coreFsPromises
 const { Transform, pipeline } = coreStream
-const { yauzl, crc32 } = coreArchive
 
 interface Entry {
   fileName: string
@@ -176,6 +175,7 @@ export class AutoMixStemInstaller {
       this.state.phase = 'checking'
       this.options.changed?.()
       if (extname(archive).toLowerCase() !== '.zip') invalidArchive()
+      const { yauzl, crc32 } = coreArchive
       zip = await new Promise<Zip>((resolve, reject) => {
         yauzl.open(
           archive,

@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
+const { spawnSync } = require('node:child_process')
 const {
   parseArgs,
   summarize,
@@ -11,6 +12,8 @@ test('memory benchmark defaults preserve the accepted workload and stop budget',
   const options = parseArgs([])
   assert.deepEqual(options.sizes, [1057, 10000, 100000])
   assert.equal(options.runs, 3)
+  assert.equal(options.scenario, 'full')
+  assert.equal(options.coreHost, 'electron')
   assert.equal(options.cycles, 50)
   assert.equal(options.soakSeconds, 1800)
   assert.equal(options.minFreeBytes, 1024 ** 3)
@@ -19,6 +22,8 @@ test('memory benchmark defaults preserve the accepted workload and stop budget',
     ['--runs', '-1'],
     ['--sizes', '1057,'],
     ['--output'],
+    ['--scenario', 'unknown'],
+    ['--core-host', 'unknown'],
     ['--unknown', 'x']
   ])
     assert.throws(() => parseArgs(args))
@@ -96,6 +101,7 @@ test('acceptance requires every scenario, the full workload, hardware compositin
   assert.equal(acceptanceEligible(options, result), true)
   assert.equal(acceptanceEligible({ ...options, diagnosticNoSandbox: true }, result), false)
   assert.equal(acceptanceEligible({ ...options, cycles: 2 }, result), false)
+  assert.equal(acceptanceEligible({ ...options, scenario: 'steady' }, result), false)
   assert.equal(acceptanceEligible(options, { ...result, summary: [] }), false)
   assert.equal(acceptanceEligible(options, { ...result, status: 'memory-pressure' }), false)
   assert.equal(
@@ -106,3 +112,65 @@ test('acceptance requires every scenario, the full workload, hardware compositin
     false
   )
 })
+
+test('steady residency is an explicit workload and preserves configured dwell times', () => {
+  const options = parseArgs([
+    '--scenario',
+    'steady',
+    '--settle-seconds',
+    '45',
+    '--soak-seconds',
+    '60'
+  ])
+  assert.equal(options.scenario, 'steady')
+  assert.equal(options.settleSeconds, 45)
+  assert.equal(options.soakSeconds, 60)
+  assert.equal(options.diagnosticNoSandbox, undefined)
+})
+
+test('Node comparison is an explicit host selection without changing the accepted workload', () => {
+  const options = parseArgs(['--core-host', 'node'])
+  assert.equal(options.coreHost, 'node')
+  assert.equal(options.scenario, 'full')
+  assert.equal(options.diagnosticNoSandbox, undefined)
+})
+
+test('an explicitly installed Electron path leaves sandbox and workload requirements intact', () => {
+  const options = parseArgs(['--electron-executable', './runtime/electron.exe'])
+  assert.equal(options.electronExecutable, require('node:path').resolve('./runtime/electron.exe'))
+  assert.equal(options.diagnosticNoSandbox, undefined)
+  assert.equal(options.runs, 3)
+})
+
+test(
+  'Windows sampling rejects stale parent PIDs while retaining real descendants',
+  {
+    skip: process.platform !== 'win32'
+  },
+  () => {
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        `
+    . ./scripts/memory-process-tree.ps1
+    function Entry($id, $parent, $seconds) {
+      [pscustomobject]@{ ProcessId=$id; ParentProcessId=$parent; CreationDate=[datetime]'2026-11-08T00:00:00Z' + [timespan]::FromSeconds($seconds) }
+    }
+    $processes = @((Entry 10 1 10), (Entry 20 10 11), (Entry 30 20 12),
+      (Entry 40 10 1), (Entry 50 40 2), (Entry 60 20 3))
+    $ids = Get-MemoryProcessIds -RootProcessId 10 -Processes $processes
+    if (($ids | Sort-Object) -join ',' -ne '10,20,30') { throw 'Reused PID admitted an unrelated process' }
+    $missing = Get-MemoryProcessIds -RootProcessId 999 -Processes $processes
+    if ($missing.Count -ne 0) { throw 'Missing root must not include processes' }
+  `
+      ],
+      { encoding: 'utf8', windowsHide: true }
+    )
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+  }
+)

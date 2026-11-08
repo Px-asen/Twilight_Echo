@@ -9,6 +9,7 @@ import {
   appearanceFullWindowPreview
 } from './appearanceEditorState.ts'
 import { useAppearanceDraft } from './useAppearanceDraft.ts'
+import { useWorkspaceState } from './workspaceSession'
 import { analyzeBackgroundImage } from '../utils/backgroundImagePalette.ts'
 import { loadLiquidGlassContextImage } from '../utils/liquidGlassContextImage.ts'
 import { recommendTransparentAppearance } from '../utils/transparentAppearanceRecipe.ts'
@@ -588,6 +589,41 @@ export function useBackgroundAppearanceEditor(options: { embedded?: boolean } = 
       appearanceFullWindowPreview.value = false
       void session.cancel()
     }
+  })
+  const workspaceState = useWorkspaceState('appearance-draft', () => ({
+    draft: state.draft,
+    error: state.error,
+    baseline: baseline.value,
+    baselineTheme: baselineTheme.value,
+    baselineThemeKey,
+    draftTheme: draftTheme.value,
+    hasConflict: hasConflict.value,
+    area: area.value,
+    target: target.value,
+    previewPage: previewPage.value,
+    tone: tone.value,
+    advancedOpen: advancedOpen.value
+  }))
+  workspaceState.restore((saved) => {
+    state.draft = saved.draft
+    state.error = saved.error
+    baseline.value = saved.baseline
+    baselineTheme.value = saved.baselineTheme
+    baselineThemeKey = saved.baselineThemeKey
+    draftTheme.value = saved.draftTheme
+    area.value = saved.area
+    target.value = saved.target
+    previewPage.value = saved.previewPage
+    tone.value = saved.tone
+    advancedOpen.value = saved.advancedOpen
+    hasConflict.value =
+      saved.hasConflict ||
+      (hasChanges.value &&
+        (JSON.stringify(confirmedAppearance()) !== baseline.value ||
+          themeKey() !== baselineThemeKey ||
+          settings.value.theme !== baselineTheme.value))
+    if (hasConflict.value) state.error = '外观已在其他位置更改，请先放弃当前调整后继续。'
+    else if (!hasChanges.value) begin()
   })
   return {
     state,
