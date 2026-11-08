@@ -1,4 +1,5 @@
-const { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } = require('node:fs')
+const { archiveNativeSymbols, bindShippedSymbols } = require('./diagnostic-symbols.cjs')
+const { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { assertX64Pe } = require('./verify-release-artifacts.cjs')
 const {
@@ -34,7 +35,9 @@ for (const file of files) {
   const source = join(sourceDir, file)
   assertX64Pe(source)
   const destination = join(outputDir, file)
+  const symbols = archiveNativeSymbols(source)
   copyFileSync(source, destination)
+  bindShippedSymbols(destination, symbols)
   console.log(`Staged ${file} (${(statSync(destination).size / 1024 / 1024).toFixed(1)} MiB)`)
 }
 
@@ -61,6 +64,8 @@ for (const file of runtimeFiles) {
   const source = join(runtimeDir, file)
   assertX64Pe(source)
   const destination = join(outputDir, file)
+  // An active native worker may have this shared runtime mapped. Identical bytes need no replacement.
+  if (existsSync(destination) && readFileSync(source).equals(readFileSync(destination))) continue
   copyFileSync(source, destination)
   console.log(`Staged ${file} (${(statSync(destination).size / 1024 / 1024).toFixed(1)} MiB)`)
 }

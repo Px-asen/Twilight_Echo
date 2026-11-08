@@ -12,6 +12,7 @@ export default defineConfig(({ command }) => {
     main: {
       define: autoMixDefine,
       build: {
+        sourcemap: 'hidden',
         rollupOptions: {
           input: {
             index: resolve(__dirname, 'src/main/index.ts'),
@@ -27,7 +28,7 @@ export default defineConfig(({ command }) => {
         }
       }
     },
-    preload: {},
+    preload: { build: { sourcemap: 'hidden' } },
     renderer: {
       define: autoMixDefine,
       resolve: {

@@ -33,6 +33,7 @@ const ENTRIES = [
   'musicCore',
   'audioEngineService',
   'audioAnalysisService',
+  'modelPackWorker',
   'libraryDatabaseService',
   'libraryScanService',
   'pluginHost'

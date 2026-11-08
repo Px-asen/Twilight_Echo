@@ -218,8 +218,8 @@ function verifyReleaseArtifacts(options) {
   const nativeBinaries = listReleaseNativeBinaries(options.nativeDir)
   const shippedBinaries = listShippedBinaries(options.nativeDir)
   for (const filePath of shippedBinaries) {
-    if (path.basename(filePath) === 'twilight-asio-helper-x86.exe') {
-      assert.equal(readPeHeader(filePath).machine, 0x14c, 'The ASIO x86 helper must be a Windows x86 PE')
+    if (['twilight-asio-helper-x86.exe', 'twilight-crash-helper-x86.exe'].includes(path.basename(filePath))) {
+      assert.equal(readPeHeader(filePath).machine, 0x14c, 'The x86 helper must be a Windows x86 PE')
     } else assertX64Pe(filePath)
   }
   require('./verify-asio-helper-artifacts.cjs').verifyAsioHelperPair(options.nativeDir)

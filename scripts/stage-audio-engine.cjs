@@ -1,3 +1,4 @@
+const { archiveNativeSymbols, bindShippedSymbols } = require('./diagnostic-symbols.cjs')
 const {
   copyFileSync,
   cpSync,
@@ -6,7 +7,8 @@ const {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync
+  statSync,
+  writeFileSync
 } = require('node:fs')
 const { execFileSync } = require('node:child_process')
 const { dirname, join, resolve } = require('node:path')
@@ -123,6 +125,7 @@ function stripStagedWindowsBinary(target, file) {
   }
 }
 
+const stagedSymbolIdentities = []
 function stageFile(source, file) {
   const target = join(outputDir, file)
   try {
@@ -134,7 +137,13 @@ function stageFile(source, file) {
     )
     process.exit(1)
   }
+  let symbols
+  if (/^(?:lib)?twilight[-_].*\.(?:dll|node|exe|so|dylib)$/i.test(file)) {
+    const tool = findWindowsStripTool()
+    symbols = archiveNativeSymbols(source, { originalName: file, toolDirectory: tool ? require('node:path').dirname(tool) : undefined })
+  }
   stripStagedWindowsBinary(target, file)
+  if (symbols) stagedSymbolIdentities.push(bindShippedSymbols(target, symbols))
   const sizeMiB = (statSync(target).size / 1024 / 1024).toFixed(1)
   console.log(`已暂存原生音频文件：${file}（${sizeMiB} MiB）`)
   return target
@@ -265,3 +274,5 @@ require('node:fs').writeFileSync(
   )}\n`
 )
 console.log(`已暂存发布能力状态：${releaseCapabilityStatusPath}`)
+
+writeFileSync(join(outputDir, 'native-build-identities.json'), JSON.stringify(stagedSymbolIdentities, null, 2))

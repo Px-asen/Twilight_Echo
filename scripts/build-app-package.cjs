@@ -1,3 +1,5 @@
+const { archiveJavaScriptSymbols } = require('./diagnostic-symbols.cjs')
+const { buildCrashHelpers } = require('./build-crash-helper.cjs')
 const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -42,10 +44,11 @@ async function main(args = process.argv.slice(2)) {
   let smtc = null
   let asio = null
   if (windowsPackage) {
+    buildCrashHelpers({ root })
     await prepareWindowsDesktopCore({ root, args })
     asio = buildAsioHelper({ root, tests: false })
     smtc = prepareSmtcMsvc({ root, stage: false })
-    prepareVst3Msvc({ root })
+    prepareVst3Msvc({ root, force: true })
   }
   const staging = windowsPackage
     ? preparePackagedAudioStaging(root, {
@@ -55,6 +58,7 @@ async function main(args = process.argv.slice(2)) {
         }
       })
     : null
+  archiveJavaScriptSymbols(path.join(root, 'out'))
   let result
   try {
     if (staging) verifyAsioHelperPair(staging.nativeDir)

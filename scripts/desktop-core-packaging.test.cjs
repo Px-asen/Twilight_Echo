@@ -74,7 +74,7 @@ test('Windows package verification requires the current complete runtime; other 
   assert.ok(!config.extraResources.some((resource) => resource.to === 'core-node'))
   assert.deepEqual(
     config.win.extraResources.find((resource) => resource.to === 'core-node'),
-    { from: 'out/desktop-core', to: 'core-node', filter: ['**/*'] }
+    { from: 'out/desktop-core', to: 'core-node', filter: ['**/*', '!**/*.map'] }
   )
   assert.equal(config.mac.extraResources, undefined)
   assert.equal(config.linux.extraResources, undefined)

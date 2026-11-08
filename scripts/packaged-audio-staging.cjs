@@ -1,3 +1,4 @@
+const { archiveNativeSymbols, bindShippedSymbols, archiveRoot, artifactId } = require('./diagnostic-symbols.cjs')
 const {
   copyFileSync,
   cpSync,
@@ -96,6 +97,7 @@ function preparePackagedAudioStaging(
       }
     }
   }
+  const identities = []
   for (const name of NATIVE_RUNTIME_FILES) {
     // The desktop resource filter excludes this Server-only addon. Its manifest
     // must describe the desktop payload rather than every build-host module.
@@ -107,10 +109,19 @@ function preparePackagedAudioStaging(
     if (!existsSync(sourcePath)) continue
     const workingPath = join(temporaryDir, `${name}.strip-input`)
     copyFileSync(sourcePath, workingPath)
+    let symbols
+    // Recover the pre-stage symbols before the second, packaging-only strip.
+    if (stripNativeFile === defaultStripNativeFile) {
+      const indexFile = join(archiveRoot(), 'index.json')
+      const index = existsSync(indexFile) ? JSON.parse(readFileSync(indexFile, 'utf8')) : {}
+      symbols = index[artifactId(sourcePath)] || archiveNativeSymbols(sourcePath, { originalName: name })
+    }
     stripNativeFile(workingPath)
     copyFileSync(workingPath, join(nativeDir, name))
+    if (symbols) identities.push(bindShippedSymbols(join(nativeDir, name), symbols))
     rmSync(workingPath, { force: true })
   }
+  writeFileSync(join(nativeDir, 'native-build-identities.json'), JSON.stringify(identities, null, 2))
   const binaryManifest = createAudioCapabilityManifest({ artifactDir: nativeDir })
   const runtimeStatus = observeRuntime({
     artifactDir: nativeDir,

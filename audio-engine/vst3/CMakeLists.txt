@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(TwilightVst3Helpers VERSION 0.1.0 LANGUAGES CXX)
+if(MSVC)
+  add_compile_options(/Zi)
+  add_link_options(/DEBUG)
+endif()
 
 if(NOT WIN32)
   message(FATAL_ERROR "Twilight VST3 helpers are supported only on Windows x64.")

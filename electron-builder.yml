@@ -16,6 +16,7 @@ icon: build/icon.png
 afterPack: scripts/after-pack.cjs
 files:
   - out/**
+  - '!out/**/*.map'
   # Pure Node cannot read app.asar; its runtime is staged as a separate resource.
   - '!out/desktop-core/**'
   - package.json
@@ -28,6 +29,7 @@ files:
   - '!out/renderer/font/Outfit-**'
   - '!out/renderer/font/**/*.{ttf,otf,woff}'
   - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
+  - '!node_modules/**/*.map'
   - '!node_modules/**/*.ts'
   - '!node_modules/**/*.md'
   - '!node_modules/@neteasecloudmusicapienhanced/api/public/**'
@@ -65,6 +67,9 @@ extraResources:
       - '*.dylib'
       - twilight_audio_node.node
       - twilight_smtc_node.node
+      - twilight-crash-helper.exe
+      - twilight-crash-helper-x86.exe
+      - native-build-identities.json
       - twilight-asio-helper.exe
       - twilight-asio-helper-x86.exe
       - twilight-vst3-host.exe
@@ -127,6 +132,7 @@ win:
       to: core-node
       filter:
         - '**/*'
+        - '!**/*.map'
   executableName: TwilightEcho
   icon: build/icon.ico
   # Personal-project Windows packages are intentionally unsigned. Release integrity is provided

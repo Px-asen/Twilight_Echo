@@ -11,7 +11,9 @@ const NATIVE_RUNTIME_FILES = Object.freeze([
   'twilight-vst3-host.exe',
   'twilight-vst3-scanner.exe',
   'twilight-asio-helper-x86.exe',
-  'twilight_image_node.node'
+  'twilight_image_node.node',
+  'twilight-crash-helper.exe',
+  'twilight-crash-helper-x86.exe'
 ])
 
 // The core playback runtime and isolated VST3 helper pair are required in a
@@ -19,7 +21,7 @@ const NATIVE_RUNTIME_FILES = Object.freeze([
 // strips every shipped product binary from the copied package payload.
 // Image decoding is required by Server packaging, not by existing desktop playback packages.
 const REQUIRED_NATIVE_RUNTIME_FILES = Object.freeze(
-  NATIVE_RUNTIME_FILES.filter((name) => name !== 'twilight_image_node.node')
+  NATIVE_RUNTIME_FILES.filter((name) => name !== 'twilight_image_node.node' && !name.startsWith('twilight-crash-helper'))
 )
 
 function executableCandidates(environment = process.env) {
