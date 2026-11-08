@@ -144,7 +144,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 app.setPath('userData',path.join(__dirname,'selection-profile'))
 app.commandLine.appendSwitch('force-device-scale-factor','1.5')
 app.whenReady().then(async()=>{
-  const win=new BrowserWindow({show:false,width:1024,height:768,useContentSize:true,webPreferences:{contextIsolation:false,backgroundThrottling:false}})
+  const win=new BrowserWindow({show:false,width:1024,height:540,useContentSize:true,webPreferences:{contextIsolation:false,backgroundThrottling:false}})
   try{
     await win.loadFile(process.argv.at(-1))
     const scenarios=['pureWhite','dark'].flatMap(tone=>[
@@ -207,11 +207,16 @@ window.prepareSelectionTest=async({tone,id='analytics',style='expanded'})=>{
   document.documentElement.dataset.theme=tone
   document.documentElement.dataset.teNavigationStyle=style
   active.value=id;await nextTick();await document.fonts.ready
-  // Let layout observers and the native compositor present the same frame.
-  // A fixed delay can capture the preceding indicator size on busy CI hosts.
+  // Windows CI can clamp a 150% window to its smaller physical display.
+  // Measure a fully visible row rather than its correctly clipped scrollport.
+  const target=document.querySelector('[data-page-id="'+id+'"]')
+  target.scrollIntoView({block:'nearest',behavior:'instant'})
   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+  await pause(75)
   expect(Math.abs(devicePixelRatio-1.5)<.01,'selection regression must run at 150% display scale: '+devicePixelRatio)
-  const marker=document.querySelector('.navigation-indicator'),target=document.querySelector('[data-page-id="'+id+'"]'),rect=target.getBoundingClientRect(),highlight=marker.getBoundingClientRect()
+  const marker=document.querySelector('.navigation-indicator'),rect=target.getBoundingClientRect(),highlight=marker.getBoundingClientRect()
+  const viewport=target.closest('.menu-nav').getBoundingClientRect()
+  expect(rect.top>=viewport.top&&rect.bottom<=viewport.bottom,'selection row is clipped by its scrollport')
   expect(['top','bottom','left','right'].every(edge=>Math.abs(highlight[edge]-rect[edge])<1),'selection does not match '+tone+' '+id+': '+JSON.stringify({highlight:highlight.toJSON(),button:rect.toJSON()}))
   const label=target.querySelector('.item-label').getBoundingClientRect()
   if(style!=='rail')expect(Math.abs((label.top+label.bottom-rect.top-rect.bottom)/2)<1,'selected label is not vertically centered')
