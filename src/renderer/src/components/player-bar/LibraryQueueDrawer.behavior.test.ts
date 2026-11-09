@@ -83,7 +83,7 @@ const entry=i=>({queueEntryId:'entry:'+i,track:song(i)})
 window.runLibraryDrawerTests=async()=>{
   const snapshot=shallowRef({id:'queue',total:300000,index:299999,revision:0,selectedEntryId:'entry:299999',order:'original'})
   const content=ref(1),busy=ref(false),playing=ref(true)
-  let small=null,serial=0,fail=false,failAction=false,reads=0,active=0,peakReads=0,plays=[],edits=[],added=[]
+  let small=null,serial=0,fail=false,failAction=false,reads=0,active=0,peakReads=0,recoveries=0,plays=[],edits=[],added=[]
   const expected=version=>expect(version.id===snapshot.value.id&&version.revision===snapshot.value.revision,'command used a stale version')
   const change=selected=>{const old=snapshot.value;const index=small.findIndex(item=>item.queueEntryId===selected);snapshot.value={...old,total:small.length,index,selectedEntryId:index<0?null:selected,revision:old.revision+1}}
   const readPage=async page=>{reads++;active++;peakReads=Math.max(peakReads,active);const captured={...snapshot.value},revision=content.value;await pause(5);active--;if(fail){fail=false;throw new Error('数据库暂时离线')}const offset=page*200;return {offset,total:captured.total,revision:captured.revision,libraryRevision:revision,items:Array.from({length:Math.max(0,Math.min(200,captured.total-offset))},(_,i)=>({...small?.[offset+i]??entry(offset+i),position:offset+i}))}}
@@ -95,7 +95,7 @@ window.runLibraryDrawerTests=async()=>{
     if(edit.kind==='insert'){const at=edit.afterEntryId?small.findIndex(item=>item.queueEntryId===edit.afterEntryId)+1:small.length;small.splice(at,0,...edit.trackIds.map(id=>({queueEntryId:'insert:'+serial++,track:{...song(0),id}})))}
     change(small.some(item=>item.queueEntryId===selected)?selected:small[0]?.queueEntryId)
   }
-  const app=createApp({render:()=>h('div',[h('p',{class:'caption'},'SQLite 曲库 · 按需读取播放队列'),h(LibraryQueueDrawer,{snapshot:snapshot.value,contentRevision:content.value,busy:busy.value,isPlaying:playing.value,readPage,playEntry,editQueue,duplicateEntry:async(id,next,version)=>{expected(version);const row=small.find(item=>item.queueEntryId===id);const selected=snapshot.value.selectedEntryId;const at=next?small.findIndex(item=>item.queueEntryId===selected)+1:small.length;small.splice(at,0,{...row,queueEntryId:'insert:'+serial++});change(selected)},refreshQueue:async()=>{},onAddToPlaylist:track=>added.push(track)})])})
+  const app=createApp({render:()=>h('div',[h('p',{class:'caption'},'SQLite 曲库 · 按需读取播放队列'),h(LibraryQueueDrawer,{snapshot:snapshot.value,contentRevision:content.value,busy:busy.value,isPlaying:playing.value,readPage,playEntry,editQueue,duplicateEntry:async(id,next,version)=>{expected(version);const row=small.find(item=>item.queueEntryId===id);const selected=snapshot.value.selectedEntryId;const at=next?small.findIndex(item=>item.queueEntryId===selected)+1:small.length;small.splice(at,0,{...row,queueEntryId:'insert:'+serial++});change(selected)},refreshQueue:async()=>{recoveries++;playing.value=false},onAddToPlaylist:track=>added.push(track)})])})
   app.mount('#app');await pause(150)
   const rows=()=>[...document.querySelectorAll('[data-queue-index]')]
   const row=i=>document.querySelector('[data-queue-index="'+i+'"]')
@@ -128,6 +128,7 @@ window.runLibraryDrawerTests=async()=>{
   expect(!document.querySelector('.playlist-empty'),'read error mistaken for empty queue')
   await click([...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='重试'))
   expect(!document.querySelector('[role="alert"]'),'retry did not recover')
+  expect(recoveries===0&&playing.value,'retrying a read stopped playback')
   small=Array.from({length:5},(_,i)=>entry(i));snapshot.value={...snapshot.value,total:5,index:0,selectedEntryId:'entry:0',revision:1};await pause(80)
   await click(row(1).querySelector('.library-queue-play'))
   expect(plays[0]==='entry:1'&&snapshot.value.index===1,'duplicate identity lost')

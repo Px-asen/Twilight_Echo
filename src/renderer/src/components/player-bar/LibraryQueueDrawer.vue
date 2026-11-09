@@ -117,11 +117,18 @@ function clear(): void {
   action(() => props.editQueue({ kind: 'clear' }, version()))
 }
 
-function retry(): void {
+function refresh(): void {
   action(async () => {
     await props.refreshQueue()
     if (!disposed) viewport.retry()
   })
+}
+
+function retry(): void {
+  // Read errors need another page read, not queue.refresh's Stop and cursor reset.
+  // An unconfirmed edit still uses the explicit recovery path without replaying it.
+  if (actionError.value) refresh()
+  else if (!disabled.value) viewport.retry()
 }
 
 async function readEntry(index: number, expected: QueueVersion) {
@@ -238,7 +245,7 @@ function drop(event: DragEvent, row: LibraryQueueRow): void {
         >
           会话
         </button>
-        <button class="playlist-tool-btn" type="button" :disabled="disabled" @click="retry">
+        <button class="playlist-tool-btn" type="button" :disabled="disabled" @click="refresh">
           刷新
         </button>
         <button

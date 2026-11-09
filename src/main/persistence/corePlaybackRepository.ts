@@ -4,6 +4,9 @@ import type { PlaybackSessionStoreBundle } from './playbackSessionRepository.ts'
 import { libraryTrack } from '../../core/playback/libraryTrack.ts'
 import type { TrackData } from '../../shared/track.ts'
 import { legacyQueueImportOwner } from '../../shared/coreQueueImport.ts'
+import type { PlaybackSession } from '../core/types.ts'
+import { PersistentDataRevisionConflictError } from '../../shared/versionedPersistence.ts'
+import { isPlaybackSession } from '../../shared/playbackSession.ts'
 
 function savedTrack(value: unknown): TrackData {
   if (
@@ -29,23 +32,58 @@ export function createCorePlaybackRepository(
   owner = 'core:persisted-playback',
   legacyImportScope?: string
 ): CoreSessionRepository {
-  async function references(): Promise<void> {
+  async function references(
+    options: {
+      next?: PlaybackSession | null
+      expectedRevision?: number
+      protectedIds?: readonly string[]
+    } = {}
+  ): Promise<string[]> {
+    const { next, expectedRevision, protectedIds } = options
     const [current, backup] = await Promise.all([
       bundle.sessionStore.load(),
       bundle.sessionStore.loadBackup()
     ])
+    if (expectedRevision !== undefined && (current?.revision ?? 0) !== expectedRevision)
+      throw new PersistentDataRevisionConflictError(current, expectedRevision)
     const ids = [
-      current?.data?.libraryQueue?.id,
-      backup?.data?.libraryQueue?.id,
-      current?.data?.heart?.baseQueue?.id,
-      backup?.data?.heart?.baseQueue?.id
-    ].filter((id): id is string => !!id)
-    await queues.syncLibraryQueueReferences(owner, [...new Set(ids)])
-    if ((owner === 'core:persisted-playback' || legacyImportScope) && current?.data?.libraryQueue)
+      ...new Set(
+        [
+          current?.data?.libraryQueue?.id,
+          backup?.data?.libraryQueue?.id,
+          current?.data?.heart?.baseQueue?.id,
+          backup?.data?.heart?.baseQueue?.id,
+          next?.libraryQueue?.id,
+          next?.heart?.baseQueue?.id
+        ].filter((id): id is string => !!id)
+      )
+    ].sort()
+    if (
+      !protectedIds ||
+      ids.length !== protectedIds.length ||
+      ids.some((id, i) => id !== protectedIds[i])
+    )
+      await queues.syncLibraryQueueReferences(owner, ids)
+    if (
+      next === undefined &&
+      (owner === 'core:persisted-playback' || legacyImportScope) &&
+      current?.data?.libraryQueue
+    )
       await queues.syncLibraryQueueReferences(
         legacyQueueImportOwner(`core-session-${legacyImportScope ? `${legacyImportScope}-` : ''}0`),
         []
       )
+    return ids
+  }
+  async function retireReferences(protectedIds: readonly string[]): Promise<void> {
+    try {
+      await references({ protectedIds })
+    } catch (error) {
+      // All current/backup/new queues were pinned before publication. A failed
+      // cleanup may retain an older queue, but cannot revoke a committed receipt.
+      // The next save/load reconciles these references again.
+      console.warn('[core.persistence] Deferred playback queue reference cleanup:', error)
+    }
   }
   return {
     async load() {
@@ -65,13 +103,16 @@ export function createCorePlaybackRepository(
         : null
     },
     async save(data, revision) {
+      if (!isPlaybackSession(data)) throw new Error('Invalid playback session')
+      const protectedIds = await references({ next: data, expectedRevision: revision })
       const result = await bundle.storage.save(data, revision)
-      await references()
+      await retireReferences(protectedIds)
       return result
     },
     async clear(revision) {
+      const protectedIds = await references({ next: null, expectedRevision: revision })
       const result = await bundle.storage.clear(revision)
-      await references()
+      await retireReferences(protectedIds)
       return result
     }
   }

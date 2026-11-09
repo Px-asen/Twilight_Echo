@@ -148,6 +148,7 @@ function fixture() {
     'remove',
     'insert',
     'clear',
+    'refresh',
     'retry',
     'readEntry',
     'addToPlaylist',
@@ -191,6 +192,16 @@ test('drawer handlers retain occurrence identity and catch synchronous stale-row
   await settle()
   assert.deepEqual(f.calls.slice(1), [['refresh'], ['retry']])
   assert.equal(f.context.actionError.value, '')
+})
+
+test('retrying a failed page only reloads rows; explicit queue recovery remains available', async () => {
+  const f = fixture()
+  f.context.retry()
+  await settle()
+  assert.deepEqual(f.calls, [['retry']], 'reading the drawer must not stop or reset playback')
+  f.context.refresh()
+  await settle()
+  assert.deepEqual(f.calls.slice(1), [['refresh'], ['retry']])
 })
 
 test('drawer next/tail insertion and removal use IDs rather than rendered positions', async () => {
