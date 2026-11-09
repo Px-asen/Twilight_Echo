@@ -3,17 +3,18 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
-import { appendNcmPlaylistTracks } from './streaming-page/ncmPlaylistEditor.ts'
 
 // Exercise the page handler without bundling or requiring an Electron window.
 // Provider I/O and navigation are controlled; the function body is production code.
 const source = readFileSync(new URL('./StreamingPage.vue', import.meta.url), 'utf8')
 const script = source.match(/<script\b[^>]*>([\s\S]*?)<\/script>/)![1]
 const ast = ts.createSourceFile('page.ts', script, ts.ScriptTarget.Latest, true)
-const fn = ast.statements.find(
-  (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'removeStreamingTracks'
-)!
-const code = ts.transpileModule(fn.getText(ast), {
+const functions = ast.statements.filter(
+  (node) =>
+    ts.isFunctionDeclaration(node) &&
+    ['removeStreamingTracks', 'collectNcmIds', 'openPlaylist'].includes(node.name?.text ?? '')
+)
+const code = ts.transpileModule(functions.map((node) => node.getText(ast)).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
 }).outputText
 const addFn = ast.statements.find(
@@ -42,7 +43,9 @@ function addFixture() {
     activeProvider: { value: 'ncm' },
     currentDetail: { value: view('A') },
     detailTracks: { value: [track(1), track(2), track(3)] },
-    detailStack: { value: [{ view: view('A'), snapshot: { tracks: [track(1)] } }] },
+    detailStack: {
+      value: [{ view: view('A'), snapshot: { id: Promise.resolve('A') }, refresh: false }]
+    },
     detailLoading: { value: false },
     detailError: { value: '' },
     addToNcmPlaylistTracks: { value: [track(2), track(2)] },
@@ -52,7 +55,9 @@ function addFixture() {
     clearSelection: () => {
       cleared++
     },
-    appendNcmPlaylistTracks,
+    setDetailTracks: async (tracks: ReturnType<typeof track>[]) => {
+      bindings.detailTracks.value = tracks
+    },
     fetchPlaylistTracks: async (_id: string, force: boolean) => {
       assert.equal(force, true)
       reads++
@@ -69,7 +74,7 @@ function addFixture() {
   return { bindings, add, finish, reads: () => reads, cleared: () => cleared, serverTracks }
 }
 
-test('add completion updates only the original cached playlist while another detail remains intact', async () => {
+test('add completion invalidates the retained target while another detail remains intact', async () => {
   const f = addFixture()
   const request = f.add({ id: 'A' })
   f.bindings.currentDetail.value = view('B')
@@ -79,11 +84,8 @@ test('add completion updates only the original cached playlist while another det
   f.finish(true)
   await request
   assert.equal(f.bindings.detailTracks.value, bRows)
-  assert.deepEqual(
-    f.bindings.detailStack.value[0].snapshot.tracks.map((row) => row.ncmSongId),
-    [1, 2]
-  )
-  assert.equal(f.bindings.detailStack.value[0].view.playlist.trackCount, 4)
+  assert.equal(f.bindings.detailStack.value[0].refresh, true)
+  assert.equal(f.bindings.detailStack.value[0].view.playlist.trackCount, 3)
   assert.equal(f.reads(), 0)
   assert.equal(f.cleared(), 0)
 })
@@ -109,7 +111,7 @@ test('add completion after account or provider replacement cannot update caches 
     f.finish(true)
     await request
     assert.equal(f.bindings.detailTracks.value.length, 3)
-    assert.equal(f.bindings.detailStack.value[0].snapshot.tracks.length, 1)
+    assert.equal(f.bindings.detailStack.value[0].refresh, false)
     assert.equal(f.reads(), 0)
   }
 })
@@ -147,6 +149,10 @@ function fixture() {
     finish = resolve
     fail = reject
   })
+  let dispatched!: () => void
+  const started = new Promise<void>((resolve) => {
+    dispatched = resolve
+  })
   const currentDetail = { value: view('A') as ReturnType<typeof view> | null }
   const detailTracks = { value: [track(1), track(2), track(3)] }
   const errors: string[] = []
@@ -163,21 +169,39 @@ function fixture() {
     detailStack: {
       value: [] as Array<{
         view: ReturnType<typeof view>
-        snapshot: { tracks: ReturnType<typeof track>[] }
+        snapshot: { id: Promise<string> }
+        refresh?: boolean
       }>
     },
     detailError: { value: '' },
     detailLoading: { value: false },
+    browseState: { value: { total: 0 } },
+    isExternalActive: { value: false },
+    beginDetailTransition: () => {},
+    beginDetailLoad: () => {
+      bindings.detailLoading.value = true
+      return ++bindings.detailLoadToken
+    },
+    produceSelection: async (
+      selected: { tracks: ReturnType<typeof track>[] },
+      produce: (tracks: ReturnType<typeof track>[]) => Promise<void>
+    ) => produce(selected.tracks),
+    detailBrowse: {
+      open: async (request: { method: string; args: unknown[] }) => {
+        assert.equal(request.method, 'fetchPlaylistTracks')
+        assert.deepEqual([...request.args], ['A', true])
+        refreshed++
+        detailTracks.value = [track(7), track(8)]
+        bindings.browseState.value.total = 2
+      }
+    },
     captureNcmSession: () => () => bindings.sessionCurrent,
     isActiveDetailLoad: (token: number) => token === bindings.detailLoadToken,
     window: { confirm: () => true },
     removeNcmTracksFromPlaylist: (id: string, tracks: number[]) => {
       requests.push({ id, tracks: [...tracks] })
+      dispatched()
       return pending
-    },
-    fetchPlaylistTracks: async () => {
-      refreshed++
-      return [track(7), track(8)]
     },
     replaceTopDetail: (next: ReturnType<typeof view>) => {
       currentDetail.value = next
@@ -195,6 +219,7 @@ function fixture() {
   return {
     bindings,
     remove,
+    started,
     finish,
     fail,
     errors,
@@ -212,11 +237,11 @@ test('playlist removal never edits B or dereferences a closed detail', async () 
   for (const destination of ['B', 'closed', 'provider', 'account']) {
     const f = fixture()
     const operation = f.remove([track(1)])
+    await f.started
     f.bindings.detailLoadToken++
     f.bindings.currentDetail.value = destination === 'closed' ? null : view('B')
     if (destination === 'provider') f.bindings.activeProvider.value = 'other'
     if (destination === 'account') f.bindings.sessionCurrent = false
-    await Promise.resolve()
     f.finish()
     await operation
     assert.deepEqual(f.requests, [{ id: 'A', tracks: [1] }])
@@ -229,6 +254,7 @@ test('playlist removal never edits B or dereferences a closed detail', async () 
 test('A -> B -> A refreshes current data instead of applying the old response', async () => {
   const f = fixture()
   const operation = f.remove([track(1)])
+  await f.started
   f.bindings.detailLoadToken += 2
   f.bindings.currentDetail.value = view('A')
   f.finish()
@@ -241,21 +267,22 @@ test('A -> B -> A refreshes current data instead of applying the old response', 
   assert.equal(f.cleared, 0)
 })
 
-test('removal updates the target navigation snapshot and deduplicates song IDs', async () => {
+test('removal invalidates the retained target and deduplicates song IDs', async () => {
   const f = fixture()
   const operation = f.remove([track(1), track(1)])
-  const cached = { view: view('A'), snapshot: { tracks: [track(1), track(2), track(3)] } }
+  await f.started
+  const cached = { view: view('A'), snapshot: { id: Promise.resolve('A') }, refresh: false }
   f.bindings.detailStack.value.push(cached)
   f.bindings.detailLoadToken++
   f.bindings.currentDetail.value = view('B')
   f.finish()
   await operation
   assert.deepEqual(f.requests, [{ id: 'A', tracks: [1] }])
-  assert.deepEqual(cached.snapshot.tracks, [track(2), track(3)])
-  assert.equal(cached.view.playlist.trackCount, 2)
+  assert.equal(cached.refresh, true)
+  assert.equal(cached.view.playlist.trackCount, 3)
 })
 
-test('same-view success updates count once; stale errors do not contaminate B', async () => {
+test('same-view success updates count once; late errors use notices without replacing B', async () => {
   const f = fixture()
   const operation = f.remove([track(1), track(1)])
   f.finish()
@@ -264,9 +291,21 @@ test('same-view success updates count once; stale errors do not contaminate B', 
   assert.equal(f.cleared, 1)
   const stale = fixture()
   const failed = stale.remove([track(1)])
+  await stale.started
   stale.bindings.detailLoadToken++
   stale.bindings.currentDetail.value = view('B')
   stale.fail(new Error('network error'))
   await failed
-  assert.deepEqual(stale.errors, [])
+  assert.deepEqual(stale.errors, ['移除曲目失败: network error'])
+  assert.equal(stale.bindings.detailError.value, '')
+  assert.equal(stale.bindings.currentDetail.value?.playlist.id, 'B')
+})
+
+test('account replacement during ID collection prevents remote writes', async () => {
+  const f = fixture()
+  const operation = f.remove([track(1)])
+  f.bindings.sessionCurrent = false
+  await operation
+  assert.deepEqual(f.requests, [])
+  assert.equal(f.refreshed, 0)
 })

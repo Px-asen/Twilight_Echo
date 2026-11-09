@@ -394,7 +394,7 @@ test('player bar artist is a keyboard-accessible navigation button', () => {
   assert.match(app, /onSelectView\('artists', `artist:\$\{artistName\}`\)/)
   assert.match(
     app,
-    /:metadata-navigation-request="[\s\S]*?tab === streamingMetadataTab[\s\S]*?streamingMetadataRequest\s*:\s*null/
+    /:metadata-navigation-request="[\s\S]*?streamingTab === streamingMetadataTab[\s\S]*?streamingMetadataRequest\s*:\s*null/
   )
 })
 

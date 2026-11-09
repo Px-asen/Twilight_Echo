@@ -59,6 +59,7 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
       component('./streaming-page/SavedMusicCollections.vue', 'SavedMusicCollections'),
       component('./streaming-page/StreamingSocialStage.vue', 'StreamingSocialStage'),
       component('./streaming-page/StreamingDetailStage.vue', 'DetailStage'),
+      component('./login/LoginDisclaimerDialog.vue', 'LoginDisclaimerDialog'),
       component('./LoginPage.vue', 'LoginPage')
     ])
     const html = join(directory, 'fixture.html')
@@ -80,6 +81,10 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
         QRCode: { toDataURL: async () => 'data:image/png;base64,AA==' },
         AnimatedInput: { template: '<input />' }, CoverImg: { template: '<img />' },
         useBackHandler: () => {},
+        useStreamingTrackLocator: () => {},
+        useDomTrackLocator: () => {},
+        useMusicStore: () => ({ refreshLibraryIndex: async () => {} }),
+        selectLocalLibraryActionTracks: () => [],
         useEscapeToClose: () => {},
         NativeDialogTransition: Vue.Transition,
         useNativeDialog: dialog => { Vue.onMounted(() => dialog.value?.showModal()); Vue.onBeforeUnmount(() => dialog.value?.close()); },
@@ -87,7 +92,7 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
         createVisibilityPollingController: () => ({ onVisibilityChange() {} }),
         useNcmStore: () => ({ checkLogin: async () => {} }),
         useProviderStore: () => ({ providers: ref([provider]), syncProviders: async () => {}, hasProvider: () => true, getProvider: () => provider, checkLogin: async () => ({ loggedIn: false, profile: null }), getQrLogin: () => new Promise(resolve => replies.push(resolve)) }),
-        useProgressiveList: source => ({ visibleItems: computed(source), visibleStart: ref(0), paddingTop: ref(0), totalHeight: computed(() => source().length * 64), listRef: () => {} })
+        useProgressiveList: source => ({ visibleItems: computed(source), visibleStart: ref(0), paddingTop: ref(0), totalHeight: computed(() => source().length * 64), listRef: () => {}, scrollContainer: ref(null), itemBounds: () => null, scrollToIndex: () => {} })
       };
       (() => { const exports = {}; ${classifications}; Object.assign(window.fixture, exports); })();
       (() => { const exports = {}, require = name => name === 'vue' ? Vue : window.fixture; ${multiSelect}; Object.assign(window.fixture, exports); })();
@@ -98,6 +103,8 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
         let loggedIn = 0;
         const login = Vue.createApp(fixture.LoginPage, { initialProviderId: 'ncm', onLoginSuccess: () => loggedIn++ });
         login.mount('#login'); await tick();
+        check(replies.length === 0, 'QR request waits for login consent');
+        document.querySelector('#login .disclaimer-accept').click(); await tick();
         check(replies.length === 1, 'QR request started');
         const back = [...document.querySelectorAll('#login button')].find(el => el.textContent.includes('全部平台'));
         check(back, 'platform back button'); back.click(); await tick();
@@ -313,7 +320,7 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
     )
     await writeFile(
       runner,
-      `const { app, BrowserWindow } = require('electron'); app.whenReady().then(async () => { const win = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, backgroundThrottling: false } }); try { await win.loadFile(process.argv.at(-1)); await win.webContents.executeJavaScript('window.runChecks()'); win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' }); await win.webContents.executeJavaScript('window.verifyKeyboardSelection()'); console.error('ISSUE46_UI_OK'); app.exit(0); } catch (error) { console.error(error); app.exit(1); } });`
+      `const { app, BrowserWindow } = require('electron'); app.setPath('userData', require('node:path').join(__dirname, 'profile')); app.whenReady().then(async () => { const win = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, backgroundThrottling: false } }); try { await win.loadFile(process.argv.at(-1)); win.webContents.debugger.attach('1.3'); await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }); win.webContents.focus(); await win.webContents.executeJavaScript('window.runChecks()'); win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' }); await win.webContents.executeJavaScript('window.verifyKeyboardSelection()'); console.error('ISSUE46_UI_OK'); app.exit(0); } catch (error) { console.error(error); app.exit(1); } });`
     )
     const { stderr } = await run(require('electron') as string, ['--no-sandbox', runner, html], {
       windowsHide: true,
@@ -321,6 +328,7 @@ test('real Vue login ignores stale QR replies and list links navigate without pl
     })
     assert.match(stderr, /ISSUE46_UI_OK/)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    if (!process.env.TWILIGHT_TEST_KEEP_TEMP) await rm(directory, { recursive: true, force: true })
+    else console.error('ISSUE46_FIXTURE', directory)
   }
 })

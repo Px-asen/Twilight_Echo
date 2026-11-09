@@ -136,6 +136,7 @@ const { app, BrowserWindow, utilityProcess, MessageChannelMain } = require('elec
 const { CoreSupervisor } = require('./src/main/coreProcess/supervisor.ts')
 const { createDspCorePlatform } = require('./src/main/dsp/corePlatform.ts')
 const { CoreStateDatabase } = require('./src/main/library/coreStateDatabase.ts')
+const { LibraryDatabase } = require('./src/main/library/libraryDatabase.ts')
 const { emptyCoreStateCounts } = require('./src/shared/coreState.ts')
 const { createPluginManagerPlatform } = require('./src/main/plugins/platform.ts')
 const { protectJsonValue, unprotectJsonValue, protectString } = require('./src/main/security/secureStorage.ts')
@@ -150,6 +151,10 @@ const root = process.argv[2], profile = join(__dirname, 'profile'), pluginId = '
 app.disableHardwareAcceleration(); mkdirSync(profile); app.setPath('userData', profile)
 const alive = new Set(), children = []
 let supervisor, serial = 0, pluginPorts = 0, businessViaMain = 0, dropWrite = false, dropBookmark = false, dropLyrics = false, dropWorkspace = false, dropRestore = false, dropMetadata = false, allowSourceRepair = false
+function readPlaylists() {
+  const database = new LibraryDatabase(join(profile, 'music-library.sqlite'))
+  try { return database.preferencesPlaylistsLoad() } finally { database.close() }
+}
 async function main() {
   await app.whenReady()
   if(process.platform==='win32') {
@@ -473,7 +478,7 @@ async function main() {
   const playlistPage = await request('query','playlists.list')
   const imported = playlistPage.items.find(p=>p.name==='Headless import')
   assert.equal(imported.count,1)
-  const playlistDisk = JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8'))
+  const playlistDisk = readPlaylists()
   assert.equal(playlistDisk.revision,playlistPage.revision)
   assert.deepEqual(playlistDisk.data.find(p=>p.id===imported.id).trackIds,['one'])
   const importedEntries = await request('query','playlists.entries',{id:imported.id,revision:playlistPage.revision})
@@ -496,18 +501,18 @@ async function main() {
   let matched
   do {
     await new Promise(r=>setTimeout(r,10))
-    matched=JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8')).data.find(p=>p.id===external.result)
+    matched=readPlaylists().data.find(p=>p.id===external.result)
   } while(matched.imported.entries.some(e=>e.resolution.state==='pending')&&Date.now()<matchingDeadline)
   assert.deepEqual(matched.imported.entries.map(e=>e.resolution.state),['streaming','streaming'])
   assert.notEqual(matched.imported.entries[0].entryId,matched.imported.entries[1].entryId)
   supervisor.connect(identity)
   assert.equal((await request('query','imports.status',{id:external.result})).done,2)
-  const previewBefore = JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8'))
+  const previewBefore = readPlaylists()
   const preview = await request('command','imports.previewStart',{link:'https://music.163.com/playlist?id=77',credentials:{accessToken:'one-shot-secret'}})
   supervisor.disconnect(identity.id)
   // No renderer and no client while the actual plugin performs both pages.
   await new Promise(r=>setTimeout(r,800))
-  assert.deepEqual(JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8')),previewBefore)
+  assert.deepEqual(readPlaylists(),previewBefore)
   supervisor.connect(identity)
   let previewStatus = await request('query','imports.preview',{id:preview.id})
   const previewDeadline=Date.now()+5000
@@ -522,7 +527,7 @@ async function main() {
   assert.notEqual(previewPage.items[0].id,previewPage.items[1].id)
   assert.doesNotMatch(JSON.stringify({previewStatus,previewPage}),/one-shot-secret|streamUrl|filePath/)
   const previewSaved=await request('command','imports.previewSave',{id:preview.id,revision:previewStatus.revision,playlistsRevision:previewBefore.revision})
-  const previewOnDisk=JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8')).data.find(p=>p.id===previewSaved.id)
+  const previewOnDisk=readPlaylists().data.find(p=>p.id===previewSaved.id)
   assert.equal(previewOnDisk.transient,undefined)
   assert.deepEqual(previewOnDisk.imported.entries.map(e=>e.entryId),previewPage.items.map(e=>e.id))
   assert.equal((await request('query','imports.previews')).total,0)
@@ -664,7 +669,7 @@ async function main() {
   assert.equal(repaired.track.id,'fixture:replacement');assert.notEqual(repaired.playback.state,'playing')
   const repairPage=await request('query','queue.page',{id:repaired.queue.id,revision:repaired.queue.revision,offset:0})
   assert.equal(repairPage.items[0].track.id,'fixture:replacement');assert.equal(repairPage.items[0].queueEntryId,repaired.queue.occurrenceId)
-  const repairedPlaylist=JSON.parse(readFileSync(join(profile,'playlists.json'),'utf8')).data.find(p=>p.id==='source-repair')
+  const repairedPlaylist=readPlaylists().data.find(p=>p.id==='source-repair')
   assert.deepEqual(repairedPlaylist.trackIds,['fixture:replacement'])
   supervisor.disconnect(identity.id);supervisor.connect(identity)
   const repairAttached=await request('query','state.snapshot')

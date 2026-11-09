@@ -20,7 +20,7 @@ test('local view transitions complete after leaving the song list, including an 
   await runPageRuntime(runtimeEntrySource())
 })
 
-test('cached streaming pages hide during plugins, including a pending async mount, and restore details', async () => {
+test('streaming pages release inactive views, fence pending mounts, and restore tab state', async () => {
   await runPageRuntime(streamingVisibilityEntrySource())
 })
 
@@ -113,27 +113,33 @@ function streamingVisibilityEntrySource(): string {
     '<input v-model="detail" /><div style="height:1000px">{{ initialTab }}</div></div></div>'
   const streamingInvocation = appSource.match(/<StreamingPage\b[\s\S]*?\/>/)![0]
   const shell = '<div>' + streamingInvocation + '</div>'
-  return `import { createApp, compile, defineAsyncComponent, nextTick, ref, shallowRef, watch } from 'vue'
+  return `import { createApp, compile, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAppNavigation } from '@renderer/app/useAppNavigation.ts'
 const expect = (value, message) => { if (!value) throw new Error(message) }
 const settle = async () => { await nextTick(); await new Promise(resolve => setTimeout(resolve, 30)) }
 window.runPlaylistLifecycleRuntime = async () => {
   const navigation = useAppNavigation()
-  const streamingPageTabs = shallowRef([])
-  watch([navigation.showStreamingPage, navigation.streamingTab], ([visible, tab]) => {
-    if (visible && !streamingPageTabs.value.includes(tab)) streamingPageTabs.value = [...streamingPageTabs.value, tab]
-  }, { immediate: true })
+  // Model the serialized state boundary; Core browse-session restoration has
+  // its own integration tests. The shell must release the mounted page.
+  const snapshots = new Map()
   let finishLoading
   let mounts = 0
   const StreamingShell = {
     props: ['active', 'initialTab', 'menuOpen', 'hasPlayer', 'metadataNavigationRequest'],
-    setup() { mounts++; return { detail: ref('saved detail') } },
+    setup(props) {
+      mounts++
+      const saved = snapshots.get(props.initialTab)
+      const detail = ref(saved?.detail ?? 'saved detail')
+      onMounted(() => { document.querySelector('.streaming-content').scrollTop = saved?.scrollTop ?? 0 })
+      onBeforeUnmount(() => snapshots.set(props.initialTab, { detail: detail.value, scrollTop: document.querySelector('.streaming-content').scrollTop }))
+      return { detail }
+    },
     render: compile(${JSON.stringify(pageTemplate)})
   }
   const StreamingPage = defineAsyncComponent(() => new Promise(resolve => { finishLoading = () => resolve(StreamingShell) }))
   const app = createApp({
     components: { StreamingPage },
-    setup: () => ({ ...navigation, streamingPageTabs, hasPlayerBar: false, showLocalSidebar: false,
+    setup: () => ({ ...navigation, hasPlayerBar: false, showLocalSidebar: false,
       streamingRootNavigationRevisions: {}, streamingMetadataRequest: null,
       streamingMetadataTab: ref('home') }),
     render: compile(${JSON.stringify(shell)})
@@ -146,7 +152,7 @@ window.runPlaylistLifecycleRuntime = async () => {
   navigation.openPluginPage()
   finishLoading()
   await settle()
-  expect(document.querySelector('.streaming-page'), 'pending streaming page should remain cached')
+  expect(!document.querySelector('.streaming-page'), 'pending streaming page mounted after leaving')
   expect(visiblePages().length === 0, 'streaming page loaded visibly behind plugins')
   expect(navigation.showStreamingPage.value === false, 'shell still reports streaming as visible during plugins')
   navigation.hidePluginPage()
@@ -169,9 +175,9 @@ window.runPlaylistLifecycleRuntime = async () => {
     expect(!navigation.showStreamingPage.value, 'streaming shell flag leaks into plugins: ' + tab)
     navigation.createTogglePluginHandler()()
     await settle()
-    expect(visiblePages().length === 1 && visiblePages()[0] === page, 'returning recreated or lost the streaming page: ' + tab)
-    expect(mounts === mountedBeforePlugins, 'returning remounted the cached tab: ' + tab)
-    expect(input.value === 'detail for ' + tab && scroller.scrollTop === 120, 'returning lost detail or scroll: ' + tab)
+    expect(visiblePages().length === 1 && visiblePages()[0] !== page, 'returning did not remount the active page: ' + tab)
+    expect(mounts === mountedBeforePlugins + 1, 'returning mounted more than one tab: ' + tab)
+    expect(visiblePages()[0].querySelector('input').value === 'detail for ' + tab && visiblePages()[0].querySelector('.streaming-content').scrollTop === 120, 'returning lost detail or scroll: ' + tab)
     navigation.openSettingsPage()
     navigation.openPluginPage()
     await settle()
@@ -181,7 +187,7 @@ window.runPlaylistLifecycleRuntime = async () => {
     expect(navigation.showSettingsPage.value && visiblePages().length === 0, 'closing plugins exposed streaming through settings')
     navigation.closeSettingsPage()
     await settle()
-    expect(visiblePages()[0] === page, 'closing settings did not restore the streaming tab')
+    expect(visiblePages().length === 1 && visiblePages()[0].querySelector('input').value === 'detail for ' + tab, 'closing settings did not restore the streaming tab')
   }
   app.unmount()
   console.log('PLAYLIST_LIFECYCLE_RUNTIME_OK')

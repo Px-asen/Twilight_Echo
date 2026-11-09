@@ -209,6 +209,7 @@ port.on('message',message=>{
 const analysis = String.raw`
 const { createServicePort }=require('./src/main/services/servicePort.ts')
 const { TWILIGHT_AUTOMIX_MODEL_VERSION }=require('./src/shared/twilightAutoMix.ts')
+const { LIBRARY_LOUDNESS_ALGORITHM_VERSION }=require('./src/shared/libraryLoudness.ts')
 const { appendFileSync,existsSync }=require('node:fs')
 const { join }=require('node:path')
 const port=createServicePort()
@@ -216,7 +217,7 @@ port.postMessage({kind:'ready',protocolVersion:1,analyses:['bpm','loudness','aut
 port.on('message',async message=>{
   appendFileSync(join(__dirname,'calls.jsonl'),JSON.stringify({method:'analyze',analysis:message.analysis})+'\n')
   while(!existsSync(join(__dirname,message.analysis==='loudness-batch'?'release-batch':'release-analysis')))await new Promise(resolve=>setTimeout(resolve,5))
-  const measured={integratedLufs:-20,truePeakDb:-1,source:'analyzed',analyzedAt:'2026-10-22T12:00:00Z',algorithmVersion:2,available:true}
+  const measured={integratedLufs:-20,truePeakDb:-1,source:'analyzed',analyzedAt:'2026-10-22T12:00:00Z',algorithmVersion:LIBRARY_LOUDNESS_ALGORITHM_VERSION,available:true}
   if(message.analysis!=='automix') {
     const options=JSON.parse(message.optionsJson)
     const value=message.analysis==='bpm'?{bpm:123,confidence:.9,source:'analyzed',analyzedAt:measured.analyzedAt,algorithmVersion:1}:message.analysis==='loudness'?measured:{tracks:options.segments.map(()=>measured),album:options.album?measured:null}

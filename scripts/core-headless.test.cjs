@@ -100,7 +100,6 @@ const { app, BrowserWindow, utilityProcess, MessageChannelMain, session } = requ
 const { CoreSupervisor } = require('./src/main/coreProcess/supervisor.ts')
 const { createDspCorePlatform } = require('./src/main/dsp/corePlatform.ts')
 const { emptyCoreStateCounts } = require('./src/shared/coreState.ts')
-const { normalizeCueRange } = require('./src/shared/cue.ts')
 const { computeAutoPreampDb } = require('./src/shared/eqResponse.ts')
 const { writeFileSync, mkdirSync, readFileSync, existsSync } = require('node:fs')
 const { createRemoteCoverCache } = require('./src/main/cache/remoteCoverCache.ts')
@@ -286,7 +285,10 @@ async function main() {
   const importedStatistics = await request('query', 'statistics.tracks', { limit: 1 })
   assert.equal(importedStatistics.items[0].plays, 2)
   assert.equal(importedStatistics.items[0].seconds, 15)
-  assert.deepEqual(importedStatistics.items[0].track.cueRange, normalizeCueRange(importedStat.track.cueRange))
+  // The imported historical ID is absent from the current library. Its counts
+  // survive, while playable details must come from a live catalog record.
+  assert.equal(importedStatistics.items[0].track, null)
+  assert.deepEqual(importedStatistics.items[0].sourceIds, importedStat.sourceIds)
   assert.doesNotMatch(JSON.stringify(importedStatistics), /filePath|streamUrl/)
   // No route is opened: save a disconnected device profile through the public
   // Core domain and the real synchronous settings repository.

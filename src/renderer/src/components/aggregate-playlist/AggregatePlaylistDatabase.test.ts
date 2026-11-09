@@ -398,8 +398,8 @@ test('production aggregate events play a complete query from deep pages, preserv
   entry.playAll()
   assert.equal(f.queues.at(-1)!.total, 405)
   assert.equal(f.arrayCalls.length, 0)
-  entry.toggleSourceVisibility('ncm')
-  await until(() => !!entry.databasePage.value.page && !!entry.databaseSources.value.page)
+  await entry.toggleSourceVisibility('ncm')
+  await until(() => !entry.databasePending.value && !entry.databaseSources.value.loading)
   assert.equal(
     entry.sourceFilters.value.find((item: { source: string }) => item.source === 'ncm').hidden,
     true

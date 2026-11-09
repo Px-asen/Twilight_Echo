@@ -65,11 +65,11 @@ onUnmounted(() => clearInterval(timer))
   gap: 12px;
   max-width: min(440px, calc(100vw - 40px));
   padding: 12px 16px;
-  border: 1px solid var(--te-control-focus-color, #637bda);
+  border: 1px solid var(--te-control-focus-color);
   border-radius: 12px;
-  background: var(--te-settings-control-bg, #f2f4f9);
-  color: var(--te-settings-text, #232736);
-  box-shadow: 0 4px 20px #0002;
+  background: var(--te-settings-control-bg);
+  color: var(--te-settings-text);
+  box-shadow: var(--te-settings-shadow);
   font-size: 13px;
 }
 button {

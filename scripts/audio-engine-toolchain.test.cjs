@@ -42,6 +42,7 @@ const { createMinimalPe } = require('./pe-fixture.cjs')
 // them or the script dies with MODULE_NOT_FOUND before reaching its own checks.
 const STAGING_SCRIPT_FILES = Object.freeze([
   'stage-audio-engine.cjs',
+  'diagnostic-symbols.cjs',
   'audio-engine-toolchain.cjs',
   'windows-persisted-environment.cjs',
   'macos-audio-runtime.cjs',

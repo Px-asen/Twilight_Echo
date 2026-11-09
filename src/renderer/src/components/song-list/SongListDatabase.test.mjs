@@ -280,7 +280,7 @@ test('song tables omit the sticky range strip while keeping header refresh and r
   const template = descriptor.template.content
   assert.doesNotMatch(template, /database-track-window-status|aria-label="曲库浏览"/)
   const toolbar = template.slice(
-    template.indexOf('<div ref="trackToolbarRef"'),
+    template.search(/<div\s+ref="trackToolbarRef"/),
     template.indexOf('<div class="library-quick-drawers">')
   )
   assert.match(

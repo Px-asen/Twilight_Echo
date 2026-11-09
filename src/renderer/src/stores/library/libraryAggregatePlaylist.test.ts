@@ -355,13 +355,15 @@ test('lease refresh preserves a deep continuous viewport and failed pages keep i
   f.setCorePlaylistRevision(2)
   owner.setInput({ ...f.input, revision: 2 })
   await until(() => release.length > 0)
-  assert.notEqual(owner.detailState.value.id, previous)
+  assert.equal(owner.detailState.value.id, previous, 'retain the acknowledged view until the new lease returns')
+  assert.equal(owner.detailState.value.pending, true)
   assert.equal(owner.pageState.value.total, 605)
   assert.equal(owner.trackAt(410), undefined)
   assert.equal(owner.pageState.value.requestedPage, 1)
   f.intercept(undefined)
   release.forEach((resolve) => resolve())
   await until(() => !owner.busy.value)
+  assert.notEqual(owner.detailState.value.id, previous)
   assert.equal(owner.trackAt(410)?.id, 'local410')
   f.intercept(async (query) => {
     if (query.offset === 0 && !query.aggregate?.sourceCounts) throw new Error('disk unavailable')
@@ -445,7 +447,7 @@ test('removal refuses a changed library or configuration and stale errors cannot
   assert.match(owner.action.value.error, /变化/)
   f.metadataHook(undefined)
   owner.invalidate()
-  await until(() => !!owner.pageState.value.page)
+  await until(() => !owner.busy.value && !!owner.pageState.value.page)
   let unblock!: () => void
   f.intercept(async (query) => {
     if (query.aggregate?.variantRow !== undefined)

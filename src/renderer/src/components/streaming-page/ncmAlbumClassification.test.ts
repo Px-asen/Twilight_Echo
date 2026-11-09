@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { computed, markRaw, ref } from 'vue'
+import { computed, markRaw, nextTick, ref } from 'vue'
 import ts from 'typescript'
 import {
   UNKNOWN_NCM_ALBUM_CLASSIFICATION,
@@ -94,9 +94,30 @@ const pageCode = ts.transpileModule(statements.map((node) => node.getText(ast)).
 }).outputText
 
 function artistPage() {
+  let snapshot: unknown
   const bindings = {
     computed,
     markRaw,
+    nextTick,
+    detailLoadToken: 1,
+    restoringBrowse: false,
+    detailQuery: ref(''),
+    detailSort: ref('default'),
+    detailSortDirection: ref('asc'),
+    browseState: ref({ total: 0 }),
+    detailBrowse: {
+      reset: () => {},
+      capture: () => ({ query: {}, offset: 0, session: null, groups: [] }),
+      restore: async () => {}
+    },
+    core: {
+      query: async () => ({ value: snapshot }),
+      command: async () => {}
+    },
+    replaceTopDetail: (view: Record<string, unknown>) => {
+      bindings.currentDetail.value = view
+    },
+    restoreStreamingScrollPosition: () => {},
     filterNcmAlbums,
     formatNcmAlbumClassification,
     NCM_PROVIDER_ID: 'ncm',
@@ -131,10 +152,17 @@ function artistPage() {
     `${pageCode}\n({ showNcmAlbumFilters, socialCollections, detailHeaderInfo, clearDetailState, captureDetailState, applyDetailState })`,
     bindings
   )
-  return { ...bindings, page }
+  return {
+    ...bindings,
+    page,
+    retainSnapshot: (value: unknown) => {
+      snapshot = value
+      return { id: Promise.resolve('artist-detail') }
+    }
+  }
 }
 
-test('artist albums preserve the release filter on back navigation and show labels in album details', () => {
+test('artist albums preserve the release filter on back navigation and show labels in album details', async () => {
   const f = artistPage()
   assert.equal(f.page.showNcmAlbumFilters.value, true)
   assert.equal(f.page.socialCollections.value.length, 2)
@@ -150,7 +178,7 @@ test('artist albums preserve the release filter on back navigation and show labe
   assert.equal(f.page.detailHeaderInfo.value.desc, 'Artist · 网易云 · EP · 共 4 首歌曲')
   assert.equal(f.page.detailHeaderInfo.value.isExplicit, true)
   f.currentDetail.value = { type: 'artist', artist: { id: 1, name: 'Artist' } }
-  f.page.applyDetailState(snapshot)
+  await f.page.applyDetailState(f.retainSnapshot(snapshot))
   assert.equal(f.artistAlbumReleaseType.value, 'EP')
   assert.equal(f.page.socialCollections.value[0].id, 2)
   assert.equal(f.page.socialCollections.value[0].isExplicit, true)

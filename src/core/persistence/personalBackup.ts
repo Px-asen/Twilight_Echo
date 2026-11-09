@@ -763,7 +763,13 @@ export function createPersonalBackupRepository(
       } else if (name === 'playlists.json' && database.preferencesPlaylistsRestore) {
         if (!isVersionedDataEnvelope(value, (v): v is Playlist[] => Array.isArray(v) && validatePersonalDomain('playlists', v)) ||
           typeof journal.id !== 'string' || !Number.isSafeInteger(journal.playlistExpectedRevision)) throw new Error('SQLite 收藏恢复日志无效')
-        await database.preferencesPlaylistsRestore(value.data, journal.id, Number(journal.playlistExpectedRevision), Date.now())
+        // V1 backups allow playlists without a creation timestamp. The SQLite
+        // owner requires one; use the durable envelope time so a replay agrees.
+        const playlists = value.data.map(playlist => ({
+          ...playlist,
+          createdAt: typeof playlist.createdAt === 'string' ? playlist.createdAt : value.savedAt
+        }))
+        await database.preferencesPlaylistsRestore(playlists, journal.id, Number(journal.playlistExpectedRevision), Date.now())
       } else writeRestoreFile(root, name, value)
     }
     finishPersonalRestore(root, journal)

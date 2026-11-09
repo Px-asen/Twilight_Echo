@@ -745,15 +745,13 @@ async function loadMorePersonalizedStream(key: PersonalizedStreamKey): Promise<v
     for (let start = 0; start < additions.length; start += 200) {
       next = (await core.command('browse.append', {
         id: next.id,
-        items: additions
-          .slice(start, start + 200)
-          .map((track) => ({
-            ...track,
-            filePath: track.filePath ?? '',
-            fileName: track.fileName ?? '',
-            cover: track.cover ?? null,
-            lyrics: track.lyrics ?? null
-          })),
+        items: additions.slice(start, start + 200).map((track) => ({
+          ...track,
+          filePath: track.filePath ?? '',
+          fileName: track.fileName ?? '',
+          cover: track.cover ?? null,
+          lyrics: track.lyrics ?? null
+        })),
         complete: true
       })) as BrowseSession
     }
@@ -2071,13 +2069,18 @@ async function openPlaylist(
         args: [playlist.id, 0, 200, force],
         paging: { offsetArg: 1, limitArg: 2 }
       })
-      return
+    } else {
+      await detailBrowse.open({
+        providerId,
+        method: 'fetchPlaylistTracks',
+        args: [playlist.id, force]
+      })
     }
-    await detailBrowse.open({
-      providerId,
-      method: 'fetchPlaylistTracks',
-      args: [playlist.id, force]
-    })
+    if (isActiveDetailLoad(token))
+      replaceTopDetail({
+        type: 'playlist',
+        playlist: { ...playlist, trackCount: browseState.value.total }
+      })
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = friendlyStreamingError(error, '加载列表失败')
@@ -3096,7 +3099,12 @@ function playDetailTrack(track: Track, _index: number, event?: MouseEvent): void
 }
 
 async function loadAllLikedTracks(): Promise<void> {
-  if (currentDetail.value?.type !== 'liked' || isExternalActive.value || likedTracksLoadingMore.value) return
+  if (
+    currentDetail.value?.type !== 'liked' ||
+    isExternalActive.value ||
+    likedTracksLoadingMore.value
+  )
+    return
   const token = detailLoadToken
   likedTracksLoadingMore.value = true
   likedTracksLoadMoreError.value = ''
@@ -3594,6 +3602,7 @@ async function removeStreamingTracks(input: Track[] | ActionSelection): Promise<
           throw new Error('账号已改变，移除操作已停止')
         await removeNcmTracksFromPlaylist(target.id, ids.slice(offset, offset + 200))
       }
+      if (!isCurrent() || provider !== activeProvider.value) return
       for (const entry of detailStack.value) {
         if (
           entry.view.type === 'playlist' &&
@@ -3607,9 +3616,10 @@ async function removeStreamingTracks(input: Track[] | ActionSelection): Promise<
         provider === activeProvider.value &&
         currentDetail.value?.type === 'playlist' &&
         String(currentDetail.value.playlist.id) === String(target.id)
-      )
+      ) {
+        if (token === detailLoadToken) clearSelection()
         await openPlaylist(currentDetail.value.playlist, true, true)
-      if (token === detailLoadToken) clearSelection()
+      }
       pushNotice({
         kind: 'success',
         message: `已从歌单「${target.name}」移除 ${ids.length} 首歌曲`

@@ -35,8 +35,13 @@ async function runAlbumRequest(change = () => {}) {
     props: {
       active: true,
       metadataNavigationRequest: {
-        kind: 'album', key: 1, providerId: 'ncm', albumId: 'album-1',
-        albumName: 'Album', artist: 'Artist', cover: null
+        kind: 'album',
+        key: 1,
+        providerId: 'ncm',
+        albumId: 'album-1',
+        albumName: 'Album',
+        artist: 'Artist',
+        cover: null
       }
     },
     lastMetadataNavigationKey: 0,
@@ -50,7 +55,8 @@ async function runAlbumRequest(change = () => {}) {
       }
     },
     mediaProviders: {
-      get: () => (providerAvailable ? { name: 'NetEase', fetchAlbumTracks: async () => [] } : undefined)
+      get: () =>
+        providerAvailable ? { name: 'NetEase', fetchAlbumTracks: async () => [] } : undefined
     },
     selectDetailProvider: async () => {},
     isCurrentDetailNavigation: (token, providerId) =>
@@ -98,7 +104,7 @@ test('album request is discarded after a newer in-page navigation starts', async
   assert.equal(opened.length, 0)
 })
 
-test('repeated playback metadata destinations retain the originating playlist', () => {
+test('repeated playback metadata destinations retain the originating playlist', async () => {
   const functions = []
   function extract(node) {
     if (ts.isFunctionDeclaration(node) && ['pushDetail', 'popDetail'].includes(node.name?.text)) {
@@ -108,11 +114,18 @@ test('repeated playback metadata destinations retain the originating playlist', 
   }
   extract(ast)
   const context = {
-    detailNavigationToken: 0, detailLoadToken: 0,
-    detailStack: { value: [] }, streamingTransitionName: { value: '' },
+    detailNavigationToken: 0,
+    detailLoadToken: 0,
+    detailStack: { value: [] },
+    streamingTransitionName: { value: '' },
     streamingContentRef: { value: null },
-    captureDetailState: () => ({ query: 'playlist filter', scrollTop: 240 }),
-    applyDetailState: (snapshot) => { context.restored = snapshot }
+    retainDetailState: () => ({ id: Promise.resolve('playlist-snapshot') }),
+    releaseDetailEntry: () => {},
+    browseState: { value: { session: null } },
+    detailBrowse: { reset() {} },
+    applyDetailState: async (snapshot) => {
+      context.restored = await snapshot.id
+    }
   }
   const code = ts.transpileModule(functions.join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
@@ -123,16 +136,20 @@ test('repeated playback metadata destinations retain the originating playlist', 
   runtime.pushDetail({ type: 'album', id: 'b' }, true)
   runtime.pushDetail({ type: 'album', id: 'c' }, true)
   assert.equal(context.detailStack.value.length, 2)
-  runtime.popDetail()
+  await runtime.popDetail()
   assert.equal(context.detailStack.value.at(-1).view.id, 'daily')
-  assert.equal(context.restored.scrollTop, 240)
+  assert.equal(context.restored, 'playlist-snapshot')
 })
 
 test('ordinary detail links still push nested history', () => {
   const fn = ast.statements.find(
     (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'pushDetail'
   )
-  const context = { detailNavigationToken: 0, detailStack: { value: [] }, captureDetailState: () => ({}) }
+  const context = {
+    detailNavigationToken: 0,
+    detailStack: { value: [] },
+    retainDetailState: () => ({ id: Promise.resolve('snapshot') })
+  }
   const code = ts.transpileModule(fn.getText(ast), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText
@@ -145,30 +162,45 @@ test('ordinary detail links still push nested history', () => {
 
 test('player artist and album open in the originating library tab', () => {
   const app = fs.readFileSync(require('node:path').join(__dirname, '../../App.vue'), 'utf8')
-  const appAst = ts.createSourceFile('app.ts', parse(app).descriptor.scriptSetup.content, ts.ScriptTarget.Latest, true)
+  const appAst = ts.createSourceFile(
+    'app.ts',
+    parse(app).descriptor.scriptSetup.content,
+    ts.ScriptTarget.Latest,
+    true
+  )
   const functions = appAst.statements.filter(
-    (node) => ts.isFunctionDeclaration(node) &&
+    (node) =>
+      ts.isFunctionDeclaration(node) &&
       ['handlePlayingAlbumClick', 'handlePlayerBarArtistClick'].includes(node.name?.text)
   )
   const openedTabs = []
   const track = {
-    id: 'track-1', album: 'Album', albumId: 'album-1', albumArtist: 'Album Artist',
-    artist: 'Artist', cover: null
+    id: 'track-1',
+    album: 'Album',
+    albumId: 'album-1',
+    albumArtist: 'Album Artist',
+    artist: 'Artist',
+    cover: null
   }
   const context = {
     currentTrack: { value: track },
-    pageTarget: { value: { kind: 'streaming' } }, streamingTab: { value: 'library' },
-    streamingMetadataTab: { value: 'home' }, streamingMetadataRequest: { value: null },
+    pageTarget: { value: { kind: 'streaming' } },
+    streamingTab: { value: 'library' },
+    streamingMetadataTab: { value: 'home' },
+    streamingMetadataRequest: { value: null },
     streamingMetadataRequestKey: 0,
     musicStore: { albums: { value: [] } },
-    getTrackSource: () => 'ncm', onSelectView: () => {}, pushNotice: () => {},
+    getTrackSource: () => 'ncm',
+    onSelectView: () => {},
+    pushNotice: () => {},
     enterStreamingMode: (tab) => openedTabs.push(tab)
   }
   const code = ts.transpileModule(functions.map((fn) => fn.getText(appAst)).join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText
   const runtime = vm.runInNewContext(
-    `${code}\n({handlePlayingAlbumClick,handlePlayerBarArtistClick})`, context
+    `${code}\n({handlePlayingAlbumClick,handlePlayerBarArtistClick})`,
+    context
   )
 
   runtime.handlePlayingAlbumClick()
@@ -188,9 +220,12 @@ test('reactivating for metadata does not start a competing root refresh', () => 
   let activation
   let pending
   function find(node) {
-    if (ts.isCallExpression(node) && node.expression.getText(ast) === 'watch' &&
-        node.arguments[0]?.getText(ast) === '() => props.active' &&
-        node.arguments[1]?.getText(ast).includes('refreshStreamingSurface')) {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(ast) === 'watch' &&
+      node.arguments[0]?.getText(ast) === '() => props.active' &&
+      node.arguments[1]?.getText(ast).includes('refreshStreamingSurface')
+    ) {
       activation = node.arguments[1].getText(ast)
     }
     if (ts.isFunctionDeclaration(node) && node.name?.text === 'playbackNavigationPending') {
@@ -202,8 +237,11 @@ test('reactivating for metadata does not start a competing root refresh', () => 
   let refreshes = 0
   const context = {
     props: { metadataNavigationRequest: { kind: 'album', key: 2 } },
-    lastMetadataNavigationKey: 1, playbackNavigationInFlight: 0,
-    refreshStreamingSurface: () => { refreshes++ }
+    lastMetadataNavigationKey: 1,
+    playbackNavigationInFlight: 0,
+    refreshStreamingSurface: () => {
+      refreshes++
+    }
   }
   const code = ts.transpileModule(`${pending}\nconst activation = ${activation}`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }

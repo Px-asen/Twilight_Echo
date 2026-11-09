@@ -272,7 +272,7 @@ port.on('message', message => {
   if (message.method === 'Pause') state = 'paused'
   if (message.method === 'LoadQueue') source = message.args[0]?.[0]?.source ?? ''
   if (message.method === 'ApplyDspState') revision = message.args[0]
-  const value = message.method === 'GetPlaybackInfo' ? { state, source, position: 0 } : message.method === 'GetDspGraphStatus' ? { revision, nodes: [], totalLatencyFrames: 0, totalTailFrames: 0 } : null
+  const value = message.method === 'BridgeStatus' ? { supported: true, selected: false, hosting: false, receiving: false, connected: false, peerName: null, receiver: null, error: null } : message.method === 'GetPlaybackInfo' ? { state, source, position: 0 } : message.method === 'GetDspGraphStatus' ? { revision, nodes: [], totalLatencyFrames: 0, totalTailFrames: 0 } : null
   port.postMessage({ kind: 'response', requestId: message.requestId, ok: true, value })
 })
 `

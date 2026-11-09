@@ -376,7 +376,7 @@ test('stop cancels delayed SQL and provider work without waiting or authorizing 
   }
 })
 
-test('stop drains dispatched rebind, retains its confirmed map, and suppresses late callbacks', async (t) => {
+test('stop drains dispatched rebind and publishes its confirmed mapping for the next owner', async (t) => {
   const f = fixture(t)
   const started = deferred<void>(),
     reply = deferred<void>()
@@ -397,7 +397,9 @@ test('stop drains dispatched rebind, retains its confirmed map, and suppresses l
   reply.resolve()
   await Promise.all([run, drain])
   assert.deepEqual(f.core.getMapping(), [0, 1])
-  assert.deepEqual(f.mapping(), [0])
+  assert.deepEqual(f.mapping(), [0, 1])
+  assert.deepEqual(f.engine.continued, [])
+  assert.deepEqual(f.errors, [])
 })
 
 test('a delayed provider cannot reset the successor that already started at EOF', async (t) => {
