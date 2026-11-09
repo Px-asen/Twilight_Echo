@@ -132,7 +132,13 @@ export function createLibraryAggregatePlaylist(api: ReturnType<typeof createCore
           aggregate: { hiddenSources: next.aggregate!.hiddenSources, sourceCounts: true }
         }
       : null
-    const sourceKey = JSON.stringify(source)
+    // Core can retain the same view handle when playlist preferences change.
+    // Source counts and visibility still belong to the new configuration.
+    const sourceKey = JSON.stringify([
+      source,
+      input.value.revision,
+      input.value.playlist?.hiddenSources
+    ])
     if (sourceKey !== sourceQuery) {
       sourceQuery = sourceKey
       sources.setQuery(source)

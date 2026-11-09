@@ -23,6 +23,8 @@
 - [真实设备音频证据规则](./audio-smoke-evidence.md)
 - [VST3 宿主工具链](./vst3-host-toolchain.md)
 - [AutoMix 运行与验证指南](../audio-engine/automix-native/README.md)
+- [2.0.1 发布说明](./release-notes/2.0.1.md)
+- [2.0.0 发布说明](./release-notes/2.0.0.md)
 - [1.3.1 发布说明](./release-notes/1.3.1.md)
 - [1.3.0 发布说明](./release-notes/1.3.0.md)
 - [1.1.0 发布说明](./release-notes/1.1.0.md)

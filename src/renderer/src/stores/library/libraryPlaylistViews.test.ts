@@ -514,7 +514,7 @@ test('v6 upgrade takes a WAL-consistent snapshot and preserves every old queue o
   )
   const upgraded = new LibraryDatabase(path)
   try {
-    assert.equal(upgraded.sql.prepare('PRAGMA user_version').get()?.user_version, 29)
+    assert.equal(upgraded.sql.prepare('PRAGMA user_version').get()?.user_version, 30)
     assert.deepEqual(upgraded.readLibraryQueue(queue.id), before)
     const snapshot = new DatabaseSync(
       join(root, readdirSync(root).find((name) => name.includes('.v6-backup-'))!),

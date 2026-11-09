@@ -66,6 +66,9 @@ function fixture(t: { after(fn: () => void): void }, supported = true) {
   )
   const bindings = {
     watch,
+    restoringPage: false,
+    browseContexts: Promise.resolve([]),
+    captureBrowseContexts: async () => [],
     activeProvider,
     activeTab,
     fallbackProvider,
