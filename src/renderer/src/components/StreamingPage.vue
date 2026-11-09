@@ -398,7 +398,9 @@ const musicStore = useMusicStore()
 const mediaProviders = useMediaProviders()
 const core = useCoreConnection()
 async function captureBrowseContexts() {
-  await core.attach()
+  // Attaching refreshes the document's shared Core projection and temporarily
+  // blocks requests. A new page only needs to attach if the document has none.
+  if (!core.state.value) await core.attach()
   return core.query('browse.context', {
     providerIds: [
       ...new Set([
@@ -408,8 +410,6 @@ async function captureBrowseContexts() {
     ].filter(Boolean)
   })
 }
-let browseContexts = captureBrowseContexts()
-void browseContexts.catch(() => {})
 const localSearchSource = useLibraryUnifiedSearch(() => {
   if (searchType.value !== 'playlists' && ['all', 'local'].includes(searchSource.value))
     refreshSearch()
@@ -477,6 +477,8 @@ const activeProvider = computed<string>(() => {
   if (isProviderAvailable(preferredProvider.value)) return preferredProvider.value
   return providerStore.providers.value[0]?.id ?? NCM_PROVIDER_ID
 })
+let browseContexts = captureBrowseContexts()
+void browseContexts.catch(() => {})
 
 const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
 const detailProviderId = computed(() =>
@@ -858,6 +860,19 @@ const {
 
 const playbackStore = usePlayerStore()
 const { currentTrack, playTrack, startPersonalizedStream, formatTime } = playbackStore
+const startingPersonalizedStream = ref<PersonalizedStreamKey | null>(null)
+
+async function startHomePersonalizedStream(key: PersonalizedStreamKey): Promise<void> {
+  if (startingPersonalizedStream.value) return
+  startingPersonalizedStream.value = key
+  try {
+    await startPersonalizedStream(key, activeProvider.value)
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '播放电台失败') })
+  } finally {
+    startingPersonalizedStream.value = null
+  }
+}
 
 function playCloudSong(song: import('../stores/useNcmStore.ts').NcmCloudSong): void {
   playTrack(
@@ -1901,8 +1916,6 @@ async function refreshExternalProviderState(id: string): Promise<void> {
     }
     state.libraryError = ''
   } catch (error) {
-    state.loggedIn = false
-    state.profile = null
     state.libraryError = friendlyStreamingError(
       error,
       `${externalProviderName(id, (providerId) => providerStore.getProvider(providerId)?.name)} 登录状态检查失败`
@@ -4059,7 +4072,17 @@ watch(
 onMounted(async () => {
   // Explicit playback navigation performs its own provider readiness check.
   if (props.metadataNavigationRequest) return
-  if (await restorePageState()) return
+  if (await restorePageState()) {
+    // A page saved before recommendations finished has no completed provider.
+    // Retry it on entry while retaining successful (including empty) results.
+    if (
+      props.active !== false &&
+      activeTab.value === 'home' &&
+      recommendationProviderId.value !== activeProvider.value
+    )
+      await refreshStreamingSurface()
+    return
+  }
   await providerStore.syncProviders().catch(() => undefined)
   // syncProviders may have resolved the preferred external provider, in which
   // case the activeProvider watcher above already handles the initial load.
@@ -4350,6 +4373,21 @@ async function restorePageState(): Promise<boolean> {
               icon="pi pi-plug"
             />
 
+            <StreamingPlaceholder
+              v-else-if="
+                !currentDetail &&
+                activeTab !== 'discover' &&
+                !activeLoggedIn &&
+                activeProviderError &&
+                !activeProviderUnavailable
+              "
+              title="暂时无法确认登录状态"
+              :hint="activeProviderError"
+              icon="pi pi-exclamation-triangle"
+              action-label="重试"
+              @action="refreshStreamingSurface"
+            />
+
             <StreamingHome
               v-else-if="
                 activeTab === 'home' &&
@@ -4367,10 +4405,12 @@ async function restorePageState(): Promise<boolean> {
               :rec-sections="recSections"
               :recommend-playlists="recommendPlaylists"
               :current-track-id="currentTrack?.id ?? null"
+              :starting-stream="startingPersonalizedStream"
               @load-recommendations="loadRecommendations(true)"
               @open-rec-section="openRecSection"
               @open-playlist="openPlaylist"
               @play-track="playHomeTrack"
+              @play-stream="startHomePersonalizedStream"
               @open-artist="openTrackArtist"
               @request-login="emit('login', activeProvider)"
               @open-discovery="selectTab('discover')"

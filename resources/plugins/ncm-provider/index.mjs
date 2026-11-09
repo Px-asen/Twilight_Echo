@@ -1069,33 +1069,31 @@ async function buildProfile(prof) {
 }
 
 async function checkLogin() {
-  try {
-    const cookie = await getCookie()
-    if (!cookie) {
-      resetCaches()
-      return { loggedIn: false, profile: null }
-    }
-    const cachedProfile = getCachedProfile()
-    if (cachedProfile) return { loggedIn: true, profile: cachedProfile }
-    const data = await request(`/login/status?timestamp=${Date.now()}`, cookie)
-    const profileData = data.data?.profile || data.profile
-    if ((data.data?.code === 200 || data.code === 200) && profileData) {
-      const profile = await buildProfile({
-        userId: profileData.userId,
-        nickname: profileData.nickname,
-        avatarUrl: profileData.avatarUrl,
-        signature: profileData.signature
-      })
-      cachedUserId = profileData.userId
-      cacheProfile(profile)
-      return { loggedIn: true, profile }
-    }
-    resetCaches()
-    return { loggedIn: false, profile: null }
-  } catch {
+  const cookie = await getCookie()
+  if (!cookie) {
     resetCaches()
     return { loggedIn: false, profile: null }
   }
+  const cachedProfile = getCachedProfile()
+  if (cachedProfile) return { loggedIn: true, profile: cachedProfile }
+  const data = await request(`/login/status?timestamp=${Date.now()}`, cookie)
+  const code = Number(data.data?.code ?? data.code)
+  const profileData = data.data?.profile ?? data.profile
+  // Network failures, rate limits and malformed responses are not logout.
+  if (code !== 200 && code !== 301) {
+    throw new Error(describeApiError(code, data))
+  }
+  if (code === 200 && !Object.hasOwn(data.data ?? data, 'profile') && !Object.hasOwn(data, 'profile')) {
+    throw new Error('网易云登录状态响应不完整，请稍后重试')
+  }
+  if (code === 200 && profileData) {
+    const profile = await buildProfile(profileData)
+    cachedUserId = profileData.userId
+    cacheProfile(profile)
+    return { loggedIn: true, profile }
+  }
+  resetCaches()
+  return { loggedIn: false, profile: null }
 }
 
 async function getProfile() {

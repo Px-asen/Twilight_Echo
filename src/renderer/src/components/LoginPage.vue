@@ -7,7 +7,7 @@ import { createVisibilityPollingController } from '../utils/visibilityPolling.ts
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBackHandler } from '../app/useBackStack'
 import { useNcmStore } from '../stores/useNcmStore'
-import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
+import { useProviderStore, type ProviderInfo, type ProviderLoginState } from '../stores/useProviderStore'
 import type { MediaProviderProfile } from '../providers/mediaProvider'
 
 const props = defineProps<{
@@ -248,15 +248,45 @@ function delay(ms: number): Promise<void> {
 }
 
 /** celebrate=true 时先停留在成功动画上，再进入流媒体 */
-async function syncSuccessfulLogin(providerId: string, celebrate = false): Promise<void> {
+async function syncSuccessfulLogin(
+  providerId: string,
+  celebrate = false,
+  verifiedState?: Pick<ProviderLoginState, 'loggedIn'> & Partial<ProviderLoginState>
+): Promise<void> {
   const revision = loginRevision
-  await refreshAccounts()
-  if (disposed || revision !== loginRevision || activeProviderId.value !== providerId) return
-  if (providerId === 'ncm') {
-    await ncmStore.checkLogin()
+  // Reuse the account just verified by the login method/account page. A second
+  // network check must not turn a successful login into an unrelated UI state.
+  if (verifiedState?.loggedIn && (verifiedState.profile || providerId !== 'ncm')) {
+    accountStates.value = {
+      ...accountStates.value,
+      [providerId]: {
+        available: true,
+        loggedIn: true,
+        profile: verifiedState.profile ?? null,
+        error: ''
+      }
+    }
+  } else if (!accountStates.value[providerId]?.loggedIn) {
+    await refreshAccount(providerId)
   }
+  if (disposed || revision !== loginRevision || activeProviderId.value !== providerId) return
+  const state = accountStates.value[providerId]
+  if (!state?.loggedIn || (providerId === 'ncm' && !state.profile)) {
+    pageState.value = 'error'
+    errorMsg.value = state?.error || '登录状态暂时无法确认，请重试'
+    return
+  }
+  if (providerId === 'ncm') {
+    const profile = await ncmStore.buildProfile({
+      ...state.profile!,
+      userId: Number(state.profile!.userId)
+    })
+    if (disposed || revision !== loginRevision || activeProviderId.value !== providerId) return
+    ncmStore.setLogin(profile)
+  }
+  pageState.value = celebrate ? 'login_success' : 'logged_in'
   if (celebrate) await delay(SUCCESS_LINGER_MS)
-  if (revision !== loginRevision || activeProviderId.value !== providerId) return
+  if (disposed || revision !== loginRevision || activeProviderId.value !== providerId) return
   emit('loginSuccess')
 }
 
@@ -293,6 +323,11 @@ function openAccount(providerId: string): void {
     errorMsg.value =
       state?.error ||
       `${providerCards.value.find((c) => c.id === providerId)?.name ?? 'Provider'} 未启用`
+    return
+  }
+  if (state.error) {
+    pageState.value = 'error'
+    errorMsg.value = state.error
     return
   }
   if (state.loggedIn) {
@@ -414,7 +449,7 @@ function startPolling(providerId: string, key: string): void {
     }
     if (isQrStatus(result.code, 'success')) {
       stopPolling()
-      pageState.value = 'login_success'
+      pageState.value = 'loading'
       await syncSuccessfulLogin(providerId, true)
     }
   }, POLL_INTERVAL)
@@ -487,8 +522,25 @@ async function startQrLogin(): Promise<void> {
   }
 }
 
-function handleRefresh(): void {
+async function handleRefresh(): Promise<void> {
   if (pageState.value === 'login_notice') return
+  const providerId = activeProviderId.value
+  const revision = loginRevision
+  if (!providerId) return
+  // The browser/QR may already have saved a valid session before a status
+  // request failed. Retry that session before asking the user to sign in again.
+  await refreshAccount(providerId)
+  if (disposed || revision !== loginRevision || activeProviderId.value !== providerId) return
+  const account = accountStates.value[providerId]
+  if (account?.loggedIn) {
+    await syncSuccessfulLogin(providerId, true)
+    return
+  }
+  if (account?.error) {
+    pageState.value = 'error'
+    errorMsg.value = account.error
+    return
+  }
   if (primaryLoginAction.value) {
     void handleExtraAction(primaryLoginAction.value.method)
     return
@@ -517,13 +569,14 @@ async function handleExtraAction(method: string): Promise<void> {
   errorMsg.value = ''
   try {
     const providerId = activeProviderId.value
-    const result = await providerStore.callProvider(providerId, method, [], controller.signal)
+    const result = await providerStore.callProvider<ProviderLoginState | undefined>(
+      providerId, method, [], controller.signal
+    )
     if (revision !== loginRevision || activeProviderId.value !== providerId) return
     if (result && typeof result === 'object' && 'loggedIn' in result && !result.loggedIn) {
       throw new Error('登录会话未建立，请重新打开官方登录窗口')
     }
-    pageState.value = 'login_success'
-    await syncSuccessfulLogin(providerId, true)
+    await syncSuccessfulLogin(providerId, true, result)
   } catch (error) {
     if (revision !== loginRevision) return
     pageState.value = 'error'
@@ -569,8 +622,7 @@ async function handleServerLogin(
     )
     if (revision !== loginRevision || activeProviderId.value !== providerId) return
     if (!result.loggedIn) throw new Error('登录未成功，请检查服务器地址和账号')
-    pageState.value = 'login_success'
-    await syncSuccessfulLogin(providerId, true)
+    await syncSuccessfulLogin(providerId, true, result)
   } catch (error) {
     if (revision === loginRevision) serverLoginMessage.value = normalizeLoginError(error)
   } finally {
@@ -585,7 +637,8 @@ function requestLogout(): void {
 async function handleLogout(): Promise<void> {
   if (!activeProviderId.value) return
   confirmLogout.value = false
-  await providerStore.logout(activeProviderId.value)
+  if (activeProviderId.value === 'ncm') await ncmStore.logout()
+  else await providerStore.logout(activeProviderId.value)
   await refreshAccounts()
   openAccount(activeProviderId.value)
 }

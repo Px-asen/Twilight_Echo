@@ -342,12 +342,12 @@ export function useNcmStore() {
       const state = await callNcmProvider<NcmLoginState>('checkLogin')
       if (request !== loginRequestRevision || !isCurrent()) return isLoggedIn.value
       return applyLoginState(state)
-    } catch {
+    } catch (error) {
       if (request !== loginRequestRevision) return isLoggedIn.value
-      isLoggedIn.value = false
-      profile.value = null
-      resetLibraryState()
-      return false
+      // A failed status request says nothing about the stored session. Only a
+      // confirmed signed-out result (or a disabled provider) clears the account.
+      providerError.value = error instanceof Error ? error.message : String(error)
+      return isLoggedIn.value
     }
   }
 

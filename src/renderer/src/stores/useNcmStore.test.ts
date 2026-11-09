@@ -196,7 +196,7 @@ test('provider registration clears stale disabled UI even when login checking fa
     }
     assert.equal(await store.checkLogin(), false)
     assert.equal(store.providerAvailable.value, true)
-    assert.equal(store.providerError.value, '')
+    assert.equal(store.providerError.value, 'temporary login gateway failure')
   } finally {
     listProviders = async () => [provider]
     await syncPluginProviders()
@@ -294,6 +294,24 @@ test('current login and library results still update the active account', async 
   await store.fetchUserLibrary()
   assert.equal(store.libraryLoaded.value, true)
   assert.equal(store.userPlaylists.value[0].id, playlist.id)
+})
+
+test('a failed login check preserves the verified account and library until an explicit signed-out result', async () => {
+  handler = async () => ({ likedPlaylist: playlist, playlists: [playlist] })
+  await store.fetchUserLibrary()
+  handler = async () => { throw new Error('temporary login gateway failure') }
+  assert.equal(await store.checkLogin(), true)
+  assert.equal(store.profile.value?.userId, 1)
+  assert.equal(store.libraryLoaded.value, true)
+  assert.equal(store.userPlaylists.value[0].id, playlist.id)
+  assert.equal(store.providerError.value, 'temporary login gateway failure')
+
+  handler = async () => ({ loggedIn: false, profile: null })
+  assert.equal(await store.checkLogin(), false)
+  assert.equal(store.profile.value, null)
+  assert.equal(store.libraryLoaded.value, false)
+  assert.deepEqual(store.userPlaylists.value, [])
+  assert.equal(store.providerError.value, '')
 })
 
 async function pending<T>(method: string, run: () => Promise<T>) {
