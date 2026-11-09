@@ -136,7 +136,7 @@ export const LYRICS_RANGES = {
   inactiveOpacity: { min: 10, max: 100, step: 5 },
   coverGap: { min: 0, max: 160, step: 2 },
   lyricsMaxWidth: { min: 420, max: 1200, step: 10 },
-  lyricsOffsetX: { min: -80, max: 160, step: 2 },
+  lyricsOffsetX: { min: -400, max: 400, step: 2 },
   coverSize: { min: 60, max: 110, step: 1 },
   coverRadius: { min: 0, max: 64, step: 1 },
   anchorPosition: { min: 0.15, max: 0.85, step: 0.01 },
