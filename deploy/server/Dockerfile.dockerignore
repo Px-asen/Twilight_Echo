@@ -12,7 +12,6 @@
 !resources/automix-stems/worker.py
 !resources/automix-stems/arrangement.py
 !resources/automix-stems/probe.py
-!docs/**
 !LICENSE
 !deploy/server/**
 audio-engine/build/**

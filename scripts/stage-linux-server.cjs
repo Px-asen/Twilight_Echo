@@ -36,8 +36,7 @@ function stageLinuxServer({ root = path.resolve(__dirname, '..'), destination, n
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   fs.mkdirSync(destination, { recursive: true })
   const copy = (relative) => fs.cpSync(path.join(root, relative), path.join(destination, relative), { recursive: true })
-  for (const relative of ['out/server', 'resources/plugins/ncm-provider', 'resources/remote', 'LICENSE',
-    'docs/server-linux.md', 'docs/server-extensions.md', 'docs/audio-bridge-formats.md', 'docs/sync-group-transitions.md', 'docs/standalone-server-phase3.md']) copy(relative)
+  for (const relative of ['out/server', 'resources/plugins/ncm-provider', 'resources/remote', 'LICENSE']) copy(relative)
   const runtime = path.join(destination, 'resources/audio-engine')
   fs.mkdirSync(runtime, { recursive: true })
   for (const name of binaries) fs.copyFileSync(path.join(native, name), path.join(runtime, name))

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-07T20:44:25.409Z",
+  "generatedAt": "2026-11-08T18:34:54.077Z",
   "evidence": {
     "path": "te-4.4-duplicate-detection-2026-09-30.json",
-    "sha256": "b7b973362951d6bd797024d0ab3e4565ab61c80fc2e9328564de5349a4ea1eb1"
+    "sha256": "b129472100b7db0ad418e41d3f76f4bcb430594f228a38e0d2ce5e2807279248"
   },
   "provenance": {
     "algorithm": "sha256",
@@ -21,11 +21,11 @@
     },
     "runnerContract": {
       "path": "scripts/duplicate-detection-benchmark.test.ts",
-      "sha256": "d1f2cea7dbdfa10cdd1691c2b6fcc9841ef3d6c7169b4178abf00f4ec4a55325"
+      "sha256": "f014d946762457e14dc5dde5dd05fc019d4b4e63ee4a7e1979ff82bfef907800"
     },
     "packageManifest": {
       "path": "package.json",
-      "sha256": "0167a2068c76e3180600325374e096e26003664347cb719f92b01485661f3269"
+      "sha256": "7a6693bddbf0752d7f23d604a07d91043f57d96b54ac32b1e424cbce0aa137e0"
     },
     "lockfile": {
       "path": "pnpm-lock.yaml",
@@ -41,12 +41,12 @@
       "collisionP95Ms": 2500
     },
     "unique": {
-      "p50Ms": 34.06550000000004,
-      "p95Ms": 44.05439999999999
+      "p50Ms": 42.84549999999996,
+      "p95Ms": 52.072400000000016
     },
     "collision": {
-      "p50Ms": 47.00520000000006,
-      "p95Ms": 65.69230000000016
+      "p50Ms": 48.433500000000095,
+      "p95Ms": 52.043899999999894
     }
   }
 }

@@ -14,7 +14,7 @@ const finalIntegratedGate = readFileSync(
   join(root, 'scripts', 'run-final-integrated-gate.ps1'),
   'utf8'
 )
-const windowsReleaseGate = readFileSync(join(root, 'docs', 'windows-release-gate.md'), 'utf8')
+const windowsReleaseGate = readFileSync(join(root, 'docs', 'DEVELOPER_README.md'), 'utf8')
 const windowsRequiredCommands = markdownSection(windowsReleaseGate, 'Required Commands')
 
 const lyricsTests = [
@@ -197,11 +197,11 @@ test('duplicate benchmark scripts retain the authenticated contract and isolated
   assert.match(live, /--expose-gc scripts\/duplicate-detection-benchmark\.ts$/)
   assert.match(
     archive,
-    /--output docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-09-30\.json/
+    /--output scripts\/fixtures\/te-4\.4-duplicate-detection-2026-09-30\.json/
   )
   assert.match(
     archive,
-    /--manifest docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-09-30\.manifest\.json/
+    /--manifest scripts\/fixtures\/te-4\.4-duplicate-detection-2026-09-30\.manifest\.json/
   )
 })
 

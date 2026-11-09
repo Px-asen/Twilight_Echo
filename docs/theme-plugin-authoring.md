@@ -242,4 +242,4 @@ access.
 
 ## 材质接入
 
-宿主通过 `packages/plugin-api/material-contract.json` 发布材质角色和可消费字段。新增界面先选择角色，再使用已有主题输入；不要在插件页面里再定义独立的模糊、半透明基底或阴影配方。示例与兼容边界见 [统一材质声明](./material-contract.md)。
+宿主通过 `packages/plugin-api/material-contract.json` 发布材质角色和可消费字段。新增界面先选择角色，再使用已有主题输入；不要在插件页面里再定义独立的模糊、半透明基底或阴影配方。可用角色与字段见 [材质契约](../packages/plugin-api/material-contract.json)。

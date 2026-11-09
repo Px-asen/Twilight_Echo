@@ -55,11 +55,7 @@ function packageReadme(applicationVersion, nodeVersion) {
     String.raw`切换后入口：pwsh -File D:\ServerData\Upgrade-01\service-console.ps1`,
     String.raw`回退预览：server.cmd rollback --work D:\ServerData\Upgrade-01`,
     '回退恢复升级前快照到另一个新目录；新版数据保留，但不合并升级后的更改。工作目录含长期凭据，须保持私有。',
-    '详细迁移、备份、配对和服务权限说明：docs/standalone-server-phase3.md',
-    '手机 Focus／标签／Server 歌单与声区选歌队列：docs/session-queues-mobile.md；Android 与 Server 需一起更新。',
-    '手机／CLI 管理逐声区 DSP 资料、.tedsp 配置包预览／导入导出、场景及 VST3 参数／扫描：docs/server-dsp-library.md。',
-    '手机／CLI 的 .tep 扩展预览、安装、更新与启停：docs/server-extensions.md。',
-    '原生 DSD／DoP／多声道：docs/audio-bridge-formats.md；组 AutoMix／无缝切曲及两端设置：docs/sync-group-transitions.md。',
+    '完整命令：server.cmd --help；迁移、备份、配对、DSP 和扩展管理沿用同一 CLI。',
     'Windows Service 的 DAC 输出位于其他交互式 Bridge，不直接在 Session 0 打开设备。',
     '不包含 Python 环境、用户 VST3 模块或登录凭据；不自动安装、注册服务或更改权限。',
     ''
@@ -211,13 +207,6 @@ function packageServer({
       path.join(staged, 'manage-service.ps1'),
       '#requires -Version 7.0\n& (Join-Path $PSScriptRoot "scripts/manage-server-service.ps1") -Node (Join-Path $PSScriptRoot "runtime/node.exe") -Application $PSScriptRoot @args\nexit $LASTEXITCODE\n'
     )
-    copy('docs/standalone-server-phase3.md')
-    copy('docs/remote-library-phase3.md')
-    copy('docs/session-queues-mobile.md')
-    copy('docs/server-dsp-library.md')
-    copy('docs/server-extensions.md')
-    copy('docs/audio-bridge-formats.md')
-    copy('docs/sync-group-transitions.md')
     fs.writeFileSync(
       path.join(staged, 'README.txt'),
       packageReadme(application.version, runtime.version)

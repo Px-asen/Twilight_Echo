@@ -30,9 +30,7 @@ test('every renderer window.api domain maps to a declared preload domain', () =>
 test('public IPC channel contracts match the committed baseline', () => {
   const baselinePath = path.join(
     __dirname,
-    '..',
-    'docs',
-    'audit-evidence',
+    'fixtures',
     'ipc-channel-baseline.json'
   )
   const baselineSnapshot = JSON.parse(fs.readFileSync(baselinePath, 'utf8'))

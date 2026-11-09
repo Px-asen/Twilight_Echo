@@ -537,7 +537,7 @@ function printEvidenceUsage(errorMessage) {
     '  1) pnpm run evidence:themes -- --seed-user-data C:\\twilight-p7-userData',
     '  2) launch the app with --remote-debugging-port=9223 and that userData dir',
     '  3) pnpm run evidence:themes -- --port 9223 --output output/theme-golden-p7',
-    '  4) review output/theme-golden-p7/manifest.json and commit selected PNGs to docs/audit-evidence/'
+    '  4) review output/theme-golden-p7/manifest.json and keep generated PNGs as local evidence'
   ].filter(Boolean)
   process.stderr.write(`${lines.join('\n')}\n`)
 }

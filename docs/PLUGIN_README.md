@@ -7,7 +7,7 @@
 
 开发「设置 → 外观 → 完整界面」中可切换的独立页面，请从[完整界面开发指南与示例](./plugin-full-interface.md)开始，使用 API v4 experience；普通主题和传统命令型 UI 扩展不进入该选择器。
 
-Android 的可选入口和宿主边界见 [Android 插件入口](./android-plugin-runtime.md)。下面的进程与权限说明针对桌面宿主。
+Android 的可选入口和宿主边界见下方 [Android 插件入口](#android-插件入口)。下面的进程与权限说明针对桌面宿主。
 
 Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句柄访问宿主能力的代码包。它能做很多事：新增一个音源、在侧边栏加一个页面、换一套主题、甚至往音频链路里挂一个原生 DSP 节点。插件让播放器不必把所有功能都塞进主程序。
 
@@ -477,3 +477,22 @@ DSP 是审核最严的插件类型，因为实时音频路径对延迟和稳定�
 - [`../README.md`](../README.md)，Twilight Echo 项目主页
 
 写插件前先把 spec 通读一遍，再把内置 NCM provider 的源码翻一遍，基本就能上手。遇到契约层面的疑问，以 spec 为准，不要猜。
+
+## Android 插件入口
+
+Android 使用与桌面相同的 `plugins.json`、`.tep`、Provider 方法名和 NCM 源码。默认桌面 `main` 不变；移动端入口是可选字段：
+
+```json
+{
+  "androidRuntime": {
+    "apiVersion": 1,
+    "entry": "android.js",
+    "permissions": ["network", "settings"],
+    "networkHosts": ["music.163.com", "interface.music.163.com", "interface3.music.163.com"]
+  }
+}
+```
+
+第一版面向独立 JavaScript Provider。入口是预打包的 ES2015 IIFE，无 Node／Electron、动态模块或下载后原生代码。桌面不读取这个入口，也不会因此改变既有 `main` 加载方式。
+
+共享兼容性与包校验位于 `src/core/plugins/mobileRepository.ts`；移动端包构建入口为 `node scripts/build-android-plugins.mjs`。
