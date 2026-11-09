@@ -2,7 +2,7 @@
  * Ceiling for a single native queue request.
  *
  * The renderer playback queue is virtualized for far larger lists (see
- * `docs/playback-queue-virtualization.md`, benchmarked at 20,000 entries), so a
+ * `scripts/playback-queue-virtualization-benchmark.ts`, benchmarked at 20,000 entries), so a
  * whole-library queue can be much bigger than what one `audioEngine:loadQueue`
  * IPC call is willing to normalize and authorize. Both sides read this same
  * constant: the main process rejects a larger request, and the renderer degrades

@@ -91,8 +91,7 @@ available. Status also reports batchId, needsReview, blocked, retrying, cancelle
 and nextAttemptAt. A partial result may count as updated while awaiting retry.
 The existing network permission is still required for queries. Explicit source
 prohibitions apply, but the new automatic-identification opt-in is not a new
-prerequisite for these manual operations. Implementation and acceptance gaps are recorded in
-[M2.4](D:/Project/Twilight_Echo/docs/unified-music-library-m2.4.md).
+prerequisite for these manual operations. The host owns worker scheduling and recovery; plugins consume the returned status and revisions.
 
 ## Talking to the plugin's own background code (`plugin.request`)
 

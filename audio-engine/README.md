@@ -1,6 +1,6 @@
 # Twilight Audio Engine
 
-Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥接给 Electron 使用。API 字段、outputPerfect 判定和 Recovery diagnostics 见 [docs/audio-engine-api.md](../docs/audio-engine-api.md)，阶段与架构约束见 [docs/twilight-audio-engine-architecture.md](../docs/twilight-audio-engine-architecture.md)。
+Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥接给 Electron 使用。公共接口见 [C ABI 头文件](./include/twilight_audio_engine.h)，应用开发与构建见 [开发入门](../docs/DEVELOPER_README.md)。
 
 ## 当前状态
 
@@ -38,7 +38,7 @@ Windows MinGW 的构建能力与 provider 采用状态分开记录：preset 会�
 
 - `twilight_audio_engine`：共享 C 接口动态库，Windows 输出名为 `twilight-audio-engine.dll`。
 - `twilight_audio_node`：Node-API 桥接模块，MinGW preset 默认启用。
-- `twilight_asio_helper`：x64 构建输出 `twilight-asio-helper.exe`；独立 MSVC Win32 构建输出 `twilight-asio-helper-x86.exe`，不构建 x86 引擎或 Node addon。[双架构构建、暂存和验收](../docs/asio-x86-bridge.md)。
+- `twilight_asio_helper`：x64 构建输出 `twilight-asio-helper.exe`；独立 MSVC Win32 构建输出 `twilight-asio-helper-x86.exe`，不构建 x86 引擎或 Node addon。构建入口为 `pnpm run build:asio-helper-x86`，验收入口为 `pnpm run test:asio-x86-bridge`。
 - `twilight_audio_tests` 和相关单元测试：C ABI、DSP、metadata、bit-perfect evaluator、queue、backend factory、platform backend smoke、ASIO mock、CoreAudio mock、ALSA mock、output backend。
 
 ## Windows MinGW
@@ -103,11 +103,11 @@ SoX 以 LGPL-2.1-or-later 独立动态链接，包含 PFFFT／FFT4G 的适用许
 
 三／四段压缩在后续 LR4 分频时给先前频带补齐全通相位，单位压缩合成保持平坦幅频；两段路径不变，全部频带禁用仍精确旁路。动态 EQ 用输入与输出修正历史实现当前系数的差分方程，避免变系数状态保留旧权重，并保持零增益峰值滤波的精确单位响应。全频门限／压缩原有启动、声道链接和时间参数含义不变。
 
-`twilight_dynamics_response_tests`／CTest `twilight_dynamics_response_unit` 含 214 项数值检查：44.1／48／96 kHz 的硬拐点与 makeup、解析 DC 攻击／释放、独立复数 LR4 幅相、动态 EQ 增益与 long-double 时域参考，以及分块／reset／8 声道与旁路。时间参数是每级一阶 `1/e` 常数，不是端到端稳定时间；多段单位增益仍有全通相位，不承诺逐样本相等。接口含义见 `docs/audio-engine-api.md`，Android 交付与完整数值序列见相邻路线图第 38 节。
+`twilight_dynamics_response_tests`／CTest `twilight_dynamics_response_unit` 含 214 项数值检查：44.1／48／96 kHz 的硬拐点与 makeup、解析 DC 攻击／释放、独立复数 LR4 幅相、动态 EQ 增益与 long-double 时域参考，以及分块／reset／8 声道与旁路。时间参数是每级一阶 `1/e` 常数，不是端到端稳定时间；多段单位增益仍有全通相位，不承诺逐样本相等。接口含义见 `audio-engine/include/twilight_audio_engine.h`，Android 交付与完整数值序列见相邻路线图第 38 节。
 
 ## 声场／校准响应与 double 桥边界
 
-`twilight_spatial_response_tests`／`twilight_spatial_response_unit` 对现有立体声矩阵、逐声道增益／延迟／静音、声道矩阵、LR4 低频管理、固定补偿搁架和交叉馈送模型执行 1086 项独立数值检查。包含 480 组立体声控制组合、0–250 ms 延迟、44.1／48／96 kHz 幅相、脉冲、分块与 reset；不打开音频设备。命名交叉馈送现对照原版 libbs2b，custom 保留原解析参考；当前含义见 `docs/audio-engine-api.md`。
+`twilight_spatial_response_tests`／`twilight_spatial_response_unit` 对现有立体声矩阵、逐声道增益／延迟／静音、声道矩阵、LR4 低频管理、固定补偿搁架和交叉馈送模型执行 1086 项独立数值检查。包含 480 组立体声控制组合、0–250 ms 延迟、44.1／48／96 kHz 幅相、脉冲、分块与 reset；不打开音频设备。命名交叉馈送现对照原版 libbs2b，custom 保留原解析参考；当前含义见 `audio-engine/include/twilight_audio_engine.h`。
 
 Float32-only 节点现在显式用准备格式的声道数调用 `processFloatBridge`，修正旧默认 double 桥固定转换 8 声道、改写较小缓冲区尾部的问题。`processDouble` 调用签名和 C／JNI／插件 ABI 不变；内部派生实现不再继承无格式默认桥。原生 double 节点保留，Float32 桥仍为原精度与临时分配，未改变实际播放的 Float32 路径。`twilight_double_bridge_tests` 的 144 项检查、DSP 图和卷积回归见相邻 Android 路线图第 40 节；第 39 节保留完整声场数列。
 
@@ -115,7 +115,7 @@ Float32-only 节点现在显式用准备格式的声道数调用 `processFloatBr
 
 `AudioFormat.channelMask` 保存 native speaker 位与交错顺序，贯通 FFmpeg／环形缓冲／DSP／预加载。低频管理按真实 primary LFE 位定位，无 LFE 时完整旁路；未知布局的旧调用继续原索引约定。Android API 32+ 动态请求／查询 AAudio 的共用 speaker 位，旧 API 不增加前置条件；CUE PCM 导出保留 WAVE speaker mask。
 
-`twilight_channel_layout_tests`／`twilight_channel_layout_unit` 的 150 项内存检查覆盖 15 种布局，受控生产管线入口 `twilight_audio_performance_gate --verify-channel-layout`／CTest `twilight_audio_channel_layout` 覆盖 11 个场景。无 LFE 的中置／主声道保持、实际 LFE、同声道数异布局、预加载晋升和输出事实均经检查；没有打开音频设备。接口、未知布局边界和证据见 `docs/audio-engine-api.md` 及相邻 Android 路线图第 41 节。
+`twilight_channel_layout_tests`／`twilight_channel_layout_unit` 的 150 项内存检查覆盖 15 种布局，受控生产管线入口 `twilight_audio_performance_gate --verify-channel-layout`／CTest `twilight_audio_channel_layout` 覆盖 11 个场景。无 LFE 的中置／主声道保持、实际 LFE、同声道数异布局、预加载晋升和输出事实均经检查；没有打开音频设备。接口、未知布局边界和证据见 `audio-engine/include/twilight_audio_engine.h` 及相邻 Android 路线图第 41 节。
 
 实时／离线 LUFS 共用 native 角色映射，排除 primary LFE／LFE2，分别计入 7.1 的侧方与后方声道，保留旧 count-only 调用。BS.1770-5 权重、BL／BR 的名义布局约定及未知位置边界见 API 文档。离线结果和自动／库内响度缓存身份同步为算法 **3**，旧缓存需要重新测量。
 
@@ -152,7 +152,7 @@ WASAPI Exclusive / ASIO 已具备 typed PCM passthrough 分支：当无 DSP、�
 
 `TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、可选 `visualizerBars`、`sampleRate`、`active`、`tapStatus`、`reason`。`spectrumPoints` 支持 8-4096；播放页全屏可视化默认以 4096 个频谱点请求 140 根 log-Hz 频谱柱。`visualizerBarCount` 支持 0-256，0 保留完整频谱接口；大于 0 时原生直接聚合柱条，省略 `spectrum`、`spectrogram` 和 `oscilloscope`，旧版原生绑定由 main 聚合兼容。可视化采样器仍使用 8192 FFT，对齐 WebAudio `AnalyserNode` 参考页的 4096-bin 频谱。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（0-4096，默认 1024；0 表示不返回该 payload）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；播放中 native tap 不可用时 main 可返回显式 `synthetic-fallback` 诊断 fallback；旧的 `TAE_GetSpectrumData` 保留兼容。
 
-原生 JSON 可用 `visualizerBarMode:"peak"` 在每个对数频带内取原生 FFT bin 的最大显示电平；默认仍为 `"interpolated"`，保留桌面原有结果。Android 直接 JNI 的 48 段监测选择新模式，桌面 Core 尚未开放该选项。频谱仍来自各 PCM 声道的算术平均，等幅反相会相消，不是声道能量和；新模式不做时间峰值保持。`twilight_audio_monitor_tests` 校验独立 DFT、频带归属和既有累计 L/R 相关性；`--profile` 离线模拟 10 Hz 轮询。完整参数与标度见 `docs/audio-engine-api.md`，Android 软件证据见相邻路线图第 36 节。
+原生 JSON 可用 `visualizerBarMode:"peak"` 在每个对数频带内取原生 FFT bin 的最大显示电平；默认仍为 `"interpolated"`，保留桌面原有结果。Android 直接 JNI 的 48 段监测选择新模式，桌面 Core 尚未开放该选项。频谱仍来自各 PCM 声道的算术平均，等幅反相会相消，不是声道能量和；新模式不做时间峰值保持。`twilight_audio_monitor_tests` 校验独立 DFT、频带归属和既有累计 L/R 相关性；`--profile` 离线模拟 10 Hz 轮询。完整参数与标度见 `audio-engine/include/twilight_audio_engine.h`，Android 软件证据见相邻路线图第 36 节。
 
 同一队列的手动选曲可使用 `TAE_SelectQueueIndex` / Node-API `SelectQueueIndex` 更新游标，再调用原有 Play 接口。Electron 的 `selectQueueItem` 还会校验主进程签发的队列版本、索引、逻辑 ID 和重新授权的规范路径；队列内容、CUE 范围、响度数据变更或服务重启后须重新加载队列。
 

@@ -76,6 +76,34 @@ async function flush() {
   await new Promise<void>((done) => setImmediate(done))
 }
 
+test('capturing page browse context reuses an attached Core without interrupting other requests', async () => {
+  const node = ast.statements.find((node) => ts.isFunctionDeclaration(node) &&
+    node.name?.text === 'captureBrowseContexts')!
+  const calls: string[] = []
+  const core = {
+    state: ref<object | null>({ epoch: 'ready' }),
+    attach: async () => { calls.push('attach'); core.state.value = { epoch: 'ready' } },
+    query: async (name: string, payload: { providerIds: string[] }) => {
+      calls.push(name)
+      assert.ok(core.state.value, 'first connection must finish before querying')
+      assert.equal(payload.providerIds.join(','), 'ncm,bili')
+      return [{ providerId: 'ncm', token: 'account' }]
+    }
+  }
+  const capture = runInNewContext(ts.transpileModule(node.getText(ast) + '\ncaptureBrowseContexts', {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText, {
+    core, activeProvider: ref('ncm'),
+    providerStore: { providers: ref([{ id: 'ncm' }, { id: 'bili' }]) }
+  })
+  for (let visit = 0; visit < 3; visit++) await capture()
+  assert.deepEqual(calls, ['browse.context', 'browse.context', 'browse.context'])
+  calls.length = 0
+  core.state.value = null
+  await capture()
+  assert.deepEqual(calls, ['attach', 'browse.context'])
+})
+
 test('late NCM registration restores the visible library without leaving the page', async (t) => {
   const f = fixture(t)
   f.ncmNavigationAvailable.value = true
@@ -107,6 +135,43 @@ test('NCM registration leaves the selected external provider alone', async (t) =
   f.ncmNavigationAvailable.value = true
   await flush()
   assert.deepEqual(f.calls, [])
+})
+
+test('external status failures preserve the last verified session and expose a retry error', async () => {
+  const node = ast.statements.find((node) => ts.isFunctionDeclaration(node) &&
+    node.name?.text === 'refreshExternalProviderState')!
+  const profile = { userId: 42 }
+  const playlists = [{ id: 'saved' }]
+  const state = { loggedIn: true, profile, playlists, likedPlaylist: null,
+    pinnedPlaylistIds: [], libraryLoaded: true, libraryError: '' }
+  let failed = true
+  const refresh = runInNewContext(ts.transpileModule(node.getText(ast) + '\nrefreshExternalProviderState', {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText, {
+    providerStore: {
+      syncProviders: async () => {},
+      getProvider: () => ({ capabilities: ['login'] }),
+      checkLogin: async () => {
+        if (failed) throw new Error('temporary network failure')
+        return { loggedIn: false, profile: null }
+      }
+    },
+    ensureExternalState: () => state,
+    isProviderAvailable: () => true,
+    externalProviderName: () => 'Fixture',
+    friendlyStreamingError: (error: Error) => error.message
+  })
+  await refresh('fixture')
+  assert.equal(state.loggedIn, true)
+  assert.equal(state.profile, profile)
+  assert.equal(state.playlists, playlists)
+  assert.equal(state.libraryError, 'temporary network failure')
+  failed = false
+  await refresh('fixture')
+  assert.equal(state.loggedIn, false)
+  assert.equal(state.profile, null)
+  assert.equal(state.playlists.length, 0)
+  assert.equal(state.libraryError, '')
 })
 
 for (const key of ['fm', 'radar'] as const) {

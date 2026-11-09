@@ -43,7 +43,6 @@ RUN node scripts/stage-automix-native-assets.cjs /public-graphs /source/resource
 COPY resources/automix-stems/worker.py resources/automix-stems/arrangement.py resources/automix-stems/probe.py ./resources/automix-stems/
 COPY resources/plugins ./resources/plugins
 COPY resources/remote ./resources/remote
-COPY docs ./docs
 COPY LICENSE ./LICENSE
 RUN node scripts/build-server.cjs \
     && node scripts/stage-linux-server.cjs --to /server --native /native

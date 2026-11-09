@@ -5,7 +5,7 @@ const path = require('node:path')
 const { buildReport } = require('./ipc-channel-report.cjs')
 
 const ROOT = path.join(__dirname, '..')
-const OUTPUT = path.join(ROOT, 'docs', 'audit-evidence', 'ipc-channel-baseline.json')
+const OUTPUT = path.join(__dirname, 'fixtures', 'ipc-channel-baseline.json')
 
 function unique(values) {
   return [...new Set(values)].sort()

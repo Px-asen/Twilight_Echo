@@ -13,6 +13,8 @@ import type {
   ProviderHomeSectionPresentation
 } from '../../../shared/providerHome'
 import { useDomTrackLocator } from '@renderer/composables/useDomTrackLocator'
+import type { PersonalizedStreamKey } from '../../../shared/corePersonalized'
+import { getPersonalizedStreamKey } from './streaming-page/streamingPageModel'
 
 interface RecSection extends ProviderHomeSectionPresentation {
   key: string
@@ -38,6 +40,7 @@ const props = defineProps<{
   recSections: RecSection[]
   recommendPlaylists: MediaProviderPlaylistSummary[]
   currentTrackId?: string | null
+  startingStream?: PersonalizedStreamKey | null
 }>()
 useDomTrackLocator('locatorRoot', () => props.currentTrackId ?? null)
 
@@ -46,6 +49,7 @@ const emit = defineEmits<{
   openRecSection: [section: RecSection]
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   playTrack: [track: Track, queue: Track[]]
+  playStream: [key: PersonalizedStreamKey]
   requestLogin: []
   openDiscovery: []
   openArtist: [track: Track, artist: TrackArtistRef]
@@ -210,8 +214,11 @@ function playDailyAll(): void {
 }
 
 function playPersonalizedStream(section: RecSection | null): void {
-  if (!section || section.tracks.length === 0) return
-  emit('playTrack', section.tracks[0], section.tracks)
+  if (!section || props.startingStream) return
+  const key = getPersonalizedStreamKey(section)
+  // Cards start a station; its next batch need not contain the preview songs.
+  if (key) emit('playStream', key)
+  else if (section.tracks.length > 0) emit('playTrack', section.tracks[0], section.tracks)
 }
 </script>
 
@@ -349,6 +356,8 @@ function playPersonalizedStream(section: RecSection | null): void {
           v-if="fmSection"
           type="button"
           class="duo-card duo-fm"
+          :disabled="!!startingStream"
+          :aria-busy="startingStream === fmSection.key"
           @click="playPersonalizedStream(fmSection)"
         >
           <span class="duo-stack" aria-hidden="true">
@@ -369,7 +378,9 @@ function playPersonalizedStream(section: RecSection | null): void {
           </span>
           <span class="duo-copy">
             <span class="duo-name">{{ fmSection.title }}</span>
-            <span class="duo-sub">{{ providerLabel }} · 为你持续推荐</span>
+            <span class="duo-sub">{{
+              startingStream === fmSection.key ? '正在准备播放…' : `${providerLabel} · 为你持续推荐`
+            }}</span>
           </span>
           <span class="duo-arrow" aria-hidden="true"><i class="pi pi-arrow-right"></i></span>
         </button>
@@ -378,6 +389,8 @@ function playPersonalizedStream(section: RecSection | null): void {
           v-if="radarSection"
           type="button"
           class="duo-card duo-radar"
+          :disabled="!!startingStream"
+          :aria-busy="startingStream === radarSection.key"
           @click="playPersonalizedStream(radarSection)"
         >
           <span class="duo-stack" aria-hidden="true">
@@ -398,7 +411,11 @@ function playPersonalizedStream(section: RecSection | null): void {
           </span>
           <span class="duo-copy">
             <span class="duo-name">{{ radarSection.title }}</span>
-            <span class="duo-sub">{{ providerLabel }} · 发现更多好音乐</span>
+            <span class="duo-sub">{{
+              startingStream === radarSection.key
+                ? '正在准备播放…'
+                : `${providerLabel} · 发现更多好音乐`
+            }}</span>
           </span>
           <span class="duo-arrow" aria-hidden="true"><i class="pi pi-arrow-right"></i></span>
         </button>
@@ -911,6 +928,10 @@ function playPersonalizedStream(section: RecSection | null): void {
   inset: 0;
   pointer-events: none;
   opacity: 0.9;
+}
+
+.duo-card:disabled {
+  cursor: wait;
 }
 
 .duo-fm::before {

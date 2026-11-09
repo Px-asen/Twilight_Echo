@@ -289,7 +289,12 @@ window.fixtureRequire = id => {
   if (id.includes('useProviderStore')) return window.providerStoreModule;
   if (id.includes('visibilityPolling')) return window.visibilityPolling;
   if (id.includes('mediaProvider')) return { toProviderIpcArgs: args => args };
-  if (id.includes('useNcmStore')) return { useNcmStore: () => ({ isLoggedIn: loggedIn, profile, checkLogin: async () => { calls.push({ id: 'ncm', method: 'ncmCheckLogin' }); } }) };
+  if (id.includes('useNcmStore')) return { useNcmStore: () => ({ isLoggedIn: loggedIn, profile,
+    buildProfile: async value => ({ signature: '', follows: 0, followeds: 0, avatarUrl: '', ...value }),
+    setLogin: value => { calls.push({ id: 'ncm', method: 'setLogin' }); loggedIn.value = true; profile.value = value; },
+    logout: async () => { loggedIn.value = false; profile.value = null; await window.api.providers.call('ncm', 'logout', []); },
+    checkLogin: async () => { throw new Error('A verified login must not need another status request'); }
+  }) };
   if (id.includes('useBackStack')) return { useBackHandler() {}, useBackStack: () => ({ canGoBack, backHint: ref(null) }) };
   if (id.includes('useWindowChrome')) return { useWindowChrome: () => ({ maximized: ref(false), fullScreen: ref(false), maximizeBehavior: ref('maximize') }) };
   if (id.includes('useAppNoticeStore')) return { useAppNoticeStore: () => ({ unreadCount: ref(0), activeTaskCount: ref(0), doNotDisturb: ref(false) }) };
@@ -400,7 +405,7 @@ window.runProviderFallbackTests = async () => {
   qrCode = 803;
   handler = (id, method) => method === 'checkQrLogin' ? { code: qrCode } : method === 'checkLogin' ? { loggedIn: true, profile: { userId: 42, nickname: '扫码账号' } } : undefined;
   await qrPolls()[0].callback(); await settle();
-  expect(success === 1 && qrPolls().length === 0 && calls.some(call => call.method === 'ncmCheckLogin'), 'QR success did not synchronize the account');
+  expect(success === 1 && qrPolls().length === 0 && loggedIn.value && profile.value?.userId === 42 && calls.some(call => call.method === 'setLogin'), 'QR success did not synchronize the streaming account');
   expect(!calls.some(call => ['sendCaptcha', 'loginByPhonePassword', 'loginByPhoneCaptcha', 'loginByEmailPassword'].includes(call.method)), 'desktop QR login called an account method retained for mobile compatibility');
 
   // QR errors retain their retry path without introducing an account form.
@@ -419,7 +424,42 @@ window.runProviderFallbackTests = async () => {
   document.querySelector('.extra-actions button').click(); await settle();
   expect(text().includes('登录成功') && qrPolls().length === 0, 'official web login did not complete or kept QR polling');
   await new Promise(resolve => setTimeout(resolve, 1300)); await settle();
-  expect(success === 1 && calls.some(call => call.method === 'openOfficialLogin') && calls.some(call => call.method === 'ncmCheckLogin'), 'official web login did not synchronize the account');
+  expect(success === 1 && calls.some(call => call.method === 'openOfficialLogin') && calls.some(call => call.method === 'setLogin') && profile.value?.nickname === '网页账号', 'official web login did not synchronize the account');
+
+  // A verified official result is the shared session even if another status request would fail.
+  loggedIn.value = false; profile.value = null;
+  await mountLogin([ncm], 'ncm', false, (id, method) => {
+    if (method === 'openOfficialLogin') return { loggedIn: true, profile: { userId: 43, nickname: '已验证账号' } };
+    if (method === 'checkLogin') return { loggedIn: false, profile: null };
+  });
+  handler = (id, method) => method === 'openOfficialLogin'
+    ? { loggedIn: true, profile: { userId: 43, nickname: '已验证账号' } }
+    : method === 'checkLogin' ? Promise.reject(new Error('network temporarily unavailable')) : undefined;
+  document.querySelector('.extra-actions button').click(); await settle();
+  expect(loggedIn.value && profile.value?.userId === 43 && text().includes('登录成功'), 'verified official session was lost to a redundant check');
+  await new Promise(resolve => setTimeout(resolve, 1300)); await settle();
+  expect(success === 1, 'verified official login did not return to streaming');
+
+  // Existing saved accounts enter streaming directly; a failed QR status never reports success.
+  loggedIn.value = false; profile.value = null;
+  await mountLogin([ncm], 'ncm', false, (id, method) => method === 'checkLogin'
+    ? { loggedIn: true, profile: { userId: 44, nickname: '已保存账号' } } : undefined);
+  handler = () => { throw new Error('unexpected extra request'); };
+  [...document.querySelectorAll('button')].find(button => button.textContent.includes('进入流媒体')).click(); await settle();
+  expect(success === 1 && loggedIn.value && profile.value?.userId === 44, 'saved account was not applied to streaming');
+  await mountLogin([ncm], 'ncm', false);
+  handler = (id, method) => method === 'checkQrLogin' ? { code: 803 }
+    : method === 'checkLogin' ? Promise.reject(new Error('登录状态检查暂时失败')) : undefined;
+  await qrPolls()[0].callback(); await settle();
+  expect(success === 0 && text().includes('登录状态检查暂时失败') && !text().includes('登录成功'), 'unverified QR result claimed success');
+  const loginAttempts = calls.filter(call => ['getQrLogin', 'openOfficialLogin'].includes(call.method)).length;
+  handler = (id, method) => method === 'checkLogin'
+    ? { loggedIn: true, profile: { userId: 45, nickname: '重试恢复账号' } } : undefined;
+  document.querySelector('.error-actions .btn-primary').click(); await settle();
+  expect(loggedIn.value && profile.value?.userId === 45, 'retry did not restore the saved QR session');
+  expect(calls.filter(call => ['getQrLogin', 'openOfficialLogin'].includes(call.method)).length === loginAttempts, 'retry opened a second login instead of checking the saved session');
+  await new Promise(resolve => setTimeout(resolve, 1300)); await settle();
+  expect(success === 1, 'retried session did not return to streaming');
 
   // A primary official action skips synthetic QR requests and preserves its retry path.
   const officialNcm = { ...ncm, ui: { ...ncm.ui, loginExtraActions: ncm.ui.loginExtraActions.map(action => ({ ...action, primary: true })) } };

@@ -1,520 +1,133 @@
-# Twilight Echo 技术文档
+# Twilight Echo 应用开发入门
 
-本文档面向 Twilight Echo 维护者，说明仓库结构、运行架构、关键数据流、性能约束和验证命令。插件系统的权威契约以 [twilight-echo-plugin-spec.md](./twilight-echo-plugin-spec.md) 为准；本文只描述 app 仓库如何接入和承载插件能力。
+修改桌面应用从这里开始；开发扩展请阅读 [插件开发导读](./PLUGIN_README.md)。
 
-应用设置的跨领域编排由 `src/main/app/settingsRuntime.ts` 承担：IPC 设置、主题和遥控入口通过它应用设置与同步集成；`audio/state.ts` 只负责音频状态持久化、DSP 生效和播放事件。窗口背景计算是 `app/windowAppearance.ts` 的纯函数，窗口创建不再导入音频状态。架构门禁使用 TypeScript AST 检查 main 的静态运行时 import/re-export 循环；类型引用和延迟 `import()` 不属于初始化依赖。
+## 安装并运行
 
-设备能力与 DSD 状态的两端公共规则位于 `src/shared/audioDeviceCapabilities.ts`。显式能力状态优先于 ID 推断；设备 ID 只能提供候选路径，不能证明设备已经支持 DoP/Native DSD。main 与 renderer 保留现有导出入口并复用该规则。插件目录的更新检测复用 `plugins/versionRange.ts`，按语义版本比较预发布标识，忽略构建元数据。
+使用 Node.js 24 和 `package.json` 固定的 `pnpm@11.7.0`。在仓库根目录执行：
 
-## 技术栈
-
-### 统一页面导航
-
-本地音乐与流媒体共用应用外壳中的 `SideMenu`。`app/navigationPages.ts` 注册页面的稳定 ID、标题、图标、导航目标与不可用原因，侧栏、编辑页面和命令面板复用同一目录。本地主页显示为“主页”；“流媒体音乐”栏目收纳推荐主页、发现歌单、我的音乐库、音乐云盘，以及可选的电台／播客、网络源；“音乐库”栏目收纳所有歌曲、专辑、艺术家、歌单、文件夹、流派及可选的统计仪表盘。搜索和最近播放保留独立入口，两个主页分别保留原内容和主题。
-
-`app/sidebarNavigation.ts` 只负责目录的分组展示，不创建新的页面或播放路径。默认顺序为主页、流媒体音乐、音乐库、搜索、最近播放；云盘、文件夹和流派默认显示在折叠栏目内，原有显式隐藏配置继续保留。栏目位置由其第一个可见页面的保存顺序决定，栏目内按保存顺序排列，插件页面保持独立入口。点击栏目只展开／收起，进入子页面自动展开所在栏目；用户可以再次收起而不退出当前页面。栏目折叠状态仅在当前会话保留，键盘左右键展开／收起及恢复焦点，空栏目自动省略。
-
-`useAppNavigation` 保存当前页面及参数，前景工具页面保存来源页面和上一层工具，并继续使用分层返回机制。已访问的流媒体入口分别按需挂载、保留音源、筛选、详情栈和滚动状态；播放器编排不随切页改变。侧栏开关为会话状态，每次启动收起，切页保持当前开关状态。
-
-API v4 插件可通过 `contributes.experiences[].launch: "sidebar"` 在导航列表末尾嵌入 HTML 小组件。`extensions/registry.ts` 将其与页面目录分开，`SideMenu` 只在真实侧栏打开时加载 `experience/SidebarWidgets.vue`；图标栏用精确 experience ID 打开已有 flyout。`EmbeddedExperience.vue` 复用权限桥，管理来源校验、连接／重试、外观事件和卸载清理，不改变播放器或页面导航。示例与字段见 [侧栏小组件](./plugin-sidebar-widgets.md)。
-
-`AppSettings.navigationPages` 为版本 1 的 `order`／`hidden` 配置，复用现有设置 IPC。旧设置采用默认目录，启动主页选择沿用 `startupHomePage`。插件 ID 为 `plugin:<pluginId>:<pageId>`，停用不清理偏好；新增页面追加，重新启用恢复已存位置。允许隐藏全部页面，固定保留底部“编辑页面”入口；全部隐藏时还可通过“添加常用页面”打开编辑器，重新勾选页面。编辑对话框仅在保存时持久化，取消撤销草稿，恢复默认也需保存。
-
-侧栏内容独立滚动，底部固定纵向“导入歌曲、编辑页面”工具栏，导航列表伸展填满剩余空间，工具按钮支持上下键切换。播放栏与侧栏并排时不预留播放栏高度，只有实际重叠时才避让。顶部“音乐空间”仅保留标题，编辑入口统一放在底部；普通窗口内容让位，窄窗口覆盖显示。自定义主题外壳的常驻／隐藏设置继续生效，隐藏外壳仍可用菜单按钮临时打开侧栏。主题样式和页面偏好分别管理，切换主题不写入页面配置。应用收藏与平台喜欢、设备记录与平台历史的归属见 [playlist-lifecycle.md](./playlist-lifecycle.md)，搜索请求与来源约束见 [search-and-library-identity.md](./search-and-library-identity.md)。
-
-### 参数均衡器滤波语义
-
-- 参数视图支持 Ctrl/Cmd 点击增减多选、Shift 按频率顺序连选、空白拖拽框选和 Ctrl/Cmd+A 全选。带修饰键的框选并入原选区，取消框选恢复原选区；点击空白解除选择，未选中时单击或已选中时双击空白添加频段。选择状态只在页面内保存，不改变声音或进入历史。
-- 拖动选中的节点、旋钮、数值输入、滚轮 Q 和方向键联动选区。频率与 Q 按比例移动，非零锚点的增益按比例缩放，零增益锚点使用共同偏移；触及参数上限时整组一起停止。无增益滤波器不写入 gain，旁路与声道掩码保留；拖动跨过 0 dB 使用起始快照维持比例。
-- 每次组合手势一次性更新 renderer 预览，结束后只提交一次 DSP 和撤销历史；撤销/A/B 恢复所有修改的频段。旁路按钮与 B 键统一旁路整个选区（混合状态先全部旁路），Delete/Backspace 删除选区；选择中任何频段仍启用时，组旁路按钮显示启用状态。
-- 参数画布提供复制/粘贴按钮与 Ctrl/Cmd+C、Ctrl/Cmd+V，文本输入仍保留原生剪贴板行为。右键选中节点保留整组选区，右键未选中节点切换到该频段；节点菜单支持复制选区/全部、粘贴、全选、滤波类型、重置增益、旁路和删除，空白菜单提供全局复制/粘贴/全选。Shift+F10 或菜单键同样可打开菜单。
-- 频段浮动面板可直接拖动空白区域，无拖动条；旋钮、输入框、滤波类型和按钮保留自身操作。面板按当前界面缩放跟随指针，整个面板限制在画布内；只点击不移动时不固定位置。手动位置在当前页面内跨频段切换和面板收起/重开保留，窗口缩放时重新约束边界；双击空白区域，或聚焦面板后按 Enter/Home 恢复自动避让节点。方向键移动 10px、Shift 精调 1px，拖动时 Escape 或 pointercancel 撤回本次位置变化；窄于 800px 时停靠图下并关闭面板拖动。面板位置不改变 EQ 参数、不发音频 IPC，也不进入撤销/A/B 历史。
-- 频段复制通过 `window:copy-eq-bands` 保存版本化 Twilight EQ JSON，粘贴通过 `window:paste-eq-bands` 只返回校验过的频段 DTO，不向 renderer 暴露任意剪贴板文本，也不开放浏览器剪贴板权限。保留滤波类型、Q、旁路和声道掩码；粘贴追加并选中新频段，一次进入撤销/A/B 历史，前级和整体旁路沿用当前设置（开启自动前级时照常重算）。无效数据或追加后超过 32 段则整体拒绝并提示，不部分粘贴。
-
-- 分析器提供冻结、峰值保持/清除、快中慢回落速度以及 60/90/100 dB 显示窗口。这些为页面显示状态，不写入 EQ 历史或音频设置。冻结停掉本页详细频谱轮询并使在途响应失效，解冻恢复；关闭分析器或离开频谱视图会解除冻结并清空显示。
-- 频谱沿用引擎现有 `[-90, +10] dB` 到 `[0, 1]` 的归一化契约：显示上沿 +10 dB，下沿为 `10 - range`；不能从截断的数据恢复更低的频谱。保持峰值取输入逐点最大值，实线为平滑显示，虚线为保持值，清除后从当前显示重新累积。
-
-- 参数编辑器右上角可选择 `±3 / ±6 / ±12 / ±30 dB`，页面默认 `±12 dB`。显示范围不进入撤销/A/B 快照，也不提交音频设置；图形 EQ 保留原有 `±18 dB` 视图。两类视图的曲线路径、频率轴与增益坐标复用 `utils/eqViewport.ts`。
-- 参数视图的曲线按真实坐标由 SVG 裁剪，超范围节点以边缘箭头表示并保留原始增益。节点拖动、旋钮及数值输入统一限制为 `±24 dB`，与现有参数 EQ 设置一致；缩放显示不会扩展滤波器的实际增益上限。
-
-- 均衡器顶部提供撤销/重做、A/B 切换与复制到另一组；A/B 各保留最多 100 次编辑，历史仅在当前页面会话有效。一次拖动或滚轮调节结束记录一次，预设、增删频段、旁路与前级同样进入历史；新编辑清除当前组的重做记录。
-- 快照仅包含手动 EQ 模式、前级、频段和 EQ 旁路，不保存 OPRA 或其他 DSP 参数。自动前级偏好保持当前设置，历史恢复使用保存的精确前级。复制覆盖另一组并清空该组历史，不立即改变声音。
-- 自动补偿开启前保存当前手动前级，关闭时恢复该值，期间编辑的频段继续保留；保存值随自动补偿偏好保存在本地，重新进入页面仍可恢复。开关与自动更新复用提交链，失败时保持原开关和恢复值。图形前级滑块与参数视图的前级数值始终可编辑；手动修改会退出自动补偿并采用新值，不先还原旧值。参数前级范围 ±24 dB、步长 0.1 dB，输入与滑块均接入一次提交/撤销历史。
-- 快捷键为 `Ctrl/Cmd+Z` 撤销、`Ctrl/Cmd+Shift+Z` 或 `Ctrl/Cmd+Y` 重做，输入框保留原生文本撤销。应用期间阻止新参数操作但保留焦点；成功应用处理设置和场景后才推进历史，失败保留历史供重试。
-
-- 参数模式的 Low/High Pass、Band Pass、Notch、All Pass 不依赖 gain，零增益仍处理；频段旁路与声道掩码继续生效。All Pass 改变相位，幅度响应保持平直。图形模式仍将所有频段视为 Peak。
-- Low/High Shelf 使用 Q 控制过渡与共振，原生处理与 renderer 响应图采用相同系数。旧实现忽略搁架 Q；启用此行为后已有预设会按保存的 Q 生效，Q 为 `1 / sqrt(2)` 时保留旧的搁架曲线。
-- `pnpm run test:dsp-graph` 包含 MinGW 原生 PCM 与前端响应对照，覆盖零增益滤波、搁架 Q、All Pass 相位、旁路及声道隔离。
-
-### 列表点击、队列与界面布局
-
-- 主窗口关闭时将普通尺寸和最大化状态原子保存至 `userData/window-state.json`；启动按当前主屏工作区与响应式最小尺寸恢复，最大化不会覆盖普通尺寸。
-- 网易云个人音乐库展示收藏专辑和歌手，分批渲染，复用现有详情导航；切换账户或分类后忽略旧请求结果。
-- 播放设置中的 DSP 链路指示受 DSP 总开关约束；关闭总开关后，音量等其他处理的运行态不显示为 DSP 已开启。
-- 自定义背景图片和显式页面背景覆盖优先于主题背景；主题素材校验仅向 IPC 发送普通素材记录，避免 Vue Proxy 无法克隆。
-- 歌曲信息对话框的关闭按钮、Escape 和原生取消事件统一通知父组件卸载，并在卸载时释放原生模态状态。
-
-### 自定义主题与 .TEP 导出
-
-设置 → 外观 →「自定义主题」统一承载常用调整、主题属性与历史，以及图层、蒙版、素材、
-字体、参数、CSS、布局和诊断等高级工具，不再分发独立工坊工具插件。当前未应用的草稿可直接
-导出 `.TEP`，导出不会应用主题或写入日常设置；本地背景、皮肤和绑定素材会随包保存。
-
-高级工具复用 `themeWorkshop` preload 域与 `src/main/ipc/themeWorkshop.ts`。项目仍保存在
-用户数据目录的 `theme-workshop/projects`，采用原子 JSON 写入、备份恢复与 revision 冲突检查。
-项目保存基础 CSS、结构化主题、内嵌素材、个人参数和上次应用版本；`.teworkshop` 保留编辑数据，
-`.tep` 经现有主题包 ZIP 写入器导出，应用操作经过插件管理器的安装和启用流程。
-旧 `.tetheme` 和 `.teworkshop` 导入、旧导航会话继续兼容。
-
-常用调整与高级工具共用隔离预览画布。定向验证入口为 `pnpm run test:appearance-workspace`
-和 `pnpm run test:theme-workshop`；真实整合与窄窗大字号检查位于
-`AppearanceCapabilities.behavior.test.ts`。编辑与导出规则见 [外观编辑器引擎](./appearance-editor-engine.md)。
-
-共享编译与校验位于 `themeWorkshopCompiler.ts` 和 `themeWorkshopValidation.ts`。
-装饰图层由宿主管理、不拦截交互，预览与安装后的主题复用同一份编译 CSS。
-
-Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.2.4`，许可证为 Apache-2.0。
-
-核心依赖：
-
-- Electron `^43.0.0`
-- Vue `^3.5.25`
-- TypeScript `^5.9.3`
-- electron-vite `^5.0.0`
-- `music-metadata`
-- `@neteasecloudmusicapienhanced/api`
-- PrimeIcons
-
-原生音频引擎使用 C++20、CMake、FFmpeg、Node-API，并通过平台后端输出到 WASAPI、CoreAudio、ALSA 或 ASIO。Windows MinGW 是当前验证最完整的原生构建路径。
-
-## 仓库结构
-
-```text
-.
-├── src/
-│   ├── main/                 Electron 主进程：窗口、IPC、设置、本地库、插件管理、音频引擎
-│   ├── preload/              contextBridge 安全 API
-│   └── renderer/             Vue 3 renderer
-├── audio-engine/             C++20 原生音频引擎与 Node-API addon
-├── resources/
-│   ├── audio-engine/         打包时加载的原生二进制
-│   ├── plugins/ncm-provider/ 内置 NCM provider 插件
-│   └── plugin-index/         离线插件索引
-├── packages/
-│   ├── plugin-api/           `@twilight-echo/plugin-api` typings
-│   └── create-twilight-plugin/ 插件脚手架与 pack 工具
-├── scripts/                  构建、staging、smoke、发布辅助脚本
-└── docs/                     技术文档、插件规范、发布 gate
-```
-
-第三方插件源码不属于 app 仓库。现有团队插件放在 `Twilight-Echo-plugins`；其他开发者可在各自公开仓库发布 GitHub Release `.tep`，给仓库添加 `twilight-echo-plugin` Topic，目录仓库定时扫描并自动加入统一 `plugins.json`，应用中显示为“社区插件 / 未验证”。需要人工审核收录时再向目录仓库的 `catalog/` 提交 Pull Request；审核条目优先于同 ID 社区条目。app 只消费 `TWILIGHT_PLUGIN_INDEX_URL` 或内置静态索引。`resources/plugins/ncm-provider` 是唯一内置 provider 例外。
-
-## 运行架构
-
-本地歌曲、流媒体歌曲及在线音乐库歌单的右键菜单由 Electron `Menu.popup` 展示，允许超出应用窗口，并由系统处理屏幕边界、子菜单与长列表滚动。renderer 的 `NativeContextMenu.vue` 从隐藏的声明式菜单项生成纯 DTO，保留原有点击动作；只经 `window.api.window.popupContextMenu` / `closeContextMenu` 调用 preload。主进程在 `ipc/nativeContextMenuIpc.ts` 校验来源、菜单规模和字段，只返回选中项 ID，不接受 renderer 提供的 Electron role、回调、脚本或文件路径。每个窗口最多保留一个菜单，组件卸载会取消对应请求。
-
-首页音源切换不依赖登录态；音乐库未登录时在页头显示切换入口。音源选择器使用浏览器顶层 popover，保留主题样式，按视口空间限制高度并独立滚动，不受资料卡片的裁剪影响。验证命令：`pnpm run test:native-menus`。
-
-Electron main 侧有五个构建入口，均在 `electron.vite.config.ts` 中声明：
-
-- `index` -> `src/main/index.ts` -> `src/main/app/lifecycle.ts`
-- `pluginHost` -> `src/main/pluginHost.ts`
-- `audioEngineService` -> `src/main/audioEngineService.ts`
-- `audioAnalysisService` -> `src/main/audioAnalysisService.ts`
-- `libraryScanService` -> `src/main/library/libraryScanService.ts`
-
-`audioAnalysisService` 使用独立 `utilityProcess` worker pool 执行 BPM/loudness 完整文件解码。其有界优先级队列使用 aging 防止低优先级任务饥饿，并为等待任务设置 deadline；队列满时更高有效优先级可驱逐最差等待项。并发上限、取消、watchdog 和 worker 重启均与实时 `audioEngineService` 隔离，离线分析不得进入播放 RPC 队列。BPM/loudness manager 在 cache commit 期间收到取消时会按精确值条件回滚，且不得广播 completed 事件。
-
-曲库的选择工具栏提供“响度分析”，库管理提供“响度分析与结果”。`libraryLoudnessManager` 把 Track/Album 分组逐个提交到同一个分析池，使用独立任务种类 `loudness-batch`、优先级 −20；播放用 loudnorm 仍使用 `loudness` 和高优先级，两者的取消互不影响。一次最多 10,000 首、每张专辑最多 256 首。专辑分析使用当前曲库已物化的完整专辑分组，包含全部碟片和合辑成员；CUE 只测量实际源区间。任务可取消、重试未完成项，关闭面板后继续，重新打开可恢复进度；应用退出后不自动续做。
-
-原始测量使用 libebur128（算法版本 2），输出 LUFS / dBTP；Album 通过 `ebur128_loudness_global_multiple` 合并门限统计，峰值取各曲目最高值。面板同时展示以 −18 LUFS 为参考的 ReplayGain 2 增益，以及以 −23 LUFS 为参考的 R128 增益。缺少测量证据时显示“未分析”，不会把已有标签当作新测量。首版只保存库内结果，不写音频标签，也不自动应用到播放或 DSP。
-
-每个 Track/Album 分组以一份小型原子 JSON（含备份）保存到 `userData/library-loudness/`，专辑记录同时保存成员测量。缓存核对算法、模式、成员顺序和 ID、授权后的真实路径、文件大小、mtime 与 CUE 起止点；曲目和专辑分别缓存。提交前再次授权并检查文件身份，随后同步原子提交该组，取消检查与提交之间不跨异步等待。取消或失败的当前专辑不会发布部分结果，已完成的其它组保留。结果面板使用 shallow Map 索引、按 100 组查询和虚拟窗口，进度更新只触及变化项。完整接口和数值语义见 [音频引擎 API](./audio-engine-api.md#库内批量响度分析)。
-
-`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。默认 SQLite 路径由 `LibraryDatabaseRuntime` 调度，任务、文件检查点及暂停状态跨应用重启持久化；数据提交由数据库 worker 负责，详见下方「本地库与搜索数据流」。
-
-旧 JSON 路径仍使用 `libraryIndexCoordinator`：所有进入 `cover-cache` 的封面统一限制为 500 px 宽 JPEG（`COVER_THUMBNAIL_WIDTH`）：主进程导入直接缩放；utilityProcess 没有 `nativeImage`，扫描 worker 先按原尺寸落盘，`libraryIndexCoordinator` 在批次进入累加器前经 `normalizeCachedCoverHandle` 换成缩略图句柄（`fs:scanMusicFiles` 同样在返回前替换），worker 写下的原图文件保留不清理。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。大扫描通过有界批次传输 identity 与解析结果，进度按时间/文件数节流；元数据通过可随机定位的文件 tokenizer 读取，跳过音频载荷但保留尾部标签与封面；无 CUE 的目录复用枚举阶段的 dependency signature，避免逐曲同步重读目录。单文件解析和扫描 worker 均有 watchdog；暂停期间停用 worker watchdog。完整 identity 快照扫描在 worker 重启后保留主进程已收到的结果批次及 identity 快照，仅解析尚未完成的文件，进度累计已完成文件数；当前阻塞路径跳过并在下次扫描重试，watch 局部扫描仍重新核对变化路径。此旧路径的恢复检查点仅在当前扫描任务内有效，不跨应用重启持久化。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
-
-主进程负责窗口生命周期、单实例锁、IPC 注册、设置持久化、本地库扫描、桌面歌词、快捷键托盘、Discord RPC、NCM API 启动和音频引擎编排。
-
-preload 位于 `src/preload/index.ts`，通过 `contextBridge` 暴露受控 API。renderer 不直接访问 Electron、Node 或主进程内部模块。
-
-renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要状态分布：
-
-- `stores/usePlayerStore.ts`：播放队列、当前曲目、播放状态、音频输出、可视化轮询、播放会话恢复。
-- `stores/useMusicStore.ts`：本地曲库、艺术家/专辑/文件夹派生集合、歌单、收藏、曲库修复与元数据补全。
-- `stores/useProviderStore.ts`：插件 provider 注册状态、能力与健康度。
-- `providers/mediaProvider.ts`：统一 provider 抽象。
-- 流媒体主页以 `ui.streamingSections` 显式准入并校验 provider 实际注册的
-  `supportedMethods`；发现歌单以标准 playlist discovery 方法准入。两个页面仅在有多个可用音源时显示可交互切换器，切源会重置筛选并废弃旧请求。
-  声明 `ui.streamingHome` 的插件使用 `streaming-page/ProviderMusicHome.vue` 的品牌首页，
-  按 API 分区展示新歌、榜单或私人 FM，支持公开浏览、局部错误和保留内容刷新。
-  酷狗的推荐发现仅使用上游可用分类（含 Hi-Res）和 `hasMore` 翻页，不显示未支持的排序或虚构总数。
-  QQ 每日推荐使用登录后的“每日30首”；首页分区可单独要求登录，公开榜单不受影响。
-  酷狗与 QQ 的首页页头统一显示“主页”，副标题使用按时段变化的问候语；进入详情、搜索或音乐库后仍显示对应上下文。
-  `useProviderStore.callProvider` 复用 `toProviderIpcArgs`，避免响应式分区参数在 Electron 桥上克隆失败。
-- `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
-
-播放会话恢复后默认暂停；继续播放原曲时使用保存的进度，主动选择其他歌曲时从头播放（指定起点的播放操作使用指定位置）。每次加载开始清除旧的待恢复进度，加载期间手动调整的进度只应用到本次加载，不能带入下一首。
-
-SQLite 本地队列保存在数据库中，`playback-session.json` 只保存当前 occurrence 引用、曲目和进度，不导出全队列。JSON/内存队列仍分开落盘：`playback-queue.json` 保存队列，限制 32 MiB，只在队列内容变化时写入；`playback-session.json` 保存当前曲目、进度和队列 revision，限制 2 MiB。定时进度保存只更新小状态。保存队列时先写队列再写状态；启动恢复按 revision 匹配主队列或备份队列，中断后若两者都不匹配则只恢复当前曲目。旧版内嵌队列会话仍可读取，并在下一次保存时迁移。清除会话先提交空状态，再删除队列及备份，因此队列文件损坏不会阻止关闭恢复。队列与状态共用现有 `data:savePlaybackSession` 通道和版本化写入器；App 与播放器 store 通过同一个写入器按提交结果判断是否需要克隆队列，失败后续写会重新携带队列，退出前会刷入尚未保存的变化。队列快照省略内嵌图片和进程内封面授权，当前曲目可保留不超过 256 KiB 的内嵌封面；其余封面在恢复后从曲库或持久封面来源重新获取。
-
-统一命令面板由 `app/useCommandPalette.ts` 连接现有播放器、统一搜索和导航，`components/CommandPalette.vue` 负责原生 modal、输入法与虚拟结果列表。标题栏搜索按钮或 Ctrl+K / ⌘K 打开，支持歌曲、本地/聚合歌单、设置索引、正在播放、EQ、DSP、桌面歌词、设备档案，以及队列撤销、清空、保存/管理会话和实际播放顺序；`>` 前缀只搜索操作和设置。空查询及一般导航不会发起歌曲搜索或应用音频设置。查询按来源分页，旧请求取消并受 request ID 约束；本地不可变曲库快照共用排序/文本索引。设置定位请求带独立 revision，即使已在相同分区也能重新定位。
-
-队列操作由 `stores/player/queueCommandController.ts` 维护稳定队列项 ID、revision 和有界撤销栈，`playbackSelectionController.ts` 保证重复曲目按具体队列项选择。命名会话的 CRUD、来源重解析与恢复分别由 `queueWorkspaceStore.ts`、`queueSessionSources.ts` / `queueSessionRestore.ts` 和 `queueSessionController.ts` 负责；恢复默认暂停，单独提供“恢复并播放”。`playbackHistoryController.ts` 仅在实际播放成功后记录顺序，最近 200 次开始与累计统计分开持久化。共享 DTO `src/shared/queueWorkspace.ts` 经 preload data API 和 `main/ipc/queueWorkspaceIpc.ts` 写入版本化 `queue-workspace.json`；最多 20 个会话、每个 20,000 项、合计 40,000 项和 32 MiB。详细行为与失败处理见 [队列虚拟化](./playback-queue-virtualization.md) 和 [歌单生命周期](./playlist-lifecycle.md#named-queue-sessions)。
-
-Renderer TS 测试通过 `scripts/register-renderer-aliases.mjs` 为 Node `--test` 解析 `@renderer/`，与应用构建使用同一模块位置，不引入额外测试框架。命令面板的键盘、组合输入、失败重试、关闭失效及 20,000 条结果的有界渲染由隐藏 Electron 行为测试覆盖。
-
-## 音频链路
-
-设备档案位于播放设置和 HiFi 输出页，支持从当前配置创建、命名、复制、编辑、删除及按稳定设备 ID 自动应用。版本化 `audioDeviceProfiles` 保存后端、独占、完整 buffer/routing、软件音量上限、SRC/DSD 策略和 DSP 场景引用；场景 graph 不复制进档案，设备 SRC 作为运行时 output-stage override 独立持久化。档案应用只更新默认场景中的旧式 ReplayGain、EQ、卷积和 Crossfeed 节点，保留其他自定义节点、声像与输出级设置。手工调整输出或 DSP 后清除“已应用档案”标记，保留实际设置和音量上限；编辑或删除已应用档案也不会突然改变播放。
-
-播放设置的“独占模式自动启停”默认关闭，仅在独占偏好开启且后端支持时生效。开启后 WASAPI Exclusive、ASIO、CoreAudio Hog 暂停立即释放设备，继续播放按保存的曲目、CUE 队列项和进度重新打开；失败仍暂停并显示原因。暂停释放后可以调整进度、设备与 DSP，下一次播放应用最新配置；停止和最终队列结束释放，连续切歌保持占用。全局策略经 `audioEngineManager` 和现有输出配置通道应用，不写入设备档案。`outputInfo.outputReleased` 区分已保存的独占偏好和实际设备占用，释放时不宣称独占或 Output Perfect。契约见 [音频 API](./audio-engine-api.md#playbackinfo-与-outputinfo)。
-
-设备档案的读取、保存、应用、删除和变更订阅统一经 `window.api.audioEngine` 暴露。`preload/domains/audioEngineApi.ts` 使用 `satisfies` 限定音频桥的四个顶层域；同目录运行时测试验证域层级、完整 DTO 转发、事件隔离和取消订阅，防止接口误挂到 `window.api` 顶层后导致设置页挂载抛错、进入动画停在透明状态。
-
-档案应用仅经 `audioEngineManager` 的 `DeviceProfiles` 与 `OutputRouter`：串行验证、静音、backend/device/config、DSP plugin chain、DSP revision ACK、输出状态 ACK、持久化，再恢复不超过档案上限的原音量。新的选择淘汰旧请求；失败回滚输出、DSP 和已保存选择，回滚失败则停止播放并显示原因。自动应用只响应重新出现且唯一匹配的稳定 ID，同名、缺失设备、冲突档案或已删除场景均有明确反馈。重启恢复档案选择与上限；服务崩溃后的恢复与配置事务串行，仍等待结构化 ready 且不自动续播。软件上限不是硬件音量或声压保证，也不会自动设置 Unity。对应软件回归位于 `audio/deviceProfiles.test.ts`；真实 DAC 切换未作为本轮验证证据。
-
-ASIO 隔离进程通过回调事件唤醒渲染线程，不依赖 `sleep(1ms)` 轮询；事件可以合并，待处理工作仍以共享内存队列为准。停止线程时主动唤醒，进程退出和回调停滞仍由现有 watchdog 处理。能力枚举只查询，不切换 DSD I/O 模式或设置采样率；PCM 模式下查不到 DSD 倍率时保留未知状态，实际 Native DSD 请求再协商。`AudioFormat.dopEncoded` 只由 DoP 载体构造设置，并经 ASIO helper 协议 v3 传递；普通高采样率 24-bit PCM 不验证 DoP 标记，也不产生 DoP 错误证据。
-
-引擎内部 `Int24In32Interleaved` 保持有效位高位对齐；ASIO `Int32LSB24` 的物理缓冲要求低位对齐，直通与浮点输出均在写入驱动缓冲时转换。完整 `Int32LSB` 承载 24-bit PCM/DoP 时仍保留高位对齐，不能混用两种驱动布局。低位布局与 [PortAudio 的 ASIO 输出转换](https://github.com/PortAudio/portaudio/blob/master/src/hostapi/asio/pa_asio.cpp)一致。
-
-PCM 打开前检查驱动是否仍处于 DSD 模式，必要时恢复 PCM；恢复不能只看返回码，还需检查 `formatType` 及可用的回读结果。驱动拒绝恢复或 PCM 请求仍返回 DSD 通道类型时拒绝启动，避免把 PCM 样本送入 DSD 通道。不支持 I/O 格式查询的驱动仍以实际通道类型验证。
-
-常规播放链路：
-
-```text
-Renderer -> preload API -> main IPC -> audioEngineManager
-  -> audioEngineService 或进程内 fallback
-  -> twilight_audio_node.node
-  -> twilight-audio-engine.dll
-  -> FFmpeg decode -> DSP chain -> platform output
-```
-
-`TWILIGHT_AUDIO_SERVICE=0` 仅用于开发调试，会让主进程直接加载引擎。生产路径应使用可重启的音频服务进程，避免 native 崩溃拖垮 app。
-
-DSD / passthrough 路径会绕过不安全的 DSP。WASAPI 与 CoreAudio 没有平台级 native DSD 通道，DSD 通过 DoP 或 PCM fallback；ALSA `hw:` 可支持 native DSD。macOS 和 Linux 音频后端仍未完成发布级验证。
-
-DSP Rack 保存前通过 `utils/dspSceneDraft.ts` 将响应式场景深拷贝为可跨 IPC 克隆的数据，包含 VST3 参数、预设引用和场景规则。“应用”通过一次 `setDspScenes` 同时提交当前草稿和选中场景的 pin，避免保存后再次应用导致音频链连续重建。提交期间禁用编辑区，防止异步返回的快照覆盖新的输入；失败保留草稿，DSD 转 PCM 仍需用户确认。场景副本与 A 快照隔离嵌套参数和 VST3 状态引用。VST3 参数每页渲染 32 项，编辑只更新对应 ID，折叠的原始配置不序列化完整参数表。
-
-VST3 扫描与运行时支持最多 2048 个参数。隔离宿主共享内存协议 v2 为参数 JSON 预留 128 KiB 加终止字节，覆盖完整参数集的 uint32 ID 与双精度归一化值；旧版 8 KiB 容量会使 WORMHOLE 等大参数集插件在启动前被旁路。协议布局变更后必须同时重建并 stage MinGW 音频引擎与 MSVC VST3 helpers，再重启应用。`test:dsp-graph` 包含 Windows 原生桥回归，验证完整参数载荷跨进程传输、处理后音频返回以及超限载荷拒绝，不依赖真实音频设备或第三方插件。
-
-VST3 音频桥按绝对帧位置回填预分配的环形缓冲，宿主按提交序号处理，允许 WASAPI 回调长度变化。桥接延迟固定为 4096 帧（48 kHz 时约 85 ms），并与插件自身延迟一起报告；仅启动/重置时填充延迟，超时保留同一时间位置的干声，不因相邻块长度不同丢弃效果音频或补静音。音频回调不等待宿主、不分配内存。原生回归覆盖交替块长度、缓冲回绕和重置后的逐样本顺序。
-
-主题工作室应用主题时以主进程返回的主题库快照为提交点：先更新活动主题状态并结束预览，再等待 Vue 响应式视图刷新，最后同步重绘运行时 CSS、布局属性和启动缓存。主题变更事件按严格递增的库 revision 接受，避免保存广播晚到时把刚应用的主题覆盖回旧主题。关闭页面只复用一个预览清理任务，避免关闭钩子与应用操作并发后把当前窗口恢复成旧主题。
-
-主题工作室按外观区域提供颜色与不透明度、逐色渐变、阴影预设和滤镜滑块；参数按歌词、封面、按钮等区域折叠分组，原始 CSS 值由单项代码图标展开。显示名称与搜索结果复用 `themeVisualControls.ts` 的用语映射，搜索保留原始名称与 ID 别名；点击结果清除搜索过滤、展开目标分组并聚焦控件。“更多外观”只列出其他分类未覆盖的项目。字体选择与导入集中在“字体与歌词”，小窗字体使用选项列表；“跟随当前主题”位于各小窗设置顶部。选择强调色色板会切回固定颜色，选择背景色板会切回实色背景。封面取色、渐变背景等有前置条件的控件按模式启用，不依赖提示文案判断是否可编辑。媒体库分类预览实际 `SongList`，页面背景的显式覆盖通过 `--te-library-custom-bg` 接入，未覆盖时保留全局壁纸；列表底色和阴影直接使用主题值。
-
-设置页与扩展中心共用 `settings-overlay-root` 的独立背景绘制层。扩展中心从流媒体页打开时，即使主题把插件页面设为透明，也由该层完整绘制壁纸和底色，避免底层流媒体内容透出。
-
-运行时以全局外观设置作为默认值，用户主题在当前深浅色中显式保存的覆盖值、字体资源绑定、背景模式与封面取色优先；内置主题及用户主题未自定义的项目仍沿用全局设置。恢复单项或分类默认后重新继承全局设置。所有内置主题及其派生主题统一复用项目标准／迷你／紧凑三种播放栏，主题布局样式不再覆盖播放栏及其附属面板的结构与样式，播放栏的默认颜色、字体、按钮尺寸与圆角统一使用默认主题同色调的原始令牌；用户主题在当前深浅色中显式保存的进度条轨道、已播放填充、播放按钮表面与悬浮表面通过播放栏专用变量优先应用，三种形态及玻璃／直播状态共用这一覆盖链，未自定义或恢复默认时继续沿用原有默认色与封面取色，不继承主题的 pro 控件、标题大小写／着色、对齐、进度装饰及可见性规则；控件显示只由播放栏按钮编排与三种模式自身决定，材质仍由全局外观设置管理。第 2、3、4 套主题（`builtin:aurora-reference`、`builtin:obsidian-glass`、`builtin:paper-light`）及其派生主题默认为紧凑，其余内置主题默认为标准；用户在设置页或首启向导主动选择形态后保留用户选择。暮光档案隐藏侧边栏品牌标识。
-
-## 本地库与搜索数据流
-
-开发与打包应用默认使用 `music-library.sqlite`，无需设置环境变量。首次启动由 `openLibraryDatabase` 流式迁移旧 `music-library.json`，保留原 JSON 与 `.bak`；已有 SQLite 时以数据库为准。迁移失败保留原资料并停止启动。普通备份与恢复继续走个人备份 API。
-
-`LibraryDatabaseRuntime` 是唯一数据库 owner，独立 `libraryDatabaseService` worker 执行查询与写入。renderer 启动读取 metadata，歌曲、分类、搜索和本地队列按页读取；数据库版本事件使受影响窗口失效，不要求重新导出全库。扫描文件检查点、暂停/继续和队列 occurrence 持久化在 SQLite。完整实现与验收记录见 [大曲库改造状态](./library-database-status.md)。
-
-仅为旧路径回归，可在**尚未迁移的独立开发资料目录**设置 `TWILIGHT_SQLITE_LIBRARY=0` 使用 JSON；已有 SQLite 的目录会拒绝此模式，打包应用始终使用 SQLite。旧 JSON 路径先把已保存曲目放入 renderer，再用快速索引做启动核对，后台提交后重读曲库文档。主进程加载路径不得遍历解析全库 metadata、转换 base64 封面或逐项修复封面；这些工作只允许在显式后台重扫中执行。
-
-本地扫描对 ALAC 保存编码名作为格式，并从 MP4 `alac` 配置读取采样率与位深，避免非标准 sample entry 把 96 kHz / 24 bit 误报成 1 Hz / 16 bit。HiFi 面板播放本地文件时优先显示引擎确认的源格式，以便已入库的旧记录在重扫前也能正确显示。
-
-本地歌词经 `lyrics:get` 完成路径授权后，由 `main/lyrics/loadLyrics.ts` 按需读取同名 LRC 或内嵌歌词。优先保留原始标签中的 LRC 时间轴；只有结构化同步歌词时，把毫秒 `syncText` 转成 LRC，不能只返回已去掉时间戳的 `common.lyrics[].text`。歌单详情的工具栏与编辑弹窗分别位于 `PlaylistLifecycleToolbar.vue`、`PlaylistActionDialog.vue`；重命名、复制及移动使用应用内表单，校验和持久化仍由原有 music store 负责。交互细节见 [歌单生命周期](playlist-lifecycle.md) 与 [歌词管理](lyrics-management.md)。
-
-`useMusicStore` 维护两个非响应式索引：
-
-- `trackById`：按 track id 定位曲目。
-- `trackByPath`：按文件路径定位曲目，供文件 watcher 的增量 add/remove 使用。
-
-派生集合 `artists`、`albums`、`folders` 使用 `shallowRef`，并通过 coalesced rebuild 合并多次变更。不要在高频操作中逐次重建完整派生集合；批量导入、删除、修复后应调度一次 rebuild。跨来源歌单解析依赖按曲库 revision 缓存的 local logical map；收藏按钮状态依赖歌单 identity cache。修改曲库数组时必须走 store 内部的曲库替换路径，确保这些缓存能正确失效。
-
-统一搜索会把本地结果和插件 provider 结果合并为逻辑曲目。`buildLogicalTracks` 使用逻辑 key 索引候选组，避免大结果集下按组线性扫描。新增搜索、最近播放或收藏逻辑时，应复用 `logicalTrackModel`，不要重新实现跨来源合并规则。
-
-最近播放、排行和 Dashboard 推荐需要把历史统计解析回可播放的本地变体时，使用 `createUnifiedRecentTrackResolver(localTracks)` 在一次计算中复用本地 id/logical 索引。不要在每条统计上单独调用会重建整库索引的解析流程。
-
-本地「统计仪表盘」由 `ListeningAnalyticsPage.vue` 和 `components/listening-analytics/` 呈现为聆听年鉴。页首及歌曲／艺人榜使用本机各音源的现存累计曲目记录；歌曲可按时长或次数排序，并播放最多 10 首可解析的榜单曲目。已移除的本地音源只保留统计展示，不回退播放失效快照。7／30／90 天范围仅作用于「聆听的节奏」，按 UTC 日时长补零，日均分母为整个区间，前期对照使用前一个等长区间；今天尚未结束，前期无数据不显示虚假的增长百分比。全年足迹精确覆盖今天及之前 364 天，周首尾补位不计入范围；趋势、日历均可键盘探索并查看每日数据表。趋势和日历使用每日总时长，不估算区间曲目榜或每日歌曲；格式分布按已听曲目快照计数，不推断实际输出音质。每日时长最多保留 730 天、曲目记录最多 10,000 首，因此累计不等于完整终身历史。子组件通过页面级活动快照包装接收 `shallowRef` 的显式更新，不复制整张统计表；UTC 跨日和页面重新可见时刷新日期，卸载时释放定时器。
-
-页首“清除数据”提供今天、近 7／30／90 天、自定义日期和全部数据，按 UTC 日划分且包含首尾日期。确认弹窗预览受影响日期、每日时长和曲目数量，取消／Escape 不修改记录。`stores/listeningStatsHistory.ts` 为新增曲目统计记录每日时长、播放次数、跳过和完成增量；按范围清除仅扣除该区间的明细，并更新累计榜单、最近播放和最后播放时间，不删除区间外的同一逻辑曲目数据。旧版及超过 730 天保留期的累计曲目数据没有可拆分的每日明细，范围清除保留这些累计值，弹窗明确提示；选择全部数据可一并清除。清除通过现有 `shallowRef`／`triggerRef` 提交并立即写入本地存储，保存失败保留内存中的清除结果并显示重试提示。清除不修改音乐文件、收藏、歌单或独立持久化的队列播放历史；当前播放继续，后续统计从清除后的状态记录。
-
-Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/streaming-page/localStreamingSearch.ts`。该工具扫描完整集合以保留分页总数，但只 materialize 当前页结果；不要在 SFC 内重新写 `filter().map().slice()` 的全量中间数组链。
-
-网络媒体库索引由 `networkLibrary.ts` 串行提交，`networkLibraryPersistence.ts` 合并在途读取并通过同目录 rename 发布。写事务先复制顶层文档映射，再整体替换来源与条目，不能修改合并读取返回的共享快照；写入失败时并发列表和搜索仍保留已提交数据。
-
-Linux 播放条的 CSS 毛玻璃回退服从减少透明度、高对比度和强制颜色偏好。无障碍模式必须禁用 backdrop 滤镜，其覆盖优先级高于平台回退规则；`liquidGlassSurfaces.test.ts` 使用实际 scoped 样式与 Electron 媒体偏好模拟验证计算结果。
-
-## 交互与诊断约定
-
-- 主窗口前台空格切换播放/暂停，输入、可编辑区域、按钮、菜单和对话框保留自身键盘行为；全局音量增减默认使用 `CommandOrControl+Alt+Up/Down`，步进 5%，允许在快捷键设置中修改。跨进程快捷键载荷统一在 `src/shared/playerShortcuts.ts`。
-- 全局字体设置支持 `local:<字体名称>`，复用 main 字体枚举与既有字体 CSS 变量，保留 CJK 回退。Windows 字体注册表经 PowerShell 显式 UTF-8 输出，避免中文名称被按错误代码页解码。
-- Issue #110 的文字渲染设置位于“外观 → 全局字体”下方，`fontRendering` 支持 `auto` / `crisp` / `smooth`，旧设置默认 `auto`。清晰档通过 0.2px 同色笔画增强改善透明或图片背景上的细字，不改变背景滤镜或排版；图标字体及歌词自身描边保持原有样式。Chromium CSS 无法直接切换 Windows ClearType，平滑偏好只在系统支持时生效。设置复用主题运行时与启动缓存，更新即时生效、失败回滚，外观重置恢复自动。
-- 均衡器模式切换和参数编辑保留旁路状态；明确点击启用才开启 EQ。合并规则在 `equalizerSettingsPatch.ts`。
-- 参数 EQ 使用随浅色／深色主题切换的全画布工作区；频段面板在遮挡所选节点时上移，可用宽度小于 800px 时停靠在图下。关闭面板不会删除频段；删除最后一段后保留空画布，参数预设按自身模式恢复 0–32 个频段。频率、增益、Q 旋钮支持上下拖动、滚轮、方向键及数值输入，Shift 精调；频率和 Q 使用对数映射，普通拖动 180px 覆盖量程。拖动仅预览，结束手势或滚轮停止 140ms 后沿现有提交链写入；切换频段或执行命令前结束待提交编辑。自动增益补偿不在拖动预览期间单独触发引擎写入。参数画布在可见、播放中且频谱开启时单独请求 2048 点原生频谱，以峰值保留的对数映射投影到 720 个显示点；120 Hz 以下用不越过原始峰值的曲线插值抹平稀疏 FFT 频点间的折角，120–240 Hz 渐变回线性插值。画布按刷新帧率对显示点做与时间间隔无关的上升／回落平滑，并直接更新两条 SVG 路径，保留细窄峰值和轻填充。减弱或关闭动效时按采样结果直接更新；离开画布或停止播放即停轮询和绘制。电平标示实际 Peak／RMS，仍由播放器共享可视化数据提供。
-- 登录页返回平台列表、切换账号/登录方式和销毁组件后，旧二维码生成/轮询结果不再改写当前页面或触发跳转。
-- 本地歌曲列表及流媒体歌单详情的歌曲标题打开信息，艺人/专辑链接与播放点击隔离；网易云曲目保留 provider 专辑 ID。缺少专辑身份时提示而不猜测同名专辑。
-- HiFi 面板 Teleport 到 body，并按顶栏实际高度避让；面板内部点击不会触发播放栏的外部点击关闭。菜单坐标使用 CSS viewport 坐标并限于视口边界。常用控件 hover 不移动命中区域；两种侧栏和播放栏避让复用 `--te-motion-panel`。
-- Streaming 返回滚动位置在进入动画开始时恢复，避免进入动画结束后跳回旧位置。
-- 授权后的远程封面按完整来源地址哈希缓存到现有 `cover-cache`，缓存有效期 7 天、单项上限 25 MiB，遵守 `cachePolicy.cover` 及上游 `private/no-store`；JPEG/PNG/WebP 宽度超过 500 px 时先经 `resizeCoverImageBytes` 缩成 500 px JPEG 再落盘（GIF/SVG 或解码失败保持原样），响应体仍是上游原始字节。音频请求不经封面缓存。清理音乐缓存包含这些文件。
-- 诊断 Markdown 单独列出欠载/丢缓冲计数，并兼容旧版 diagnosis 中的实际输出格式；非逐位直通不等同于播放卡顿。Issue 附件的 1.1.2 legacy-native / Voicemeeter ASIO 卡顿尚需当前版本同配置实机对照，不能仅凭无设备测试判定已解决。
-
-## Renderer 性能约束
-
-低频交互动效复用 `--te-ease-soft`、`--te-motion-panel` 和 `--te-motion-hover`：新建聚合歌单弹窗使用遮罩淡入与居中缩放，添加网络源表单使用短距离位移与淡入，扫描状态仅在状态切换时交叉淡入淡出，DSP 节点排序由 Vue `TransitionGroup` 在独立容器上做位移过渡。减弱动效模式仅保留 120ms 显隐淡化，节点立即定位；关闭动效时全部即时完成。不为歌曲虚拟列表、播放 tick 或主题实时预览增加入场动画。
-
-歌词页紧凑播放栏仅在鼠标进入底部触发区或操作控件时展开，不因切歌或播放状态变化自动弹出。离开触发区后按 `playerBar.hideDelayMs`（默认 900ms）收起，在页面其他位置移动鼠标不会重置倒计时；返回底部、键盘焦点或打开浮动面板可保持展开，鼠标点击留下的焦点不会阻止收起。播放栏保持固定布局高度，以 160ms 位移与控件淡化完成展开和收起，频谱随之贴回底部；减弱动效仅保留 120ms 控件淡化，关闭动效时即时切换。
-
-本项目的卡顿风险主要来自大曲库和高频播放状态更新。维护时遵守以下规则：
-
-- 大列表只渲染可见区域。`SongList` 表格走虚拟滚动，网格视图走 idle/timer 分批渲染。
-- 大型数组更新使用 `shallowRef` + 新数组替换，避免深层响应式追踪整首曲目对象。
-- 曲库艺术家、专辑、文件夹等派生集合在分组入库时同步维护封面等摘要元数据，不要生成每个分组后再扫描组内曲目。
-- 高频查找使用 `Map` / `Set` 索引，不在事件处理、watcher、播放 tick 中反复 `find`、`includes` 或全量 `map/filter`。
-- 单曲 metadata、BPM 等回写路径使用 `trackIndexById` 定位数组槽位，不要对整张曲库 `findIndex`。
-- 最近播放、排行榜和 Dashboard 榜单等只需要前 N 项的选择器使用 store 内的有界 top-N 收集，避免在 SFC 内为整张历史表创建 `entries/filter/sort/slice/map` 中间链。
-- 播放 tick 会写入的统计状态使用 `shallowRef` 加显式 `triggerRef` 提交，更新单条统计时不要复制整张历史表。
-- 迷你播放器 / 托盘 / SMTC 共用的状态快照分两路发布：曲目、传输、收藏等元数据变化立即发；`currentTime` 只在整秒变化时经 ≥500ms 节流发（各窗口按采样时间自行外推），快照不携带歌词，主进程再按渲染签名去重后才调用原生 SMTC。不要把 `currentTime` 直接加回即时 watch。
-- Linux 的系统媒体控制走 Chromium 的 MPRIS 桥接，而该桥接**只对由 HTMLMediaElement 支撑的 MediaSession 生效**。原生 ALSA 引擎出声时渲染层并不持有媒体元素，导出的 `org.mpris.MediaPlayer2` 会是一个能力全为 false、metadata 只有 `mpris:length: 0` 的空壳，桌面媒体控件和 `playerctl` 都无法控制播放。因此 Linux 上额外 arm 一个常驻静音元素（`mediaSessionSentinel.ts`）：`muted` 必须保持 false（muted 的元素不注册 MPRIS），静音靠 `volume = 0` 加静音 PCM 源实现。有该哨兵时渲染层即使不拥有会话也要发布 metadata 与 action handler，否则名字虽在但仍是空壳；原生引擎仍独占音频设备，Windows/macOS 有原生会话时不 arm。
-- 播放栏 / 均衡器电平表的 60ms 可视化轮询按消费者引用计数启动：读取 `visualizationData` 的组件挂载时 `acquireVisualizationConsumer()`、卸载时释放，计数为 0 不发共享轮询 IPC；store 轮询不请求 oscilloscope / spectrogram。参数 EQ 的高分辨率频谱和完整可视化面板各自按可见状态请求数据。性能设置中的“歌词页底部动态频谱”开关默认开启；关闭后不挂载紧凑播放栏频谱并释放其轮询消费者，播放控制栏保持可用。
-- 完整可视化面板在 BPM 和时长之间显示曲目的来源（本地、NCM、网络源、电台、播客或其他 provider），不猜测曲风。音频属性先用与当前曲目音源匹配的原生播放信息补齐编码、采样率、源声道数、位深与码率，缺项回退到曲目元数据；文件大小沿用曲库记录。原生解码器对有损音频报告的位深可能是解码后的样本位深，面板不把它当作源文件位深。原生信息迟到时只更新音频属性，不重置实时 BPM。
-- 搜索热路径避免为每首歌创建临时字段数组，优先短路判断，并尽量只保留当前页需要渲染的结果。
-- store composable 可以被多个组件调用；模块级初始化不能在每次调用时全量重建曲库索引。
-- 启动期跨 store 副作用优先由入口层注入所需 refs，不要在 store 内动态 import 已经被主界面静态引用的热 store；否则既形成隐式反向依赖，也无法带来实际 chunk 拆分。
-- 播放进度和频谱同步要节流。桌面歌词由 `useDesktopLyricsPublisher.ts` 发布标准化 session 与最多 4 Hz 的 clock；歌词窗口在本地外推时钟、按下一句边界唤醒，并将逐字填充交给 WAAPI 遮罩时间轴，快照只用于漂移校正、暂停和 seek，禁止逐帧 IPC、逐帧 CSS 变量写入和 Vue 重渲染。独立窗口外观设置（单双行、横竖排、对齐、描边、配色、翻译与音译）都通过 `src/shared/desktopLyrics.ts` 的版本化契约持久化和实时同步；插件启动时的主题对账只在活动主题实际回退时更新独立窗口默认值，不能覆盖用户已保存的桌面歌词配置。
-- 正在播放页按播放时间定位歌词时使用二分查找，不在每个播放 tick 从歌词首行线性扫描。
-- 封面主题色提取使用小型 LRU/promise 缓存；切歌时必须防止旧封面异步结果覆盖当前曲目颜色。
-- 本地主页由 `components/local-dashboard/LocalHome.vue` 根据主题运行时的 `presetLayout` 选择布局。「暮光档案」（`builtin:aurora-reference`）与其派生主题使用唱片客厅主页；`builtin:obsidian-glass` 使用 `NightHarborDashboard.vue` 的夜港唱片厅布局：黑胶播放台、曲库统计、最近轮换与唱片架；其默认歌词页复用主题 1 的标准布局、封面效果、文字模式与完整信息可见性，不再叠加全屏封面及侧边歌词面板样式，底部播放栏设置保持独立；`builtin:paper-light` 使用下述声场主页；其他主题使用 `LocalDashboard.vue`。`LocalHome.vue` 使用稳定的外层容器承接页面过渡，避免异步主页切换时残留入场透明样式；主题预览与取消同步切换布局。`archiveLibrary.ts` 按音乐库数组版本物化统计和曲目位置索引，只保留最新 30 首，夜港主页只 materialize 当前可见的最近曲目与最多 4 张专辑，时长在小时不足 1 时显示分钟；最近播放复用统一曲目解析器，播放队列最多取相邻 200 首，禁止在播放 tick 中重建音乐库索引。夜港样式使用主题 token，亮色为纸白/珊瑚红/青绿，暗色为墨色/珊瑚红/灰绿，并为中小窗口提供播放台折行、曲目单列和唱片架双列布局。
-- 第四套「声场 Sound Field」沿用 `builtin:paper-light` 标识，由 `SoundFieldDashboard.vue` 接入独立 `SoundFieldHome.vue`：左侧独立圆角聆听面板、右侧圆角专辑画廊与分页曲目目录、底部曲库统计。暖灰底色与柔和青绿通过主题 token 提供明暗两套配色；主页强调色由青绿辅助色与全局主色混合，正文与辅助信息采用清晰的字号层级，最近收听/新近入库使用分段切换。宽屏采用 300px 播放面板与弹性内容区，1100px 以下收拢间距；小于 820px 的内容区域改为顶部横向播放台，小于 540px 的专辑画廊改为双列。最近记录复用统一解析器，音乐库索引按数组版本物化，最多准备 8 张专辑，每页仅渲染 4 张专辑和 5 首曲目；播放、上下首、随机播放和 seek 复用播放器 store，未加载当前曲目时禁用 seek。声场本地主页的内容宽度大于 820px 时由左侧播放台接管控制并隐藏底栏，补齐收藏、随机/循环、音量/静音、队列、歌词和音频面板入口；队列与音频面板复用仍挂载的 PlayerBar，收藏复用 App 的统一收藏动作。封面随窗口高度缩放，侧栏可独立滚动。窄窗口及其他本地列表保留底栏，流媒体模式和歌词页继续使用原有播放栏设置，不修改持久化设置。主题预览、取消及派生主题均通过现有 `presetLayout` 路由同步布局；运行时背景和强调色继续遵循用户的全局外观设置。
-- 第二套「暮光档案」的本地歌曲列表由 `assets/theme-layouts/aurora-library.css` 提供无外框、细分隔线布局；深浅色默认关闭曲目标题底色，标题按文字宽度收缩，强调色用于播放与选中状态。专辑和时长列使用稳定宽度，按列表容器宽度在 720px 以下收起专辑列、480px 以下收起音质副行；保持既有虚拟滚动行高和多选逻辑，主题工作室的显式底色设置仍生效。
-- provider 或文件系统慢操作必须后台化，不能阻塞首屏曲库渲染。
-
-歌词页背景：在全局播放背景选择为“封面模糊”时，内置主题使用当前曲目的封面作为模糊背景。主题 4（`builtin:paper-light`）通过 `playback.backdrop.filter` 与半透明 `playback.backdrop.scrim` 保持这层封面可见，同时保留自身的浅色／深色文字和强调色。
-
-歌词页标准布局将封面与歌词作为同一限宽网格水平居中，封面不使用额外横向位移；封面尺寸同时受窗口高度限制。1120px 以下保留顶部横向封面信息与下方歌词，无歌词时封面信息仍在内容区居中。歌曲进度独立定位于页面右上角，不随歌词宽度、横向偏移或单列布局移动；窄窗口顶部为进度和可视化入口预留空间。
-
-主题 4 的侧边栏沿用主题 3 的悬浮控制台结构：上下留白、右侧圆角、半透明材质、圆角菜单项和发光活动指示线，颜色仍取主题 4 的导航 token。
-
-主题 3「夜港」首页的固定分区眉标题和英文副标题已移除，保留中文页面标题、分区编号、动态曲目元数据和无障碍标签。
-
-## 插件边界
-
-插件运行在 `utilityProcess`，入口为 `src/main/pluginHost.ts`。插件只能通过版本化 `twilight` API 访问宿主能力，不得直接 import Electron、Node 内置模块或 app 内部实现。
-
-宿主进程按需存在：`TwilightPluginManager` 用 `plugins/hostIdle.ts` 跟踪每个 JS 插件的活动（provider 调用、UI command、已订阅事件）；连续 5 分钟无活动且没有未完成 RPC 的宿主会被休眠（进程停止，provider/UI 贡献与事件订阅保留在内存快照中），下一次 provider 调用、UI command 或已订阅事件到达时透明唤醒，并发调用共享一次唤醒。休眠期间插件在 `list()` 里仍是 `enabled`，`plugin-state.json` 不变。贡献快照同时持久化到 `plugin-contributions.json`（含插件版本和入口文件 size:mtime）；下次启动若版本与入口文件签名都匹配，启用的插件直接以休眠态就绪而不 fork 进程，签名不符则照常冷启动。试激活、汽水音乐（登录态绑定宿主进程）与正在处理内部 NCM 请求的插件不会休眠；已订阅 `app:ready` 的休眠宿主会唤醒并在激活后收到事件，`app:before-quit` 不会唤醒休眠宿主。
-
-成功返回 HTTP(S) 回环播放地址（`127.0.0.0/8`、`localhost`、`::1`）的音源宿主也保持运行：本地媒体代理在 provider RPC 结束后仍服务当前播放、暂停续播和队列中的已准备链接，休眠会关闭服务并使这些链接失效。此保留状态只属于当前进程实例，显式停止或应用退出仍会关闭宿主；普通 CDN 音源继续按空闲窗口休眠。
-
-`audioAnalysisService` 的 worker 池与 `libraryScanService` 同样惰性：分析 worker 只按当前排队/进行中任务数 fork，空闲 60 s 后回收；扫描 worker 在没有扫描进行时 60 s 后回收，下一次扫描重新 fork。
-
-app 仓库允许包含：
-
-- 插件 host/runtime 代码。
-- 插件 API typings 与脚手架。
-- 内置 NCM provider。
-- 宿主验证所需的内置示例或静态索引客户端。
-
-app 仓库不允许包含第三方插件源码、第三方插件测试、第三方 `.tep` 包或插件专属 README。需要新增第三方能力时，app 侧只实现通用 host/API/UI 能力，具体 provider 逻辑放到外部插件仓库。
-
-## 常用命令
-
-安装依赖：
-
-```bash
+```powershell
 corepack enable
 pnpm install --frozen-lockfile
-```
-
-主仓库只使用 `pnpm@11.7.0` 和 `pnpm-lock.yaml`。不要运行 `npm install`，也不要提交
-`package-lock.json`；内置 NCM API 的修补由 `pnpm-workspace.yaml` 的
-`patchedDependencies` 在安装时应用。
-
-`discord-rpc` 的 `register-scheme` 仅是 Electron 不可用时的 optional fallback，且上游把它
-指向 exotic Git dependency。主应用通过 Discord IPC 上报播放状态，**当前不注册** OS 默认
-协议客户端（无 `setAsDefaultProtocolClient`）。因此 workspace 通过
-`ignoredOptionalDependencies` 只排除这个 fallback，并保持 `blockExoticSubdeps: true`。
-`pnpm run verify:install-policy` 会确认该包未安装且 `discord-rpc` 在普通 Node.js 环境安全降级。
-
-第二实例（`second-instance`）仅恢复/聚焦主窗口或迷你播放器，**不**解析 `commandLine` /
-自定义 URL 深链。在产品明确实现协议客户端之前，argv 交接为 N/A。
-
-仓库内字体均为已转换并提交的 `.woff2` 资源，构建和打包不执行字体转换。不要为了安装时
-生成字体重新引入 native converter；若未来需要重建字体资产，必须提供独立、可验证的
-转换脚本和跨平台 fallback。
-
-开发运行：
-
-```bash
 pnpm run dev
 ```
 
-### Linux 输入法（fcitx5/ibus）说明
+依赖以 `pnpm-lock.yaml` 为准；内置 NCM 修补通过 `pnpm-workspace.yaml` 安装。不要混用 npm 安装或提交本机工具路径。音频播放还需要构建并暂存原生运行时，见下方原生构建。
 
-KDE Plasma Wayland 会话下，KWin 只有在 `kwinrc` 的 `[Wayland]` 组配置了
-`InputMethod`（KDE 系统设置 → 虚拟键盘）时，才会向 Wayland 客户端暴露
-`zwp_input_method` 协议 —— 这是 Wayland 原生 text-input 通道的前提。未配置时，
-Chromium/Electron 在 Wayland 下无法通过 text-input 使用 fcitx5/ibus。
+## 代码从哪里看
 
-处理方式（见 `src/main/imeBackend.ts` 与 `src/main/app/lifecycle.ts`）：
+| 目录 | 职责 |
+| --- | --- |
+| `src/core/` | 曲库、播放、队列与插件等共享业务 |
+| `src/main/` | Electron 主进程、Core 监督、IPC 与系统集成 |
+| `src/preload/` | 向界面提供受控 API |
+| `src/renderer/` | Vue 3 界面、页面状态与交互 |
+| `src/shared/` | 跨进程类型和纯契约 |
+| `audio-engine/` | C++20 音频引擎、平台输出与 Node-API |
+| `packages/`、`sdk/` | 插件类型、脚手架与示例 |
+| `scripts/` | 构建、测试、暂存和发布工具 |
 
-- 检测到「Linux + Wayland + KWin/Plasma + 未配置输入法」时，应用以真实启动参数
-  `--ozone-platform=x11` 运行（X11/XWayland 后端），fcitx5 通过
-  `GTK_IM_MODULE`/XIM 链路工作，与 VS Code 等 Electron 应用一致。
-- 为什么必须用真实参数：Chromium 的 ozone 平台在 Electron 二进制启动阶段确定，
-  早于任何主进程 JS。环境变量（`OZONE_PLATFORM` 等）对 Electron 无效；
-  `app.commandLine.appendSwitch()` 只影响子进程（renderer/GPU），无法改变
-  browser 进程自身。
-- 开发/预览模式（`pnpm run dev` / `pnpm run start`）由
-  `scripts/run-electron-vite.cjs` 在启动时透传参数（electron-vite 的 `--` 透传
-  机制）；打包后的生产模式由 `src/main/index.ts` 的 `relaunchWithX11BackendIfNeeded()`
-  自重启并携带参数。
-- KWin 已配置输入法时，遵循 fcitx-im 官方建议使用 text-input-v1（KWin 对
-  text-input-v3 存在协议理解差异）；GNOME/Sway 等仅支持 v3 的 compositor 保持 v3。
+Core 是曲库与播放状态的所有者；renderer 通过现有命令和查询访问业务，不直接操作数据库或文件系统。公共 API 变更需同步调用端、类型、权限校验及相关测试。第三方插件源码放在独立插件仓库；应用仓库保留宿主、SDK 和内置 NCM provider。
 
-渲染层 IME 注意事项（`src/renderer/src/components/AnimatedInput.vue`）：
+## 日常验证
 
-- 自定义输入框不得在 IME composition 期间丢弃 `input` 事件：X11/XIM 路径下
-  commit 文本的 `input` 事件可能与 `compositionend` 时序不一致，只依赖
-  `compositionend` + `setTimeout(0)` 兜底会丢失已提交的中文。
-- 不要对需要中文输入的输入框使用 `type="search"`（Chromium 对 search 框有独立
-  IME/清除按钮处理，提交时序与 `type="text"` 不同），统一用 `type="text"`。
-
-类型检查与构建：
-
-```bash
+```powershell
 pnpm run typecheck
+pnpm run lint
 pnpm run build
 ```
 
-Lint 与格式化：
+按改动选择 `package.json` 中已有的 `test:*` 入口。`pnpm run test:quality-policy` 检查测试归属、IPC 基线与架构边界；`pnpm run test:product` 执行产品行为测试。
 
-```bash
-pnpm run lint
-pnpm run format
-```
+插件工具链可运行 `pnpm run build:plugin-api`、`pnpm run test:plugin-tooling` 和 `pnpm run test:plugins`。公共 IPC 基线位于 `scripts/fixtures/ipc-channel-baseline.json`；确认接口变更后用 `node scripts/write-ipc-channel-baseline.cjs` 更新。
 
-应用测试：
+## Windows 原生音频构建
 
-`test:local-perf` 和 `test:plugins` 各限制两个测试进程，避免 Electron 夹具与系统字体 PowerShell 查询在 Windows CI 中争抢资源。全部测试文件与字体查询的原有超时限制保留，`test:quality-policy` 检查并发上限。
-
-```bash
-pnpm run test:plugins
-pnpm run test:audio-manager
-pnpm run test:playback-routing
-pnpm run test:local-perf
-pnpm run test:plugin-tooling
-pnpm run test:app
-```
-
-单个 TS 测试文件：
-
-```bash
-node --experimental-strip-types --test src/renderer/src/utils/logicalTrackModel.test.ts
-```
-
-Windows MinGW 原生音频引擎：
+安装 vcpkg、w64devkit 和 Git for Windows 后，在当前终端设置实际路径：
 
 ```powershell
 $env:VCPKG_ROOT = 'C:\path\to\vcpkg'
 $env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
 $env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
-# 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
 $env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
 pnpm run test:audio-toolchain
 pnpm run configure:audio-engine:mingw
 pnpm run build:audio-engine:mingw
 pnpm run test:audio-engine:mingw
-ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
 
-配置脚本会在调用 CMake 前验证 vcpkg、MinGW 编译器、Ninja 和 GNU `patch`，并清理指向已移动构建目录的 CTest 注册。Git for Windows 的 `patch.exe` 必须优先于 w64devkit 的 BusyBox 版本；未安装 Git 时设置 `TWILIGHT_GNU_PATCH`。当仓库路径包含空白时，必须设置 `TAE_MINGW_BUILD_DIR` 到一个可写且完整路径不含空白的外部目录；配置、构建、CTest、暂存和临时目录 `$env:TAE_MINGW_BUILD_DIR\tmp` 都使用它。不要把本机工具链路径写入 CMake preset。
+构建目录必须可写且完整路径不含空白。`TWILIGHT_GNU_PATCH` 应指向 GNU patch，避免选中 BusyBox 的同名程序。配置、构建、CTest 和暂存共用 `TAE_MINGW_BUILD_DIR`。原生目标、暂存步骤和设备验证见 [音频引擎 README](../audio-engine/README.md)。
 
-无真实设备发布前 gate：
+## Server 开发
 
-```bash
-pnpm run test:no-real-device
+`pnpm run build:server` 构建独立 Node Core，`node out/server/server.cjs --help` 列出启动、配对、迁移、DSP 与扩展管理命令。使用独立数据目录，不能直接让 Server 打开正在运行的桌面配置。Windows 自包含包使用 `pnpm run package:server -- --to <新目录> --zip <新归档>`；Linux 部署见 [部署 README](../deploy/server/README.md)。
+
+## Required Commands
+
+Windows 发布前从仓库根目录顺序执行完整验证：
+
+```powershell
+pnpm run lint
+pnpm run typecheck
+pnpm run test:production-audit
+pnpm run audit:production -- --output output/release-evidence/production-dependency-audit.json
+pnpm run test:plugins
+pnpm run test:core
+pnpm run test:audio-manager
+pnpm run test:radio-remote
+pnpm run test:network-sources
+pnpm run test:tag-duplicate-management
+pnpm run test:duplicate-detection-benchmark
+pnpm run benchmark:duplicate-detection:ci -- --output output/release-evidence/duplicate-detection-benchmark.json --manifest output/release-evidence/duplicate-detection-benchmark.manifest.json
+pnpm run test:playback-routing
+pnpm run test:playlist-lifecycle
+pnpm run test:lyrics-management
+pnpm run test:cue
+pnpm run test:local-perf
+pnpm run test:themes
+pnpm run test:appearance-workspace
+pnpm run test:dsp-graph
+pnpm run test:dsp-assets
+pnpm run test:plugin-tooling
+pnpm run test:audio-toolchain
+pnpm run test:renderer-data-tooling
+pnpm run test:sleep-timer
+pnpm run test:cross-cutting-regressions
+pnpm run test:app
+pnpm run build
+pnpm run configure:audio-engine:mingw
+pnpm run build:audio-engine:mingw
+pnpm run test:core:electron
 ```
 
-## 变更验证建议
+| 测试入口 | 验证范围 |
+| --- | --- |
+| `test:core` | 业务所有权、队列、事务及进程边界 |
+| `test:radio-remote` | 电台、远程控制与访问授权 |
+| `test:network-sources` | 网络源配置、路径与适配器 |
+| `test:themes` | 主题契约、归档与运行时 |
+| `test:appearance-workspace` | 外观持久化、导航与真实界面 |
+| `test:renderer-data-tooling` | 界面数据、类型边界与资源预算 |
+| `test:sleep-timer` | 定时停止、淡出及静音交互 |
+| `test:cross-cutting-regressions` | 退出持久化、字体与可见性 |
 
-按改动范围选择最小但足够的验证：
+性能基准需串行运行。`test:core:electron` 使用已构建的应用与原生运行时，必须在两者完成后执行。软件测试不代替 DAC、ASIO、DoP 或物理双机验证；macOS 和 Linux 尚未达到 Windows 同等级别的发布及真实设备验证。
 
-- renderer 搜索、最近播放、收藏、逻辑曲目：`pnpm run test:playback-routing`
-- 本地曲库性能、列表、收藏按钮：`pnpm run test:local-perf`
-- 插件 manifest、依赖、索引、provider routing：`pnpm run test:plugins`
-- 音频引擎 IPC、播放/分析 service client、BPM/loudness manager：`pnpm run test:audio-manager`
-- 其余可执行应用契约（设置、导航、OPRA、逻辑曲目和音频证据 CLI）：`pnpm run test:app`
-- 跨 main/preload/renderer 类型变更：`pnpm run typecheck`
-- 发布前：按 [windows-release-gate.md](./windows-release-gate.md) 执行完整 gate
+## 发布能力声明
 
-真实设备 smoke 不属于默认 gate。ASIO、WASAPI Exclusive、native DSD、SACD ISO、CoreAudio、ALSA `hw:` 等验证需要明确设备与曲目样本。
+下面的表格由发布门禁读取，必须与暂存原生文件和带来源的运行观察一致。允许状态为 `available`、`experimental`、`unverified`、`not-built` 和 `unsupported`；设备未验证时保持 `unverified`。
 
-## 代码风格
+| Capability          | Product status | Build presence | Runtime observation | Real-device verification |
+| ------------------- | -------------- | -------------- | ------------------- | ------------------------ |
+| ASIO                | `experimental` | `available`    | `available`         | `unverified`             |
+| VST3                | `available`    | `available`    | `unverified`        | `unverified`             |
+| SoXR                | `unverified`   | `unverified`   | `unverified`        | `unverified`             |
+| ebur128             | `available`    | `available`    | `available`         | `unverified`             |
+| CUDA                | `not-built`    | `not-built`    | `not-built`         | `unverified`             |
+| Native DSD provider | `available`    | `available`    | `available`         | `unverified`             |
 
-Prettier 配置：单引号、无分号、`printWidth: 100`、无 trailing comma。ESLint 使用 flat config，Vue SFC 必须使用 `<script lang="ts">`。
+发布命令生成并校验暂存目录中的 `audio-capabilities.json` 和 `release-capability-status.json`。任一受控声明与构建、运行或设备事实不一致时停止发布。
 
-测试使用 Node 内置 `node --test`，TS 测试通过 `--experimental-strip-types` 运行。新增测试应与被测文件 co-locate，命名为 `*.test.ts`、`*.test.mjs` 或 `*.test.cjs`。
+## 提交约定
 
-renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层深度相对路径。主进程、preload、renderer 的类型边界要显式维护，不要让 renderer 直接依赖 main 内部实现。
-
-歌单详情提供页内返回入口：流媒体复用详情栈恢复上一层，本地分类返回集合，聚合歌单返回网格。再次点击当前流媒体栏目会清除详情和搜索。全局 Esc 优先关闭已注册浮层，没有浮层且焦点不在输入控件时返回上一层（长按和输入法组合事件不触发返回）。网易云歌单删除或取消收藏放在右键／更多操作菜单中，继续使用原有确认流程。底栏常用工具图标使用继承按钮颜色的 SVG，避免图标字体加载或字形渲染影响操作入口。
-
-## 局域网远程控制
-
-远控页面资源由 `electron-builder.yml` 的 `extraResources` 复制到安装目录的 `resources/remote`；打包运行时从 `process.resourcesPath/remote` 提供页面，开发时从仓库 `resources/remote` 读取。静态资源路径由 `RemoteHttpServer` 统一选择，创建服务时不要覆盖默认路径。
-
-远程控制默认关闭。完整控制面由 `src/main/remote/httpServer.ts` 提供，PIN 配对后才会暴露带 Bearer token 的状态、SSE、浏览与命令接口；投送模式的 `mediaOnly` bind 仍只服务 capability-token 媒体，绝不开放远控 UI/API。
-
-`GET /api/browse` 接受受限的 `view`（`library`、`playlists`、`queue`）、`query`、`offset`、`limit`（1–100）与可选 `playlistId`，返回分页且经 renderer 生成的展示数据。曲目与歌单 ID 是短生命周期 opaque token，LAN 端不会获得主机路径、真实媒体 URL 或 provider 凭据。远控播放/入队只接受这些 token；不能传入路径或 URL。
-
-主进程通过受信任的 `remote:request` / `remote:rendererResponse` IPC 向已就绪 renderer 请求每页数据或实际播放动作，并以 5 秒 timeout 明确失败，不会静默确认。队列页面和播放状态共享 `queueRevision`；`jumpQueue`、`removeQueue` 必须回传该 revision，陈旧索引返回 `409 queue_changed`。播放模式 API 使用 `sequence`、`loop`、`single`、`shuffle`，renderer 映射到内部 `sequential`、`listLoop`、`repeat`、`shuffle`。
-
-网页位于 `resources/remote/`，采用暖纸白与墨绿的响应式听音室布局：桌面双栏，手机提供正在播放、音乐库、队列导航及浏览时的迷你控制条。音乐库与歌单支持搜索、每页 40 条、点播和入队；队列支持跳转和移除。歌单曲目复用 `getPlaylistTracksById`，包括已保存的 provider 曲目快照，不额外开放在线平台全站搜索或任意 URL 点播。
-
-`remotePlaybackPublisher` 在曲目封面变化时复用现有封面解析，只有不超过 256 KiB 的 PNG/JPEG/WebP data URL 可以发布；不传递本机协议句柄或原始远端地址，缺失或超限封面显示网页内置唱片插画。不变封面不随播放 tick 重复发送。网页配对凭据保留在当前浏览器，断开配对会清除本机保存；仅适用于可信局域网，不应将 HTTP 端口映射到公网。
-
-远控改动至少运行 `pnpm run test:radio-remote` 和 `pnpm run typecheck`。该测试集包含真实 localhost HTTP 认证/分页/并发/错误/mediaOnly 检查、preload 请求回执测试、曲目与歌单选择测试、状态发布测试及网页 DOM 行为测试。
-
-## 用户需求表：在线歌单与界面补齐（2026-09-10）
-
-- 反馈表 48：桌面歌词移动时使用已保存尺寸，避免拖动时窗口尺寸漂移；锁定悬停 500ms 显示解锁入口，仅指针位于解锁按钮且未按下鼠标时接收点击，其余区域保持穿透。迷你播放器使用带采样时间的播放快照在两次同步间推算进度，每次快照重新校准，最多推算 2 秒；保留主窗口既有后台节流策略。长歌单标题与操作按钮允许换行，避免互相挤压。
-- 反馈表 49：本地歌曲信息弹窗可直接进入现有标签编辑器，写入文件并更新曲库；在线曲目不改写平台元数据。本地专辑、艺人等列表按视图、搜索和排序条件保存本次会话的滚动位置，返回时在切换动画完成后恢复。
-- 反馈表 50：歌词组装从解析器拆至 `lyricLineBuilder.ts`。内嵌 LRC 支持显式翻译/注音标签，以及至少两组相同时间戳、相同语言排列的双语行；日/韩文、中文、拉丁注音三层可分开显示。独立辅助歌词优先，显式声部、单个模糊行和同语言重复行不自动归类。
-- 反馈表 51：继续使用现有音量标准化。Track/Album 依赖源标签；Loudnorm 离线测量本地文件，无缓存首播及不支持测量的网络源使用备用增益，DSD 直通不经过 DSP。关闭模式或切换曲目后，旧缓存查询不得注入响度结果或重新启动分析。
-
-- 反馈表 44–45：任务栏歌词保留翻译开关，并按任务栏高度约束字号；窗口不可聚焦、鼠标穿透，仅在任务栏模式定期恢复可见浮层的堆叠顺序，离开该模式或关闭窗口时停止。任务栏自动隐藏、点击及多显示器行为仍需 Windows 实机验证。
-- 反馈表 46（后续调整）：歌词页封面信息下不显示“添加到歌单”；播放队列仍提供歌单选择器，支持已有自建歌单、新建歌单及可写音源的自建云端歌单。
-- 反馈表 47：补齐安装包中的远控静态页面资源与运行时查找路径；PIN 配对和授权规则保持现有契约。
-
-- 在线歌单详情提供当前列表搜索、标题/歌手/专辑/时长升降序、刷新、播放定位。检索索引按数据版本缓存；虚拟列表测量实际行高并在字号/窗口变化后更新。多选及播放队列使用同一视图顺序；排序不改写远端歌单。收藏列表尚未全部加载时，界面提示检索范围并提供“加载全部”；加载完成后即可检索完整收藏。
-- 在线歌曲右键支持“下一首播放”，复用播放队列控制器，不直接操作原生引擎。
-- 在线音乐库提供全部/我创建的/我收藏的分类；来源未提供归属信息的歌单保留在全部分类。长按约 450ms 后拖动排序，无需进入调整模式；键盘支持 Alt + ↑ / ↓。顺序按音源与账号保存到当前设备；不写回服务端。歌单卡片分批显示，每批 48 个。
-- 主窗口支持 760px 最小宽度，首次窗口大小不超过主显示器工作区。小于 760px 的工作区按实际可用宽度限制。设置导航在 1180px 以下转为横向栏，导航跳转保留原有平滑滚动（反馈表第 36 项不采纳）。主界面的设置、主题工作室、侧栏、曲库、首页、播放栏及插件等页面的固定文字尺寸按界面字号同比缩放；独立桌面歌词窗口继续使用专用字号。
-- 下载设置提供音源原名、歌手-歌名、歌名-歌手、歌名四种格式；标签/封面补写与歌词文件保存默认关闭，保留既有行为。标签先写临时副本，失败保留原始音频并展示提示。歌词文件使用排他写入，不覆盖已有同名歌词。
-- 下载面板区分请求音质、音源报告和文件核验结果；无损 24bit/48kHz 归类 Lossless，采样率超过 48kHz 的无损归类 Hi-Res。无法解析时保留音源报告并标注未核验。逐字歌词仅保留音源提供的真实时间信息，不合成伪逐字时间轴。
-- 验证入口新增 `pnpm run test:feature-requests`，涵盖视图顺序、分类排序、下载偏好、音质判断、歌词保护与任务栏浮层几何。
-
-本地与流媒体歌单总览均支持长按歌单卡片拖动排序，松手后保存本机显示顺序；搜索后只调整可见歌单的相对位置。歌单内歌曲未接入此次长按排序，保留原有曲目排序与播放行为。长按交互提供落点提示、边缘滚动、Esc 取消和防误点击；键盘使用 Alt + ↑ / ↓ 调整。歌曲列表的歌名、歌手与专辑链接按文字内容收缩，长文本仍在列宽内省略，空白区域不触发详情跳转。
-
-本地页面通过 Vue `Transition mode="out-in"` 切换，`SongList` 必须保留单一元素根节点。歌曲信息弹窗置于列表根容器内部，仍经 Teleport 显示；不得与根容器并列，否则离开歌曲列表后切换可能停在空白占位。`LocalViewTransition.test.ts` 使用实际模板的根节点结构验证首页、列表、其他本地页及模式切换，并覆盖弹窗开启状态。
-
-网易云播放在会话首次解析及地址缓存到期后，先通过当前账号解析在线地址，再复用匹配完整来源 URL 的磁盘缓存。旧版仅按歌曲 ID 保存的缓存不参与直接播放；试听响应不写入播放缓存，重新登录清空会话缓存，避免开通会员后继续播放旧试听文件。
-
-本地歌曲列表多选工具栏与右键菜单支持一次性追加选中歌曲到播放队列，复用批量队列命令，不切换当前播放曲目；顺序播放按当前列表顺序追加，随机模式沿用队列随机策略。批量加入歌单与从歌单移除沿用已有多选操作。
-
-播放栏的左、中、右区域显式占据第一行第 1、2、3 列，避免主题装饰节点参与网格自动排位后使操作区落到第二行；标准、迷你和紧凑形态沿用同一列归属。
-
-### DSP 等响度试听
-
-DSP 机架记录 A 快照后，以当前草稿为 B，选择当前本地 PCM 曲目的 10–60 秒文件内区间并测量。只有独立分析进程完成两侧处理后响度及补偿复测，才开放 A/B；切换等待 DSP ACK，保留进度和队列，退出恢复原配置。首版只支持原采样率单/双声道的无处理或内置 EQ，其他处理组合显示不可匹配。修改草稿、音源、设备或外部 DSP 配置使旧结果失效。范围、数值容差及 native fixture 证据见 [音频 API](./audio-engine-api.md#等响度试听会话) 与 [音频架构](./twilight-audio-engine-architecture.md#等响度-ab-的离线等价边界)。
-
-### 连续播放与内容边界
-
-播放设置可选择“原样优先”或“连续优先”，输出策略随设备档案保存。默认保留原样优先；连续优先将 PCM 请求统一为双声道 Float32 和所选采样率，显示来源、目标与实际输出，DSD 单独切换。格式转换复用现有 SRC，曲目预加载和交接仍完全由原生队列负责。
-
-交叉淡化提供线性、等功率曲线，以及保留专辑/短曲边界、允许覆盖、现场保留三种内容规则；CUE、未知时长和变速始终不重叠。界面显示当前规则允许的时长、正在混合状态或阻断原因。seek、变速和手动切歌不会将已消费的预加载片段误当成下一首起点。详细默认值和范围见 [音频 API](./audio-engine-api.md#连续播放策略与交叉淡化)。
-
-### 迷你播放器
-
-迷你窗口使用透明无边框窗口，圆角仅由渲染层的 CSS 裁剪与透明度绘制。不要用原生 `setShape` 拼接圆角区域；该区域按整数像素裁剪，在分数缩放下会露出锯齿。
-
-迷你播放器以封面为主体、模糊封面为窗口底面，不显示歌词。封面模式从封面像素计算平均颜色作为底层，再叠加未压暗的模糊封面；浅色封面呈现浅色底面，深色封面呈现深色底面，切歌时交叉淡入淡出。文字颜色按封面平均颜色自动选择，强调色取封面主色并保证相对底面的 3:1 对比度。封面模式不继承主题背景图、深色歌词遮罩或已保存的紫色底色、强调色和文字颜色；无封面时使用中性色。纯色、渐变和图片模式仍保留各自的自定义背景及文字参数。四种形态由窗口尺寸决定（`mini-player/presentation.ts`）：条形 360×88、卡片 440×184、舞台 640×260、海报 300×480，预设在 `shared/miniPlayer.ts` 的 `MINI_PLAYER_SIZE_PRESETS`，工具条的“切换形态”按最近预设轮换。收藏按钮跟随曲目信息放在标题旁，控制行保持“播放模式｜上一首/播放/下一首｜音量”对称，舞台的音量滑条悬停时向左展开；舞台与海报的标题最多两行，条形与卡片的长标题每轮先在起点停留再滚动。窗口工具（自定义、切换形态、置顶、锁定、最小化、返回主窗口）只在悬停时出现，条形悬停时由工具条替换标题位置；自定义面板打开时把小形态临时撑到 520×340，面板左侧保留只显示底面与封面的实时预览，关闭后恢复。
-
-窗口不使用 `-webkit-app-region: drag`（拖动区会吞掉悬停和点击），由渲染进程指针事件经 `miniPlayer:moveTo` / `miniPlayer:moveEnd` 自行移动。分数缩放下无边框 thickFrame 窗口的读回尺寸会比设定值大 1–4px：拖动全程使用设置中的尺寸，结束时保存一次；程序化 `setBounds` 之后的读数由 `isMiniPlayerBoundsEcho` 识别为回声，只保存请求的 bounds，避免尺寸逐次累积。改变尺寸时 `resizeMiniPlayerBounds` 锚定窗口所在的最近工作区角，停在角落的窗口切换形态后不会漂移。验证：`test:playback-routing`、`test:plugins`，真实渲染与拖动用 CDP 在 1.75 缩放下核对。
+沿用相邻文件的 TypeScript、Vue 和格式约定。提交源码、必要测试与开发者使用说明；本机计划、执行记录、release note 和性能采样留在被忽略的目录。新增公开文档需明确调整白名单。

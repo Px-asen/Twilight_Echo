@@ -22,11 +22,11 @@ import {
 } from './duplicate-detection-benchmark.ts'
 
 const evidenceUrl = new URL(
-  '../docs/audit-evidence/te-4.4-duplicate-detection-2026-09-30.json',
+  './fixtures/te-4.4-duplicate-detection-2026-09-30.json',
   import.meta.url
 )
 const manifestUrl = new URL(
-  '../docs/audit-evidence/te-4.4-duplicate-detection-2026-09-30.manifest.json',
+  './fixtures/te-4.4-duplicate-detection-2026-09-30.manifest.json',
   import.meta.url
 )
 

@@ -14,7 +14,7 @@ import type {
   MediaProviderAlbumSummary,
   MediaProviderArtistSummary
 } from '../../providers/mediaProvider.ts'
-import { appendUniqueTracks } from './streamingPageModel.ts'
+import { appendUniqueTracks, getPersonalizedStreamKey } from './streamingPageModel.ts'
 import { createCoreCollectionSearch } from './coreCollectionSearch.ts'
 import { createNcmPlaylistEditor } from './ncmPlaylistEditor.ts'
 import { getTrackSource } from '../../utils/logicalTrackModel.ts'
@@ -1012,6 +1012,28 @@ test('private FM and radar start the Core session without renderer queue ownersh
   assert.doesNotMatch(source, /appendPersonalizedStreamTracks|personalizedStreamRemaining|session: PersonalizedStreamSession/)
   assert.match(homeSource, /@click="playPersonalizedStream\(fmSection\)"/)
   assert.match(homeSource, /@click="playPersonalizedStream\(radarSection\)"/)
+})
+
+test('FM and radar cards start their stream without pinning an obsolete preview track', () => {
+  const handler = homeSource.match(/function playPersonalizedStream\([\s\S]*?\n\}/)?.[0]
+  assert.ok(handler)
+  const events: unknown[][] = []
+  const play = runInNewContext(`${stripTypeScriptTypes(handler)};playPersonalizedStream`, {
+    props: { startingStream: null },
+    getPersonalizedStreamKey,
+    emit: (...args: unknown[]) => events.push(args)
+  })
+  for (const key of ['fm', 'radar']) {
+    play({ key, tracks: [createTrack('ncm:old-preview', 'ncm')] })
+    play({ key, tracks: [] })
+    assert.deepEqual(events.splice(0), [
+      ['playStream', key],
+      ['playStream', key]
+    ])
+  }
+  const tracks = [createTrack('other:1', 'other')]
+  play({ key: 'other', tracks })
+  assert.deepEqual(events, [['playTrack', tracks[0], tracks]])
 })
 
 test('streaming destinations unload and restore Core-owned navigation state', () => {

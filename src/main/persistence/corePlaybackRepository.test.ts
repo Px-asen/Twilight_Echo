@@ -9,6 +9,114 @@ import { createCorePlaybackRepository } from './corePlaybackRepository.ts'
 import { libraryQueueTrack } from '../../core/playback/libraryTrack.ts'
 import { importLegacyQueue } from '../../core/playback/legacyQueueImport.ts'
 
+test('queue-reference backpressure cannot commit playback without returning its new revision', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'core-session-backpressure-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bundle = createPlaybackSessionStoreBundle(root)
+  let blocked = true
+  const repository = createCorePlaybackRepository(bundle, {
+    syncLibraryQueueReferences: async () => {
+      if (blocked) throw new Error('Music library database request queue is full')
+    }
+  })
+  const session = {
+    version: 1 as const,
+    savedAt: '',
+    mode: 'trackAndPosition' as const,
+    position: 12,
+    track: libraryQueueTrack({ id: 'one', filePath: 'D:/one.flac' }, 'entry'),
+    libraryQueue: { id: 'queue', revision: 0, index: 0, entryId: 'entry' }
+  }
+  await assert.rejects(repository.save(session, 0), /request queue is full/)
+  assert.equal(
+    await bundle.sessionStore.load(),
+    null,
+    'a failed prerequisite must leave the durable revision unchanged'
+  )
+  blocked = false
+  const saved = await repository.save(session, 0)
+  assert.equal(saved.revision, 1)
+  blocked = true
+  await assert.rejects(repository.save(session, 0), { code: 'ERR_PERSISTENCE_REVISION_CONFLICT' })
+  await assert.rejects(repository.clear(0), { code: 'ERR_PERSISTENCE_REVISION_CONFLICT' })
+  blocked = false
+  assert.equal((await repository.save({ ...session, position: 15 }, saved.revision)).revision, 2)
+})
+
+test('post-commit reference cleanup failures keep recovery queues pinned and acknowledge save and clear', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'core-session-reference-cleanup-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  db.replaceDocument({
+    version: 2,
+    revision: 0,
+    folders: [],
+    exclusions: [],
+    tracks: [{ id: 'one', filePath: 'D:/one.flac' }]
+  })
+  const bundle = createPlaybackSessionStoreBundle(root)
+  let failCleanup = false,
+    protectedCount = 0
+  const warning = t.mock.method(console, 'warn', () => {})
+  const repository = createCorePlaybackRepository(bundle, {
+    syncLibraryQueueReferences: async (owner, ids) => {
+      if (owner === 'core:persisted-playback') {
+        if (failCleanup && ids.length < protectedCount)
+          throw new Error('Music library database request queue is full')
+        protectedCount = ids.length
+      }
+      db.syncLibraryQueueReferences(owner, ids)
+    }
+  })
+  const queues = Array.from({ length: 3 }, () => db.createLibraryQueue({}))
+  const session = (queue: (typeof queues)[number]) => ({
+    version: 1 as const,
+    savedAt: '',
+    mode: 'trackAndPosition' as const,
+    position: 12,
+    track: libraryQueueTrack(db.readLibraryQueue(queue.id).items[0].track!, queue.selectedEntryId!),
+    libraryQueue: {
+      id: queue.id,
+      revision: queue.revision,
+      index: queue.index,
+      entryId: queue.selectedEntryId!
+    }
+  })
+  let revision = 0
+  for (const queue of queues) {
+    failCleanup = queue === queues[2]
+    revision = (await repository.save(session(queue), revision)).revision
+  }
+  assert.equal(revision, 3, 'cleanup failure must not hide the committed revision')
+  assert.equal(warning.mock.callCount(), 1)
+  db.sql.exec('UPDATE queues SET created_at=0')
+  assert.equal(
+    db.collectLibraryQueueGarbage(1),
+    0,
+    'the failed cleanup retains the previous recovery queues'
+  )
+  assert.equal((await bundle.sessionStore.loadBackup())?.data?.libraryQueue?.id, queues[1].id)
+  failCleanup = false
+  revision = (await repository.save(session(queues[2]), revision)).revision
+  assert.equal(revision, 4)
+  assert.equal(db.collectLibraryQueueGarbage(1), 2)
+  // Build a distinct backup again so Clear has references to retire after committing.
+  const next = db.createLibraryQueue({})
+  revision = (await repository.save(session(next), revision)).revision
+  failCleanup = true
+  const cleared = await repository.clear(revision)
+  assert.equal(cleared.revision, revision + 1)
+  assert.equal((await bundle.sessionStore.load())?.data, null)
+  db.sql.exec('UPDATE queues SET created_at=0')
+  assert.equal(db.collectLibraryQueueGarbage(1), 0)
+  failCleanup = false
+  assert.equal(
+    (await repository.save(session(next), cleared.revision)).revision,
+    cleared.revision + 1
+  )
+})
+
 test('persisted Zone owners never replace another session queue reference', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'core-zone-repository-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

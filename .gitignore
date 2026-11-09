@@ -121,30 +121,11 @@ CLAUDE.md
 .workbuddy/
 .omo/
 .superpowers/
-/docs/superpowers/
-/docs/audit-evidence/*
-!/docs/audit-evidence/ipc-channel-baseline.json
-!/docs/audit-evidence/te-3.3-persistence-benchmark-2026-07-17.json
-!/docs/audit-evidence/te-3.4-queue-virtualization-2026-07-17.json
-!/docs/audit-evidence/te-4.4-duplicate-detection-2026-09-30.json
-!/docs/audit-evidence/te-4.4-duplicate-detection-2026-09-30.manifest.json
-!/docs/audit-evidence/m5.3-unified-library-100k.json
-!/docs/audit-evidence/m5.3-unified-library-100k-checkpoint.json
-!/docs/audit-evidence/m5.3-unified-library-100k-worker-checkpoint.json
-!/docs/audit-evidence/m5.3-unified-library-100k-selective.json
-!/docs/audit-evidence/m5.3-unified-library-100k-focus-page.json
-!/docs/audit-evidence/m5.3-unified-library-100k-startup.json
-!/docs/audit-evidence/m5.3-database-open-diagnostic.json
-!/docs/audit-evidence/m5.3-metadata-tasks-diagnostic.json
-!/docs/audit-evidence/m5.3-unified-library-100k-focus-matched.json
-!/docs/audit-evidence/m5.3-unified-library-100k-catalog-facets.json
-!/docs/audit-evidence/m5.3-ingestion-aborted.json
 **/docs/history-session/
 **/docs/performance-audit-evidence/
 **/docs/plans/
 **/docs/handoffs/
 **/docs/*-plan*.md
-!/docs/unified-music-library-m2.2-plan.md
 **/docs/*-roadmap.md
 **/docs/*-handoff-*.md
 **/docs/*-audit*.md
@@ -152,10 +133,6 @@ CLAUDE.md
 **/docs/*-review-*.md
 **/docs/*-implementation-*.md
 **/docs/*-fixes-*.md
-/docs/agent-architecture-guide.md
-/docs/playback-capability-agent-prompt-pack.md
-/docs/code-relief-*.md
-/docs/asio-dsd-passthrough-research.md
 .worktrees/
 agent-tools/
 .idea/
@@ -183,6 +160,17 @@ history-session/
 /orig-labels.json
 /.service-exe-label-helper.ps1
 /.service-exe-label-original.json
+
+# Documentation: only public developer entry points and plugin authoring guides.
+/docs/**
+!/docs/README.md
+!/docs/DEVELOPER_README.md
+!/docs/PLUGIN_README.md
+!/docs/twilight-echo-plugin-spec.md
+!/docs/theme-plugin-authoring.md
+!/docs/plugin-full-interface.md
+!/docs/plugin-sidebar-widgets.md
+!/docs/plugin-experiences.md
 
 # Temporary files / local scratch
 /.remote-library-editor-package-path.txt

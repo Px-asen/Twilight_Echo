@@ -686,13 +686,18 @@ test('login checks preserve credentials across failures and provider restarts', 
     { code: 502 },
     { code: 503 },
     { code: 460 },
-    { code: 301 },
-    { data: { code: 200, profile: null } },
+    { code: 200 },
     {},
     { code: -1, message: 'connection unavailable' }
   ]
   try {
     for (const response of failures) {
+      const provider = await activateProvider(async () => response, settings)
+      await assert.rejects(provider.checkLogin())
+      assert.equal(settings.get('cookie'), 'MUSIC_U=restart-test;')
+      ncmProvider.deactivate()
+    }
+    for (const response of [{ code: 301 }, { data: { code: 200, profile: null } }]) {
       const provider = await activateProvider(async () => response, settings)
       assert.deepEqual(await provider.checkLogin(), { loggedIn: false, profile: null })
       assert.equal(settings.get('cookie'), 'MUSIC_U=restart-test;')
@@ -3365,7 +3370,8 @@ for (const loginMethod of ['QR', 'official web']) {
     const provider = await activateProvider(
       async (path) => {
         if (path.startsWith('/login/qr/check')) return { code: 803, cookie: 'MUSIC_U=renewed;' }
-        if (path.startsWith('/login/status')) return { data: { profile: { userId: 1 } } }
+        if (path.startsWith('/login/status')) return { data: { code: 200, profile: { userId: 1 } } }
+        if (path.startsWith('/user/detail')) return { code: 200, profile: { follows: 0 } }
         return {
           code: 200,
           data: [{ code: 200, url: `https://music.example/${++calls}.mp3` }]

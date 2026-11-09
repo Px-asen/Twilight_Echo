@@ -1,6 +1,6 @@
 /**
  * 网络音乐源（Network Music Sources）共享类型。
- * 详见 docs/network-music-sources.md。
+ * 网络源的共享类型与跨进程接口以本文件为准。
  */
 
 export type NetworkProtocol = 'webdav' | 'ftp' | 'ftps' | 'sftp' | 'scp' | 'smb' | 'nfs' | 'dlna'

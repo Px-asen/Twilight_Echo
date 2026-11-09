@@ -252,7 +252,7 @@ test('layout, motion and typography knobs are clamped to their published ranges'
 
   assert.equal(normalized.coverGap, 160)
   assert.equal(normalized.lyricsMaxWidth, 420)
-  assert.equal(normalized.lyricsOffsetX, -80)
+  assert.equal(normalized.lyricsOffsetX, -400)
   assert.equal(normalized.coverSize, 110)
   assert.equal(normalized.coverRadius, 0)
   assert.equal(normalized.anchorPosition, 0.85)

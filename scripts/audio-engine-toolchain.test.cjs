@@ -1322,7 +1322,7 @@ test('every native test target keeps assert() live in Release builds', () => {
 })
 
 test('Windows release gate documents MinGW toolchain and no-whitespace build layout requirements', () => {
-  const guide = readFileSync(join(__dirname, '..', 'docs', 'windows-release-gate.md'), 'utf8')
+  const guide = readFileSync(join(__dirname, '..', 'docs', 'DEVELOPER_README.md'), 'utf8')
 
   for (const requirement of [
     'VCPKG_ROOT',

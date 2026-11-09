@@ -43,6 +43,50 @@ interface TestNcmProvider {
   ): Promise<string | null>
 }
 
+test('saved NCM sessions survive host restart and status failures remain retryable', async (t) => {
+  const module = await import(new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href)
+  t.after(() => module.deactivate())
+  let provider!: TestNcmProvider
+  const settings = new Map<string, unknown>([['cookie', 'MUSIC_U=saved-account']])
+  const profile = { userId: 42, nickname: 'Saved account', signature: '', follows: 0, followeds: 0 }
+  let response: unknown = { data: { code: 200, profile } }
+  const context = {
+    twilight: {
+      internal: { ncm: { request: async (_path: string, cookie: string) => {
+        assert.equal(cookie, 'MUSIC_U=saved-account')
+        if (response instanceof Error) throw response
+        return response
+      } } },
+      providers: { register: (value: TestNcmProvider) => { provider = value } }
+    },
+    settings: { get: (key: string) => settings.get(key),
+      set: (key: string, value: unknown) => settings.set(key, value),
+      delete: (key: string) => settings.delete(key) },
+    logger: { info() {}, warn() {}, error() {}, debug() {} }
+  }
+  await module.activate(context)
+  assert.equal((await provider.checkLogin()).profile?.userId, 42)
+  module.deactivate()
+  await module.activate(context)
+  assert.equal((await provider.checkLogin()).loggedIn, true)
+
+  for (const failure of [new Error('fetch failed'), { code: 503 }, { code: 460 }, { code: 200 }]) {
+    module.deactivate()
+    await module.activate(context)
+    response = failure
+    await assert.rejects(provider.checkLogin())
+    assert.equal(settings.get('cookie'), 'MUSIC_U=saved-account')
+    response = { data: { code: 200, profile } }
+    assert.equal((await provider.checkLogin()).profile?.userId, 42, 'retry uses the saved credential')
+  }
+  for (const signedOut of [{ data: { code: 200, profile: null } }, { code: 301 }]) {
+    module.deactivate()
+    await module.activate(context)
+    response = signedOut
+    assert.deepEqual(await provider.checkLogin(), { loggedIn: false, profile: null })
+  }
+})
+
 test('official NCM login saves a verified account and discards a cancelled browser result', async (t) => {
   const module = await import(new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href)
   t.after(() => module.deactivate())

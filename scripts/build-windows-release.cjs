@@ -101,7 +101,7 @@ async function main() {
   if ((verify.status ?? 1) !== 0) process.exit(verify.status ?? 1)
   verifyReleaseCapabilityConsistency({
     nativeDir: path.join(root, 'dist', 'win-unpacked', 'resources', 'audio-engine'),
-    declaration: path.join(root, 'docs', 'release-capability-status.md')
+    declaration: path.join(root, 'docs', 'DEVELOPER_README.md')
   })
   await writeInstallerChecksum(expectedInstaller)
 }

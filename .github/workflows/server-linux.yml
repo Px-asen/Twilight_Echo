@@ -20,11 +20,6 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - 'docs/server-linux.md'
-      - 'docs/server-extensions.md'
-      - 'docs/audio-bridge-formats.md'
-      - 'docs/sync-group-transitions.md'
-      - 'docs/standalone-server-phase3.md'
       - 'LICENSE'
       - '.github/workflows/server-linux.yml'
 permissions:

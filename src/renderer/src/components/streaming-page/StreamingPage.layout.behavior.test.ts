@@ -110,12 +110,21 @@ test(
         ['--no-sandbox', join(directory, 'runner.cjs'), directory],
         { windowsHide: true, timeout: 80_000, env, maxBuffer: 1024 * 1024 }
       )
+      if (process.env.TWILIGHT_STREAMING_PERSONALIZED_ONLY) {
+        assert.match(result.stdout, /STREAMING_PERSONALIZED_OK/)
+        return
+      }
+      if (process.env.TWILIGHT_STREAMING_AUTH_ONLY) {
+        assert.match(result.stdout, /STREAMING_AUTH_OK/)
+        return
+      }
       if (!process.env.TWILIGHT_STREAMING_RESTORE_ONLY) {
         assert.match(result.stdout, /STREAMING_LAYOUT_OK/)
         assert.match(result.stdout, /STREAMING_LOCATE_OK/)
         assert.match(result.stdout, /STREAMING_PEOPLE_OK/)
       }
       assert.match(result.stdout, /STREAMING_RESTORE_OK/)
+      assert.match(result.stdout, /STREAMING_AUTH_OK/)
       console.log(result.stdout.split('\n').find((line) => line.startsWith('STREAMING_RESTORE_OK')))
     } finally {
       assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep))
@@ -154,6 +163,11 @@ defineExpose({
 const runtime = `
 import {createApp,h,nextTick,ref} from 'vue'
 import StreamingPage from '@renderer/components/StreamingPage.vue'
+import LoginPage from '@renderer/components/LoginPage.vue'
+import {useNcmStore} from '@renderer/stores/useNcmStore.ts'
+import {useProviderStore} from '@renderer/stores/useProviderStore.ts'
+import {useCoreConnection} from '@renderer/stores/coreConnection.ts'
+import {useAppNoticeStore} from '@renderer/stores/useAppNoticeStore.ts'
 import { coreSnapshot } from '@renderer/stores/coreTestFixtures.ts'
 import {installScrollToTopButton} from '@renderer/utils/scrollToTopButton.ts'
 import '@renderer/assets/base.css'
@@ -161,11 +175,31 @@ import '@renderer/assets/primeicons.css'
 import '@renderer/assets/icon-fonts.ts'
 installScrollToTopButton();
 const noop=()=>{};
+let authMode='guest',authProviders=[],authConnectDelay=0,authConnectCount=0;
+let recommendationMode='ready',recommendationCalls=0;
+const authProfile={userId:42,nickname:'已保存的网易云账号',avatarUrl:'',signature:'',follows:0,followeds:0};
 window.api={
  core:{
-  connect:async()=>({ok:true,value:{connectionId:'layout',snapshot:coreSnapshot()}}),
+  connect:async()=>{authConnectCount++;if(authConnectDelay)await new Promise(resolve=>setTimeout(resolve,authConnectDelay));return {ok:true,value:{connectionId:'layout',snapshot:coreSnapshot()}}},
   onMessage:()=>noop,onStatus:()=>noop,disconnect:async()=>{},cancel:async()=>{},
   request:async(_id,request)=>{
+   if(request.name==='providers.list')return {ok:true,value:authProviders};
+   if(request.name==='providers.call'){
+     const {method}=request.payload;
+     if(method==='checkLogin'){
+       if(authMode==='offline')throw Error('登录状态检查暂时失败，请重试');
+       return {ok:true,value:{loggedIn:authMode==='ready',profile:authMode==='ready'?authProfile:null}};
+     }
+     if(method==='openOfficialLogin'){authMode='ready';return {ok:true,value:{loggedIn:true,profile:authProfile}};}
+     if(method==='logout'){authMode='guest';return {ok:true,value:undefined};}
+     if(method==='fetchRecommendSongs'||method==='fetchRecommendPlaylists'){
+       recommendationCalls++;
+       if(recommendationMode==='failure')throw Error('推荐服务暂时不可用');
+       return {ok:true,value:method==='fetchRecommendSongs'&&recommendationMode!=='empty'?tracks.slice(0,3):[]};
+     }
+     if(method==='fetchPersonalFm'||method==='fetchPrivateContent')return {ok:true,value:recommendationMode==='empty'?[]:tracks.slice(3,6)};
+     return {ok:true,value:[]};
+   }
    if(request.name.startsWith('browse.')) {
      try { return {ok:true,value:await window.browseFixture(request.name,request.payload)} }
      catch(error) { errors.push(request.name+': '+String(error)); throw error }
@@ -191,7 +225,8 @@ window.api={
 };
 window.layoutPlayer={currentTrack:ref(null),personalizedStreamSession:ref(null),personalizedStreamRemaining:ref(0),queue:ref([]),playTrack:noop,playTrackPages:async(produce)=>{window.playedCount=0;await produce(async tracks=>{window.playedCount+=tracks.length})},startPersonalizedStream:noop,appendPersonalizedStreamTracks:noop,formatTime:seconds=>Math.floor(seconds/60)+':00'};
 const errors=[];
-const page=ref(null),tab=ref('library');
+window.addEventListener('unhandledrejection',event=>errors.push(String(event.reason)));
+const page=ref(null),tab=ref('library'),loginVisible=ref(false),authNavigationRevision=ref(0);
 let app;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const expect=(ok,label)=>{if(!ok)throw new Error(label)};
@@ -200,7 +235,104 @@ const tracks=Array.from({length:100},(_,i)=>({id:'fixture-'+i,title:'歌曲 '+i,
 const names=['Porter Robinson','C418','Ludicin','ReeK','Ophidian','n-buna','ヨルシカ','重音テト','Betwixt & Between','MIMI','25時、ナイトコードで。','花譜','Sad Keyboard Guy','void (Mournfinale)'];
 const portraits=['#c85f92','#527e8a','#bd8c58','#65628a'].map(color=>{paint.fillStyle=color;paint.fillRect(0,0,256,256);paint.fillStyle='#e9dbca';paint.beginPath();paint.ellipse(128,91,41,48,0,0,Math.PI*2);paint.fill();paint.fillStyle='#e1c4ae';paint.beginPath();paint.ellipse(128,248,85,92,0,0,Math.PI*2);paint.fill();return canvas.toDataURL()});
 const people=Array.from({length:80},(_,i)=>({id:i+1,name:names[i%names.length],picUrl:i%3===1?null:portraits[i%portraits.length],musicSize:0,userType:0}));
-const mount=async(wait=250)=>{app?.unmount();app=createApp({render:()=>h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');if(wait)await pause(wait);else await nextTick()};
+const mount=async(wait=250)=>{app?.unmount();app=createApp({render:()=>loginVisible.value?h(LoginPage,{initialProviderId:'ncm',onLoginSuccess:()=>{loginVisible.value=false}}):h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value,rootNavigationRevision:authNavigationRevision.value,onLogin:()=>{loginVisible.value=true}})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');if(wait)await pause(wait);else await nextTick()};
+const streamStarts=[];
+let streamResolve,streamReject;
+window.layoutPlayer.startPersonalizedStream=(...args)=>{
+ streamStarts.push(args);
+ return new Promise((resolve,reject)=>{streamResolve=resolve;streamReject=reject});
+};
+window.setupPersonalizedPlayback=async(empty=false)=>{
+ app?.unmount();app=null;authNavigationRevision.value++;
+ document.documentElement.dataset.teMotion='off';tab.value='home';authMode='ready';recommendationMode=empty?'empty':'ready';
+ useAppNoticeStore().clearNotices();
+ authProviders=[{id:'ncm',name:'网易云音乐',capabilities:['login','playbackUrl','library'],supportedMethods:['checkLogin','fetchRecommendSongs','fetchRecommendPlaylists','fetchPersonalFm','fetchPrivateContent'],ui:{streamingSections:[
+  {id:'daily',title:'每日推荐',icon:'pi pi-calendar',method:'fetchRecommendSongs'},
+  {id:'fm',title:'私人漫游',icon:'pi pi-compass',method:'fetchPersonalFm'},
+  {id:'radar',title:'私人雷达',icon:'pi pi-send',method:'fetchPrivateContent'}
+ ]}}];
+ await useCoreConnection().attach();await useProviderStore().syncProviders();useNcmStore().setLogin(authProfile);await mount();
+ expect(document.querySelectorAll('.duo-card').length===2,'both station cards must render');
+ if(!empty){
+  const before=streamStarts.length;window.playedCount=0;document.querySelector('.hero-play').click();
+  for(let i=0;i<100&&window.playedCount!==3;i++)await pause(10);
+  expect(window.playedCount===3&&streamStarts.length===before,'daily mix no longer plays its browse queue');
+ }
+ expect(errors.length===0,errors.join(';'));
+};
+window.startPersonalizedPlayback=async key=>{
+ const before=streamStarts.length,card=document.querySelector('.duo-'+key);
+ card.scrollIntoView({block:'center'});card.click();await nextTick();
+ expect(streamStarts.length===before+1,'station click did not start playback');
+ const args=streamStarts.at(-1);
+ expect(args.length===2&&args[0]===key&&args[1]==='ncm','station must start without an obsolete preview track: '+JSON.stringify(args));
+ expect(card.getAttribute('aria-busy')==='true'&&card.textContent.includes('正在准备播放'),'station has no loading feedback');
+ for(const button of document.querySelectorAll('.duo-card')){expect(button.disabled,'station can be submitted twice');button.click();}
+ await nextTick();expect(streamStarts.length===before+1,'repeated click started another station');
+ await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+ expect(errors.length===0,errors.join(';'));
+};
+window.finishPersonalizedPlayback=async(failed=false)=>{
+ if(failed)streamReject(new Error('电台服务暂时不可用，请重试'));else streamResolve();
+ await pause(20);await nextTick();
+ expect([...document.querySelectorAll('.duo-card')].every(button=>!button.disabled&&button.getAttribute('aria-busy')==='false'),'station remained busy after completion');
+ if(failed)expect(useAppNoticeStore().notices.value.some(notice=>notice.kind==='error'&&notice.message.includes('电台服务暂时不可用')),'station failure was not shown to the user');
+ expect(errors.length===0,errors.join(';'));
+};
+window.checkStreamingAuthentication=async stage=>{
+ const wait=async(predicate,label)=>{for(let i=0;i<100;i++){if(predicate())return;await pause(30)}throw Error(label+': '+document.body.innerText.slice(-1000)+' '+errors.join(';'))};
+ const store=useNcmStore();
+ if(stage==='offline'){
+   app?.unmount();app=null;
+   document.documentElement.dataset.teMotion='off';tab.value='home';authMode='offline';
+   authProviders=[{id:'ncm',name:'网易云音乐',capabilities:['login','playbackUrl','library'],supportedMethods:['checkLogin','fetchRecommendSongs','fetchRecommendPlaylists','openOfficialLogin'],ui:{authType:'qr',icon:'pi pi-cloud',loginExtraActions:[{label:'使用官方网页登录',method:'openOfficialLogin',primary:true}],streamingSections:[{id:'daily',title:'每日推荐',icon:'pi pi-calendar',method:'fetchRecommendSongs'}]}}];
+   await useCoreConnection().attach();await useProviderStore().syncProviders();await mount();
+   await wait(()=>document.body.innerText.includes('暂时无法确认登录状态'),'cold-start status error');
+   expect(!document.querySelector('.hero-invite'),'status error asks for another login');
+ }else if(stage==='retry'){
+   authMode='ready';[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='重试').click();
+   await wait(()=>store.isLoggedIn.value&&document.querySelector('.hero-title'),'saved session retry');
+   expect(!document.body.innerText.includes('登录后查看推荐'),'saved session still displays login invite');
+ }else if(stage==='official'){
+   await store.logout();await nextTick();await wait(()=>document.querySelector('.invite-cta'),'logout must clear homepage');
+   document.querySelector('.invite-cta').click();
+   await wait(()=>document.querySelector('.disclaimer-accept'),'login page');
+   document.querySelector('.disclaimer-accept').click();
+   await wait(()=>!loginVisible.value&&store.profile.value?.userId===42,'official login returns to streaming');
+   await wait(()=>document.querySelector('.hero-title'),'recommendations after login');
+   expect(!document.body.innerText.includes('登录后查看推荐'),'successful login returned to signed-out home');
+ }else if(stage==='delayed-entry'){
+   app?.unmount();app=null;authNavigationRevision.value++;authMode='ready';authConnectDelay=100;
+   await pause(150);store.setLogin(authProfile);
+   const connected=authConnectCount;
+   for(let visit=0;visit<5;visit++){
+     if(visit%2===0){app?.unmount();app=null;authNavigationRevision.value++;}
+     const before= recommendationCalls;
+     await mount();
+     await wait(()=>document.querySelector('.hero-title'),'automatic home load during Core attachment, visit '+visit);
+     expect(!document.querySelector('.home-error'),'page load requires a manual retry, visit '+visit);
+     expect(authConnectCount===connected,'page visit reattached the shared Core connection');
+     if(visit%2===1)expect(recommendationCalls===before,'cached recommendations fetched again');
+   }
+   authConnectDelay=0;
+ }else if(stage==='failed-cache'){
+   app?.unmount();app=null;authNavigationRevision.value++;recommendationMode='failure';
+   await mount();await wait(()=>document.querySelector('.home-error'),'initial recommendation failure');
+   recommendationMode='ready';await mount();
+   await wait(()=>document.querySelector('.hero-title'),'failed cached home loads automatically on return');
+   expect(!document.querySelector('.home-error'),'cached failure still needs manual retry');
+   app?.unmount();app=null;authNavigationRevision.value++;recommendationMode='empty';
+   await mount();await wait(()=>document.body.innerText.includes('暂无推荐歌单'),'valid empty recommendation result');
+   const before=recommendationCalls;await mount();
+   expect(recommendationCalls===before,'valid empty recommendations fetched again');
+   recommendationMode='ready';
+ }else{
+   authMode='offline';await store.checkLogin();await mount();
+   await wait(()=>document.querySelector('.hero-title'),'revisit preserves verified session');
+   expect(store.isLoggedIn.value&&!document.body.innerText.includes('登录后查看推荐'),'transient error lost session on revisit');
+ }
+ expect(errors.length===0,errors.join(';'));
+};
 window.checkStreamingRestoration=async()=>{
  document.documentElement.dataset.teMotion='off';tab.value='library';await mount();
  const many=Array.from({length:4201},(_,i)=>({...tracks[i%tracks.length],id:'fixture-'+i,title:'歌曲 '+i,ncmSongId:i+1,cover:null}));
@@ -379,7 +511,28 @@ ipcMain.handle('fixture:browse',(_event,name,payload)=>browse.execute('fixture',
 app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{backgroundThrottling:false,offscreen:true,preload:path.join(directory,'preload.cjs')}});
 try{await win.loadFile(path.join(directory,'index.html'));
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.mkdirSync(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,{recursive:true});
-if(process.env.TWILIGHT_STREAMING_RESTORE_ONLY){console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingRestoration()')));app.exit(0);return;}
+async function checkPersonalizedPlayback(){
+ for(const empty of [false,true]){
+  await win.webContents.executeJavaScript('window.setupPersonalizedPlayback('+empty+')');
+  for(const key of ['fm','radar']){
+   await win.webContents.executeJavaScript('window.startPersonalizedPlayback('+JSON.stringify(key)+')');
+   if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'stream-'+key+(empty?'-empty':'')+'.png'),(await win.webContents.capturePage()).toPNG());
+   await win.webContents.executeJavaScript('window.finishPersonalizedPlayback(true)');
+   await win.webContents.executeJavaScript('window.startPersonalizedPlayback('+JSON.stringify(key)+')');
+   await win.webContents.executeJavaScript('window.finishPersonalizedPlayback()');
+  }
+ }
+ console.log('STREAMING_PERSONALIZED_OK');
+}
+if(process.env.TWILIGHT_STREAMING_PERSONALIZED_ONLY){await checkPersonalizedPlayback();app.exit(0);return;}
+if(process.env.TWILIGHT_STREAMING_AUTH_ONLY){
+ for(const stage of ['offline','retry','delayed-entry','failed-cache','official','revisit']){
+  await win.webContents.executeJavaScript('window.checkStreamingAuthentication('+JSON.stringify(stage)+')');
+  if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'auth-'+stage+'.png'),(await win.webContents.capturePage()).toPNG());
+ }
+ console.log('STREAMING_AUTH_OK');app.exit(0);return;
+}
+if(process.env.TWILIGHT_STREAMING_RESTORE_ONLY){console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingRestoration()')));console.log('STREAMING_AUTH_OK '+JSON.stringify(await win.webContents.executeJavaScript("(async()=>{for(const stage of ['offline','retry','delayed-entry','failed-cache','official','revisit'])await window.checkStreamingAuthentication(stage)})()")));app.exit(0);return;}
 for(const width of [1480,520,360])for(const tone of ['pureWhite','dark']){
  win.setContentSize(width,900);console.log(JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingPeople('+JSON.stringify(tone)+')')));
  if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,tone+'-'+width+'-people.png'),(await win.webContents.capturePage()).toPNG())}
@@ -395,5 +548,7 @@ win.setContentSize(1280,900);
 console.log(await win.webContents.executeJavaScript('window.checkStreamingLocate()'));
 console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.executeJavaScript('window.checkStreamingRestoration()')));
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'liked-floating-locator.png'),(await win.webContents.capturePage()).toPNG())}
+await win.webContents.executeJavaScript("(async()=>{for(const stage of ['offline','retry','delayed-entry','failed-cache','official','revisit'])await window.checkStreamingAuthentication(stage)})()");console.log('STREAMING_AUTH_OK');
+await checkPersonalizedPlayback();
 console.log('STREAMING_LAYOUT_OK');app.exit(0)}catch(error){if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'failure.png'),(await win.webContents.capturePage()).toPNG());console.error(error.stack);app.exit(1)}});
 `

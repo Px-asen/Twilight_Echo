@@ -192,3 +192,42 @@ test('compiled search ignores unrelated snapshots and keeps results and selectio
   pending.at(-1)!.resolve({ ...page(), items: [], total: 0 }); await settle()
   assert.match(ui.text(), /暂无匹配的库内人物或作品/)
 })
+
+test('metadata notifications coalesce while search is pending and do not repeatedly retry a failed search', async t => {
+  const snapshot = shallowRef({ epoch: 'one', libraryRevision: 1, entityMetadataRevision: 1 })
+  const pending: Array<{
+    signal: AbortSignal
+    resolve: (value: MusicExplorationPage) => void
+    reject: (error: Error) => void
+  }> = []
+  const Search = component('../music-exploration/MusicExplorationSearch.vue', {
+    './explorationSearchView.ts': { createExplorationSearchView },
+    '../../stores/coreConnection.ts': { useCoreConnection: () => ({
+      state: snapshot,
+      query: (_name: string, _query: MusicExplorationQuery, signal: AbortSignal) =>
+        new Promise((resolve, reject) => pending.push({ signal, resolve, reject }))
+    }) }
+  })
+  const ui = mount(t, () => h(Search, { query: '周杰伦' }))
+  for (let revision = 2; revision <= 20; revision++) {
+    snapshot.value = { ...snapshot.value, entityMetadataRevision: revision }
+    await settle()
+  }
+  assert.equal(pending.length, 1, 'background enrichment must not restart an unfinished SQL read')
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].resolve(page()); await settle()
+  assert.match(ui.text(), /Same name/)
+  assert.equal(pending.length, 2, 'all pending invalidations share one fresh read')
+  pending[1].reject(new Error('Music library database request queue is full')); await settle()
+  for (let revision = 21; revision <= 30; revision++) {
+    snapshot.value = { ...snapshot.value, entityMetadataRevision: revision }
+    await settle()
+    assert.match(ui.text(), /request queue is full/)
+    assert.doesNotMatch(ui.text(), /正在查找/)
+  }
+  assert.equal(pending.length, 2, 'an error stays visible until an explicit retry or a new query')
+  ui.button('重新读取').props.onClick(); await settle()
+  assert.equal(pending.length, 3)
+  pending[2].resolve(page()); await settle()
+  assert.match(ui.text(), /Same name/)
+})
