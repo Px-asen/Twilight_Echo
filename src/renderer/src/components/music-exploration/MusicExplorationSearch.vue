@@ -17,7 +17,7 @@ watch([
     selected.value = ''
     void view.setQuery(query, nextScope)
   } else {
-    void view.refresh()
+    view.invalidate()
   }
 }, { immediate: true })
 onBeforeUnmount(() => view.dispose())
