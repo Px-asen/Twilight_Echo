@@ -1078,17 +1078,36 @@ async function checkLogin() {
   if (cachedProfile) return { loggedIn: true, profile: cachedProfile }
   const data = await request(`/login/status?timestamp=${Date.now()}`, cookie)
   const code = Number(data.data?.code ?? data.code)
-  const profileData = data.data?.profile ?? data.profile
+  let profileData = data.data?.profile ?? data.profile
   // Network failures, rate limits and malformed responses are not logout.
   if (code !== 200 && code !== 301) {
     throw new Error(describeApiError(code, data))
   }
-  if (code === 200 && !Object.hasOwn(data.data ?? data, 'profile') && !Object.hasOwn(data, 'profile')) {
+  const accountId = Number(data.data?.account?.id ?? data.account?.id)
+  if (code === 200 && !profileData && Number.isSafeInteger(accountId) && accountId > 0) {
+    const detail = await request(`/user/detail?uid=${accountId}`, cookie)
+    const detailCode = Number(detail.data?.code ?? detail.code)
+    if (detailCode !== 200) throw new Error(describeApiError(detailCode, detail))
+    profileData = detail.data?.profile ?? detail.profile
+    if (Number(profileData?.userId) !== accountId) {
+      throw new Error('网易云账户资料不完整，请稍后重试')
+    }
+  }
+  if (
+    code === 200 &&
+    !profileData &&
+    !Object.hasOwn(data.data ?? data, 'profile') &&
+    !Object.hasOwn(data, 'profile')
+  ) {
     throw new Error('网易云登录状态响应不完整，请稍后重试')
   }
   if (code === 200 && profileData) {
-    const profile = await buildProfile(profileData)
-    cachedUserId = profileData.userId
+    const userId = Number(profileData.userId)
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw new Error('网易云账户资料不完整，请稍后重试')
+    }
+    const profile = await buildProfile({ ...profileData, userId })
+    cachedUserId = userId
     cacheProfile(profile)
     return { loggedIn: true, profile }
   }
@@ -1240,6 +1259,11 @@ async function fetchUserLibrary(force = false) {
     attempts: 3,
     label: 'user playlists'
   })
+  const code = data.data?.code ?? data.code
+  if (code != null && Number(code) !== 200) throw new Error(describeApiError(Number(code), data))
+  if (![data.playlist, data.playlists, data.data?.playlist, data.data?.playlists].some(Array.isArray)) {
+    throw new Error('网易云歌单响应不完整，请稍后重试')
+  }
   const items = getPlaylistItems(data)
   const likedItem = items.find(isLikedPlaylistItem) ?? null
   const nextOwned = new Set()

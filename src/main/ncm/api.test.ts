@@ -82,7 +82,7 @@ test('NCM API binding rejects when the server cannot listen', async () => {
   }
 })
 
-test('FM, radar and writes bypass gateway caches while ordinary playback keeps caching', async () => {
+test('account library reads, FM, radar and writes bypass gateway caches while ordinary playback keeps caching', async () => {
   let now = 1000
   const urls: URL[] = []
   const api = new NcmApiService({
@@ -98,7 +98,11 @@ test('FM, radar and writes bypass gateway caches while ordinary playback keeps c
       '/personal_fm',
       '/personal/fm/mode?mode=DEFAULT',
       '/playlist/tracks?op=add',
-      '/like?id=1'
+      '/like?id=1',
+      '/user/playlist?uid=42&limit=1000',
+      '/user/detail?uid=42',
+      '/user/cloud?limit=50',
+      '/likelist?uid=42'
     ]) {
       await api.request(path)
       now++

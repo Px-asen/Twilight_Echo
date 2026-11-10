@@ -23,6 +23,12 @@ export interface NcmApiServiceOptions<TServer extends Server = Server> {
 const TIMESTAMPED_NCM_API_PATHS = [
   '/login',
   '/login/',
+  // The gateway caches reads for two minutes. Profile recovery and explicit
+  // library refreshes must not reuse incomplete or pre-edit account content.
+  '/user/playlist',
+  '/user/detail',
+  '/user/cloud',
+  '/likelist',
   '/playlist/create',
   '/playlist/delete',
   '/playlist/tracks',

@@ -2574,6 +2574,60 @@ test('artist intro and follow state use dedicated artist endpoints', async () =>
   }
 })
 
+test('account library failures are retryable errors, not successful empty libraries', async t => {
+  t.after(() => ncmProvider.deactivate())
+  let libraryResponse = { code: 301, msg: '需要登录' }
+  const provider = await activateProvider(async path => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') return { data: { code: 200, profile: {
+      userId: 1001, nickname: 'Account', signature: '', follows: 0, followeds: 0
+    } } }
+    if (url.pathname === '/user/playlist') return libraryResponse
+    throw new Error(`Unexpected endpoint ${url.pathname}`)
+  })
+  await assert.rejects(provider.fetchUserLibrary(), /登录/)
+  libraryResponse = { code: 200 }
+  await assert.rejects(provider.fetchUserLibrary(true), /歌单.*不完整/)
+  libraryResponse = { code: 200, playlist: [
+    { id: 11, name: '喜欢的音乐', specialType: 5, userId: 1001, trackCount: 2 },
+    { id: 22, name: 'My playlist', userId: 1001, trackCount: 3 }
+  ] }
+  const library = await provider.fetchUserLibrary(true)
+  assert.equal(library.likedPlaylist.id, 11)
+  assert.equal(library.playlists[0].id, 22)
+  assert.equal(library.playlists[0].owned, true)
+  libraryResponse = { code: 200, playlist: [] }
+  assert.deepEqual(await provider.fetchUserLibrary(true), { likedPlaylist: null, playlists: [] })
+})
+
+test('login restores missing profile details from the authenticated account identity', async t => {
+  t.after(() => ncmProvider.deactivate())
+  const settings = new Map([['cookie', 'MUSIC_U=account']])
+  let detail = { code: 200, profile: { userId: 42, nickname: 'Restored',
+    avatarUrl: null, signature: '', follows: 3, followeds: 4 } }
+  const provider = await activateProvider(async (path, cookie) => {
+    assert.equal(cookie, 'MUSIC_U=account')
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') return { data: { code: 200, account: { id: 42 }, profile: null } }
+    if (url.pathname === '/user/detail') {
+      assert.equal(url.searchParams.get('uid'), '42')
+      return detail
+    }
+    throw new Error(`Unexpected endpoint ${url.pathname}`)
+  }, settings)
+  detail = { code: 503 }
+  await assert.rejects(provider.checkLogin())
+  assert.equal(settings.get('cookie'), 'MUSIC_U=account')
+  detail = { code: 200, profile: { userId: 99, nickname: 'Wrong account' } }
+  await assert.rejects(provider.checkLogin(), /账户/)
+  detail = { code: 200, profile: { userId: 42, nickname: 'Restored',
+    avatarUrl: null, signature: '', follows: 3, followeds: 4 } }
+  const login = await provider.checkLogin()
+  assert.equal(login.loggedIn, true)
+  assert.equal(login.profile.userId, 42)
+  assert.equal(login.profile.nickname, 'Restored')
+})
+
 test('create delete and track mutations call NetEase playlist write endpoints', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
