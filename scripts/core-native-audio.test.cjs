@@ -20,7 +20,9 @@ test(
     try {
       const main = join(directory, 'out', 'main')
       const resources = join(directory, 'resources', 'audio-engine')
-      const stage = join(root, 'resources', 'audio-engine')
+      const stage = process.env.TAE_AUDIO_ENGINE_STAGE_DIR
+        ? resolve(process.env.TAE_AUDIO_ENGINE_STAGE_DIR)
+        : join(root, 'resources', 'audio-engine')
       await mkdir(main, { recursive: true })
       await mkdir(resources, { recursive: true })
       for (const file of await readdir(stage, { withFileTypes: true }))
@@ -63,6 +65,18 @@ test(
       assert.equal(result.runtime.addonPath, join(resources, 'twilight_audio_node.node'))
       assert.equal(result.capabilities.features.ffmpeg, true)
       assert.equal(result.alive, 0)
+      const journal = join(directory, '中文用户 🎵', '日志')
+      const events = (
+        await Promise.all(
+          (await readdir(journal))
+            .filter((name) => name.endsWith('.jsonl'))
+            .map(async (name) =>
+              (await readFile(join(journal, name), 'utf8')).trim().split('\n').map(JSON.parse)
+            )
+        )
+      ).flat()
+      assert.ok(events.some((event) => event.event === 'engine.started'))
+      assert.ok(events.filter((event) => event.event === 'health.sample').length >= 2)
     } finally {
       assert.equal(dirname(directory), resolve(tmpdir()))
       assert.ok(basename(directory).startsWith('twilight-core-native-audio-'))
@@ -80,6 +94,7 @@ const profile = join(__dirname, 'profile')
 mkdirSync(profile)
 app.setPath('userData', profile)
 app.disableHardwareAcceleration()
+process.env.TAE_DIAGNOSTICS_DIR = join(__dirname, '中文用户 🎵', '日志')
 const children = new Set()
 let core, audio, ports = 0, parentBusinessMessages = 0, result
 const fork = (entry, args, name) => {
@@ -170,6 +185,8 @@ const main = async () => {
   assert.equal(timer,null)
   const loopAcknowledged = await manager.setLoopRangeConfirmed(-1,-1)
   await visualization.shutdown()
+  // The diagnostic thread starts independently of the service ready message.
+  await new Promise(resolve => setTimeout(resolve, 1200))
   const info = await manager.getPlaybackInfo()
   const runtime = manager.getNativeRuntimeIdentity()
   const result = {state:info.state,nativePlaybackActive:info.nativePlaybackActive,fftDisabled:disabled.tapStatus==='disabled',frames,loopAcknowledged,transportMethods,runtime,capabilities}

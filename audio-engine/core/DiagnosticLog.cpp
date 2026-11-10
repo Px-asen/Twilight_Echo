@@ -1,4 +1,5 @@
 #include "DiagnosticLog.h"
+#include "Utf8Path.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +11,10 @@
 #include <cerrno>
 #include "../utils/JsonUtils.h"
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <process.h>
 #else
 #include <unistd.h>
@@ -226,6 +231,30 @@ uint64_t steadyMs() {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+
+std::filesystem::path environmentPath(const char* name) {
+#ifdef _WIN32
+  // getenv() uses the Windows ANSI code page, not Node's UTF-8. Passing its
+  // bytes to u8path throws for Chinese profile paths before the journal's
+  // write error handler can run, taking down the entire audio service.
+  const std::wstring wideName(name, name + std::char_traits<char>::length(name));
+  DWORD size = GetEnvironmentVariableW(wideName.c_str(), nullptr, 0);
+  while (size) {
+    std::wstring value(size, L'\0');
+    const DWORD length = GetEnvironmentVariableW(wideName.c_str(), value.data(), size);
+    if (!length) return {};
+    if (length < size) {
+      value.resize(length);
+      return std::filesystem::path(value);
+    }
+    size = length;
+  }
+  return {};
+#else
+  const char* value = std::getenv(name);
+  return value ? std::filesystem::path(value) : std::filesystem::path{};
+#endif
+}
 }
 
 std::string sanitizeNativeDiagnosticJson(const std::string& json, bool preservePaths) {
@@ -267,12 +296,16 @@ std::string sanitizeNativeDiagnosticJson(const std::string& json, bool preserveP
 
 DiagnosticJournal::DiagnosticJournal() {
   startMs_ = steadyMs();
-  const char* directory = std::getenv("TAE_DIAGNOSTICS_DIR");
-  if (!directory || !*directory) return;
-  directory_ = std::filesystem::u8path(directory);
-  const char* session = std::getenv("TWILIGHT_LOG_SESSION_ID");
-  session_ = safeIdentifier(session ? session : "native-standalone");
-  instance_ = "native-" + std::to_string(getpid()) + '-' + std::to_string(nowEpochMs()) + '-' + fingerprint(std::to_string(reinterpret_cast<uintptr_t>(this)));
+  try {
+    directory_ = environmentPath("TAE_DIAGNOSTICS_DIR");
+    if (directory_.empty()) return;
+    const char* session = std::getenv("TWILIGHT_LOG_SESSION_ID");
+    session_ = safeIdentifier(session ? session : "native-standalone");
+    instance_ = "native-" + std::to_string(getpid()) + '-' + std::to_string(nowEpochMs()) + '-' + fingerprint(std::to_string(reinterpret_cast<uintptr_t>(this)));
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "[TwilightDiagnostics] native journal unavailable; stage=initialize reason=%s\n", error.what());
+    directory_.clear();
+  }
 }
 
 void DiagnosticJournal::write(const std::string& event, const std::string& details, DiagLevel level,
@@ -295,9 +328,9 @@ void DiagnosticJournal::write(const std::string& event, const std::string& detai
     // Other processes may own active files. Never delete them to make room.
     uint64_t total = 0;
     for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
-      const auto name = entry.path().filename().string();
+      const auto name = entry.path().filename().u8string();
       if (entry.is_regular_file() && entry.path().extension() == ".jsonl" &&
-          (name.rfind("app-", 0) == 0 || name.rfind("native-", 0) == 0 || name.rfind("emergency-", 0) == 0)) total += entry.file_size();
+          (name.rfind(u8"app-", 0) == 0 || name.rfind(u8"native-", 0) == 0 || name.rfind(u8"emergency-", 0) == 0)) total += entry.file_size();
     }
     if (total + line.size() > 256 * 1024 * 1024) throw std::runtime_error("diagnostic capacity reached");
     file_ = directory_ / (instance_ + '-' + std::to_string(part_) + ".active.jsonl");
@@ -309,19 +342,24 @@ void DiagnosticJournal::write(const std::string& event, const std::string& detai
     if (!reportedFailure_) std::fprintf(stderr, "[TwilightDiagnostics] native journal unavailable; stage=write errno=%d reason=%s\n", errno, error.what());
     reportedFailure_ = true;
   }
-  std::string debugId, debugDirectory;
-  {
-    std::lock_guard lock(debugCaptureMutex);
-    if (debugCaptureConfigured) { debugId = debugCaptureId; debugDirectory = debugCaptureDirectory; }
-    else {
-      const char* id = std::getenv("TWILIGHT_DEBUG_SESSION_ID");
-      const char* directory = std::getenv("TWILIGHT_DEBUG_DIRECTORY");
-      if (id && directory) { debugId = id; debugDirectory = directory; }
+  try {
+    std::string debugId;
+    std::filesystem::path debugDirectory;
+    {
+      std::lock_guard lock(debugCaptureMutex);
+      if (debugCaptureConfigured) {
+        debugId = debugCaptureId;
+        // Live N-API strings are UTF-8; environment paths are native UTF-16.
+        debugDirectory = utf8Path(debugCaptureDirectory);
+      } else {
+        const char* id = std::getenv("TWILIGHT_DEBUG_SESSION_ID");
+        if (id) debugId = id;
+        debugDirectory = environmentPath("TWILIGHT_DEBUG_DIRECTORY");
+      }
     }
-  }
-  if (!debugId.empty() && !debugDirectory.empty()) try {
-    if (std::filesystem::exists(std::filesystem::u8path(debugDirectory) / "capacity-reached")) return;
-    const auto directory = std::filesystem::u8path(debugDirectory) / "logs";
+    if (debugId.empty() || debugDirectory.empty()) return;
+    if (std::filesystem::exists(debugDirectory / "capacity-reached")) return;
+    const auto directory = debugDirectory / "logs";
     std::filesystem::create_directories(directory);
     const auto file = directory / (instance_ + "-debug.active.jsonl");
     const auto size = std::filesystem::exists(file) ? std::filesystem::file_size(file) : 0;
