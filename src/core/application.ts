@@ -90,12 +90,20 @@ import type { TwilightPluginManager } from './plugins/manager.ts'
 import type { CorePluginManagement } from './plugins/management.ts'
 import { CoreServiceRegistry, type CoreServiceFactories } from './serviceRegistry.ts'
 import type { CoreBrowseService } from './browse/service.ts'
+import { CORE_REQUEST_CAPACITY, isCorePriorityRequest } from '../shared/coreRequestCapacity.ts'
 
 interface Client {
   identity: CoreClientIdentity
   send(message: CoreClientMessage): void
   requests: Map<string, AbortController>
   seen: Set<string>
+  active: number
+  waiting: number
+}
+interface RequestWaiter {
+  client: Client
+  priority: boolean
+  grant(): void
 }
 export interface CoreApplicationDependencies {
   lazyServices?: CoreServiceFactories<CoreLazyServices>
@@ -243,6 +251,7 @@ export class CoreApplication {
   }
   private migrationRequired = true
   private active = 0
+  private readonly requestWaiters = new Set<RequestWaiter>()
   private initialized = false
   private readonly deferredAudioStartup = new Map<string, () => Promise<void>>()
   private audioStartupRestore: Promise<void> | null = null
@@ -592,7 +601,9 @@ export class CoreApplication {
       identity: structuredClone(identity),
       send,
       requests: new Map(),
-      seen: new Set()
+      seen: new Set(),
+      active: 0,
+      waiting: 0
     })
     // Snapshot and subscription registration occur in one JS turn. An event
     // cannot be lost in the snapshot-to-subscription gap.
@@ -612,7 +623,7 @@ export class CoreApplication {
     void this.dependencies.pluginManagement?.disconnect(clientId).catch(error => console.error('[core.plugins.upload]', error))
     void this.dependencies.browse?.disconnect(clientId).catch(error => console.error('[core.browse]', error))
     for (const controller of client.requests.values())
-      controller.abort(new Error('Core client disconnected'))
+      controller.abort(failure('CANCELLED', 'Core client disconnected'))
   }
   changed(): void {
     this.sequence++
@@ -640,7 +651,44 @@ export class CoreApplication {
       this.clients
         .get(clientId)
         ?.requests.get(requestId)
-        ?.abort(new Error('Core request cancelled'))
+        ?.abort(failure('CANCELLED', 'Core request cancelled'))
+  }
+  private canDispatchRequest(client: Client, priority: boolean): boolean {
+    return !this.shuttingDown && this.clients.get(client.identity.id) === client &&
+      this.active < CORE_REQUEST_CAPACITY.active &&
+      client.active < (priority ? CORE_REQUEST_CAPACITY.clientActive : CORE_REQUEST_CAPACITY.clientReaders)
+  }
+  private acquireRequest(client: Client, priority: boolean, signal: AbortSignal): Promise<void> | void {
+    const reserve = () => { this.active++; client.active++ }
+    if (this.canDispatchRequest(client, priority)) {
+      reserve()
+      return
+    }
+    return new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        this.requestWaiters.delete(waiter)
+        client.waiting--
+        signal.removeEventListener('abort', abort)
+      }
+      const waiter: RequestWaiter = {
+        client,
+        priority,
+        grant: () => { finish(); reserve(); resolve() }
+      }
+      const abort = () => { finish(); reject(signal.reason) }
+      client.waiting++
+      this.requestWaiters.add(waiter)
+      signal.addEventListener('abort', abort, { once: true })
+    })
+  }
+  private drainRequests(): void {
+    while (!this.shuttingDown && this.active < CORE_REQUEST_CAPACITY.active) {
+      const available = [...this.requestWaiters].filter(waiter =>
+        this.canDispatchRequest(waiter.client, waiter.priority))
+      const next = available.find(waiter => waiter.priority) ?? available[0]
+      if (!next) return
+      next.grant()
+    }
   }
   request(clientId: string, raw: CoreRequestEnvelope): Promise<void> {
     const work = this.handleRequest(clientId, raw)
@@ -666,6 +714,7 @@ export class CoreApplication {
       } as CoreClientMessage)
     }
     let controller: AbortController | null = null
+    let admitted = false
     try {
       if (!isCoreRequest(raw))
         throw failure('INVALID_REQUEST', 'Unknown or malformed Core operation')
@@ -679,8 +728,6 @@ export class CoreApplication {
           'OUTCOME_UNKNOWN',
           'Request was already dispatched; refresh state instead of replaying it'
         )
-      if (this.active >= 128 || client.requests.size >= 16)
-        throw failure('BUSY', 'Core request capacity exceeded')
       if (
         this.phase !== 'ready' &&
         !raw.name.startsWith('migration.') &&
@@ -689,11 +736,22 @@ export class CoreApplication {
         throw failure('NOT_READY', 'Core initialization or browser migration is incomplete')
       if (this.phase === 'stopped' || this.shuttingDown)
         throw failure('NOT_READY', 'Core is shutting down')
+      const priority = isCorePriorityRequest(raw)
+      if (!this.canDispatchRequest(client, priority) && (
+        client.waiting >= CORE_REQUEST_CAPACITY.clientQueued ||
+        this.requestWaiters.size >= CORE_REQUEST_CAPACITY.queued
+      )) throw failure('BUSY', 'Core request capacity exceeded')
       controller = new AbortController()
       client.requests.set(raw.requestId, controller)
       client.seen.add(raw.requestId)
       if (client.seen.size > 1024) client.seen.delete(client.seen.values().next().value!)
-      this.active++
+      // Cancellation at the gateway can finish before a database read stops.
+      // Count the actual work until it settles and queue replacements here.
+      const waiting = this.acquireRequest(client, priority, controller.signal)
+      if (waiting) await waiting
+      admitted = true
+      controller.signal.throwIfAborted()
+      if (this.shuttingDown) throw failure('NOT_READY', 'Core is shutting down')
       const value = await this.dispatch(raw, controller.signal, client.identity)
       reply({ ok: true, value })
     } catch (error) {
@@ -702,7 +760,11 @@ export class CoreApplication {
     } finally {
       if (controller) {
         client.requests.delete(raw.requestId)
+      }
+      if (admitted) {
+        client.active--
         this.active--
+        this.drainRequests()
       }
     }
   }
@@ -730,7 +792,10 @@ export class CoreApplication {
         ? playback.startPersonalized(request.payload, signal)
         : playback.refillPersonalized(request.payload)
     }
-    if (request.name.startsWith('playlists.')) {
+    // A submission holds the playlist write lane until commit/abort. Its next
+    // batch must reach the submission owner so that lane can finish. New
+    // submissions already serialize and check revisions inside editPages.
+    if (request.name.startsWith('playlists.') && request.name !== 'playlists.submit') {
       await this.dependencies.playlists?.waitForPending()
       signal.throwIfAborted()
     }
@@ -2539,7 +2604,7 @@ export class CoreApplication {
     await this.dependencies.presentation?.shutdown()
     for (const client of this.clients.values())
       for (const controller of client.requests.values())
-        controller.abort(new Error('Core shutting down'))
+        controller.abort(failure('CANCELLED', 'Core shutting down'))
     try {
       await this.dependencies.audioRecovery?.shutdown()
       await this.dependencies.pluginManagement?.shutdown()

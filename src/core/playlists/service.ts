@@ -418,7 +418,11 @@ export class CorePlaylistService {
     })
   }
   /** Public read dispatch waits for a just-published preference refresh before using cached pages. */
-  async waitForPending(): Promise<void> { await this.tail }
+  async waitForPending(): Promise<void> {
+    // Failed/cancelled edits report to their caller. Readers still need the
+    // last committed state, including the persistence error needed to recover.
+    await this.tail.catch(() => undefined)
+  }
   /** A preference/identity transaction can change the default list outside a playlist gesture. */
   refreshPreferences(): Promise<void> {
     return this.enqueue(async () => {

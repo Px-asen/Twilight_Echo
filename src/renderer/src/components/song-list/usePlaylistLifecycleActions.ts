@@ -362,30 +362,34 @@ export function usePlaylistLifecycleActions(options: PlaylistLifecycleActionOpti
     playlistDragTrackId.value = null
     const captured = dragSource
     dragSource = null
-    if (options.streamingSelection?.enabled()) {
-      if (
-        !playlist ||
-        !captured ||
-        captured.playlistId !== playlist.id ||
-        captured.id === target.id
-      )
-        return
-      const targetIndex = await getPlaylistMemberPosition(playlist.id, target.id)
-      if (targetIndex < 0) return
-      await options.streamingSelection.run(captured.source, async (lease, signal) => {
-        if (await reorderPlaylistTrackIdPagesById(playlist.id, lease.ids, targetIndex, signal))
-          options.repairMessage.value = '已更新歌单顺序'
-      })
-      return
-    }
     if (!playlist || !dragged || dragged === target.id) return
-    const targetIndex = await getPlaylistMemberPosition(playlist.id, target.id)
-    if (targetIndex < 0) return
-    const selected = options.isSelected(dragged)
-      ? options.getSelectedTracks().map((track) => track.id)
-      : [dragged]
-    if (await reorderPlaylistTracks(playlist.name, selected, targetIndex)) {
-      options.repairMessage.value = '已更新歌单顺序'
+    const streaming = options.streamingSelection?.enabled()
+    if (streaming && (!captured || captured.playlistId !== playlist.id)) return
+    const selected = streaming
+      ? []
+      : options.isSelected(dragged)
+        ? options.getSelectedTracks().map((track) => track.id)
+        : [dragged]
+    try {
+      const [fromIndex, targetIndex] = await Promise.all([
+        getPlaylistMemberPosition(playlist.id, dragged),
+        getPlaylistMemberPosition(playlist.id, target.id)
+      ])
+      if (fromIndex < 0 || targetIndex < 0 || options.currentPlaylist.value?.id !== playlist.id)
+        return
+      // Dropping downward inserts after the target; upward inserts before it.
+      // Inserting before the next row would otherwise leave adjacent songs unchanged.
+      const insertion = targetIndex + (fromIndex < targetIndex ? 1 : 0)
+      if (streaming && captured) {
+        await options.streamingSelection!.run(captured.source, async (lease, signal) => {
+          if (await reorderPlaylistTrackIdPagesById(playlist.id, lease.ids, insertion, signal))
+            options.repairMessage.value = '已更新歌单顺序'
+        })
+      } else if (await reorderPlaylistTracks(playlist.name, selected, insertion)) {
+        options.repairMessage.value = '已更新歌单顺序'
+      }
+    } catch (error) {
+      options.repairMessage.value = describeError(error, '调整歌单顺序失败')
     }
   }
 

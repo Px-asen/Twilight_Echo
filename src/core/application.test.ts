@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreApplication, type CoreApplicationDependencies } from './application.ts'
+import { CORE_REQUEST_CAPACITY } from '../shared/coreRequestCapacity.ts'
 import { CoreRemoteService } from './remote/service.ts'
 import { CoreAudioRecoveryService } from './audio/recoveryService.ts'
 import { CoreVisualizationService } from './audio/visualizationService.ts'
@@ -48,6 +49,12 @@ import type { TrackData } from '../shared/track.ts'
 import { CoreMetadataService } from './library/metadataService.ts'
 import { CorePersonalBackupService } from './persistence/personalBackupService.ts'
 import type { EntityMetadataDatabaseApi, EntityMetadataDetail, EntityMetadataJob } from '../shared/entityMetadata.ts'
+import { CorePlaylistService } from './playlists/service.ts'
+import { CorePlaylistSubmission, createPlaylistInputResolver } from './playlists/submission.ts'
+import { createQueueInputResolver } from './playback/queueInputResolver.ts'
+import { createLogicalTrackModel } from '../shared/logicalTrackModel.ts'
+import type { Playlist } from '../shared/playlists.ts'
+import type { CorePlaylistPageEdit, CorePlaylistSubmitReply } from '../shared/corePlaylists.ts'
 
 function fixture(
   t: test.TestContext,
@@ -186,7 +193,7 @@ function fixture(
     coreMigrationCommit: async (...args) => database.commit(...args),
     coreMigrationAbort: async (...args) => database.abort(...args)
   }
-  const application = new CoreApplication({
+  const dependencies: CoreApplicationDependencies = {
     settings,
     output,
     cache,
@@ -292,7 +299,8 @@ function fixture(
     },
     ready: () => calls.push('ready'),
     ...owners
-  })
+  }
+  const application = new CoreApplication(dependencies)
   const messages = new Map<string, CoreClientMessage[]>(),
     identities = new Map<string, CoreClientIdentity>()
   function connect(
@@ -340,7 +348,7 @@ function fixture(
     await application.shutdown()
     database.close()
   })
-  return { application, playback, scan, calls, messages, connect, request }
+  return { application, playback, library: dependencies.library, scan, calls, messages, connect, request }
 }
 
 test('Core remains usable after an audio startup crash and restores deferred owners on explicit recovery', async t => {
@@ -753,6 +761,96 @@ test('Core tags keep local management offline and require library plus playback 
   assert.equal(f.application.snapshot({ id: 'reader', role: 'plugin', permissions: ['library:read'] }).tagsRevision, db.tagsState().tagsRevision)
   const hidden = f.application.snapshot({ id: 'blind', role: 'plugin', permissions: [] })
   assert.equal(hidden.tagsRevision, null); assert.equal(hidden.tagsLinkRevision, null)
+})
+
+test('Core dispatch completes playlist add, reorder, remove and abort while a submission owns the write lane', async t => {
+  const tracks = [1, 2, 3].map(i => ({
+    id: `local:${i}`, title: `Song ${i}`, artist: 'Artist', album: 'Album',
+    duration: 180, size: 1, filePath: `D:/Music/${i}.flac`, source: 'local' as const
+  }))
+  const db = new LibraryDatabase(':memory:')
+  db.replaceDocument({ version: 2, revision: 0, folders: [], exclusions: [], tracks })
+  let saved: Playlist[] = [], revision = 0
+  const envelope = () => ({ version: 2 as const, revision, savedAt: '', data: structuredClone(saved) })
+  const database = {
+    getMetadata: async () => db.getMetadata(),
+    queryTracks: async (query: Parameters<typeof db.queryTracks>[0]) => db.queryTracks(query),
+    getTracksByIds: async (ids: string[]) => db.getTracksByIds(ids),
+    lookupTracksByPaths: async (paths: string[]) => db.lookupTracksByPaths(paths),
+    syncPlaylistView: async (request: Parameters<typeof db.syncPlaylistView>[0]) => db.syncPlaylistView(request)
+  }
+  const playlists = new CorePlaylistService({
+    runtime: {
+      now: Date.now, newId: () => crypto.randomUUID(), clone: structuredClone, notify() {},
+      identity: createLogicalTrackModel(() => undefined), versions: { ensure() {}, revision: () => 0 },
+      repository: {
+        load: async () => envelope(),
+        save: async (data, expected) => {
+          assert.equal(expected, revision)
+          saved = structuredClone(data)
+          revision++
+          return envelope()
+        }
+      }
+    },
+    database, versions: { getRevision: () => 0, snapshot: emptyMusicVersions }, changed() {}
+  })
+  const submissions = new CorePlaylistSubmission({
+    playlists,
+    resolve: createPlaylistInputResolver(createQueueInputResolver({
+      database: { getTracksByIds: database.getTracksByIds, readLibraryQueue: async () => { throw new Error('Unused queue') } },
+      authorizeLocal: async path => path, providers: () => new Set(), streams: () => new Map(),
+      network: async () => { throw new Error('Unused network') }
+    }), database),
+    newId: () => crypto.randomUUID(),
+    schedule: (callback, delay) => {
+      const timer = setTimeout(callback, delay)
+      timer.unref()
+      return () => clearTimeout(timer)
+    }
+  })
+  const library = { playlists, submissions }
+  const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+    playlists: library.playlists, playlistSubmission: library.submissions
+  })
+  t.after(() => db.close())
+  await f.application.initialize()
+  f.connect('editor', ['library:read', 'library:write'])
+  async function submit(payload: object): Promise<CorePlaylistSubmitReply> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const reply = await Promise.race([
+        f.request('editor', 'playlists.submit', payload),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Playlist dispatch deadlocked')), 1500)
+        })
+      ])
+      assert.equal(reply.ok, true, JSON.stringify(reply))
+      return (reply as { value: CorePlaylistSubmitReply }).value
+    } catch (error) {
+      await library.submissions.disconnect('editor')
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  async function edit(edit: CorePlaylistPageEdit, items: object[]) {
+    const stage = await submit({ kind: 'begin', revision: library.playlists.getRevision(), edit })
+    await submit({ kind: 'append', id: stage.id, sequence: 1, items })
+    return submit({ kind: 'commit', id: stage.id, sequence: 2 })
+  }
+  const created = await edit({ kind: 'create', name: 'Local songs' }, [])
+  const id = created.result as string
+  await edit({ kind: 'add', id }, tracks.map(track => ({ input: { kind: 'local', id: track.id } })))
+  await edit({ kind: 'reorder', id, target: 0 }, [{ id: tracks[2].id }])
+  await edit({ kind: 'remove', id }, [{ id: tracks[1].id }])
+  const stage = await submit({ kind: 'begin', revision: library.playlists.getRevision(), edit: { kind: 'remove', id } })
+  await submit({ kind: 'append', id: stage.id, sequence: 1, items: [{ id: tracks[0].id }] })
+  await submit({ kind: 'abort', id: stage.id })
+  const read = await f.request('editor', 'playlists.members', { id, revision: library.playlists.getRevision() })
+  assert.equal(read.ok, true, JSON.stringify(read))
+  if (read.ok) assert.deepEqual((read.value as { items: { id: string }[] }).items.map(item => item.id), [tracks[2].id, tracks[0].id])
+  assert.deepEqual(saved.find(playlist => playlist.id === id)?.trackIds, [tracks[2].id, tracks[0].id])
 })
 
 test('Core playlist reads wait for a published preference refresh before returning cached members', async t => {
@@ -1689,6 +1787,209 @@ test('cache ownership is dispatched through Core and requires settings access ra
   assert.equal(duplicate.ok, false)
   if (!duplicate.ok) assert.equal(duplicate.error.code, 'OUTCOME_UNKNOWN')
   assert.equal(clears, 1)
+})
+
+test('cancelled slow reads retain their execution slots while replacement pages wait and playback stays usable', async t => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('desktop')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const metadata = f.library.getMetadata
+  let running = 0, peak = 0, calls = 0
+  f.library.getMetadata = async () => {
+    calls++
+    peak = Math.max(peak, ++running)
+    try { await gate; return await metadata() }
+    finally { running-- }
+  }
+  const old = Array.from({ length: 12 }, (_, i) =>
+    f.request('desktop', 'library.metadata', {}, { requestId: `old:${i}` }))
+  for (let i = 0; i < 12; i++) f.application.cancel('desktop', `old:${i}`, 'current')
+  const fresh = Array.from({ length: 24 }, () => f.request('desktop', 'library.metadata'))
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(calls, 12, 'cancelled database work still consumes real execution capacity')
+    assert.equal((await f.request('desktop', 'playback.pause')).ok, true)
+    f.connect('mini')
+    assert.equal((await f.request('mini', 'state.snapshot')).ok, true)
+  } finally { release() }
+  await Promise.all(old)
+  const responses = await Promise.all(fresh)
+  assert.equal(responses.every(response => response.ok), true, JSON.stringify(responses))
+  assert.equal(calls, 36)
+  assert.ok(peak <= 12)
+})
+
+test('queued cancellation and disconnect retire work without dispatching it or replaying command IDs', async t => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('desktop')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const metadata = f.library.getMetadata
+  let reads = 0, edits = 0
+  f.library.getMetadata = async () => { reads++; await gate; return metadata() }
+  f.scan.pause = async () => { edits++; return true }
+  const active = Array.from({ length: 12 }, () => f.request('desktop', 'library.metadata'))
+  const cancelled = f.request('desktop', 'scan.pause', { jobId: 'scan' }, { requestId: 'cancelled-edit' })
+  const disconnected = f.request('desktop', 'scan.pause', { jobId: 'scan' }, { requestId: 'detached-edit' })
+  try {
+    assert.equal(edits, 0)
+    f.application.cancel('desktop', 'cancelled-edit', 'previous')
+    assert.equal(edits, 0)
+    f.application.cancel('desktop', 'cancelled-edit', 'current')
+    const response = await cancelled
+    assert.equal(response.ok, false)
+    if (!response.ok) assert.equal(response.error.code, 'CANCELLED')
+    const duplicate = await f.request('desktop', 'scan.pause', { jobId: 'scan' }, { requestId: 'cancelled-edit' })
+    assert.equal(duplicate.ok, false)
+    if (!duplicate.ok) assert.equal(duplicate.error.code, 'OUTCOME_UNKNOWN')
+    f.application.disconnect('desktop')
+    await disconnected
+    f.connect('desktop')
+    assert.equal((await f.request('desktop', 'state.snapshot')).ok, true)
+  } finally { release() }
+  await Promise.all(active)
+  assert.equal(edits, 0)
+  assert.equal(reads, 12)
+})
+
+test('request waiting is bounded, cancellation frees queue capacity and rejected IDs can be submitted once', async t => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('desktop')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const metadata = f.library.getMetadata
+  f.library.getMetadata = async () => { await gate; return metadata() }
+  const active = Array.from({ length: CORE_REQUEST_CAPACITY.clientReaders }, () =>
+    f.request('desktop', 'library.metadata'))
+  const queued = Array.from({ length: CORE_REQUEST_CAPACITY.clientQueued }, (_, i) =>
+    f.request('desktop', 'library.metadata', {}, { requestId: `queued:${i}` }))
+  let retried: Promise<CoreResponse> | undefined
+  try {
+    const overflow = await f.request('desktop', 'library.metadata', {}, { requestId: 'overflow' })
+    assert.equal(overflow.ok, false)
+    if (!overflow.ok) assert.equal(overflow.error.code, 'BUSY')
+    const duplicate = await f.request('desktop', 'library.metadata', {}, { requestId: 'queued:1' })
+    assert.equal(duplicate.ok, false)
+    if (!duplicate.ok) assert.equal(duplicate.error.code, 'OUTCOME_UNKNOWN')
+    assert.equal((await f.request('desktop', 'playback.pause')).ok, true)
+    f.application.cancel('desktop', 'queued:0', 'current')
+    const cancelled = await queued[0]
+    assert.equal(cancelled.ok, false)
+    if (!cancelled.ok) assert.equal(cancelled.error.code, 'CANCELLED')
+    retried = f.request('desktop', 'library.metadata', {}, { requestId: 'overflow' })
+  } finally { release() }
+  const responses = await Promise.all([...active, ...queued.slice(1), retried!])
+  assert.equal(responses.every(response => response.ok), true)
+})
+
+test('Core globally bounds running and waiting work and gives queued playback the next available slot', async t => {
+  const f = fixture(t)
+  await f.application.initialize()
+  const releases: Array<() => void> = []
+  let running = 0, peak = 0
+  f.playback.play = async () => {
+    peak = Math.max(peak, ++running)
+    try { await new Promise<void>(resolve => releases.push(resolve)) }
+    finally { running-- }
+  }
+  const active: Array<Promise<CoreResponse>> = []
+  for (let client = 0; client < 8; client++) {
+    f.connect(`window:${client}`)
+    for (let i = 0; i < 16; i++) active.push(f.request(`window:${client}`, 'playback.play'))
+  }
+  const metadata = f.library.getMetadata
+  const order: string[] = []
+  f.library.getMetadata = async () => { order.push('read'); return metadata() }
+  f.playback.pause = async () => { order.push('pause') }
+  f.connect('reader:1')
+  f.connect('reader:2')
+  const queued = Array.from({ length: CORE_REQUEST_CAPACITY.queued - 1 }, (_, i) =>
+    f.request(`reader:${i < CORE_REQUEST_CAPACITY.clientQueued ? 1 : 2}`, 'library.metadata'))
+  const pause = f.request('reader:2', 'playback.pause')
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(running, 128)
+    assert.deepEqual(order, [])
+    f.connect('overflow')
+    const overflow = await f.request('overflow', 'library.metadata')
+    assert.equal(overflow.ok, false)
+    if (!overflow.ok) assert.equal(overflow.error.code, 'BUSY')
+    releases.shift()!()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(order[0], 'pause')
+  } finally { for (const release of releases) release() }
+  const responses = await Promise.all([...active, ...queued, pause])
+  assert.equal(responses.every(response => response.ok), true)
+  assert.equal(order[0], 'pause')
+  assert.equal(peak, 128)
+})
+
+for (const completion of ['commit', 'abort'] as const) {
+  test(`playlist ${completion} can release the write lane while playlist readers saturate admission`, async t => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const submitted: string[] = []
+    const f = fixture(t, true, undefined, undefined, undefined, undefined, undefined, {
+      playlists: {
+        initialize: async () => {}, getRevision: () => 0,
+        waitForPending: () => gate, state: () => ({ revision: 0 }),
+        shutdown: async () => {}, flush: async () => {}
+      } as unknown as CoreApplicationDependencies['playlists'],
+      playlistSubmission: {
+        submit: async (_client: string, command: { kind: string }) => {
+          submitted.push(command.kind)
+          if (command.kind === completion) release()
+          return { id: 'stage', state: 'building', sequence: 1, total: 0 }
+        },
+        disconnect: async () => {}, shutdown: async () => { release() }
+      } as unknown as CoreApplicationDependencies['playlistSubmission']
+    })
+    await f.application.initialize()
+    f.connect('desktop')
+    const readers = Array.from({ length: 12 }, () => f.request('desktop', 'playlists.state'))
+    const append = f.request('desktop', 'playlists.submit', { kind: 'append', id: 'stage', sequence: 1, items: [] })
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.deepEqual(submitted, ['append'], 'a pending write must be able to receive its next batch')
+      assert.equal((await append).ok, true)
+      const finish = f.request('desktop', 'playlists.submit', {
+        kind: completion, id: 'stage', ...(completion === 'commit' ? { sequence: 2 } : {})
+      })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.deepEqual(submitted, ['append', completion])
+      assert.equal((await finish).ok, true)
+    } finally { release() }
+    assert.equal((await Promise.all([...readers, append])).every(response => response.ok), true)
+  })
+}
+
+test('shutdown cancels queued commands and still joins active database reads before stopping', async t => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('desktop')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const metadata = f.library.getMetadata
+  f.library.getMetadata = async () => { await gate; return metadata() }
+  let edits = 0, stopped = false
+  f.scan.pause = async () => { edits++; return true }
+  const active = Array.from({ length: 12 }, () => f.request('desktop', 'library.metadata'))
+  const queued = f.request('desktop', 'scan.pause', { jobId: 'scan' })
+  const shutdown = f.application.shutdown().then(() => { stopped = true })
+  try {
+    const response = await queued
+    assert.equal(response.ok, false)
+    if (!response.ok) assert.equal(response.error.code, 'CANCELLED')
+    assert.equal(edits, 0)
+    assert.equal(stopped, false)
+  } finally { release() }
+  await Promise.all([...active, shutdown])
+  assert.equal(edits, 0)
+  assert.equal(stopped, true)
 })
 
 test('slow source work is cancellable per client while another window can pause; disconnect suppresses late replies', async (t) => {

@@ -311,3 +311,38 @@ test('starting a song and locating a queued occurrence also bypass saturated met
     await settled
   }
 })
+
+test('playlist continuation reaches Core while dependent readers fill the window budget', async () => {
+  const f = fixture(), connection = new CoreWindowConnection(f.api)
+  await connection.connect()
+  const releases: Array<() => void> = []
+  f.api.request = async (_id, request) => {
+    f.requests.push(request)
+    if (request.kind === 'query') await new Promise<void>(resolve => releases.push(resolve))
+    return { ok: true, value: null }
+  }
+  const readers = Array.from({ length: 12 }, (_, i) => connection.request({
+    kind: 'query', name: 'playlists.state', epoch: 'first', requestId: `read:${i}`, payload: {}
+  }))
+  const begin = connection.request({
+    kind: 'command', name: 'playlists.submit', epoch: 'first', requestId: 'begin',
+    payload: { kind: 'begin', revision: 0, edit: { kind: 'create', name: 'Another playlist' } }
+  })
+  const requests: CoreRequestEnvelope[] = [
+    { kind: 'command', name: 'playlists.submit', epoch: 'first', requestId: 'append', payload: { kind: 'append', id: 'stage', sequence: 1, items: [] } },
+    { kind: 'command', name: 'playlists.submit', epoch: 'first', requestId: 'commit', payload: { kind: 'commit', id: 'stage', sequence: 2 } },
+    { kind: 'command', name: 'playlists.submit', epoch: 'first', requestId: 'abort', payload: { kind: 'abort', id: 'stage' } },
+    { kind: 'command', name: 'playback.pause', epoch: 'first', requestId: 'pause', payload: {} }
+  ]
+  const continuations = requests.map(request => connection.request(request))
+  try {
+    assert.deepEqual(f.requests.slice(12), requests)
+    await Promise.all(continuations)
+    assert.equal(f.requests.some(request => request.requestId === 'begin'), false)
+  } finally {
+    const settled = Promise.allSettled([...readers, begin, ...continuations])
+    connection.dispose()
+    for (const release of releases) release()
+    await settled
+  }
+})

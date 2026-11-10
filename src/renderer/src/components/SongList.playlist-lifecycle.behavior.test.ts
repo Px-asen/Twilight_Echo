@@ -102,6 +102,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { usePlaylistLifecycleActions } from ${JSON.stringify(actionsPath)}
 import { useMusicStore } from ${JSON.stringify(storePath)}
 import { installMusicCoreFixture } from '@renderer/components/musicCore.fixture.mjs'
+import { createSongListActionSource } from '@renderer/components/song-list/songListActionSource.ts'
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import { MAX_PLAYLIST_IMPORT_BYTES } from ${JSON.stringify(lifecyclePath)}
 import PlaylistLifecycleToolbar from ${JSON.stringify(toolbarPath)}
@@ -189,6 +190,7 @@ await music.loadPlaylists()
 
 const activePlaylistName = ref('Road Mix')
 const selectedIds = ref([])
+const streamingSelectionEnabled = ref(false)
 const repairMessage = ref('')
 const currentPlaylist = computed(
   () => music.localPlaylists.value.find((playlist) => playlist.name === activePlaylistName.value) || null
@@ -204,6 +206,15 @@ const Root = {
       isSelected: (trackId) => selectedIds.value.includes(trackId),
       clearSelection: () => {
         selectedIds.value = []
+      },
+      streamingSelection: {
+        enabled: () => streamingSelectionEnabled.value,
+        capture: item => createSongListActionSource({ rows: [{ track: item, definitionId: item.id }] }),
+        run: async (source, action) => {
+          const lease = await source.open()
+          try { return (await action(lease, new AbortController().signal)) !== false }
+          finally { await lease.close() }
+        }
       },
       selectPlaylist: (name) => {
         activePlaylistName.value = name
@@ -250,6 +261,13 @@ const Root = {
           'Move start'
         ),
         h('button', { id: 'playlist-move', onClick: actions.handleMoveSelectedToPlaylist }, 'Move'),
+        ...window.__playlistFixture.localTracks.map(item => h('div', {
+          id: 'playlist-track-' + item.id,
+          draggable: true,
+          onDragstart: event => actions.handlePlaylistDragStart(event, item),
+          onDragover: event => event.preventDefault(),
+          onDrop: event => actions.handlePlaylistDrop(event, item)
+        }, item.title)),
         h('output', { id: 'playlist-status' }, repairMessage.value),
         h('pre', { id: 'playlist-state' }, JSON.stringify(music.playlists.value))
       ])
@@ -379,6 +397,25 @@ const runPlaylistLifecycleRuntime = async () => {
   await setDialogValue('Road Copy')
   await submitDialog()
   expect(music.playlists.value.some((playlist) => playlist.name === 'Road Copy'), 'copy action did not use the real store')
+
+  const dragTrack = async (from, to) => {
+    const dataTransfer = new DataTransfer()
+    document.querySelector('#playlist-track-' + from).dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }))
+    document.querySelector('#playlist-track-' + to).dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }))
+    await tick()
+  }
+  const savedIds = () => window.__playlistFixture.authoritative.find(p => p.id === currentPlaylist.value.id).trackIds
+  selectedIds.value = []
+  await dragTrack('a', 'b')
+  await waitFor(() => savedIds()[0] === 'b' && savedIds()[1] === 'a', 'dragging down onto the next song must change its order')
+  await dragTrack('a', 'b')
+  await waitFor(() => savedIds()[0] === 'a' && savedIds()[1] === 'b', 'dragging up must restore the song before its target')
+  streamingSelectionEnabled.value = true
+  await dragTrack('a', 'b')
+  await waitFor(() => savedIds()[0] === 'b' && savedIds()[1] === 'a', 'paged selection must also support dragging down')
+  await dragTrack('a', 'b')
+  await waitFor(() => savedIds()[0] === 'a' && savedIds()[1] === 'b', 'paged selection must also support dragging up')
+  streamingSelectionEnabled.value = false
 
   selectedIds.value = ['b']
   await click('#playlist-reorder-start')

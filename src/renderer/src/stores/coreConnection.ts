@@ -15,23 +15,15 @@ import type {
   CoreSnapshot
 } from '../../../shared/coreProtocol.ts'
 import { CoreProjection, type CoreConnection } from './coreProjection.ts'
+import { CORE_REQUEST_CAPACITY, isCorePriorityRequest } from '../../../shared/coreRequestCapacity.ts'
 
 function unwrap<T>(reply: CoreBridgeReply<T>): T {
   if (!reply.ok) throw Object.assign(new Error(reply.error.message), { code: reply.error.code })
   return reply.value
 }
 
-const READER_CAPACITY = 12
-const REQUEST_CAPACITY = 16
-
-function isPlaybackRequest(request: CoreRequestEnvelope): boolean {
-  // Selecting an existing occurrence locates it before issuing queue.select.
-  if (request.kind === 'query') return request.name === 'queue.locate'
-  return (
-    request.name.startsWith('playback.') ||
-    ['queue.select', 'queue.fromQuery', 'queue.submit', 'catalog.play', 'focus.play'].includes(request.name)
-  )
-}
+const READER_CAPACITY = CORE_REQUEST_CAPACITY.clientReaders
+const REQUEST_CAPACITY = CORE_REQUEST_CAPACITY.clientActive
 
 /** A document owns only a connection. Reattachment never repeats a business command. */
 export class CoreWindowConnection implements CoreConnection {
@@ -41,7 +33,7 @@ export class CoreWindowConnection implements CoreConnection {
   private disposed = false
   private activeRequests = 0
   private readonly requestWaiters = new Set<{
-    playback: boolean
+    priority: boolean
     grant(): void
     reject(error: Error): void
   }>()
@@ -79,7 +71,7 @@ export class CoreWindowConnection implements CoreConnection {
   private drainRequests(): void {
     while (!this.disposed && this.activeRequests < REQUEST_CAPACITY) {
       const waiters = [...this.requestWaiters]
-      const next = waiters.find(waiter => waiter.playback) ??
+      const next = waiters.find(waiter => waiter.priority) ??
         (this.activeRequests < READER_CAPACITY ? waiters[0] : undefined)
       if (!next) return
       next.grant()
@@ -124,10 +116,10 @@ export class CoreWindowConnection implements CoreConnection {
     if (!id || this.disposed) throw new Error('Core connection is not attached')
     if (signal?.aborted)
       throw Object.assign(new Error('Core request was cancelled'), { code: 'CANCELLED' })
-    // Readers cannot occupy the four slots reserved for transport controls.
+    // Readers leave four slots for transport controls and submission completion.
     // Both lanes stay inside Core's per-client budget; no command is replayed.
-    const playback = isPlaybackRequest(request)
-    if (this.activeRequests < (playback ? REQUEST_CAPACITY : READER_CAPACITY)) this.activeRequests++
+    const priority = isCorePriorityRequest(request)
+    if (this.activeRequests < (priority ? REQUEST_CAPACITY : READER_CAPACITY)) this.activeRequests++
     else
       await new Promise<void>((resolve, reject) => {
         const finish = () => {
@@ -135,7 +127,7 @@ export class CoreWindowConnection implements CoreConnection {
           signal?.removeEventListener('abort', abort)
         }
         const waiter = {
-          playback,
+          priority,
           grant: () => {
             finish()
             this.activeRequests++
