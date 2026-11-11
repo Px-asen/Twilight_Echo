@@ -7,7 +7,7 @@ const REQUIRED_OVERRIDES = Object.freeze({
   'form-data': '4.0.6',
   qs: '6.16.1',
   'follow-redirects': '1.16.2',
-  'node-forge': '1.4.1'
+  'node-forge': '1.4.3'
 })
 const NCM_PATCH = '@neteasecloudmusicapienhanced/api@4.36.1'
 const NCM_PATCH_PATH = 'patches/@neteasecloudmusicapienhanced__api@4.36.1.patch'
@@ -79,8 +79,8 @@ function assertNodeForgeVersion(root) {
   const workspace = readFile(path.join(root, 'pnpm-workspace.yaml'))
   assert.match(
     workspace,
-    /^\s+['"]?node-forge['"]?:\s*['"]?1\.4\.1['"]?\s*$/m,
-    'node-forge must use the fixed upstream 1.4.1 release'
+    /^\s+['"]?node-forge['"]?:\s*['"]?1\.4\.3['"]?\s*$/m,
+    'node-forge must use the fixed upstream 1.4.3 release'
   )
   assert.doesNotMatch(
     workspace,
@@ -88,10 +88,10 @@ function assertNodeForgeVersion(root) {
     'node-forge must not retain its obsolete patch or audit exception'
   )
   const lockfile = readFile(path.join(root, 'pnpm-lock.yaml'))
-  assert.match(lockfile, /node-forge:\s*1\.4\.1\s*$/m, 'NCM must resolve the fixed node-forge dependency')
+  assert.match(lockfile, /node-forge:\s*1\.4\.3\s*$/m, 'NCM must resolve the fixed node-forge dependency')
   const resolutions = [...lockfile.matchAll(/^\s+node-forge(?:@|:\s+)(\d+\.\d+\.\d+)/gm)]
   assert.ok(resolutions.length > 0, 'node-forge must be present in the lockfile')
-  for (const match of resolutions) assert.equal(match[1], '1.4.1', 'node-forge dependency must be fixed in every branch')
+  for (const match of resolutions) assert.equal(match[1], '1.4.3', 'node-forge dependency must be fixed in every branch')
 }
 
 function readModulesMetadata(nodeModulesDir) {
