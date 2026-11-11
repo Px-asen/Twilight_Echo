@@ -77,7 +77,7 @@ function makeCandidate(options = {}) {
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-lock.yaml'),
-    "lockfileVersion: '9.0'\npackages:\n  '@neteasecloudmusicapienhanced/api@4.36.1(patch_hash=abc)': {}\n  node-forge@1.4.1: {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.1\n"
+    "lockfileVersion: '9.0'\npackages:\n  '@neteasecloudmusicapienhanced/api@4.36.1(patch_hash=abc)': {}\n  node-forge@1.4.3: {}\nsnapshots:\n  api:\n    dependencies:\n      node-forge: 1.4.3\n"
   )
   fs.writeFileSync(
     path.join(root, 'pnpm-workspace.yaml'),
@@ -87,7 +87,7 @@ function makeCandidate(options = {}) {
       '  form-data: 4.0.6',
       '  qs: 6.16.1',
       '  follow-redirects: 1.16.2',
-      '  node-forge: 1.4.1',
+      '  node-forge: 1.4.3',
       'patchedDependencies:',
       "  '@neteasecloudmusicapienhanced/api@4.36.1': patches/@neteasecloudmusicapienhanced__api@4.36.1.patch"
     ].join('\n')
@@ -115,15 +115,17 @@ test('install policy accepts the single-lock pnpm candidate layout', () => {
 })
 
 test('install policy rejects vulnerable node-forge resolutions and obsolete audit exceptions', () => {
-  for (const corrupt of ['override', 'resolution', 'nested', 'exception']) {
+  for (const corrupt of ['override', 'resolution', 'nested', 'exception', 'previous', 'unpatched']) {
     const root = makeCandidate()
     try {
-      const target = path.join(root, ['resolution', 'nested'].includes(corrupt) ? 'pnpm-lock.yaml' : 'pnpm-workspace.yaml')
+      const target = path.join(root, ['resolution', 'nested', 'unpatched'].includes(corrupt) ? 'pnpm-lock.yaml' : 'pnpm-workspace.yaml')
       const text = fs.readFileSync(target, 'utf8')
       fs.writeFileSync(target,
         corrupt === 'nested' ? text + '\n  node-forge@1.4.0: {}\n' :
         corrupt === 'exception' ? text + '\nauditConfig:\n  ignoreGhsas:\n    - GHSA-86w9-cpqp-85rv\n' :
-        text.replace('node-forge: 1.4.1', 'node-forge: 1.4.0'))
+        corrupt === 'previous' ? text.replace('node-forge: 1.4.3', 'node-forge: 1.4.1') :
+        corrupt === 'unpatched' ? text + '\n  node-forge@1.4.2: {}\n' :
+        text.replace('node-forge: 1.4.3', 'node-forge: 1.4.0'))
       assert.throws(() => assertNodeForgeVersion(root), /node-forge/)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
