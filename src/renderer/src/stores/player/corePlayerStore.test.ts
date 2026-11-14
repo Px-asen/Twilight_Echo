@@ -170,6 +170,24 @@ test('construct, attach, rebuild and Core epoch changes never issue playback or 
   next.player.dispose()
 })
 
+test('superseded playback commands settle quietly while real failures stay visible', async () => {
+  const f = fixture()
+  try {
+    f.setHandler(async () => {
+      throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+    })
+    await f.player.next()
+    assert.equal(f.player.audioEngineError.value, null)
+    f.setHandler(async () => {
+      throw new Error('transport unavailable')
+    })
+    await assert.rejects(f.player.next(), /transport unavailable/)
+    assert.match(f.player.audioEngineError.value ?? '', /transport unavailable/)
+  } finally {
+    f.player.dispose()
+  }
+})
+
 test('clock only interpolates Core samples, does not re-anchor on unrelated state or issue seek', async () => {
   const f = fixture()
   f.state.value = {
