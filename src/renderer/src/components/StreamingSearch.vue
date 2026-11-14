@@ -192,6 +192,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
                     :cover="track.cover"
                     :cover-source="track.coverSource"
                     :identity="track.id"
+                    size="sm"
                     class="cover-img"
                     alt=""
                     loading="lazy"
@@ -305,6 +306,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
               v-if="album.cover || album.coverSmall"
               :cover="album.coverSmall || album.cover"
               :cover-source="album.coverSmallSource || album.coverSource"
+              size="grid"
               class="playlist-grid-cover"
               alt=""
             />
@@ -338,6 +340,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
               v-if="playlist.cover || playlist.coverSmall"
               :cover="playlist.coverSmall || playlist.cover"
               :cover-source="playlist.coverSmallSource || playlist.coverSource"
+              size="grid"
               class="playlist-grid-cover"
               alt=""
             />
@@ -366,6 +369,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
               v-if="artist.picUrl"
               :cover="artist.picUrl"
               :cover-source="artist.picUrlSource"
+              size="grid"
               class="playlist-grid-cover artist-cover"
               alt=""
             />

@@ -14,43 +14,134 @@
  * IMPORTANT: never put raw `cover://` / `background://` into <img src> long-term.
  * Chromium's custom-protocol image cache can keep painting the first decoded
  * bitmap across track switches after a cold start (remount / navigation fixes
- * it). Materialize local handles to `data:` via IPC so each distinct cover is a
- * unique, cache-safe src.
+ * it). Materialize local handles to `blob:` object URLs (or `data:` in bare Node
+ * tests) via IPC so each distinct cover has a unique, cache-safe src without
+ * Base64 / UTF-16 string duplication in V8.
  */
 
-import { ref, type Ref, watch, type ComputedRef } from 'vue'
+import { getCurrentScope, onScopeDispose, ref, type Ref, watch, type ComputedRef } from 'vue'
 import { clearDominantColorCache } from './colorExtractor.ts'
 import { recordCoverDiagnostic } from './coverDiagnostics.ts'
 
+interface CachedLocalCoverEntry {
+  url: string
+  bytes: number
+  isBlob: boolean
+}
+
 const remoteCoverGrantCache = new Map<string, string>()
 const remoteCoverGrantInflight = new Map<string, Promise<string | null>>()
-const localCoverDataCache = new Map<string, string>()
+const localCoverDataCache = new Map<string, CachedLocalCoverEntry>()
 const localCoverDataInflight = new Map<string, Promise<string | null>>()
+const retiringBlobUrls = new Set<string>()
+const pendingImmediateRevoke = new Set<string>()
+const pinnedBlobUrls = new Map<string, number>()
 
 const LOCAL_COVER_DATA_CACHE_LIMIT = 128
-// Conservatively count UTF-16 storage; entry count alone does not bound large art.
+const RETIRING_BLOB_URL_LIMIT = 64
+// Bound total retained cover bytes (raw Blob bytes for blob: URLs, UTF-16 bytes for data: URLs).
 const LOCAL_COVER_DATA_CACHE_BYTES = 16 * 1024 * 1024
 let localCoverDataBytes = 0
 let localCoverGeneration = 0
 let remoteCoverGeneration = 0
 
+function canUseObjectUrls(): boolean {
+  return (
+    typeof document !== 'undefined' &&
+    typeof URL !== 'undefined' &&
+    typeof URL.createObjectURL === 'function' &&
+    typeof URL.revokeObjectURL === 'function'
+  )
+}
+
+function safeRevokeObjectUrl(url: string): void {
+  try {
+    URL.revokeObjectURL(url)
+  } catch {
+    // Ignore already-revoked or synthetic test URLs.
+  }
+}
+
+function isUrlInActiveCache(url: string): boolean {
+  for (const entry of localCoverDataCache.values()) {
+    if (entry.url === url) return true
+  }
+  return false
+}
+
+function flushRetiringBlobUrls(forceAll = false): void {
+  for (const candidate of [...retiringBlobUrls]) {
+    if (!forceAll && retiringBlobUrls.size <= RETIRING_BLOB_URL_LIMIT) break
+    if ((pinnedBlobUrls.get(candidate) ?? 0) > 0) {
+      if (forceAll) pendingImmediateRevoke.add(candidate)
+      continue
+    }
+    retiringBlobUrls.delete(candidate)
+    pendingImmediateRevoke.delete(candidate)
+    if (!isUrlInActiveCache(candidate)) {
+      safeRevokeObjectUrl(candidate)
+    }
+  }
+}
+
+function retireBlobCoverUrl(url: string): void {
+  retiringBlobUrls.delete(url)
+  retiringBlobUrls.add(url)
+  flushRetiringBlobUrls(false)
+}
+
+function retainCoverUrl(url: string | null | undefined): void {
+  if (typeof url !== 'string' || !url.startsWith('blob:')) return
+  pinnedBlobUrls.set(url, (pinnedBlobUrls.get(url) ?? 0) + 1)
+}
+
+function releaseCoverUrl(url: string | null | undefined): void {
+  if (typeof url !== 'string' || !url.startsWith('blob:')) return
+  const current = pinnedBlobUrls.get(url) ?? 0
+  if (current > 1) {
+    pinnedBlobUrls.set(url, current - 1)
+    return
+  }
+  pinnedBlobUrls.delete(url)
+  if (pendingImmediateRevoke.has(url)) {
+    pendingImmediateRevoke.delete(url)
+    retiringBlobUrls.delete(url)
+    if (!isUrlInActiveCache(url)) {
+      safeRevokeObjectUrl(url)
+    }
+    return
+  }
+  flushRetiringBlobUrls(false)
+}
+
 /** Insert a materialized cover while keeping the renderer cache bounded. */
-function cacheLocalCoverData(handle: string, dataUrl: string): void {
+function cacheLocalCoverData(handle: string, entry: CachedLocalCoverEntry): void {
   const previous = localCoverDataCache.get(handle)
-  if (previous) localCoverDataBytes -= previous.length * 2
-  localCoverDataCache.delete(handle)
-  const bytes = dataUrl.length * 2
-  if (bytes > LOCAL_COVER_DATA_CACHE_BYTES) return
-  localCoverDataCache.set(handle, dataUrl)
-  localCoverDataBytes += bytes
+  if (previous) {
+    localCoverDataBytes -= previous.bytes
+    localCoverDataCache.delete(handle)
+    if (previous.isBlob && previous.url !== entry.url) {
+      retireBlobCoverUrl(previous.url)
+    }
+  }
+  if (entry.bytes > LOCAL_COVER_DATA_CACHE_BYTES) {
+    if (entry.isBlob) retireBlobCoverUrl(entry.url)
+    return
+  }
+  retiringBlobUrls.delete(entry.url)
+  pendingImmediateRevoke.delete(entry.url)
+  localCoverDataCache.set(handle, entry)
+  localCoverDataBytes += entry.bytes
   while (
     localCoverDataCache.size > LOCAL_COVER_DATA_CACHE_LIMIT ||
     localCoverDataBytes > LOCAL_COVER_DATA_CACHE_BYTES
   ) {
     const oldest = localCoverDataCache.keys().next().value
     if (typeof oldest !== 'string') break
-    localCoverDataBytes -= localCoverDataCache.get(oldest)!.length * 2
+    const evicted = localCoverDataCache.get(oldest)!
+    localCoverDataBytes -= evicted.bytes
     localCoverDataCache.delete(oldest)
+    if (evicted.isBlob) retireBlobCoverUrl(evicted.url)
   }
 }
 
@@ -77,10 +168,16 @@ function bareLocalCoverHandle(handle: string): string {
   return handle.trim().split(/[?#]/, 1)[0]
 }
 
-export type CoverDisplaySize = 'sm' | 'md'
+export type CoverDisplaySize = 'sm' | 'grid' | 'md'
 
 function localCoverCacheKey(bare: string, size?: CoverDisplaySize): string {
-  return size === 'sm' ? `${bare}?size=sm` : bare
+  return size === 'sm' || size === 'grid' ? `${bare}?size=${size}` : bare
+}
+
+function applyRemoteCoverSize(handle: string, size?: CoverDisplaySize): string {
+  if (!isTwilightMediaImageHandle(handle)) return handle
+  const base = handle.trim().split(/[?#]/, 1)[0]
+  return size === 'sm' || size === 'grid' ? `${base}?size=${size}` : base
 }
 
 /** Synchronous first paint for virtualized cards whose artwork is already resolved. */
@@ -97,7 +194,7 @@ export function readCachedCover(
     if (!cached) return null
     localCoverDataCache.delete(key)
     localCoverDataCache.set(key, cached)
-    return cached
+    return cached.url
   }
   if (/^(data|blob):/i.test(trimmed)) return trimmed
   const source =
@@ -106,7 +203,13 @@ export function readCachedCover(
       : isDurableRemoteCoverSource(trimmed)
         ? trimmed
         : null
-  if (source) return remoteCoverGrantCache.get(source) ?? null
+  if (source) {
+    const granted = remoteCoverGrantCache.get(source)
+    return granted ? applyRemoteCoverSize(granted, size) : null
+  }
+  if (trimmed && isTwilightMediaImageHandle(trimmed)) {
+    return applyRemoteCoverSize(trimmed, size)
+  }
   return trimmed || null
 }
 
@@ -148,9 +251,9 @@ export async function resolveCover(
   // Prefer durable origin for remote-only rows (session restore / listening stats).
   if (source) {
     const granted = await grantRemoteCoverForDisplay(source)
-    if (granted) return granted
+    if (granted) return applyRemoteCoverSize(granted, size)
     if (trimmedHandle && isTwilightMediaImageHandle(trimmedHandle)) {
-      return trimmedHandle
+      return applyRemoteCoverSize(trimmedHandle, size)
     }
     return null
   }
@@ -159,12 +262,12 @@ export async function resolveCover(
 
   if (isDurableRemoteCoverSource(trimmedHandle)) {
     const granted = await grantRemoteCoverForDisplay(trimmedHandle)
-    if (granted) return granted
+    if (granted) return applyRemoteCoverSize(granted, size)
     return null
   }
 
   if (isTwilightMediaImageHandle(trimmedHandle)) {
-    return trimmedHandle
+    return applyRemoteCoverSize(trimmedHandle, size)
   }
 
   return trimmedHandle
@@ -182,7 +285,7 @@ async function materializeLocalCoverForDisplay(
   if (cached) {
     localCoverDataCache.delete(cacheKey)
     localCoverDataCache.set(cacheKey, cached)
-    return cached
+    return cached.url
   }
 
   const inflight = localCoverDataInflight.get(cacheKey)
@@ -207,16 +310,28 @@ async function materializeLocalCoverForDisplay(
       ).window?.api?.data
       if (api?.getCover) {
         const response =
-          size === 'sm' ? await api.getCover(bare, 'sm') : await api.getCover(bare)
+          size === 'sm' || size === 'grid'
+            ? await api.getCover(bare, size)
+            : await api.getCover(bare)
         if (typeof response === 'string' && response.startsWith('data:')) {
           const dataUrl = response
-          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, dataUrl)
+          if (generation === localCoverGeneration) {
+            cacheLocalCoverData(cacheKey, {
+              url: dataUrl,
+              bytes: dataUrl.length * 2,
+              isBlob: false
+            })
+          }
           return dataUrl
         }
-        const materialized = await coverBytesToDataUrl(response, bare)
+        const materialized = await coverBytesToMaterializedEntry(response, bare)
         if (materialized) {
-          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, materialized)
-          return materialized
+          if (generation === localCoverGeneration) {
+            cacheLocalCoverData(cacheKey, materialized)
+          } else if (materialized.isBlob) {
+            retireBlobCoverUrl(materialized.url)
+          }
+          return materialized.url
         }
       }
 
@@ -225,10 +340,14 @@ async function materializeLocalCoverForDisplay(
         const response = await fetch(bare)
         if (!response.ok) return null
         const blob = await response.blob()
-        const dataUrl = await blobToDataUrl(blob)
-        if (dataUrl) {
-          if (generation === localCoverGeneration) cacheLocalCoverData(cacheKey, dataUrl)
-          return dataUrl
+        const materialized = await blobToMaterializedEntry(blob)
+        if (materialized) {
+          if (generation === localCoverGeneration) {
+            cacheLocalCoverData(cacheKey, materialized)
+          } else if (materialized.isBlob) {
+            retireBlobCoverUrl(materialized.url)
+          }
+          return materialized.url
         }
       }
       return null
@@ -282,7 +401,10 @@ function sniffCoverBytesMime(bytes: Uint8Array, handle: string): string {
         : 'image/jpeg'
 }
 
-async function coverBytesToDataUrl(value: unknown, handle: string): Promise<string | null> {
+async function coverBytesToMaterializedEntry(
+  value: unknown,
+  handle: string
+): Promise<CachedLocalCoverEntry | null> {
   let bytes: Uint8Array | null = null
   if (value instanceof ArrayBuffer) bytes = new Uint8Array(value)
   else if (ArrayBuffer.isView(value)) {
@@ -290,7 +412,25 @@ async function coverBytesToDataUrl(value: unknown, handle: string): Promise<stri
   }
   if (!bytes || bytes.byteLength === 0) return null
   const type = sniffCoverBytesMime(bytes, handle)
-  return blobToDataUrl(new Blob([bytes as unknown as BlobPart], { type }))
+  return blobToMaterializedEntry(new Blob([bytes as unknown as BlobPart], { type }))
+}
+
+async function blobToMaterializedEntry(blob: Blob): Promise<CachedLocalCoverEntry | null> {
+  if (canUseObjectUrls()) {
+    const objectUrl = URL.createObjectURL(blob)
+    return {
+      url: objectUrl,
+      bytes: Math.max(1, blob.size),
+      isBlob: true
+    }
+  }
+  const dataUrl = await blobToDataUrl(blob)
+  if (!dataUrl) return null
+  return {
+    url: dataUrl,
+    bytes: dataUrl.length * 2,
+    isBlob: false
+  }
 }
 
 function blobToDataUrl(blob: Blob): Promise<string | null> {
@@ -372,9 +512,13 @@ export function clearRemoteCoverGrantCache(): void {
 
 export function clearLocalCoverDataCache(): void {
   localCoverGeneration += 1
+  for (const entry of localCoverDataCache.values()) {
+    if (entry.isBlob) retiringBlobUrls.add(entry.url)
+  }
   localCoverDataCache.clear()
   localCoverDataBytes = 0
   localCoverDataInflight.clear()
+  flushRetiringBlobUrls(true)
 }
 
 /**
@@ -384,10 +528,25 @@ export function clearLocalCoverDataCache(): void {
  */
 export function useCover(
   handleRef: ComputedRef<string | null | undefined> | Ref<string | null | undefined>,
-  sourceRef?: ComputedRef<string | null | undefined> | Ref<string | null | undefined>
+  sourceRef?: ComputedRef<string | null | undefined> | Ref<string | null | undefined>,
+  size?: CoverDisplaySize
 ): Ref<string | null> {
   const resolved = ref<string | null>(null)
   let requestId = 0
+
+  const assignResolved = (next: string | null): void => {
+    const previous = resolved.value
+    if (previous === next) return
+    retainCoverUrl(next)
+    resolved.value = next
+    releaseCoverUrl(previous)
+  }
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      releaseCoverUrl(resolved.value)
+    })
+  }
 
   watch(
     () => [handleRef.value, sourceRef?.value] as const,
@@ -399,17 +558,17 @@ export function useCover(
       // Always clear on input change so Chromium cannot keep the previous bitmap
       // while async materialize / re-grant runs (protocol-local handles included).
       if (inputsChanged) {
-        resolved.value = null
+        assignResolved(null)
       }
 
       // Only paint handles that are safe without async work.
       if (trimmed && isDisplayableCoverHandle(trimmed) && !isProtocolLocalCoverHandle(trimmed)) {
-        resolved.value = trimmed
+        assignResolved(applyRemoteCoverSize(trimmed, size))
       }
 
-      void resolveCover(handle, source).then((next) => {
+      void resolveCover(handle, source, size).then((next) => {
         if (id !== requestId) return
-        resolved.value = next
+        assignResolved(next)
       })
     },
     { immediate: true }

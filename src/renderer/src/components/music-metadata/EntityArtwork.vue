@@ -58,6 +58,7 @@ function openRelease() {
         v-if="!expired"
         :cover="artwork.handle"
         :identity="artwork.handle"
+        size="grid"
         :alt="`${name} · ${label}`"
         fallback=""
         loading="lazy"

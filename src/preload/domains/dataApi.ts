@@ -51,7 +51,7 @@ export const dataApi = {
     ipcRenderer.invoke('data:saveMusicLibrary', data),
   loadMusicLibrary: (): Promise<LocalMusicLibraryDocument | unknown[]> =>
     ipcRenderer.invoke('data:loadMusicLibrary'),
-  getCover: (handle: string, size?: 'sm' | 'md'): Promise<Uint8Array | string | null> =>
+  getCover: (handle: string, size?: 'sm' | 'grid' | 'md'): Promise<Uint8Array | string | null> =>
     size ? ipcRenderer.invoke('cover:get', handle, size) : ipcRenderer.invoke('cover:get', handle),
   cacheCover: (data: ArrayBuffer | Uint8Array): Promise<string | null> =>
     ipcRenderer.invoke('cover:cache', data),
@@ -131,7 +131,7 @@ export const dataApi = {
 }
 
 export const miniPlayerCoverDataApi = {
-  getCover: (handle: string, size?: 'sm' | 'md'): Promise<Uint8Array | string | null> =>
+  getCover: (handle: string, size?: 'sm' | 'grid' | 'md'): Promise<Uint8Array | string | null> =>
     size ? ipcRenderer.invoke('cover:get', handle, size) : ipcRenderer.invoke('cover:get', handle),
   cacheCover: (data: ArrayBuffer | Uint8Array): Promise<string | null> =>
     ipcRenderer.invoke('cover:cache', data),

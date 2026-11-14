@@ -125,6 +125,16 @@ function stopLoop(): void {
   lastDrawMs = 0
 }
 
+function isSettledWhilePaused(state = phaseIntegrator.getState()): boolean {
+  if (!renderer) return true
+  return (
+    !props.playing &&
+    !renderer.isTransitioning() &&
+    state.playFactor <= 0.2 &&
+    state.swell <= 0.01
+  )
+}
+
 function tick(nowMs: number): void {
   rafId = null
   if (disposed || !renderer || !shouldAnimate.value) return
@@ -140,6 +150,20 @@ function tick(nowMs: number): void {
     lowFreqEnergy: readLowFrequencyEnergy(),
     audioReactive: props.audioReactive !== false
   })
+
+  if (isSettledWhilePaused(state)) {
+    lastDrawMs = nowMs
+    renderer.render(
+      {
+        phase: state.phase,
+        swell: state.swell,
+        tone: tone.value
+      },
+      nowMs
+    )
+    lastStepMs = 0
+    return
+  }
 
   const frameBudgetMs =
     props.playing || renderer.isTransitioning() || state.playFactor > 0.24 ? 1000 / 45 : 1000 / 24
@@ -161,7 +185,7 @@ function tick(nowMs: number): void {
 
 function syncLoop(): void {
   if (disposed || !renderer) return
-  if (shouldAnimate.value) {
+  if (shouldAnimate.value && !isSettledWhilePaused()) {
     if (rafId === null) {
       lastStepMs = performance.now()
       lastDrawMs = 0

@@ -529,6 +529,7 @@ const infoTrack = shallowRef<Track | null>(null)
             <CoverImg
               :cover="row.group.tracks[0].track.cover"
               :cover-source="row.group.tracks[0].track.coverSource"
+              size="sm"
               class="part-video-cover"
               alt=""
             />
@@ -654,6 +655,7 @@ const infoTrack = shallowRef<Track | null>(null)
                 v-if="!row.grouped"
                 :cover="row.track.cover"
                 :cover-source="row.track.coverSource"
+                size="sm"
                 class="row-cover"
                 alt=""
               />

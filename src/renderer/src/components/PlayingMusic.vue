@@ -874,6 +874,7 @@ onBeforeUnmount(() => {
                 :cover="currentTrack.cover"
                 :cover-source="currentTrack.coverSource"
                 :identity="currentTrack.id"
+                size="sm"
                 class="backdrop-cover"
                 alt=""
               />

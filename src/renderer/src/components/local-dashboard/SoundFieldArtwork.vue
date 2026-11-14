@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import CoverImg from '@renderer/components/CoverImg.vue'
 
-defineProps<{
-  cover?: string | null
-  coverSource?: string | null
-  identity?: string
-  title: string
-  eager?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    cover?: string | null
+    coverSource?: string | null
+    identity?: string
+    title: string
+    eager?: boolean
+    size?: 'sm' | 'grid' | 'md'
+  }>(),
+  {
+    size: 'grid'
+  }
+)
 </script>
 
 <template>
@@ -22,6 +28,7 @@ defineProps<{
       :cover="cover"
       :cover-source="coverSource"
       :identity="identity"
+      :size="size"
       :loading="eager ? 'eager' : 'lazy'"
       fallback=""
       alt=""

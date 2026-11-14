@@ -891,17 +891,43 @@ const databaseReadError = computed(() =>
         : '')
     : ''
 )
+let databaseTableIntent = ''
 watch(
   databaseQuery,
   (query, previous) => {
-    const { historyRevision: _nextHistory, ...next } = query ?? {}
-    const { historyRevision: _previousHistory, ...before } = previous ?? {}
-    const historyOnly =
-      query?.sort === 'lastPlayed' &&
-      previous?.sort === 'lastPlayed' &&
-      query.historyRevision !== previous.historyRevision &&
-      JSON.stringify(next) === JSON.stringify(before)
-    databasePages.setQuery(query, historyOnly)
+    const intent = JSON.stringify([
+      databaseTableEnabled.value,
+      props.category,
+      props.filter,
+      isPlaylistDetail.value ? currentPlaylist.value?.id : null,
+      props.category === 'recent' ? recentSource.value : null
+    ])
+    const previousIntent = databaseTableIntent
+    databaseTableIntent = intent
+    if (
+      previous !== undefined &&
+      intent === previousIntent &&
+      JSON.stringify(query) === JSON.stringify(previous)
+    )
+      return
+    const {
+      historyRevision: _nextHistory,
+      playlistView: _nextPlaylistView,
+      ...next
+    } = query ?? {}
+    const {
+      historyRevision: _previousHistory,
+      playlistView: _previousPlaylistView,
+      ...before
+    } = previous ?? {}
+    const backgroundRefresh =
+      !!query &&
+      !!previous &&
+      intent === previousIntent &&
+      JSON.stringify(next) === JSON.stringify(before) &&
+      (query.historyRevision !== previous.historyRevision ||
+        query.playlistView !== previous.playlistView)
+    databasePages.setQuery(query, backgroundRefresh, backgroundRefresh)
   },
   { immediate: true, flush: 'sync' }
 )
@@ -3730,6 +3756,7 @@ watch(
                         : item.coverTrackId
                     "
                     :identity="item.id ?? item.name"
+                    size="grid"
                     class="genre-card-bg"
                     alt=""
                     fallback=""
@@ -3812,6 +3839,7 @@ watch(
                           v-if="artist.cover || artist.coverSource"
                           :cover="artist.cover"
                           :cover-source="artist.coverSource"
+                          size="grid"
                           class="artist-cover"
                           :alt="artist.name"
                           loading="lazy"
@@ -3874,6 +3902,7 @@ watch(
                       <CoverImg
                         v-if="item.cover"
                         :cover="item.cover"
+                        size="grid"
                         class="album-cover"
                         alt="playlist cover"
                         loading="lazy"
@@ -3926,6 +3955,7 @@ watch(
                       <CoverImg
                         v-if="item.cover"
                         :cover="item.cover"
+                        size="grid"
                         class="album-cover"
                         alt="cover"
                         loading="lazy"

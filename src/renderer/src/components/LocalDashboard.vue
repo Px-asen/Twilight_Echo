@@ -976,6 +976,7 @@ function closeDspRouteDialog(): void {
               :cover="heroTrack?.cover"
               :cover-source="heroTrack?.coverSource"
               :identity="heroTrack?.id"
+              size="sm"
               :fallback="DEFAULT_COVER"
               alt=""
             />
@@ -1070,6 +1071,7 @@ function closeDspRouteDialog(): void {
                   :cover="heroTrack?.cover"
                   :cover-source="heroTrack?.coverSource"
                   :identity="heroTrack?.id"
+                  size="grid"
                   :fallback="DEFAULT_COVER"
                   alt=""
                 />
@@ -1133,6 +1135,7 @@ function closeDspRouteDialog(): void {
                   :cover="track.cover"
                   :cover-source="track.coverSource"
                   :identity="track.id"
+                  size="grid"
                   :fallback="DEFAULT_COVER"
                   :alt="track.title"
                 />
@@ -1182,6 +1185,7 @@ function closeDspRouteDialog(): void {
                       :cover="entry.track?.cover || entry.cover"
                       :cover-source="entry.track?.coverSource || entry.coverSource"
                       :identity="entry.track?.id || entry.id"
+                      size="sm"
                       :fallback="DEFAULT_COVER"
                       :alt="entry.title"
                     />
@@ -1274,7 +1278,7 @@ function closeDspRouteDialog(): void {
               @click="playAlbum(album)"
             >
               <span class="gallery-cover">
-                <CoverImg :cover="album.cover" :fallback="DEFAULT_COVER" :alt="album.name" />
+                <CoverImg :cover="album.cover" size="grid" :fallback="DEFAULT_COVER" :alt="album.name" />
                 <span class="gallery-scrim" aria-hidden="true"></span>
                 <span class="gallery-count">{{ album.trackCount }} 首</span>
                 <span class="gallery-play" aria-hidden="true"><PlaybackIcon name="play" /></span>

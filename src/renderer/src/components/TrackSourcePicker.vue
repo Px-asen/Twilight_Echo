@@ -120,6 +120,7 @@ onBeforeUnmount(() => controller?.abort())
               :cover="candidate.coverSmall || candidate.cover"
               :cover-source="candidate.coverSmallSource || candidate.coverSource"
               :identity="candidate.id"
+              size="sm"
               class="candidate-cover"
               alt=""
               loading="lazy"

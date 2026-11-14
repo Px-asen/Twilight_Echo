@@ -335,6 +335,7 @@ function emitPage(nextOffset: number): void {
               v-if="playlist.coverSmall || playlist.cover"
               :cover="playlist.coverSmall || playlist.cover"
               :cover-source="playlist.coverSmallSource || playlist.coverSource"
+              size="grid"
               class="disc-card-img"
               alt=""
             />

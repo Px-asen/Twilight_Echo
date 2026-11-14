@@ -131,7 +131,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="emit('openAlbum', album)"
         >
-          <CoverImg :cover="album.cover" :cover-source="album.coverSource" alt="" />
+          <CoverImg :cover="album.cover" :cover-source="album.coverSource" size="grid" alt="" />
           <span class="saved-album-title">
             <span>{{ album.name }}</span>
             <ExplicitBadge v-if="isNcm && album.isExplicit" />
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="emit('openArtist', artist)"
         >
-          <CoverImg :cover="artist.picUrl" :cover-source="artist.picUrlSource" alt="" />
+          <CoverImg :cover="artist.picUrl" :cover-source="artist.picUrlSource" size="grid" alt="" />
           <span>{{ artist.name }}</span>
         </button>
       </template>

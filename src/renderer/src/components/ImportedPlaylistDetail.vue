@@ -287,6 +287,7 @@ onBeforeUnmount(() => {
             v-if="entry.resolution.track"
             :core-track-id="entry.resolution.track.id"
             :identity="entry.resolution.track.id"
+            size="sm"
             class="entry-cover"
             alt=""
             loading="lazy"

@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import CoverImg from '../CoverImg.vue'
 
-defineProps<{
-  cover?: string | null
-  coverSource?: string | null
-  identity?: string
-  name: string
-  eager?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    cover?: string | null
+    coverSource?: string | null
+    identity?: string
+    name: string
+    eager?: boolean
+    size?: 'sm' | 'grid' | 'md'
+  }>(),
+  {
+    size: 'grid'
+  }
+)
 </script>
 
 <template>
@@ -16,6 +22,7 @@ defineProps<{
       :cover="cover"
       :cover-source="coverSource"
       :identity="identity"
+      :size="size"
       :alt="`${name}专辑封面`"
       :loading="eager ? 'eager' : 'lazy'"
       class="album-artwork-image"

@@ -38,8 +38,8 @@ const props = withDefaults(
     identity?: string | null | undefined
     /** Core-owned local track identity; no source path or durable URL is required. */
     coreTrackId?: string
-    /** Compact row thumbnails pass 'sm' (128px) to avoid decoding 500px bitmaps. */
-    size?: 'sm' | 'md'
+    /** Compact row ('sm', 128px) or card ('grid', 256px) thumbnails avoid decoding 500px bitmaps. */
+    size?: 'sm' | 'grid' | 'md'
     alt?: string
     fallback?: string
     loading?: 'lazy' | 'eager'

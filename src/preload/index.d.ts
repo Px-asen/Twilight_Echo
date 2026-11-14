@@ -362,6 +362,7 @@ interface WindowAPI {
     minimize: () => void
     toggleMaximize: () => void
     close: () => void
+    clearMemoryCache: () => void
     showTrayPlayer: (options?: ExperienceWindowOptions) => Promise<void>
   }
   experienceWindow: {
@@ -608,7 +609,7 @@ interface WindowAPI {
     acknowledgeRendererRestore: (id: string) => Promise<void>
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
     loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
-    getCover: (handle: string, size?: 'sm' | 'md') => Promise<Uint8Array | string | null>
+    getCover: (handle: string, size?: 'sm' | 'grid' | 'md') => Promise<Uint8Array | string | null>
     cacheCover: (data: ArrayBuffer | Uint8Array) => Promise<string | null>
     grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
