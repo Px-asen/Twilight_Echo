@@ -61,6 +61,9 @@ import type {
   CoreHeartQueueApi
 } from '../../shared/coreHeart.ts'
 
+/** Background maintenance defers to the user's in-flight load for at most this long. */
+const PREPARATION_GRACE_MS = 10_000
+
 interface HeartSelection {
   native: NativeQueueSelection | null
   reference: LibraryPlaybackQueueReference
@@ -189,6 +192,11 @@ export class CorePlaybackSession {
   private muted = false
   private lastAudibleVolume = DEFAULT_SOFTWARE_VOLUME
   private loadingIntent: number | null = null
+  /** Settles when the in-flight preparation finishes or is cancelled.
+   * Background resource maintenance waits on it so a cache prune cannot
+   * supersede the user's next/previous command mid-load. */
+  private preparationSettled: Promise<void> | null = null
+  private settlePreparation: (() => void) | null = null
   private requestedState: 'playing' | 'paused' | 'stopped' | null = null
   private modeControls: Promise<void> = Promise.resolve()
   private streamBuffering = false
@@ -922,13 +930,17 @@ export class CorePlaybackSession {
     const drain = this.maintainer?.stop()
     this.maintainer = null
     if (drain) this.mutation = Promise.all([this.mutation.catch(() => {}), drain])
-    if (wasLoading) this.publish()
+    if (wasLoading) {
+      this.releasePreparation()
+      this.publish()
+    }
     return this.intent
   }
   private beginPreparation(play = true): number {
     this.assertAudioAvailable()
     const intent = this.revoke()
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     return intent
@@ -936,8 +948,42 @@ export class CorePlaybackSession {
   private finishPreparation(intent: number): void {
     if (intent !== this.intent) return
     this.loadingIntent = null
+    this.releasePreparation()
     this.requestedState = null
     this.publish()
+  }
+  /** Opens the gate maintenance waits on; the first caller wins. */
+  private openPreparation(): void {
+    if (this.preparationSettled) return
+    this.preparationSettled = new Promise<void>((resolve) => {
+      this.settlePreparation = resolve
+    })
+  }
+  /** Releases whoever waits for the in-flight preparation to settle. */
+  private releasePreparation(): void {
+    const settle = this.settlePreparation
+    this.settlePreparation = null
+    this.preparationSettled = null
+    settle?.()
+  }
+  /** Waits for the user's in-flight load to land before maintenance invalidates sources.
+   * Bounded so a stalled load cannot suppress cache maintenance forever. */
+  private async awaitPreparation(): Promise<void> {
+    const started = Date.now()
+    while (this.loadingIntent !== null && !this.stopped) {
+      const pending = this.preparationSettled
+      if (!pending) return
+      const remaining = PREPARATION_GRACE_MS - (Date.now() - started)
+      if (remaining <= 0) return
+      await new Promise<void>((resolve) => {
+        const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, remaining)
+        const settle = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        void pending.then(settle, settle)
+      })
+    }
   }
   private commit<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutation.then(async () => {
@@ -1060,6 +1106,7 @@ export class CorePlaybackSession {
   ): Promise<void> {
     this.guard(intent, signal)
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     try {
@@ -3043,6 +3090,10 @@ export class CorePlaybackSession {
    * Filesystem IO stays outside the transport lane, so Pause/Stop remain usable. */
   async maintainSources<T>(action: (sources: readonly string[]) => Promise<T>): Promise<T> {
     if (this.outputClaim) return action([]) // Shared owner supplies the active physical sources.
+    // Background maintenance (NCM cache pruning and friends) must not interrupt a load the
+    // user asked for: revoke() below bumps the intent, which would surface the pending
+    // next/previous as CANCELLED and leave the old track playing. Let that load land first.
+    await this.awaitPreparation()
     const resume = this.maintainer?.isActive()
     const intent = this.revoke()
     let release!: () => void

@@ -2201,7 +2201,7 @@ test('source maintenance pins current and preload without a native reload, and P
   )
 })
 
-test('source maintenance revokes a resolved-before-load candidate and holds new source loads outside the control lane', async (t) => {
+test('source maintenance settles an in-flight load instead of superseding it, then holds later loads behind its barrier', async (t) => {
   let slow = false
   const entered = deferred<void>(),
     authorized = deferred<void>()
@@ -2217,18 +2217,23 @@ test('source maintenance revokes a resolved-before-load candidate and holds new 
   await f.session.fromQuery({}, 'a')
   await f.session.pause()
   slow = true
-  const old = f.session.fromQuery({}, 'b')
-  const cancelled = assert.rejects(old, { code: 'CANCELLED' })
+  const loading = f.session.fromQuery({}, 'b')
   await entered.promise
+  // Background maintenance (NCM cache pruning) starts while the user's load is still
+  // resolving its source: it must wait for that load to land, not supersede it.
   const clearing = deferred<void>(),
     release = deferred<void>()
+  let enteredMaintenance = false
   const maintenance = f.session.maintainSources(async () => {
+    enteredMaintenance = true
     clearing.resolve()
     await release.promise
   })
-  await clearing.promise
+  await tick()
+  assert.equal(enteredMaintenance, false)
   authorized.resolve()
-  await cancelled
+  await loading
+  await clearing.promise
   slow = false
   const calls = f.engine.calls.length
   const next = f.session.fromQuery({}, 'b')
@@ -2240,7 +2245,7 @@ test('source maintenance revokes a resolved-before-load candidate and holds new 
   await maintenance
   await nextCancelled
   assert.equal(f.engine.calls.slice(calls).includes('loadQueue'), false)
-  assert.equal(f.session.snapshot().track?.id, 'a')
+  assert.equal(f.session.snapshot().track?.id, 'b')
 })
 
 test('a source owner reserves its playback intent before file/provider preparation; Pause prevents a late Play', async (t) => {
