@@ -287,6 +287,7 @@ function playPersonalizedStream(section: RecSection | null): void {
             :key="ambientCover.cover"
             :cover="ambientCover.cover"
             :cover-source="ambientCover.coverSource"
+            size="sm"
             class="hero-ambient-img"
             alt=""
           />
@@ -335,6 +336,7 @@ function playPersonalizedStream(section: RecSection | null): void {
                   <CoverImg
                     :cover="item.cover"
                     :cover-source="item.coverSource"
+                    size="grid"
                     class="hero-collage-img"
                     alt=""
                   />
@@ -367,7 +369,7 @@ function playPersonalizedStream(section: RecSection | null): void {
               class="duo-stack-cover"
               :class="`duo-stack-cover-${index}`"
             >
-              <CoverImg :cover="item.cover" :cover-source="item.coverSource" alt="" />
+              <CoverImg :cover="item.cover" :cover-source="item.coverSource" size="sm" alt="" />
             </span>
             <span
               v-if="fmCovers.length === 0"
@@ -400,7 +402,7 @@ function playPersonalizedStream(section: RecSection | null): void {
               class="duo-stack-cover"
               :class="`duo-stack-cover-${index}`"
             >
-              <CoverImg :cover="item.cover" :cover-source="item.coverSource" alt="" />
+              <CoverImg :cover="item.cover" :cover-source="item.coverSource" size="sm" alt="" />
             </span>
             <span
               v-if="radarCovers.length === 0"
@@ -449,7 +451,12 @@ function playPersonalizedStream(section: RecSection | null): void {
               String(index + 1).padStart(2, '0')
             }}</span>
             <span class="chart-cover">
-              <CoverImg :cover="track.cover" :cover-source="track.coverSource" alt="" />
+              <CoverImg
+                :cover="track.coverSmall || track.cover"
+                :cover-source="track.coverSmallSource || track.coverSource"
+                size="sm"
+                alt=""
+              />
 
               <span class="chart-cover-action" aria-hidden="true">
                 <span v-if="isPlayingTrack(track)" class="chart-eq"> <i></i><i></i><i></i> </span>
@@ -491,6 +498,7 @@ function playPersonalizedStream(section: RecSection | null): void {
                 v-if="playlist.coverSmall || playlist.cover"
                 :cover="playlist.coverSmall || playlist.cover"
                 :cover-source="playlist.coverSmallSource || playlist.coverSource"
+                size="grid"
                 alt=""
               />
               <span v-else class="shelf-cover-empty"><i class="pi pi-list"></i></span>

@@ -68,7 +68,9 @@ export function createRemoteCoverCache(
           { source, bytes: bytes.length - separator - 1, contentType: type },
           'debug'
         )
-        return new Response(bytes.subarray(separator + 1), { headers: { 'content-type': type } })
+        return new Response(bytes.subarray(separator + 1), {
+          headers: { 'content-type': type, 'cache-control': 'private, max-age=3600' }
+        })
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return miss('not-found')
         writeDiagnostic('cover.cache', 'read.failed', { source, error }, 'warn')

@@ -3,6 +3,7 @@ import { diagnosticContext, withDiagnosticContext, writeDiagnostic } from '../di
 import type { DiagnosticLevel } from '../../shared/diagnostics.ts'
 
 export type RemoteMediaKind = 'audio' | 'image'
+export type RemoteImageDisplaySize = 'sm' | 'grid' | 'md'
 
 export interface RemoteMediaGrant {
   source: string
@@ -28,7 +29,12 @@ export interface RemoteMediaRequestHandlerOptions {
       bytes: Uint8Array,
       generation?: number
     ) => Promise<{ bytes: Uint8Array; contentType: string } | void | null>
-    resize?: (bytes: Uint8Array, mime: string) => { bytes: Uint8Array; mime: string } | null
+    resize?: (
+      bytes: Uint8Array,
+      mime: string,
+      maxWidth?: number,
+      quality?: number
+    ) => { bytes: Uint8Array; mime: string } | null
   }
   grants?: RemoteMediaGrantService
   fetch: (source: string, init: RequestInit) => Promise<Response>
@@ -43,9 +49,37 @@ const IMAGE_IDLE_TTL_MS = 24 * 60 * 60 * 1000
 const GRANT_SWEEP_BATCH = 64
 const MAX_IMAGE_RESPONSE_BYTES = 25 * 1024 * 1024
 const MAX_AUDIO_RESPONSE_BYTES = 1024 * 1024 * 1024
+const MAX_RESIZED_DERIVATIVE_ENTRIES = 192
+const MAX_RESIZED_DERIVATIVE_BYTES = 2 * 1024 * 1024
 // Provider CDNs (especially NetEase album art) routinely 302 to edge hosts.
 // Follow a short, credential-free hop chain instead of failing every cover load.
 const MAX_REMOTE_MEDIA_REDIRECTS = 5
+
+export function upstreamFetchUrlForRemoteMedia(source: string, kind: RemoteMediaKind): string {
+  if (kind !== 'image') return source
+  try {
+    const url = new URL(source)
+    if (
+      url.hostname.toLowerCase().endsWith('.music.126.net') &&
+      !url.searchParams.has('param') &&
+      !url.searchParams.has('thumbnail')
+    ) {
+      url.searchParams.set('param', '500y500')
+      return url.toString()
+    }
+  } catch {
+    // Keep original source if URL parsing fails.
+  }
+  return source
+}
+
+function imageResizeBudget(
+  size: RemoteImageDisplaySize | undefined
+): { width: number; quality: number } | null {
+  if (size === 'sm') return { width: 128, quality: 80 }
+  if (size === 'grid') return { width: 256, quality: 82 }
+  return null
+}
 
 export class RemoteMediaGrantService {
   private readonly grants = new Map<string, StoredGrant>()
@@ -125,6 +159,280 @@ export function createRemoteMediaRequestHandler(
   options: RemoteMediaRequestHandlerOptions
 ): (request: Request) => Promise<Response> {
   const grants = options.grants ?? remoteMediaGrants
+  const resizedDerivatives = new Map<
+    string,
+    { bytes: Uint8Array; contentType: string; cacheControl: string | null }
+  >()
+  let resizedDerivativeBytes = 0
+  let resizedDerivativeGeneration: number | undefined
+
+  type CanonicalImageOutcome =
+    | {
+        kind: 'failure'
+        status: number
+        reason: string
+        message: string
+        error?: unknown
+      }
+    | {
+        kind: 'uncached'
+        status: number
+        headers: Headers
+        bytes: Uint8Array
+        skipReason: string
+      }
+    | {
+        kind: 'cached'
+        status: number
+        headers: Headers
+        bytes: Uint8Array
+        storedBytesReplaced: boolean
+      }
+
+  interface InFlightCanonicalImage {
+    controller: AbortController
+    generation: number | undefined
+    waiters: number
+    settled: boolean
+    promise: Promise<CanonicalImageOutcome>
+  }
+
+  const inFlightCanonicalImages = new Map<string, InFlightCanonicalImage>()
+
+  const syncDerivativeGeneration = (generation: number | undefined): void => {
+    if (generation !== resizedDerivativeGeneration) {
+      resizedDerivatives.clear()
+      resizedDerivativeBytes = 0
+      resizedDerivativeGeneration = generation
+    }
+  }
+
+  const cacheResizedDerivative = (
+    key: string,
+    bytes: Uint8Array,
+    contentType: string,
+    cacheControl: string | null
+  ): void => {
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_RESIZED_DERIVATIVE_BYTES) return
+    const existing = resizedDerivatives.get(key)
+    if (existing) {
+      resizedDerivativeBytes -= existing.bytes.byteLength
+      resizedDerivatives.delete(key)
+    }
+    const copy = new Uint8Array(bytes.byteLength)
+    copy.set(bytes)
+    resizedDerivatives.set(key, { bytes: copy, contentType, cacheControl })
+    resizedDerivativeBytes += copy.byteLength
+    while (
+      resizedDerivatives.size > MAX_RESIZED_DERIVATIVE_ENTRIES ||
+      resizedDerivativeBytes > MAX_RESIZED_DERIVATIVE_BYTES
+    ) {
+      const oldest = resizedDerivatives.keys().next().value
+      if (oldest === undefined) break
+      const evicted = resizedDerivatives.get(oldest)
+      if (evicted) resizedDerivativeBytes -= evicted.bytes.byteLength
+      resizedDerivatives.delete(oldest)
+    }
+  }
+
+  const startCanonicalImageFetch = (
+    singleflightKey: string,
+    grant: RemoteMediaGrant,
+    cacheGeneration: number | undefined,
+    record: MediaDiagnostic
+  ): InFlightCanonicalImage => {
+    const controller = new AbortController()
+    const entry: InFlightCanonicalImage = {
+      controller,
+      generation: cacheGeneration,
+      waiters: 0,
+      settled: false,
+      promise: Promise.resolve({
+        kind: 'failure',
+        status: 502,
+        reason: 'uninitialized',
+        message: 'Remote media request failed'
+      })
+    }
+
+    const run = async (): Promise<CanonicalImageOutcome> => {
+      let upstream: Response
+      try {
+        const upstreamUrl = upstreamFetchUrlForRemoteMedia(grant.source, grant.kind)
+        upstream = await fetchRemoteMediaWithRedirects(
+          options.fetch,
+          upstreamUrl,
+          {
+            method: 'GET',
+            signal: controller.signal,
+            headers: buildUpstreamRequestHeaders(grant.source, grant.kind, null)
+          },
+          record
+        )
+      } catch (error) {
+        controller.signal.throwIfAborted()
+        return {
+          kind: 'failure',
+          status: 502,
+          reason: 'upstream-fetch',
+          message: 'Remote media request failed',
+          error
+        }
+      }
+
+      if (!upstream.ok && upstream.status !== 206) {
+        await cancelRemoteMediaBody(upstream)
+        return {
+          kind: 'failure',
+          status: 502,
+          reason: 'upstream-status',
+          message: 'Remote media request failed'
+        }
+      }
+      if (!isExpectedMediaType(upstream.headers.get('content-type'), grant.kind)) {
+        await cancelRemoteMediaBody(upstream)
+        return {
+          kind: 'failure',
+          status: 415,
+          reason: 'content-type',
+          message: 'Remote media type is not authorized'
+        }
+      }
+      const maximumBytes = maxResponseBytesFor(grant.kind)
+      const contentLength = parseContentLength(upstream.headers.get('content-length'))
+      if (contentLength !== null && contentLength > maximumBytes) {
+        await cancelRemoteMediaBody(upstream)
+        return {
+          kind: 'failure',
+          status: 413,
+          reason: 'content-length',
+          message: 'Remote media response is too large'
+        }
+      }
+
+      const baseHeaders = filteredResponseHeaders(upstream.headers)
+      const shouldWriteCache =
+        upstream.status === 200 &&
+        !/no-store|no-cache|private|max-age\s*=\s*0(?:\D|$)/i.test(
+          upstream.headers.get('cache-control') ?? ''
+        )
+
+      try {
+        const bodyResponse = new Response(
+          limitResponseBody(upstream.body, maximumBytes, record, controller.signal)
+        )
+        const bytes = new Uint8Array(await bodyResponse.arrayBuffer())
+        controller.signal.throwIfAborted()
+        if (!shouldWriteCache) {
+          return {
+            kind: 'uncached',
+            status: upstream.status,
+            headers: baseHeaders,
+            bytes,
+            skipReason: 'response-policy'
+          }
+        }
+        const stored = await options.imageCache!.write(
+          grant.source,
+          upstream.headers.get('content-type') ?? '',
+          bytes,
+          cacheGeneration
+        )
+        const canonicalBytes = stored && stored.bytes.byteLength > 0 ? stored.bytes : bytes
+        const headers = new Headers(baseHeaders)
+        if (stored?.contentType) {
+          headers.set('Content-Type', stored.contentType)
+        }
+        const storedBytesReplaced = Boolean(
+          stored && stored.bytes.byteLength > 0 && stored.bytes !== bytes
+        )
+        if (storedBytesReplaced) {
+          headers.delete('Content-Length')
+        }
+        return {
+          kind: 'cached',
+          status: upstream.status,
+          headers,
+          bytes: canonicalBytes,
+          storedBytesReplaced
+        }
+      } catch (error) {
+        controller.signal.throwIfAborted()
+        return {
+          kind: 'failure',
+          status: 502,
+          reason: 'body-or-cache-write',
+          message: 'Remote image response failed',
+          error
+        }
+      }
+    }
+
+    entry.promise = run().finally(() => {
+      entry.settled = true
+      if (inFlightCanonicalImages.get(singleflightKey) === entry) {
+        inFlightCanonicalImages.delete(singleflightKey)
+      }
+    })
+    entry.promise.catch(() => {})
+    inFlightCanonicalImages.set(singleflightKey, entry)
+    return entry
+  }
+
+  const awaitCanonicalImage = (
+    singleflightKey: string,
+    entry: InFlightCanonicalImage,
+    signal: AbortSignal
+  ): Promise<CanonicalImageOutcome> => {
+    signal.throwIfAborted()
+    entry.waiters += 1
+    let detached = false
+    return new Promise<CanonicalImageOutcome>((resolve, reject) => {
+      const detach = () => {
+        if (detached) return
+        detached = true
+        signal.removeEventListener('abort', onAbort)
+        entry.waiters = Math.max(0, entry.waiters - 1)
+        if (entry.waiters === 0 && !entry.settled) {
+          if (inFlightCanonicalImages.get(singleflightKey) === entry) {
+            inFlightCanonicalImages.delete(singleflightKey)
+          }
+          entry.controller.abort(signal.reason)
+        }
+      }
+      const onAbort = () => {
+        detach()
+        try {
+          signal.throwIfAborted()
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        } catch (error) {
+          reject(error)
+        }
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      entry.promise.then(
+        (outcome) => {
+          if (detached) return
+          detached = true
+          signal.removeEventListener('abort', onAbort)
+          entry.waiters = Math.max(0, entry.waiters - 1)
+          resolve(outcome)
+        },
+        (error) => {
+          if (detached) return
+          detached = true
+          signal.removeEventListener('abort', onAbort)
+          entry.waiters = Math.max(0, entry.waiters - 1)
+          reject(error)
+        }
+      )
+    })
+  }
+
   return (request) =>
     withDiagnosticContext({ requestId: randomUUID() }, async () => {
       request.signal.throwIfAborted()
@@ -160,8 +468,12 @@ export function createRemoteMediaRequestHandler(
       }
 
       let grant: RemoteMediaGrant
+      let requestedImageSize: RemoteImageDisplaySize | undefined
       try {
         grant = grants.resolve(request.url)
+        if (grant.kind === 'image') {
+          requestedImageSize = parseGrantToken(request.url).imageSize
+        }
       } catch (error) {
         return fail(403, 'authorization', 'Remote media authorization failed', error)
       }
@@ -173,9 +485,190 @@ export function createRemoteMediaRequestHandler(
         return fail(416, 'range', 'Requested range is not supported')
       }
 
-      const cacheable = grant.kind === 'image' && request.method === 'GET' && !range && grant.expiresAt === undefined
+      const cacheable =
+        grant.kind === 'image' &&
+        request.method === 'GET' &&
+        !range &&
+        grant.expiresAt === undefined
       const cacheGeneration = options.imageCache?.generation?.()
+      syncDerivativeGeneration(cacheGeneration)
+      const resizeBudget = options.imageCache?.resize
+        ? imageResizeBudget(requestedImageSize)
+        : null
+      const derivativeKey =
+        cacheable && resizeBudget ? `${grant.source}?size=${requestedImageSize}` : null
+
+      const serveCachedImage = async (cached: Response): Promise<Response> => {
+        const noStore = grant.expiresAt !== undefined
+        if (!resizeBudget || !options.imageCache?.resize) {
+          record('response.ready', { status: cached.status, fromCache: true })
+          if (!noStore) return cached
+          const headers = new Headers(cached.headers)
+          headers.set('Cache-Control', 'no-store')
+          return new Response(cached.body, {
+            status: cached.status,
+            statusText: cached.statusText,
+            headers
+          })
+        }
+        const rawBytes = new Uint8Array(await cached.arrayBuffer())
+        request.signal.throwIfAborted()
+        let outBytes: Uint8Array = rawBytes
+        const headers = new Headers(cached.headers)
+        if (noStore) headers.set('Cache-Control', 'no-store')
+        try {
+          const resized = options.imageCache.resize(
+            rawBytes,
+            cached.headers.get('content-type') ?? 'image/jpeg',
+            resizeBudget.width,
+            resizeBudget.quality
+          )
+          if (resized && resized.bytes.byteLength > 0) {
+            outBytes = resized.bytes
+            const contentType = resized.mime.split(';', 1)[0].trim() || resized.mime
+            headers.set('Content-Type', contentType)
+            headers.delete('Content-Length')
+            if (derivativeKey && !noStore) {
+              cacheResizedDerivative(
+                derivativeKey,
+                outBytes,
+                contentType,
+                headers.get('Cache-Control')
+              )
+            }
+          }
+        } catch {
+          // Serve cached canonical bytes if resizing fails.
+        }
+        record('response.ready', { status: cached.status, fromCache: true })
+        return new Response(outBytes as BodyInit, { status: cached.status, headers })
+      }
+
+      const serveCanonicalOutcome = (
+        outcome: CanonicalImageOutcome,
+        entryGeneration: number | undefined
+      ): Response => {
+        if (outcome.kind === 'failure') {
+          return fail(outcome.status, outcome.reason, outcome.message, outcome.error)
+        }
+        if (outcome.kind === 'uncached') {
+          record('cache.write.skipped', { reason: outcome.skipReason })
+          let outBytes: Uint8Array = outcome.bytes
+          const headers = new Headers(outcome.headers)
+          if (options.imageCache?.resize && outcome.status === 200) {
+            try {
+              const resized = options.imageCache.resize(
+                outcome.bytes,
+                outcome.headers.get('content-type') ?? '',
+                resizeBudget?.width,
+                resizeBudget?.quality
+              )
+              if (resized && resized.bytes.byteLength > 0) {
+                outBytes = resized.bytes
+                headers.set('Content-Type', resized.mime.split(';', 1)[0].trim() || resized.mime)
+                headers.delete('Content-Length')
+              }
+            } catch {
+              // Keep original bytes when downscaling fails.
+            }
+          }
+          record('response.ready', {
+            status: outcome.status,
+            fromCache: false,
+            bytes: outBytes.byteLength
+          })
+          return new Response(outBytes as BodyInit, { status: outcome.status, headers })
+        }
+
+        const currentGeneration = options.imageCache?.generation?.()
+        syncDerivativeGeneration(currentGeneration)
+        const sameGeneration = currentGeneration === entryGeneration
+        if (sameGeneration && derivativeKey) {
+          const cachedDerivative = resizedDerivatives.get(derivativeKey)
+          if (cachedDerivative) {
+            resizedDerivatives.delete(derivativeKey)
+            resizedDerivatives.set(derivativeKey, cachedDerivative)
+            const headers = new Headers({ 'Content-Type': cachedDerivative.contentType })
+            if (cachedDerivative.cacheControl) {
+              headers.set('Cache-Control', cachedDerivative.cacheControl)
+            }
+            record('response.ready', {
+              status: outcome.status,
+              fromCache: false,
+              bytes: cachedDerivative.bytes.byteLength
+            })
+            return new Response(cachedDerivative.bytes as BodyInit, {
+              status: outcome.status,
+              headers
+            })
+          }
+        }
+
+        let outBytes = outcome.bytes
+        const headers = new Headers(outcome.headers)
+        let downscaled = false
+        if (resizeBudget && options.imageCache?.resize) {
+          try {
+            const resized = options.imageCache.resize(
+              outBytes,
+              headers.get('content-type') ?? 'image/jpeg',
+              resizeBudget.width,
+              resizeBudget.quality
+            )
+            if (resized && resized.bytes.byteLength > 0) {
+              outBytes = resized.bytes
+              downscaled = true
+              const contentType = resized.mime.split(';', 1)[0].trim() || resized.mime
+              headers.set('Content-Type', contentType)
+              if (sameGeneration && derivativeKey) {
+                cacheResizedDerivative(
+                  derivativeKey,
+                  outBytes,
+                  contentType,
+                  headers.get('Cache-Control')
+                )
+              }
+            }
+          } catch {
+            // Keep canonical stored bytes when secondary downscale fails.
+          }
+        }
+        if (downscaled || outcome.storedBytesReplaced) {
+          headers.delete('Content-Length')
+        }
+        record('response.ready', {
+          status: outcome.status,
+          fromCache: false,
+          bytes: outBytes.byteLength
+        })
+        return new Response(outBytes as BodyInit, { status: outcome.status, headers })
+      }
+
       if (cacheable && options.imageCache) {
+        if (derivativeKey) {
+          const cachedDerivative = resizedDerivatives.get(derivativeKey)
+          if (cachedDerivative) {
+            resizedDerivatives.delete(derivativeKey)
+            resizedDerivatives.set(derivativeKey, cachedDerivative)
+            const headers = new Headers({ 'Content-Type': cachedDerivative.contentType })
+            if (cachedDerivative.cacheControl) {
+              headers.set('Cache-Control', cachedDerivative.cacheControl)
+            }
+            record('cache.lookup', { hit: true, size: requestedImageSize })
+            record('response.ready', { status: 200, fromCache: true })
+            return new Response(cachedDerivative.bytes as BodyInit, { status: 200, headers })
+          }
+        }
+
+        const singleflightKey =
+          cacheGeneration === undefined ? grant.source : `${cacheGeneration}\0${grant.source}`
+        let inFlight = inFlightCanonicalImages.get(singleflightKey)
+        if (inFlight) {
+          record('cache.lookup', { hit: false, coalesced: true })
+          const outcome = await awaitCanonicalImage(singleflightKey, inFlight, request.signal)
+          return serveCanonicalOutcome(outcome, inFlight.generation)
+        }
+
         try {
           const cached = await options.imageCache.read(grant.source)
           if (request.signal.aborted) {
@@ -184,20 +677,27 @@ export function createRemoteMediaRequestHandler(
           }
           record('cache.lookup', { hit: Boolean(cached) })
           if (cached) {
-            record('response.ready', { status: cached.status, fromCache: true })
-            return cached
+            return await serveCachedImage(cached)
           }
         } catch (error) {
           record('cache.read.failed', { error }, 'warn')
           throw error
         }
+
+        inFlight = inFlightCanonicalImages.get(singleflightKey)
+        if (!inFlight) {
+          inFlight = startCanonicalImageFetch(singleflightKey, grant, cacheGeneration, record)
+        }
+        const outcome = await awaitCanonicalImage(singleflightKey, inFlight, request.signal)
+        return serveCanonicalOutcome(outcome, inFlight.generation)
       }
 
       let upstream: Response
       try {
+        const upstreamUrl = upstreamFetchUrlForRemoteMedia(grant.source, grant.kind)
         upstream = await fetchRemoteMediaWithRedirects(
           options.fetch,
-          grant.source,
+          upstreamUrl,
           {
             method: request.method,
             signal: request.signal,
@@ -215,7 +715,9 @@ export function createRemoteMediaRequestHandler(
         return fail(502, 'upstream-status', 'Remote media request failed')
       }
       if (grant.expiresAt !== undefined) {
-        try { grants.resolve(request.url, 'image') } catch {
+        try {
+          grants.resolve(request.url, 'image')
+        } catch {
           await cancelRemoteMediaBody(upstream)
           return fail(403, 'authorization-expired', 'Remote image permission has expired')
         }
@@ -241,46 +743,11 @@ export function createRemoteMediaRequestHandler(
         }
       )
       if (grant.expiresAt !== undefined) response.headers.set('Cache-Control', 'no-store')
-      if (
-        cacheable &&
-        options.imageCache &&
-        upstream.status === 200 &&
-        !/no-store|no-cache|private|max-age\s*=\s*0(?:\D|$)/i.test(
-          upstream.headers.get('cache-control') ?? ''
-        )
-      ) {
-        try {
-          const bytes = new Uint8Array(await response.arrayBuffer())
-          request.signal.throwIfAborted()
-          const stored = await options.imageCache.write(
-            grant.source,
-            upstream.headers.get('content-type') ?? '',
-            bytes,
-            cacheGeneration
-          )
-          const outBytes = stored && stored.bytes.byteLength > 0 ? stored.bytes : bytes
-          const headers = new Headers(response.headers)
-          if (stored?.contentType) {
-            headers.set('Content-Type', stored.contentType)
-          }
-          if (outBytes !== bytes) {
-            headers.delete('Content-Length')
-          }
-          record('response.ready', {
-            status: response.status,
-            fromCache: false,
-            bytes: outBytes.byteLength
-          })
-          return new Response(outBytes as BodyInit, { status: response.status, headers })
-        } catch (error) {
-          request.signal.throwIfAborted()
-          return fail(502, 'body-or-cache-write', 'Remote image response failed', error)
-        }
-      }
-      if (cacheable)
+      if (cacheable) {
         record('cache.write.skipped', {
           reason: options.imageCache ? 'response-policy' : 'unconfigured'
         })
+      }
       if (
         options.imageCache?.resize &&
         grant.kind === 'image' &&
@@ -296,7 +763,9 @@ export function createRemoteMediaRequestHandler(
           try {
             const resized = options.imageCache.resize(
               bytes,
-              upstream.headers.get('content-type') ?? ''
+              upstream.headers.get('content-type') ?? '',
+              resizeBudget?.width,
+              resizeBudget?.quality
             )
             if (resized && resized.bytes.byteLength > 0) {
               outBytes = resized.bytes
@@ -596,7 +1065,11 @@ function normalizeRemoteMediaSource(source: string): string {
   return parsed.toString()
 }
 
-function parseGrantToken(url: string): { token: string; kind: RemoteMediaKind } {
+function parseGrantToken(url: string): {
+  token: string
+  kind: RemoteMediaKind
+  imageSize?: RemoteImageDisplaySize
+} {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -610,12 +1083,25 @@ function parseGrantToken(url: string): { token: string; kind: RemoteMediaKind } 
     (kind !== 'audio' && kind !== 'image') ||
     !token ||
     token.includes('/') ||
-    parsed.search ||
     parsed.hash
   ) {
     throw new Error('Remote media grant URL is invalid')
   }
-  return { token, kind }
+  let imageSize: RemoteImageDisplaySize | undefined
+  if (parsed.search) {
+    if (kind !== 'image') {
+      throw new Error('Remote media grant URL is invalid')
+    }
+    const size = parsed.searchParams.get('size')
+    if (
+      parsed.searchParams.size !== 1 ||
+      (size !== 'sm' && size !== 'grid' && size !== 'md')
+    ) {
+      throw new Error('Remote media grant URL is invalid')
+    }
+    imageSize = size
+  }
+  return { token, kind, ...(imageSize ? { imageSize } : {}) }
 }
 
 function ttlFor(kind: RemoteMediaKind): number {

@@ -818,3 +818,625 @@ test('CDN playback URLs and non-playback loopback results still allow idle hiber
     })
   }
 })
+
+async function createRealLifecycleManager(
+  t,
+  {
+    userData,
+    bundledPlugins = [],
+    hostIdleTimeoutMs = 15_000,
+    onActivate,
+    onDeactivate
+  }
+) {
+  const importSource = (name) => import(pathToFileURL(path.join(__dirname, name)).href)
+  await importSource('../../adapters-node/index.ts')
+  const [media, identities] = await Promise.all([
+    importSource('../security/remoteMediaGrants.ts'),
+    importSource('../audio/providerPlaybackIdentity.ts')
+  ])
+  const children = []
+  class Child extends EventEmitter {
+    messages = []
+    postMessage(message) {
+      this.messages.push(message)
+      if (message.kind === 'activate') {
+        queueMicrotask(() => onActivate?.(this, message))
+      }
+      if (message.kind === 'provider-call') {
+        if (this.deactivating) return
+        queueMicrotask(() =>
+          this.emit('message', {
+            kind: 'provider-result',
+            requestId: message.requestId,
+            ok: true,
+            value: `${message.providerId}.${message.method}:${JSON.stringify(message.args)}`
+          })
+        )
+      }
+      if (message.kind === 'ui-command') {
+        queueMicrotask(() =>
+          this.emit('message', {
+            kind: 'ui-command-result',
+            requestId: message.requestId,
+            ok: true,
+            value: `ui:${message.command}:${JSON.stringify(message.args)}`
+          })
+        )
+      }
+      if (message.kind === 'deactivate') {
+        this.deactivating = true
+        if (onDeactivate) {
+          onDeactivate(this, message)
+          return
+        }
+        queueMicrotask(() =>
+          this.emit('message', {
+            kind: 'deactivated',
+            requestId: message.requestId
+          })
+        )
+      }
+    }
+    kill() {
+      this.emit('exit', 0)
+    }
+  }
+  const managerPath = path.join(__dirname, '../../core/plugins/manager.ts')
+  const source = ts.transpileModule(fs.readFileSync(managerPath, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  const dependencies = {
+    electron: {
+      app: { getPath: () => userData },
+      dialog: {},
+      shell: {},
+      utilityProcess: { fork: () => new Child() }
+    },
+    '../security/remoteMediaGrants.ts': media,
+    '../audio/providerPlaybackIdentity.ts': identities
+  }
+  for (const [, id] of source.matchAll(/require\("([^"]+)"\)/g)) {
+    if (!id.startsWith('.') || id in dependencies) continue
+    const target = path.resolve(path.dirname(managerPath), id)
+    dependencies[id] = await import(pathToFileURL(path.extname(target) ? target : `${target}.ts`).href)
+  }
+  const exports = {}
+  vm.runInNewContext(source, {
+    exports,
+    require: (id) => {
+      if (id in dependencies) return dependencies[id]
+      return require(id)
+    },
+    Buffer,
+    structuredClone,
+    AbortController,
+    process,
+    setTimeout,
+    clearTimeout,
+    console
+  })
+  const manager = new exports.TwilightPluginManager({
+    appVersion: '2.0.2',
+    platform: {
+      userData,
+      launchHost: () => {
+        const child = new Child()
+        children.push(child)
+        return child
+      },
+      chooseInstallSource: async () => null,
+      confirmInstall: async () => true,
+      showLog: () => {},
+      notifyStateIssue: async () => {},
+      log: (_pluginId, level, message) => ({
+        timestamp: '2026-11-14T00:00:00.000Z',
+        eventId: 'evt',
+        text: `[${level}] ${message}`
+      }),
+      protectProviderResult: media.protectProviderMedia
+    },
+    settings: { flush: async () => {} },
+    recordPlaybackIdentity: (...args) => identities.providerPlaybackIdentities.record(...args),
+    bundledPlugins,
+    hostIdleTimeoutMs,
+    getPlaybackInfo: () => ({}),
+    autoMixEnabled: () => false,
+    applyNativeDspPluginChain: () => {},
+    player: {}
+  })
+  t.after(async () => {
+    await manager.destroy().catch(() => undefined)
+  })
+  return { manager, children }
+}
+
+async function flushAsync() {
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise(setImmediate)
+  }
+}
+
+test('provider+ui plugin hibernates on idle, preserves contributions across destroy(), and boots hibernated on restart', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'twilight-p2a-provider-ui-'))
+  t.after(() => {
+    assert.equal(path.dirname(directory), path.resolve(tmpdir()))
+    assert.ok(path.basename(directory).startsWith('twilight-p2a-provider-ui-'))
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  const pluginId = 'com.example.hybrid'
+  const pluginDir = path.join(directory, 'plugins', pluginId, '1.0.0')
+  fs.mkdirSync(pluginDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(pluginDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        id: pluginId,
+        name: 'Hybrid Provider',
+        version: '1.0.0',
+        description: 'Hybrid provider + UI settings plugin',
+        author: 'Test',
+        license: 'MIT',
+        main: 'index.mjs',
+        engines: { twilightEcho: '*' },
+        type: ['provider', 'ui'],
+        permissions: ['network', 'ui:inject'],
+        apiVersion: 3
+      },
+      null,
+      2
+    )
+  )
+  fs.writeFileSync(path.join(pluginDir, 'index.mjs'), 'export function activate() {}\n')
+  fs.writeFileSync(
+    path.join(directory, 'plugin-state.json'),
+    JSON.stringify(
+      {
+        [pluginId]: {
+          enabled: true,
+          installedAt: '2026-10-08T00:00:00.000Z',
+          updatedAt: '2026-10-08T00:00:00.000Z',
+          source: 'directory',
+          activeVersion: '1.0.0'
+        }
+      },
+      null,
+      2
+    )
+  )
+
+  const registerHybrid = (child) => {
+    child.emit('message', {
+      kind: 'api-call',
+      requestId: 'reg-provider',
+      namespace: 'providers',
+      method: 'register',
+      args: [
+        {
+          id: 'hybrid',
+          name: 'Hybrid',
+          capabilities: ['search'],
+          supportedMethods: ['searchSongs']
+        }
+      ]
+    })
+    child.emit('message', {
+      kind: 'api-call',
+      requestId: 'reg-ui',
+      namespace: 'extensions',
+      method: 'registerUi',
+      args: [
+        {
+          id: 'hybrid-settings',
+          kind: 'settingsPanel',
+          title: 'Hybrid Settings',
+          command: 'hybrid.openSettings',
+          renderMode: 'command',
+          autoLoad: false
+        }
+      ]
+    })
+    child.emit('message', { kind: 'activated', pluginId })
+  }
+
+  // First boot: cold-starts once, registers provider + settingsPanel UI, and hibernates after 15s idle.
+  const firstRun = await createRealLifecycleManager(t, {
+    userData: directory,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: registerHybrid
+  })
+  await firstRun.manager.initialize()
+  assert.equal(firstRun.children.length, 1)
+  assert.deepEqual(
+    firstRun.manager.listProviders().map((provider) => provider.id),
+    ['hybrid']
+  )
+  assert.equal((await firstRun.manager.listExtensions())[0]?.ui[0]?.id, 'hybrid-settings')
+
+  t.mock.timers.tick(15_000)
+  await flushAsync()
+  assert.equal(firstRun.manager.isHibernated(pluginId), true)
+  assert.equal(firstRun.manager.running.has(pluginId), false)
+
+  // Wake it, then call destroy() while running to confirm shutdown preserves plugin-contributions.json.
+  assert.equal(
+    await firstRun.manager.callProvider('hybrid', 'searchSongs', ['before-shutdown']),
+    'hybrid.searchSongs:["before-shutdown"]'
+  )
+  assert.equal(firstRun.children.length, 2)
+  assert.equal(firstRun.manager.running.has(pluginId), true)
+  await firstRun.manager.destroy()
+
+  const cachedAfterDestroy = JSON.parse(
+    fs.readFileSync(path.join(directory, 'plugin-contributions.json'), 'utf8')
+  )
+  assert.equal(cachedAfterDestroy.plugins[pluginId]?.providers[0]?.id, 'hybrid')
+  assert.equal(cachedAfterDestroy.plugins[pluginId]?.ui[0]?.kind, 'settingsPanel')
+
+  // Second boot: boots straight into hibernation with 0 host spawns, then wakes on UI command or provider call.
+  const secondRun = await createRealLifecycleManager(t, {
+    userData: directory,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: registerHybrid
+  })
+  await secondRun.manager.initialize()
+  assert.equal(secondRun.children.length, 0)
+  assert.equal(secondRun.manager.isHibernated(pluginId), true)
+  assert.deepEqual(
+    secondRun.manager.listProviders().map((provider) => provider.id),
+    ['hybrid']
+  )
+  const secondExtensions = await secondRun.manager.listExtensions()
+  assert.equal(secondExtensions[0]?.ui[0]?.command, 'hybrid.openSettings')
+
+  assert.equal(
+    await secondRun.manager.executeUiCommand('hybrid.openSettings', [{ tab: 'account' }]),
+    'ui:hybrid.openSettings:[{"tab":"account"}]'
+  )
+  assert.equal(secondRun.children.length, 1)
+  assert.equal(secondRun.manager.isHibernated(pluginId), false)
+
+  t.mock.timers.tick(15_000)
+  await flushAsync()
+  assert.equal(secondRun.manager.isHibernated(pluginId), true)
+
+  assert.equal(
+    await secondRun.manager.callProvider('hybrid', 'searchSongs', ['after-wake']),
+    'hybrid.searchSongs:["after-wake"]'
+  )
+  assert.equal(secondRun.children.length, 2)
+
+  // Verify autoLoad: true UI contributions never allow hibernation.
+  const autoLoadDescriptor = {
+    ...(await secondRun.manager.list())[0],
+    id: 'com.example.autoload-hybrid'
+  }
+  assert.equal(
+    secondRun.manager.supportsProviderHostHibernation(autoLoadDescriptor, [
+      {
+        id: 'autoload-ui',
+        kind: 'sidebarPage',
+        title: 'AutoLoad',
+        command: 'autoload.open',
+        renderMode: 'command',
+        autoLoad: true
+      }
+    ]),
+    false
+  )
+  await secondRun.manager.destroy()
+})
+
+test('unchanged bundled provider preserves mainSignature across initialize() restarts and prunes retired bundled entries', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'twilight-p2a-bundled-'))
+  t.after(() => {
+    assert.equal(path.dirname(directory), path.resolve(tmpdir()))
+    assert.ok(path.basename(directory).startsWith('twilight-p2a-bundled-'))
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  const userData = path.join(directory, 'userData')
+  const bundledSource = path.join(directory, 'resources', 'plugins', 'demo-bundled')
+  fs.mkdirSync(bundledSource, { recursive: true })
+  const bundledManifest = {
+    id: 'com.example.bundled',
+    name: 'Bundled Provider',
+    version: '1.0.0',
+    description: 'Bundled test provider',
+    author: 'Test',
+    license: 'MIT',
+    main: 'index.mjs',
+    engines: { twilightEcho: '*' },
+    type: ['provider'],
+    permissions: ['network'],
+    apiVersion: 3
+  }
+  fs.writeFileSync(path.join(bundledSource, 'plugin.json'), JSON.stringify(bundledManifest, null, 2))
+  fs.writeFileSync(path.join(bundledSource, 'index.mjs'), 'export function activate() {}\n')
+  const initialSourceTime = new Date('2025-02-03T04:05:06.000Z')
+  fs.utimesSync(path.join(bundledSource, 'plugin.json'), initialSourceTime, initialSourceTime)
+  fs.utimesSync(path.join(bundledSource, 'index.mjs'), initialSourceTime, initialSourceTime)
+
+  // Seed a retired bundled plugin (to be pruned) and a marketplace ('index') plugin (to be kept).
+  const retiredId = 'com.twilightecho.provider.navidrome'
+  const marketplaceId = 'com.example.marketplace'
+  fs.mkdirSync(path.join(userData, 'plugins', retiredId, '1.0.0'), { recursive: true })
+  fs.writeFileSync(path.join(userData, 'plugins', retiredId, '1.0.0', 'index.mjs'), 'retired\n')
+  fs.mkdirSync(path.join(userData, 'plugins', marketplaceId, '1.0.0'), { recursive: true })
+  fs.writeFileSync(
+    path.join(userData, 'plugins', marketplaceId, '1.0.0', 'plugin.json'),
+    JSON.stringify(
+      {
+        id: marketplaceId,
+        name: 'Marketplace Provider',
+        version: '1.0.0',
+        description: 'Marketplace test provider',
+        author: 'Test',
+        license: 'MIT',
+        main: 'index.mjs',
+        engines: { twilightEcho: '*' },
+        type: ['provider'],
+        permissions: ['network'],
+        apiVersion: 3
+      },
+      null,
+      2
+    )
+  )
+  fs.writeFileSync(
+    path.join(userData, 'plugins', marketplaceId, '1.0.0', 'index.mjs'),
+    'export function activate() {}\n'
+  )
+  fs.writeFileSync(
+    path.join(userData, 'plugin-state.json'),
+    JSON.stringify(
+      {
+        [retiredId]: {
+          enabled: true,
+          installedAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:00.000Z',
+          source: 'bundled',
+          activeVersion: '1.0.0'
+        },
+        [marketplaceId]: {
+          enabled: false,
+          installedAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:00.000Z',
+          source: 'index',
+          activeVersion: '1.0.0'
+        }
+      },
+      null,
+      2
+    )
+  )
+  fs.writeFileSync(
+    path.join(userData, 'plugin-contributions.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        plugins: {
+          [retiredId]: {
+            version: '1.0.0',
+            mainSignature: '8:1700000000000',
+            providers: [
+              { id: 'navidrome', name: 'Navidrome', capabilities: ['search'], supportedMethods: ['searchSongs'] }
+            ],
+            ui: [],
+            subscriptions: []
+          },
+          [marketplaceId]: {
+            version: '1.0.0',
+            mainSignature: '30:1700000000000',
+            providers: [
+              { id: 'market', name: 'Market', capabilities: ['search'], supportedMethods: ['searchSongs'] }
+            ],
+            ui: [],
+            subscriptions: []
+          }
+        }
+      },
+      null,
+      2
+    )
+  )
+
+  const registerBundled = (child, message) => {
+    child.emit('message', {
+      kind: 'api-call',
+      requestId: 'reg-bundled',
+      namespace: 'providers',
+      method: 'register',
+      args: [
+        {
+          id: 'bundled',
+          name: 'Bundled',
+          capabilities: ['search'],
+          supportedMethods: ['searchSongs']
+        }
+      ]
+    })
+    child.emit('message', { kind: 'activated', pluginId: message.pluginId })
+  }
+
+  const bundledPlugins = [
+    { id: 'com.example.bundled', sourcePath: bundledSource, defaultEnabled: true }
+  ]
+
+  // Boot 1: syncs bundled plugin, prunes retired bundled entry, keeps marketplace entry, saves contributions on destroy.
+  const firstRun = await createRealLifecycleManager(t, {
+    userData,
+    bundledPlugins,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: registerBundled
+  })
+  await firstRun.manager.initialize()
+  assert.equal(firstRun.children.length, 1)
+  assert.equal(fs.existsSync(path.join(userData, 'plugins', retiredId)), false)
+  assert.equal(firstRun.manager.state[retiredId], undefined)
+  assert.equal(fs.existsSync(path.join(userData, 'plugins', marketplaceId)), true)
+  assert.equal(firstRun.manager.state[marketplaceId]?.source, 'index')
+
+  const installedMain = path.join(userData, 'plugins', 'com.example.bundled', '1.0.0', 'index.mjs')
+  const firstInstalledMtime = Math.floor(fs.statSync(installedMain).mtimeMs)
+  await firstRun.manager.destroy()
+
+  const cacheAfterFirstRun = JSON.parse(
+    fs.readFileSync(path.join(userData, 'plugin-contributions.json'), 'utf8')
+  )
+  assert.equal(cacheAfterFirstRun.plugins[retiredId], undefined)
+  assert.ok(cacheAfterFirstRun.plugins[marketplaceId])
+  assert.ok(cacheAfterFirstRun.plugins['com.example.bundled']?.mainSignature)
+
+  // Touch source mtimes WITHOUT modifying bytes; unchanged content must keep installed mtimeMs untouched and hibernate.
+  const newerTime = new Date(Date.now() + 60_000)
+  fs.utimesSync(path.join(bundledSource, 'plugin.json'), newerTime, newerTime)
+  fs.utimesSync(path.join(bundledSource, 'index.mjs'), newerTime, newerTime)
+
+  const secondRun = await createRealLifecycleManager(t, {
+    userData,
+    bundledPlugins,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: registerBundled
+  })
+  await secondRun.manager.initialize()
+  assert.equal(secondRun.children.length, 0)
+  assert.equal(secondRun.manager.isHibernated('com.example.bundled'), true)
+  assert.equal(Math.floor(fs.statSync(installedMain).mtimeMs), firstInstalledMtime)
+  assert.equal(
+    await secondRun.manager.callProvider('bundled', 'searchSongs', ['ping']),
+    'bundled.searchSongs:["ping"]'
+  )
+  assert.equal(secondRun.children.length, 1)
+  await secondRun.manager.destroy()
+
+  // Modify bundled entry bytes with the same version: sync must re-copy with preserveTimestamps and cold-start.
+  fs.writeFileSync(
+    path.join(bundledSource, 'index.mjs'),
+    'export function activate() { /* updated */ }\n'
+  )
+  const thirdRun = await createRealLifecycleManager(t, {
+    userData,
+    bundledPlugins,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: registerBundled
+  })
+  await thirdRun.manager.initialize()
+  assert.equal(thirdRun.children.length, 1)
+  assert.equal(thirdRun.manager.isHibernated('com.example.bundled'), false)
+  await thirdRun.manager.destroy()
+})
+
+test('callProvider arriving mid-hibernation waits for dying host shutdown and wakes a fresh host cleanly', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'twilight-p2a-mid-hibernate-'))
+  t.after(() => {
+    assert.equal(path.dirname(directory), path.resolve(tmpdir()))
+    assert.ok(path.basename(directory).startsWith('twilight-p2a-mid-hibernate-'))
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  const pluginId = 'com.example.race'
+  const pluginDir = path.join(directory, 'plugins', pluginId, '1.0.0')
+  fs.mkdirSync(pluginDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(pluginDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        id: pluginId,
+        name: 'Race Provider',
+        version: '1.0.0',
+        description: 'Mid-hibernation race provider',
+        author: 'Test',
+        license: 'MIT',
+        main: 'index.mjs',
+        engines: { twilightEcho: '*' },
+        type: ['provider'],
+        permissions: ['network'],
+        apiVersion: 3
+      },
+      null,
+      2
+    )
+  )
+  fs.writeFileSync(path.join(pluginDir, 'index.mjs'), 'export function activate() {}\n')
+  fs.writeFileSync(
+    path.join(directory, 'plugin-state.json'),
+    JSON.stringify(
+      {
+        [pluginId]: {
+          enabled: true,
+          installedAt: '2026-10-08T00:00:00.000Z',
+          updatedAt: '2026-10-08T00:00:00.000Z',
+          source: 'directory',
+          activeVersion: '1.0.0'
+        }
+      },
+      null,
+      2
+    )
+  )
+
+  let releaseDeactivate = null
+  let pausedOnce = false
+  const harness = await createRealLifecycleManager(t, {
+    userData: directory,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: (child) => {
+      child.emit('message', {
+        kind: 'api-call',
+        requestId: 'reg-race',
+        namespace: 'providers',
+        method: 'register',
+        args: [
+          {
+            id: 'race',
+            name: 'Race',
+            capabilities: ['search'],
+            supportedMethods: ['searchSongs']
+          }
+        ]
+      })
+      child.emit('message', { kind: 'activated', pluginId })
+    },
+    onDeactivate: (child, message) => {
+      if (!pausedOnce) {
+        pausedOnce = true
+        releaseDeactivate = () =>
+          child.emit('message', {
+            kind: 'deactivated',
+            requestId: message.requestId
+          })
+        return
+      }
+      queueMicrotask(() =>
+        child.emit('message', {
+          kind: 'deactivated',
+          requestId: message.requestId
+        })
+      )
+    }
+  })
+
+  await harness.manager.initialize()
+  assert.equal(harness.children.length, 1)
+
+  // Trigger 15s idle hibernation; child #0 receives deactivate and pauses before replying.
+  t.mock.timers.tick(15_000)
+  await flushAsync()
+  assert.equal(typeof releaseDeactivate, 'function')
+
+  // While child #0 is mid-hibernation, issue callProvider — must NOT dispatch to dying child #0.
+  const pendingCall = harness.manager.callProvider('race', 'searchSongs', ['during-hibernate'])
+  await flushAsync()
+
+  // Complete child #0 deactivation; queued wakePlugin spawns child #1 and resolves pendingCall.
+  releaseDeactivate()
+  assert.equal(await pendingCall, 'race.searchSongs:["during-hibernate"]')
+  assert.equal(harness.children.length, 2)
+  await harness.manager.destroy()
+})
+

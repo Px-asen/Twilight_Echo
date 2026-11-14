@@ -86,6 +86,11 @@ const pluginFlyoutOpenFor = (pluginId: string): boolean =>
 const togglePluginFlyout = (contribution: { pluginId: string; title: string }): void => {
   pluginFlyout.toggle({ pluginId: contribution.pluginId, title: contribution.title })
 }
+const avatarSrc = computed(() => {
+  const url = profile.value?.avatarUrl
+  if (!url) return ''
+  return url.startsWith('twilight-media://image/') && !url.includes('?') ? `${url}?size=sm` : url
+})
 const avatarLoadFailed = ref(false)
 watch(
   [
@@ -191,8 +196,8 @@ function close(): void {
         @click="$emit('login', loginProvider?.id ?? null)"
       >
         <img
-          v-if="showNcmProfile && profile?.avatarUrl && !avatarLoadFailed"
-          :src="profile.avatarUrl"
+          v-if="showNcmProfile && avatarSrc && !avatarLoadFailed"
+          :src="avatarSrc"
           class="user-avatar"
           alt=""
           @error="avatarLoadFailed = true"

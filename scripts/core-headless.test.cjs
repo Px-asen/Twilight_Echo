@@ -512,6 +512,14 @@ async function main() {
   const ungrouped = (await request('query', 'zones.list')).zones.filter(z => z.id !== 'local')
   assert.deepEqual(ungrouped.map(z => z.queue.id), [aQueue, bQueue])
   assert.ok(ungrouped.every(z => !z.groupId && z.playback.state === 'paused'))
+  assert.equal(children.some(row => row.serviceName === 'twilight-zone-audio'), false)
+  const connectTarget = ungrouped.find(z => z.id === zoneA)
+  await assert.rejects(zoneCommand('zones.connect', {
+    zoneId: zoneA,
+    revision: connectTarget.revision,
+    peer: { host: '127.0.0.1', port: 1, token: 'a'.repeat(48), fingerprint: 'b'.repeat(64) }
+  }))
+  assert.equal(children.filter(row => row.serviceName === 'twilight-zone-audio').length, 1)
   supervisor.disconnect(zoneDesktop.id)
   const recoveredMetadata = await request('query', 'metadata.entity.detail', { entityId: metadataArtist, language: 'en' })
   assert.equal(recoveredMetadata.introduction.value, 'Headless user introduction')

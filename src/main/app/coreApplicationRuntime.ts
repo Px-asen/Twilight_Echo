@@ -42,6 +42,7 @@ export function createCoreApplication(): CoreApplicationRuntime {
         proxyPort: settings.proxyPort,
         proxyAllowDirectFallback: settings.proxyAllowDirectFallback
       },
+      hostIdleTimeoutMs: 15_000,
       bundledPlugins: [
         {
           id: 'com.twilightecho.provider.ncm',

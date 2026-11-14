@@ -5,7 +5,8 @@ const {
   RemoteMediaGrantService,
   createRemoteMediaRequestHandler,
   protectProviderMedia,
-  grantRemoteImageUrl
+  grantRemoteImageUrl,
+  upstreamFetchUrlForRemoteMedia
 } = (await import(
   new URL('./remoteMediaGrants.ts', import.meta.url).href
 )) as typeof import('./remoteMediaGrants')
@@ -255,7 +256,7 @@ test('remote media proxy follows same-policy CDN redirects for cover images', as
         source,
         referer: new Headers(init.headers).get('referer')
       })
-      if (source === 'https://p1.music.126.net/album.jpg') {
+      if (source === 'https://p1.music.126.net/album.jpg?param=500y500') {
         return new Response(null, {
           status: 302,
           headers: { location: 'https://p2.music.126.net/edge/album.jpg' }
@@ -273,7 +274,10 @@ test('remote media proxy follows same-policy CDN redirects for cover images', as
   assert.equal(await response.text(), 'jpeg-bytes')
   assert.deepEqual(
     requests.map((entry) => entry.source),
-    ['https://p1.music.126.net/album.jpg', 'https://p2.music.126.net/edge/album.jpg']
+    [
+      'https://p1.music.126.net/album.jpg?param=500y500',
+      'https://p2.music.126.net/edge/album.jpg'
+    ]
   )
   // NetEase CDN hosts need a music.163.com Referer or they return 403 HTML.
   assert.ok(requests.every((entry) => entry.referer === 'https://music.163.com/'))
@@ -497,4 +501,248 @@ test('remote media rejection releases bodies for HTTP, type, size and invalid re
     assert.equal((await handler(new Request(granted))).status, entry.expectedStatus)
     assert.equal(cancelled, true, `response ${entry.status} / ${JSON.stringify(entry.headers)}`)
   }
+})
+
+test('remote image proxy serves sm and grid resized derivatives while persisting canonical md cache', async () => {
+  const grants = new RemoteMediaGrantService()
+  const imageGrant = grants.grant('https://cover.example/tiered.jpg', 'image')
+  const audioGrant = grants.grant('https://audio.example/song.mp3', 'audio')
+  const stored = new Map<string, { bytes: Uint8Array; contentType: string }>()
+  const resizeCalls: Array<{ maxWidth?: number; quality?: number }> = []
+  const encodeResized = (
+    bytes: Uint8Array,
+    _mime: string,
+    maxWidth = 500,
+    quality = 85
+  ): { bytes: Uint8Array; mime: string } => {
+    resizeCalls.push({ maxWidth, quality })
+    return {
+      bytes: new TextEncoder().encode(
+        `${new TextDecoder().decode(bytes)}@${maxWidth}q${quality}`
+      ),
+      mime: 'image/jpeg'
+    }
+  }
+
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    imageCache: {
+      generation: () => 1,
+      read: async (source) => {
+        const entry = stored.get(source)
+        return entry
+          ? new Response(new Uint8Array(entry.bytes), {
+              status: 200,
+              headers: { 'Content-Type': entry.contentType }
+            })
+          : null
+      },
+      write: async (source, contentType, bytes) => {
+        const canonical = encodeResized(bytes, contentType, 500, 85)
+        const entry = { bytes: canonical.bytes, contentType: canonical.mime }
+        stored.set(source, entry)
+        return entry
+      },
+      resize: encodeResized
+    },
+    fetch: async () =>
+      new Response('raw', {
+        status: 200,
+        headers: { 'content-type': 'image/png' }
+      })
+  })
+
+  // First request asks for grid (256px): canonical 500px is written to disk cache, 256px is returned.
+  const gridMiss = await handler(new Request(`${imageGrant}?size=grid`))
+  assert.equal(gridMiss.status, 200)
+  assert.equal(await gridMiss.text(), 'raw@500q85@256q82')
+  assert.equal(
+    new TextDecoder().decode(stored.get('https://cover.example/tiered.jpg')!.bytes),
+    'raw@500q85'
+  )
+
+  // Subsequent sm (128px) and md (500px) hit cache cleanly.
+  const smHit = await handler(new Request(`${imageGrant}?size=sm`))
+  assert.equal(await smHit.text(), 'raw@500q85@128q80')
+  const mdHit = await handler(new Request(imageGrant))
+  assert.equal(await mdHit.text(), 'raw@500q85')
+
+  // Repeated grid hit uses bounded in-memory derivative cache without re-running resize.
+  const countBeforeRepeat = resizeCalls.length
+  const gridRepeat = await handler(new Request(`${imageGrant}?size=grid`))
+  assert.equal(await gridRepeat.text(), 'raw@500q85@256q82')
+  assert.equal(resizeCalls.length, countBeforeRepeat)
+
+  // Invalid query parameters or audio query parameters remain rejected.
+  assert.equal((await handler(new Request(`${imageGrant}?size=xl`))).status, 403)
+  assert.equal((await handler(new Request(`${imageGrant}?size=sm&extra=1`))).status, 403)
+  assert.equal((await handler(new Request(`${audioGrant}?size=sm`))).status, 403)
+})
+
+test('upstreamFetchUrlForRemoteMedia appends param=500y500 only for unsized NetEase image URLs', () => {
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://p1.music.126.net/album.jpg', 'image'),
+    'https://p1.music.126.net/album.jpg?param=500y500'
+  )
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://p2.music.126.net/album.jpg?quality=90', 'image'),
+    'https://p2.music.126.net/album.jpg?quality=90&param=500y500'
+  )
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://p1.music.126.net/album.jpg?param=130y130', 'image'),
+    'https://p1.music.126.net/album.jpg?param=130y130'
+  )
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://p1.music.126.net/album.jpg?thumbnail=200y200', 'image'),
+    'https://p1.music.126.net/album.jpg?thumbnail=200y200'
+  )
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://cdn.example.com/album.jpg', 'image'),
+    'https://cdn.example.com/album.jpg'
+  )
+  assert.equal(
+    upstreamFetchUrlForRemoteMedia('https://m701.music.126.net/track.mp3', 'audio'),
+    'https://m701.music.126.net/track.mp3'
+  )
+})
+
+test('concurrent requests for one canonical image coalesce singleflight and survive partial waiter abort', async () => {
+  const grants = new RemoteMediaGrantService()
+  const source = 'https://p4.music.126.net/shared-cover.jpg'
+  const grantUrl = grants.grant(source, 'image')
+  const stored = new Map<string, { bytes: Uint8Array; contentType: string }>()
+  let fetches = 0
+  let writes = 0
+  let releaseUpstream!: () => void
+  const upstreamReady = new Promise<void>((resolve) => {
+    releaseUpstream = resolve
+  })
+  const upstreamSignals: Array<AbortSignal | null | undefined> = []
+
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    imageCache: {
+      generation: () => 1,
+      read: async (key) => {
+        const entry = stored.get(key)
+        return entry
+          ? new Response(new Uint8Array(entry.bytes), {
+              status: 200,
+              headers: { 'Content-Type': entry.contentType }
+            })
+          : null
+      },
+      write: async (key, _type, bytes) => {
+        writes += 1
+        const entry = {
+          bytes: new TextEncoder().encode(`${new TextDecoder().decode(bytes)}@500`),
+          contentType: 'image/jpeg'
+        }
+        stored.set(key, entry)
+        return entry
+      },
+      resize: (bytes, _mime, maxWidth = 500) => ({
+        bytes: new TextEncoder().encode(`${new TextDecoder().decode(bytes)}@${maxWidth}`),
+        mime: 'image/jpeg'
+      })
+    },
+    fetch: async (url, init) => {
+      fetches += 1
+      assert.equal(url, 'https://p4.music.126.net/shared-cover.jpg?param=500y500')
+      upstreamSignals.push(init.signal)
+      await upstreamReady
+      return new Response('raw', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' }
+      })
+    }
+  })
+
+  const abortFirst = new AbortController()
+  const req1 = handler(new Request(`${grantUrl}?size=sm`, { signal: abortFirst.signal }))
+  const req2 = handler(new Request(`${grantUrl}?size=grid`))
+  const req3 = handler(new Request(grantUrl))
+
+  // Let read() misses resolve and join the singleflight entry before aborting caller 1.
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(fetches, 1)
+
+  abortFirst.abort()
+  await assert.rejects(req1, { name: 'AbortError' })
+  assert.equal(upstreamSignals[0]?.aborted, false)
+
+  releaseUpstream()
+  const [res2, res3] = await Promise.all([req2, req3])
+  assert.equal(res2.status, 200)
+  assert.equal(res3.status, 200)
+  assert.equal(await res2.text(), 'raw@500@256')
+  assert.equal(await res3.text(), 'raw@500')
+  assert.equal(fetches, 1)
+  assert.equal(writes, 1)
+})
+
+test('aborting all singleflight waiters aborts upstream and clears the entry for later retries', async () => {
+  const grants = new RemoteMediaGrantService()
+  const source = 'https://cover.example/all-abort.jpg'
+  const grantUrl = grants.grant(source, 'image')
+  let fetches = 0
+  let writes = 0
+  let cancelled = false
+  let streamStarted!: () => void
+  const ready = new Promise<void>((resolve) => {
+    streamStarted = resolve
+  })
+
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    imageCache: {
+      generation: () => 1,
+      read: async () => null,
+      write: async () => {
+        writes += 1
+      }
+    },
+    fetch: async (_url, init) => {
+      fetches += 1
+      if (fetches === 1) {
+        return new Response(
+          new ReadableStream({
+            pull() {
+              streamStarted()
+            },
+            cancel() {
+              cancelled = true
+            }
+          }),
+          { status: 200, headers: { 'content-type': 'image/jpeg' } }
+        )
+      }
+      assert.equal(init.signal?.aborted, false)
+      return new Response('recovered', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' }
+      })
+    }
+  })
+
+  const c1 = new AbortController()
+  const c2 = new AbortController()
+  const p1 = handler(new Request(`${grantUrl}?size=sm`, { signal: c1.signal }))
+  const p2 = handler(new Request(`${grantUrl}?size=grid`, { signal: c2.signal }))
+  await ready
+
+  c1.abort()
+  await assert.rejects(p1, { name: 'AbortError' })
+  assert.equal(cancelled, false)
+
+  c2.abort()
+  await assert.rejects(p2, { name: 'AbortError' })
+  assert.equal(cancelled, true)
+  assert.equal(writes, 0)
+
+  const retry = await handler(new Request(grantUrl))
+  assert.equal(retry.status, 200)
+  assert.equal(await retry.text(), 'recovered')
+  assert.equal(fetches, 2)
+  assert.equal(writes, 1)
 })

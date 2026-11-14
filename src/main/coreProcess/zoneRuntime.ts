@@ -90,7 +90,7 @@ export async function createZoneRuntime(options: {
   const catalog = new Vst3CatalogService(join(directory, 'dsp-vst3'), { scan: p => audio.scanVst3Module(p) }, environment.searchPaths,
     { platform: environment.platform, helpers: environment.helpers, now: Date.now })
   const audio: AudioEngineManager = new AudioEngineManager(coreAudioConfiguration(settings.read()), {
-    platform: process.platform, initialBridgeSelected: true,
+    platform: process.platform, initialBridgeSelected: true, deferNativeStartup: true,
     dspAssetPathResolver: id => assets.getKnownPath(id),
     vst3StateAssetResolver: id => assets.resolveVst3State(id),
     vst3ModuleResolver: (id, classId) => catalog.resolveAvailableModule(id, classId),

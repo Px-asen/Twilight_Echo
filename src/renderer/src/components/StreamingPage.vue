@@ -3879,7 +3879,9 @@ watch(
   () => {
     ensureVisibleSidebarSelection()
   },
-  { flush: 'post' }
+  // Providers may already be registered when a keyed root page is mounted.
+  // Resolve its source on entry too, without persisting the surface fallback.
+  { immediate: true, flush: 'post' }
 )
 
 // Side effects of switching the resolved active provider (user toggle, plugin

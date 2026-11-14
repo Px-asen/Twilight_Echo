@@ -674,4 +674,13 @@ test('plugin hosts hibernate when idle and wake on demand without losing contrib
   assert.match(managerSource, /if \(this\.hibernateFromCache\(descriptor\)\) return/)
   assert.match(managerSource, /cached\.mainSignature !== signature/)
   assert.match(managerSource, /if \(this\.shuttingDown \|\| name === 'app:before-quit'\) return/)
+  // P2-A: provider+ui hibernation, shutdown contribution preservation, and bundled sync timestamp preservation.
+  assert.match(managerSource, /private supportsProviderHostHibernation\(/)
+  assert.match(managerSource, /if \(!running\.trial && !this\.shuttingDown\) this\.forgetContributions\(id\)/)
+  assert.match(managerSource, /preserveTimestamps: true/)
+  const coreRuntimeSource = readFileSync(
+    new URL('../app/coreApplicationRuntime.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(coreRuntimeSource, /hostIdleTimeoutMs:\s*15_000/)
 })

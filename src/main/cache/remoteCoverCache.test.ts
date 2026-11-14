@@ -108,6 +108,7 @@ test('remote covers are downscaled by the injected resizer before they reach dis
     const cached = await cache.read('https://example.com/large.png')
     assert.ok(cached)
     assert.equal(cached.headers.get('content-type'), 'image/jpeg')
+    assert.equal(cached.headers.get('cache-control'), 'private, max-age=3600')
     assert.deepEqual(new Uint8Array(await cached.arrayBuffer()), new Uint8Array([9, 9]))
     assert.deepEqual(calls, [{ bytes: 64, mime: 'image/png' }])
   } finally {
