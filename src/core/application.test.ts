@@ -2048,6 +2048,48 @@ test('a superseded playback command settles quietly while unrelated cancellation
   }
   const failed = await f.request('desktop', 'liked.play', {}, { requestId: 'superseded:real-failure' })
   assert.equal(failed.ok, false)
+  // Value-returning commands and queries must never settle to undefined when cancelled.
+  f.playback.configureAbLoop = async () => {
+    throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+  }
+  const abLoop = await f.request(
+    'desktop',
+    'playback.abLoop',
+    { revision: 0, occurrenceId: 'entry-1', action: 'clear' },
+    { requestId: 'superseded:abLoop' }
+  )
+  assert.equal(abLoop.ok, false)
+  if (!abLoop.ok) assert.equal(abLoop.error.code, 'CANCELLED')
+
+  f.playback.refillHeart = async () => {
+    throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+  }
+  const refill = await f.request(
+    'desktop',
+    'heart.refill',
+    { id: 'queue-1', revision: 1 },
+    { requestId: 'superseded:heart-refill' }
+  )
+  assert.equal(refill.ok, false)
+  if (!refill.ok) assert.equal(refill.error.code, 'CANCELLED')
+
+  const originalReadQueue = f.library.readLibraryQueue.bind(f.library)
+  f.library.readLibraryQueue = () => {
+    throw Object.assign(new Error('Core request cancelled'), { code: 'CANCELLED' })
+  }
+  const locate = await f.application.request('desktop', {
+    kind: 'query',
+    name: 'queue.locate',
+    payload: { id: 'queue-1', revision: 1, occurrenceId: 'entry-1' },
+    epoch: 'current',
+    requestId: 'superseded:queue-locate'
+  })
+  void locate
+  f.library.readLibraryQueue = originalReadQueue
+  const locateMessage = f.messages
+    .get('desktop')!
+    .find((message) => message.kind === 'response' && message.requestId === 'superseded:queue-locate')
+  assert.equal(locateMessage?.kind === 'response' && locateMessage.ok, false)
 })
 
 test('slow source work is cancellable per client while another window can pause; disconnect suppresses late replies', async (t) => {

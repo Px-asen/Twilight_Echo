@@ -23,9 +23,16 @@ const LIBRARY_MAX_START_SKIPS = 5
 /** Raised by the start handoff when the first occurrence has no playable
  * source, so stagePages can step on instead of failing the whole start. */
 export class LibraryStartUnavailable extends Error {
-  constructor(message = 'No playable source for the starting occurrence') {
-    super(message)
+  readonly trackTitle: string | undefined
+  constructor(trackTitle?: string, cause?: unknown) {
+    super(
+      trackTitle
+        ? `连续多首歌曲无可用音源（最后尝试：${trackTitle}），未切换播放来源`
+        : '连续多首歌曲无可用音源，未切换播放来源',
+      cause === undefined ? undefined : { cause }
+    )
     this.name = 'LibraryStartUnavailable'
+    this.trackTitle = trackTitle
   }
 }
 
@@ -108,7 +115,8 @@ export function createLibraryPlaybackController(
     adopt: (
       result: LibraryQueuePlaybackWindow,
       activate: () => void,
-      retain: () => void
+      retain: () => void,
+      skipped: number
     ) => Promise<void>,
     options: LibraryQueuePageOptions = {}
   ) {
@@ -179,7 +187,7 @@ export function createLibraryPlaybackController(
         }
         for (let skipped = 0; ; skipped++) {
           try {
-            await adopt(current, activate, retainSeed)
+            await adopt(current, activate, retainSeed, skipped)
             break
           } catch (error) {
             if (!(error instanceof LibraryStartUnavailable) || skipped >= LIBRARY_MAX_START_SKIPS)
@@ -646,38 +654,6 @@ export function createLibraryPlaybackController(
     })
   }
 
-  /** Keeps appending pages after the first one already plays. Runs outside the
-   * player command lane so a slow provider pull never delays the next user
-   * command; every batch is an ordinary compare-and-swap insert on the queue and
-   * the drain stops as soon as the source detaches, playback is replaced or the
-   * caller aborts. */
-  function appendBehind(
-    nextBatch: () => Promise<readonly LibraryQueueInsertItem[] | null>,
-    options: { signal?: AbortSignal; guard?: () => void } = {}
-  ): Promise<number> {
-    const generation = epoch
-    let inserted = 0
-    const current = () => generation === epoch && active.value && !options.signal?.aborted
-    return (async () => {
-      for (;;) {
-        if (!current()) return inserted
-        const batch = await nextBatch()
-        if (!batch) return inserted
-        if (!batch.length) continue
-        if (!current()) return inserted
-        // The extension path is the one insert that accepts a deferred remote
-        // source (a streaming provider row has no local file path yet).
-        const result = await source.extend([...batch])
-        if (!result) return inserted
-        inserted += batch.length
-        options.guard?.()
-        if (generation !== epoch) return inserted
-        // Membership only: the playing occurrence and its window stay untouched.
-        snapshot.value = result.queue
-      }
-    })()
-  }
-
   function editPositions(
     action: { kind: 'remove'; index: number } | { kind: 'move'; from: number; to: number },
     mode: PlayMode
@@ -833,7 +809,6 @@ export function createLibraryPlaybackController(
     edit,
     extend,
     appendPages,
-    appendBehind,
     stagePages,
     undo,
     canUndo: () => source.canUndo,

@@ -642,7 +642,10 @@ export class CoreZoneRegistry {
   }
   /** The stable topology is held while each session fences preparation; source
    * deletion/cache maintenance sees all zones, but their Stop remains usable. */
-  maintainSources<T>(action: (sources: readonly string[]) => Promise<T>): Promise<T> {
+  maintainSources<T>(
+    action: (sources: readonly string[]) => Promise<T>,
+    options?: { background?: boolean; preparationGraceMs?: number }
+  ): Promise<T> {
     return this.serialize(async () => {
       for (const owner of this.owners.values()) ++owner.revision
       const sessions = [...this.owners.values()].flatMap(z => z.runtime ? [z.runtime.playback] : [])
@@ -651,8 +654,16 @@ export class CoreZoneRegistry {
         // Group sessions participate in the same source-deletion fence as standalone sessions.
         sessions.push(group.runtime.playback)
       }
-      const visit = (index: number, sources: readonly string[]): Promise<T> => index === sessions.length
-        ? action(sources) : sessions[index].maintainSources(next => visit(index + 1, [...sources, ...next]))
+      const visit = (index: number, sources: readonly string[]): Promise<T> =>
+        index === sessions.length
+          ? action(sources)
+          : options
+            ? (
+                sessions[index] as {
+                  maintainSources: CorePlaybackSession['maintainSources']
+                }
+              ).maintainSources((next) => visit(index + 1, [...sources, ...next]), options)
+            : sessions[index].maintainSources((next) => visit(index + 1, [...sources, ...next]))
       return visit(0, [])
     })
   }

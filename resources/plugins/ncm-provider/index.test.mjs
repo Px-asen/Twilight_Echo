@@ -1684,6 +1684,25 @@ test('a bare -460 item code without risk wording still stops the fallback ladder
   }
 })
 
+test('an outer code 200 wrapper around a nested -460 body still stops the fallback ladder', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(parseRequest(path).pathname)
+    return {
+      code: 200,
+      status: 400,
+      body: { code: -460, msg: '检测到您的网络环境存在风险，请稍后再试' }
+    }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:96' }, { quality: 'hires' }), null)
+    assert.deepEqual(requests, ['/song/url/v1'])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist songs keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

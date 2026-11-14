@@ -759,7 +759,8 @@ export class CoreApplication {
       // That is expected control flow for an interactive player, so the client
       // must not receive it as a failed command (the UI would report an error
       // for what is a settled, intentional cancellation).
-      if (isSettledPlaybackCancellation(raw?.name, error)) reply({ ok: true, value: undefined })
+      if (isSettledPlaybackCancellation(raw, error, this.shuttingDown))
+        reply({ ok: true, value: undefined })
       else {
         const e = error as { code?: string; message?: string }
         reply({ ok: false, error: { code: e?.code ?? 'FAILED', message: projectCoreError(error) } })
@@ -2675,20 +2676,43 @@ export class CoreApplication {
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
-// Playback and queue commands are last-writer-wins: a newer intent aborts the
-// older one. Treating that cancellation as a command result keeps the renderer
-// from surfacing it as an error while every other failure still propagates.
+// Void-returning playback and queue start commands are last-writer-wins: a newer
+// intent aborts the older one. Settling only those commands keeps the renderer
+// from surfacing an expected supersede as an error while queries, shutdowns and
+// value-returning commands (insert, submit, refill, abLoop, favorite) still reject.
 const SUPERSEDED_CANCELLATION = /superseded/i
-const SETTLED_CANCELLATION_PREFIXES = [
-  'playback.',
-  'queue.',
-  'liked.',
-  'heart.',
-  'personalized.'
-]
-function isSettledPlaybackCancellation(name: unknown, error: unknown): boolean {
-  if (typeof name !== 'string') return false
-  if (!SETTLED_CANCELLATION_PREFIXES.some(prefix => name.startsWith(prefix))) return false
+const SETTLED_PLAYBACK_COMMANDS = new Set<string>([
+  'playback.play',
+  'playback.pause',
+  'playback.stop',
+  'playback.seek',
+  'playback.next',
+  'playback.previous',
+  'playback.mode',
+  'playback.control',
+  'queue.select',
+  'queue.fromQuery',
+  'liked.play',
+  'personalized.start',
+  'catalog.play',
+  'downloads.play',
+  'network.play',
+  'streams.play'
+])
+function isSettledPlaybackCancellation(
+  raw: { kind?: unknown; name?: unknown; payload?: unknown } | null | undefined,
+  error: unknown,
+  shuttingDown: boolean
+): boolean {
+  if (shuttingDown || raw?.kind !== 'command' || typeof raw.name !== 'string') return false
+  if (!SETTLED_PLAYBACK_COMMANDS.has(raw.name)) return false
+  if (
+    raw.name === 'playback.control' &&
+    typeof raw.payload === 'object' &&
+    raw.payload !== null &&
+    (raw.payload as { type?: unknown }).type === 'toggle-favorite'
+  )
+    return false
   if (typeof error !== 'object' || error === null) return false
   const { code, message } = error as { code?: unknown; message?: unknown }
   if (code === 'CANCELLED') return true

@@ -209,13 +209,21 @@ function isRiskControlMessage(message) {
 const RISK_CONTROL_API_CODES = new Set([460])
 
 function getApiResponseCode(data) {
-  const code = Number(data?.code ?? data?.body?.code ?? data?.data?.code)
-  return Number.isFinite(code) ? Math.abs(code) : null
+  for (const candidate of [data?.code, data?.body?.code, data?.data?.code]) {
+    if (candidate === null || candidate === undefined || candidate === '') continue
+    const code = Number(candidate)
+    if (Number.isFinite(code)) return Math.abs(code)
+  }
+  return null
 }
 
 function isRiskControlResponse(data) {
-  const code = getApiResponseCode(data)
-  return code !== null && RISK_CONTROL_API_CODES.has(code)
+  for (const candidate of [data?.code, data?.body?.code, data?.data?.code]) {
+    if (candidate === null || candidate === undefined || candidate === '') continue
+    const code = Number(candidate)
+    if (Number.isFinite(code) && RISK_CONTROL_API_CODES.has(Math.abs(code))) return true
+  }
+  return false
 }
 
 function describeApiError(code, data) {
@@ -1871,7 +1879,9 @@ function getPlaybackFailureMessage(data, streamItem) {
     streamItem?.message ??
     data?.msg ??
     data?.message ??
+    data?.body?.msg ??
     data?.body?.message ??
+    data?.data?.msg ??
     data?.data?.message
   return typeof message === 'string' && message.trim() ? message.trim() : ''
 }
@@ -2044,20 +2054,25 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
         }
         return playbackIdentityResult(url, url, streamItem, options, null)
       }
-      lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
+      const attemptFailureMessage = getPlaybackFailureMessage(data, streamItem)
+      lastFailureMessage = attemptFailureMessage || lastFailureMessage
       if (isRiskControlResponse(data) || isRiskControlResponse(streamItem)) {
-        riskControlMessage =
-          lastFailureMessage || getPlaybackFailureMessage({}, streamItem) || '网易云限制了当前网络环境（460）'
+        riskControlMessage = attemptFailureMessage || '网易云限制了当前网络环境（460）'
+        break
+      }
+      if (isRiskControlMessage(attemptFailureMessage)) {
+        riskControlMessage = attemptFailureMessage
         break
       }
     } catch (error) {
       throwIfRequestAborted(requestContext)
-      lastFailureMessage = getErrorMessage(error)
-    }
-    // 风控提示命中即终止整条阶梯：继续连打只会加深风控（批量 8.5）。
-    if (isRiskControlMessage(lastFailureMessage)) {
-      riskControlMessage = lastFailureMessage
-      break
+      const errorMessage = getErrorMessage(error)
+      lastFailureMessage = errorMessage
+      // 风控提示命中即终止整条阶梯：继续连打只会加深风控（批量 8.5）。
+      if (isRiskControlMessage(errorMessage)) {
+        riskControlMessage = errorMessage
+        break
+      }
     }
   }
 
