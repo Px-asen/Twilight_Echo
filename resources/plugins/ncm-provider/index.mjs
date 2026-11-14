@@ -195,8 +195,27 @@ function normalizeApiMessage(data, fallback) {
   return typeof message === 'string' && message.trim() ? message.trim() : fallback
 }
 
+// -460 的官方文案是「检测到您的网络环境存在风险，请稍后再试」：既没有「安全风险」，
+// 也不含「高频」，只按关键词判定会漏掉它，于是回退阶梯把每一档音质都撞一遍
+// （实测每首歌 3～4 秒）。这里补上 -460 的文案，并允许调用方直接用错误码判定。
 function isRiskControlMessage(message) {
-  return /安全风险|设备环境异常|操作已拦截|高频|风控|ip 高频|IP 高频/i.test(message)
+  return /安全风险|网络环境.{0,8}风险|限制了当前网络环境|设备环境异常|操作已拦截|风险控制|高频|风控/i.test(
+    message
+  )
+}
+
+// 风控响应的错误码：上游既可能放在 data.code，也可能包在 data.body.code 里，
+// 且实测是负数（-460）。取绝对值判定，避免文案变化后再次漏判。
+const RISK_CONTROL_API_CODES = new Set([460])
+
+function getApiResponseCode(data) {
+  const code = Number(data?.code ?? data?.body?.code ?? data?.data?.code)
+  return Number.isFinite(code) ? Math.abs(code) : null
+}
+
+function isRiskControlResponse(data) {
+  const code = getApiResponseCode(data)
+  return code !== null && RISK_CONTROL_API_CODES.has(code)
 }
 
 function describeApiError(code, data) {
@@ -1845,7 +1864,15 @@ function getPlaybackStreamItems(data) {
 }
 
 function getPlaybackFailureMessage(data, streamItem) {
-  const message = streamItem?.msg ?? streamItem?.message ?? data?.msg ?? data?.message
+  // 风控响应把文案包在 body 里（{"status":400,"body":{"code":-460,"message":…}}），
+  // 只读顶层会把「网络环境存在风险」丢成空串，阶梯因此不会提前终止。
+  const message =
+    streamItem?.msg ??
+    streamItem?.message ??
+    data?.msg ??
+    data?.message ??
+    data?.body?.message ??
+    data?.data?.message
   return typeof message === 'string' && message.trim() ? message.trim() : ''
 }
 
@@ -2018,6 +2045,11 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
         return playbackIdentityResult(url, url, streamItem, options, null)
       }
       lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
+      if (isRiskControlResponse(data) || isRiskControlResponse(streamItem)) {
+        riskControlMessage =
+          lastFailureMessage || getPlaybackFailureMessage({}, streamItem) || '网易云限制了当前网络环境（460）'
+        break
+      }
     } catch (error) {
       throwIfRequestAborted(requestContext)
       lastFailureMessage = getErrorMessage(error)
@@ -2047,6 +2079,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       }
       lastFailureMessage =
         getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
+      if (isRiskControlResponse(data)) riskControlMessage = lastFailureMessage
     } catch (error) {
       throwIfRequestAborted(requestContext)
       lastFailureMessage = getErrorMessage(error)

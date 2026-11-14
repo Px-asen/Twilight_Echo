@@ -1641,6 +1641,49 @@ test('risk control messages stop the whole playback fallback ladder early', asyn
   }
 })
 
+test('a -460 risk-control body stops the playback fallback ladder after one request', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(parseRequest(path).pathname)
+    // Shape observed against the live service: the transport reports 400 and the
+    // risk-control code and message are nested under body, not at the top level.
+    return {
+      status: 400,
+      body: { code: -460, message: '检测到您的网络环境存在风险，请稍后再试' }
+    }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:94' }, { quality: 'hires' }), null)
+    assert.deepEqual(
+      requests,
+      ['/song/url/v1'],
+      'a -460 body must stop the level ladder and the gray-track match after one request'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('a bare -460 item code without risk wording still stops the fallback ladder', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(parseRequest(path).pathname)
+    return { code: 200, data: [{ id: 95, url: null, code: 460 }] }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:95' }, { quality: 'hires' }), null)
+    assert.deepEqual(
+      requests,
+      ['/song/url/v1'],
+      'a numeric 460 without a message must still stop the ladder'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist songs keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
