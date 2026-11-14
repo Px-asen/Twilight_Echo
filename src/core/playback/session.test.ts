@@ -1074,6 +1074,53 @@ test('Core builds the authenticated liked queue in bounded pages, uses the provi
   assert.equal(f.session.snapshot().queue?.id, before.queue?.id)
 })
 
+test('a liked start skips a first occurrence whose provider serves no source, and still starts the queue', async (t) => {
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    return { tracks: [1, 2, 3].map(recommended), nextOffset: 3, hasMore: false, total: 3 }
+  }
+  const f = await fixture(
+    t,
+    {
+      resolve: async (track) =>
+        (track as TrackData).id === 'ncm:1'
+          ? null
+          : { source: `https://audio.test/${(track as TrackData).id}`, expiresAt: null }
+    },
+    undefined,
+    undefined,
+    undefined,
+    provider
+  )
+  await f.session.startLiked({})
+  const snapshot = f.session.snapshot()
+  assert.equal(snapshot.track?.id, 'ncm:2')
+  assert.equal(snapshot.queue?.index, 1)
+  assert.equal(snapshot.playback?.state, 'playing')
+  assert.equal(f.engine.calls.filter((call) => call === 'play').length, 1)
+})
+
+test('a liked start whose occurrences are all unplayable fails instead of skipping without bound', async (t) => {
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    return { tracks: [1, 2, 3].map(recommended), nextOffset: 3, hasMore: false, total: 3 }
+  }
+  const f = await fixture(
+    t,
+    { resolve: async () => null },
+    undefined,
+    undefined,
+    undefined,
+    provider
+  )
+  await assert.rejects(f.session.startLiked({}), /没有可解析音源的歌曲/)
+  assert.equal(f.session.snapshot().queue, null)
+})
+
 for (const shuffle of [false, true]) {
   test(`liked playback retains all 2100 songs independently of the displayed first page (shuffle=${shuffle})`, async (t) => {
     const tracks = Array.from({ length: 2100 }, (_, index) => recommended(index + 1))

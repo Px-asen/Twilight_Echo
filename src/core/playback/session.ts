@@ -25,7 +25,7 @@ import type { PlaybackResumeMode } from '../../shared/appSettings.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
 import type { NativeQueueSelection } from '../../shared/nativeQueue.ts'
-import { createLibraryPlaybackController } from './libraryPlaybackController.ts'
+import { createLibraryPlaybackController, LibraryStartUnavailable } from './libraryPlaybackController.ts'
 import type { LibraryQueueApi } from './libraryQueueSource.ts'
 import {
   LibraryNativeQueueMaintainer,
@@ -61,8 +61,16 @@ import type {
   CoreHeartQueueApi
 } from '../../shared/coreHeart.ts'
 
-/** Background maintenance defers to the user's in-flight load for at most this long. */
-const PREPARATION_GRACE_MS = 10_000
+/** Background maintenance defers to the user's in-flight load for at most this long.
+ * Dataset starts read every page of a large library, so the grace has to cover
+ * a slow but healthy load rather than a single page fetch. */
+const PREPARATION_GRACE_MS = 120_000
+
+/** Exhausted provider resolution is skippable when it is the queue start;
+ * authorization refusals and transient IO errors keep surfacing. */
+const UNAVAILABLE_START_SOURCE = /^Unable to resolve the selected audio source\b/
+const isUnavailableStartSource = (error: unknown): boolean =>
+  error instanceof Error && UNAVAILABLE_START_SOURCE.test(error.message)
 
 interface HeartSelection {
   native: NativeQueueSelection | null
@@ -1549,6 +1557,31 @@ export class CorePlaybackSession {
             })
             await this.flush()
           } else {
+            const entry = window.items[0]
+            let prepared = options.preparedSource
+            if (!prepared) {
+              const track = entry?.track ? libraryQueueTrack(entry.track, entry.queueEntryId) : null
+              if (!track) throw new Error('Selected queue occurrence is not playable')
+              const current = signal
+                ? AbortSignal.any([this.preview.signal, signal])
+                : this.preview.signal
+              try {
+                prepared = await this.prepareSource(track, current)
+              } catch (error) {
+                this.guard(intent, signal)
+                // A dataset start reads the whole library before it can play, so
+                // one occurrence whose provider no longer serves a source must
+                // not fail the start: stagePages steps to the next occurrence.
+                // An explicitly chosen source stays an error, never a silent skip.
+                if (
+                  !options.automatic &&
+                  track.sourceSelection !== 'explicit' &&
+                  isUnavailableStartSource(error)
+                )
+                  throw new LibraryStartUnavailable(track.title || undefined)
+                throw error
+              }
+            }
             await this.load(window, intent, true, options.position ?? 0, signal, {
               automatic: options.automatic,
               prepare: async () => {
@@ -1556,13 +1589,16 @@ export class CorePlaybackSession {
                 adopt()
               },
               owner: candidate,
-              ...(options.preparedSource ? {
+              ...(prepared ? {
                 prepared: {
-                  ...options.preparedSource,
-                  track: { ...options.preparedSource.track, queueEntryId: window.items[0]?.queueEntryId }
+                  ...prepared,
+                  track: { ...prepared.track, queueEntryId: entry?.queueEntryId }
                 },
                 resourcesHeld: true,
-                allowRecovery: false
+                // A start handed in from another source keeps that owner's
+                // recovery contract; a source this start resolved itself still
+                // gets the one native-rejection recovery the dynamic path has.
+                ...(options.preparedSource ? { allowRecovery: false } : {})
               } : {})
             })
           }
