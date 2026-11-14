@@ -43,6 +43,16 @@ Windows MinGW 的构建能力与 provider 采用状态分开记录：preset 会�
 
 ## Windows MinGW
 
+### 曲中随机爆音：回调唤醒不能等待解码线程的锁
+
+ASIO 和 WASAPI 都通过 `AudioBuffer` 读取解码数据。Windows 使用
+`WaitOnAddress` / `WakeByAddressSingle` 唤醒满缓冲上等待的解码线程；停止和重置唤醒全部等待者。
+不要换回 `std::atomic::notify_one()`：当前 MinGW libstdc++ 会在通知内部获取共享互斥锁，
+即使音频缓冲仍有数据，也可能阻塞实时回调。非 Windows 保留原有等待实现。
+
+`twilight_audio_buffer_unit` 在 MinGW POSIX 线程构建中拦截实际 `pthread_mutex_lock` 调用，
+检查读取和丢弃帧的实时路径不进入运行库互斥锁；同时覆盖满缓冲唤醒、停止解阻塞及逐帧顺序。
+
 推荐入口：
 
 ```powershell

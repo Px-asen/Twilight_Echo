@@ -94,4 +94,9 @@ struct EmptyOutputDetector {
   bool sample(bool available, bool playing, bool eof, bool stopped, uint64_t nextToken,
               uint64_t nextCallbacks, uint64_t nextConsumed);
 };
+struct HealthSampleGate {
+  std::string lastIdleSignature;
+  bool hasIdleSample = false;
+  bool shouldWrite(bool active, uint64_t clockAgeMs, const std::string& signature);
+};
 }

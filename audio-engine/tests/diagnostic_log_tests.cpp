@@ -135,6 +135,17 @@ void testNativeSanitizationAndEmptyOutputEvidence() {
   assert(!detector.sample(true, true, false, true, 1, 90, 100)); // Stop.
   assert(!detector.sample(true, true, false, false, 2, 100, 100)); // Seek / new stream.
   assert(!detector.sample(true, true, false, false, 2, 110, 200)); // Consumption resumes.
+
+  twilight::audio::HealthSampleGate gate;
+  assert(gate.shouldWrite(false, 100, "idle-state-1"));   // Initial idle sample is recorded.
+  assert(!gate.shouldWrite(false, 200, "idle-state-1"));  // Repeated identical idle state is suppressed.
+  assert(gate.shouldWrite(false, 500, "idle-state-2"));   // Idle state change is recorded once.
+  assert(!gate.shouldWrite(false, 800, "idle-state-2"));  // Subsequent identical idle sample is suppressed.
+  assert(gate.shouldWrite(false, 5500, "idle-state-2"));  // Clock stall anomaly (>=5s) forces sample.
+  assert(gate.shouldWrite(true, 50, "playing-state-1"));  // Active playback/decode writes every sample.
+  assert(gate.shouldWrite(true, 50, "playing-state-1"));
+  assert(gate.shouldWrite(false, 200, "paused-state-1")); // Transition back to idle is recorded once.
+  assert(!gate.shouldWrite(false, 300, "paused-state-1"));
 }
 
 }  // namespace

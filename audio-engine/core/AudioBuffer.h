@@ -51,10 +51,14 @@ class AudioBuffer {
   void endRead() noexcept;
   void beginControlReset();
   void endControlReset();
+  void waitForProducerWake(uint64_t epoch) noexcept;
+  void notifyProducer(bool all = false) noexcept;
 
   // waitMutex_/notEmpty_ are only used for bounded control-path preroll waits.
-  // A full-buffer decoder parks on producerWakeEpoch_ via C++20 atomic wait so
-  // the realtime consumer can wake it without a mutex or a lost notification.
+  // A full-buffer decoder parks on this epoch. Windows uses WaitOnAddress:
+  // MinGW's std::atomic::notify_* takes a shared runtime mutex even with no
+  // waiters, which must not run on the audio callback. Other platforms retain
+  // the existing C++20 wait/notify path. The epoch prevents lost wakeups.
   mutable std::mutex waitMutex_;
   mutable std::condition_variable notEmpty_;
   std::atomic<uint64_t> producerWakeEpoch_{0};

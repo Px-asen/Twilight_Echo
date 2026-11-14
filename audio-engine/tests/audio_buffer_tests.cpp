@@ -11,13 +11,56 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <thread>
 #include <vector>
 
 using namespace twilight::audio;
 
+#if defined(TAE_TEST_RENDER_MUTEX_WRAP) && defined(_GLIBCXX_GCC_GTHR_POSIX_H)
+#define TAE_HAS_RENDER_MUTEX_PROBE 1
 namespace {
+thread_local bool watchRenderMutex = false;
+thread_local size_t renderMutexCalls = 0;
+}
+extern "C" int __real_pthread_mutex_lock(pthread_mutex_t* mutex);
+extern "C" int __wrap_pthread_mutex_lock(pthread_mutex_t* mutex) {
+  if (watchRenderMutex) ++renderMutexCalls;
+  return __real_pthread_mutex_lock(mutex);
+}
+#endif
+
+namespace {
+
+void testRenderWakeDoesNotAcquireRuntimeMutex() {
+#if defined(TAE_HAS_RENDER_MUTEX_PROBE)
+  // Ensure the link-time probe is active, rather than passing with an unused hook.
+  std::mutex calibration;
+  renderMutexCalls = 0;
+  watchRenderMutex = true;
+  calibration.lock();
+  calibration.unlock();
+  watchRenderMutex = false;
+  assert(renderMutexCalls == 1);
+
+  AudioBuffer buffer;
+  buffer.reset(2, 256);
+  std::atomic<bool> running{true};
+  std::array<float, 512> input{}, output{};
+  input.fill(0.25f);
+  assert(buffer.writeBlocking(input.data(), 256, running) == 256);
+
+  renderMutexCalls = 0;
+  watchRenderMutex = true;
+  const auto read = buffer.read(output.data(), 64);
+  const auto discarded = buffer.discard(64);
+  watchRenderMutex = false;
+  assert(read == 64 && discarded == 64 && output[0] == 0.25f);
+  std::cout << "render read/discard runtime mutex calls: " << renderMutexCalls << std::endl;
+  assert(renderMutexCalls == 0 && "audio callback must not acquire libstdc++'s atomic-wait mutex");
+#endif
+}
 
 void testNetworkBufferHysteresisAndShortTail() {
   StreamBufferGate gate;
@@ -105,8 +148,7 @@ void testAudioBufferRenderReadsUseSpscAtomicsWithoutMutexFallback() {
   assert(readFramesBody.find("readPosition_.store") != std::string::npos);
   assert(readBlockBody.find("tryBeginRead()") != std::string::npos);
   assert(readBlockBody.find("endRead()") != std::string::npos);
-  assert(readBlockBody.find("producerWakeEpoch_.fetch_add") != std::string::npos);
-  assert(readBlockBody.find("producerWakeEpoch_.notify_one") != std::string::npos);
+  assert(readBlockBody.find("notifyProducer()") != std::string::npos);
 }
 
 void testProducerWaitUsesAtomicEpochWithoutLostWake() {
@@ -117,7 +159,7 @@ void testProducerWaitUsesAtomicEpochWithoutLostWake() {
       source,
       "size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>& running)");
 
-  assert(writeBody.find("producerWakeEpoch_.wait") != std::string::npos);
+  assert(writeBody.find("waitForProducerWake(wakeEpoch)") != std::string::npos);
   assert(writeBody.find("notFull_.wait") == std::string::npos);
   assert(writeBody.find("std::unique_lock") == std::string::npos);
 }
@@ -181,6 +223,48 @@ void testSpscProducerConsumerDoesNotDropPublishedFrames() {
   buffer.notifyAll();
   producer.join();
   assert(buffer.availableFrames() == 0);
+}
+
+void testFullBufferProducerWakesForReadDiscardAndStop() {
+  for (int action = 0; action < 3; ++action) {
+    AudioBuffer buffer;
+    buffer.reset(2, 64);
+    std::atomic<bool> running{true}, done{false};
+    std::array<float, 256> input{};
+    for (size_t i = 0; i < input.size(); ++i) input[i] = static_cast<float>(i + 1);
+    size_t written = 0;
+    std::thread producer([&] {
+      written = buffer.writeBlocking(input.data(), 128, running);
+      done.store(true, std::memory_order_release);
+    });
+    const auto waitUntil = [](auto ready) {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      while (!ready() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+      return ready();
+    };
+    assert(waitUntil([&] { return buffer.availableFrames() == 64; }));
+    // Let the writer park on a full ring, not merely win a scheduling race.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    assert(!done.load(std::memory_order_acquire));
+    std::array<float, 128> output{};
+    if (action == 0) {
+      assert(buffer.read(output.data(), 64) == 64);
+      assert(std::equal(output.begin(), output.end(), input.begin()));
+    } else if (action == 1) {
+      assert(buffer.discard(64) == 64);
+    } else {
+      running.store(false, std::memory_order_release);
+      buffer.notifyAll();
+    }
+    const bool woke = waitUntil([&] { return done.load(std::memory_order_acquire); });
+    running.store(false, std::memory_order_release);
+    buffer.notifyAll();
+    producer.join();
+    assert(woke);
+    assert(written == (action == 2 ? 64 : 128));
+    assert(buffer.read(output.data(), 64) == 64);
+    assert(std::equal(output.begin(), output.end(), input.begin() + (action == 2 ? 0 : 128)));
+  }
 }
 
 void testResetMakesOldFramesUnreadableAndEmptyReadsSilent() {
@@ -292,11 +376,13 @@ void testPcmSpeakerLayoutSurvivesTheRingBuffer() {
 }  // namespace
 
 int main() {
+  testRenderWakeDoesNotAcquireRuntimeMutex();
   testNetworkBufferHysteresisAndShortTail();
   testAudioBufferRenderReadsUseSpscAtomicsWithoutMutexFallback();
   testProducerWaitUsesAtomicEpochWithoutLostWake();
   testControlResetGateAtomicallyExcludesNewReaders();
   testSpscProducerConsumerDoesNotDropPublishedFrames();
+  testFullBufferProducerWakesForReadDiscardAndStop();
   testResetMakesOldFramesUnreadableAndEmptyReadsSilent();
   testReadPcmBlockCapsFramesToByteSize();
   testWritePcmBlockCapsFramesToByteSize();
