@@ -17,6 +17,18 @@ import { LibraryQueueSource, type LibraryQueueApi } from './libraryQueueSource.t
 import { buildLibraryQueuePages, type LibraryQueueSeedProducer } from './libraryQueueBuild.ts'
 import type { CoreQueueSourceReplacement } from '../../shared/coreSourceRecovery.ts'
 
+/** How many unplayable occurrences a queue start may skip before it fails. */
+const LIBRARY_MAX_START_SKIPS = 5
+
+/** Raised by the start handoff when the first occurrence has no playable
+ * source, so stagePages can step on instead of failing the whole start. */
+export class LibraryStartUnavailable extends Error {
+  constructor(message = 'No playable source for the starting occurrence') {
+    super(message)
+    this.name = 'LibraryStartUnavailable'
+  }
+}
+
 /** The producer awaits each append before requesting its next bounded page. */
 export type LibraryQueuePageProducer = (
   append: (items: readonly LibraryQueueInsertItem[]) => Promise<void>
@@ -148,23 +160,43 @@ export function createLibraryPlaybackController(
         // replace the occurrence that is already playing/paused.
         if (!result || result.items[0]?.queueEntryId !== ready.selectedEntryId)
           throw new Error('未能读取原选中歌曲，未切换播放来源')
-        await adopt(
-          result,
-          () => {
+        // The starting occurrence may be a library row whose provider no longer
+        // serves a source (removed upload, region lock, dead radio entry). The
+        // whole queue start must not fail for it: step to the next occurrence
+        // and let the same start handoff run again on the new window.
+        let current = result
+        const activate = () => {
+          check()
+          adopted = true
+          active.value = true
+          publish(current)
+        }
+        const retainSeed = () => {
+          // A successful/unknown native handoff may already reference this
+          // seed. A later source fence must not delete it as unused. Existing
+          // reference-aware GC owns retirement after that point.
+          retained = true
+        }
+        for (let skipped = 0; ; skipped++) {
+          try {
+            await adopt(current, activate, retainSeed)
+            break
+          } catch (error) {
+            if (!(error instanceof LibraryStartUnavailable) || skipped >= LIBRARY_MAX_START_SKIPS)
+              throw error
             check()
-            adopted = true
-            active.value = true
-            publish(result)
-          },
-          () => {
-            // A successful/unknown native handoff may already reference this
-            // seed. A later source fence must not delete it as unused. Existing
-            // reference-aware GC owns retirement after that point.
-            retained = true
+            const stepped = await commit({ kind: 'step', direction: 1, wrap: false })
+            check()
+            if (!stepped || stepped.reachedEnd)
+              throw new Error('队列中没有可解析音源的歌曲，未切换播放来源')
+            const next = await readSelection(mode, isCurrent)
+            check()
+            if (!next) throw new Error('未能读取下一首歌曲，未切换播放来源')
+            current = next
           }
-        )
+        }
         if (!adopted) throw new Error('队列尚未接管，未切换播放来源')
-        return result
+        return current
       } finally {
         accepting = false
         if (!adopted) {

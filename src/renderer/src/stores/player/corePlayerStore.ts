@@ -44,12 +44,22 @@ export function createCorePlayerStore(
     const failed = (error: unknown) => {
       commandError.value = error instanceof Error ? error : new Error(String(error))
     }
+    /**
+     * Playback intent is last-writer-wins: starting a new request revokes the previous one and
+     * Core rejects the stale request with CANCELLED. That is the expected outcome, not a
+     * playback failure, so playback commands must settle quietly instead of surfacing a
+     * "Playback request superseded" alert and an unhandled renderer rejection.
+     */
+    const superseded = (name: string, error: unknown) =>
+      (name.startsWith('playback.') || name.startsWith('queue.')) &&
+      typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'CANCELLED'
     async function command<K extends CoreCommandName>(name: K, payload: CoreCommands[K]) {
       try {
         const value = await core.command(name, payload)
         commandError.value = null
         return value
       } catch (error) {
+        if (superseded(name, error)) return undefined
         failed(error)
         throw error
       }

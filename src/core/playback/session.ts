@@ -25,7 +25,7 @@ import type { PlaybackResumeMode } from '../../shared/appSettings.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
 import type { NativeQueueSelection } from '../../shared/nativeQueue.ts'
-import { createLibraryPlaybackController } from './libraryPlaybackController.ts'
+import { createLibraryPlaybackController, LibraryStartUnavailable } from './libraryPlaybackController.ts'
 import type { LibraryQueueApi } from './libraryQueueSource.ts'
 import {
   LibraryNativeQueueMaintainer,
@@ -60,6 +60,17 @@ import type {
   CoreLikedPlayback,
   CoreHeartQueueApi
 } from '../../shared/coreHeart.ts'
+
+/** Background maintenance defers to the user's in-flight load for at most this long.
+ * Dataset starts read every page of a large library, so the grace has to cover
+ * a slow but healthy load rather than a single page fetch. */
+const PREPARATION_GRACE_MS = 120_000
+
+/** Exhausted provider resolution is skippable when it is the queue start;
+ * authorization refusals and transient IO errors keep surfacing. */
+const UNAVAILABLE_START_SOURCE = /^Unable to resolve the selected audio source\b/
+const isUnavailableStartSource = (error: unknown): boolean =>
+  error instanceof Error && UNAVAILABLE_START_SOURCE.test(error.message)
 
 interface HeartSelection {
   native: NativeQueueSelection | null
@@ -189,6 +200,11 @@ export class CorePlaybackSession {
   private muted = false
   private lastAudibleVolume = DEFAULT_SOFTWARE_VOLUME
   private loadingIntent: number | null = null
+  /** Settles when the in-flight preparation finishes or is cancelled.
+   * Background resource maintenance waits on it so a cache prune cannot
+   * supersede the user's next/previous command mid-load. */
+  private preparationSettled: Promise<void> | null = null
+  private settlePreparation: (() => void) | null = null
   private requestedState: 'playing' | 'paused' | 'stopped' | null = null
   private modeControls: Promise<void> = Promise.resolve()
   private streamBuffering = false
@@ -922,13 +938,17 @@ export class CorePlaybackSession {
     const drain = this.maintainer?.stop()
     this.maintainer = null
     if (drain) this.mutation = Promise.all([this.mutation.catch(() => {}), drain])
-    if (wasLoading) this.publish()
+    if (wasLoading) {
+      this.releasePreparation()
+      this.publish()
+    }
     return this.intent
   }
   private beginPreparation(play = true): number {
     this.assertAudioAvailable()
     const intent = this.revoke()
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     return intent
@@ -936,8 +956,42 @@ export class CorePlaybackSession {
   private finishPreparation(intent: number): void {
     if (intent !== this.intent) return
     this.loadingIntent = null
+    this.releasePreparation()
     this.requestedState = null
     this.publish()
+  }
+  /** Opens the gate maintenance waits on; the first caller wins. */
+  private openPreparation(): void {
+    if (this.preparationSettled) return
+    this.preparationSettled = new Promise<void>((resolve) => {
+      this.settlePreparation = resolve
+    })
+  }
+  /** Releases whoever waits for the in-flight preparation to settle. */
+  private releasePreparation(): void {
+    const settle = this.settlePreparation
+    this.settlePreparation = null
+    this.preparationSettled = null
+    settle?.()
+  }
+  /** Waits for the user's in-flight load to land before maintenance invalidates sources.
+   * Bounded so a stalled load cannot suppress cache maintenance forever. */
+  private async awaitPreparation(): Promise<void> {
+    const started = Date.now()
+    while (this.loadingIntent !== null && !this.stopped) {
+      const pending = this.preparationSettled
+      if (!pending) return
+      const remaining = PREPARATION_GRACE_MS - (Date.now() - started)
+      if (remaining <= 0) return
+      await new Promise<void>((resolve) => {
+        const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, remaining)
+        const settle = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        void pending.then(settle, settle)
+      })
+    }
   }
   private commit<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutation.then(async () => {
@@ -1060,6 +1114,7 @@ export class CorePlaybackSession {
   ): Promise<void> {
     this.guard(intent, signal)
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     try {
@@ -1502,6 +1557,31 @@ export class CorePlaybackSession {
             })
             await this.flush()
           } else {
+            const entry = window.items[0]
+            let prepared = options.preparedSource
+            if (!prepared) {
+              const track = entry?.track ? libraryQueueTrack(entry.track, entry.queueEntryId) : null
+              if (!track) throw new Error('Selected queue occurrence is not playable')
+              const current = signal
+                ? AbortSignal.any([this.preview.signal, signal])
+                : this.preview.signal
+              try {
+                prepared = await this.prepareSource(track, current)
+              } catch (error) {
+                this.guard(intent, signal)
+                // A dataset start reads the whole library before it can play, so
+                // one occurrence whose provider no longer serves a source must
+                // not fail the start: stagePages steps to the next occurrence.
+                // An explicitly chosen source stays an error, never a silent skip.
+                if (
+                  !options.automatic &&
+                  track.sourceSelection !== 'explicit' &&
+                  isUnavailableStartSource(error)
+                )
+                  throw new LibraryStartUnavailable(track.title || undefined)
+                throw error
+              }
+            }
             await this.load(window, intent, true, options.position ?? 0, signal, {
               automatic: options.automatic,
               prepare: async () => {
@@ -1509,13 +1589,16 @@ export class CorePlaybackSession {
                 adopt()
               },
               owner: candidate,
-              ...(options.preparedSource ? {
+              ...(prepared ? {
                 prepared: {
-                  ...options.preparedSource,
-                  track: { ...options.preparedSource.track, queueEntryId: window.items[0]?.queueEntryId }
+                  ...prepared,
+                  track: { ...prepared.track, queueEntryId: entry?.queueEntryId }
                 },
                 resourcesHeld: true,
-                allowRecovery: false
+                // A start handed in from another source keeps that owner's
+                // recovery contract; a source this start resolved itself still
+                // gets the one native-rejection recovery the dynamic path has.
+                ...(options.preparedSource ? { allowRecovery: false } : {})
               } : {})
             })
           }
@@ -3043,6 +3126,10 @@ export class CorePlaybackSession {
    * Filesystem IO stays outside the transport lane, so Pause/Stop remain usable. */
   async maintainSources<T>(action: (sources: readonly string[]) => Promise<T>): Promise<T> {
     if (this.outputClaim) return action([]) // Shared owner supplies the active physical sources.
+    // Background maintenance (NCM cache pruning and friends) must not interrupt a load the
+    // user asked for: revoke() below bumps the intent, which would surface the pending
+    // next/previous as CANCELLED and leave the old track playing. Let that load land first.
+    await this.awaitPreparation()
     const resume = this.maintainer?.isActive()
     const intent = this.revoke()
     let release!: () => void
