@@ -44,12 +44,57 @@ export function createCorePlayerStore(
     const failed = (error: unknown) => {
       commandError.value = error instanceof Error ? error : new Error(String(error))
     }
+    /**
+     * Playback intent is last-writer-wins: starting a new request revokes the previous one and
+     * Core rejects the stale request with CANCELLED. Void-returning playback commands settle
+     * quietly; value-returning commands (e.g. queue.submit, queue.insert, playback.abLoop) still
+     * reject so callers never read undefined, without polluting the global commandError banner.
+     */
+    const SUPERSEDED_CANCELLATION = /superseded/i
+    const SETTLED_PLAYBACK_COMMANDS = new Set<string>([
+      'playback.play',
+      'playback.pause',
+      'playback.stop',
+      'playback.seek',
+      'playback.next',
+      'playback.previous',
+      'playback.mode',
+      'playback.control',
+      'queue.select',
+      'queue.fromQuery',
+      'liked.play',
+      'personalized.start',
+      'catalog.play',
+      'downloads.play',
+      'network.play',
+      'streams.play'
+    ])
+    const isCancelledCommand = (error: unknown) => {
+      if (typeof error !== 'object' || error === null) return false
+      const { code, message } = error as { code?: unknown; message?: unknown }
+      return (
+        code === 'CANCELLED' ||
+        (typeof message === 'string' && SUPERSEDED_CANCELLATION.test(message))
+      )
+    }
+    const isSettledPlaybackCommand = (name: string, payload: unknown) =>
+      SETTLED_PLAYBACK_COMMANDS.has(name) &&
+      !(
+        name === 'playback.control' &&
+        typeof payload === 'object' &&
+        payload !== null &&
+        (payload as { type?: unknown }).type === 'toggle-favorite'
+      )
     async function command<K extends CoreCommandName>(name: K, payload: CoreCommands[K]) {
       try {
         const value = await core.command(name, payload)
         commandError.value = null
         return value
       } catch (error) {
+        if (isCancelledCommand(error)) {
+          if (isSettledPlaybackCommand(name, payload)) return undefined
+          throw error
+        }
         failed(error)
         throw error
       }

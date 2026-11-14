@@ -1074,6 +1074,202 @@ test('Core builds the authenticated liked queue in bounded pages, uses the provi
   assert.equal(f.session.snapshot().queue?.id, before.queue?.id)
 })
 
+test('a liked start skips a first occurrence whose provider serves no source, and still starts the queue', async (t) => {
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    return { tracks: [1, 2, 3].map(recommended), nextOffset: 3, hasMore: false, total: 3 }
+  }
+  const f = await fixture(
+    t,
+    {
+      resolve: async (track) =>
+        (track as TrackData).id === 'ncm:1'
+          ? null
+          : { source: `https://audio.test/${(track as TrackData).id}`, expiresAt: null }
+    },
+    undefined,
+    undefined,
+    undefined,
+    provider
+  )
+  await f.session.startLiked({})
+  const snapshot = f.session.snapshot()
+  assert.equal(snapshot.track?.id, 'ncm:2')
+  assert.equal(snapshot.queue?.index, 1)
+  assert.equal(snapshot.playback?.state, 'playing')
+  assert.equal(f.engine.calls.filter((call) => call === 'play').length, 1)
+})
+
+test('a liked start whose occurrences are all unplayable fails instead of skipping without bound', async (t) => {
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    return { tracks: [1, 2, 3].map(recommended), nextOffset: 3, hasMore: false, total: 3 }
+  }
+  const f = await fixture(
+    t,
+    { resolve: async () => null },
+    undefined,
+    undefined,
+    undefined,
+    provider
+  )
+  await assert.rejects(f.session.startLiked({}), /没有可解析音源的歌曲/)
+  assert.equal(f.session.snapshot().queue, null)
+})
+
+test('start skip formats exhaustion clearly, never skips explicit selections, and resets skipped start position', async (t) => {
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    return {
+      tracks: [1, 2, 3, 4, 5, 6, 7, 8].map(recommended),
+      nextOffset: 8,
+      hasMore: false,
+      total: 8
+    }
+  }
+  let resolveTrack: SourceResolver['resolve'] = async () => null
+  const f = await fixture(
+    t,
+    { resolve: (track, signal) => resolveTrack(track, signal) },
+    undefined,
+    undefined,
+    undefined,
+    provider
+  )
+  await assert.rejects(f.session.startLiked({}), /连续多首歌曲无可用音源/)
+  assert.equal(f.session.snapshot().queue, null)
+
+  // Explicitly targeting a song must report its source failure rather than playing the next song.
+  resolveTrack = async (track) =>
+    (track as TrackData).id === 'ncm:1'
+      ? null
+      : { source: `https://audio.test/${(track as TrackData).id}`, expiresAt: null }
+  await assert.rejects(
+    f.session.startLiked({ selectedId: 'ncm:1' }),
+    /Unable to resolve the selected audio source/
+  )
+  await assert.rejects(
+    f.session.fromTrack(recommended(1)),
+    /Unable to resolve the selected audio source/
+  )
+
+  // When a multi-track start skips occurrence 0, occurrence 1 must start at 0s, not position.
+  await f.session.fromPages(
+    async (append) => {
+      await append([
+        { id: 'ncm:1', snapshot: { ...recommended(1) } },
+        { id: 'ncm:2', snapshot: { ...recommended(2) } }
+      ])
+    },
+    { position: 42, allowStartSkip: true }
+  )
+  assert.equal(f.session.snapshot().track?.id, 'ncm:2')
+  assert.equal(f.session.snapshot().playback?.position, 0)
+})
+
+test('staged page playback holds a SourceResources read lease across prepareSource and native loadQueue', async (t) => {
+  const resources = new SourceResources(),
+    preparedGate = deferred<void>(),
+    releaseLoad = deferred<void>()
+  let maintenanceRan = false
+  const f = await fixture(
+    t,
+    {
+      resolve: async (track) => ({
+        source: `D:/cache/${(track as TrackData).id}.flac`,
+        expiresAt: null
+      })
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    resources
+  )
+  const originalLoadQueue = f.engine.loadQueue.bind(f.engine)
+  f.engine.loadQueue = async (items, index) => {
+    preparedGate.resolve()
+    await releaseLoad.promise
+    assert.equal(maintenanceRan, false, 'resource lease must stay held until native loadQueue settles')
+    return originalLoadQueue(items, index)
+  }
+  const starting = f.session.fromPages(async (append) => {
+    await append([{ id: 'ncm:1', snapshot: { ...recommended(1) } }])
+  })
+  await preparedGate.promise
+  const maintaining = resources.maintain(async () => {
+    maintenanceRan = true
+  })
+  await tick()
+  assert.equal(maintenanceRan, false)
+  releaseLoad.resolve()
+  await Promise.all([starting, maintaining])
+  assert.equal(maintenanceRan, true)
+})
+
+test('background liked drain aborts on stop, publishes paused totals, and mixes later pages into shuffle', async (t) => {
+  const tracks = Array.from({ length: 600 }, (_, index) => recommended(index + 1))
+  let blockSecondPage = true
+  const secondPageEntered = deferred<void>(),
+    secondPageRelease = deferred<void>()
+  t.after(() => secondPageRelease.resolve())
+  const calls: number[] = []
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    const offset = Number(args[0]),
+      limit = Number(args[1])
+    calls.push(offset)
+    if (offset === 200 && blockSecondPage) {
+      secondPageEntered.resolve()
+      await new Promise<void>((resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        void secondPageRelease.promise.then(resolve)
+      })
+    }
+    return {
+      tracks: tracks.slice(offset, offset + limit),
+      nextOffset: offset + limit,
+      hasMore: offset + limit < tracks.length
+    }
+  }
+  const f = await heartFixture(t, provider)
+  await f.session.startLiked({})
+  await secondPageEntered.promise
+  await f.session.stop()
+  secondPageRelease.resolve()
+  for (let i = 0; i < 10; i++) await tick()
+  assert.deepEqual(calls, [0, 200], 'stop() must abort the background liked drain before page 3')
+  assert.equal(f.session.snapshot().queue?.total, 200)
+
+  // Paused liked start still publishes streamed totals and mixes later pages into shuffle.
+  blockSecondPage = false
+  calls.length = 0
+  await f.session.startLiked({ shuffle: true, play: false })
+  const changesAfterStart = f.changes
+  await waitFor(() => f.session.snapshot().queue?.total === 600, 'paused liked drain to finish')
+  assert.ok(f.changes > changesAfterStart)
+  assert.equal(f.saved?.data?.libraryQueue?.id, f.session.snapshot().queue?.id)
+  const queue = f.session.snapshot().queue!
+  const firstWindowRows = f.db.readLibraryQueue(queue.id, 0, 200).items
+  assert.equal(
+    firstWindowRows.slice(2).some((row) => Number(row.track?.id.slice(4)) > 200),
+    true,
+    'shuffle must mix tracks from pages > 1 into the unplayed first-200 positions'
+  )
+  await f.session.setMode('sequential')
+  const sequentialHead = f.db.readLibraryQueue(queue.id, 0, 5).items.map((row) => row.track?.id)
+  assert.deepEqual(sequentialHead, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5'])
+})
+
 for (const shuffle of [false, true]) {
   test(`liked playback retains all 2100 songs independently of the displayed first page (shuffle=${shuffle})`, async (t) => {
     const tracks = Array.from({ length: 2100 }, (_, index) => recommended(index + 1))
@@ -1093,6 +1289,16 @@ for (const shuffle of [false, true]) {
     }
     const f = await heartFixture(t, provider)
     await f.session.startLiked(shuffle ? { shuffle: true } : { selectedId: 'ncm:2001' })
+    if (shuffle) {
+      // A start without a chosen occurrence plays the first page immediately and
+      // streams the remaining pages into the queue that is already playing.
+      assert.equal(f.session.snapshot().queue?.total, 200)
+      assert.equal(f.engine.calls.filter((call) => call === 'play').length, 1)
+      await waitFor(
+        () => f.session.snapshot().queue?.total === 2100,
+        'every liked page to stream in'
+      )
+    }
     assert.deepEqual(
       offsets,
       Array.from({ length: 11 }, (_, index) => index * 200)
@@ -2201,7 +2407,7 @@ test('source maintenance pins current and preload without a native reload, and P
   )
 })
 
-test('source maintenance revokes a resolved-before-load candidate and holds new source loads outside the control lane', async (t) => {
+test('explicit source maintenance revokes a resolved-before-load candidate and holds new source loads outside the control lane', async (t) => {
   let slow = false
   const entered = deferred<void>(),
     authorized = deferred<void>()
@@ -2241,6 +2447,72 @@ test('source maintenance revokes a resolved-before-load candidate and holds new 
   await nextCancelled
   assert.equal(f.engine.calls.slice(calls).includes('loadQueue'), false)
   assert.equal(f.session.snapshot().track?.id, 'a')
+})
+
+test('background source maintenance settles an in-flight load instead of superseding it, and falls through after preparationGraceMs', async (t) => {
+  let slow = false,
+    stall = false
+  const entered = deferred<void>(),
+    authorized = deferred<void>(),
+    stalledEntered = deferred<void>(),
+    stalledRelease = deferred<void>()
+  t.after(() => stalledRelease.resolve())
+  const f = await fixture(t, {
+    resolve: async (track) => {
+      if (stall) {
+        stalledEntered.resolve()
+        await stalledRelease.promise
+      }
+      if (slow) {
+        entered.resolve()
+        await authorized.promise
+      }
+      return { source: (track as TrackData).filePath, expiresAt: null }
+    }
+  })
+  await f.session.fromQuery({}, 'a')
+  await f.session.pause()
+  slow = true
+  const loading = f.session.fromQuery({}, 'b')
+  await entered.promise
+  // Background maintenance (NCM cache pruning) starts while the user's load is still
+  // resolving its source: it must wait for that load to land, not supersede it.
+  const clearing = deferred<void>(),
+    release = deferred<void>()
+  let enteredMaintenance = false
+  const maintenance = f.session.maintainSources(
+    async () => {
+      enteredMaintenance = true
+      clearing.resolve()
+      await release.promise
+    },
+    { background: true }
+  )
+  await tick()
+  assert.equal(enteredMaintenance, false)
+  authorized.resolve()
+  await loading
+  await clearing.promise
+  release.resolve()
+  await maintenance
+  assert.equal(f.session.snapshot().track?.id, 'b')
+
+  // If a load stalls past preparationGraceMs, background maintenance still proceeds.
+  slow = false
+  stall = true
+  const stalled = f.session.fromQuery({}, 'a')
+  const stalledRejected = assert.rejects(stalled, { code: 'CANCELLED' })
+  await stalledEntered.promise
+  let fallbackRan = false
+  await f.session.maintainSources(
+    async () => {
+      fallbackRan = true
+    },
+    { background: true, preparationGraceMs: 15 }
+  )
+  assert.equal(fallbackRan, true)
+  stalledRelease.resolve()
+  await stalledRejected
 })
 
 test('a source owner reserves its playback intent before file/provider preparation; Pause prevents a late Play', async (t) => {
@@ -3377,6 +3649,14 @@ test('cold restore remains paused and attaches durable occurrence/position witho
   assert.deepEqual(f.engine.calls.slice(calls), ['start'])
   await restored.shutdown()
 })
+
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error(`Timed out waiting for ${label}`)
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void

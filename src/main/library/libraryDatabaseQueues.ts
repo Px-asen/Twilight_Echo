@@ -1359,6 +1359,22 @@ export class LibraryDatabaseQueues {
             position
           )
           this.run('UPDATE queues SET total_count=total_count+? WHERE id=?', items.length, id)
+          if (extension && previous.order === 'shuffle' && anchor === undefined) {
+            // Keep already-played rows, the active occurrence and the native gapless
+            // lookahead fixed while mixing newly streamed pages across the unplayed tail.
+            const shuffleStart = previous.index < 0 ? 0 : previous.index + 2
+            if (previous.total + items.length > shuffleStart + 1) {
+              this.run(
+                `INSERT INTO queue_reorder
+                 SELECT entry_id,?+row_number() OVER (ORDER BY random())-1
+                 FROM queue_entries WHERE queue_id=? AND position>=?`,
+                shuffleStart,
+                id,
+                shuffleStart
+              )
+              this.applyOrder(id, 'position')
+            }
+          }
           historyKind = 'insert'
           historyPayload.entryIds = items.map(
             (item) => (item as LibraryQueueInsertItem & { entryId: string }).entryId

@@ -25,7 +25,7 @@ import type { PlaybackResumeMode } from '../../shared/appSettings.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
 import type { NativeQueueSelection } from '../../shared/nativeQueue.ts'
-import { createLibraryPlaybackController } from './libraryPlaybackController.ts'
+import { createLibraryPlaybackController, LibraryStartUnavailable } from './libraryPlaybackController.ts'
 import type { LibraryQueueApi } from './libraryQueueSource.ts'
 import {
   LibraryNativeQueueMaintainer,
@@ -60,6 +60,16 @@ import type {
   CoreLikedPlayback,
   CoreHeartQueueApi
 } from '../../shared/coreHeart.ts'
+
+/** Background maintenance defers to the user's in-flight load for at most this long.
+ * Explicit user cache/file maintenance skips this grace and revokes immediately. */
+const PREPARATION_GRACE_MS = 15_000
+
+/** Exhausted provider resolution is skippable when it is the queue start;
+ * authorization refusals and transient IO errors keep surfacing. */
+const UNAVAILABLE_START_SOURCE = /^Unable to resolve the selected audio source\b/
+const isUnavailableStartSource = (error: unknown): boolean =>
+  error instanceof Error && UNAVAILABLE_START_SOURCE.test(error.message)
 
 interface HeartSelection {
   native: NativeQueueSelection | null
@@ -173,6 +183,8 @@ export class CorePlaybackSession {
   private persistence: Promise<void> = Promise.resolve()
   private scheduledSave: Promise<void> | null = null
   private stopped = false
+  /** Owns the background liked-page drain; aborted whenever a new one starts. */
+  private likedDrain: AbortController | null = null
   private committing = false
   private recoveringAudio = false
   private sourceBarrier: Promise<void> | null = null
@@ -189,6 +201,11 @@ export class CorePlaybackSession {
   private muted = false
   private lastAudibleVolume = DEFAULT_SOFTWARE_VOLUME
   private loadingIntent: number | null = null
+  /** Settles when the in-flight preparation finishes or is cancelled.
+   * Background resource maintenance waits on it so a cache prune cannot
+   * supersede the user's next/previous command mid-load. */
+  private preparationSettled: Promise<void> | null = null
+  private settlePreparation: (() => void) | null = null
   private requestedState: 'playing' | 'paused' | 'stopped' | null = null
   private modeControls: Promise<void> = Promise.resolve()
   private streamBuffering = false
@@ -922,13 +939,17 @@ export class CorePlaybackSession {
     const drain = this.maintainer?.stop()
     this.maintainer = null
     if (drain) this.mutation = Promise.all([this.mutation.catch(() => {}), drain])
-    if (wasLoading) this.publish()
+    if (wasLoading) {
+      this.releasePreparation()
+      this.publish()
+    }
     return this.intent
   }
   private beginPreparation(play = true): number {
     this.assertAudioAvailable()
     const intent = this.revoke()
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     return intent
@@ -936,8 +957,43 @@ export class CorePlaybackSession {
   private finishPreparation(intent: number): void {
     if (intent !== this.intent) return
     this.loadingIntent = null
+    this.releasePreparation()
     this.requestedState = null
     this.publish()
+  }
+  /** Opens the gate maintenance waits on; the first caller wins. */
+  private openPreparation(): void {
+    if (this.preparationSettled) return
+    this.preparationSettled = new Promise<void>((resolve) => {
+      this.settlePreparation = resolve
+    })
+  }
+  /** Releases whoever waits for the in-flight preparation to settle. */
+  private releasePreparation(): void {
+    const settle = this.settlePreparation
+    this.settlePreparation = null
+    this.preparationSettled = null
+    settle?.()
+  }
+  /** Waits for the user's in-flight load to land before background maintenance invalidates sources.
+   * Bounded so a stalled load cannot suppress cache maintenance forever. */
+  private async awaitPreparation(graceMs = PREPARATION_GRACE_MS): Promise<void> {
+    const started = Date.now()
+    while (this.loadingIntent !== null && !this.stopped) {
+      const pending = this.preparationSettled
+      if (!pending) return
+      const remaining = graceMs - (Date.now() - started)
+      if (remaining <= 0) return
+      await new Promise<void>((resolve) => {
+        const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, remaining)
+        timer.unref?.()
+        const settle = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        void pending.then(settle, settle)
+      })
+    }
   }
   private commit<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutation.then(async () => {
@@ -1060,6 +1116,7 @@ export class CorePlaybackSession {
   ): Promise<void> {
     this.guard(intent, signal)
     this.loadingIntent = intent
+    this.openPreparation()
     this.requestedState = play ? 'playing' : 'paused'
     this.publish()
     try {
@@ -1409,11 +1466,24 @@ export class CorePlaybackSession {
       guard?: () => void
       beforeAdopt?: (playing: boolean) => Promise<void>
       onAdopt?: () => void
+      allowStartSkip?: boolean
     } = {},
     signal?: AbortSignal
   ): Promise<void> {
     const intent = this.beginPreparation(options.play !== false)
-    return this.stagePages(produce, options, intent, signal)
+    return this.stagePages(
+      produce,
+      {
+        ...options,
+        allowStartSkip:
+          options.allowStartSkip ??
+          (typeof options.selectedIndex !== 'function' &&
+            (options.selectedIndex ?? 0) === 0 &&
+            !options.position)
+      },
+      intent,
+      signal
+    )
   }
   private async stagePages(
     produce: LibraryQueueSeedProducer,
@@ -1429,6 +1499,7 @@ export class CorePlaybackSession {
       onAdopt?: () => void
       preparedSource?: PreparedPlaybackSource
       automatic?: boolean
+      allowStartSkip?: boolean
     },
     intent: number,
     signal?: AbortSignal
@@ -1459,7 +1530,7 @@ export class CorePlaybackSession {
           order: options.order ?? (mode === 'shuffle' ? 'shuffle' : 'original')
         },
         mode,
-        async (window, activate, retain) => {
+        async (window, activate, retain, skipped) => {
           const previous = this.controller
           const adopt = () => {
             if (adopted) return
@@ -1502,22 +1573,66 @@ export class CorePlaybackSession {
             })
             await this.flush()
           } else {
-            await this.load(window, intent, true, options.position ?? 0, signal, {
-              automatic: options.automatic,
-              prepare: async () => {
-                await options.beforeAdopt?.(true)
-                adopt()
-              },
-              owner: candidate,
-              ...(options.preparedSource ? {
-                prepared: {
-                  ...options.preparedSource,
-                  track: { ...options.preparedSource.track, queueEntryId: window.items[0]?.queueEntryId }
+            const entry = window.items[0]
+            const position = skipped > 0 ? 0 : (options.position ?? 0)
+            const runWithSource = async (prepared: PreparedPlaybackSource | undefined) => {
+              if (!prepared) {
+                const track = entry?.track
+                  ? libraryQueueTrack(entry.track, entry.queueEntryId)
+                  : null
+                if (!track) throw new Error('Selected queue occurrence is not playable')
+                const current = signal
+                  ? AbortSignal.any([this.preview.signal, signal])
+                  : this.preview.signal
+                try {
+                  prepared = await this.prepareSource(track, current)
+                } catch (error) {
+                  this.guard(intent, signal)
+                  // A dataset start reads a multi-track queue without targeting a
+                  // specific occurrence, so one unplayable head track steps forward.
+                  // Explicitly targeted occurrences or sources stay errors.
+                  if (
+                    options.allowStartSkip &&
+                    !options.automatic &&
+                    track.sourceSelection !== 'explicit' &&
+                    window.queue.total > 1 &&
+                    isUnavailableStartSource(error)
+                  )
+                    throw new LibraryStartUnavailable(track.title || undefined, error)
+                  throw error
+                }
+              }
+              await this.load(window, intent, true, position, signal, {
+                automatic: options.automatic,
+                prepare: async () => {
+                  await options.beforeAdopt?.(true)
+                  adopt()
                 },
-                resourcesHeld: true,
-                allowRecovery: false
-              } : {})
-            })
+                owner: candidate,
+                ...(prepared
+                  ? {
+                      prepared: {
+                        ...prepared,
+                        track: { ...prepared.track, queueEntryId: entry?.queueEntryId }
+                      },
+                      resourcesHeld: true,
+                      // A start handed in from another source keeps that owner's
+                      // recovery contract; a source this start resolved itself still
+                      // gets the one native-rejection recovery the dynamic path has.
+                      ...(options.preparedSource ? { allowRecovery: false } : {})
+                    }
+                  : {})
+              })
+            }
+            if (options.preparedSource) {
+              await runWithSource(options.preparedSource)
+            } else {
+              if (this.sourceBarrier) await this.sourceBarrier
+              this.guard(intent, signal)
+              await (this.options.resources
+                ? this.options.resources.use(() => runWithSource(undefined))
+                : runWithSource(undefined))
+            }
           }
         },
         {
@@ -2092,6 +2207,7 @@ export class CorePlaybackSession {
     }
   }
   private async stopTransport(current = () => true): Promise<void> {
+    this.abortLikedDrain()
     await this.transport(async () => {
       if (!current()) return
       try {
@@ -2659,7 +2775,12 @@ export class CorePlaybackSession {
     const actual = await this.options.engine.getPlaybackInfo()
     this.info = this.restored && this.info ? { ...this.info, volume: actual.volume } : actual
   }
+  private abortLikedDrain(): void {
+    this.likedDrain?.abort()
+    this.likedDrain = null
+  }
   private clearHeart(): void {
+    this.abortLikedDrain()
     this.heart?.stop()
     this.heartBase?.dispose()
     this.heartBase = null
@@ -2683,26 +2804,103 @@ export class CorePlaybackSession {
     const current = AbortSignal.any([this.preview.signal, ...(signal ? [signal] : [])])
     try {
       const liked = await owner.liked(current, command.selectedId)
+      const mode = command.shuffle ? 'shuffle' : this.mode === 'heart' ? 'sequential' : this.mode
+      const staged = {
+        mode,
+        order: (command.shuffle ? 'shuffle' : 'original') as 'shuffle' | 'original',
+        selectedIndex: liked.selectedIndex,
+        play: command.play,
+        allowStartSkip: !command.selectedId,
+        onAdopt: () =>
+          owner.attach({
+            queueId: this.controller.reference()!.id,
+            likedPlaylistId: liked.playlistId
+          })
+      }
+      if (command.selectedId) {
+        // A chosen occurrence can live on any page, so its index needs the whole
+        // seed before the queue can be published.
+        await this.stagePages(liked.produce, staged, intent, current)
+        return
+      }
+      // Start on the first page instead of pulling the entire playlist first: a
+      // 2190-song liked list used to hold the first sound back for ~40s.
+      let streamed = false
       await this.stagePages(
-        liked.produce,
-        {
-          mode: command.shuffle ? 'shuffle' : this.mode === 'heart' ? 'sequential' : this.mode,
-          order: command.shuffle ? 'shuffle' : 'original',
-          selectedIndex: liked.selectedIndex,
-          play: command.play,
-          onAdopt: () =>
-            owner.attach({
-              queueId: this.controller.reference()!.id,
-              likedPlaylistId: liked.playlistId
-            })
+        async (append) => {
+          const first = await liked.nextBatch()
+          if (!first?.length) return
+          await append(first)
+          streamed = true
         },
+        staged,
         intent,
         current
       )
+      if (streamed) this.drainLiked(liked)
     } finally {
       this.finishPreparation(intent)
       if (intent === this.intent) this.startMaintenance()
     }
+  }
+  /** Streams the remaining liked pages into the queue that is already playing.
+   * Provider page IO stays outside the player command lane; each resolved batch
+   * commits through controller.extend so window/snapshot revisions, projections,
+   * native gapless preload and session persistence stay synchronized. */
+  private drainLiked(liked: Awaited<ReturnType<HeartQueue['liked']>>): void {
+    const controller = new AbortController()
+    this.abortLikedDrain()
+    this.likedDrain = controller
+    const queue = this.controller
+    const queueId = queue.reference()?.id
+    if (!queueId) return
+    liked.useSignal(controller.signal)
+    const active = () =>
+      !this.stopped &&
+      !controller.signal.aborted &&
+      this.likedDrain === controller &&
+      this.controller === queue &&
+      this.controller.reference()?.id === queueId
+    void (async () => {
+      let added = 0
+      for (;;) {
+        if (!active()) break
+        const batch = await liked.nextBatch()
+        if (!batch) break
+        if (!batch.length) continue
+        let committed = false
+        while (!committed && active()) {
+          if (this.loadingIntent !== null) await this.awaitPreparation()
+          if (!active()) break
+          await this.commit(async () => {
+            if (!active() || this.loadingIntent !== null) return
+            await this.nativeSelection()
+            if (!active()) return
+            const previous = this.controller.snapshot.value?.total ?? 0
+            const window = await this.controller.extend([...batch], this.mode)
+            if (!window) {
+              committed = true
+              return
+            }
+            added += window.queue.total - previous
+            committed = true
+            await this.updateTrack(this.controller.track(window))
+            this.publish()
+          })
+        }
+      }
+      if (added > 0 && active()) {
+        void this.maintainer?.tick()
+        await this.flush()
+      }
+    })()
+      // The queue that is already playing is complete enough to listen to; a
+      // page that fails to stream in only shortens it, so it is not surfaced as
+      // a playback error.
+      .catch(() => {})
+      .finally(() => {
+        if (this.likedDrain === controller) this.likedDrain = null
+      })
   }
   private async enterHeart(signal?: AbortSignal): Promise<void> {
     const owner = this.heart,
@@ -2747,6 +2945,7 @@ export class CorePlaybackSession {
         current,
         selection,
         (previous) => {
+          this.abortLikedDrain()
           this.heartBase = previous
           this.mode = 'heart'
           owner.attach({
@@ -3041,8 +3240,16 @@ export class CorePlaybackSession {
   }
   /** Invalidate prepared sources and pin every acknowledged native resource.
    * Filesystem IO stays outside the transport lane, so Pause/Stop remain usable. */
-  async maintainSources<T>(action: (sources: readonly string[]) => Promise<T>): Promise<T> {
+  async maintainSources<T>(
+    action: (sources: readonly string[]) => Promise<T>,
+    options?: { background?: boolean; preparationGraceMs?: number }
+  ): Promise<T> {
     if (this.outputClaim) return action([]) // Shared owner supplies the active physical sources.
+    // Background maintenance (NCM cache pruning and friends) must not interrupt a load the
+    // user asked for: revoke() below bumps the intent, which would surface the pending
+    // next/previous as CANCELLED and leave the old track playing. Explicit user cache/file
+    // maintenance skips this wait and revokes immediately.
+    if (options?.background) await this.awaitPreparation(options.preparationGraceMs)
     const resume = this.maintainer?.isActive()
     const intent = this.revoke()
     let release!: () => void
@@ -3243,6 +3450,7 @@ export class CorePlaybackSession {
     if (options.audioTerminated) this.resetAbLoopState()
     else await this.clearAbLoop()
     this.stopped = true
+    this.likedDrain?.abort()
     await this.options.cast?.shutdown()
     if (!options.audioTerminated) await this.options.engine.stop()
     this.resetStreamBuffering()

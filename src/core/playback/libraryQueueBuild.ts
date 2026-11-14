@@ -10,6 +10,11 @@ type Item = Extract<LibraryQueueBuildCommand, { kind: 'append' }>['items'][numbe
 export type LibraryQueueSeedProducer = (
   append: (items: readonly Item[]) => Promise<void>
 ) => Promise<unknown>
+export type LibraryQueueSeedPage = Item[]
+/** Pulls the next seed page, or null once the source is exhausted. Shared by
+ * the one-shot producer and by a background drain that keeps appending after
+ * the first page is already playing. */
+export type LibraryQueueSeedBatch = () => Promise<LibraryQueueSeedPage | null>
 
 /** Construct a hidden seed without touching the live source. One page in
  * flight, once-only writes and a final guard also cover producer mistakes. */

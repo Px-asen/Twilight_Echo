@@ -170,6 +170,37 @@ test('construct, attach, rebuild and Core epoch changes never issue playback or 
   next.player.dispose()
 })
 
+test('superseded playback commands settle quietly while real failures and value-returning commands keep contracts', async () => {
+  const f = fixture()
+  try {
+    f.state.value = {
+      ...snapshot(),
+      abLoop: { revision: 1, occurrenceId: 'entry-1', a: 1, b: 5, mode: 'native' },
+      queue: { id: 'q', revision: 1, index: 0, total: 1, occurrenceId: 'entry-1' }
+    }
+    f.setHandler(async () => {
+      throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+    })
+    await f.player.next()
+    await f.player.playLikedTracks({ shuffle: true })
+    await f.player.startPersonalizedStream('fm', 'ncm')
+    await f.player.playTrack(track('1'))
+    assert.equal(f.player.audioEngineError.value, null)
+
+    // Value-returning commands must reject rather than resolving undefined, without setting audioEngineError.
+    await assert.rejects(f.player.clearAbLoop(), { code: 'CANCELLED' })
+    assert.equal(f.player.audioEngineError.value, null)
+
+    f.setHandler(async () => {
+      throw new Error('transport unavailable')
+    })
+    await assert.rejects(f.player.next(), /transport unavailable/)
+    assert.match(f.player.audioEngineError.value ?? '', /transport unavailable/)
+  } finally {
+    f.player.dispose()
+  }
+})
+
 test('clock only interpolates Core samples, does not re-anchor on unrelated state or issue seek', async () => {
   const f = fixture()
   f.state.value = {

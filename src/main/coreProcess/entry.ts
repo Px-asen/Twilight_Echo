@@ -1311,16 +1311,20 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       root: () => musicCacheRoot(),
       maintainSources: (action) =>
         autoMix.maintain(() =>
-          zones.maintainSources(sources => sourceResources.maintain(async () => {
-            // All source reads have committed or cancelled before this sample.
-            // Pause/Seek may still run; neither can introduce a new physical source.
-            const actual = await audio!.getPlaybackInfo()
-            return action([
-              ...sources,
-              actual.source,
-              ...sourceResources.protectedSources()
-            ])
-          }))
+          zones.maintainSources(
+            (sources) =>
+              sourceResources.maintain(async () => {
+                // All source reads have committed or cancelled before this sample.
+                // Pause/Seek may still run; neither can introduce a new physical source.
+                const actual = await audio!.getPlaybackInfo()
+                return action([
+                  ...sources,
+                  actual.source,
+                  ...sourceResources.protectedSources()
+                ])
+              }),
+            { background: true }
+          )
         )
     })
     const control = (operation: () => Promise<void>) => {

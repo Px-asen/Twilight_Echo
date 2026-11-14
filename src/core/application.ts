@@ -755,8 +755,16 @@ export class CoreApplication {
       const value = await this.dispatch(raw, controller.signal, client.identity)
       reply({ ok: true, value })
     } catch (error) {
-      const e = error as { code?: string; message?: string }
-      reply({ ok: false, error: { code: e?.code ?? 'FAILED', message: projectCoreError(error) } })
+      // A newer playback intent routinely cancels the command it superseded.
+      // That is expected control flow for an interactive player, so the client
+      // must not receive it as a failed command (the UI would report an error
+      // for what is a settled, intentional cancellation).
+      if (isSettledPlaybackCancellation(raw, error, this.shuttingDown))
+        reply({ ok: true, value: undefined })
+      else {
+        const e = error as { code?: string; message?: string }
+        reply({ ok: false, error: { code: e?.code ?? 'FAILED', message: projectCoreError(error) } })
+      }
     } finally {
       if (controller) {
         client.requests.delete(raw.requestId)
@@ -2667,6 +2675,50 @@ export class CoreApplication {
 }
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
+}
+// Void-returning playback and queue start commands are last-writer-wins: a newer
+// intent aborts the older one. Settling only those commands keeps the renderer
+// from surfacing an expected supersede as an error while queries, shutdowns and
+// value-returning commands (insert, submit, refill, abLoop, favorite) still reject.
+const SUPERSEDED_CANCELLATION = /superseded/i
+const SETTLED_PLAYBACK_COMMANDS = new Set<string>([
+  'playback.play',
+  'playback.pause',
+  'playback.stop',
+  'playback.seek',
+  'playback.next',
+  'playback.previous',
+  'playback.mode',
+  'playback.control',
+  'queue.select',
+  'queue.fromQuery',
+  'liked.play',
+  'personalized.start',
+  'catalog.play',
+  'downloads.play',
+  'network.play',
+  'streams.play'
+])
+function isSettledPlaybackCancellation(
+  raw: { kind?: unknown; name?: unknown; payload?: unknown } | null | undefined,
+  error: unknown,
+  shuttingDown: boolean
+): boolean {
+  if (shuttingDown || raw?.kind !== 'command' || typeof raw.name !== 'string') return false
+  if (!SETTLED_PLAYBACK_COMMANDS.has(raw.name)) return false
+  if (
+    raw.name === 'playback.control' &&
+    typeof raw.payload === 'object' &&
+    raw.payload !== null &&
+    (raw.payload as { type?: unknown }).type === 'toggle-favorite'
+  )
+    return false
+  if (typeof error !== 'object' || error === null) return false
+  const { code, message } = error as { code?: unknown; message?: unknown }
+  if (code === 'CANCELLED') return true
+  // `preview.abort(new Error('Playback intent superseded'))` reaches the request
+  // as a plain reason without a code; it is the same settled cancellation.
+  return typeof message === 'string' && SUPERSEDED_CANCELLATION.test(message)
 }
 function nonnegative(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)

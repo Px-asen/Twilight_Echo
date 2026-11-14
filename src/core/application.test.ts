@@ -1992,6 +1992,106 @@ test('shutdown cancels queued commands and still joins active database reads bef
   assert.equal(stopped, true)
 })
 
+test('a superseded playback command settles quietly while unrelated cancellations stay failures', async (t) => {
+  const f = fixture(t)
+  await f.application.initialize()
+  f.connect('desktop', [
+    'playback:read',
+    'playback:write',
+    'library:read',
+    'library:write',
+    'migration:write',
+    'statistics:read',
+    'statistics:write',
+    'providers:call'
+  ])
+  const stalled = (reason: () => Error = () => Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })) => {
+    let aborted = false
+    const run = async (_argument: unknown, signal?: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            reject(reason())
+          },
+          { once: true }
+        )
+      })
+    return { run, aborted: () => aborted }
+  }
+  for (const name of ['playback.next', 'liked.play', 'personalized.start']) {
+    const stalledStart = stalled()
+    if (name === 'playback.next') f.playback.navigate = stalledStart.run
+    else if (name === 'liked.play') f.playback.startLiked = stalledStart.run
+    else f.playback.startPersonalized = stalledStart.run
+    const requestId = `superseded:${name}`
+    const payload = name === 'personalized.start' ? { providerId: 'ncm', key: 'fm', play: false } : {}
+    const pending = f.request('desktop', name, payload, { requestId })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    f.application.cancel('desktop', requestId, 'current')
+    const response = await pending
+    assert.equal(stalledStart.aborted(), true)
+    assert.equal(response.ok, true)
+  }
+  // `preview.abort(...)` reaches the request as a plain reason without a code.
+  const uncoded = stalled(() => new Error('Playback intent superseded'))
+  f.playback.startLiked = uncoded.run
+  const pendingUncoded = f.request('desktop', 'liked.play', {}, { requestId: 'superseded:uncoded' })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  f.application.cancel('desktop', 'superseded:uncoded', 'current')
+  assert.equal(uncoded.aborted(), true)
+  assert.equal((await pendingUncoded).ok, true)
+  // A genuine source failure on the same command is still reported.
+  f.playback.startLiked = async () => {
+    throw new Error('Unable to resolve the selected audio source')
+  }
+  const failed = await f.request('desktop', 'liked.play', {}, { requestId: 'superseded:real-failure' })
+  assert.equal(failed.ok, false)
+  // Value-returning commands and queries must never settle to undefined when cancelled.
+  f.playback.configureAbLoop = async () => {
+    throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+  }
+  const abLoop = await f.request(
+    'desktop',
+    'playback.abLoop',
+    { revision: 0, occurrenceId: 'entry-1', action: 'clear' },
+    { requestId: 'superseded:abLoop' }
+  )
+  assert.equal(abLoop.ok, false)
+  if (!abLoop.ok) assert.equal(abLoop.error.code, 'CANCELLED')
+
+  f.playback.refillHeart = async () => {
+    throw Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+  }
+  const refill = await f.request(
+    'desktop',
+    'heart.refill',
+    { id: 'queue-1', revision: 1 },
+    { requestId: 'superseded:heart-refill' }
+  )
+  assert.equal(refill.ok, false)
+  if (!refill.ok) assert.equal(refill.error.code, 'CANCELLED')
+
+  const originalReadQueue = f.library.readLibraryQueue.bind(f.library)
+  f.library.readLibraryQueue = () => {
+    throw Object.assign(new Error('Core request cancelled'), { code: 'CANCELLED' })
+  }
+  const locate = await f.application.request('desktop', {
+    kind: 'query',
+    name: 'queue.locate',
+    payload: { id: 'queue-1', revision: 1, occurrenceId: 'entry-1' },
+    epoch: 'current',
+    requestId: 'superseded:queue-locate'
+  })
+  void locate
+  f.library.readLibraryQueue = originalReadQueue
+  const locateMessage = f.messages
+    .get('desktop')!
+    .find((message) => message.kind === 'response' && message.requestId === 'superseded:queue-locate')
+  assert.equal(locateMessage?.kind === 'response' && locateMessage.ok, false)
+})
+
 test('slow source work is cancellable per client while another window can pause; disconnect suppresses late replies', async (t) => {
   const f = fixture(t)
   await f.application.initialize()

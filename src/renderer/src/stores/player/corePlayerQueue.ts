@@ -237,27 +237,37 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
       throw error
     }
   }
+  const isSupersededError = (error: unknown) => {
+    if (typeof error !== 'object' || error === null) return false
+    const { code, message } = error as { code?: unknown; message?: unknown }
+    return code === 'CANCELLED' || (typeof message === 'string' && /superseded/i.test(message))
+  }
   async function submit(
     tracks: readonly QueueTrack[],
     selectedIndex: number,
     position?: number,
     play = true
   ) {
-    await submitInputs(
-      async (append) => {
-        for (let offset = 0; offset < tracks.length; offset += 200)
-          await append(
-            tracks
-              .slice(offset, offset + 200)
-              .map((track) =>
-                coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)
-              )
-          )
-      },
-      selectedIndex,
-      position,
-      play
-    )
+    try {
+      await submitInputs(
+        async (append) => {
+          for (let offset = 0; offset < tracks.length; offset += 200)
+            await append(
+              tracks
+                .slice(offset, offset + 200)
+                .map((track) =>
+                  coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)
+                )
+            )
+        },
+        selectedIndex,
+        position,
+        play
+      )
+    } catch (error) {
+      if (isSupersededError(error)) return
+      throw error
+    }
   }
   async function appendLibraryQueuePages(
     produce: CoreQueueInputPageProducer,
@@ -421,10 +431,17 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
       produce: (append: (tracks: readonly QueueTrack[]) => Promise<void>) => Promise<unknown>,
       selectedIndex = 0,
       guard: () => void = () => {}
-    ): Promise<void> => submitInputs(
-      append => produce(tracks => append(tracks.map(track => coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)))),
-      selectedIndex, 0, true, guard
-    ),
+    ): Promise<void> => {
+      try {
+        await submitInputs(
+          append => produce(tracks => append(tracks.map(track => coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)))),
+          selectedIndex, 0, true, guard
+        )
+      } catch (error) {
+        if (isSupersededError(error)) return
+        throw error
+      }
+    },
     playLikedTracks,
     playLibraryQuery: async (
       query: LibraryQuery,
