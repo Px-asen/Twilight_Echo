@@ -1,7 +1,11 @@
 import type { CoreHeartContext, CoreHeartState } from '../../shared/coreHeart.ts'
 import type { CoreQueueReference } from '../../shared/coreProtocol.ts'
 import type { TrackData } from '../../shared/track.ts'
-import type { LibraryQueueSeedProducer } from './libraryQueueBuild.ts'
+import type {
+  LibraryQueueSeedBatch,
+  LibraryQueueSeedPage,
+  LibraryQueueSeedProducer
+} from './libraryQueueBuild.ts'
 import { libraryTrack } from './libraryTrack.ts'
 import { toPlaybackQueueSnapshot } from './queueSnapshots.ts'
 import { projectCoreError } from '../projections.ts'
@@ -95,6 +99,11 @@ export class HeartQueue {
     playlistId: number
     selectedIndex(): number
     produce: LibraryQueueSeedProducer
+    /** Reads the next 200-song page; null once the playlist is exhausted. */
+    nextBatch: LibraryQueueSeedBatch
+    /** Rebinds the page cursor to a longer-lived signal once the queue that
+     *  streams it is already playing and no longer owned by the start command. */
+    useSignal(signal: AbortSignal): void
   }> {
     const library = (await this.options.call('fetchUserLibrary', [], signal)) as {
       likedPlaylist?: { id?: unknown }
@@ -104,6 +113,39 @@ export class HeartQueue {
     if (!Number.isSafeInteger(playlistId) || playlistId <= 0)
       throw new Error('NCM liked playlist is unavailable')
     let selected = selectedId ? -1 : 0
+    let offset = 0,
+      position = 0,
+      exhausted = false,
+      pageSignal = signal
+    // The cursor lives in this closure so a first page can start playing while
+    // the remaining pages keep streaming in behind it.
+    const nextBatch = async (): Promise<LibraryQueueSeedPage | null> => {
+      if (exhausted) return null
+      pageSignal.throwIfAborted()
+      const page = (await this.options.call(
+        'fetchLikedTracksPage',
+        [offset, 200, false],
+        pageSignal
+      )) as {
+        tracks: unknown
+        nextOffset: number
+        hasMore: boolean
+      }
+      pageSignal.throwIfAborted()
+      const batch = tracks(page.tracks)
+      if (selectedId && selected < 0) {
+        const index = batch.findIndex((track) => track.id === selectedId)
+        if (index >= 0) selected = position + index
+      }
+      position += batch.length
+      if (!page.hasMore) exhausted = true
+      else {
+        if (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset)
+          throw new Error('NCM liked playlist cursor did not advance')
+        offset = page.nextOffset
+      }
+      return batch.map((track) => ({ id: track.id, snapshot: { ...track } }))
+    }
     return {
       playlistId,
       selectedIndex: () => {
@@ -111,32 +153,15 @@ export class HeartQueue {
         return selected
       },
       produce: async (append) => {
-        let offset = 0,
-          position = 0
         for (;;) {
-          signal.throwIfAborted()
-          const page = (await this.options.call(
-            'fetchLikedTracksPage',
-            [offset, 200, false],
-            signal
-          )) as {
-            tracks: unknown
-            nextOffset: number
-            hasMore: boolean
-          }
-          signal.throwIfAborted()
-          const batch = tracks(page.tracks)
-          if (selectedId && selected < 0) {
-            const index = batch.findIndex((track) => track.id === selectedId)
-            if (index >= 0) selected = position + index
-          }
-          await append(batch.map((track) => ({ id: track.id, snapshot: { ...track } })))
-          position += batch.length
-          if (!page.hasMore) break
-          if (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset)
-            throw new Error('NCM liked playlist cursor did not advance')
-          offset = page.nextOffset
+          const batch = await nextBatch()
+          if (!batch) break
+          if (batch.length) await append(batch)
         }
+      },
+      nextBatch,
+      useSignal: (next) => {
+        pageSignal = next
       }
     }
   }

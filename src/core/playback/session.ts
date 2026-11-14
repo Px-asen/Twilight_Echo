@@ -184,6 +184,8 @@ export class CorePlaybackSession {
   private persistence: Promise<void> = Promise.resolve()
   private scheduledSave: Promise<void> | null = null
   private stopped = false
+  /** Owns the background liked-page drain; aborted whenever a new one starts. */
+  private likedDrain: AbortController | null = null
   private committing = false
   private recoveringAudio = false
   private sourceBarrier: Promise<void> | null = null
@@ -2766,26 +2768,72 @@ export class CorePlaybackSession {
     const current = AbortSignal.any([this.preview.signal, ...(signal ? [signal] : [])])
     try {
       const liked = await owner.liked(current, command.selectedId)
+      const mode = command.shuffle ? 'shuffle' : this.mode === 'heart' ? 'sequential' : this.mode
+      const staged = {
+        mode,
+        order: (command.shuffle ? 'shuffle' : 'original') as 'shuffle' | 'original',
+        selectedIndex: liked.selectedIndex,
+        play: command.play,
+        onAdopt: () =>
+          owner.attach({
+            queueId: this.controller.reference()!.id,
+            likedPlaylistId: liked.playlistId
+          })
+      }
+      if (command.selectedId) {
+        // A chosen occurrence can live on any page, so its index needs the whole
+        // seed before the queue can be published.
+        await this.stagePages(liked.produce, staged, intent, current)
+        return
+      }
+      // Start on the first page instead of pulling the entire playlist first: a
+      // 2190-song liked list used to hold the first sound back for ~40s.
+      let streamed = false
       await this.stagePages(
-        liked.produce,
-        {
-          mode: command.shuffle ? 'shuffle' : this.mode === 'heart' ? 'sequential' : this.mode,
-          order: command.shuffle ? 'shuffle' : 'original',
-          selectedIndex: liked.selectedIndex,
-          play: command.play,
-          onAdopt: () =>
-            owner.attach({
-              queueId: this.controller.reference()!.id,
-              likedPlaylistId: liked.playlistId
-            })
+        async (append) => {
+          const first = await liked.nextBatch()
+          if (!first?.length) return
+          await append(first)
+          streamed = true
         },
+        staged,
         intent,
         current
       )
+      if (streamed) this.drainLiked(liked, signal)
     } finally {
       this.finishPreparation(intent)
       if (intent === this.intent) this.startMaintenance()
     }
+  }
+  /** Streams the remaining liked pages into the queue that is already playing.
+   * A page pull must never hold the player command lane, so the inserts run on
+   * the queue source's own compare-and-swap lane and stop as soon as this drain
+   * is superseded, playback stops or another queue takes over. */
+  private drainLiked(
+    liked: Awaited<ReturnType<HeartQueue['liked']>>,
+    signal?: AbortSignal
+  ): void {
+    const controller = new AbortController()
+    this.likedDrain?.abort()
+    this.likedDrain = controller
+    const queue = this.controller
+    liked.useSignal(AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]))
+    void queue
+      .appendBehind(() => liked.nextBatch(), {
+        signal: controller.signal,
+        guard: () => {
+          if (this.stopped || this.controller !== queue)
+            throw new Error('播放队列已切换，停止补全收藏歌曲')
+        }
+      })
+      // The queue that is already playing is complete enough to listen to; a
+      // page that fails to stream in only shortens it, so it is not surfaced as
+      // a playback error.
+      .catch(() => {})
+      .finally(() => {
+        if (this.likedDrain === controller) this.likedDrain = null
+      })
   }
   private async enterHeart(signal?: AbortSignal): Promise<void> {
     const owner = this.heart,
@@ -3330,6 +3378,7 @@ export class CorePlaybackSession {
     if (options.audioTerminated) this.resetAbLoopState()
     else await this.clearAbLoop()
     this.stopped = true
+    this.likedDrain?.abort()
     await this.options.cast?.shutdown()
     if (!options.audioTerminated) await this.options.engine.stop()
     this.resetStreamBuffering()

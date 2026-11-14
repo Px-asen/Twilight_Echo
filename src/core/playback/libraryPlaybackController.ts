@@ -646,6 +646,38 @@ export function createLibraryPlaybackController(
     })
   }
 
+  /** Keeps appending pages after the first one already plays. Runs outside the
+   * player command lane so a slow provider pull never delays the next user
+   * command; every batch is an ordinary compare-and-swap insert on the queue and
+   * the drain stops as soon as the source detaches, playback is replaced or the
+   * caller aborts. */
+  function appendBehind(
+    nextBatch: () => Promise<readonly LibraryQueueInsertItem[] | null>,
+    options: { signal?: AbortSignal; guard?: () => void } = {}
+  ): Promise<number> {
+    const generation = epoch
+    let inserted = 0
+    const current = () => generation === epoch && active.value && !options.signal?.aborted
+    return (async () => {
+      for (;;) {
+        if (!current()) return inserted
+        const batch = await nextBatch()
+        if (!batch) return inserted
+        if (!batch.length) continue
+        if (!current()) return inserted
+        // The extension path is the one insert that accepts a deferred remote
+        // source (a streaming provider row has no local file path yet).
+        const result = await source.extend([...batch])
+        if (!result) return inserted
+        inserted += batch.length
+        options.guard?.()
+        if (generation !== epoch) return inserted
+        // Membership only: the playing occurrence and its window stay untouched.
+        snapshot.value = result.queue
+      }
+    })()
+  }
+
   function editPositions(
     action: { kind: 'remove'; index: number } | { kind: 'move'; from: number; to: number },
     mode: PlayMode
@@ -801,6 +833,7 @@ export function createLibraryPlaybackController(
     edit,
     extend,
     appendPages,
+    appendBehind,
     stagePages,
     undo,
     canUndo: () => source.canUndo,

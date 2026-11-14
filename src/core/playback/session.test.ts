@@ -1140,6 +1140,16 @@ for (const shuffle of [false, true]) {
     }
     const f = await heartFixture(t, provider)
     await f.session.startLiked(shuffle ? { shuffle: true } : { selectedId: 'ncm:2001' })
+    if (shuffle) {
+      // A start without a chosen occurrence plays the first page immediately and
+      // streams the remaining pages into the queue that is already playing.
+      assert.equal(f.session.snapshot().queue?.total, 200)
+      assert.equal(f.engine.calls.filter((call) => call === 'play').length, 1)
+      await waitFor(
+        () => f.session.snapshot().queue?.total === 2100,
+        'every liked page to stream in'
+      )
+    }
     assert.deepEqual(
       offsets,
       Array.from({ length: 11 }, (_, index) => index * 200)
@@ -3429,6 +3439,14 @@ test('cold restore remains paused and attaches durable occurrence/position witho
   assert.deepEqual(f.engine.calls.slice(calls), ['start'])
   await restored.shutdown()
 })
+
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error(`Timed out waiting for ${label}`)
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
