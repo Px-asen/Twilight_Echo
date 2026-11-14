@@ -63,8 +63,8 @@ test('300k queue occurrences expose bounded deep pages, not a global replacement
     assert.equal(page.total, 300_000)
     assert.equal(page.offset, (1400 + index) * 200)
   }
-  assert.equal(f.source.state.cachedPages, 10)
-  assert.equal(f.source.state.cachedTracks, 2000)
+  assert.equal(f.source.state.cachedPages, 4)
+  assert.equal(f.source.state.cachedTracks, 800)
   assert.equal(f.source.state.queue?.total, 300_000)
   assert.equal(f.source.state.queue?.index, 0)
   await tick()

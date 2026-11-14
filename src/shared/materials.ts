@@ -1,4 +1,4 @@
-import { CARD_SURFACE_SELECTOR } from './cardSurfaces.ts'
+import { CARD_SURFACE_SELECTOR, DENSE_CARD_SURFACE_SELECTOR } from './cardSurfaces.ts'
 /** Host material contract. Recipes consume theme/editor inputs; they never save preferences. */
 export const MATERIAL_CONTRACT_VERSION = 1
 export const MATERIAL_MODES = ['standard', 'transparent', 'liquidGlass'] as const
@@ -318,6 +318,7 @@ export function compileMaterialCss(): string {
     `@media (forced-colors: active) {\n  html [data-te-material] {\n    --te-material-background: Canvas;\n    --te-material-ink: CanvasText;\n    --te-material-border: CanvasText;\n    --te-material-shadow: none;\n    --te-material-filter: none;\n  }\n}`
   )
   const imageCards = `:where(html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off'] body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off'] body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace) :is(${CARD_SURFACE_SELECTOR})`
+  const denseImageCards = `:where(html[data-te-local-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) .audio-workspace) :is(${DENSE_CARD_SURFACE_SELECTOR}):is(html *)`
   const imageCardInk = declarations({
     '--te-neutral-900': 'var(--te-image-control-text)',
     '--te-neutral-800': 'var(--te-image-control-text)',
@@ -340,6 +341,7 @@ export function compileMaterialCss(): string {
   blocks.push(`@layer te-appearance {
 html[data-te-card-custom='on'] :is(${CARD_SURFACE_SELECTOR}){background:var(--te-card-bg)!important;border:var(--te-card-border-width) solid var(--te-card-border)!important;border-radius:var(--te-card-radius)!important;box-shadow:var(--te-card-shadow),var(--te-card-glass-highlight)!important;backdrop-filter:var(--te-material-content-filter)!important;-webkit-backdrop-filter:var(--te-material-content-filter)!important}
 ${imageCards}{background-color:color-mix(in srgb,var(--te-image-control-surface) 72%,transparent)!important;border-color:var(--te-image-control-border)!important;backdrop-filter:var(--te-image-card-filter)!important;-webkit-backdrop-filter:var(--te-image-card-filter)!important}
+${denseImageCards}{background-color:color-mix(in srgb,var(--te-image-control-surface) 82%,transparent)!important;border-color:color-mix(in srgb,var(--te-image-control-border) 88%,color-mix(in srgb,white 14%,transparent))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 :where(html:not([data-te-surface-material='transparent'])) ${imageCards}{\n${imageCardInk}\ncolor:var(--te-image-control-text)!important;}
 html[data-te-surface-material='transparent'] :is(${CARD_SURFACE_SELECTOR}){background-color:transparent!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 html[data-te-effects-mode='reduced'] :is(${CARD_SURFACE_SELECTOR}),body.te-no-blur :is(${CARD_SURFACE_SELECTOR}){background-color:var(--te-material-solid,var(--te-card-bg-solid))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}

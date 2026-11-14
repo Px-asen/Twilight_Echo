@@ -3103,12 +3103,8 @@ html[data-window-transparent='on']:not([data-platform='linux'])
 html[data-window-transparent='on']:not([data-platform='linux'])
   body:not(.te-no-blur)
   :is(
-    .artist-card,
-    .album-card,
-    .playlist-card,
     .glass-card,
     .feature-card,
-    .playlist-grid-card,
     .favorites-card,
     .streaming-placeholder,
     .empty-recommend,
@@ -3116,20 +3112,13 @@ html[data-window-transparent='on']:not([data-platform='linux'])
     .track-table-wrapper,
     .profile-panel,
     .liked-panel,
-    .playlist-list-item,
     .profile-card,
-    .recent-card,
-    .ranking-card,
     .create-playlist-card,
-    .folder-card,
     .empty-list-card,
     .filter-card,
     .device-card,
     .card,
     .account-card,
-    .plugin-card,
-    .market-card,
-    .plugin-extension-card,
     .chart-card,
     .parameter-card,
     .square-card,
@@ -3143,6 +3132,43 @@ html[data-window-transparent='on']:not([data-platform='linux'])
   ) {
   backdrop-filter: blur(var(--te-tp-card-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) !important;
+}
+
+html[data-window-transparent='on']:not([data-platform='linux'])[data-te-card-custom='on']
+  body:not(.te-no-blur)
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .playlist-grid-card,
+    .playlist-list-item,
+    .recent-card,
+    .ranking-card,
+    .folder-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card
+  ) {
+  backdrop-filter: blur(var(--te-tp-card-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) !important;
+}
+
+html[data-window-transparent='on']:not([data-te-card-custom='on'])
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .playlist-grid-card,
+    .playlist-list-item,
+    .recent-card,
+    .ranking-card,
+    .folder-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card
+  ) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Phase 2 theme treatments stay declarative and only consume managed variables. */

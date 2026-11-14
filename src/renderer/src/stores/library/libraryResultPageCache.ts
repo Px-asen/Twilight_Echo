@@ -1,5 +1,6 @@
 import {
   LIBRARY_CACHE_PAGES,
+  LIBRARY_MAX_PENDING_PAGE_READS,
   LIBRARY_PAGE_SIZE,
   type LibraryQuery
 } from '../../../../shared/libraryDatabase.ts'
@@ -20,7 +21,7 @@ type Request<P> = {
 }
 
 /** Query windows are separate from the legacy complete-library store.
- * At most ten detail pages and two requests are resident, including stale requests. */
+ * At most four detail pages (by default) and two requests are resident, including stale requests. */
 export class LibraryResultPageCache<P extends LibraryResultPage> {
   private readonly readPage: (query: LibraryQuery) => Promise<P>
   private readonly itemCount: (page: P) => number
@@ -45,7 +46,11 @@ export class LibraryResultPageCache<P extends LibraryResultPage> {
     },
     capacity = LIBRARY_CACHE_PAGES
   ) {
-    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > LIBRARY_CACHE_PAGES)
+    if (
+      !Number.isSafeInteger(capacity) ||
+      capacity < 1 ||
+      capacity > Math.max(LIBRARY_CACHE_PAGES, LIBRARY_MAX_PENDING_PAGE_READS)
+    )
       throw new Error('Invalid library page cache capacity')
     this.readPage = options.readPage
     this.itemCount = options.itemCount
@@ -124,7 +129,7 @@ export class LibraryResultPageCache<P extends LibraryResultPage> {
     const key = JSON.stringify([this.generation, page, anchorId, fallbackPage]),
       existing = this.requests.get(key)
     if (existing) return existing
-    if (this.waiting.length >= LIBRARY_CACHE_PAGES)
+    if (this.waiting.length >= LIBRARY_MAX_PENDING_PAGE_READS)
       return Promise.reject(new Error('Too many pending library pages'))
     const promise = new Promise<P | null>((resolve, reject) => {
       this.waiting.push({

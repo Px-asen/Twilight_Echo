@@ -16,7 +16,7 @@ const result = (query: LibraryQuery, revision = 1): LibraryPage => ({
 })
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
-test('page detail cache stays at ten pages and evicts least recently used details', async () => {
+test('page detail cache stays at four pages and evicts least recently used details', async () => {
   let calls = 0
   const cache = new LibraryPageCache({
     queryTracks: async (query) => {
@@ -24,14 +24,15 @@ test('page detail cache stays at ten pages and evicts least recently used detail
       return result(query ?? {})
     }
   })
-  for (let page = 0; page < 10; page++) await cache.load(page)
+  for (let page = 0; page < 4; page++) await cache.load(page)
   await cache.load(0)
-  await cache.load(10)
-  assert.equal(cache.state.cachedPages, 10)
-  assert.equal(cache.state.cachedTracks, 2000)
+  await cache.load(4)
+  assert.equal(cache.state.cachedPages, 4)
+  assert.equal(cache.state.cachedTracks, 800)
   assert.equal(cache.peek(1), undefined)
   assert.ok(cache.peek(0))
-  assert.equal(calls, 11)
+  assert.ok(cache.peek(4))
+  assert.equal(calls, 5)
   cache.dispose()
 })
 
@@ -127,4 +128,26 @@ test('playlist pages require complete unique occurrence identities, not unique T
   entries = ['0', '5']
   assert.deepEqual((await cache.load(0))?.entryIds, entries)
   cache.dispose()
+})
+
+test('pending page queue stays bounded at ten waiting reads while allowing custom cache capacities up to ten', async () => {
+  assert.throws(
+    () => new LibraryPageCache({ queryTracks: async () => result({}) }, 11),
+    /Invalid library page cache capacity/
+  )
+  const custom = new LibraryPageCache({ queryTracks: async (query) => result(query ?? {}) }, 9)
+  assert.equal(custom.pageCapacity, 9)
+  custom.dispose()
+
+  const pending: Array<{ query: LibraryQuery; resolve(value: LibraryPage): void }> = []
+  const cache = new LibraryPageCache({
+    queryTracks: (query) => new Promise((resolve) => pending.push({ query: query ?? {}, resolve }))
+  })
+  const reads = Array.from({ length: 12 }, (_, i) => cache.load(i))
+  assert.equal(pending.length, 2)
+  assert.equal(cache.state.activeRequests, 2)
+  await assert.rejects(cache.load(12), /Too many pending library pages/)
+  cache.dispose()
+  for (const item of pending) item.resolve(result(item.query))
+  assert.ok((await Promise.all(reads)).every((page) => page === null))
 })

@@ -111,6 +111,7 @@ import { hasDismissLayer } from '@renderer/app/useDismissLayer'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMotionPreference } from './app/useMotionPreference'
 import { useLanguagePreference } from './app/useLocale'
+import { useIdleMemoryTrim } from './app/useIdleMemoryTrim'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
@@ -142,6 +143,7 @@ const appearanceGuardRequested = ref(false)
 const appearanceSuspendReady = ref(true)
 const audioSuspendReady = ref(true)
 const appearanceLeavePending = ref(false)
+const idleMinimizedTrimmed = useIdleMemoryTrim()
 const appearanceGuardWorkspace: AppearanceWorkspace = {
   async requestLeave() {
     appearanceGuardRequested.value = true
@@ -1024,12 +1026,17 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
 <template>
   <DebugSessionNotice />
   <AppearanceLayersHost
-    v-if="appearanceFullWindowPreview || (!appearancePageRetained && !appearanceEditorOpen)"
+    v-if="
+      !idleMinimizedTrimmed &&
+      (appearanceFullWindowPreview || (!appearancePageRetained && !appearanceEditorOpen))
+    "
     :settings="
       appearanceChromePreview?.appearanceLayers ?? effectiveThemeLayers ?? settings.appearanceLayers
     "
   />
   <AppBackgroundLayer
+    v-if="!idleMinimizedTrimmed"
+    v-show="!settingsOverlayVisible || appearanceFullWindowPreview"
     :page="showStreamingSurface ? 'streaming' : 'local'"
     :ambient="localViewVisible && activeCategory === 'dashboard'"
   />
@@ -1042,7 +1049,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
       '--te-side-menu-tools-clearance': `${sideMenuToolsClearance}px`
     }"
   >
-    <LiquidGlassDefs :active="playbarRefractionActive" />
+    <LiquidGlassDefs :active="playbarRefractionActive && !idleMinimizedTrimmed" />
     <div class="app-shell-title">
       <TitleBar
         :close-only="showOnboarding"
@@ -1120,7 +1127,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           :wait-for-enter="localViewVisible"
         >
           <LocalDashboard
-            v-if="localViewVisible && activeCategory === 'dashboard'"
+            v-if="localViewVisible && activeCategory === 'dashboard' && !idleMinimizedTrimmed"
             key="local-dashboard"
             @select-view="onSelectView"
             @open-library-settings="openSettingsPage('library')"
@@ -1143,13 +1150,15 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             @customize-appearance="openThemeStudioPage('library')"
           />
           <ListeningAnalyticsPage
-            v-else-if="localViewVisible && activeCategory === 'analytics'"
+            v-else-if="localViewVisible && activeCategory === 'analytics' && !idleMinimizedTrimmed"
             key="local-analytics"
             @select-view="onSelectView"
             @open-artist="handleAnalyticsArtistOpen"
           />
           <SongList
-            v-else-if="localViewVisible"
+            v-else-if="
+              localViewVisible && activeCategory !== 'dashboard' && activeCategory !== 'analytics'
+            "
             key="local-songlist"
             :category="activeCategory"
             :filter="activeFilter"
@@ -1167,7 +1176,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
           @before-leave="artworkMotion.leave"
         >
           <PlayingMusic
-            v-if="showPlayingPage"
+            v-if="showPlayingPage && !idleMinimizedTrimmed"
             @customize-appearance="openThemeStudioPage('player')"
             @open-artist="handlePlayerBarArtistClick"
             @open-album="handlePlayingAlbumClick"
@@ -1256,7 +1265,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
     :class="{ 'settings-overlay-root--active': settingsOverlayVisible }"
   >
     <AppBackgroundLayer
-      v-if="settingsOverlayVisible && !appearanceFullWindowPreview"
+      v-if="settingsOverlayVisible && !appearanceFullWindowPreview && !idleMinimizedTrimmed"
       page="settings"
       embedded
       :reading="!appearanceFullWindowPreview"

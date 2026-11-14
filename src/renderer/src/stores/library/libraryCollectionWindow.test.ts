@@ -35,7 +35,7 @@ function page(
   }
 }
 
-test('continuous collection summaries span pages and retain only ten cached pages for a 300k result', async (t) => {
+test('continuous collection summaries span pages and retain only four cached pages for a 300k result', async (t) => {
   const calls: LibraryQuery[] = []
   const source = createLibraryCollectionWindow({
     queryCollections: async (kind, query) => {
@@ -57,8 +57,8 @@ test('continuous collection summaries span pages and retain only ten cached page
     assert.ok(source.pages.value.length <= 2)
   }
   assert.equal(source.state.value.total, 300_000)
-  assert.equal(source.cacheState.cachedPages, 10)
-  assert.equal(source.cacheState.cachedItems, 2000)
+  assert.equal(source.cacheState.cachedPages, 4)
+  assert.equal(source.cacheState.cachedItems, 800)
   assert.equal(source.itemAt(0), undefined)
   assert.ok(calls.every((query) => query.limit === 200 && query.direction === 'desc'))
   assert.deepEqual(source.letterOffsets.value, { A: 0, Z: 299999 })
