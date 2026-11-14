@@ -34,6 +34,7 @@ import { MessageChannelMain, utilityProcess, session, app } from 'electron'
 import { CastOutputSupervisor } from './castOutputSupervisor.ts'
 import { dlnaStop } from '../../core/cast/dlnaClient.ts'
 import { chromecastStopReceiver } from '../../core/cast/chromecastClient.ts'
+import { existsSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { release } from 'node:os'
 import { CoreSupervisor, type CoreSupervisorOptions, type SupervisedProcess } from './supervisor.ts'
@@ -43,7 +44,9 @@ import { audioServiceEnv } from '../audio/audioServiceEnvironment.ts'
 import { createNodeServiceChannel, NodeSupervisedProcess } from '../server/nodeHost.ts'
 import {
   desktopCoreHost,
+  desktopElectronNodeEnvironment,
   desktopNodeEnvironment,
+  inProcessWorkerServicesEnabled,
   resolveDesktopNodeRuntime
 } from './desktopNodeRuntime.ts'
 import {
@@ -90,14 +93,52 @@ export function createElectronCoreSupervisor(
     observeNodeProcess?: (child: NodeSupervisedProcess, serviceName: string) => void
   } = {}
 ): CoreSupervisor {
+  const hostMode = desktopCoreHost()
+  const workerServices =
+    configuration.workerServices ?? inProcessWorkerServicesEnabled(hostMode)
+  const mainDirectory = existsSync(join(__dirname, 'musicCore.js'))
+    ? __dirname
+    : join(app.getAppPath(), 'out', 'main')
+  const desktopResourcesPath = app.isPackaged
+    ? process.resourcesPath
+    : join(app.getAppPath(), 'resources')
+  const electronEntries: CoreSupervisorOptions['entries'] = {
+    core: join(mainDirectory, 'musicCore.js'),
+    audio: join(mainDirectory, 'audioEngineService.js'),
+    'audio-test': join(mainDirectory, 'audioEngineService.js'),
+    database: join(mainDirectory, 'libraryDatabaseService.js'),
+    scan: join(mainDirectory, 'libraryScanService.js'),
+    analysis: join(mainDirectory, 'audioAnalysisService.js'),
+    'model-install': join(mainDirectory, 'modelPackWorker.js'),
+    plugin: join(mainDirectory, 'pluginHost.js')
+  }
   const nodeRuntime =
-    desktopCoreHost() === 'node'
+    hostMode === 'node'
       ? resolveDesktopNodeRuntime({
           packaged: app.isPackaged,
           appPath: app.getAppPath(),
           resourcesPath: process.resourcesPath
         })
       : null
+  const nodeHost =
+    hostMode === 'node' && nodeRuntime
+      ? {
+          executable: nodeRuntime.executable,
+          bootstrap: nodeRuntime.bootstrap,
+          cwd: nodeRuntime.root,
+          entries: nodeRuntime.entries,
+          env: (source: NodeJS.ProcessEnv) => desktopNodeEnvironment(nodeRuntime, source)
+        }
+      : hostMode === 'electron-node'
+        ? {
+            executable: process.execPath,
+            bootstrap: join(mainDirectory, 'bootstrap.js'),
+            cwd: app.isPackaged ? join(process.resourcesPath, '..') : app.getAppPath(),
+            entries: electronEntries,
+            env: (source: NodeJS.ProcessEnv) =>
+              desktopElectronNodeEnvironment(desktopResourcesPath, source)
+          }
+        : null
   const castOutput = new CastOutputSupervisor((target) =>
     target.protocol === 'dlna'
       ? dlnaStop(target.controlUrl)
@@ -138,6 +179,7 @@ export function createElectronCoreSupervisor(
   const supervisor = new CoreSupervisor({
     configuration: {
       ...configuration,
+      ...(workerServices ? { workerServices } : {}),
       diagnostics: {
         directory: join(app.getPath('logs'), 'audio'),
         environment: {
@@ -359,34 +401,25 @@ export function createElectronCoreSupervisor(
         await trashLocalFileWithRetry(await resolveAuthorizedAudioFile(path))
       }
     },
-    entries: nodeRuntime?.entries ?? {
-      core: join(__dirname, 'musicCore.js'),
-      audio: join(__dirname, 'audioEngineService.js'),
-      'audio-test': join(__dirname, 'audioEngineService.js'),
-      database: join(__dirname, 'libraryDatabaseService.js'),
-      scan: join(__dirname, 'libraryScanService.js'),
-      analysis: join(__dirname, 'audioAnalysisService.js'),
-      'model-install': join(__dirname, 'modelPackWorker.js'),
-      plugin: join(__dirname, 'pluginHost.js')
-    },
+    entries: nodeHost?.entries ?? electronEntries,
     fork: (entry, args, serviceName) => {
       const maxOldSpaceMb = serviceName === 'twilight-core' ? 256 : 128
-      if (nodeRuntime) {
-        const env = desktopNodeEnvironment(
-          nodeRuntime,
-          ['twilight-audio', 'twilight-audio-test', 'twilight-zone-audio'].includes(serviceName)
-            ? audioServiceEnv()
-            : process.env
-        )
+      const baseEnv = ['twilight-audio', 'twilight-audio-test', 'twilight-zone-audio'].includes(
+        serviceName
+      )
+        ? audioServiceEnv()
+        : process.env
+      if (nodeHost) {
+        const env = nodeHost.env(baseEnv)
         if (serviceName === 'twilight-plugin' && configuration.plugins?.proxy)
           Object.assign(env, buildPluginProxyEnv(configuration.plugins.proxy))
         const child = new NodeSupervisedProcess({
-          execPath: nodeRuntime.executable,
+          execPath: nodeHost.executable,
           execArgv: [`--max-old-space-size=${maxOldSpaceMb}`],
-          bootstrap: nodeRuntime.bootstrap,
+          bootstrap: nodeHost.bootstrap,
           entry,
           args,
-          cwd: nodeRuntime.root,
+          cwd: nodeHost.cwd,
           env
         })
         observeUtilityProcess(child, serviceName)
@@ -398,7 +431,7 @@ export function createElectronCoreSupervisor(
         stdio: 'pipe',
         execArgv: [`--max-old-space-size=${maxOldSpaceMb}`],
         ...(['twilight-audio', 'twilight-audio-test', 'twilight-zone-audio'].includes(serviceName)
-          ? { env: audioServiceEnv() }
+          ? { env: baseEnv }
           : {}),
         ...(serviceName === 'twilight-plugin' && configuration.plugins?.proxy
           ? { env: { ...process.env, ...buildPluginProxyEnv(configuration.plugins.proxy) } }
@@ -408,7 +441,7 @@ export function createElectronCoreSupervisor(
       return child as unknown as SupervisedProcess
     },
     channel: () =>
-      nodeRuntime
+      nodeHost
         ? createNodeServiceChannel()
         : (new MessageChannelMain() as unknown as {
             port1: ServiceMessagePort

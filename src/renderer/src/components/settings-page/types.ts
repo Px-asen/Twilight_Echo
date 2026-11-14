@@ -33,13 +33,18 @@ import { DEFAULT_DESKTOP_LYRICS_SETTINGS } from '../../../../shared/desktopLyric
 import type { AppFontFamily } from '../../../../shared/appFont.ts'
 
 export type SectionKey =
+  | 'overview'
   | 'general'
   | 'appearance'
-  | 'playback'
+  | 'interface'
   | 'lyrics'
+  | 'playback'
   | 'library'
+  | 'storage'
   | 'connections'
+  | 'hotkeys'
   | 'system'
+  | 'updates'
 export type LegacySettingsSection =
   | 'dsp'
   | 'cache'
@@ -54,17 +59,21 @@ export const LEGACY_SETTINGS_TARGETS: Record<
   { section: SectionKey; anchor: string }
 > = {
   dsp: { section: 'playback', anchor: 'dsp' },
-  cache: { section: 'library', anchor: 'cache' },
+  cache: { section: 'storage', anchor: 'cache' },
   performance: { section: 'system', anchor: 'setting-hardware-acceleration' },
   desktopLyrics: { section: 'lyrics', anchor: 'desktopLyrics' },
-  shortcuts: { section: 'connections', anchor: 'shortcuts' },
-  about: { section: 'system', anchor: 'about' }
+  shortcuts: { section: 'hotkeys', anchor: 'shortcuts' },
+  about: { section: 'updates', anchor: 'about' }
 }
+/** Landing category for first visits and unknown destinations. */
+export const DEFAULT_SETTINGS_SECTION: SectionKey = 'overview'
 export function normalizeSettingsSection(value: unknown): SectionKey {
-  if (typeof value !== 'string') return 'general'
+  if (typeof value !== 'string') return DEFAULT_SETTINGS_SECTION
   if (Object.hasOwn(LEGACY_SETTINGS_TARGETS, value))
     return LEGACY_SETTINGS_TARGETS[value as LegacySettingsSection].section
-  return sections.some((section) => section.key === value) ? (value as SectionKey) : 'general'
+  return sections.some((section) => section.key === value)
+    ? (value as SectionKey)
+    : DEFAULT_SETTINGS_SECTION
 }
 
 export type BooleanSettingKey =
@@ -83,50 +92,150 @@ export type BooleanSettingKey =
   | 'remoteControlEnabled'
   | 'developerMode'
 
-export const sections: { key: SectionKey; label: string; icon: string; description: string }[] = [
+/**
+ * Icon tile palette. Each category owns one tone so the sidebar, page header,
+ * search results and overview map read as the same place at a glance.
+ */
+export type SettingsTone =
+  | 'accent'
+  | 'graphite'
+  | 'coral'
+  | 'teal'
+  | 'amber'
+  | 'rose'
+  | 'blue'
+  | 'green'
+  | 'cyan'
+  | 'indigo'
+  | 'slate'
+
+export type SettingsSectionGroupKey = 'start' | 'interface' | 'sound' | 'library' | 'connect' | 'system'
+
+export interface SettingsSectionInfo {
+  key: SectionKey
+  label: string
+  icon: string
+  description: string
+  group: SettingsSectionGroupKey
+  tone: SettingsTone
+  /** Extra words that make the category itself discoverable from search. */
+  keywords?: string
+}
+
+export const settingsSectionGroups: { key: SettingsSectionGroupKey; label: string }[] = [
+  { key: 'start', label: '' },
+  { key: 'interface', label: '界面' },
+  { key: 'sound', label: '声音' },
+  { key: 'library', label: '音乐库' },
+  { key: 'connect', label: '连接' },
+  { key: 'system', label: '系统' }
+]
+
+export const sections: SettingsSectionInfo[] = [
+  {
+    key: 'overview',
+    label: '概览',
+    icon: 'pi pi-th-large',
+    description: '一眼看清当前状态，常用开关和全部设置都从这里出发。',
+    group: 'start',
+    tone: 'accent'
+  },
   {
     key: 'general',
     label: '通用',
     icon: 'pi pi-sliders-h',
-    description: '调整启动、窗口和日常操作习惯。'
+    description: '语言、启动方式、关闭窗口行为与日常操作习惯。',
+    group: 'start',
+    tone: 'graphite'
   },
   {
     key: 'appearance',
     label: '外观',
     icon: 'pi pi-palette',
-    description: '设置主题、背景、字体与播放器外观。'
+    description: '主题与配色、背景材质、字体与界面密度。',
+    group: 'interface',
+    tone: 'coral'
   },
   {
-    key: 'playback',
-    label: '播放与音效',
-    icon: 'pi pi-volume-up',
-    description: '调整播放习惯、输出设备和声音处理。'
+    key: 'interface',
+    label: '播放器界面',
+    icon: 'pi pi-window-maximize',
+    description: '播放条的形态、显示方式与按钮编排，以及迷你播放器。',
+    group: 'interface',
+    tone: 'teal'
   },
   {
     key: 'lyrics',
     label: '歌词',
     icon: 'pi pi-align-left',
-    description: '设置歌词来源与播放页、桌面上的显示方式。'
+    description: '歌词来源、播放页歌词样式与桌面歌词。',
+    group: 'interface',
+    tone: 'amber'
+  },
+  {
+    key: 'playback',
+    label: '播放与音效',
+    icon: 'pi pi-volume-up',
+    description: '播放习惯、输出设备、音频引擎与 DSP 声音处理。',
+    group: 'sound',
+    tone: 'rose'
   },
   {
     key: 'library',
-    label: '媒体库与存储',
-    icon: 'pi pi-database',
-    description: '管理本地媒体库、下载目录与缓存。'
+    label: '媒体库',
+    icon: 'pi pi-folder-open',
+    description: '扫描文件夹、实时监控、歌曲资料补全与媒体库维护。',
+    group: 'library',
+    tone: 'blue'
+  },
+  {
+    key: 'storage',
+    label: '下载与缓存',
+    icon: 'pi pi-download',
+    description: '下载位置与文件命名，缓存目录、缓存类型与空间清理。',
+    group: 'library',
+    tone: 'green'
   },
   {
     key: 'connections',
-    label: '连接与控制',
+    label: '连接与集成',
     icon: 'pi pi-link',
-    description: '配置系统集成、远程控制和快捷键。'
+    description: '系统媒体控制、网易云账号、远程控制与网络代理。',
+    group: 'connect',
+    tone: 'cyan'
+  },
+  {
+    key: 'hotkeys',
+    label: '快捷键',
+    icon: 'pi pi-bolt',
+    description: '应用内快捷键、全局组合键与系统媒体键。',
+    group: 'connect',
+    tone: 'indigo',
+    keywords: 'shortcut hotkey 键盘 组合键'
   },
   {
     key: 'system',
-    label: '系统与关于',
+    label: '系统与维护',
     icon: 'pi pi-cog',
-    description: '管理性能、插件、备份与软件更新。'
+    description: '运行性能、日志诊断、备份恢复、插件与开发者选项。',
+    group: 'system',
+    tone: 'slate'
+  },
+  {
+    key: 'updates',
+    label: '关于',
+    icon: 'pi pi-info-circle',
+    description: '版本信息、软件更新与项目支持。',
+    group: 'system',
+    tone: 'accent',
+    keywords: 'about version update 更新 版本'
   }
 ]
+
+export function settingsSectionInfo(key: SettingsSectionInput): SettingsSectionInfo {
+  const normalized = normalizeSettingsSection(key)
+  return sections.find((section) => section.key === normalized) ?? sections[0]
+}
 
 export const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
   { value: 'system', label: '系统', icon: 'pi pi-desktop' },
@@ -1655,10 +1764,10 @@ const groupedTargets: { path: readonly string[]; ids: readonly string[] }[] = [
     ]
   },
   {
-    path: ['player-bar', 'player-bar-behavior-details'],
+    path: ['player-bar-behavior-details'],
     ids: ['player-page-mode', 'player-page-visibility', 'player-bar-threshold', 'player-bar-delay']
   },
-  { path: ['player-bar', 'player-bar-layout-details'], ids: ['player-bar-layout'] },
+  { path: ['player-bar-layout-details'], ids: ['player-bar-layout'] },
   {
     path: ['lyrics-style-details'],
     ids: [
@@ -1674,15 +1783,50 @@ const groupedTargets: { path: readonly string[]; ids: readonly string[] }[] = [
   { path: ['external-connections'], ids: ['discord', 'remote-control', 'remote-pairing'] },
   { path: ['network-proxy'], ids: ['proxy-mode', 'proxy-host', 'proxy-port', 'proxy-fallback'] }
 ]
+/**
+ * Entries whose controls moved into a dedicated category during the settings
+ * reorganization. Kept as data so the index above stays a flat, readable list.
+ */
+const relocatedEntries: { section: SectionKey; ids: readonly string[]; prefixes?: string[] }[] = [
+  {
+    section: 'interface',
+    ids: [
+      'mini-player',
+      'mini-taskbar',
+      'player-bar-mode',
+      'player-page-mode',
+      'player-bar-layout',
+      'player-bar-visibility',
+      'player-page-visibility',
+      'player-bar-threshold',
+      'player-bar-delay',
+      'compact-visualizer'
+    ]
+  },
+  { section: 'storage', ids: [], prefixes: ['cache-', 'download-'] },
+  {
+    section: 'hotkeys',
+    ids: ['local-shortcuts', 'global-shortcuts', 'shortcut-status', 'shortcut-bindings', 'media-keys']
+  },
+  {
+    section: 'updates',
+    ids: ['app-version', 'app-update', 'app-update-install', 'project-support', 'project-links']
+  }
+]
 for (const entry of SETTINGS_SEARCH_INDEX) {
   const path = groupedTargets.find((group) => group.ids.includes(entry.id ?? ''))?.path
   if (path) {
     entry.disclosureIds = path
     entry.disclosureId = path[path.length - 1]
-  } else if (entry.id?.startsWith('download-') || entry.id?.startsWith('cache-')) {
-    entry.disclosureIds = ['storage', ...(entry.disclosureId ? [entry.disclosureId] : [])]
-    entry.disclosureId = entry.disclosureIds[entry.disclosureIds.length - 1]
   }
+  // The player bar is a first-class block of its own category now, not a group.
+  if (entry.disclosureId === 'player-bar') delete entry.disclosureId
+  const id = entry.id ?? ''
+  const relocation = relocatedEntries.find(
+    (candidate) =>
+      candidate.ids.includes(id) || candidate.prefixes?.some((prefix) => id.startsWith(prefix))
+  )
+  if (relocation) entry.section = relocation.section
   if (entry.id?.startsWith('autoMixStem')) {
     entry.fallbackId = 'autoMixMode'
     entry.fallbackReason = '当前版本的 AutoMix 分轨功能暂不可用，请查看此处的功能说明。'
@@ -1694,7 +1838,6 @@ export function settingsDisclosurePath(entry: SettingsSearchEntry): readonly str
 }
 
 export function settingsAnchorDisclosurePath(anchor: string): readonly string[] {
-  if (anchor === 'cache') return ['storage']
   if (anchor === 'device-profiles') return ['output-advanced']
   if (anchor === 'audio-output-device-panel') return ['output-advanced', anchor]
   const entry = SETTINGS_SEARCH_INDEX.find(

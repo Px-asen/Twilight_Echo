@@ -22,6 +22,11 @@ const { stagedVst3Files } = require('./prepare-vst3-msvc.cjs')
 const { readStagedAudioRuntimeObservation } = require('./staged-audio-runtime-observation.cjs')
 const { collectProductionPackages } = require('./server-package-dependencies.cjs')
 
+const PACKAGE_SPECIFIC_FILTERS = {
+  '@neteasecloudmusicapienhanced/api': ['!public/**'],
+  'opencc-js': ['!dist/esm/**', '!dist/esm-lib/**', '!types/**']
+}
+
 function productionPackageFileSets(root) {
   const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   // Electron supplies its own built-in module; do not embed its development
@@ -38,9 +43,44 @@ function productionPackageFileSets(root) {
       '!**/*.map',
       '!**/*.ts',
       '!**/*.md',
-      ...(record.manifest.name === '@neteasecloudmusicapienhanced/api' ? ['!public/**'] : [])
+      ...(PACKAGE_SPECIFIC_FILTERS[record.manifest.name] || [])
     ]
   }))
+}
+
+/** Transforms electron-builder.yml with staged native assets, pnpm production packages, and optional core-node. */
+function buildStagedElectronBuilderConfig(sourceConfig, root, nativeDir, { bundleNodeCore = false } = {}) {
+  const audioConfig = sourceConfig.replace(
+    '  - from: resources/audio-engine',
+    `  - from: '${nativeDir.replaceAll('\\', '/')}'`
+  )
+  if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
+  if (!/^files:\r?$/m.test(audioConfig)) throw new Error('Package files entry was not found')
+  const fileSets = productionPackageFileSets(root).flatMap((entry) => [
+    `  - from: ${JSON.stringify(entry.from)}`,
+    `    to: ${JSON.stringify(entry.to)}`,
+    `    filter: ${JSON.stringify(entry.filter)}`
+  ])
+  let stagedConfig = audioConfig.replace(
+    /^files:\r?$/m,
+    ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
+  )
+  if (bundleNodeCore) {
+    if (!/^win:\r?$/m.test(stagedConfig)) throw new Error('Windows package config entry was not found')
+    stagedConfig = stagedConfig.replace(
+      /^win:\r?$/m,
+      [
+        'win:',
+        '  extraResources:',
+        '    - from: out/desktop-core',
+        '      to: core-node',
+        '      filter:',
+        "        - '**/*'",
+        "        - '!**/*.map'"
+      ].join('\n')
+    )
+  }
+  return stagedConfig
 }
 
 function refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus) {
@@ -59,6 +99,7 @@ function preparePackagedAudioStaging(
   root,
   {
     nativeOverrides = {},
+    bundleNodeCore = false,
     environment = process.env,
     stripNativeFile = defaultStripNativeFile,
     observeRuntime = readStagedAudioRuntimeObservation
@@ -130,23 +171,9 @@ function preparePackagedAudioStaging(
   refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus)
 
   const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  const audioConfig = sourceConfig.replace(
-    '  - from: resources/audio-engine',
-    `  - from: '${nativeDir.replaceAll('\\', '/')}'`
-  )
-  if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
-  // Mirror the installed production graph with native electron-builder file
-  // sets: its pnpm collector otherwise flattens away conflicting nested versions.
-  const fileSets = productionPackageFileSets(root).flatMap((entry) => [
-    `  - from: ${JSON.stringify(entry.from)}`,
-    `    to: ${JSON.stringify(entry.to)}`,
-    `    filter: ${JSON.stringify(entry.filter)}`
-  ])
-  const stagedConfig = audioConfig.replace(
-    /^files:\r?$/m,
-    ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
-  )
-  if (!/^files:\r?$/m.test(audioConfig)) throw new Error('Package files entry was not found')
+  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root, nativeDir, {
+    bundleNodeCore
+  })
   const configPath = join(temporaryDir, 'electron-builder.yml')
   writeFileSync(configPath, stagedConfig)
   return {
@@ -165,6 +192,7 @@ function preparePackagedAudioStaging(
 }
 
 module.exports = {
+  buildStagedElectronBuilderConfig,
   preparePackagedAudioStaging,
   productionPackageFileSets,
   refreshAudioCapabilityArtifacts

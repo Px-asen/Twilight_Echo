@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
+import { Worker } from 'node:worker_threads'
 import { createServicePort, type ServiceMessagePort } from './servicePort.ts'
 import { CoreServiceLauncher } from '../coreProcess/serviceLauncher.ts'
 import type { CoreChildMessage } from '../../shared/coreProcessProtocol.ts'
@@ -96,4 +101,34 @@ test('service port notifies onClose when peer or parent port closes', () => {
   assert.deepEqual(closedSources, ['peer'])
   parent.emit('close')
   assert.deepEqual(closedSources, ['peer', 'parent'])
+})
+test('servicePort adapts worker_threads parentPort automatically without entering peerMode', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'twilight-service-port-worker-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const servicePortUrl = pathToFileURL(resolve(import.meta.dirname, './servicePort.ts')).href
+  const entry = join(dir, 'echo-worker.mjs')
+  writeFileSync(
+    entry,
+    `
+      import { createServicePort } from ${JSON.stringify(servicePortUrl)};
+      const port = createServicePort();
+      port.postMessage({ kind: 'ready', argvCount: process.argv.length });
+      port.on('message', (msg) => port.postMessage({ kind: 'echo', value: msg.value }));
+    `
+  )
+  const worker = new Worker(entry, {
+    workerData: { twilightWorkerThread: true }
+  })
+  t.after(() => worker.terminate())
+  const messages: unknown[] = []
+  await new Promise<void>((resolveReady, rejectReady) => {
+    worker.once('error', rejectReady)
+    worker.on('message', (message: { kind?: string; value?: unknown }) => {
+      messages.push(message)
+      if (message.kind === 'ready') worker.postMessage({ value: 'ping' })
+      else if (message.kind === 'echo') resolveReady()
+    })
+  })
+  assert.equal((messages[0] as { kind: string }).kind, 'ready')
+  assert.deepEqual(messages[1], { kind: 'echo', value: 'ping' })
 })

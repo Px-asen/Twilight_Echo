@@ -10,7 +10,10 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
-const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
+const {
+  prepareWindowsDesktopCore,
+  shouldBundleWindowsDesktopCore
+} = require('./desktop-core-packaging.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -37,7 +40,9 @@ function run(args, environment = process.env) {
 }
 
 async function main(args = process.argv.slice(2)) {
-  const windowsPackage = targetsWindows(args)
+  const bundleNodeCore = shouldBundleWindowsDesktopCore(args)
+  const builderArgs = args.filter((arg) => arg !== '--with-node-core')
+  const windowsPackage = targetsWindows(builderArgs)
   if (windowsPackage && process.platform !== 'win32') {
     throw new Error('Windows packaging with native VST3/SMTC helpers must run on Windows x64.')
   }
@@ -45,13 +50,14 @@ async function main(args = process.argv.slice(2)) {
   let asio = null
   if (windowsPackage) {
     buildCrashHelpers({ root })
-    await prepareWindowsDesktopCore({ root, args })
+    if (bundleNodeCore) await prepareWindowsDesktopCore({ root, args: builderArgs })
     asio = buildAsioHelper({ root, tests: false })
     smtc = prepareSmtcMsvc({ root, stage: false })
     prepareVst3Msvc({ root, force: true })
   }
   const staging = windowsPackage
     ? preparePackagedAudioStaging(root, {
+        bundleNodeCore,
         nativeOverrides: {
           'twilight_smtc_node.node': smtc.artifactPath,
           'twilight-asio-helper-x86.exe': asio.artifactPath
@@ -62,8 +68,9 @@ async function main(args = process.argv.slice(2)) {
   let result
   try {
     if (staging) verifyAsioHelperPair(staging.nativeDir)
-    result = run(staging ? [...args, '--config', staging.configPath] : args, {
+    result = run(staging ? [...builderArgs, '--config', staging.configPath] : builderArgs, {
       ...process.env,
+      ...(bundleNodeCore ? { TWILIGHT_BUNDLE_NODE_CORE: '1' } : {}),
       TWILIGHT_PACKAGED_AUDIO_PRESTRIPPED: staging ? '1' : '0'
     })
   } finally {
@@ -71,7 +78,7 @@ async function main(args = process.argv.slice(2)) {
   }
   if (result.error) throw result.error
   if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1)
-  const unpackedApp = path.join(packageOutputDirectory(args), 'win-unpacked')
+  const unpackedApp = path.join(packageOutputDirectory(builderArgs), 'win-unpacked')
   const packagedAsar = path.join(unpackedApp, 'resources', 'app.asar')
   if (process.platform === 'win32') {
     const branding = verifyWindowsAppBranding(unpackedApp)

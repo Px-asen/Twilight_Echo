@@ -5,7 +5,7 @@ import { summarizeDiagnosticArguments } from './sanitize.ts'
 import type { DiagnosticContext } from '../../shared/diagnostics.ts'
 
 const POLLED =
-  /(?:getPlaybackInfo|getVisualizationData|getSpectrumData|getState|getStatus|playback-info|progress|miniPlayer:moveTo|desktopLyrics:clock)/i
+  /(?:getPlaybackInfo|getVisualizationData|getSpectrumData|getDspGraphStatus|getDspPluginStatus|getConvolverInfo|getUpcomingTrack|enumerateDevices|bridgeStatus|bridgeSourceTimeline|getState|getStatus|playback-info|progress|miniPlayer:moveTo|desktopLyrics:clock)/i
 const buckets = new Map<
   string,
   { count: number; durationMs: number; maxMs: number; failures: number }
@@ -39,13 +39,14 @@ export function observeDiagnosticOperation<T>(
   method: string,
   fn: () => T,
   args: unknown[] = [],
-  context: DiagnosticContext = {}
+  context: DiagnosticContext = {},
+  options?: { polled?: boolean }
 ): T {
   const startedAt = performance.now()
   const requestId = context.requestId ?? randomUUID()
   const operationId = context.operationId ?? diagnosticContext().operationId ?? randomUUID()
   const scope = { ...context, requestId, operationId }
-  const polled = POLLED.test(method)
+  const polled = options?.polled ?? POLLED.test(method)
   if (!polled)
     writeDiagnostic(
       module,
@@ -132,6 +133,29 @@ export function unwrapObservedIpc(args: unknown[]): {
   return { args: candidate.args, context }
 }
 
+function describeIpcOperation(
+  channel: string,
+  args: unknown[]
+): { method: string; args: unknown[]; polled?: boolean } {
+  if (channel === 'core-window:request') {
+    const envelope = args[0] as Record<string, unknown> | undefined
+    const request =
+      envelope && typeof envelope === 'object' && !Array.isArray(envelope)
+        ? (envelope.request as Record<string, unknown> | undefined)
+        : undefined
+    const name = request && typeof request === 'object' ? request.name : undefined
+    const kind = request && typeof request === 'object' ? request.kind : undefined
+    if (typeof name === 'string' && /^[\w.-]{1,96}$/.test(name)) {
+      return {
+        method: `${channel}:${name}`,
+        args: 'payload' in request! ? [request!.payload] : [],
+        polled: kind === 'query' || undefined
+      }
+    }
+  }
+  return { method: channel, args }
+}
+
 export function installIpcDiagnostics(ipc: any, trusted: (event: any) => boolean): () => void {
   const originalHandle = ipc.handle
   const originalOn = ipc.on
@@ -142,12 +166,14 @@ export function installIpcDiagnostics(ipc: any, trusted: (event: any) => boolean
       if (channel.startsWith('diagnostics:')) return listener(event, ...wireArgs)
       if (!trusted(event)) return listener(event, ...wireArgs)
       const call = unwrapObservedIpc(wireArgs)
+      const described = describeIpcOperation(channel, call.args)
       return observeDiagnosticOperation(
         `ipc.${channel.split(':', 1)[0]}`,
-        channel,
+        described.method,
         () => listener(event, ...call.args),
-        call.args,
-        call.context
+        described.args,
+        call.context,
+        described.polled !== undefined ? { polled: described.polled } : undefined
       )
     })
   }
@@ -161,12 +187,14 @@ export function installIpcDiagnostics(ipc: any, trusted: (event: any) => boolean
     const wrapped = function (this: any, event: any, ...wireArgs: unknown[]) {
       if (!trusted(event)) return listener.call(this, event, ...wireArgs)
       const call = unwrapObservedIpc(wireArgs)
+      const described = describeIpcOperation(channel, call.args)
       return observeDiagnosticOperation(
         `ipc.${channel.split(':', 1)[0]}`,
-        channel,
+        described.method,
         () => listener.call(this, event, ...call.args),
-        call.args,
-        call.context
+        described.args,
+        call.context,
+        described.polled !== undefined ? { polled: described.polled } : undefined
       )
     }
     Object.assign(wrapped, { listener: (listener as any).listener ?? listener })

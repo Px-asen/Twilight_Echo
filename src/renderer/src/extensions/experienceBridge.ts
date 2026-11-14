@@ -758,7 +758,17 @@ export function createExperienceBridge(
   }
   if (experience.permissions.includes('library:read'))
     stops.push(watch(
-      () => [core.state.value?.epoch, core.state.value?.libraryRevision, core.state.value?.playlistsRevision, core.state.value?.scan],
+      () => [
+        core.state.value?.epoch,
+        core.state.value?.libraryRevision,
+        core.state.value?.playlistsRevision,
+        core.state.value?.scan?.jobId,
+        core.state.value?.scan?.state,
+        core.state.value?.scan?.phase,
+        core.state.value?.scan?.checkedFiles,
+        core.state.value?.scan?.parsedFiles,
+        core.state.value?.scan?.error
+      ],
       () => send('library', null)
     ))
   const timer = setInterval(() => {

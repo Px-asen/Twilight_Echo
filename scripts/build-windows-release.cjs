@@ -13,7 +13,10 @@ const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
 const { prepareSmtcMsvc } = require('./prepare-smtc-msvc.cjs')
 const { buildAsioHelper } = require('./build-asio-helper.cjs')
 const { verifyAsioHelperPair } = require('./verify-asio-helper-artifacts.cjs')
-const { prepareWindowsDesktopCore } = require('./desktop-core-packaging.cjs')
+const {
+  prepareWindowsDesktopCore,
+  shouldBundleWindowsDesktopCore
+} = require('./desktop-core-packaging.cjs')
 const {
   verifyReleaseCapabilityConsistency
 } = require('./verify-release-capability-consistency.cjs')
@@ -42,11 +45,13 @@ async function writeInstallerChecksum(installerPath = expectedInstaller) {
   return checksumPath
 }
 
-async function main() {
+async function main(args = process.argv.slice(2)) {
+  const bundleNodeCore = shouldBundleWindowsDesktopCore(args)
   buildCrashHelpers({ root })
-  await prepareWindowsDesktopCore({ root, args: ['--win'] })
+  if (bundleNodeCore) await prepareWindowsDesktopCore({ root, args: ['--win'] })
   const releaseEnvironment = {
     ...process.env,
+    ...(bundleNodeCore ? { TWILIGHT_BUNDLE_NODE_CORE: '1' } : {}),
     CSC_IDENTITY_AUTO_DISCOVERY: 'false',
     TWILIGHT_RELEASE_BUILD: '1',
     TWILIGHT_PACKAGED_AUDIO_PRESTRIPPED: '1'
@@ -63,6 +68,7 @@ async function main() {
   prepareVst3Msvc({ root, environment: releaseEnvironment, force: true })
   const asio = buildAsioHelper({ root, environment: releaseEnvironment, tests: false })
   const staging = preparePackagedAudioStaging(root, {
+    bundleNodeCore,
     nativeOverrides: {
       'twilight_smtc_node.node': smtc.artifactPath,
       'twilight-asio-helper-x86.exe': asio.artifactPath

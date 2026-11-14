@@ -6,6 +6,11 @@ const { buildDesktopCore, ENTRIES } = require('./build-desktop-core.cjs')
 
 const WINDOWS_NODE_VERSION = 'v24.21.0'
 
+/** Returns true when packaging should bundle an external Node runtime under resources/core-node. */
+function shouldBundleWindowsDesktopCore(args = [], env = process.env) {
+  return args.includes('--with-node-core') || env.TWILIGHT_BUNDLE_NODE_CORE === '1'
+}
+
 async function prepareWindowsDesktopCore({
   root = path.resolve(__dirname, '..'),
   args = [],
@@ -87,4 +92,9 @@ function verifyPackagedDesktopCore(resources, applicationVersion) {
   return manifest
 }
 
-module.exports = { WINDOWS_NODE_VERSION, prepareWindowsDesktopCore, verifyPackagedDesktopCore }
+module.exports = {
+  WINDOWS_NODE_VERSION,
+  prepareWindowsDesktopCore,
+  shouldBundleWindowsDesktopCore,
+  verifyPackagedDesktopCore
+}

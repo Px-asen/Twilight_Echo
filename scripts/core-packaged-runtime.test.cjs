@@ -260,6 +260,9 @@ const bootstrap = String.raw`(() => {
   app.disableHardwareAcceleration()
   assert.equal(app.isPackaged, true)
   assert.equal(app.getPath('userData'), profile)
+  const cp = require('node:child_process')
+  const net = require('node:net')
+  const v8 = require('node:v8')
   const children = new Set(), transportMethods = [], commands = [], pending = new Map()
   const failures = [], rendererErrors = [], relays = []
   let core, epoch, snapshot, nativeAddon, coreProcesses = 0, requestSerial = 0, result
@@ -267,6 +270,178 @@ const bootstrap = String.raw`(() => {
     'playback:read','playback:write','library:read','library:write',
     'statistics:read','settings:read','settings:write','migration:write'
   ] }
+  const decodeWire = (wire) => {
+    if (!wire || typeof wire !== 'object' || wire.version !== 1 || !Array.isArray(wire.nodes)) return wire
+    const decoded = new Map()
+    const dec = (v) => {
+      if (!Array.isArray(v)) return v
+      if (v[0] === 'undefined') return undefined
+      if (v[0] === 'bigint') return BigInt(v[1])
+      if (v[0] === 'number') return v[1] === '-0' ? -0 : Number(v[1])
+      if (v[0] !== 'ref') return undefined
+      const idx = v[1]
+      if (decoded.has(idx)) return decoded.get(idx)
+      const n = wire.nodes[idx]
+      let out
+      if (n.type === 'object') out = {}
+      else if (n.type === 'array') out = []
+      else if (n.type === 'map') out = new Map()
+      else if (n.type === 'set') out = new Set()
+      else if (n.type === 'Buffer') out = Buffer.from(n.value, 'base64')
+      else if (n.type === 'ArrayBuffer') { const b = Buffer.from(n.value, 'base64'); out = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }
+      else if (n.type === 'view') { const [name, buf, off, len] = n.value; const C = globalThis[name]; out = name === 'DataView' ? new DataView(dec(buf), off, len) : new C(dec(buf), off, len / C.BYTES_PER_ELEMENT) }
+      else if (n.type === 'date') out = new Date(dec(n.value))
+      else if (n.type === 'regexp') out = new RegExp(n.value[0], n.value[1])
+      else if (n.type === 'error') { out = new Error(n.value[1]); out.name = n.value[0]; out.stack = n.value[2] }
+      decoded.set(idx, out)
+      if (n.type === 'object') for (const [k, item] of n.value) Object.defineProperty(out, k, { value: dec(item), writable: true, configurable: true, enumerable: true })
+      else if (n.type === 'array') for (const item of n.value) out.push(dec(item))
+      else if (n.type === 'map') for (const [k, item] of n.value) out.set(dec(k), dec(item))
+      else if (n.type === 'set') for (const item of n.value) out.add(dec(item))
+      else if (n.type === 'error') out.cause = dec(n.value[3])
+      return out
+    }
+    return dec(wire.root)
+  }
+  const encodeWire = (msg) => {
+    const nodes = [], seen = new Map()
+    const enc = (v) => {
+      if (v === undefined) return ['undefined']
+      if (v === null || typeof v === 'string' || typeof v === 'boolean') return v
+      if (typeof v === 'number') return Number.isFinite(v) && !Object.is(v, -0) ? v : ['number', Object.is(v, -0) ? '-0' : String(v)]
+      if (typeof v === 'bigint') return ['bigint', String(v)]
+      if (seen.has(v)) return ['ref', seen.get(v)]
+      const idx = nodes.length; seen.set(v, idx)
+      const n = { type: 'object', value: null }; nodes.push(n)
+      if (Buffer.isBuffer(v)) { n.type = 'Buffer'; n.value = v.toString('base64') }
+      else if (v instanceof ArrayBuffer) { n.type = 'ArrayBuffer'; n.value = Buffer.from(v).toString('base64') }
+      else if (ArrayBuffer.isView(v)) { n.type = 'view'; n.value = [v.constructor.name, enc(v.buffer), v.byteOffset, v.byteLength] }
+      else if (Array.isArray(v)) { n.type = 'array'; n.value = v.map(enc) }
+      else if (v instanceof Map) { n.type = 'map'; n.value = [...v].map(([k, x]) => [enc(k), enc(x)]) }
+      else if (v instanceof Set) { n.type = 'set'; n.value = [...v].map(enc) }
+      else if (v instanceof Date) { n.type = 'date'; n.value = enc(v.getTime()) }
+      else if (v instanceof RegExp) { n.type = 'regexp'; n.value = [v.source, v.flags] }
+      else if (v instanceof Error) { n.type = 'error'; n.value = [v.name, v.message, v.stack, enc(v.cause)] }
+      else n.value = Object.entries(v).map(([k, x]) => [k, enc(x)])
+      return ['ref', idx]
+    }
+    return { version: 1, root: enc(msg), nodes }
+  }
+  const createTap = (onValue) => {
+    let buf = Buffer.alloc(0)
+    return (chunk) => {
+      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk
+      while (buf.length >= 4) {
+        const len = buf.readUInt32BE(0)
+        if (buf.length < 4 + len) break
+        const val = v8.deserialize(buf.subarray(4, 4 + len))
+        buf = buf.subarray(4 + len)
+        onValue(val)
+      }
+    }
+  }
+  const relaySocket = async (original) => {
+    const srv = net.createServer({ pauseOnConnect: true })
+    let accepted, client, ready = false
+    await new Promise((resolvePair, rejectPair) => {
+      const done = () => {
+        if (!ready || !accepted || !client) return
+        srv.close()
+        resolvePair()
+      }
+      srv.on('error', rejectPair)
+      srv.on('connection', (sock) => {
+        if (!accepted && client && sock.remotePort === client.localPort) { accepted = sock; done() }
+        else sock.destroy()
+      })
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address()
+        client = net.createConnection({ port: addr.port, host: '127.0.0.1' })
+        client.on('error', rejectPair)
+        client.once('connect', () => { ready = true; done() })
+      })
+    })
+    const onPacket = (data) => {
+      if (data && data.kind === 'request' && ['Play', 'Seek', 'LoadQueue'].includes(data.method))
+        transportMethods.push(data.method)
+      if (data && data.kind === 'ready')
+        nativeAddon = data.capabilities?.nativeRuntime?.addonPath
+    }
+    const tapA = createTap(onPacket), tapB = createTap(onPacket)
+    original.on('data', (chunk) => { tapA(chunk); if (!accepted.destroyed) accepted.write(chunk) })
+    accepted.on('data', (chunk) => { tapB(chunk); if (!original.destroyed) original.write(chunk) })
+    original.on('error', () => {}); accepted.on('error', () => {})
+    original.on('close', () => accepted.destroy()); accepted.on('close', () => original.destroy())
+    relays.push(original, accepted)
+    accepted.resume(); original.resume()
+    return client
+  }
+  const observeCoreIncoming = (message, sendBack) => {
+    if (message.kind === 'core:initialized') sendBack({ kind: 'core:connect', identity })
+    if (message.kind === 'core:fatal') failures.push(message.error)
+    if (message.kind !== 'core:client-message' || message.clientId !== identity.id) return
+    const item = message.message
+    if (item.kind === 'state') snapshot = item.snapshot
+    if (item.kind === 'response') {
+      const job = pending.get(item.requestId)
+      if (!job) return
+      pending.delete(item.requestId); clearTimeout(job.timer)
+      item.ok ? job.resolve(item.value) : job.reject(Object.assign(Error(item.error.message), item.error))
+    }
+  }
+  const observeCoreOutgoing = (message) => {
+    if (message.kind === 'core:initialize') epoch = message.configuration.epoch
+    if (message.kind === 'core:request' && message.request.kind === 'command')
+      commands.push({ clientId: message.clientId, name: message.request.name })
+  }
+  const rawSpawn = cp.spawn.bind(cp)
+  cp.spawn = (command, args = [], options = {}) => {
+    const bootIdx = Array.isArray(args) ? args.findIndex(item => typeof item === 'string' && item.endsWith('bootstrap.js')) : -1
+    if (options?.env?.TWILIGHT_DESKTOP_NODE_HOST !== '1' || bootIdx < 0) return rawSpawn(command, args, options)
+    const entry = args[bootIdx + 1]
+    assert.ok(typeof entry === 'string' && entry.startsWith(join(process.resourcesPath, 'app.asar', 'out', 'main')),
+      'Node service must use the packaged entry: ' + entry)
+    const serviceName = entry.endsWith('musicCore.js') ? 'twilight-core' : entry.endsWith('audioEngineService.js') ? 'twilight-audio' : entry
+    const child = rawSpawn(command, args, options)
+    child.stdout?.on('data', data => log(serviceName, data))
+    child.stderr?.on('data', data => log(serviceName, data))
+    children.add(child); child.once('exit', () => children.delete(child))
+    const rawSend = child.send.bind(child)
+    let sendChain = Promise.resolve()
+    const sendControl = (message) => {
+      sendChain = sendChain.then(() => new Promise((resolveSend) => {
+        rawSend({ message: encodeWire(message), socket: false }, undefined, { keepOpen: false }, () => resolveSend())
+      }))
+    }
+    child.send = (envelope, handle, sendOptions, callback) => {
+      let cb = callback, opts = sendOptions, sock = handle
+      if (typeof sock === 'function') { cb = sock; sock = undefined; opts = undefined }
+      else if (typeof opts === 'function') { cb = opts; opts = undefined }
+      const decoded = envelope?.message ? decodeWire(envelope.message) : envelope
+      if (serviceName === 'twilight-core' && decoded) observeCoreOutgoing(decoded)
+      sendChain = sendChain.then(async () => {
+        let forwarded = sock
+        if (serviceName === 'twilight-audio' && decoded?.kind === 'core:attach-service' && sock) {
+          forwarded = await relaySocket(sock)
+        }
+        await new Promise((resolveSend) => {
+          const done = (err) => { cb?.(err); resolveSend() }
+          if (forwarded !== undefined) rawSend(envelope, forwarded, opts ?? { keepOpen: false }, done)
+          else if (opts !== undefined) rawSend(envelope, undefined, opts, done)
+          else rawSend(envelope, done)
+        })
+      }).catch((err) => { cb?.(err) })
+      return true
+    }
+    if (serviceName === 'twilight-core') {
+      core = { postMessage: sendControl }
+      coreProcesses++
+      child.on('message', (envelope) => {
+        observeCoreIncoming(decodeWire(envelope), sendControl)
+      })
+    }
+    return child
+  }
   const fork = utilityProcess.fork.bind(utilityProcess)
   utilityProcess.fork = (entry, args, options) => {
     assert.ok(entry.startsWith(join(process.resourcesPath, 'app.asar', 'out', 'main')),
@@ -277,11 +452,7 @@ const bootstrap = String.raw`(() => {
     children.add(child); child.once('exit', () => children.delete(child))
     const send = child.postMessage.bind(child)
     child.postMessage = (message, ports) => {
-      if (options?.serviceName === 'twilight-core') {
-        if (message.kind === 'core:initialize') epoch = message.configuration.epoch
-        if (message.kind === 'core:request' && message.request.kind === 'command')
-          commands.push({ clientId:message.clientId, name:message.request.name })
-      }
+      if (options?.serviceName === 'twilight-core') observeCoreOutgoing(message)
       if (options?.serviceName === 'twilight-audio' && message.kind === 'core:attach-service') {
         const original = ports[0], { port1, port2 } = new MessageChannelMain()
         original.on('message', ({ data }) => {
@@ -300,19 +471,7 @@ const bootstrap = String.raw`(() => {
     }
     if (options?.serviceName === 'twilight-core') {
       core = child; coreProcesses++
-      child.on('message', message => {
-        if (message.kind === 'core:initialized') child.postMessage({kind:'core:connect',identity})
-        if (message.kind === 'core:fatal') failures.push(message.error)
-        if (message.kind !== 'core:client-message' || message.clientId !== identity.id) return
-        const item = message.message
-        if (item.kind === 'state') snapshot = item.snapshot
-        if (item.kind === 'response') {
-          const job = pending.get(item.requestId)
-          if (!job) return
-          pending.delete(item.requestId);clearTimeout(job.timer)
-          item.ok ? job.resolve(item.value) : job.reject(Object.assign(Error(item.error.message),item.error))
-        }
-      })
+      child.on('message', message => observeCoreIncoming(message, send))
     }
     return child
   }

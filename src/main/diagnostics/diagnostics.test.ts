@@ -19,6 +19,7 @@ import { sanitizeDiagnosticValue, sanitizeDiagnosticText } from './sanitize.ts'
 import {
   installIpcDiagnostics,
   observeDiagnosticOperation,
+  flushDiagnosticAggregates,
   diagnosticInFlight,
   unwrapObservedIpc
 } from './observation.ts'
@@ -280,6 +281,49 @@ test('IPC unwrap keeps legacy and observed args compatible, once/duplicate liste
   assert.equal(calls, 2)
   transport.removeListener('test:event', listener)
   assert.equal(transport.listenerCount('test:event'), 0)
+
+  const entries: DiagnosticEvent[] = []
+  configureDiagnosticLogger({}, (entry) => entries.push(entry))
+  flushDiagnosticAggregates()
+  entries.length = 0
+  for (const method of ['BridgeStatus', 'GetDspGraphStatus', 'EnumerateDevices']) {
+    observeDiagnosticOperation('audio.rpc', method, () => 'ok')
+    observeDiagnosticOperation('audio.rpc', method, () => 'ok')
+  }
+  transport.handle('core-window:request', (_event: any, payload: any) => payload)
+  await transport.handles.get('core-window:request')(sender, {
+    connectionId: 'c1',
+    request: { kind: 'query', name: 'zones.state', payload: {}, requestId: 'r1', epoch: 'e1' }
+  })
+  await transport.handles.get('core-window:request')(sender, {
+    connectionId: 'c1',
+    request: { kind: 'query', name: 'zones.state', payload: {}, requestId: 'r2', epoch: 'e1' }
+  })
+  await transport.handles.get('core-window:request')(sender, {
+    connectionId: 'c1',
+    request: { kind: 'command', name: 'playback.pause', payload: {}, requestId: 'r3', epoch: 'e1' }
+  })
+  assert.equal(
+    entries.filter((entry) => entry.event === 'request.start').length,
+    1,
+    'only command requests should write individual request.start events'
+  )
+  assert.equal(
+    (entries.find((entry) => entry.event === 'request.start')!.details as any).method,
+    'core-window:request:playback.pause'
+  )
+  flushDiagnosticAggregates()
+  const summaries = entries.filter((entry) => entry.event === 'requests.summary')
+  for (const expectedMethod of [
+    'BridgeStatus',
+    'GetDspGraphStatus',
+    'EnumerateDevices',
+    'core-window:request:zones.state'
+  ]) {
+    const summary = summaries.find((entry) => (entry.details as any).method === expectedMethod)
+    assert.ok(summary, `expected aggregated summary for ${expectedMethod}`)
+    assert.equal((summary!.details as any).count, 2)
+  }
   restore()
 })
 test('ZIP sorts and deduplicates the timeline, sanitizes all files, rejects torn lines, records hashes and hung collectors', async (t) => {

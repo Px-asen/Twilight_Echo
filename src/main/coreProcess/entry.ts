@@ -189,6 +189,7 @@ import type {
 } from '../../shared/coreProcessProtocol.ts'
 import type { ServiceMessagePort } from '../services/servicePort.ts'
 import { CoreServiceLauncher, type CoreServiceLease } from './serviceLauncher.ts'
+import { createCoreServiceFactory } from './workerServiceLease.ts'
 import { CorePlatformClient } from './platformClient.ts'
 import type { CorePlatformOperations } from '../../shared/corePlatform.ts'
 import { CorePluginExperiences } from '../../core/plugins/experiences.ts'
@@ -212,6 +213,7 @@ initializeUtilityDiagnostics('twilight-core')
 let configuration: CoreProcessConfiguration | null = null
 let application: CoreApplication | null = null
 let launcher: CoreServiceLauncher | null = null
+let services: ReturnType<typeof createCoreServiceFactory> | null = null
 let platform: CorePlatformClient | null = null
 let database: LibraryDatabaseServiceClient | null = null
 let audio: AudioEngineManager | null = null
@@ -263,6 +265,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const lazyServices: CoreServiceFactories<CoreLazyServices> = {}
   let pluginMarketplaceStatus: (() => Promise<TwilightPluginIndexStatus>) | undefined
   launcher = new CoreServiceLauncher(config.epoch, send)
+  services = createCoreServiceFactory({
+    launcher,
+    workerServices: config.workerServices,
+    hostFilename: typeof __filename === 'string' ? __filename : undefined
+  })
   platform = new CorePlatformClient(config.epoch, send)
   database = new LibraryDatabaseServiceClient({
     changed: (revision) => { libraryRevision = revision; application?.changed(); catalog?.invalidate() },
@@ -278,7 +285,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     libraryFilePath: config.libraryFilePath,
     coverCacheDir: config.coverCacheDir,
     coreStateFilePath: join(config.root, 'core-state.sqlite'),
-    fork: () => launcher!.launch('database')
+    fork: () => services!.launch('database')
   })
   await database.coreStateOpen(join(config.root, 'core-state.sqlite'))
   // Recover the old journal before any staged owner can scan or mutate the library.
@@ -1184,7 +1191,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const autoMix = new CoreAutoMixService({ ...autoMixDependencies, root: config.root, engine: audio })
   const scanner = new LocalLibraryScanServiceClient({
     serviceEntry: 'scan',
-    launch: () => launcher!.launch('scan')
+    launch: () => services!.launch('scan')
   })
   let scanRevision = -1
   let metadataScanJob: string | null = null
@@ -2311,6 +2318,8 @@ async function shutdown(requestId: string): Promise<void> {
     audio?.destroy()
     audio = null
     launcher?.destroy()
+    await services?.closeAll()
+    services = null
     platform?.destroy()
     send({ kind: 'core:shutdown-complete', epoch: configuration.epoch, requestId, ok: true })
   } catch (error) {
