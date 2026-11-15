@@ -6,6 +6,7 @@
 const { join } = require('node:path')
 const { existsSync } = require('node:fs')
 const { validate: validateAutoMixAssets } = require('./stage-automix-native-assets.cjs')
+const { verifyPackagedDependencyClosure } = require('./verify-packaged-dependency-closure.cjs')
 
 exports.default = async function afterPack(context) {
   const { electronPlatformName } = context
@@ -18,6 +19,16 @@ exports.default = async function afterPack(context) {
           'Resources'
         )
       : join(context.appOutDir, 'resources')
+  const packagedAsar = join(resourcesDir, 'app.asar')
+  if (existsSync(packagedAsar)) {
+    const verified = verifyPackagedDependencyClosure(packagedAsar, {
+      projectRoot: context.packager?.projectDir,
+      externalPackages: ['electron']
+    })
+    console.log(
+      `[after-pack] Packaged dependency closure verified (${electronPlatformName}): ${verified.packages} packages`
+    )
+  }
   const autoMixAssets = join(resourcesDir, 'audio-engine', 'automix-native')
   if (existsSync(autoMixAssets)) validateAutoMixAssets(autoMixAssets)
   if (electronPlatformName === 'win32') {

@@ -80,15 +80,19 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
           pnpm run build
-          pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
+          node scripts/build-app-package.cjs --mac --${{ matrix.arch }} --publish never
 
-      - name: Verify staged native engine in the packaged app
+      - name: Verify staged native engine and packaged runtime
         run: |
-          runtime_dir="$(find dist -path '*/TwilightEcho.app/Contents/Resources/audio-engine' -type d -print -quit)"
-          test -n "$runtime_dir"
+          app_bundle="$(find dist -path '*/TwilightEcho.app' -type d -print -quit)"
+          test -n "$app_bundle"
+          runtime_dir="$app_bundle/Contents/Resources/audio-engine"
+          test -d "$runtime_dir"
           test -f "$runtime_dir/libtwilight-audio-engine.dylib"
           test -f "$runtime_dir/twilight_audio_node.node"
           node scripts/macos-audio-runtime.cjs --runtime-dir "$runtime_dir"
+          node scripts/verify-packaged-dependency-closure.cjs "$app_bundle"
+          node scripts/verify-packaged-runtime-smoke.cjs --require-executable "$app_bundle"
 
       - name: Upload macOS packages
         uses: actions/upload-artifact@v4

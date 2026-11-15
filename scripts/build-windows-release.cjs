@@ -7,6 +7,7 @@ const { writeFile } = require('node:fs/promises')
 const path = require('node:path')
 const { findInstaller } = require('./verify-release-artifacts.cjs')
 const { verifyPackagedDependencyClosure } = require('./verify-packaged-dependency-closure.cjs')
+const { verifyPackagedRuntimeSmoke } = require('./verify-packaged-runtime-smoke.cjs')
 const { verifyWindowsAppBranding } = require('./verify-windows-app-branding.cjs')
 const { preparePackagedAudioStaging } = require('./packaged-audio-staging.cjs')
 const { prepareVst3Msvc } = require('./prepare-vst3-msvc.cjs')
@@ -90,6 +91,12 @@ async function main() {
     externalPackages: ['electron']
   })
   console.log(`Packaged dependency closure verified: ${dependencyClosure.packages} packages`)
+  const runtimeSmoke = verifyPackagedRuntimeSmoke(path.join(root, 'dist', 'win-unpacked'), {
+    requirePackagedExecutable: true
+  })
+  console.log(
+    `Packaged runtime smoke verified (${runtimeSmoke.mode}): ${runtimeSmoke.scannedTracks} scanned track, ${runtimeSmoke.ncmRoutesChecked} NCM routes`
+  )
   const verify = run(process.execPath, [
     path.join(root, 'scripts', 'verify-release-artifacts.cjs'),
     '--native-dir',

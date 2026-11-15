@@ -7,6 +7,7 @@ const test = require('node:test')
 const { createMinimalPe } = require('./pe-fixture.cjs')
 const { NATIVE_RUNTIME_FILES } = require('./release-artifact-strip.cjs')
 const {
+  preparePackagedAppStaging,
   preparePackagedAudioStaging,
   productionPackageFileSets
 } = require('./packaged-audio-staging.cjs')
@@ -366,4 +367,94 @@ test('release docs keep non-Windows audio backends explicitly unverified', () =>
     /macOS \(CoreAudio\) and Linux \(ALSA\) backends and packages are available, but have not received the same release and real-device validation as Windows/
   )
   assert.doesNotMatch(readme, /macOS 与 Linux 的原生音频引擎仍在验证阶段（代码已 release-ready/)
+})
+
+test('macOS and Linux packaging stage nested production node_modules and verify closure + runtime smoke', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-cross-platform-staging-'))
+  try {
+    fs.writeFileSync(
+      path.join(directory, 'package.json'),
+      JSON.stringify({ name: 'desktop', version: '2.0.2', dependencies: { 'type-is': '1.6.18' } })
+    )
+    fs.writeFileSync(
+      path.join(directory, 'electron-builder.yml'),
+      'files:\n  - out/**\nextraResources:\n  - from: resources/audio-engine\n'
+    )
+    const typeIsDir = path.join(directory, 'node_modules', 'type-is')
+    const nestedTyperDir = path.join(typeIsDir, 'node_modules', 'media-typer')
+    fs.mkdirSync(nestedTyperDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(typeIsDir, 'package.json'),
+      JSON.stringify({
+        name: 'type-is',
+        version: '1.6.18',
+        dependencies: { 'media-typer': '0.3.0' }
+      })
+    )
+    fs.writeFileSync(
+      path.join(nestedTyperDir, 'package.json'),
+      JSON.stringify({ name: 'media-typer', version: '0.3.0' })
+    )
+
+    const staging = preparePackagedAppStaging(directory)
+    try {
+      assert.equal(staging.nativeDir, null)
+      const stagedYaml = fs.readFileSync(staging.configPath, 'utf8')
+      assert.match(stagedYaml, /- '!node_modules\/\*\*'/)
+      assert.match(stagedYaml, /to: "node_modules\/type-is\/node_modules\/media-typer"/)
+      assert.match(stagedYaml, /- from: resources\/audio-engine/)
+    } finally {
+      staging.dispose()
+    }
+
+    const {
+      packagedRuntimeTargets,
+      stripDefaultBuilderConfigArgs
+    } = require('./build-app-package.cjs')
+    assert.deepEqual(
+      stripDefaultBuilderConfigArgs([
+        '--mac',
+        '--arm64',
+        '--config',
+        'electron-builder.yml',
+        '--publish',
+        'never'
+      ]),
+      ['--mac', '--arm64', '--publish', 'never']
+    )
+    const distDir = path.join(directory, 'dist')
+    const macApp = path.join(distDir, 'mac-arm64', 'TwilightEcho.app')
+    fs.mkdirSync(path.join(macApp, 'Contents', 'Resources'), { recursive: true })
+    fs.writeFileSync(path.join(macApp, 'Contents', 'Resources', 'app.asar'), 'asar')
+    assert.deepEqual(packagedRuntimeTargets(distDir, ['--mac', '--arm64']), [macApp])
+
+    const linuxDir = path.join(distDir, 'linux-unpacked')
+    fs.mkdirSync(path.join(linuxDir, 'resources'), { recursive: true })
+    fs.writeFileSync(path.join(linuxDir, 'resources', 'app.asar'), 'asar')
+    assert.deepEqual(packagedRuntimeTargets(distDir, ['--linux']), [linuxDir])
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+
+  const pkg = JSON.parse(read('package.json'))
+  assert.match(pkg.scripts['build:mac'], /node scripts\/build-app-package\.cjs --mac/)
+  assert.match(pkg.scripts['build:linux'], /node scripts\/build-app-package\.cjs --linux/)
+  assert.doesNotMatch(pkg.scripts['build:mac'], /electron-builder/)
+  assert.doesNotMatch(pkg.scripts['build:linux'], /electron-builder/)
+
+  for (const workflowFile of [
+    '.github/workflows/build-macos.yml',
+    '.github/workflows/build-linux.yml'
+  ]) {
+    const workflow = read(workflowFile)
+    assert.match(workflow, /node scripts\/build-app-package\.cjs/, workflowFile)
+    assert.doesNotMatch(workflow, /pnpm exec electron-builder/, workflowFile)
+    assert.match(workflow, /verify-packaged-dependency-closure\.cjs/, workflowFile)
+    assert.match(workflow, /verify-packaged-runtime-smoke\.cjs --require-executable/, workflowFile)
+  }
+
+  assert.match(read('scripts/after-pack.cjs'), /verifyPackagedDependencyClosure/)
+  assert.match(read('scripts/build-app-package.cjs'), /preparePackagedAppStaging/)
+  assert.match(read('scripts/build-app-package.cjs'), /verifyPackagedRuntimeSmoke/)
+  assert.match(read('scripts/build-windows-release.cjs'), /verifyPackagedRuntimeSmoke/)
 })
