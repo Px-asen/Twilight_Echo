@@ -17,7 +17,23 @@ const BUNDLE_IMPORT_PATTERN =
   /(?:^|[^\w$.])require\(\s*(['"])([^'"]+)\1\s*\)|(?:^|\s)from\s+(['"])([^'"]+)\3|(?:^|[^\w$.])import\(\s*(['"])([^'"]+)\5\s*\)/gm
 
 function normalizeArchivePath(value) {
-  return value.replaceAll('\\', '/')
+  const normalized = value.replaceAll('\\', '/')
+  return normalized.startsWith('/') ? normalized : `/${normalized}`
+}
+
+function maxPackedEndOffset(node, maxOffset = 0) {
+  if (!node || typeof node !== 'object') return maxOffset
+  if (node.files && typeof node.files === 'object') {
+    for (const child of Object.values(node.files)) {
+      maxOffset = maxPackedEndOffset(child, maxOffset)
+    }
+    return maxOffset
+  }
+  if (!node.unpacked && node.offset !== undefined && Number.isFinite(node.size)) {
+    const end = Number(node.offset) + Number(node.size)
+    if (end > maxOffset) return end
+  }
+  return maxOffset
 }
 
 function packageRootFromManifest(manifestPath) {
@@ -264,6 +280,14 @@ function findUnresolvedBundleImports(
 
 function readPackagedArchive(asarPath) {
   assert.ok(fs.existsSync(asarPath), `Packaged app.asar not found: ${asarPath}`)
+  asar.uncache(asarPath)
+  const rawHeader = asar.getRawHeader(asarPath)
+  const expectedMinSize = 8 + rawHeader.headerSize + maxPackedEndOffset(rawHeader.header)
+  const actualSize = fs.statSync(asarPath).size
+  assert.ok(
+    actualSize >= expectedMinSize,
+    `Truncated packaged app.asar (${asarPath}): expected at least ${expectedMinSize} bytes, found ${actualSize}`
+  )
   const archiveEntries = asar.listPackage(asarPath)
   const archiveEntryByPath = new Map(
     archiveEntries.map((entry) => [normalizeArchivePath(entry), entry])

@@ -1,9 +1,29 @@
 const assert = require('node:assert/strict')
+const { once } = require('node:events')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 const asar = require('@electron/asar')
+
+async function createFlushedAsarArchive(sourceDir, outputAsarPath) {
+  const realSource = fs.realpathSync(sourceDir)
+  const entries = []
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name)
+      entries.push(fullPath)
+      if (entry.isDirectory()) walk(fullPath)
+    }
+  }
+  walk(realSource)
+  fs.mkdirSync(path.dirname(outputAsarPath), { recursive: true })
+  const writeStream = await asar.createPackageFromFiles(realSource, outputAsarPath, entries)
+  if (writeStream && typeof writeStream.once === 'function' && !writeStream.closed) {
+    await once(writeStream, 'close')
+  }
+  asar.uncache(outputAsarPath)
+}
 
 const {
   createPcmWaveBuffer,
@@ -234,8 +254,7 @@ process.on('message', async (msg) => {
 });\n`
     )
 
-    fs.mkdirSync(path.dirname(outputAsarPath), { recursive: true })
-    await asar.createPackage(stageDir, outputAsarPath)
+    await createFlushedAsarArchive(stageDir, outputAsarPath)
   } finally {
     fs.rmSync(stageDir, { recursive: true, force: true })
   }

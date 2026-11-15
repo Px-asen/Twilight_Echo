@@ -1,9 +1,32 @@
 const assert = require('node:assert/strict')
+const { once } = require('node:events')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 const asar = require('@electron/asar')
+
+async function createFlushedAsarArchive(sourceDir, outputAsarPath) {
+  const realSource = fs.realpathSync(sourceDir)
+  const entries = []
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name)
+      entries.push(fullPath)
+      if (entry.isDirectory()) walk(fullPath)
+    }
+  }
+  walk(realSource)
+  fs.mkdirSync(path.dirname(outputAsarPath), { recursive: true })
+  // @electron/asar createPackageFromFiles returns fs.WriteStream via `out.end()`
+  // before the underlying file handle finishes flushing; await `close` so
+  // immediate synchronous `asar.extractFile` reads never observe zero-filled EOF.
+  const writeStream = await asar.createPackageFromFiles(realSource, outputAsarPath, entries)
+  if (writeStream && typeof writeStream.once === 'function' && !writeStream.closed) {
+    await once(writeStream, 'close')
+  }
+  asar.uncache(outputAsarPath)
+}
 
 const afterPack = require('./after-pack.cjs').default
 const {
@@ -202,14 +225,19 @@ test('bundle external import audit checks main/preload specifiers and exports su
       `require('electron'); require('fs/promises'); require('present-pkg'); require('missing-pkg');`
     )
     const asarPath = path.join(tempDir, 'app.asar')
-    await asar.createPackage(appDir, asarPath)
+    await createFlushedAsarArchive(appDir, asarPath)
     const { manifests, archiveEntryByPath } = readPackagedArchive(asarPath)
+    assert.ok(archiveEntryByPath.has('/out/main/index.js'))
     assert.deepEqual(
       findUnresolvedBundleImports(asarPath, manifests, archiveEntryByPath, {
         externalPackages: ['electron']
       }),
       ['/out/main/index.js -> missing-pkg']
     )
+
+    const truncatedAsarPath = path.join(tempDir, 'truncated.asar')
+    fs.writeFileSync(truncatedAsarPath, fs.readFileSync(asarPath).subarray(0, -16))
+    assert.throws(() => readPackagedArchive(truncatedAsarPath), /Truncated packaged app\.asar/)
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
@@ -238,7 +266,7 @@ test('afterPack fails closed on macOS app bundles when a nested runtime dependen
     )
     fs.mkdirSync(bundleResources, { recursive: true })
     const asarPath = path.join(bundleResources, 'app.asar')
-    await asar.createPackage(appSrc, asarPath)
+    await createFlushedAsarArchive(appSrc, asarPath)
 
     assert.equal(resolvePackagedAsarPath(path.join(tempDir, 'dist', 'mac-arm64')), asarPath)
 
