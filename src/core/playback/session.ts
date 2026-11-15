@@ -20,7 +20,7 @@ import type {
   LibraryQueuePlaybackWindow,
   LibraryQueueSnapshot
 } from '../../shared/libraryDatabase.ts'
-import { libraryQueueResumeMode } from '../../shared/libraryDatabase.ts'
+import { LIBRARY_PAGE_SIZE, libraryQueueResumeMode } from '../../shared/libraryDatabase.ts'
 import type { PlaybackResumeMode } from '../../shared/appSettings.ts'
 import type { PlaybackSessionData } from '../../shared/playbackSession.ts'
 import type { TrackData } from '../../shared/track.ts'
@@ -55,6 +55,7 @@ import { automaticPlaybackMask, type AutomaticPlaybackAllowed } from './automati
 import type { ZoneQueueFence } from '../../shared/coreZones.ts'
 import type { PreparedPlaybackSource, PlaybackSourceRecovery } from './sourceRecovery.ts'
 import type { SourceResources } from './sourceResources.ts'
+import { createSourcePrefetchQueue, SOURCE_PREFETCH_AHEAD, type SourcePrefetchQueue } from './sourcePrefetch.ts'
 import type {
   CoreHeartState,
   CoreLikedPlayback,
@@ -64,6 +65,10 @@ import type {
 /** Background maintenance defers to the user's in-flight load for at most this long.
  * Explicit user cache/file maintenance skips this grace and revokes immediately. */
 const PREPARATION_GRACE_MS = 15_000
+
+/** A start can still be resolving when it publishes; give it a moment before
+ * the lookahead begins reading the same provider. */
+const PREFETCH_DELAY_MS = 1_200
 
 /** Exhausted provider resolution is skippable when it is the queue start;
  * authorization refusals and transient IO errors keep surfacing. */
@@ -185,6 +190,8 @@ export class CorePlaybackSession {
   private stopped = false
   /** Owns the background liked-page drain; aborted whenever a new one starts. */
   private likedDrain: AbortController | null = null
+  private sourcePrefetchQueue: SourcePrefetchQueue | null = null
+  private prefetchTimer: ReturnType<typeof setTimeout> | null = null
   private committing = false
   private recoveringAudio = false
   private sourceBarrier: Promise<void> | null = null
@@ -1036,10 +1043,65 @@ export class CorePlaybackSession {
     this.guard(intent, signal)
     return prepared
   }
+  private get sourcePrefetch(): SourcePrefetchQueue {
+    if (!this.sourcePrefetchQueue)
+      this.sourcePrefetchQueue = createSourcePrefetchQueue({
+        prepare: (track, signal) => this.prepareSource(track, signal),
+        key: (track) => (track.queueEntryId ?? '') + ':' + track.id,
+        now: () => this.options.now()
+      })
+    return this.sourcePrefetchQueue
+  }
+
+  /** Warm after playback is visibly running: a click that arrives during a start
+   * must not compete with a batch of provider reads. */
+  private schedulePrefetch(): void {
+    if (this.prefetchTimer) clearTimeout(this.prefetchTimer)
+    this.prefetchTimer = setTimeout(() => {
+      this.prefetchTimer = null
+      this.prefetchAhead()
+    }, PREFETCH_DELAY_MS)
+    // Never hold the process (or a test) open for a warm-up batch.
+    this.prefetchTimer.unref?.()
+  }
+
+  /** Warn the occurrences after the cursor so the next skip does not wait on the
+   * provider. Page reads and source reads stay off the transport lane. */
+  private prefetchAhead(): void {
+    if (this.stopped || this.outputClaim || this.uncertain || this.restored) return
+    // A Cast session resolves on the remote device; a local warm source would be
+    // an unused provider read (and a competing resolution).
+    if (this.options.cast?.active()) return
+    const queue = this.controller.window.value?.queue
+    if (!queue || queue.index < 0) return
+    void this.readAheadTracks(queue)
+      .then((tracks) => {
+        if (!this.stopped && !this.outputClaim) this.sourcePrefetch.schedule(tracks)
+      })
+      .catch(() => {})
+  }
+
+  private async readAheadTracks(queue: LibraryQueueSnapshot): Promise<TrackData[]> {
+    const last = Math.min(queue.total - 1, queue.index + SOURCE_PREFETCH_AHEAD)
+    const tracks: TrackData[] = []
+    for (let position = queue.index + 1; position <= last; position++) {
+      const pageNumber = Math.floor(position / LIBRARY_PAGE_SIZE)
+      const page = await this.controller.loadPage(pageNumber)
+      // A queue edit or a library revision invalidates this lookahead wholesale.
+      if (!page || page.revision !== queue.revision) return []
+      const item = page.items[position - pageNumber * LIBRARY_PAGE_SIZE]
+      if (item?.track) tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+    }
+    return tracks
+  }
   private async prepareSource(
     track: TrackData,
     signal?: AbortSignal
   ): Promise<PreparedPlaybackSource> {
+    // A warm lookahead entry is already authorized and expiry-checked; taking it
+    // here keeps a skip from paying provider latency again.
+    const warm = this.sourcePrefetch.take(track)
+    if (warm) return warm
     if (this.options.sources) return this.options.sources.prepare(track, signal)
     const resolved = await this.options.resolver.resolve(track, signal)
     signal?.throwIfAborted()
@@ -1292,6 +1354,7 @@ export class CorePlaybackSession {
     }
     this.guard(intent, signal)
     if (!staged) this.startMaintenance()
+    this.schedulePrefetch()
     await this.flush()
   }
   private async recoverSource(track: TrackData, intent: number, signal?: AbortSignal) {
@@ -1388,6 +1451,7 @@ export class CorePlaybackSession {
         await this.acceptNative(info)
         this.info = info
         this.publish()
+        this.schedulePrefetch()
         this.scheduleSave()
       },
       onError: (message) => {
@@ -3451,6 +3515,7 @@ export class CorePlaybackSession {
     else await this.clearAbLoop()
     this.stopped = true
     this.likedDrain?.abort()
+    this.sourcePrefetchQueue?.clear()
     await this.options.cast?.shutdown()
     if (!options.audioTerminated) await this.options.engine.stop()
     this.resetStreamBuffering()

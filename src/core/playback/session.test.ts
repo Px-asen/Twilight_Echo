@@ -1991,6 +1991,29 @@ test('injecting automatic preferences leaves ordinary playlist native preloading
   assert.equal(f.engine.items.length, 2)
   assert.equal(reads, 0)
 })
+test('the session warms the occurrence after the cursor so a skip resolves without another provider read', async (t) => {
+  const reads: string[] = []
+  const f = await fixture(t, {
+    resolve: async (value) => {
+      const track = value as TrackData
+      reads.push(track.id)
+      return { source: track.filePath, expiresAt: null }
+    }
+  })
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  assert.deepEqual(reads, ['ncm:1'])
+  // The lookahead starts one PREFETCH_DELAY_MS after the start and reads the next occurrence.
+  await new Promise((resolve) => setTimeout(resolve, 1_700))
+  assert.equal(reads[0], 'ncm:1')
+  assert.ok(reads.includes('ncm:2'))
+  const warmed = reads.length
+  await f.session.navigate(1)
+  // The skip consumes the warm entry instead of paying provider latency again.
+  assert.equal(reads.length, warmed)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:2')
+})
 
 test('Cast recommendation EOF skips newly banned queue entries before issuing remote LOAD', async (t) => {
   const banned = new Set<string>()
