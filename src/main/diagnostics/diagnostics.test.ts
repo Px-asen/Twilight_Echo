@@ -439,6 +439,13 @@ test('cover diagnostics correlate grants, CDN hops, cache and body completion wi
     assert.equal(entries.find((e) => e.event === name)!.requestId, firstRequest, name)
   }
   const granted = entries.find((e) => e.event === 'grant.issued')!.details as any
+  assert.equal(entries.filter((e) => e.event === 'grant.issued').length, 1)
+  grants.grant('https://private-cover.example/art.jpg?token=do-not-log', 'image')
+  assert.equal(
+    entries.filter((e) => e.event === 'grant.issued').length,
+    1,
+    'refreshing an active deterministic image grant must not emit duplicate grant.issued logs'
+  )
   const authorized = entries.find((e) => e.event === 'authorization.complete')!.details as any
   assert.deepEqual(granted.handleUrl, authorized.handleUrl)
   assert.deepEqual(granted.source, authorized.source)

@@ -411,3 +411,270 @@ test('completion can restart immediately after cancelling buffered updates', asy
   assert.equal(f.db.getTracksByIds([track().id]).tracks[0].album, 'Online Album')
   assert.deepEqual(f.errors, [])
 })
+
+test('complete local tracks without genre or inline lyrics do not trigger startup searches', async (t) => {
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  db.replaceDocument({
+    version: 2,
+    revision: 0,
+    folders: [],
+    exclusions: [],
+    tracks: [
+      {
+        ...track('local:complete-flac'),
+        album: 'Local Album',
+        cover: 'cover://embedded.jpg',
+        genre: undefined,
+        lyrics: null
+      }
+    ]
+  })
+  let searches = 0
+  let writes = 0
+  let queriedPages = 0
+  const service = new CoreMetadataService({
+    database: {
+      queryTracks: async (query) => {
+        queriedPages++
+        return db.queryTracks(query)
+      },
+      getTracksByIds: async (ids) => db.getTracksByIds(ids),
+      patchTracks: async (patches) => {
+        writes++
+        return db.patchTracks(patches)
+      }
+    },
+    provider: {
+      providesLyrics: false,
+      searchSongs: async () => {
+        searches++
+        return { items: [candidate], total: 1 }
+      }
+    },
+    available: () => true,
+    policy: () => ({ cover: true, lyrics: true, metadata: true }),
+    now: Date.now,
+    newId: () => 'id',
+    changed: () => {},
+    libraryChanged: () => {},
+    failed: (error) => {
+      throw error
+    }
+  })
+  t.after(() => service.shutdown())
+  service.activate()
+  const deadline = Date.now() + 1_000
+  while (queriedPages === 0 && Date.now() < deadline) await tick()
+  await tick()
+  assert.equal(queriedPages, 1)
+  assert.equal(searches, 0)
+  assert.equal(writes, 0)
+  assert.equal(service.snapshot().state, 'idle')
+})
+
+test('unmatched and partially fillable tracks persist attempts across restarts until inputs, providers or manual start change', async (t) => {
+  const db = new LibraryDatabase(':memory:')
+  t.after(() => db.close())
+  const unmatchedTrack: TrackData = {
+    ...track('local:unmatched'),
+    title: 'Obscure Bootleg',
+    artist: 'Indie Band',
+    album: 'Unknown Album',
+    cover: 'cover://local.jpg',
+    lyrics: null
+  }
+  const partialTrack: TrackData = {
+    ...track('local:partial'),
+    title: 'Single Release',
+    artist: 'Audrey',
+    album: 'Unknown Album',
+    cover: null,
+    lyrics: null
+  }
+  const legacyCoverTrack: TrackData = {
+    ...track('local:legacy-handle'),
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Real Album',
+    cover: 'twilight-media://image/expired-session-token',
+    lyrics: null
+  }
+  db.replaceDocument({
+    version: 2,
+    revision: 0,
+    folders: [],
+    exclusions: [],
+    tracks: [unmatchedTrack, partialTrack, legacyCoverTrack]
+  })
+
+  let storedAttempts: Record<string, string> = {}
+  const attemptStore = {
+    load: async () => ({ ...storedAttempts }),
+    save: async (records: Record<string, string>) => {
+      storedAttempts = { ...records }
+    }
+  }
+  let providerInventory = 'ncm'
+  const queries: string[] = []
+  const errors: unknown[] = []
+
+  const createSessionService = () =>
+    new CoreMetadataService({
+      database: {
+        queryTracks: async (query) => db.queryTracks(query),
+        getTracksByIds: async (ids) => db.getTracksByIds(ids),
+        patchTracks: async (patches) => db.patchTracks(patches)
+      },
+      provider: {
+        providesLyrics: false,
+        searchSongs: async (query) => {
+          queries.push(query)
+          if (query.startsWith('Single Release')) {
+            return {
+              items: [
+                {
+                  ...candidate,
+                  id: 'ncm:single',
+                  title: 'Single Release',
+                  artist: 'Audrey',
+                  album: 'Unknown Album',
+                  cover: 'twilight-media://image/live-session-token',
+                  coverSource: 'https://cdn.example/single.jpg',
+                  lyrics: null
+                }
+              ],
+              total: 1
+            }
+          }
+          if (query.startsWith('Moon River')) {
+            return {
+              items: [
+                {
+                  ...candidate,
+                  id: 'ncm:moon',
+                  title: 'Moon River',
+                  artist: 'Audrey',
+                  album: 'Online Album',
+                  cover: 'twilight-media://image/healed-session-token',
+                  coverSource: 'https://cdn.example/healed.jpg',
+                  lyrics: null
+                }
+              ],
+              total: 1
+            }
+          }
+          return { items: [], total: 0 }
+        }
+      },
+      attemptStore,
+      providerSignature: () => providerInventory,
+      available: () => true,
+      policy: () => ({ cover: true, lyrics: true, metadata: true }),
+      now: Date.now,
+      newId: () => 'id',
+      changed: () => {},
+      libraryChanged: () => {},
+      failed: (error) => errors.push(error)
+    })
+
+  // Session 1: runs enrichment once for all 3 tracks and persists coverSource + incomplete attempts.
+  const session1 = createSessionService()
+  session1.activate()
+  const waitCompleted = async (svc: CoreMetadataService, minQueries = 1) => {
+    const deadline = Date.now() + 3_000
+    while (
+      (queries.length < minQueries || svc.snapshot().state !== 'completed') &&
+      Date.now() < deadline
+    ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5))
+    }
+    assert.equal(svc.snapshot().state, 'completed')
+  }
+  await waitCompleted(session1, 3)
+  await session1.shutdown()
+
+  const afterSession1Count = queries.length
+  assert.ok(afterSession1Count >= 3)
+  assert.equal(
+    db.getTracksByIds(['local:partial']).tracks[0].coverSource,
+    'https://cdn.example/single.jpg'
+  )
+  assert.equal(
+    db.getTracksByIds(['local:legacy-handle']).tracks[0].coverSource,
+    'https://cdn.example/healed.jpg'
+  )
+  assert.equal(
+    storedAttempts['local:legacy-handle'],
+    undefined,
+    'fully healed tracks need no durable attempt entry'
+  )
+  assert.ok(storedAttempts['local:unmatched'])
+  assert.ok(storedAttempts['local:partial'])
+
+  // Session 2 (app restart): 0 provider searches run because attempts & coverSource survived.
+  let session2Queries = 0
+  const session2 = new CoreMetadataService({
+    database: {
+      queryTracks: async (query) => {
+        session2Queries++
+        return db.queryTracks(query)
+      },
+      getTracksByIds: async (ids) => db.getTracksByIds(ids),
+      patchTracks: async (patches) => db.patchTracks(patches)
+    },
+    provider: {
+      providesLyrics: false,
+      searchSongs: async (query) => {
+        queries.push(query)
+        return { items: [], total: 0 }
+      }
+    },
+    attemptStore,
+    providerSignature: () => providerInventory,
+    available: () => true,
+    policy: () => ({ cover: true, lyrics: true, metadata: true }),
+    now: Date.now,
+    newId: () => 'id',
+    changed: () => {},
+    libraryChanged: () => {},
+    failed: (error) => errors.push(error)
+  })
+  t.after(() => session2.shutdown())
+  session2.activate()
+  const deadline = Date.now() + 1_000
+  while (session2Queries === 0 && Date.now() < deadline) await tick()
+  await tick()
+  assert.equal(queries.length, afterSession1Count, 'restart must not re-query previously settled tracks')
+
+  // Local tag edit invalidates only the edited track.
+  queries.length = 0
+  const unmatchedPage = db.getTracksByIds(['local:unmatched'])
+  db.patchTracks([
+    {
+      id: 'local:unmatched',
+      expectedVersion: unmatchedPage.versions['local:unmatched'],
+      patch: { title: 'Corrected Bootleg Title' }
+    }
+  ])
+  session2.refresh()
+  await waitCompleted(session2)
+  assert.ok(queries.every((q) => q.includes('Corrected Bootleg Title')))
+
+  // Enabling a new provider retries incomplete tracks automatically without touching complete ones.
+  queries.length = 0
+  providerInventory = 'ncm,qqmusic'
+  session2.refresh()
+  await waitCompleted(session2, 2)
+  assert.ok(queries.some((q) => q.includes('Corrected Bootleg Title')))
+  assert.ok(queries.some((q) => q.includes('Single Release')))
+  assert.ok(!queries.some((q) => q.includes('Moon River')))
+
+  // Manual start forces a retry even with the same provider inventory.
+  queries.length = 0
+  session2.start()
+  await waitCompleted(session2, 2)
+  assert.ok(queries.some((q) => q.includes('Corrected Bootleg Title')))
+  assert.ok(queries.some((q) => q.includes('Single Release')))
+  assert.deepEqual(errors, [])
+})

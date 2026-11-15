@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { nextTick, ref } from 'vue'
 import type { SearchSourceOption } from './useStreamingSearch.ts'
@@ -515,4 +516,107 @@ test('local database search playback freezes all results, fences stale rows, and
   await search.performSearch('moon')
   search.onSearchTrackClick(providerTrack)
   assert.deepEqual(arrays, [[localTrack.id], [providerTrack.id]])
+})
+
+test('refreshSearch coalesces during in-flight all-sources search without aborting or flashing loading state', async (t) => {
+  const signals: Array<AbortSignal | undefined> = []
+  const resolvers: Array<
+    (page: { tracks: Array<typeof localTrack | typeof providerTrack>; total: number }) => void
+  > = []
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchUnifiedSongs: async (_query, _limit, _offset, options) => {
+      signals.push(options?.signal)
+      return new Promise((resolve) => {
+        resolvers.push(resolve)
+      })
+    },
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+  t.after(search.clearSearch)
+
+  search.searchSource.value = 'all'
+  search.searchQuery.value = 'Moon River'
+  await nextTick()
+
+  const initial = search.performSearch('Moon River')
+  assert.equal(signals.length, 1)
+  assert.equal(search.searchLoading.value, true)
+
+  for (let i = 0; i < 5; i++) search.refreshSearch()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(signals.length, 1, 'refreshSearch must wait for active unified search')
+  assert.equal(signals[0]?.aborted, false, 'in-flight unified search must not be aborted')
+
+  resolvers[0]({ tracks: [localTrack], total: 1 })
+  await initial
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(signals.length, 2, 'coalesced refresh runs once after active search settles')
+  assert.equal(
+    search.searchLoading.value,
+    false,
+    'background refresh must not flip searchLoading back to true'
+  )
+  assert.deepEqual(
+    search.searchResults.value.map((track) => track.id),
+    ['local:moon'],
+    'existing results stay visible during background refresh'
+  )
+
+  resolvers[1]({ tracks: [localTrack, providerTrack], total: 2 })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(
+    search.searchResults.value.map((track) => track.id),
+    ['local:moon', 'ncm:moon']
+  )
+  assert.equal(search.searchTotal.value, 2)
+})
+
+test('refreshSearch skips retries while debounce is pending or searchError is displayed', async (t) => {
+  let calls = 0
+  let shouldFail = true
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchUnifiedSongs: async () => {
+      calls++
+      if (shouldFail) throw new Error('provider failure')
+      return { tracks: [localTrack], total: 1 }
+    },
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+  t.after(search.clearSearch)
+
+  search.searchSource.value = 'all'
+  search.searchQuery.value = 'Moon'
+  await nextTick()
+
+  await search.performSearch('Moon')
+  assert.equal(calls, 1)
+  assert.ok(search.searchError.value.length > 0)
+
+  shouldFail = false
+  search.refreshSearch()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(calls, 1, 'refreshSearch must not auto-retry while searchError is displayed')
+
+  search.searchQuery.value = 'Moonlight'
+  await nextTick()
+  search.refreshSearch()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(calls, 1, 'refreshSearch must not bypass pending input debounce')
+})
+
+test('StreamingSearch keeps result rows mounted instead of flashing loading placeholder when results exist', () => {
+  const source = readFileSync(new URL('../StreamingSearch.vue', import.meta.url), 'utf8')
+  assert.match(source, /const hasVisibleResults = computed\(/)
+  assert.match(source, /v-if="searchLoading && !hasVisibleResults"/)
+  assert.doesNotMatch(source, /v-if="searchLoading && searchOffset === 0"/)
 })

@@ -1,12 +1,14 @@
 import type { LibraryDatabaseApi } from '../../shared/libraryDatabase.ts'
+import type { TrackData } from '../../shared/track.ts'
 import type { LibraryMetadataEnrichmentTrackUpdate } from './metadataEnrichment.ts'
 import { libraryTrack } from '../playback/libraryTrack.ts'
 
-const fields = [
+export const METADATA_PATCH_FIELDS = [
   'artist',
   'album',
   'genre',
   'cover',
+  'coverSource',
   'lyrics',
   'translatedLyrics',
   'lyricsSource',
@@ -14,8 +16,18 @@ const fields = [
   'metadataMatch'
 ] as const
 
+const fields = METADATA_PATCH_FIELDS
+
 const equal = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right)
+
+export function hasMetadataPatchChanges(source: TrackData, track: TrackData): boolean {
+  if (source === track) return false
+  for (const field of fields) {
+    if (!equal(source[field], track[field]) && track[field] !== undefined) return true
+  }
+  return false
+}
 
 /** Provider work can outlive a scan/edit. Compare its source with the authority,
  * then use that record's version to fence changes after this read. */

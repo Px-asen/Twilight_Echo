@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Track, TrackArtistRef } from '../types/music'
 import type { MediaProviderPlaylistSummary } from '../providers/mediaProvider'
 import type { SearchType } from './streaming-page/useStreamingSearch'
@@ -62,6 +63,14 @@ const emit = defineEmits<{
 const pageSize = 30
 useDomTrackLocator('locatorRoot', () => props.currentTrack?.id)
 
+const hasVisibleResults = computed(() => {
+  if (props.searchType === 'songs') return props.searchResults.length > 0
+  if (props.searchType === 'albums') return (props.searchAlbumsResults?.length ?? 0) > 0
+  if (props.searchType === 'playlists') return props.searchPlaylistsResults.length > 0
+  if (props.searchType === 'artists') return props.searchArtistsResults.length > 0
+  return false
+})
+
 function isSelected(trackId: string): boolean {
   return props.selectedIds?.has(trackId) ?? false
 }
@@ -100,7 +109,7 @@ function onTrackKeydown(event: KeyboardEvent, track: Track): void {
 
 <template>
   <div class="search-view">
-    <div v-if="searchLoading && searchOffset === 0" class="streaming-placeholder">
+    <div v-if="searchLoading && !hasVisibleResults" class="streaming-placeholder">
       <i
         class="pi pi-spin pi-spinner"
         style="font-size: calc(var(--te-font-size-body, 14px) * 40 / 14); color: #999"

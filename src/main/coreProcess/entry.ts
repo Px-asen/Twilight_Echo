@@ -14,6 +14,7 @@ import { stat, access, readFile } from 'node:fs/promises'
 import * as transferFiles from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { CoreLibraryMaintenance } from '../../core/library/maintenanceService.ts'
+import { isMetadataRateLimitError } from '../../core/library/metadataEnrichment.ts'
 import { CoreGenresService } from '../../core/library/genresService.ts'
 import { CoreMusicRatingsService } from '../../core/library/ratingsService.ts'
 import { CoreMusicPreferencesService } from '../../core/library/preferencesService.ts'
@@ -356,6 +357,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       else application?.changed()
       publishSettings()
       if (Object.hasOwn(patch, 'musicIdentification') || Object.hasOwn(patch, 'language')) metadata?.entities?.refreshIdentification(true)
+      if (Object.hasOwn(patch, 'cachePolicy')) metadata?.refresh()
       if (Object.hasOwn(patch, 'genreSeparators')) genres?.invalidate()
       if (Object.hasOwn(patch, 'ncmListeningSyncEnabled'))
         listeningSync?.setEnabled(settings.read().ncmListeningSyncEnabled)
@@ -1749,7 +1751,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
       providerInventory = inventory
       identificationInventoryRevision++
       void application?.reconcileImports(true).catch(error => console.error('[core.imports]', error))
-      metadata.refresh(true)
+      metadata.refresh()
       metadata.entities?.refreshIdentification()
       presentation.refresh()
     }
@@ -1859,23 +1861,92 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         failed: error => console.error('[core.metadata.entities]', error),
         taskFailed: (error, task) => console.error('[core.metadata.task]', task, error)
     },
-    provider: {
-      searchSongs: async (query, limit = 30, offset = 0, signal) => {
-        const results = await Promise.allSettled(
-          metadataProviders().map(
-            (provider) =>
-              plugins!.callProvider(provider.id, 'searchSongs', [query, limit, offset], {
-                signal
-              }) as Promise<{ items: import('../../shared/track.ts').TrackData[]; total: number }>
+    provider: (() => {
+      const metadataSearchCooldownUntil = new Map<string, number>()
+      return {
+        providesLyrics: false,
+        searchSongs: async (query, limit = 30, offset = 0, signal) => {
+          const providers = metadataProviders()
+          if (!providers.length) return { items: [], total: 0 }
+          const now = Date.now()
+          const readyProviders = providers.filter(
+            (provider) => now >= (metadataSearchCooldownUntil.get(provider.id) ?? 0)
           )
-        )
-        signal?.throwIfAborted()
-        const fulfilled = results.filter((result) => result.status === 'fulfilled')
-        if (results.length && !fulfilled.length) throw new Error('在线元数据服务暂不可用')
-        const items = fulfilled.flatMap((result) => result.value.items)
-        return { items, total: items.length }
+          if (!readyProviders.length) {
+            throw new Error('NCM_METADATA_RATE_LIMITED')
+          }
+          const results = await Promise.allSettled(
+            readyProviders.map(async (provider) => {
+              try {
+                return (await plugins!.callProvider(
+                  provider.id,
+                  'searchSongs',
+                  [query, limit, offset],
+                  {
+                    signal
+                  }
+                )) as { items: import('../../shared/track.ts').TrackData[]; total: number }
+              } catch (error) {
+                if (!signal?.aborted && isMetadataRateLimitError(error)) {
+                  metadataSearchCooldownUntil.set(provider.id, Date.now() + 60_000)
+                }
+                throw error
+              }
+            })
+          )
+          signal?.throwIfAborted()
+          const fulfilled = results.filter((result) => result.status === 'fulfilled')
+          if (!fulfilled.length) {
+            const firstRejected = results.find(
+              (result): result is PromiseRejectedResult => result.status === 'rejected'
+            )
+            throw firstRejected?.reason instanceof Error
+              ? firstRejected.reason
+              : new Error('在线元数据服务暂不可用')
+          }
+          const items = fulfilled.flatMap((result) => result.value.items)
+          return { items, total: items.length }
+        }
       }
-    },
+    })(),
+    attemptStore: (() => {
+      const isAttemptRecordMap = (value: unknown): value is Record<string, string> =>
+        Boolean(value) &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        Object.values(value as Record<string, unknown>).every((item) => typeof item === 'string')
+      const repository = new VersionedDataStore<Record<string, string>>({
+        filePath: join(config.root, 'core-metadata-enrichment-attempts.json'),
+        label: 'metadata enrichment attempts',
+        maxBytes: 8 * 1024 * 1024,
+        isData: isAttemptRecordMap,
+        isLegacy: isAttemptRecordMap,
+        onCorrupt: (error) =>
+          console.warn(
+            '[core.persistence] Corrupt store reset to default:',
+            error.filePath,
+            error.primaryError
+          )
+      })
+      let revision = 0
+      return {
+        load: async () => {
+          const document = await repository.load()
+          revision = document?.revision ?? 0
+          return document?.data ?? {}
+        },
+        save: async (records) => {
+          revision = (await repository.save(records, revision)).revision
+        }
+      }
+    })(),
+    providerSignature: () =>
+      metadataProviders()
+        .map((provider) => provider.id)
+        .sort()
+        .join(','),
+    minQueryIntervalMs: 1_200,
+    rateLimitCooldownMs: 60_000,
     available: () => metadataProviders().length > 0,
     policy: () => settings.read().cachePolicy,
     now: Date.now,

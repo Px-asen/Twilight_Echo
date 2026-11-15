@@ -63,22 +63,33 @@ export class RemoteMediaGrantService {
 
   grant(source: string, kind: RemoteMediaKind, expiresAt?: number): string {
     const normalized = normalizeRemoteMediaSource(source)
-    if (expiresAt !== undefined && (kind !== 'image' || !Number.isSafeInteger(expiresAt) || expiresAt <= this.now()))
+    const now = this.now()
+    if (expiresAt !== undefined && (kind !== 'image' || !Number.isSafeInteger(expiresAt) || expiresAt <= now))
       throw new Error('Remote image permission has expired')
-    this.pruneExpired(this.now())
+    this.pruneExpired(now)
     const token =
       kind === 'image' && this.deterministicImageTokens
         ? deterministicImageToken(expiresAt === undefined ? normalized : JSON.stringify([normalized, expiresAt]))
         : this.createToken()
     if (!token || /[/?#]/.test(token)) throw new Error('Remote media grant token is invalid')
-    this.grants.set(token, { source: normalized, kind, lastAccessAt: this.now(), ...(expiresAt === undefined ? {} : { expiresAt }) })
+    const existing = this.grants.get(token)
+    const alreadyActive =
+      existing !== undefined &&
+      now - existing.lastAccessAt <= ttlFor(existing.kind) &&
+      (existing.expiresAt === undefined || now < existing.expiresAt) &&
+      existing.source === normalized &&
+      existing.kind === kind &&
+      existing.expiresAt === expiresAt
+    this.grants.set(token, { source: normalized, kind, lastAccessAt: now, ...(expiresAt === undefined ? {} : { expiresAt }) })
     const handle = `twilight-media://${kind}/${token}`
-    writeDiagnostic(
-      'media.remote',
-      'grant.issued',
-      { source: normalized, handleUrl: handle, kind },
-      'debug'
-    )
+    if (!alreadyActive) {
+      writeDiagnostic(
+        'media.remote',
+        'grant.issued',
+        { source: normalized, handleUrl: handle, kind },
+        'debug'
+      )
+    }
     return handle
   }
 
