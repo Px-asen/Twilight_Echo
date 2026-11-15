@@ -507,3 +507,93 @@ test('a changed cover is resolved once and its late predecessor cannot replace t
     assert.equal(f.player.coverThemeColor.value, '#223344')
   } finally { f.player.dispose() }
 })
+
+test('audio output switch failure localizes TE-ERR sentinel, refreshes output revision and exposes fallbackNotice', async () => {
+  const { encodeAppError } = await import('../../../../shared/errors/appError.ts')
+  const { formatAudioOutputFallbackNotice } = await import('../../utils/audioErrorPresentation.ts')
+  const f = fixture()
+  let outputRevision = 2
+  const currentBackend: 'wasapi' | 'asio' = 'wasapi'
+  let fallbackNotice: {
+    id: number
+    fromOutput: 'asio'
+    fromDevice: string
+    toOutput: 'wasapi'
+    toDevice: string
+    reason: string
+  } | null = null
+  let outputQueryCount = 0
+
+  f.setQuery(async (name) => {
+    if (name === 'audio.output') {
+      outputQueryCount++
+      return {
+        revision: outputRevision,
+        output: {
+          output: currentBackend,
+          device: 'auto',
+          exclusiveMode: false,
+          exclusiveAvailable: true,
+          outputOptions: [],
+          deviceOptions: []
+        },
+        config: {
+          preferredBufferSize: 0,
+          routingMode: 'auto',
+          wasapiExclusivePushMode: false
+        },
+        applyStatus: {
+          requestedRevision: 0,
+          appliedRevision: 0,
+          failedRevision: 0,
+          state: 'idle',
+          error: '',
+          generation: 0
+        },
+        exclusiveAutoRelease: false,
+        ...(fallbackNotice ? { fallbackNotice } : {})
+      }
+    }
+    return null
+  })
+  f.setHandler(async (name) => {
+    if (name === 'audio.output.edit') {
+      outputRevision++
+      throw new Error(
+        encodeAppError('audio.output_switch_failed', 'native output switch failed', {
+          detail: 'ASIO driver init failed (code=-1000)'
+        })
+      )
+    }
+    return null
+  })
+
+  try {
+    f.state.value = { ...snapshot(), settingsRevision: 1, audioRevision: 1 }
+    await tick()
+    assert.equal(outputQueryCount, 1)
+    const queriesBeforeEdit = outputQueryCount
+    await assert.rejects(f.player.setAudioOutput('asio'))
+    assert.equal(outputQueryCount, queriesBeforeEdit + 1, 'failed edit must refresh audio.output in finally')
+    assert.equal(f.player.audioOutput.value, 'wasapi')
+    assert.equal(f.player.audioEngineError.value?.includes('[TE-ERR:'), false)
+    assert.match(f.player.audioEngineError.value ?? '', /ASIO driver init failed \(code=-1000\)/)
+
+    fallbackNotice = {
+      id: 1,
+      fromOutput: 'asio',
+      fromDevice: 'asio:studio',
+      toOutput: 'wasapi',
+      toDevice: 'auto',
+      reason: 'ASIO driver init failed (code=-1000)'
+    }
+    f.state.value = { ...f.state.value, sequence: 2, audioRevision: 2 }
+    await tick()
+    assert.deepEqual(f.player.audioOutputFallbackNotice.value, fallbackNotice)
+    const noticeCopy = formatAudioOutputFallbackNotice(f.player.audioOutputFallbackNotice.value!, 'zh-CN')
+    assert.match(noticeCopy, /WASAPI/)
+    assert.match(noticeCopy, /ASIO driver init failed \(code=-1000\)/)
+  } finally {
+    f.player.dispose()
+  }
+})

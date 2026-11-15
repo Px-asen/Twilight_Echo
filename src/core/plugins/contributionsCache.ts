@@ -27,6 +27,7 @@ const CACHE_SCHEMA_VERSION = 1
 const PROVIDER_CAPABILITIES: readonly TwilightMediaProviderCapability[] = [
   'search',
   'playbackUrl',
+  'mv',
   'lyrics',
   'cover',
   'playlist',

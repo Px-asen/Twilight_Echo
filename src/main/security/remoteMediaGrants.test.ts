@@ -746,3 +746,101 @@ test('aborting all singleflight waiters aborts upstream and clears the entry for
   assert.equal(fetches, 2)
   assert.equal(writes, 1)
 })
+
+test('getTrackMv rewrites video, companion DASH audio and cover grants while stripping and forwarding sanitized Referer across redirects', async () => {
+  const grants = new RemoteMediaGrantService()
+  const protectedMv = protectProviderMedia(
+    {
+      url: 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/01/02/mv-1080p.m4s?deadline=999999',
+      audioUrl: 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/01/02/mv-audio.m4s?deadline=999999',
+      coverUrl: 'https://i0.hdslb.com/bfs/archive/mv-cover.jpg',
+      quality: '1080p',
+      width: 1920,
+      height: 1080,
+      mvId: 'BV1xx411c7mD',
+      referer: 'https://www.bilibili.com/video/BV1xx411c7mD?spm_id_from=333.999'
+    },
+    'getTrackMv',
+    grants
+  ) as Record<string, unknown>
+
+  assert.match(String(protectedMv.url), /^twilight-media:\/\/video\/[A-Za-z0-9_-]{16,64}$/)
+  assert.match(String(protectedMv.audioUrl), /^twilight-media:\/\/audio\/[A-Za-z0-9_-]{16,64}$/)
+  assert.match(String(protectedMv.coverUrl), /^twilight-media:\/\/image\/[A-Za-z0-9_-]{16,64}$/)
+  assert.equal('referer' in protectedMv, false)
+  assert.equal(protectedMv.mvId, 'BV1xx411c7mD')
+
+  const upstreamRequests: Array<{ url: string; referer: string | null; range: string | null }> = []
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    fetch: async (url, init) => {
+      const headers = new Headers(init.headers)
+      upstreamRequests.push({
+        url,
+        referer: headers.get('referer'),
+        range: headers.get('range')
+      })
+      if (url.includes('mv-audio.m4s')) {
+        return new Response('audio-chunk', {
+          status: 206,
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-range': 'bytes 0-10/512',
+            'accept-ranges': 'bytes'
+          }
+        })
+      }
+      if (url.includes('bilivideo.com')) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://edge-mirror.akamaized.net/mv-1080p.m4s' }
+        })
+      }
+      return new Response('video-chunk', {
+        status: 206,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-range': 'bytes 0-10/1024',
+          'accept-ranges': 'bytes'
+        }
+      })
+    }
+  })
+
+  const response = await handler(
+    new Request(String(protectedMv.url), {
+      headers: { Range: 'bytes=0-10' }
+    })
+  )
+  assert.equal(response.status, 206)
+  assert.equal(response.headers.get('content-type'), 'video/mp4')
+  assert.equal(await response.text(), 'video-chunk')
+
+  const audioResponse = await handler(
+    new Request(String(protectedMv.audioUrl), {
+      headers: { Range: 'bytes=0-10' }
+    })
+  )
+  assert.equal(audioResponse.status, 206)
+  assert.equal(audioResponse.headers.get('content-type'), 'audio/mp4')
+  assert.equal(await audioResponse.text(), 'audio-chunk')
+
+  assert.deepEqual(upstreamRequests, [
+    {
+      url: 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/01/02/mv-1080p.m4s?deadline=999999',
+      referer: 'https://www.bilibili.com/',
+      range: 'bytes=0-10'
+    },
+    {
+      url: 'https://edge-mirror.akamaized.net/mv-1080p.m4s',
+      referer: 'https://www.bilibili.com/',
+      range: 'bytes=0-10'
+    },
+    {
+      url: 'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/01/02/mv-audio.m4s?deadline=999999',
+      referer: 'https://www.bilibili.com/',
+      range: 'bytes=0-10'
+    }
+  ])
+})
+

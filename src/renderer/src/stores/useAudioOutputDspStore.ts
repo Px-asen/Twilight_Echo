@@ -13,6 +13,7 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     audioEngineReady: player.audioEngineReady,
     audioEngineError: player.audioEngineError,
     audioEngineRecoveryNotice: player.audioEngineRecoveryNotice,
+    audioOutputFallbackNotice: player.audioOutputFallbackNotice,
     exclusiveMode: player.exclusiveMode,
     audioOutput: player.audioOutput,
     audioDevice: player.audioDevice,

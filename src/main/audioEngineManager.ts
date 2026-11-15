@@ -314,6 +314,9 @@ export class AudioEngineManager extends EventEmitter {
           this.createDeviceCapabilityRefreshSignature(info),
         invalidateAudioDeviceOptionsCache: (reason) =>
           this.invalidateAudioDeviceOptionsCache(reason),
+        commitFallbackOutputRoute: (options) =>
+          this.outputRouter.commitFallbackOutputRoute(options),
+        ensureNativeStarted: () => this.ensureNativeStarted(),
         getProcessing: () => this.processing,
         getAutoMixAnalysisStatus: () => this.autoMixAnalysisStatus,
         getActiveDspGraph: () => this.dsp.activeDspGraph,
@@ -821,9 +824,9 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  async ensureNativeStarted(): Promise<void> {
-    if (this.destroyed) throw new Error('Audio engine has been destroyed')
-    if (!this.nativeStartupDeferred) return
+  ensureNativeStarted(): Promise<void> | void {
+    if (this.destroyed) return Promise.reject(new Error('Audio engine has been destroyed'))
+    if (!this.nativeStartupDeferred && !this.ensureNativeStartedPromise) return
     if (this.ensureNativeStartedPromise) return this.ensureNativeStartedPromise
     const work = (async () => {
       this.nativeStartupDeferred = false
@@ -1354,6 +1357,10 @@ export class AudioEngineManager extends EventEmitter {
     return this.outputRouter.getOutputConfigApplyStatus()
   }
 
+  getOutputFallbackNotice() {
+    return this.outputRouter.getOutputFallbackNotice()
+  }
+
   async getAudioOutput(): Promise<AudioOutputId> {
     return this.outputRouter.getAudioOutput()
   }
@@ -1447,12 +1454,11 @@ export class AudioEngineManager extends EventEmitter {
     return this.outputRouter.createDeviceCapabilityRefreshSignature(info)
   }
 
-  async play(
+  play(
     source: string,
     startTime = 0,
     requested?: () => boolean
   ): Promise<AudioEnginePlayResult> {
-    await this.ensureNativeStarted()
     this.invalidateLocalAutoMix('playback_changed')
     return this.playback.play(source, startTime, requested)
   }
@@ -1463,7 +1469,6 @@ export class AudioEngineManager extends EventEmitter {
   /** Group-only lane; ordinary play retains its original preparation contract. */
   async playTimedBridge(source: string, position: number, requested: () => boolean): Promise<AudioEnginePlayResult> {
     if (!this.bridgeSelected) throw new Error('同步组成员必须明确选择输出桥')
-    await this.ensureNativeStarted()
     this.invalidateLocalAutoMix('group_playback')
     let epoch: number | undefined
     const result = await this.playback.play(source, position, requested, async () => {

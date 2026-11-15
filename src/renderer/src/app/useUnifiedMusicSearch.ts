@@ -46,7 +46,9 @@ export function useUnifiedMusicSearch(options?: {
             () => core.state.value?.network?.revision,
             () => core.state.value?.pluginsRevision
           ],
-          () => search.refresh()
+          () => {
+            if (!search.error.value) search.refresh()
+          }
         )
   onBeforeUnmount(() => {
     stop()
@@ -69,15 +71,25 @@ export function createUnifiedMusicSearch(
   let controller: AbortController | null = null
   let lastOptions: { limit?: number; offset?: number } = {}
   let minimumLibraryRevision = 0,
-    refreshQueued = false
+    refreshQueued = false,
+    refreshPending = false
 
   function refresh(): void {
     if (refreshQueued || !query.value.trim()) return
+    if (controller) {
+      refreshPending = true
+      return
+    }
     refreshQueued = true
     const requestId = latestRequestId
     queueMicrotask(() => {
       refreshQueued = false
-      if (requestId === latestRequestId && query.value.trim()) void search(query.value, lastOptions)
+      if (requestId !== latestRequestId || !query.value.trim()) return
+      if (controller) {
+        refreshPending = true
+        return
+      }
+      void runSearch(query.value, lastOptions, { background: true })
     })
   }
   function invalidateLibrary(revision: number): void {
@@ -89,6 +101,7 @@ export function createUnifiedMusicSearch(
 
   function clear(): void {
     latestRequestId += 1
+    refreshPending = false
     controller?.abort()
     controller = null
     query.value = ''
@@ -101,10 +114,12 @@ export function createUnifiedMusicSearch(
     hasMore.value = false
   }
 
-  async function search(
+  async function runSearch(
     nextQuery: string,
-    options: { limit?: number; offset?: number } = {}
+    options: { limit?: number; offset?: number } = {},
+    mode: { background?: boolean } = {}
   ): Promise<void> {
+    if (!mode.background) refreshPending = false
     const normalizedQuery = nextQuery.trim()
     lastOptions = { ...options }
     query.value = nextQuery
@@ -124,11 +139,13 @@ export function createUnifiedMusicSearch(
     }
     loading.value = true
     error.value = ''
-    items.value = []
-    logicalItems.value = []
-    providerHealth.value = {}
-    total.value = 0
-    hasMore.value = false
+    if (!mode.background) {
+      items.value = []
+      logicalItems.value = []
+      providerHealth.value = {}
+      total.value = 0
+      hasMore.value = false
+    }
     try {
       const result = await dependencies.searchAllSongs({
         query: snapshot.query,
@@ -137,8 +154,10 @@ export function createUnifiedMusicSearch(
         signal: requestController.signal
       })
       if (requestId !== latestRequestId) return
-      if (result.libraryRevision !== undefined && result.libraryRevision < minimumLibraryRevision)
+      if (result.libraryRevision !== undefined && result.libraryRevision < minimumLibraryRevision) {
+        if (refreshPending) return
         throw new Error('曲库在搜索期间发生变化，请重新搜索')
+      }
       items.value = result.items
       logicalItems.value = result.logicalItems
       providerHealth.value = result.health
@@ -151,11 +170,27 @@ export function createUnifiedMusicSearch(
       items.value = []
       logicalItems.value = []
       providerHealth.value = {}
+      total.value = 0
+      hasMore.value = false
     } finally {
+      if (controller === requestController) controller = null
       if (requestId === latestRequestId) {
-        loading.value = false
+        const followUp = refreshPending && !error.value && !!query.value.trim()
+        refreshPending = false
+        if (followUp) {
+          void runSearch(query.value, lastOptions, { background: true })
+        } else {
+          loading.value = false
+        }
       }
     }
+  }
+
+  function search(
+    nextQuery: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<void> {
+    return runSearch(nextQuery, options)
   }
 
   return {

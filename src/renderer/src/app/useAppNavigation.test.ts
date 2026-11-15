@@ -572,7 +572,7 @@ test('reopening restores foreground tools, current sections, and their return pa
   const reopenedPersistence = createNavigationSessionPersistence(reopened, storage)
   assert.equal(reopened.showThemeStudioPage.value, true)
   assert.equal(reopened.themeStudioInitialDomain.value, 'typography')
-  assert.equal(reopened.settingsInitialSection.value, 'connections')
+  assert.equal(reopened.settingsInitialSection.value, 'hotkeys')
   reopened.closeThemeStudioPage()
   assert.equal(reopened.showSettingsPage.value, true)
   reopened.closeSettingsPage()
@@ -631,7 +631,7 @@ test('corrupt, unsupported, and invalid saved pages fall back without breaking s
     overlayHistory: [null, 'playing', 'invalid'],
     menuOpen: 'true'
   })!
-  assert.equal(normalized.settingsSection, 'general')
+  assert.equal(normalized.settingsSection, 'overview')
   assert.equal(normalized.themeStudioDomain, 'presets')
   assert.equal(normalized.overlay, null)
   assert.equal(normalized.menuOpen, false)
@@ -731,7 +731,7 @@ test('explicit navigation during startup overrides a saved plugin destination', 
     { pluginId: 'tool', id: 'page', kind: 'sidebarPage', title: 'Tool' }
   ])
   assert.equal(navigation.showSettingsPage.value, true)
-  assert.equal(navigation.settingsInitialSection.value, 'system')
+  assert.equal(navigation.settingsInitialSection.value, 'updates')
   assert.equal(navigation.activePluginPage.value, null)
   persistence.stop()
 })

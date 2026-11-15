@@ -20,7 +20,7 @@ const test = require('node:test')
 const ts = require('typescript')
 
 const ROOT = path.join(__dirname, '..')
-const MAIN_DIR = path.join(ROOT, 'src', 'main')
+const SOURCE_DIRS = [path.join(ROOT, 'src', 'main'), path.join(ROOT, 'src', 'core')]
 const CATALOG_DIR = path.join(ROOT, 'src', 'shared', 'i18n', 'messages')
 const LOCALES = ['zh-CN', 'en-US']
 
@@ -70,15 +70,17 @@ function collectSourceCodes(source, file) {
 /** Codes thrown through the structured helpers, as `code -> [source files]`. */
 function collectThrownCodes() {
   const codes = new Map()
-  for (const file of walk(MAIN_DIR)) {
-    if (/\.(?:test|spec)\.[^.]+$/.test(file)) continue
-    const source = fs.readFileSync(file, 'utf8')
-    // Include literals delegated through the route transaction to nativeAudioError.
-    // Parse call sites so comments and unrelated errorCode properties aren't evidence.
-    for (const code of collectSourceCodes(source, file)) {
-      const relative = path.relative(ROOT, file).replace(/\\/g, '/')
-      if (!codes.has(code)) codes.set(code, [])
-      codes.get(code).push(relative)
+  for (const dir of SOURCE_DIRS) {
+    for (const file of walk(dir)) {
+      if (/\.(?:test|spec)\.[^.]+$/.test(file)) continue
+      const source = fs.readFileSync(file, 'utf8')
+      // Include literals delegated through the route transaction to nativeAudioError.
+      // Parse call sites so comments and unrelated errorCode properties aren't evidence.
+      for (const code of collectSourceCodes(source, file)) {
+        const relative = path.relative(ROOT, file).replace(/\\/g, '/')
+        if (!codes.has(code)) codes.set(code, [])
+        codes.get(code).push(relative)
+      }
     }
   }
   return codes
@@ -170,11 +172,13 @@ test('no catalog entry claims an audio error that nothing throws', () => {
     'error.audio.awaiting_route_confirmation',
     'error.audio.unknown_reason',
     'error.audio.native_unavailable',
+    'error.audio.playback_target_unavailable',
     'error.audio.native_unavailable_detail',
     'error.audio.native_fallback',
     'error.audio.playback_fallback_switched',
     'error.audio.playback_fallback_rematched',
-    'error.audio.current_track'
+    'error.audio.current_track',
+    'error.audio.decode_failed'
   ])
   const orphans = []
   for (const key of keys) {

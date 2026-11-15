@@ -46,6 +46,7 @@ export function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): n
   if (
     [
       'getPlaybackUrl',
+      'getTrackMv',
       'getLyrics',
       'searchSongs',
       'searchRecordingIdentities',
@@ -255,6 +256,7 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   Record<TwilightMediaProviderMethod, TwilightMediaProviderRegistration['capabilities'][number]>
 > = {
   getPlaybackUrl: 'playbackUrl',
+  getTrackMv: 'mv',
   getLyrics: 'lyrics',
   searchSongs: 'search',
   searchRecordingIdentities: 'search',

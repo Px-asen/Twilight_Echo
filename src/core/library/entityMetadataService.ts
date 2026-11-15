@@ -632,7 +632,9 @@ export class CoreEntityMetadataService {
         }
         const message = error instanceof Error ? error.message : ''
         const http = error instanceof MetadataHttpError ? error :
-          this.active?.provider === 'platform.ncm' && message.includes('NCM_METADATA_RATE_LIMITED')
+          this.active?.provider === 'platform.ncm' &&
+          (message.includes('NCM_METADATA_RATE_LIMITED') ||
+            /\b(?:405|429)\b|操作频繁|请求频繁|高频|风控/.test(message))
             ? new MetadataHttpError('platform_metadata_rate_limited', 429, now() + 60_000) : null
         const transient = !http || [429, 503, 502, 504, 408].includes(http.status)
         result =

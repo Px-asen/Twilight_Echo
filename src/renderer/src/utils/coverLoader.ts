@@ -47,7 +47,7 @@ let remoteCoverGeneration = 0
 
 function canUseObjectUrls(): boolean {
   return (
-    typeof document !== 'undefined' &&
+    typeof globalThis.document !== 'undefined' &&
     typeof URL !== 'undefined' &&
     typeof URL.createObjectURL === 'function' &&
     typeof URL.revokeObjectURL === 'function'

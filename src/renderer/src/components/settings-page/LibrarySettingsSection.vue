@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useSettingsStore } from '../../stores/useSettingsStore'
-import DownloadSettingsFields from './DownloadSettingsFields.vue'
 import SettingsGroup from './SettingsGroup.vue'
 import MusicMetadataSettings from './MusicMetadataSettings.vue'
 import { ref, watch } from 'vue'
@@ -24,8 +23,6 @@ watch(
 )
 
 defineProps<{
-  formattedCacheSize: string
-  storageAttention?: string
   libraryWatcherStatus: LibraryWatcherStatusSnapshot | null
   libraryScanStatus: LocalLibraryScanStatus
   libraryScanIsActive: boolean
@@ -38,8 +35,6 @@ defineProps<{
   libraryResetPending: boolean
   addLibraryFolder: () => void
   removeLibraryFolder: (folder: string) => void
-  chooseDownloadFolder: () => void
-  resetDownloadFolder: () => void
   toggleSetting: (key: BooleanSettingKey) => void
   setGenreSeparators: (event: Event) => void
   watcherStateLabel: (state: string) => string
@@ -56,10 +51,10 @@ defineProps<{
 <template>
   <section id="library" class="glass-card preview-section">
     <div class="section-title-row">
-      <i class="pi pi-database" aria-hidden="true" />
-      <h2>媒体库与存储</h2>
+      <i class="pi pi-folder-open" aria-hidden="true" />
+      <h2>媒体库</h2>
     </div>
-    <p class="settings-section-description">管理本地音乐、下载文件与缓存空间。</p>
+    <p class="settings-section-description">扫描文件夹、实时监控、歌曲资料补全与媒体库维护。</p>
     <div class="section-block">
       <h3>本地媒体库</h3>
       <div class="setting-list">
@@ -305,56 +300,6 @@ defineProps<{
         </div>
       </div></SettingsGroup
     >
-    <SettingsGroup
-      id="storage"
-      title="下载与存储"
-      :summary="
-        '下载：' +
-        (settings.downloadFolder || settings.libraryFolders[0] || '尚未选择位置') +
-        ' · 缓存 ' +
-        formattedCacheSize
-      "
-      :attention="storageAttention"
-      description="下载文件用于长期保留；缓存用于加快加载，可以单独清理，两者分别选择保存位置。"
-    >
-      <div class="section-block">
-        <h3>下载到本地</h3>
-        <div class="setting-list">
-          <div
-            data-setting-id="download-directory"
-            id="setting-download-directory"
-            class="setting-item top-align"
-          >
-            <div class="setting-copy">
-              <strong>下载目录</strong>
-              <span>
-                流媒体「下载到本地」的保存位置；留空时沿用第一个扫描文件夹。选在扫描文件夹之外时，下载完成的文件不会自动进入媒体库。
-              </span>
-            </div>
-            <div class="path-control">
-              <input
-                readonly
-                aria-label="下载目录"
-                :value="settings.downloadFolder || '跟随扫描文件夹'"
-              />
-              <button type="button" class="soft-button" @click="chooseDownloadFolder">
-                选择文件夹
-              </button>
-              <button
-                v-if="settings.downloadFolder"
-                type="button"
-                class="muted-button"
-                @click="resetDownloadFolder"
-              >
-                清除
-              </button>
-            </div>
-          </div>
-          <DownloadSettingsFields />
-        </div>
-      </div>
-      <slot />
-    </SettingsGroup>
   </section>
 </template>
 

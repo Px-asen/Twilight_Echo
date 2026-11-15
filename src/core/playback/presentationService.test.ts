@@ -290,3 +290,180 @@ test('provider tracks missing persisted artwork recover exact-identity cover via
   ])
   assert.deepEqual(f.errors, [])
 })
+
+test('resolveMv resolves online NCM tracks, metadataMatch local tracks, search fallback local tracks, and enforces twilight-media handles', async (t) => {
+  let providerCalls = 0
+  const f = fixture(t, {
+    listProviderIds: () => ['bili', 'ncm'],
+    supportedMethods: (id) =>
+      id === 'ncm' || id === 'bili' ? ['searchSongs', 'getTrackMv'] : [],
+    callProvider: async (providerId, method, args) => {
+      providerCalls++
+      if (providerId === 'ncm' && method === 'getTrackMv') {
+        const lookup = args[0] as { id?: string; mvId?: string }
+        if (lookup.id === 'ncm:500' || lookup.mvId === '9001') {
+          return {
+            url: 'twilight-media://video/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            quality: '1080p',
+            width: 1920,
+            height: 1080,
+            mvId: '9001'
+          }
+        }
+        return null
+      }
+      if (providerId === 'ncm' && method === 'searchSongs') {
+        return {
+          items: [
+            {
+              id: 'ncm:500',
+              source: 'ncm',
+              title: '夜曲',
+              artist: '周杰伦',
+              duration: 226,
+              mvId: '9001'
+            }
+          ]
+        }
+      }
+      if (providerId === 'bili' && method === 'getTrackMv') {
+        return {
+          url: 'twilight-media://video/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          audioUrl: 'twilight-media://audio/cccccccccccccccccccccccccccccccc',
+          coverUrl: 'twilight-media://image/dddddddddddddddddddddddddddddddd',
+          quality: '1080p',
+          mvId: 'BV1mv'
+        }
+      }
+      return null
+    }
+  })
+
+  // 1. Direct provider track (including companion DASH audioUrl for external plugin)
+  f.service.observe({ ...song('bili:BV1mv', 'bili'), title: '夜曲 MV', artist: '周杰伦' }, 'occ-bili')
+  const biliResult = await f.service.resolveMv({
+    trackId: 'bili:BV1mv',
+    occurrenceId: 'occ-bili',
+    quality: '1080p'
+  })
+  assert.equal(biliResult.available, true)
+  assert.equal(biliResult.stream?.providerId, 'bili')
+  assert.equal(biliResult.stream?.url, 'twilight-media://video/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+  assert.equal(
+    biliResult.stream?.audioUrl,
+    'twilight-media://audio/cccccccccccccccccccccccccccccccc'
+  )
+
+  // 2. Stale occurrence fence returns unavailable without leaking stream
+  const stale = await f.service.resolveMv({
+    trackId: 'bili:BV1mv',
+    occurrenceId: 'wrong-occurrence'
+  })
+  assert.equal(stale.available, false)
+  assert.equal(stale.stream, null)
+
+  // 3. Unmatched local track falls back to searchSongs + pickBestLyricSearchMatch -> NCM MV
+  f.service.observe(
+    { ...song('local:nocturne', 'local'), title: '夜曲', artist: '周杰伦', duration: 226 },
+    'occ-local'
+  )
+  const localResult = await f.service.resolveMv({
+    trackId: 'local:nocturne',
+    occurrenceId: 'occ-local'
+  })
+  assert.equal(localResult.available, true)
+  assert.equal(localResult.stream?.providerId, 'ncm')
+  assert.equal(localResult.stream?.mvId, '9001')
+
+  // Cached repeat avoids calling providers again unless force=true
+  const callsBeforeCached = providerCalls
+  const cachedResult = await f.service.resolveMv({
+    trackId: 'local:nocturne',
+    occurrenceId: 'occ-local'
+  })
+  assert.equal(cachedResult.available, true)
+  assert.equal(providerCalls, callsBeforeCached)
+})
+
+test('resolveMv prioritizes Bilibili first and automatically falls back to NetEase when Bilibili has no MV, while allowing manual NCM switch', async (t) => {
+  let biliCalls = 0
+  let ncmCalls = 0
+  let biliAvailable = true
+
+  const f = fixture(t, {
+    listProviderIds: () => ['ncm'],
+    supportedMethods: (id) => (id === 'ncm' ? ['searchSongs', 'getTrackMv'] : []),
+    resolveBilibiliMv: async (track) => {
+      biliCalls++
+      if (!biliAvailable || track.title === '仅网易云有MV') return null
+      return {
+        url: 'twilight-media://video/bilibilibilibilibilibilibilibili',
+        quality: '1080p',
+        width: 1920,
+        height: 1080,
+        providerId: 'bili',
+        mvId: 'BV17t4y1r7Jq',
+        title: '春泥棒 MV'
+      }
+    },
+    callProvider: async (providerId, method) => {
+      if (providerId === 'ncm' && method === 'getTrackMv') {
+        ncmCalls++
+        return {
+          url: 'twilight-media://video/ncmncmncmncmncmncmncmncmncmncmnc',
+          quality: '1080p',
+          width: 1920,
+          height: 1080,
+          providerId: 'ncm',
+          mvId: '14288888'
+        }
+      }
+      return null
+    }
+  })
+
+  f.service.observe(
+    { ...song('ncm:1811921555', 'ncm'), title: '春泥棒', artist: 'ヨルシカ', duration: 290 },
+    'occ-spring'
+  )
+
+  // 1. Default ('bili' / 'auto') prioritizes watermark-free Bilibili MV first
+  const defaultRes = await f.service.resolveMv({
+    trackId: 'ncm:1811921555',
+    occurrenceId: 'occ-spring',
+    source: 'bili'
+  })
+  assert.equal(defaultRes.available, true)
+  assert.equal(defaultRes.stream?.providerId, 'bili')
+  assert.equal(defaultRes.stream?.mvId, 'BV17t4y1r7Jq')
+  assert.equal(biliCalls, 1)
+  assert.equal(ncmCalls, 0)
+
+  // 2. Switching source to 'ncm' prioritizes NetEase MV with separate cache entry
+  const ncmRes = await f.service.resolveMv({
+    trackId: 'ncm:1811921555',
+    occurrenceId: 'occ-spring',
+    source: 'ncm'
+  })
+  assert.equal(ncmRes.available, true)
+  assert.equal(ncmRes.stream?.providerId, 'ncm')
+  assert.equal(ncmRes.stream?.mvId, '14288888')
+  assert.equal(biliCalls, 1)
+  assert.equal(ncmCalls, 1)
+
+  // 3. When Bilibili fails to obtain an MV, BOTH 'bili' and 'auto' automatically switch to NetEase!
+  biliAvailable = false
+  f.service.observe(
+    { ...song('ncm:199999', 'ncm'), title: '仅网易云有MV', artist: '歌手', duration: 240 },
+    'occ-ncm-only'
+  )
+  const biliFallbackToNcm = await f.service.resolveMv({
+    trackId: 'ncm:199999',
+    occurrenceId: 'occ-ncm-only',
+    source: 'bili'
+  })
+  assert.equal(biliFallbackToNcm.available, true)
+  assert.equal(biliFallbackToNcm.stream?.providerId, 'ncm')
+  assert.equal(biliFallbackToNcm.stream?.mvId, '14288888')
+})
+

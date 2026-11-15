@@ -25,15 +25,14 @@ test('legacy anchors and single-level callers resolve ordered disclosure paths',
     }),
     ['cache-details']
   )
-  assert.deepEqual(settingsAnchorDisclosurePath('cache'), ['storage'])
-  assert.deepEqual(settingsAnchorDisclosurePath('cache-details'), ['storage', 'cache-details'])
+  assert.deepEqual(settingsAnchorDisclosurePath('cache'), [])
+  assert.deepEqual(settingsAnchorDisclosurePath('cache-details'), ['cache-details'])
   assert.deepEqual(settingsAnchorDisclosurePath('device-profiles'), ['output-advanced'])
   assert.deepEqual(settingsAnchorDisclosurePath('audio-output-device-panel'), [
     'output-advanced',
     'audio-output-device-panel'
   ])
   assert.deepEqual(settingsAnchorDisclosurePath('player-bar-layout-details'), [
-    'player-bar',
     'player-bar-layout-details'
   ])
 })
@@ -178,7 +177,7 @@ window.runQuickSetupTests=async()=>{
  const trigger=card.querySelector(':scope > button')
  const actions=[...card.querySelectorAll('.settings-quick-setup-action')]
  expect(actions.length===3&&trigger.getAttribute('aria-expanded')==='true','three optional quick setup entries must be visible initially')
- for(const id of ['output-advanced','playback-transitions','player-bar','player-bar-behavior-details','player-bar-layout-details','theme-customization','window-transparency-details','storage','shortcut-details','external-connections','network-proxy','lyrics-style-details']){const groupTrigger=page.querySelector('#'+id+' > button');expect(groupTrigger,'advanced group trigger missing: '+id);expect(groupTrigger.getAttribute('aria-expanded')==='false','advanced group must start collapsed: '+id)}
+ for(const id of ['output-advanced','playback-transitions','player-bar-behavior-details','player-bar-layout-details','theme-customization','window-transparency-details','cache-details','shortcut-details','external-connections','network-proxy','lyrics-style-details']){const groupTrigger=page.querySelector('#'+id+' > button');expect(groupTrigger,'advanced group trigger missing: '+id);expect(groupTrigger.getAttribute('aria-expanded')==='false','advanced group must start collapsed: '+id)}
  expect(card.textContent.includes('已添加 0 个文件夹')&&card.textContent.includes('跟随系统默认设备')&&card.textContent.includes('默认主题'),'unconfigured users must retain valid default audio and theme choices')
  const originalSettings=JSON.stringify(settings.value)
  for(const [index,id] of ['library-folders','audio-device','color-mode'].entries()){
@@ -199,9 +198,9 @@ window.runQuickSetupTests=async()=>{
  expect(selectedDevice==='auto','simple device selector must use the existing output handler')
  const reveal=async id=>{const entry=SETTINGS_SEARCH_INDEX.find(entry=>entry.id===id);const input=page.querySelector('#settings-search-input');input.value=entry.title;input.dispatchEvent(new Event('input',{bubbles:true}));await settle();const result=[...page.querySelectorAll('[role="option"]')].find(option=>option.querySelector('.settings-nav-result-title').textContent===entry.title);expect(result,'search option missing: '+id);result.click();await settle();await waitFor(()=>{const target=page.querySelector('.search-target-flash');return [id,entry.fallbackId,entry.disclosureId].filter(Boolean).includes(target?.dataset.settingId||target?.id)},id);return page.querySelector('.search-target-flash')}
  await reveal('player-bar-layout')
- for(const id of ['player-bar','player-bar-layout-details'])expect(page.querySelector('#'+id+' > button').getAttribute('aria-expanded')==='true','search must reveal both ancestors: '+id)
+ expect(page.querySelector('#interface').checkVisibility()&&page.querySelector('#player-bar-layout-details > button').getAttribute('aria-expanded')==='true','search must reveal interface section and layout group')
  await reveal('cache-metadata')
- for(const id of ['storage','cache-details'])expect(page.querySelector('#'+id+' > button').getAttribute('aria-expanded')==='true','cache search must reveal both ancestors: '+id)
+ expect(page.querySelector('#storage').checkVisibility()&&page.querySelector('#cache-details > button').getAttribute('aria-expanded')==='true','cache search must reveal storage section and cache details')
  const input=page.querySelector('#settings-search-input');input.value='元数据缓存';input.dispatchEvent(new Event('input',{bubbles:true}));await settle()
  expect([...page.querySelectorAll('[role="option"]')].some(option=>option.textContent.includes('歌曲信息缓存')),'old terminology must remain searchable')
  const beforeFallback=JSON.stringify(settings.value)
@@ -219,8 +218,7 @@ window.runQuickSetupTests=async()=>{
  await reveal('cache-usage')
  window.api.settings={clearCache:async()=>{throw Error('测试缓存清理失败')}};window.confirm=()=>true
  page.querySelector('[data-setting-id="cache-usage"] button').click();await settle()
- page.querySelector('#storage > button').click();await settle()
- expect(page.querySelector('#storage > button').textContent.includes('测试缓存清理失败'),'storage must retain cleanup failure feedback after collapse')
+ expect(page.querySelector('#storage').textContent.includes('测试缓存清理失败'),'storage section must retain cleanup failure feedback')
  for(const entry of SETTINGS_SEARCH_INDEX.filter(entry=>!entry.appearanceArea)){
   for(const button of [...page.querySelectorAll('.settings-group > button[aria-expanded="true"]')].reverse())button.click()
   for(const detail of page.querySelectorAll('details[open]'))detail.open=false

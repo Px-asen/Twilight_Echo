@@ -169,7 +169,7 @@ function normalizeMatchText(value: string | null | undefined): string {
   return (value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-function pickBestLyricSearchMatch(local: Track, candidates: Track[]): Track | null {
+export function pickBestLyricSearchMatch(local: Track, candidates: Track[]): Track | null {
   const localTitle = normalizeMatchText(local.title)
   const localArtist = normalizeMatchText(local.artist)
   if (!localTitle) return null

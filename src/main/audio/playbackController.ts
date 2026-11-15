@@ -72,6 +72,13 @@ export interface PlaybackControllerHost {
   setOutputConfig(value: OutputConfig): void
   createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string
   invalidateAudioDeviceOptionsCache(reason: string): void
+  commitFallbackOutputRoute(options: {
+    fromOutput: AudioOutputId
+    fromDevice: string
+    reason: string
+    cacheReason: string
+  }): void
+  ensureNativeStarted?(): Promise<void> | void
   getProcessing(): AudioProcessingSettings
   getAutoMixAnalysisStatus?(): {
     state: 'preparing' | 'ready' | 'degraded' | 'off'
@@ -414,6 +421,11 @@ export class PlaybackController {
       fallbackReason: '',
       superseded: true
     }
+    const pendingNativeStart = this.host.ensureNativeStarted?.()
+    if (pendingNativeStart) {
+      await pendingNativeStart
+      if (!isRequested()) return superseded
+    }
     this.invalidateUpcomingTrackCache()
     await this.prepareLoudnormForPlay(source)
     // Startup preparation can outlive a next/previous/stop or a newer play.
@@ -459,7 +471,14 @@ export class PlaybackController {
       } else {
         this.lastNativeError = fallbackRoute.errors.join('\n') || this.lastNativeError
       }
-      if (!nativeStarted) {
+      if (nativeStarted) {
+        this.host.commitFallbackOutputRoute({
+          fromOutput: firstErrorContext.output,
+          fromDevice: firstErrorContext.device,
+          reason: nativeFallbackReason,
+          cacheReason: 'asio-play-fallback'
+        })
+      } else {
         this.output = firstErrorContext.output
         this.device = firstErrorContext.device
         this.exclusiveMode = firstErrorContext.exclusiveMode
@@ -491,6 +510,12 @@ export class PlaybackController {
         if (nativeStarted) {
           this.device = candidate
           this.nativeOutputRouteSynced = true
+          this.host.commitFallbackOutputRoute({
+            fromOutput: firstErrorContext.output,
+            fromDevice: firstErrorContext.device,
+            reason: nativeFallbackReason,
+            cacheReason: 'alsa-play-fallback'
+          })
           break
         }
       }

@@ -14,11 +14,14 @@ import { build } from 'vite'
 const require = createRequire(import.meta.url)
 const workspace = fileURLToPath(new URL('../../../../', import.meta.url))
 const sectionKeys: Record<string, string> = {
+  Overview: 'overview',
   General: 'general',
+  Interface: 'interface',
   Playback: 'playback-basics',
   Dsp: 'dsp',
   Cache: 'cache',
   Library: 'library',
+  Storage: 'storage',
   Connections: 'connections',
   System: 'system',
   Appearance: 'appearance',

@@ -504,6 +504,8 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   },
   {
     id: 'windows-audio-restart',
+    fallbackId: 'audio-restart',
+    fallbackReason: '当前系统不支持重启 Windows 音频服务，可先尝试在此重启音频引擎。',
     section: 'playback',
     title: '重启 Windows 音频服务',
     terms: '系统 Windows 音频 服务 故障排除 管理员 没声音 恢复 restart audio services'

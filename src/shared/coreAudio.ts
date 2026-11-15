@@ -7,12 +7,22 @@ import type {
   OutputConfigApplyStatus
 } from './audioEngineTypes.ts'
 
+export interface AudioOutputFallbackNotice {
+  id: number
+  fromOutput: AudioOutputId
+  fromDevice: string
+  toOutput: AudioOutputId
+  toDevice: string
+  reason: string
+}
+
 export interface CoreAudioOutput {
   revision: number
   output: AudioOutputState
   config: OutputConfig
   applyStatus: OutputConfigApplyStatus
   exclusiveAutoRelease: boolean
+  fallbackNotice?: AudioOutputFallbackNotice | null
 }
 export interface CoreOutputTestState {
   revision: number

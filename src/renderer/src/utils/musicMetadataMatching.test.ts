@@ -414,3 +414,47 @@ test('enrichLocalTrackMetadata preserves existing lyric source labels', () => {
   assert.equal(enriched.translatedLyrics, '[00:00.00]Provider translation')
   assert.equal(enriched.translatedLyricsSource, 'provider')
 })
+
+test('enrichLocalTrackMetadata persists durable coverSource for session-protected remote covers without overwriting local covers', () => {
+  const remoteCandidate = {
+    id: 'ncm:789',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Online Album',
+    filePath: 'ncm:789',
+    fileName: 'Moon River',
+    duration: 180,
+    size: 0,
+    cover: 'twilight-media://image/session-token',
+    coverSource: 'https://p2.music.126.net/durable.jpg',
+    lyrics: null,
+    source: 'ncm'
+  }
+  const match = { track: remoteCandidate, confidence: 'high' as const, score: 96 }
+
+  const fromEmpty = enrichLocalTrackMetadata(localTrack, match)
+  assert.equal(fromEmpty.cover, 'twilight-media://image/session-token')
+  assert.equal(fromEmpty.coverSource, 'https://p2.music.126.net/durable.jpg')
+
+  const staleHandleTrack = {
+    ...localTrack,
+    cover: 'twilight-media://image/stale-previous-session'
+  }
+  assert.equal(buildMetadataMatchCandidates(staleHandleTrack, [remoteCandidate])[0].fills.cover, true)
+  const healed = enrichLocalTrackMetadata(staleHandleTrack, match)
+  assert.equal(healed.cover, 'twilight-media://image/session-token')
+  assert.equal(healed.coverSource, 'https://p2.music.126.net/durable.jpg')
+
+  const embeddedCoverTrack = {
+    ...localTrack,
+    album: 'Unknown Album',
+    cover: 'cover://embedded.jpg'
+  }
+  assert.equal(
+    buildMetadataMatchCandidates(embeddedCoverTrack, [remoteCandidate])[0].fills.cover,
+    false
+  )
+  const keptEmbedded = enrichLocalTrackMetadata(embeddedCoverTrack, match)
+  assert.equal(keptEmbedded.cover, 'cover://embedded.jpg')
+  assert.equal(keptEmbedded.coverSource, undefined)
+})

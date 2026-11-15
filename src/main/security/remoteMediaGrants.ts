@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { diagnosticContext, withDiagnosticContext, writeDiagnostic } from '../diagnostics/logger.ts'
 import type { DiagnosticLevel } from '../../shared/diagnostics.ts'
 
-export type RemoteMediaKind = 'audio' | 'image'
+export type RemoteMediaKind = 'audio' | 'image' | 'video'
 export type RemoteImageDisplaySize = 'sm' | 'grid' | 'md'
 
 export interface RemoteMediaGrant {
@@ -10,6 +10,13 @@ export interface RemoteMediaGrant {
   kind: RemoteMediaKind
   /** Expiring metadata images bypass durable/browser caches. */
   expiresAt?: number
+  /** Sanitized origin-only Referer (`https://host/`) for CDN hotlink protection. */
+  referer?: string
+}
+
+export interface RemoteMediaGrantIssueOptions {
+  expiresAt?: number
+  referer?: string | null
 }
 
 export interface RemoteMediaGrantServiceOptions {
@@ -45,10 +52,12 @@ interface StoredGrant extends RemoteMediaGrant {
 }
 
 const AUDIO_IDLE_TTL_MS = 30 * 60 * 1000
+const VIDEO_IDLE_TTL_MS = 45 * 60 * 1000
 const IMAGE_IDLE_TTL_MS = 24 * 60 * 60 * 1000
 const GRANT_SWEEP_BATCH = 64
 const MAX_IMAGE_RESPONSE_BYTES = 25 * 1024 * 1024
 const MAX_AUDIO_RESPONSE_BYTES = 1024 * 1024 * 1024
+const MAX_VIDEO_RESPONSE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_RESIZED_DERIVATIVE_ENTRIES = 192
 const MAX_RESIZED_DERIVATIVE_BYTES = 2 * 1024 * 1024
 // Provider CDNs (especially NetEase album art) routinely 302 to edge hosts.
@@ -95,24 +104,57 @@ export class RemoteMediaGrantService {
       options.deterministicImageTokens ?? options.createToken === undefined
   }
 
-  grant(source: string, kind: RemoteMediaKind, expiresAt?: number): string {
+  grant(
+    source: string,
+    kind: RemoteMediaKind,
+    expiresAtOrOptions?: number | RemoteMediaGrantIssueOptions
+  ): string {
     const normalized = normalizeRemoteMediaSource(source)
-    if (expiresAt !== undefined && (kind !== 'image' || !Number.isSafeInteger(expiresAt) || expiresAt <= this.now()))
+    const expiresAt =
+      typeof expiresAtOrOptions === 'number' ? expiresAtOrOptions : expiresAtOrOptions?.expiresAt
+    const referer =
+      typeof expiresAtOrOptions === 'object' && expiresAtOrOptions !== null
+        ? normalizeRemoteMediaReferer(expiresAtOrOptions.referer)
+        : undefined
+    if (
+      expiresAt !== undefined &&
+      (kind !== 'image' || !Number.isSafeInteger(expiresAt) || expiresAt <= this.now())
+    )
       throw new Error('Remote image permission has expired')
     this.pruneExpired(this.now())
     const token =
       kind === 'image' && this.deterministicImageTokens
-        ? deterministicImageToken(expiresAt === undefined ? normalized : JSON.stringify([normalized, expiresAt]))
+        ? deterministicImageToken(
+            expiresAt === undefined && referer === undefined
+              ? normalized
+              : JSON.stringify([normalized, expiresAt ?? null, referer ?? null])
+          )
         : this.createToken()
     if (!token || /[/?#]/.test(token)) throw new Error('Remote media grant token is invalid')
-    this.grants.set(token, { source: normalized, kind, lastAccessAt: this.now(), ...(expiresAt === undefined ? {} : { expiresAt }) })
+    const now = this.now()
+    const existing = this.grants.get(token)
+    const unchanged =
+      existing !== undefined &&
+      existing.source === normalized &&
+      existing.kind === kind &&
+      existing.expiresAt === expiresAt &&
+      existing.referer === referer
+    this.grants.set(token, {
+      source: normalized,
+      kind,
+      lastAccessAt: now,
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+      ...(referer === undefined ? {} : { referer })
+    })
     const handle = `twilight-media://${kind}/${token}`
-    writeDiagnostic(
-      'media.remote',
-      'grant.issued',
-      { source: normalized, handleUrl: handle, kind },
-      'debug'
-    )
+    if (!unchanged) {
+      writeDiagnostic(
+        'media.remote',
+        'grant.issued',
+        { source: normalized, handleUrl: handle, kind },
+        'debug'
+      )
+    }
     return handle
   }
 
@@ -129,7 +171,12 @@ export class RemoteMediaGrantService {
       throw new Error('Remote media grant has expired')
     }
     grant.lastAccessAt = this.now()
-    return { source: grant.source, kind: grant.kind, ...(grant.expiresAt === undefined ? {} : { expiresAt: grant.expiresAt }) }
+    return {
+      source: grant.source,
+      kind: grant.kind,
+      ...(grant.expiresAt === undefined ? {} : { expiresAt: grant.expiresAt }),
+      ...(grant.referer === undefined ? {} : { referer: grant.referer })
+    }
   }
 
   revokeAll(): void {
@@ -265,9 +312,10 @@ export function createRemoteMediaRequestHandler(
           {
             method: 'GET',
             signal: controller.signal,
-            headers: buildUpstreamRequestHeaders(grant.source, grant.kind, null)
+            headers: buildUpstreamRequestHeaders(grant.source, grant.kind, null, grant.referer)
           },
-          record
+          record,
+          grant.referer
         )
       } catch (error) {
         controller.signal.throwIfAborted()
@@ -701,9 +749,10 @@ export function createRemoteMediaRequestHandler(
           {
             method: request.method,
             signal: request.signal,
-            headers: buildUpstreamRequestHeaders(grant.source, grant.kind, range)
+            headers: buildUpstreamRequestHeaders(grant.source, grant.kind, range, grant.referer)
           },
-          record
+          record,
+          grant.referer
         )
       } catch (error) {
         request.signal.throwIfAborted()
@@ -742,6 +791,7 @@ export function createRemoteMediaRequestHandler(
           headers: filteredResponseHeaders(upstream.headers)
         }
       )
+      normalizeStreamMediaContentType(response.headers, grant.kind, grant.source)
       if (grant.expiresAt !== undefined) response.headers.set('Cache-Control', 'no-store')
       if (cacheable) {
         record('cache.write.skipped', {
@@ -826,12 +876,20 @@ function protectValue(value: unknown, method: string, grants: RemoteMediaGrantSe
   if (Array.isArray(value)) return value.map((entry) => protectValue(entry, method, grants))
   if (!value || typeof value !== 'object') return value
 
+  const record = value as Record<string, unknown>
+  const explicitReferer =
+    method === 'getTrackMv' ? normalizeRemoteMediaReferer(record.referer) : undefined
+  const grantOptions = explicitReferer ? { referer: explicitReferer } : undefined
+
   const protectedValue: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, entry] of Object.entries(record)) {
+    if (method === 'getTrackMv' && key === 'referer') {
+      continue
+    }
     if (typeof entry === 'string' && isImageField(key, method)) {
       const normalized = normalizeProviderRemoteUrl(entry)
       if (normalized) {
-        protectedValue[key] = grants.grant(normalized, 'image')
+        protectedValue[key] = grants.grant(normalized, 'image', grantOptions)
         // Keep a durable origin so session restore / listening stats can re-grant
         // after the in-memory twilight-media token is gone.
         const sourceKey = durableImageSourceKey(key)
@@ -841,8 +899,10 @@ function protectValue(value: unknown, method: string, grants: RemoteMediaGrantSe
       } else {
         protectedValue[key] = entry
       }
+    } else if (typeof entry === 'string' && isVideoField(key, method)) {
+      protectedValue[key] = grantIfRemote(entry, 'video', grants, grantOptions)
     } else if (typeof entry === 'string' && isAudioField(key)) {
-      protectedValue[key] = grantIfRemote(entry, 'audio', grants)
+      protectedValue[key] = grantIfRemote(entry, 'audio', grants, grantOptions)
     } else {
       protectedValue[key] = protectValue(entry, method, grants)
     }
@@ -888,13 +948,18 @@ function isAudioField(key: string): boolean {
   return key === 'streamUrl' || key === 'audioUrl'
 }
 
+function isVideoField(key: string, method: string): boolean {
+  return key === 'videoUrl' || (key === 'url' && method === 'getTrackMv')
+}
+
 function grantIfRemote(
   source: string,
   kind: RemoteMediaKind,
-  grants: RemoteMediaGrantService
+  grants: RemoteMediaGrantService,
+  options?: RemoteMediaGrantIssueOptions
 ): string {
   const normalized = normalizeProviderRemoteUrl(source)
-  return normalized ? grants.grant(normalized, kind) : source
+  return normalized ? grants.grant(normalized, kind, options) : source
 }
 
 /**
@@ -922,7 +987,8 @@ function normalizeProviderRemoteUrl(source: string): string | null {
 function buildUpstreamRequestHeaders(
   source: string,
   kind: RemoteMediaKind,
-  range: string | null
+  range: string | null,
+  explicitReferer?: string
 ): Record<string, string> {
   // Return a plain object so Electron net.fetch always receives string headers.
   // Passing a WHATWG Headers instance can drop fields under some Electron builds.
@@ -932,10 +998,24 @@ function buildUpstreamRequestHeaders(
     Accept: kind === 'image' ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
   }
-  const referer = refererForRemoteMediaSource(source)
+  const referer = refererForRemoteMediaSource(source) ?? explicitReferer ?? null
   if (referer) headers.Referer = referer
   if (range) headers.Range = range
   return headers
+}
+
+function normalizeRemoteMediaReferer(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined
+    if (parsed.username || parsed.password) return undefined
+    return `${parsed.origin}/`
+  } catch {
+    return undefined
+  }
 }
 
 function refererForRemoteMediaSource(source: string): string | null {
@@ -949,6 +1029,21 @@ function refererForRemoteMediaSource(source: string): string | null {
     ) {
       return 'https://music.163.com/'
     }
+    if (
+      host === 'bilibili.com' ||
+      host.endsWith('.bilibili.com') ||
+      host.endsWith('.bilivideo.com') ||
+      host.endsWith('.bilivideo.cn') ||
+      host.endsWith('.hdslb.com')
+    ) {
+      return 'https://www.bilibili.com/'
+    }
+    if (host === 'y.qq.com' || host.endsWith('.qq.com') || host.endsWith('.gtimg.cn')) {
+      return 'https://y.qq.com/'
+    }
+    if (host === 'kugou.com' || host.endsWith('.kugou.com')) {
+      return 'https://www.kugou.com/'
+    }
   } catch {
     // ignore parse failures
   }
@@ -959,7 +1054,8 @@ async function fetchRemoteMediaWithRedirects(
   fetchImpl: RemoteMediaRequestHandlerOptions['fetch'],
   source: string,
   init: { method: string; headers?: HeadersInit; signal: AbortSignal },
-  record: MediaDiagnostic
+  record: MediaDiagnostic,
+  fallbackReferer?: string
 ): Promise<Response> {
   let current = source
   const baseHeaders = headersInitToRecord(init.headers)
@@ -967,7 +1063,7 @@ async function fetchRemoteMediaWithRedirects(
     init.signal.throwIfAborted()
     // Refresh Referer for each hop so edge hosts still look browser-like.
     const hopHeaders: Record<string, string> = { ...baseHeaders }
-    const hopReferer = refererForRemoteMediaSource(current)
+    const hopReferer = refererForRemoteMediaSource(current) ?? fallbackReferer ?? null
     if (hopReferer) hopHeaders.Referer = hopReferer
     record('upstream.request.start', { hop, address: current })
     const response = await fetchImpl(current, {
@@ -1080,7 +1176,7 @@ function parseGrantToken(url: string): {
   const kind = parsed.hostname
   if (
     parsed.protocol !== 'twilight-media:' ||
-    (kind !== 'audio' && kind !== 'image') ||
+    (kind !== 'audio' && kind !== 'image' && kind !== 'video') ||
     !token ||
     token.includes('/') ||
     parsed.hash
@@ -1105,7 +1201,9 @@ function parseGrantToken(url: string): {
 }
 
 function ttlFor(kind: RemoteMediaKind): number {
-  return kind === 'audio' ? AUDIO_IDLE_TTL_MS : IMAGE_IDLE_TTL_MS
+  if (kind === 'audio') return AUDIO_IDLE_TTL_MS
+  if (kind === 'video') return VIDEO_IDLE_TTL_MS
+  return IMAGE_IDLE_TTL_MS
 }
 
 function isSingleByteRange(value: string): boolean {
@@ -1121,6 +1219,15 @@ function isExpectedMediaType(contentType: string | null, kind: RemoteMediaKind):
     return (
       !normalized ||
       normalized.startsWith('image/') ||
+      normalized === 'application/octet-stream' ||
+      normalized === 'binary/octet-stream'
+    )
+  }
+  if (kind === 'video') {
+    return (
+      !normalized ||
+      normalized.startsWith('video/') ||
+      normalized === 'application/mp4' ||
       normalized === 'application/octet-stream' ||
       normalized === 'binary/octet-stream'
     )
@@ -1147,7 +1254,9 @@ function parseContentLength(value: string | null): number | null {
 }
 
 function maxResponseBytesFor(kind: RemoteMediaKind): number {
-  return kind === 'audio' ? MAX_AUDIO_RESPONSE_BYTES : MAX_IMAGE_RESPONSE_BYTES
+  if (kind === 'audio') return MAX_AUDIO_RESPONSE_BYTES
+  if (kind === 'video') return MAX_VIDEO_RESPONSE_BYTES
+  return MAX_IMAGE_RESPONSE_BYTES
 }
 
 function filteredResponseHeaders(headers: Headers): Headers {
@@ -1167,6 +1276,32 @@ function filteredResponseHeaders(headers: Headers): Headers {
   filtered.set('Access-Control-Allow-Origin', '*')
   filtered.set('Access-Control-Allow-Methods', 'GET, HEAD')
   return filtered
+}
+
+function normalizeStreamMediaContentType(
+  headers: Headers,
+  kind: RemoteMediaKind,
+  sourceUrl: string
+): void {
+  if (kind !== 'video' && kind !== 'audio') return
+  const normalized = headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+  const isGenericBinary =
+    !normalized || normalized === 'application/octet-stream' || normalized === 'binary/octet-stream'
+  if (kind === 'video') {
+    if (isGenericBinary || normalized === 'application/mp4' || normalized === 'video/iso.segment') {
+      headers.set('Content-Type', 'video/mp4')
+    }
+    return
+  }
+  if (!isGenericBinary) return
+  try {
+    const pathname = new URL(sourceUrl).pathname.toLowerCase()
+    if (pathname.endsWith('.m4s') || pathname.endsWith('.m4a') || pathname.endsWith('.mp4')) {
+      headers.set('Content-Type', 'audio/mp4')
+    }
+  } catch {
+    // Ignore malformed source URLs; grant registration already validates URLs.
+  }
 }
 
 function limitResponseBody(

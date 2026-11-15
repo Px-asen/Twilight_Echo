@@ -10,6 +10,7 @@ export type {
 } from '../../../shared/providerSearch.ts'
 import { toRaw } from 'vue'
 import type { MediaProviderLyrics } from '../../../shared/providerLyrics.ts'
+import type { MediaProviderMvOptions, MediaProviderMvStream } from '../../../shared/providerMv.ts'
 import { assertProviderEnabled } from '../../../core/lyrics/providerLyrics.ts'
 import type { Track } from '../types/music'
 import { getNcmSongId } from './ncmTrack.ts'
@@ -18,6 +19,7 @@ import type { CoreMusicSearchPage, CoreMusicSearchQuery } from '../../../shared/
 export type MediaProviderCapability =
   | 'search'
   | 'playbackUrl'
+  | 'mv'
   | 'lyrics'
   | 'cover'
   | 'playlist'
@@ -26,6 +28,11 @@ export type MediaProviderCapability =
   | 'download'
 
 export type { MediaProviderLyrics } from '../../../shared/providerLyrics.ts'
+export type {
+  MediaProviderMvOptions,
+  MediaProviderMvQuality,
+  MediaProviderMvStream
+} from '../../../shared/providerMv.ts'
 
 export interface MediaProviderCallOptions {
   signal?: AbortSignal
@@ -149,6 +156,11 @@ export interface MediaProvider {
   health?: MediaProviderHealth
   isEnabled?: () => boolean | Promise<boolean>
   getPlaybackUrl?: (track: Track, options?: PlaybackUrlOptions) => Promise<string | null>
+  getTrackMv?: (
+    track: Track,
+    options?: MediaProviderMvOptions,
+    callOptions?: MediaProviderCallOptions
+  ) => Promise<MediaProviderMvStream | null>
   getLyrics?: (track: Track, options?: MediaProviderCallOptions) => Promise<MediaProviderLyrics>
   searchSongs?: (
     keywords: string,

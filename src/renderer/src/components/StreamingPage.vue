@@ -95,6 +95,7 @@ import NcmPlaylistDialogs from './streaming-page/NcmPlaylistDialogs.vue'
 import { createNcmPlaylistEditor } from './streaming-page/ncmPlaylistEditor.ts'
 import ProviderDownloadsPanel from './streaming-page/ProviderDownloadsPanel.vue'
 import StreamingContextMenu from './streaming-page/StreamingContextMenu.vue'
+import { requestMvPlayback } from '../composables/usePlayingMv'
 import {
   getStreamingDiscoveryProviders,
   getStreamingHomeProviders,
@@ -2906,6 +2907,27 @@ function handleContextPlayNext(): void {
   pushNotice({ kind: 'success', message: `下一首播放：${track.title}` })
 }
 
+const contextMenuCanPlayMv = computed(() => {
+  const track = streamingContextMenuTrack.value
+  if (!track || streamingContextActionCount.value !== 1) return false
+  return track.source !== 'radio' && track.source !== 'podcast'
+})
+
+async function handleContextPlayMv(): Promise<void> {
+  const track = streamingContextMenuTrack.value
+  closeStreamingContextMenu()
+  if (!track || track.source === 'radio' || track.source === 'podcast') return
+  requestMvPlayback(track.id)
+  if (currentTrack.value?.id === track.id) {
+    if (!playbackStore.isPlaying.value) {
+      playbackStore.togglePlay()
+    }
+    return
+  }
+  if (currentDetail.value) await playTrackFromCurrentDetail(track)
+  else playStreamingTrack(track, streamingListTracks.value)
+}
+
 async function handleContextFavorite(): Promise<void> {
   const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
@@ -4735,6 +4757,7 @@ async function restorePageState(): Promise<boolean> {
         :all-favorited="streamingContextAllFavorited"
         :favorite-label="contextFavoriteLabel"
         :action-label="streamingContextActionLabel"
+        :can-play-mv="contextMenuCanPlayMv"
         :can-like="contextMenuCanLike"
         :single-liked="contextMenuSingleLiked"
         :can-manage-playlists="canManageNcmPlaylists"
@@ -4747,6 +4770,7 @@ async function restorePageState(): Promise<boolean> {
         :show-aggregate-submenu="showStreamingAggregateSubmenu"
         @play="handleContextPlayTrack"
         @play-next="handleContextPlayNext"
+        @play-mv="handleContextPlayMv"
         @copy-track-names="handleContextCopyTrackNames"
         @favorite="handleContextFavorite"
         @like="handleContextLikeTrack"

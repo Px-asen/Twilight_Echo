@@ -1,9 +1,11 @@
 import type {
+  AudioOutputFallbackNotice,
   CoreAudioOutput,
   CoreAudioOutputEdit,
   CoreAudioProfileEdit,
   CoreAudioProfiles
 } from '../../shared/coreAudio.ts'
+import { projectCoreError } from '../projections.ts'
 import type {
   AudioOutputState,
   AudioOutputId,
@@ -21,6 +23,7 @@ export interface CoreOutputEngine {
   getAudioOutputState(): Promise<AudioOutputState>
   getOutputConfig(): OutputConfig
   getOutputConfigApplyStatus(): OutputConfigApplyStatus
+  getOutputFallbackNotice?(): AudioOutputFallbackNotice | null
   setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState>
   setAudioDevice(device: string): Promise<AudioOutputState>
   setExclusiveMode(enabled: boolean): Promise<AudioOutputState>
@@ -56,12 +59,21 @@ export class CoreAudioOutputService {
   state(): Promise<CoreAudioOutput> {
     return this.serialize(async () => {
       const output = await this.options.engine.getAudioOutputState()
+      const fallbackNotice = this.options.engine.getOutputFallbackNotice?.() ?? null
       return structuredClone({
         revision: this.revision,
         output,
         config: this.options.engine.getOutputConfig(),
         applyStatus: this.options.engine.getOutputConfigApplyStatus(),
-        exclusiveAutoRelease: this.options.settings.read().audioExclusiveAutoRelease
+        exclusiveAutoRelease: this.options.settings.read().audioExclusiveAutoRelease,
+        ...(fallbackNotice
+          ? {
+              fallbackNotice: {
+                ...fallbackNotice,
+                reason: projectCoreError(fallbackNotice.reason)
+              }
+            }
+          : {})
       })
     })
   }

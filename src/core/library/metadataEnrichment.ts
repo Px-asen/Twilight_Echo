@@ -3,6 +3,7 @@ import {
   buildMetadataSearchQueries,
   enrichLocalTrackMetadata,
   findBestMetadataMatch,
+  hasUsableTrackCover,
   isMetadataPlaceholder,
   type MetadataEnrichmentPolicy
 } from '../../shared/musicMetadataMatching.ts'
@@ -14,6 +15,12 @@ export type {
 } from '../../shared/coreMetadata.ts'
 
 export interface LibraryMetadataEnrichmentProvider {
+  /**
+   * Whether `searchSongs` candidates carry inline lyrics. Production plugin
+   * `searchSongs` results never include lyrics (resolved on-demand via `getLyrics`),
+   * so setting `false` avoids treating `lyrics: null` as an enrichment trigger.
+   */
+  providesLyrics?: boolean
   searchSongs: (
     query: string,
     limit?: number,
@@ -35,6 +42,12 @@ export interface LibraryMetadataEnrichmentTrackUpdate {
   track: Track
 }
 
+export interface LibraryMetadataEnrichmentSettledTrack {
+  source: Track
+  track: Track
+  policy: MetadataEnrichmentPolicy
+}
+
 type MetadataEnrichmentSink =
   | ((update: LibraryMetadataEnrichmentTrackUpdate) => void)
   | ((update: LibraryMetadataEnrichmentTrackUpdate) => Promise<void>)
@@ -44,11 +57,17 @@ export interface LibraryMetadataEnrichmentQueueOptions {
   concurrency?: number
   retryBaseMs?: number
   retryMaxMs?: number
+  /** Minimum spacing between background provider search queries (0 in synthetic tests). */
+  minQueryIntervalMs?: number
+  /** Queue-wide pause duration when an upstream provider reports rate limiting. */
+  rateLimitCooldownMs?: number
   now?: () => number
   onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   onTrackEnriched?: MetadataEnrichmentSink
   /** Batch-capable owners can commit grouped matches without one write per copy. */
   onTracksEnriched?: (updates: LibraryMetadataEnrichmentTrackUpdate[]) => Promise<void>
+  /** Invoked after a search group and its batch writes settle cleanly (including unmatched tracks). */
+  onTracksSettled?: (items: LibraryMetadataEnrichmentSettledTrack[]) => void | Promise<void>
 }
 
 export interface LibraryMetadataEnrichmentBenchmarkResult {
@@ -81,15 +100,20 @@ export class LibraryMetadataEnrichmentQueue {
   private readonly concurrency: number
   private readonly retryBaseMs: number
   private readonly retryMaxMs: number
+  private readonly minQueryIntervalMs: number
+  private readonly rateLimitCooldownMs: number
   private readonly now: () => number
   private readonly onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
   private readonly onTrackEnriched?: MetadataEnrichmentSink
   private readonly onTracksEnriched?: LibraryMetadataEnrichmentQueueOptions['onTracksEnriched']
+  private readonly onTracksSettled?: LibraryMetadataEnrichmentQueueOptions['onTracksSettled']
   private readonly entries = new Map<string, QueueEntry>()
   private readonly activeEntries = new Map<string, QueueEntry>()
   private readonly failures = new Map<string, FailureBackoff>()
   private failureCleanupTimer: ReturnType<typeof setTimeout> | null = null
   private nextFailureCleanupAt = Infinity
+  private nextQueryAt = 0
+  private cooldownUntil = 0
   private readonly waiters = new Map<number, Array<() => void>>()
   private readonly activeAbortControllers = new Map<number, Set<AbortController>>()
   private generation = 0
@@ -102,10 +126,13 @@ export class LibraryMetadataEnrichmentQueue {
     this.concurrency = clampConcurrency(options.concurrency ?? DEFAULT_CONCURRENCY)
     this.retryBaseMs = Math.max(1, options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS)
     this.retryMaxMs = Math.max(this.retryBaseMs, options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS)
+    this.minQueryIntervalMs = Math.max(0, options.minQueryIntervalMs ?? 0)
+    this.rateLimitCooldownMs = Math.max(0, options.rateLimitCooldownMs ?? 0)
     this.now = options.now ?? Date.now
     this.onStatus = options.onStatus
     this.onTrackEnriched = options.onTrackEnriched
     this.onTracksEnriched = options.onTracksEnriched
+    this.onTracksSettled = options.onTracksSettled
   }
 
   getStatus(): LibraryMetadataEnrichmentStatus {
@@ -118,7 +145,9 @@ export class LibraryMetadataEnrichmentQueue {
   ): Promise<void> {
     if (this.now() >= this.nextFailureCleanupAt) this.pruneFailures()
     const policy = normalizeMetadataEnrichmentPolicy(cachePolicy)
-    if (!policy.cover && !policy.lyrics && !policy.metadata) return Promise.resolve()
+    const providesLyrics = this.provider.providesLyrics !== false
+    if (!policy.cover && !(policy.lyrics && providesLyrics) && !policy.metadata)
+      return Promise.resolve()
 
     const shouldStartNewRun =
       this.entries.size === 0 && this.status.active === 0 && this.status.state !== 'enriching'
@@ -126,7 +155,7 @@ export class LibraryMetadataEnrichmentQueue {
 
     let added = false
     for (const track of tracks) {
-      if (!isLocalTrack(track) || !needsMetadataEnrichment(track, policy)) continue
+      if (!needsMetadataEnrichment(track, policy, { providesLyrics })) continue
       const query = buildMetadataSearchQuery(track)
       const queryKey = normalizeMetadataQuery(query)
       if (!queryKey) continue
@@ -212,6 +241,8 @@ export class LibraryMetadataEnrichmentQueue {
     if (this.failureCleanupTimer !== null) clearTimeout(this.failureCleanupTimer)
     this.failureCleanupTimer = null
     this.nextFailureCleanupAt = Infinity
+    this.nextQueryAt = 0
+    this.cooldownUntil = 0
     this.failures.clear()
   }
 
@@ -272,12 +303,13 @@ export class LibraryMetadataEnrichmentQueue {
     try {
       const candidates = await searchMetadataTracks(
         Array.from(entry.tracks.values(), ({ track }) => track),
-        (query, limit, offset, signal) => this.provider.searchSongs(query, limit, offset, signal),
+        (query, limit, offset, signal) => this.searchWithPacing(query, limit, offset, signal),
         { signal: controller.signal }
       )
       if (generation !== this.generation) return
       this.failures.delete(entry.queryKey)
       const processed = new Set<string>()
+      const settled: LibraryMetadataEnrichmentSettledTrack[] = []
       do {
         const updates: LibraryMetadataEnrichmentTrackUpdate[] = []
         for (const { track, policy } of entry.tracks.values()) {
@@ -286,6 +318,7 @@ export class LibraryMetadataEnrichmentQueue {
           processed.add(track.id)
           const match = findBestMetadataMatch(track, candidates)
           const enriched = enrichLocalTrackMetadata(track, match, policy)
+          settled.push({ source: track, track: enriched, policy })
           if (enriched === track) continue
           if (this.onTracksEnriched) updates.push({ source: track, track: enriched })
           else {
@@ -303,19 +336,32 @@ export class LibraryMetadataEnrichmentQueue {
         // Copies can join an active query while its owner is saving a batch.
       } while (processed.size < entry.tracks.size)
       if (generation !== this.generation) return
-      this.status.completed += entry.tracks.size
-    } catch {
+      if (settled.length && this.onTracksSettled) {
+        acceptingUpdate = true
+        await this.onTracksSettled(settled)
+        acceptingUpdate = false
+      }
       if (generation !== this.generation) return
+      this.status.completed += entry.tracks.size
+    } catch (error) {
+      if (generation !== this.generation) return
+      const rateLimited = !acceptingUpdate && isMetadataRateLimitError(error)
       const previous = this.failures.get(entry.queryKey)
       const attempts = (previous?.attempts ?? 0) + 1
-      const retryMs = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** (attempts - 1))
+      const baseRetryMs = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** (attempts - 1))
+      const retryMs =
+        rateLimited && this.rateLimitCooldownMs > 0
+          ? Math.max(baseRetryMs, Math.min(this.retryMaxMs, this.rateLimitCooldownMs))
+          : baseRetryMs
       const retryAt = this.now() + retryMs
       this.failures.set(entry.queryKey, { attempts, retryAt })
       this.scheduleFailureCleanup(retryAt + this.retryMaxMs)
       this.status.failed += entry.tracks.size
       this.status.error = acceptingUpdate
         ? '元数据保存失败，请稍后重试'
-        : '在线元数据服务暂不可用，将在稍后自动重试'
+        : rateLimited
+          ? '在线元数据请求过于频繁，将在稍后自动重试'
+          : '在线元数据服务暂不可用，将在稍后自动重试'
     } finally {
       const activeControllers = this.activeAbortControllers.get(generation)
       activeControllers?.delete(controller)
@@ -362,6 +408,54 @@ export class LibraryMetadataEnrichmentQueue {
   private resolveWaiters(generation: number): void {
     for (const resolve of this.waiters.get(generation) ?? []) resolve()
     this.waiters.delete(generation)
+  }
+
+  private searchWithPacing(
+    query: string,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal
+  ): Promise<{ items: Track[]; total: number }> {
+    if (this.minQueryIntervalMs <= 0 && this.rateLimitCooldownMs <= 0) {
+      return this.provider.searchSongs(query, limit, offset, signal)
+    }
+    return this.runPacedSearch(query, limit, offset, signal)
+  }
+
+  private async runPacedSearch(
+    query: string,
+    limit: number,
+    offset: number,
+    signal?: AbortSignal
+  ): Promise<{ items: Track[]; total: number }> {
+    await this.acquireQuerySlot(signal)
+    try {
+      return await this.provider.searchSongs(query, limit, offset, signal)
+    } catch (error) {
+      if (this.rateLimitCooldownMs > 0 && isMetadataRateLimitError(error)) {
+        const until = this.now() + this.rateLimitCooldownMs
+        this.cooldownUntil = Math.max(this.cooldownUntil, until)
+        this.nextQueryAt = Math.max(this.nextQueryAt, this.cooldownUntil)
+      }
+      throw error
+    }
+  }
+
+  private async acquireQuerySlot(signal?: AbortSignal): Promise<void> {
+    if (this.minQueryIntervalMs <= 0 && this.rateLimitCooldownMs <= 0) return
+    while (true) {
+      signal?.throwIfAborted()
+      const now = this.now()
+      const waitUntil = Math.max(this.nextQueryAt, this.cooldownUntil)
+      const scheduledAt = Math.max(now, waitUntil)
+      this.nextQueryAt = scheduledAt + this.minQueryIntervalMs
+      const delayMs = scheduledAt - now
+      if (delayMs > 0) {
+        await waitWithAbortSignal(delayMs, signal)
+      }
+      signal?.throwIfAborted()
+      if (this.now() >= this.cooldownUntil) return
+    }
   }
 
   private emitStatus(): void {
@@ -445,6 +539,37 @@ function createIdleStatus(): LibraryMetadataEnrichmentStatus {
   }
 }
 
+export function isMetadataRateLimitError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : String(error ?? '')
+  return /\b(?:405|429)\b|操作频繁|请求频繁|高频|风控|限流|rate.?limit|too many requests|NCM_METADATA_RATE_LIMITED/i.test(
+    message
+  )
+}
+
+function waitWithAbortSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve()
+  if (signal?.aborted) {
+    return Promise.reject(
+      signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
+    )
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(
+        signal?.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError')
+      )
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 function clampConcurrency(value: number): number {
   return Math.max(MIN_CONCURRENCY, Math.min(MAX_CONCURRENCY, Math.round(value)))
 }
@@ -454,7 +579,8 @@ async function enrichOneLocalTrack(
   provider: LibraryMetadataEnrichmentProvider,
   policy: MetadataEnrichmentPolicy
 ): Promise<Track> {
-  if (!isLocalTrack(track) || !needsMetadataEnrichment(track, policy)) return track
+  if (!needsMetadataEnrichment(track, policy, { providesLyrics: provider.providesLyrics !== false }))
+    return track
 
   try {
     const candidates = await searchMetadataTracks([track], (query, limit, offset, signal) =>
@@ -471,14 +597,19 @@ function isLocalTrack(track: Track): boolean {
   return track.source === 'local' || track.id.startsWith('local:')
 }
 
-function needsMetadataEnrichment(track: Track, policy: MetadataEnrichmentPolicy): boolean {
-  return (
-    (policy.metadata &&
-      (isMetadataPlaceholder(track.artist) ||
-        isMetadataPlaceholder(track.album) ||
-        !track.genre)) ||
-    (policy.cover && !track.cover) ||
-    (policy.lyrics && (!track.lyrics || !track.translatedLyrics))
+export function needsMetadataEnrichment(
+  track: Track,
+  policy: Partial<MetadataEnrichmentPolicy> | undefined = undefined,
+  options?: { providesLyrics?: boolean }
+): boolean {
+  if (!isLocalTrack(track)) return false
+  const normalized = normalizeMetadataEnrichmentPolicy(policy)
+  const providesLyrics = options?.providesLyrics !== false
+  return Boolean(
+    (normalized.metadata &&
+      (isMetadataPlaceholder(track.artist) || isMetadataPlaceholder(track.album))) ||
+      (normalized.cover && !hasUsableTrackCover(track)) ||
+      (normalized.lyrics && providesLyrics && !track.lyrics)
   )
 }
 

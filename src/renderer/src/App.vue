@@ -110,9 +110,14 @@ import { createHistoryCommandRouter } from './app/historyNavigation.ts'
 import { hasDismissLayer } from '@renderer/app/useDismissLayer'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMotionPreference } from './app/useMotionPreference'
-import { useLanguagePreference } from './app/useLocale'
+import { useLanguagePreference, useLocale } from './app/useLocale'
 import { useIdleMemoryTrim } from './app/useIdleMemoryTrim'
+import {
+  formatAudioError,
+  formatAudioOutputFallbackNotice
+} from './utils/audioErrorPresentation'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
+import { pendingMvPlaybackRequest } from './composables/usePlayingMv'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
 import { scheduleIdleTask, type IdleTaskHandle } from './app/scheduleIdleTask'
@@ -442,6 +447,12 @@ function openPlayingPage(_rect: { x: number; y: number; w: number; h: number }):
   showPlaying()
 }
 
+watch(pendingMvPlaybackRequest, (request) => {
+  if (request && !showPlayingPage.value) {
+    showPlaying()
+  }
+})
+
 function handleCoverClick(rect: { x: number; y: number; w: number; h: number }): void {
   if (showPlayingPage.value) {
     closePlayingPage()
@@ -475,7 +486,7 @@ async function handleOnboardingFinish(result: OnboardingFinishResult): Promise<v
   try {
     await saveOnboardingSettings(result.patch, { core: useCoreConnection(), updateSettings })
   } catch (error) {
-    onboardingSaveError.value = `保存失败，请重试：${error instanceof Error ? error.message : String(error)}`
+    onboardingSaveError.value = `保存失败，请重试：${formatAudioError(error)}`
     return
   } finally {
     onboardingSaving.value = false
@@ -553,9 +564,32 @@ const {
   currentFavorite,
   queueWorkspace,
   queueCount,
+  audioOutputFallbackNotice,
   togglePlay,
   toggleFavorite
 } = usePlayerStore()
+const { t } = useLocale()
+if (audioOutputFallbackNotice) {
+  let lastSeenFallbackNoticeId = 0
+  watch(
+    audioOutputFallbackNotice,
+    (notice) => {
+      if (!notice || notice.id === lastSeenFallbackNoticeId) return
+      lastSeenFallbackNoticeId = notice.id
+      pushNotice({
+        kind: 'warning',
+        sticky: true,
+        dedupeKey: `audio-output-fallback:${notice.id}`,
+        message: formatAudioOutputFallbackNotice(notice),
+        action: {
+          label: t('audio.outputFallback.openSettings'),
+          run: () => openSettingsPage('playback')
+        }
+      })
+    },
+    { immediate: true }
+  )
+}
 const { setAdaptiveMedia, effectiveSurfaceMaterial, effectiveLiquidGlass, effectiveThemeLayers } =
   useThemeStore()
 const navigationProviders = useProviderStore()

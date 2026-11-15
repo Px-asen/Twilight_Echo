@@ -471,14 +471,22 @@ test('library playback controls stay in the title group while the album stage pr
   assert.match(source, /'搜索本专辑歌曲'/)
 })
 
-test('song list context menu exposes play next, view artist, and view album actions', () => {
+test('song list context menu exposes play next, play MV, view artist, and view album actions', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 
   assert.match(source, /playNextTrack/)
   assert.match(source, /playNext: playNextTrack/)
   assert.match(source, /canPlayNextSelectedTrack/)
   assert.match(source, /handlePlayNext/)
   assert.match(source, /下一首播放/)
+
+  assert.match(source, /requestMvPlayback/)
+  assert.match(source, /playMv: playSelectedTrackMv/)
+  assert.match(source, /canPlayMvSelectedTrack/)
+  assert.match(source, /handlePlayMv/)
+  assert.match(source, /播放 MV/)
+  assert.match(appSource, /watch\(pendingMvPlaybackRequest/)
 
   assert.match(source, /canViewSelectedContext/)
   assert.match(source, /handleViewArtist/)
@@ -755,4 +763,16 @@ test('genre mosaic keeps keyboard focus, image-free fallbacks, and a single-colu
     /@container te-song-list \(max-width: 440px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/
   )
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.genre-card-bg/)
+})
+
+test('song list unified search suppresses empty-state and status text flicker while results exist or load', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /if \(unifiedSearch\.loading\.value && unifiedSearch\.items\.value\.length === 0\)[\s\S]*?return '正在同时搜索本地库和在线音源'/
+  )
+  assert.match(
+    source,
+    /v-else-if="\s*tableTrackCount === 0 && !\(shouldUseUnifiedSearch && unifiedSearch\.loading\.value\)\s*"/
+  )
 })

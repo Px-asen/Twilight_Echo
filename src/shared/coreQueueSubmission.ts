@@ -13,9 +13,12 @@ export type CoreQueueTrackInput =
         cueRange?: CueRange
       }
     }
-  | {
+    | {
       kind: 'provider'
-      track: Pick<TrackData, 'id' | 'title' | 'artist' | 'album' | 'duration' | 'ncmSongId'> & {
+      track: Pick<
+        TrackData,
+        'id' | 'title' | 'artist' | 'album' | 'duration' | 'ncmSongId' | 'mvId'
+      > & {
         source: string
         cover?: string | null
       }

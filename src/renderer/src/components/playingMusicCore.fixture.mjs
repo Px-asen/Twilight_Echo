@@ -71,6 +71,13 @@ export async function installPlayingMusicCoreFixture() {
           case 'lyrics.exportDraft': value = await lyrics.exportDraft(payload.contents); break
           case 'playback.seek':
             snapshot = { ...snapshot, playback: { ...snapshot.playback, position: payload.position } }; publish(); break
+          case 'playback.suppressAudio':
+            fixture.audioSuppressed = Boolean(payload.suppressed); break
+          case 'player.mv':
+            value = typeof fixture.resolveMv === 'function'
+              ? await fixture.resolveMv(payload)
+              : { current: { trackId: payload.trackId, occurrenceId: payload.occurrenceId ?? null }, available: false, stream: null }
+            break
           case 'playback.diagnostics': value = { status: 'native' }; break
           case 'queue.page': value = { revision: snapshot.queue.revision, total: 1, offset: 0, items: [{ position: 0, queueEntryId: snapshot.queue.occurrenceId, track: snapshot.track }] }; break
           case 'visualization.subscribe': {

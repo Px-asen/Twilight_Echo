@@ -272,6 +272,8 @@ export interface TwilightProviderCallOptions {
   idempotencyKey?: string
   /** Cancels queued or active plugin RPC work and propagates cancellation to the provider host. */
   signal?: AbortSignal
+  /** Marks automated background metadata/search calls so foreground playback retains headroom. */
+  background?: boolean
 }
 
 const STATE_FILE = 'plugin-state.json'
@@ -819,7 +821,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private identityContextChanged(pluginId: string): void {
-    this.identityContexts.set(pluginId, (this.identityContexts.get(pluginId) ?? 0) + 1)
+    this.identityContexts?.set(pluginId, (this.identityContexts.get(pluginId) ?? 0) + 1)
     for (const plugin of this.contributingPlugins())
       if (plugin.descriptor.id === pluginId)
         for (const provider of plugin.providers) this.emit('provider-context', provider.id)
@@ -929,9 +931,36 @@ export class TwilightPluginManager extends EventEmitter {
       this.identityContextChanged(running.descriptor.id)
       this.accountContextChanged(running.descriptor.id)
     }
+    const highPriority = [
+      'getPlaybackUrl',
+      'getTrackMv',
+      'getLyrics',
+      'fetchUserLibrary',
+      'fetchLikedTracks',
+      'fetchLikedTracksPage',
+      'fetchPlaylistTracks',
+      'fetchPlaylistTracksPage',
+      'fetchIntelligenceList',
+      'fetchPersonalFm',
+      'checkLogin',
+      'getProfile',
+      'logout',
+      'openOfficialLogin',
+      'sendCaptcha',
+      'loginByPhonePassword',
+      'loginByPhoneCaptcha',
+      'loginByEmailPassword',
+      'loginWithServer',
+      'getQrLogin',
+      'getQrKey',
+      'getQrImage',
+      'checkQrLogin'
+    ].includes(method)
     const result = this.rpcCalls.request<unknown, ProviderRpcMetadata>({
       requestId,
       pluginId: running.descriptor.id,
+      circuitKey: `${running.descriptor.id}:provider:${normalizedProviderId}:${method}`,
+      priority: options.background ? 'low' : highPriority ? 'high' : 'normal',
       kind: 'provider',
       timeoutMs: getProviderCallTimeoutMs(method),
       metadata: {
@@ -1492,6 +1521,16 @@ export class TwilightPluginManager extends EventEmitter {
     })
     child.stdout?.on('data', (chunk) => this.appendLog(descriptor, 'info', chunk.toString()))
     child.stderr?.on('data', (chunk) => this.appendLog(descriptor, 'error', chunk.toString()))
+    const wakingSnapshot = this.hibernated.get(descriptor.id)
+    const previousProvidersSignature = wakingSnapshot
+      ? JSON.stringify(
+          (wakingSnapshot.providers ?? []).map((provider) => ({
+            provider,
+            available: this.getProviderHealth(provider.id).available
+          }))
+        )
+      : null
+    const previousUiSignature = wakingSnapshot ? JSON.stringify(wakingSnapshot.ui ?? []) : null
     const activation = this.waitForActivation(child, descriptor)
     child.postMessage({
       kind: 'activate',
@@ -1508,7 +1547,26 @@ export class TwilightPluginManager extends EventEmitter {
     try {
       await activation
       running.activating = false
-      this.hibernated.delete(descriptor.id)
+      const wasHibernated = this.hibernated.delete(descriptor.id)
+      if (wasHibernated) {
+        const nextProvidersSignature = JSON.stringify(
+          running.providers.map((provider) => ({
+            provider,
+            available: this.getProviderHealth(provider.id).available
+          }))
+        )
+        const providersChanged = nextProvidersSignature !== previousProvidersSignature
+        const uiChanged = JSON.stringify(running.ui) !== previousUiSignature
+        if (providersChanged) {
+          this.identityContextChanged(descriptor.id)
+          for (const provider of wakingSnapshot?.providers ?? []) {
+            if (!running.providers.some((candidate) => candidate.id === provider.id)) {
+              this.emit('provider-context', provider.id)
+            }
+          }
+        }
+        if (providersChanged || uiChanged) this.emit('changed')
+      }
       if (options.persistState !== false) this.markStarted(descriptor)
       this.appendLog(descriptor, 'info', '插件已激活')
       if (!running.trial) {
@@ -1962,6 +2020,7 @@ export class TwilightPluginManager extends EventEmitter {
             [
               'search',
               'playbackUrl',
+              'mv',
               'lyrics',
               'cover',
               'playlist',
@@ -1998,8 +2057,10 @@ export class TwilightPluginManager extends EventEmitter {
     const existingIndex = running.providers.findIndex((candidate) => candidate.id === providerId)
     if (existingIndex >= 0) running.providers[existingIndex] = provider
     else running.providers.push(provider)
-    this.identityContextChanged(pluginId)
-    this.emit('changed')
+    if (!this.hibernated?.has(pluginId)) {
+      this.identityContextChanged(pluginId)
+      this.emit('changed')
+    }
     return provider
   }
 
@@ -2186,7 +2247,7 @@ export class TwilightPluginManager extends EventEmitter {
         message.args[0]
       )
       running.ui.push(contribution)
-      this.emit('changed')
+      if (!this.hibernated?.has(pluginId)) this.emit('changed')
       return contribution
     }
     if (message.method === 'registerTheme') {
@@ -2354,7 +2415,8 @@ export class TwilightPluginManager extends EventEmitter {
       } catch (error) {
         this.rpcCalls.complete(pluginId, message.requestId, {
           ok: false,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
+          tripCircuit: false
         })
         return
       }
@@ -2447,9 +2509,15 @@ export class TwilightPluginManager extends EventEmitter {
     const error = staleBundledProvider
       ? `${message.error}。内置音源插件尚未加载最新代码，请重启应用。`
       : message.error
+    const hostRuntimeBroken =
+      staleBundledProvider || /runtime is not initialized/i.test(message.error)
+    // A responsive plugin host returning a normal business or upstream error
+    // (login required, upstream rate-limit, missing track, invalid parameter)
+    // proves the RPC channel is alive and must not open the host RPC circuit.
     const completion = this.rpcCalls.complete<ProviderRpcMetadata>(pluginId, message.requestId, {
       ok: false,
-      error
+      error,
+      tripCircuit: hostRuntimeBroken
     })
     if (completion.status !== 'settled') return
     this.recordProviderCallFailure(

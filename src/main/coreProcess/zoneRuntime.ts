@@ -102,6 +102,8 @@ export async function createZoneRuntime(options: {
   const report = (error: unknown) => console.error('[core.zone]', zone.id, error)
   audio.on('error', report)
   const output = new CoreAudioOutputService({ engine: audio, settings, changed })
+  audio.on('audio-device-options-changed', () => output.changed())
+  audio.on('device-profiles-changed', () => output.changed())
   const dsp = new CoreDspService({ engine: audio, configuration: output, settings,
     preferences: database, assets, catalog, platform, temporaryDirectory: environment.temporaryDirectory,
     uploadDirectory: join(directory, 'dsp-upload-staging'),

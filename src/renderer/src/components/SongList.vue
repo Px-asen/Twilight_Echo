@@ -96,6 +96,7 @@ import ThemeIcon from './ThemeIcon.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
 import { useSongListContextMenu } from './song-list/useSongListContextMenu'
+import { requestMvPlayback } from '../composables/usePlayingMv'
 import { useSongListGridRendering } from './song-list/useSongListGridRendering'
 import { usePlaylistLifecycleActions } from './song-list/usePlaylistLifecycleActions.ts'
 import { useSongListSearch } from './song-list/useSongListSearch'
@@ -1139,7 +1140,8 @@ const unifiedSearchHealthItems = computed(() =>
 
 const unifiedSearchStatusText = computed(() => {
   if (!showUnifiedSearchStatus.value) return ''
-  if (unifiedSearch.loading.value) return '正在同时搜索本地库和在线音源'
+  if (unifiedSearch.loading.value && unifiedSearch.items.value.length === 0)
+    return '正在同时搜索本地库和在线音源'
   if (unifiedSearch.error.value) return `统一搜索失败：${unifiedSearch.error.value}`
   const providerCount = unifiedSearchHealthItems.value.length
   const failedCount = unifiedSearchHealthItems.value.filter((item) => item.state === 'error').length
@@ -1675,6 +1677,22 @@ async function handleMetadataRematch(track: Track): Promise<void> {
   }
 }
 
+function playSelectedTrackMv(track: Track): void {
+  if (props.previewTracks) return
+  requestMvPlayback(track.id)
+  if (currentTrack.value?.id === track.id) {
+    if (!playbackStore.isPlaying.value) {
+      void playbackStore.togglePlay()
+    }
+    return
+  }
+  if (track.source === 'network' && !databaseTableEnabled.value) {
+    void playNetworkTrack(track)
+    return
+  }
+  playTableTrack(track)
+}
+
 const {
   showContextMenu,
   menuX,
@@ -1682,7 +1700,9 @@ const {
   selectedTrack,
   canViewSelectedContext,
   canPlayNextSelectedTrack,
+  canPlayMvSelectedTrack,
   handlePlayNext,
+  handlePlayMv,
   handleViewArtist,
   handleViewAlbum,
   showPlaylistSubmenu,
@@ -1722,6 +1742,7 @@ const {
   createPlaylist,
   deletePlaylist,
   playNext: playNextTrack,
+  playMv: playSelectedTrackMv,
   viewArtist: (track) => {
     const artist = track.artist.trim()
     if (!artist) return
@@ -4626,7 +4647,12 @@ watch(
           >
             <p class="empty-text">正在读取曲库…</p>
           </div>
-          <div v-else-if="tableTrackCount === 0" class="empty-state">
+          <div
+            v-else-if="
+              tableTrackCount === 0 && !(shouldUseUnifiedSearch && unifiedSearch.loading.value)
+            "
+            class="empty-state"
+          >
             <div class="empty-icon">
               <ThemeIcon class="empty-library-icon" icon-slot="library.empty" />
             </div>
@@ -4961,6 +4987,19 @@ watch(
                 >
                   <PlaybackIcon name="next" />
                   <span>下一首播放</span>
+                </div>
+                <div
+                  v-if="canPlayMvSelectedTrack && contextActionCount <= 1"
+                  class="menu-item"
+                  role="menuitem"
+                  tabindex="0"
+                  data-te-interactive
+                  @click="handlePlayMv"
+                  @keydown.enter.prevent="handlePlayMv"
+                  @keydown.space.prevent="handlePlayMv"
+                >
+                  <i class="pi pi-video"></i>
+                  <span>播放 MV</span>
                 </div>
                 <div
                   class="menu-item"

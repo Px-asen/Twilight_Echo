@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { documentMotionMode, scrollMotionBehavior } from '../app/scrollMotion'
 import GeneralSettingsSection from './settings-page/GeneralSettingsSection.vue'
+import OverviewSettingsSection from './settings-page/OverviewSettingsSection.vue'
+import InterfaceSettingsSection from './settings-page/InterfaceSettingsSection.vue'
+import StorageSettingsSection from './settings-page/StorageSettingsSection.vue'
 import SettingsQuickSetup from './settings-page/SettingsQuickSetup.vue'
 import AppearanceSettingsSection from './settings-page/AppearanceSettingsSection.vue'
 import { openAppearanceEditor } from '../composables/appearanceEditorState.ts'
@@ -27,6 +30,7 @@ import {
   resolveSettingsSearchEntry,
   settingsDisclosurePath,
   settingsAnchorDisclosurePath,
+  settingsSectionInfo,
   type BooleanSettingKey,
   type SettingsSearchEntry,
   sections,
@@ -102,9 +106,7 @@ const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
 
 const disclosures = provideSettingsDisclosures()
 const activeSection = ref<SectionKey>(normalizeSettingsSection(props.initialSection))
-const activeSectionInfo = computed(
-  () => sections.find((section) => section.key === activeSection.value) ?? sections[0]
-)
+const activeSectionInfo = computed(() => settingsSectionInfo(activeSection.value))
 watch(activeSection, (section) => emit('sectionChange', section), { flush: 'sync' })
 const pageRef = ref<HTMLElement | null>(null)
 
@@ -433,6 +435,13 @@ function navigateQuickSetup(id: string): void {
 const activeCachePath = computed(
   () => paths.value?.activeCachePath ?? settings.value.cachePath ?? ''
 )
+const storageAttentionText = computed(
+  () =>
+    storageError.value ||
+    (clearingCache.value || clearingBpmAnalysisCache.value || clearingLoudnessAnalysisCache.value
+      ? '正在清理缓存…'
+      : '')
+)
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
@@ -446,11 +455,25 @@ watch(
   },
   { immediate: true }
 )
+
+interface SettingsSearchCandidate extends SettingsSearchEntry {
+  categoryOnly?: boolean
+}
+
+const categorySearchCandidates = computed<SettingsSearchCandidate[]>(() =>
+  sections.map((section) => ({
+    section: section.key,
+    title: section.label,
+    terms: `${section.description} ${section.keywords ?? ''}`.trim(),
+    categoryOnly: true
+  }))
+)
+
 const activeSearchIndex = ref(-1)
-const filteredSearchResults = computed(() => {
+const filteredSearchResults = computed<SettingsSearchCandidate[]>(() => {
   const query = settingsSearchQuery.value.trim().toLowerCase()
   if (!query) return []
-  const matches = SETTINGS_SEARCH_INDEX.map((entry) => {
+  const itemMatches = SETTINGS_SEARCH_INDEX.map((entry) => {
     const title = entry.title.toLowerCase()
     const terms = entry.terms.toLowerCase()
     let score = 0
@@ -458,12 +481,28 @@ const filteredSearchResults = computed(() => {
     else if (title.startsWith(query)) score = 3
     else if (title.includes(query)) score = 2
     else if (terms.includes(query)) score = 1
-    return { entry, score }
-  })
+    return { entry: entry as SettingsSearchCandidate, score }
+  }).filter(({ score }) => score > 0)
+
+  const seenExactTitles = new Set(
+    itemMatches.map(({ entry }) => `${entry.section}:${entry.title.toLowerCase()}`)
+  )
+  const sectionMatches = categorySearchCandidates.value
+    .filter((candidate) => !seenExactTitles.has(`${candidate.section}:${candidate.title.toLowerCase()}`))
+    .map((entry) => {
+      const title = entry.title.toLowerCase()
+      const terms = entry.terms.toLowerCase()
+      let score = 0
+      if (title === query) score = 2.5
+      else if (title.startsWith(query) || title.includes(query)) score = 1.5
+      else if (terms.includes(query)) score = 0.5
+      return { entry, score }
+    })
     .filter(({ score }) => score > 0)
+
+  return [...itemMatches, ...sectionMatches]
     .sort((a, b) => b.score - a.score)
     .map(({ entry }) => entry)
-  return matches
 })
 // 结果集变化时修正选中索引，避免越界
 watch(filteredSearchResults, (matches) => {
@@ -840,6 +879,11 @@ function revealActiveNavigationItem(): void {
     const strip = pageRef.value?.querySelector<HTMLElement>('.settings-nav-categories')
     const item = strip?.querySelector<HTMLElement>('[aria-current="page"]')
     if (!strip || !item || !strip.getClientRects().length) return
+    if (activeSection.value === sections[0]?.key) {
+      strip.scrollTop = 0
+      strip.scrollLeft = 0
+      return
+    }
     const containerRect = strip.getBoundingClientRect()
     const itemRect = item.getBoundingClientRect()
     if (itemRect.top < containerRect.top) strip.scrollTop += itemRect.top - containerRect.top
@@ -955,9 +999,18 @@ function focusSetting(target: HTMLElement): void {
 }
 
 async function scrollToSearchResult(
-  input: SettingsSearchEntry,
+  input: SettingsSearchCandidate,
   keyboardNavigation = false
 ): Promise<void> {
+  if (input.categoryOnly) {
+    scrollToSection(normalizeSettingsSection(input.section), keyboardNavigation)
+    await nextTick()
+    const sectionTarget = pageRef.value?.querySelector<HTMLElement>(
+      `#${normalizeSettingsSection(input.section)}`
+    )
+    if (sectionTarget) focusSetting(sectionTarget)
+    return
+  }
   const revision = ++settingsNavigationRevision
   const entry = resolveSettingsSearchEntry(input)
   settingsSearchQuery.value = ''
@@ -1211,7 +1264,7 @@ onBeforeUnmount(() => {
           >
             <button
               v-for="(result, index) in filteredSearchResults"
-              :key="`${result.section}:${result.title}`"
+              :key="`${result.section}:${result.categoryOnly ? 'category' : 'item'}:${result.id ?? result.title}`"
               :id="`settings-search-result-${index}`"
               type="button"
               tabindex="-1"
@@ -1221,9 +1274,11 @@ onBeforeUnmount(() => {
               @mouseenter="activeSearchIndex = index"
               @click="scrollToSearchResult(result, $event.detail === 0)"
             >
-              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
+              <i :class="settingsSectionInfo(result.section).icon"></i>
               <span class="settings-nav-result-title">{{ result.title }}</span>
-              <small>{{ sections.find((section) => section.key === result.section)?.label }}</small>
+              <small>{{
+                result.categoryOnly ? '分类' : settingsSectionInfo(result.section).label
+              }}</small>
             </button>
           </div>
           <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty" role="status">
@@ -1291,6 +1346,19 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
+        <OverviewSettingsSection
+          v-show="activeSection === 'overview'"
+          :theme-summary="quickSetupThemeName"
+          :device-summary="quickSetupDeviceName"
+          :library-scan-is-active="libraryScanIsActive"
+          :library-scan-progress-text="libraryScanProgressText"
+          :formatted-cache-size="formattedCacheSize"
+          :app-version="appVersion"
+          :set-close-behavior="setCloseBehavior"
+          @select-section="scrollToSection"
+          @toggle-desktop-lyrics="toggleDesktopLyrics"
+          @open-equalizer="emit('openEqualizer')"
+        />
         <GeneralSettingsSection
           v-show="activeSection === 'general'"
           :track-activation-mode-options="trackActivationModeOptions"
@@ -1305,30 +1373,13 @@ onBeforeUnmount(() => {
           v-show="activeSection === 'appearance'"
           @open-appearance="emit('openAppearance')"
         />
-        <section
-          v-show="activeSection === 'playback'"
-          id="playback"
-          class="glass-card preview-section"
-        >
-          <div class="section-title-row">
-            <i class="pi pi-volume-up" aria-hidden="true" />
-            <h2>播放与音效</h2>
-          </div>
-          <p class="settings-section-description">调整播放习惯、输出设备和声音处理。</p>
-          <PlaybackSettingsSection
-            :auto-analyze-bpm="settings.autoAnalyzeBpm"
-            @toggle-auto-analyze-bpm="toggleAutoAnalyzeBpm"
-            @export-audio-diagnostics="exportAudioDiagnostics"
-          />
-          <DspSettingsSection @open-equalizer="emit('openEqualizer')" />
-          <BridgeOutputPanel manage />
-        </section>
+        <InterfaceSettingsSection v-show="activeSection === 'interface'" />
         <section v-show="activeSection === 'lyrics'" id="lyrics" class="glass-card preview-section">
           <div class="section-title-row">
             <i class="pi pi-align-left" aria-hidden="true" />
             <h2>歌词</h2>
           </div>
-          <p class="settings-section-description">设置歌词来源与播放页、桌面上的显示方式。</p>
+          <p class="settings-section-description">歌词来源、播放页歌词样式与桌面歌词。</p>
           <div class="section-block">
             <h3>歌词来源</h3>
             <div class="setting-list">
@@ -1363,15 +1414,28 @@ onBeforeUnmount(() => {
             @update="updateDesktopLyrics"
           />
         </section>
+        <section
+          v-show="activeSection === 'playback'"
+          id="playback"
+          class="glass-card preview-section"
+        >
+          <div class="section-title-row">
+            <i class="pi pi-volume-up" aria-hidden="true" />
+            <h2>播放与音效</h2>
+          </div>
+          <p class="settings-section-description">
+            播放习惯、输出设备、音频引擎与 DSP 声音处理。
+          </p>
+          <PlaybackSettingsSection
+            :auto-analyze-bpm="settings.autoAnalyzeBpm"
+            @toggle-auto-analyze-bpm="toggleAutoAnalyzeBpm"
+            @export-audio-diagnostics="exportAudioDiagnostics"
+          />
+          <DspSettingsSection @open-equalizer="emit('openEqualizer')" />
+          <BridgeOutputPanel manage />
+        </section>
         <LibrarySettingsSection
           v-show="activeSection === 'library'"
-          :formatted-cache-size="formattedCacheSize"
-          :storage-attention="
-            storageError ||
-            (clearingCache || clearingBpmAnalysisCache || clearingLoudnessAnalysisCache
-              ? '正在清理缓存…'
-              : '')
-          "
           :library-watcher-status="libraryWatcherStatus"
           :library-scan-status="libraryScanStatus"
           :library-scan-is-active="libraryScanIsActive"
@@ -1386,8 +1450,6 @@ onBeforeUnmount(() => {
           :library-reset-pending="libraryResetPending"
           :add-library-folder="addLibraryFolderAndRestore"
           :remove-library-folder="removeLibraryFolder"
-          :choose-download-folder="chooseDownloadFolder"
-          :reset-download-folder="resetDownloadFolder"
           :toggle-setting="toggleSetting"
           :set-genre-separators="setGenreSeparators"
           :watcher-state-label="watcherStateLabel"
@@ -1399,6 +1461,12 @@ onBeforeUnmount(() => {
           :cancel-active-library-scan="cancelActiveLibraryScan"
           :reset-local-library="resetLocalLibrary"
           :cancel-active-library-metadata-enrichment="cancelActiveLibraryMetadataEnrichment"
+        />
+        <StorageSettingsSection
+          v-show="activeSection === 'storage'"
+          :storage-attention="storageAttentionText"
+          :choose-download-folder="chooseDownloadFolder"
+          :reset-download-folder="resetDownloadFolder"
         >
           <CacheSettingsSection
             :active-cache-path="activeCachePath"
@@ -1418,12 +1486,22 @@ onBeforeUnmount(() => {
             @confirm-clear-loudness-analysis-cache="confirmClearLoudnessAnalysisCache"
             @confirm-clear-cache="confirmClearCache"
           />
-        </LibrarySettingsSection>
+        </StorageSettingsSection>
         <ConnectionsSettingsSection
           v-show="activeSection === 'connections'"
           :update-settings="updateSettings"
           :toggle-setting="toggleSetting"
+        />
+        <section
+          v-show="activeSection === 'hotkeys'"
+          id="hotkeys"
+          class="glass-card preview-section"
         >
+          <div class="section-title-row">
+            <i class="pi pi-bolt" aria-hidden="true" />
+            <h2>快捷键</h2>
+          </div>
+          <p class="settings-section-description">应用内快捷键、全局组合键与系统媒体键。</p>
           <ShortcutsSettingsSection
             :global-shortcuts="settings.globalShortcuts"
             :shortcut-statuses="shortcutStatuses"
@@ -1433,7 +1511,7 @@ onBeforeUnmount(() => {
             @update:shortcut-bindings="onUpdateShortcutBindings"
             @update:shortcut-enabled="onUpdateShortcutEnabled"
           />
-        </ConnectionsSettingsSection>
+        </section>
         <SystemSettingsSection
           v-show="activeSection === 'system'"
           :plugin-settings-panels="pluginSettingsPanels"
@@ -1452,12 +1530,22 @@ onBeforeUnmount(() => {
           :submit-plugin-settings-form="submitPluginSettingsForm"
           :reset-plugin-settings-form="resetPluginSettingsForm"
           :run-plugin-settings-action="runPluginSettingsAction"
+        />
+        <section
+          v-show="activeSection === 'updates'"
+          id="updates"
+          class="glass-card preview-section"
         >
+          <div class="section-title-row">
+            <i class="pi pi-info-circle" aria-hidden="true" />
+            <h2>关于</h2>
+          </div>
+          <p class="settings-section-description">版本信息、软件更新与项目支持。</p>
           <AboutSettingsSection
             :app-version="appVersion"
             @export-audio-diagnostics="exportAudioDiagnostics"
           />
-        </SystemSettingsSection>
+        </section>
       </div>
     </div>
   </main>
@@ -1782,6 +1870,24 @@ html[data-theme='dark'] .settings-preview-page .sponsor-card h3 {
 html[data-theme='dark'] .settings-preview-page .restart-banner span,
 html[data-theme='dark'] .settings-preview-page .sponsor-card p {
   color: rgba(253, 230, 138, 0.78);
+}
+
+html[data-theme='dark'] .settings-preview-page .storage-attention-banner {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+}
+
+html[data-theme='dark'] .settings-preview-page .overview-status-card,
+html[data-theme='dark'] .settings-preview-page .overview-category-card {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+}
+
+html[data-theme='dark'] .settings-preview-page .overview-status-card:hover,
+html[data-theme='dark'] .settings-preview-page .overview-category-card:hover {
+  border-color: rgba(var(--te-primary-rgb), 0.36);
+  background: var(--te-settings-control-bg);
 }
 
 html[data-theme='dark'] .settings-preview-page .engine-error {

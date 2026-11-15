@@ -1440,3 +1440,140 @@ test('callProvider arriving mid-hibernation waits for dying host shutdown and wa
   await harness.manager.destroy()
 })
 
+test('waking a hibernated provider+ui plugin stays silent when contributions match and emits once when they change', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'twilight-wake-silent-'))
+  t.after(() => {
+    assert.equal(path.dirname(directory), path.resolve(tmpdir()))
+    assert.ok(path.basename(directory).startsWith('twilight-wake-silent-'))
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  const pluginId = 'com.example.silent-wake'
+  const pluginDir = path.join(directory, 'plugins', pluginId, '1.0.0')
+  fs.mkdirSync(pluginDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(pluginDir, 'plugin.json'),
+    JSON.stringify(
+      {
+        id: pluginId,
+        name: 'Silent Wake Provider',
+        version: '1.0.0',
+        description: 'Tests silent provider+ui wake',
+        author: 'Test',
+        license: 'MIT',
+        main: 'index.mjs',
+        engines: { twilightEcho: '*' },
+        type: ['provider', 'ui'],
+        permissions: ['network', 'ui:inject'],
+        apiVersion: 3
+      },
+      null,
+      2
+    )
+  )
+  fs.writeFileSync(path.join(pluginDir, 'index.mjs'), 'export function activate() {}\n')
+  fs.writeFileSync(
+    path.join(directory, 'plugin-state.json'),
+    JSON.stringify(
+      {
+        [pluginId]: {
+          enabled: true,
+          installedAt: '2026-10-08T00:00:00.000Z',
+          updatedAt: '2026-10-08T00:00:00.000Z',
+          source: 'directory',
+          activeVersion: '1.0.0'
+        }
+      },
+      null,
+      2
+    )
+  )
+
+  let supportedMethods = ['searchSongs']
+  const harness = await createRealLifecycleManager(t, {
+    userData: directory,
+    hostIdleTimeoutMs: 15_000,
+    onActivate: (child) => {
+      child.emit('message', {
+        kind: 'api-call',
+        requestId: 'reg-provider',
+        namespace: 'providers',
+        method: 'register',
+        args: [
+          {
+            id: 'silent',
+            name: 'Silent',
+            capabilities: ['search'],
+            supportedMethods
+          }
+        ]
+      })
+      child.emit('message', {
+        kind: 'api-call',
+        requestId: 'reg-ui',
+        namespace: 'extensions',
+        method: 'registerUi',
+        args: [
+          {
+            id: 'silent-panel',
+            kind: 'sidebarPage',
+            title: 'Silent Panel',
+            command: 'silent.open',
+            renderMode: 'command'
+          }
+        ]
+      })
+      child.emit('message', { kind: 'activated', pluginId })
+    }
+  })
+
+  await harness.manager.initialize()
+  assert.equal(harness.children.length, 1)
+
+  t.mock.timers.tick(15_000)
+  await flushAsync()
+  assert.equal(harness.manager.isHibernated(pluginId), true)
+
+  let changedCount = 0
+  const providerContextEvents = []
+  harness.manager.on('changed', () => {
+    changedCount++
+  })
+  harness.manager.on('provider-context', (providerId) => {
+    providerContextEvents.push(providerId)
+  })
+  const contextBeforeUnchangedWake = harness.manager.providerIdentityContext('silent')
+
+  assert.equal(
+    await harness.manager.callProvider('silent', 'searchSongs', ['moon']),
+    'silent.searchSongs:["moon"]'
+  )
+  assert.equal(harness.children.length, 2)
+  assert.equal(harness.manager.isHibernated(pluginId), false)
+  assert.equal(changedCount, 0, 'unchanged wake must not bump pluginsRevision via changed')
+  assert.deepEqual(
+    providerContextEvents,
+    [],
+    'unchanged wake must not invalidate provider-context mid-search'
+  )
+  assert.equal(harness.manager.providerIdentityContext('silent'), contextBeforeUnchangedWake)
+
+  t.mock.timers.tick(15_000)
+  await flushAsync()
+  assert.equal(harness.manager.isHibernated(pluginId), true)
+
+  supportedMethods = ['searchSongs', 'getLyrics']
+  assert.equal(
+    await harness.manager.callProvider('silent', 'searchSongs', ['star']),
+    'silent.searchSongs:["star"]'
+  )
+  assert.equal(harness.children.length, 3)
+  assert.equal(changedCount, 1, 'changed wake contributions emit changed once after activation')
+  assert.deepEqual(providerContextEvents, ['silent'])
+  assert.notEqual(harness.manager.providerIdentityContext('silent'), contextBeforeUnchangedWake)
+
+  await harness.manager.destroy()
+})
+
+

@@ -195,7 +195,13 @@ test('presentError classifies raw network noise when no sentinel is present', ()
     ['net::ERR_CONNECTION_REFUSED', /网络连接失败/, /network/i],
     ['ETIMEDOUT', /网络连接失败/, /network/i],
     ['HTTP 401 Unauthorized', /登录状态已失效/, /sign in|log in|session/i],
-    ['429 Too Many Requests', /请求过于频繁/, /too many|slow down|frequent/i]
+    ['429 Too Many Requests', /请求过于频繁/, /too many|slow down|frequent/i],
+    [
+      'Plugin com.twilightecho.provider.ncm RPC circuit is open; retry after 522ms.',
+      /请求过于频繁/,
+      /too many|slow down|frequent/i
+    ],
+    ['NCM_METADATA_RATE_LIMITED', /请求过于频繁/, /too many|slow down|frequent/i]
   ]
   for (const [raw, zhPattern, enPattern] of cases) {
     assert.match(presentError('zh-CN', new Error(raw), 'error.generic.unknown'), zhPattern)

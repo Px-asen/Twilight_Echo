@@ -23,7 +23,8 @@ import { parseAppError, stripAppErrorSentinel, unwrapRemoteInvokeMessage } from 
 const NETWORK_PATTERN =
   /fetch failed|network|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ERR_NETWORK|ERR_INTERNET|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|timed? ?out/i
 const UNAUTHORIZED_PATTERN = /\b(?:401|403)\b|unauthoriz|forbidden|need login|not login/i
-const RATE_LIMIT_PATTERN = /\b429\b|too many requests/i
+const RATE_LIMIT_PATTERN =
+  /\b429\b|too many requests|rate.?limit|NCM_METADATA_RATE_LIMITED|RPC circuit is (?:open|half-open)|RPC queue is full/i
 const HAS_CJK = /[一-鿿]/
 
 export interface PresentErrorOptions {
