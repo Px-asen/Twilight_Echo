@@ -74,7 +74,7 @@ test('stops a batch after two consecutive provider failures', async () => {
 
 test('a newer schedule cancels the batch it replaced', async () => {
   const reads: string[] = []
-  let release: (() => void) | null = null
+  const gate: { abort?: () => void } = {}
   const queue = createSourcePrefetchQueue({
     key: (value) => value.id,
     now: () => 1_000,
@@ -83,7 +83,7 @@ test('a newer schedule cancels the batch it replaced', async () => {
       new Promise<PreparedPlaybackSource>((resolve, reject) => {
         reads.push(value.id)
         if (value.id === 'a') {
-          release = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          gate.abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
           return
         }
         resolve({
@@ -96,7 +96,7 @@ test('a newer schedule cancels the batch it replaced', async () => {
   await new Promise<void>((resolve) => setImmediate(resolve))
   queue.schedule([track('c')])
   await settle()
-  release?.()
+  gate.abort?.()
   await settle()
   assert.equal(queue.take(track('a')), null)
   assert.equal(queue.take(track('c'))?.resolved.source, 'https://audio.test/c')
