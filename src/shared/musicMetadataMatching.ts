@@ -94,7 +94,9 @@ export function buildMetadataMatchCandidates(
         providerId,
         sourceLabel: providerId || 'unknown',
         fills: {
-          cover: !metadataAvailable(localTrack.cover) && metadataAvailable(candidate.cover),
+          cover:
+            !hasUsableTrackCover(localTrack) &&
+            (metadataAvailable(candidate.cover) || metadataAvailable(candidate.coverSource)),
           lyrics: !metadataAvailable(localTrack.lyrics) && metadataAvailable(candidate.lyrics),
           translatedLyrics:
             !metadataAvailable(localTrack.translatedLyrics) &&
@@ -112,6 +114,15 @@ export function buildMetadataMatchCandidates(
     .map(({ index: _index, ...match }) => match)
 }
 
+export function hasUsableTrackCover(
+  track: Pick<Track, 'cover' | 'coverSource'>
+): boolean {
+  if (metadataAvailable(track.coverSource)) return true
+  if (typeof track.cover !== 'string' || !metadataAvailable(track.cover)) return false
+  // Session-scoped remote media handles expire on restart unless backed by a durable coverSource.
+  return !track.cover.trim().startsWith('twilight-media://')
+}
+
 export function enrichLocalTrackMetadata(
   localTrack: Track,
   match: MetadataMatch | null,
@@ -119,6 +130,10 @@ export function enrichLocalTrackMetadata(
 ): Track {
   if (!match) return localTrack
   const metadata = match.track
+  const shouldFillCover =
+    policy.cover &&
+    !hasUsableTrackCover(localTrack) &&
+    (metadataAvailable(metadata.cover) || metadataAvailable(metadata.coverSource))
   const nextLyrics = policy.lyrics
     ? (localTrack.lyrics ?? metadata.lyrics ?? null)
     : localTrack.lyrics
@@ -140,7 +155,12 @@ export function enrichLocalTrackMetadata(
         ? metadata.album
         : localTrack.album,
     genre: policy.metadata ? localTrack.genre || metadata.genre || null : localTrack.genre,
-    cover: policy.cover ? (localTrack.cover ?? metadata.cover ?? null) : localTrack.cover,
+    cover: shouldFillCover
+      ? (metadata.cover ?? metadata.coverSource ?? null)
+      : localTrack.cover,
+    ...(shouldFillCover && metadataAvailable(metadata.coverSource)
+      ? { coverSource: metadata.coverSource }
+      : {}),
     lyrics: nextLyrics,
     translatedLyrics: nextTranslatedLyrics,
     lyricsSource: resolveEnrichedLyricSource(

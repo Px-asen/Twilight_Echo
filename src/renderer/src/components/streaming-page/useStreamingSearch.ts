@@ -204,16 +204,35 @@ export function useStreamingSearch({
   let lastRequestFingerprint = ''
   let activeSearchController: AbortController | null = null
   let refreshQueued = false
+  let refreshPending = false
   let restoring = false
   let songPlayback: { snapshot: SearchRequestSnapshot; query: LibraryQuery } | null = null
 
   function refreshSearch(): void {
-    if (refreshQueued || !isSearching.value) return
+    if (refreshQueued || !isSearching.value || searchDebounceTimer !== null || searchError.value) {
+      return
+    }
+    if (activeSearchController) {
+      refreshPending = true
+      return
+    }
     refreshQueued = true
     const requestId = latestRequestId
     queueMicrotask(() => {
       refreshQueued = false
-      if (requestId === latestRequestId && isSearching.value) void performSearch(searchQuery.value)
+      if (
+        requestId !== latestRequestId ||
+        !isSearching.value ||
+        searchDebounceTimer !== null ||
+        searchError.value
+      ) {
+        return
+      }
+      if (activeSearchController) {
+        refreshPending = true
+        return
+      }
+      void runSearch(searchQuery.value, { background: true })
     })
   }
 
@@ -229,6 +248,8 @@ export function useStreamingSearch({
 
   function clearSearch(): void {
     latestRequestId += 1
+    refreshPending = false
+    songPlayback = null
     cancelActiveSearch()
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer)
@@ -323,7 +344,11 @@ export function useStreamingSearch({
     return { artists: [], total: 0 }
   }
 
-  async function performSearch(keywords: string): Promise<void> {
+  async function runSearch(
+    keywords: string,
+    options: { background?: boolean } = {}
+  ): Promise<void> {
+    if (!options.background) refreshPending = false
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer)
       searchDebounceTimer = null
@@ -331,6 +356,8 @@ export function useStreamingSearch({
     const query = keywords.trim()
     if (!query) {
       latestRequestId += 1
+      refreshPending = false
+      songPlayback = null
       cancelActiveSearch()
       searchResults.value = []
       searchAlbumsResults.value = []
@@ -352,7 +379,7 @@ export function useStreamingSearch({
       offset: searchOffset.value
     }
     lastRequestFingerprint = searchRequestFingerprint(snapshot)
-    searchLoading.value = true
+    if (!options.background) searchLoading.value = true
     searchError.value = ''
     try {
       if (snapshot.type === 'songs') {
@@ -367,7 +394,7 @@ export function useStreamingSearch({
           if (snapshot.offset > 0 && snapshot.offset >= total) {
             searchOffset.value = total > 0 ? Math.floor((total - 1) / 30) * 30 : 0
             if (total > 0) {
-              await performSearch(snapshot.query)
+              await runSearch(snapshot.query, options)
               return
             }
           }
@@ -390,7 +417,7 @@ export function useStreamingSearch({
           if (snapshot.offset > 0 && snapshot.offset >= total) {
             searchOffset.value = total > 0 ? Math.floor((total - 1) / 30) * 30 : 0
             if (total > 0) {
-              await performSearch(snapshot.query)
+              await runSearch(snapshot.query, options)
               return
             }
           }
@@ -421,7 +448,7 @@ export function useStreamingSearch({
           if (snapshot.offset > 0 && snapshot.offset >= total) {
             searchOffset.value = total > 0 ? Math.floor((total - 1) / 30) * 30 : 0
             if (total > 0) {
-              await performSearch(snapshot.query)
+              await runSearch(snapshot.query, options)
               return
             }
           }
@@ -432,6 +459,7 @@ export function useStreamingSearch({
     } catch (e) {
       if (snapshot.requestId === latestRequestId) {
         searchError.value = friendlyStreamingError(e, '搜索失败')
+        songPlayback = null
         searchResults.value = []
         searchAlbumsResults.value = []
         searchPlaylistsResults.value = []
@@ -442,18 +470,31 @@ export function useStreamingSearch({
       if (activeSearchController === controller) activeSearchController = null
       if (snapshot.requestId === latestRequestId) {
         searchLoading.value = false
+        const followUp =
+          refreshPending && !searchError.value && isSearching.value && searchDebounceTimer === null
+        refreshPending = false
+        if (followUp) void runSearch(searchQuery.value, { background: true })
       }
     }
+  }
+
+  function performSearch(keywords: string): Promise<void> {
+    return runSearch(keywords)
   }
 
   watch(
     [searchQuery, searchType, searchSource],
     ([newQuery, newType, newSource], [oldQuery, oldType, oldSource]) => {
       if (restoring) return
-      if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+        searchDebounceTimer = null
+      }
       const q = newQuery.trim()
       if (!q) {
         latestRequestId += 1
+        refreshPending = false
+        songPlayback = null
         cancelActiveSearch()
         searchResults.value = []
         searchAlbumsResults.value = []
@@ -477,6 +518,8 @@ export function useStreamingSearch({
         })
         if (nextFingerprint === lastRequestFingerprint) return
         latestRequestId += 1
+        refreshPending = false
+        songPlayback = null
         cancelActiveSearch()
         searchResults.value = []
         searchAlbumsResults.value = []
@@ -487,7 +530,7 @@ export function useStreamingSearch({
         searchLoading.value = true
         searchDebounceTimer = setTimeout(() => {
           searchDebounceTimer = null
-          void performSearch(q)
+          void runSearch(q)
         }, 300)
       }
     }
@@ -532,7 +575,11 @@ export function useStreamingSearch({
 
   if (getCurrentInstance()) {
     onBeforeUnmount(() => {
-      if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+        searchDebounceTimer = null
+      }
+      refreshPending = false
       latestRequestId += 1
       cancelActiveSearch()
     })
@@ -564,8 +611,12 @@ export function useStreamingSearch({
       artists: searchArtistsResults.value, playback: songPlayback }),
     async restore(saved) {
       restoring = true
+      refreshPending = false
       latestRequestId++
-      if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+        searchDebounceTimer = null
+      }
       cancelActiveSearch()
       searchQuery.value = saved.query
       searchType.value = saved.type

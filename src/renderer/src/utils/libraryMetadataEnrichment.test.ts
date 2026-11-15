@@ -224,6 +224,41 @@ test('enrichLocalTracksFromProviders skips local tracks that already have enrich
   assert.deepEqual(enriched, [enrichedTrack])
 })
 
+test('enrichLocalTracksFromProviders does not re-query tracks only missing genre, translatedLyrics, or non-provided lyrics', async () => {
+  let calls = 0
+  const trackWithoutGenreOrTranslation = {
+    ...localTrack,
+    album: 'Local Album',
+    genre: undefined,
+    cover: 'cover://embedded',
+    lyrics: '[00:00.00]local',
+    translatedLyrics: null
+  }
+  await enrichLocalTracksFromProviders([trackWithoutGenreOrTranslation], {
+    searchSongs: async () => {
+      calls++
+      return { items: [], total: 0 }
+    }
+  })
+  assert.equal(calls, 0)
+
+  const scannedFlacTrack = {
+    ...localTrack,
+    album: 'Local Album',
+    genre: undefined,
+    cover: 'cover://embedded',
+    lyrics: null
+  }
+  await enrichLocalTracksFromProviders([scannedFlacTrack], {
+    providesLyrics: false,
+    searchSongs: async () => {
+      calls++
+      return { items: [], total: 0 }
+    }
+  })
+  assert.equal(calls, 0)
+})
+
 test('metadata enrichment queue deduplicates matching queries and updates every local track', async () => {
   const statuses: string[] = []
   const updates: string[] = []
@@ -565,6 +600,62 @@ test('metadata enrichment benchmark handles a large library with bounded query w
   console.log(
     `metadata enrichment benchmark: ${result.trackCount} tracks, ${result.queryCalls} queries, ${result.durationMs.toFixed(1)}ms`
   )
+})
+
+test('metadata enrichment paces background queries and pauses remaining work during upstream 405 cooldowns', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 })
+  const tracks = [0, 1, 2].map((index) => ({
+    ...localTrack,
+    id: `local:rate-limit-${index}`,
+    title: `RateSong ${index}`,
+    artist: 'RateArtist',
+    filePath: `D:\\Music\\RateSong ${index}.flac`,
+    fileName: `RateSong ${index}.flac`
+  }))
+  const callTimes: Array<{ query: string; at: number }> = []
+  const enrichedIds: string[] = []
+  const queue = new LibraryMetadataEnrichmentQueue({
+    concurrency: 2,
+    minQueryIntervalMs: 1_200,
+    rateLimitCooldownMs: 60_000,
+    provider: {
+      searchSongs: async (query) => {
+        const at = Date.now()
+        callTimes.push({ query, at })
+        if (callTimes.length === 1) {
+          throw new Error('操作频繁，请稍候再试 (405)')
+        }
+        const matched = tracks.find((item) => `${item.title} ${item.artist}` === query)!
+        return { items: [createProviderTrack(matched)], total: 1 }
+      }
+    },
+    onTrackEnriched: ({ track }) => enrichedIds.push(track.id)
+  })
+  t.after(() => queue.dispose())
+
+  const run = queue.enqueue(tracks)
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(callTimes.length, 1, 'first query runs immediately and triggers 60s cooldown')
+
+  // Advancing 10 seconds inside the 60s cooldown must not fire the remaining tracks into 405s.
+  t.mock.timers.tick(10_000)
+  await Promise.resolve()
+  assert.equal(callTimes.length, 1, 'remaining tracks pause during rate-limit cooldown')
+
+  // Once the 60s cooldown expires, remaining tracks resume at minQueryIntervalMs spacing.
+  t.mock.timers.tick(50_000)
+  await Promise.resolve()
+  await Promise.resolve()
+  t.mock.timers.tick(1_200)
+  await run
+
+  assert.equal(callTimes.length, 3)
+  assert.ok(callTimes[1].at >= 60_000)
+  assert.ok(callTimes[2].at - callTimes[1].at >= 1_200)
+  assert.deepEqual(enrichedIds.sort(), ['local:rate-limit-1', 'local:rate-limit-2'])
+  assert.equal(queue.getStatus().failed, 1)
+  assert.equal(queue.getStatus().completed, 2)
 })
 
 function createProviderTrack(track: typeof localTrack): Track {

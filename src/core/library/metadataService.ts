@@ -7,6 +7,8 @@ import type {
 import {
   buildMetadataMatchCandidates,
   enrichLocalTrackMetadata,
+  hasUsableTrackCover,
+  isMetadataPlaceholder,
   type MetadataEnrichmentPolicy,
   type MetadataMatchCandidate
 } from '../../shared/musicMetadataMatching.ts'
@@ -14,18 +16,32 @@ import { libraryTrack } from '../playback/libraryTrack.ts'
 import { projectCoreTrack } from '../projections.ts'
 import {
   LibraryMetadataEnrichmentQueue,
+  needsMetadataEnrichment,
   type LibraryMetadataEnrichmentProvider,
   type LibraryMetadataEnrichmentTrackUpdate
 } from './metadataEnrichment.ts'
 import { searchMetadataTracks } from './metadataSearch.ts'
-import { patchLibraryMetadataBatch } from './metadataPatch.ts'
+import {
+  METADATA_PATCH_FIELDS,
+  hasMetadataPatchChanges,
+  patchLibraryMetadataBatch
+} from './metadataPatch.ts'
 import { deferMacrotask } from '../../shared/portableAsync.ts'
 import { CoreEntityMetadataService, type EntityMetadataOptions } from './entityMetadataService.ts'
+
+export interface MetadataAttemptStore {
+  load(): Promise<Record<string, string>>
+  save(records: Record<string, string>): Promise<void>
+}
 
 interface Options {
   entities?: EntityMetadataOptions
   database: Pick<LibraryDatabaseApi, 'queryTracks' | 'getTracksByIds' | 'patchTracks'>
   provider: LibraryMetadataEnrichmentProvider
+  attemptStore?: MetadataAttemptStore
+  providerSignature?: () => string
+  minQueryIntervalMs?: number
+  rateLimitCooldownMs?: number
   available(): boolean
   policy(): MetadataEnrichmentPolicy
   now(): number
@@ -43,6 +59,8 @@ interface Candidates {
 type PendingUpdate = {
   update: LibraryMetadataEnrichmentTrackUpdate
   generation: number
+  policy: MetadataEnrichmentPolicy
+  providerKey: string
   resolve(): void
   reject(error: unknown): void
 }
@@ -59,11 +77,19 @@ export class CoreMetadataService {
   private stopped = false
   private suspended = false
   private requested = false
+  private manualStartRequested = false
   private generation = 0
+  private resetGeneration = 0
   private task: Promise<void> | null = null
   private readonly lifetime = new AbortController()
   private readonly requests = new Set<Promise<unknown>>()
   private seen = new Map<string, string>()
+  private attemptsLoaded: Promise<void> | null = null
+  private attemptsDirty = false
+  private attemptsSaveTimer: ReturnType<typeof setTimeout> | null = null
+  private attemptsSaveTask: Promise<void> | null = null
+  private activePolicy: MetadataEnrichmentPolicy = { cover: true, lyrics: true, metadata: true }
+  private activeProviderKey = 'default'
   private readonly candidates = new Map<string, Candidates>()
   private status: LibraryMetadataEnrichmentStatus | null = null
   private totals = { total: 0, completed: 0, failed: 0, skipped: 0, error: '' }
@@ -77,6 +103,8 @@ export class CoreMetadataService {
       provider: options.provider,
       // Foreground searches and playback use these providers too.
       concurrency: 2,
+      minQueryIntervalMs: options.minQueryIntervalMs,
+      rateLimitCooldownMs: options.rateLimitCooldownMs,
       now: options.now,
       onStatus: (status) => {
         const totals = this.totals
@@ -92,15 +120,106 @@ export class CoreMetadataService {
           this.status.state = 'failed'
         options.changed()
       },
-      onTracksEnriched: (updates) => this.saveUpdates(updates)
+      onTracksEnriched: (updates) => this.saveUpdates(updates),
+      onTracksSettled: (items) => {
+        if (this.stopped || this.suspended) return
+        const providerKey = this.activeProviderKey
+        for (const item of items) {
+          if (!hasMetadataPatchChanges(item.source, item.track)) {
+            this.recordTrackState(item.source, item.policy, providerKey)
+          }
+        }
+      }
     })
   }
+  private currentProviderSignature(): string {
+    return this.options.providerSignature?.() ?? 'default'
+  }
+  private ensureAttemptsLoaded(): Promise<void> {
+    if (!this.options.attemptStore) return Promise.resolve()
+    return (this.attemptsLoaded ??= (async () => {
+      const beforeReset = this.resetGeneration
+      try {
+        const loaded = await this.options.attemptStore!.load()
+        if (this.resetGeneration !== beforeReset || this.stopped) return
+        for (const [id, key] of Object.entries(loaded)) {
+          if (!this.seen.has(id) && typeof key === 'string') {
+            this.seen.set(id, key)
+          }
+        }
+      } catch (error) {
+        this.options.failed(error)
+      }
+    })())
+  }
+  private markAttemptsDirty(): void {
+    if (!this.options.attemptStore) return
+    this.attemptsDirty = true
+    if (this.stopped || this.attemptsSaveTimer || this.attemptsSaveTask) return
+    this.attemptsSaveTimer = setTimeout(() => {
+      this.attemptsSaveTimer = null
+      void this.flushAttempts()
+    }, WRITE_DELAY_MS)
+    ;(this.attemptsSaveTimer as unknown as { unref?: () => void }).unref?.()
+  }
+  private flushAttempts(): Promise<void> {
+    if (!this.options.attemptStore || (!this.attemptsDirty && !this.attemptsSaveTask)) {
+      return this.attemptsSaveTask ?? Promise.resolve()
+    }
+    if (this.attemptsSaveTask) return this.attemptsSaveTask
+    this.attemptsSaveTask = (async () => {
+      while (this.attemptsDirty) {
+        this.attemptsDirty = false
+        const snapshot = Object.fromEntries(this.seen)
+        try {
+          await this.options.attemptStore!.save(snapshot)
+        } catch (error) {
+          this.options.failed(error)
+        }
+      }
+    })().finally(() => {
+      this.attemptsSaveTask = null
+    })
+    return this.attemptsSaveTask
+  }
+  private clearAttempts(): void {
+    this.resetGeneration += 1
+    if (this.seen.size > 0 || this.options.attemptStore) {
+      this.seen.clear()
+      this.markAttemptsDirty()
+    }
+  }
+  private recordTrackState(
+    track: TrackData,
+    policy: MetadataEnrichmentPolicy,
+    providerKey: string
+  ): void {
+    const providesLyrics = this.options.provider.providesLyrics !== false
+    if (needsMetadataEnrichment(track, policy, { providesLyrics })) {
+      const key = attemptKey(track, policy, providesLyrics, providerKey)
+      if (this.seen.get(track.id) !== key) {
+        this.seen.set(track.id, key)
+        this.markAttemptsDirty()
+      }
+    } else if (this.seen.delete(track.id)) {
+      this.markAttemptsDirty()
+    }
+  }
   private async saveUpdates(updates: LibraryMetadataEnrichmentTrackUpdate[]): Promise<void> {
+    const policy = this.activePolicy
+    const providerKey = this.activeProviderKey
     const results = await Promise.allSettled(
       updates.map(
         (update) =>
           new Promise<void>((resolve, reject) => {
-            this.updates.push({ update, generation: this.generation, resolve, reject })
+            this.updates.push({
+              update,
+              generation: this.generation,
+              policy,
+              providerKey,
+              resolve,
+              reject
+            })
             this.scheduleWrites()
           })
       )
@@ -121,7 +240,7 @@ export class CoreMetadataService {
   private async flushUpdates(): Promise<void> {
     while (this.updates.length) {
       const batch = this.updates.splice(0, WRITE_BATCH_SIZE)
-      const generation = batch[0].generation
+      const { generation, policy, providerKey } = batch[0]
       try {
         const saved = await patchLibraryMetadataBatch(
           this.options.database,
@@ -130,7 +249,7 @@ export class CoreMetadataService {
         )
         if (saved) {
           for (const record of saved.tracks)
-            this.seen.set(record.id, signature(libraryTrack(record)))
+            this.recordTrackState(libraryTrack(record), policy, providerKey)
           this.options.changed()
           this.options.libraryChanged()
         }
@@ -154,17 +273,25 @@ export class CoreMetadataService {
   /** Called at scan completion/provider inventory changes, never on renderer attachment. */
   refresh(force = false): void {
     if (!this.activated || this.stopped || this.suspended || !this.options.available()) return
-    if (force) this.seen.clear()
+    if (force) this.clearAttempts()
     this.requested = true
     if (this.task) return
     this.task = (async () => {
+      await this.ensureAttemptsLoaded()
       while (this.requested && !this.stopped && !this.suspended) {
         this.requested = false
+        const manualStart = this.manualStartRequested
+        this.manualStartRequested = false
         const generation = this.generation
         this.totals = { total: 0, completed: 0, failed: 0, skipped: 0, error: '' }
         const policy = this.options.policy()
-        if (!policy.cover && !policy.lyrics && !policy.metadata) continue
+        const providesLyrics = this.options.provider.providesLyrics !== false
+        if (!policy.cover && !(policy.lyrics && providesLyrics) && !policy.metadata) continue
+        const providerKey = this.currentProviderSignature()
+        this.activePolicy = policy
+        this.activeProviderKey = providerKey
         const present = new Set<string>()
+        let enqueuedAny = false
         for (let offset = 0; ; offset += 200) {
           const page = await this.options.database.queryTracks({
             sort: 'insertion',
@@ -175,27 +302,55 @@ export class CoreMetadataService {
           const tracks = page.tracks.map(libraryTrack)
           const selected = tracks.filter((track) => {
             present.add(track.id)
-            const key = signature(track)
-            if (this.seen.get(track.id) === key) return false
-            this.seen.set(track.id, key)
-            return true
+            if (!needsMetadataEnrichment(track, policy, { providesLyrics })) {
+              if (this.seen.delete(track.id)) this.markAttemptsDirty()
+              return false
+            }
+            return (
+              this.seen.get(track.id) !== attemptKey(track, policy, providesLyrics, providerKey)
+            )
           })
-          await this.queue.enqueue(selected, policy)
-          await this.queue.join()
-          const status = this.snapshot()
-          this.totals = {
-            total: status.total,
-            completed: status.completed,
-            failed: status.failed,
-            skipped: status.skipped,
-            error: status.error
+          if (selected.length) {
+            enqueuedAny = true
+            await this.queue.enqueue(selected, policy)
+            await this.queue.join()
+            const status = this.snapshot()
+            this.totals = {
+              total: status.total,
+              completed: status.completed,
+              failed: status.failed,
+              skipped: status.skipped,
+              error: status.error
+            }
           }
           if (this.stopped || this.suspended || generation !== this.generation) break
           if (offset + page.tracks.length >= page.total) {
-            for (const id of this.seen.keys()) if (!present.has(id)) this.seen.delete(id)
+            for (const id of this.seen.keys()) {
+              if (!present.has(id)) {
+                this.seen.delete(id)
+                this.markAttemptsDirty()
+              }
+            }
+            if (
+              !enqueuedAny &&
+              (manualStart || (this.status !== null && this.status.state !== 'idle'))
+            ) {
+              this.status = {
+                state: 'completed',
+                total: 0,
+                queued: 0,
+                active: 0,
+                completed: 0,
+                failed: 0,
+                skipped: 0,
+                error: ''
+              }
+              this.options.changed()
+            }
             break
           }
         }
+        if (this.attemptsDirty) await this.flushAttempts()
       }
     })()
       .catch(this.options.failed)
@@ -205,7 +360,10 @@ export class CoreMetadataService {
   }
   start(): void {
     this.suspended = false
-    this.seen.clear()
+    this.manualStartRequested = true
+    this.status = null
+    this.clearAttempts()
+    this.options.changed()
     this.refresh()
   }
   cancel(): boolean {
@@ -269,7 +427,8 @@ export class CoreMetadataService {
       if (!selection || !match) throw new Error('元数据候选已失效，请重新搜索')
       const source = await this.read(selection.source.id, selection.version)
       current.throwIfAborted()
-      const enriched = enrichLocalTrackMetadata(source, match, this.options.policy())
+      const policy = this.options.policy()
+      const enriched = enrichLocalTrackMetadata(source, match, policy)
       await this.options.database.patchTracks([
         {
           id: source.id,
@@ -278,7 +437,7 @@ export class CoreMetadataService {
         }
       ])
       this.candidates.delete(token)
-      this.seen.set(source.id, signature(enriched))
+      this.recordTrackState(enriched, policy, this.currentProviderSignature())
       this.options.changed()
       this.options.libraryChanged()
     }, signal)
@@ -306,6 +465,10 @@ export class CoreMetadataService {
   }
   async shutdown(): Promise<void> {
     this.stopped = true
+    if (this.attemptsSaveTimer) {
+      clearTimeout(this.attemptsSaveTimer)
+      this.attemptsSaveTimer = null
+    }
     this.cancel()
     this.lifetime.abort(new Error('Core metadata service stopped'))
     await Promise.all([
@@ -315,42 +478,42 @@ export class CoreMetadataService {
       this.writeTask,
       Promise.allSettled([...this.requests])
     ])
+    if (this.attemptsDirty || this.attemptsSaveTask) {
+      await this.flushAttempts()
+    }
     this.candidates.clear()
     this.queue.dispose()
   }
 }
 
-function signature(track: TrackData): string {
+function attemptKey(
+  track: TrackData,
+  policy: MetadataEnrichmentPolicy,
+  providesLyrics: boolean,
+  providerSignature: string
+): string {
+  const needsMetadata = Boolean(
+    policy.metadata && (isMetadataPlaceholder(track.artist) || isMetadataPlaceholder(track.album))
+  )
+  const needsCover = Boolean(policy.cover && !hasUsableTrackCover(track))
+  const needsLyrics = Boolean(policy.lyrics && providesLyrics && !track.lyrics)
   return JSON.stringify([
     track.filePath,
     track.title,
     track.artist,
     track.album,
     track.duration,
-    track.cueRange,
-    track.genre,
-    !!track.cover,
-    !!track.lyrics,
-    !!track.translatedLyrics,
-    track.metadataMatch
+    track.cueRange ?? null,
+    needsMetadata,
+    needsCover,
+    needsLyrics,
+    providerSignature
   ])
 }
 function metadataFields(track: TrackData): Record<string, unknown> {
   return Object.fromEntries(
-    [
-      'artist',
-      'album',
-      'genre',
-      'cover',
-      'lyrics',
-      'translatedLyrics',
-      'lyricsSource',
-      'translatedLyricsSource',
-      'metadataMatch'
-    ].flatMap((field) =>
-      track[field as keyof TrackData] === undefined
-        ? []
-        : [[field, track[field as keyof TrackData]]]
+    METADATA_PATCH_FIELDS.flatMap((field) =>
+      track[field] === undefined ? [] : [[field, track[field]]]
     )
   )
 }
