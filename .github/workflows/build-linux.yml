@@ -88,9 +88,9 @@ jobs:
       - name: Build renderer and package Linux targets
         run: |
           pnpm run build
-          pnpm exec electron-builder --linux --config electron-builder.yml --publish never
+          node scripts/build-app-package.cjs --linux --publish never
 
-      - name: Verify staged native engine in the unpacked app
+      - name: Verify staged native engine and packaged runtime
         run: |
           ls -la dist/linux-unpacked/resources/audio-engine/
           test -f dist/linux-unpacked/resources/audio-engine/libtwilight-audio-engine.so
@@ -98,6 +98,8 @@ jobs:
           test -f dist/linux-unpacked/resources/audio-engine/twilight_image_node.node
           test -f dist/linux-unpacked/resources/audio-engine/libtwilight-soxr.so
           node -e "require('./dist/linux-unpacked/resources/audio-engine/twilight_audio_node.node'); require('./dist/linux-unpacked/resources/audio-engine/twilight_image_node.node')"
+          node scripts/verify-packaged-dependency-closure.cjs dist/linux-unpacked
+          node scripts/verify-packaged-runtime-smoke.cjs --require-executable dist/linux-unpacked
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4

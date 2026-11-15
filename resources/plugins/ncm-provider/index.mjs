@@ -208,15 +208,6 @@ function isRiskControlMessage(message) {
 // 且实测是负数（-460）。取绝对值判定，避免文案变化后再次漏判。
 const RISK_CONTROL_API_CODES = new Set([460])
 
-function getApiResponseCode(data) {
-  for (const candidate of [data?.code, data?.body?.code, data?.data?.code]) {
-    if (candidate === null || candidate === undefined || candidate === '') continue
-    const code = Number(candidate)
-    if (Number.isFinite(code)) return Math.abs(code)
-  }
-  return null
-}
-
 function isRiskControlResponse(data) {
   for (const candidate of [data?.code, data?.body?.code, data?.data?.code]) {
     if (candidate === null || candidate === undefined || candidate === '') continue

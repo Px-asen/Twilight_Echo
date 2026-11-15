@@ -1,4 +1,9 @@
-const { archiveNativeSymbols, bindShippedSymbols, archiveRoot, artifactId } = require('./diagnostic-symbols.cjs')
+const {
+  archiveNativeSymbols,
+  bindShippedSymbols,
+  archiveRoot,
+  artifactId
+} = require('./diagnostic-symbols.cjs')
 const {
   copyFileSync,
   cpSync,
@@ -41,6 +46,51 @@ function productionPackageFileSets(root) {
       ...(record.manifest.name === '@neteasecloudmusicapienhanced/api' ? ['!public/**'] : [])
     ]
   }))
+}
+
+function buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir = null } = {}) {
+  let config = sourceConfig
+  if (nativeDir) {
+    const audioConfig = sourceConfig.replace(
+      '  - from: resources/audio-engine',
+      `  - from: '${nativeDir.replaceAll('\\', '/')}'`
+    )
+    if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
+    config = audioConfig
+  }
+  // Mirror the installed production graph with native electron-builder file
+  // sets: its pnpm collector otherwise flattens away conflicting nested versions.
+  const fileSets = productionPackageFileSets(root).flatMap((entry) => [
+    `  - from: ${JSON.stringify(entry.from)}`,
+    `    to: ${JSON.stringify(entry.to)}`,
+    `    filter: ${JSON.stringify(entry.filter)}`
+  ])
+  if (!/^files:\r?$/m.test(config)) throw new Error('Package files entry was not found')
+  return config.replace(
+    /^files:\r?$/m,
+    ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
+  )
+}
+
+function preparePackagedAppStaging(root) {
+  const temporaryDir = mkdtempSync(join(tmpdir(), 'twilight-packaged-app-'))
+  const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
+  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root)
+  const configPath = join(temporaryDir, 'electron-builder.yml')
+  writeFileSync(configPath, stagedConfig)
+  return {
+    configPath,
+    nativeDir: null,
+    dispose: () => {
+      try {
+        rmSync(temporaryDir, { recursive: true, force: true, maxRetries: 60, retryDelay: 500 })
+        return true
+      } catch (_error) {
+        console.warn(`Unable to remove packaged app staging directory: ${temporaryDir}`)
+        return false
+      }
+    }
+  }
 }
 
 function refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus) {
@@ -114,14 +164,18 @@ function preparePackagedAudioStaging(
     if (stripNativeFile === defaultStripNativeFile) {
       const indexFile = join(archiveRoot(), 'index.json')
       const index = existsSync(indexFile) ? JSON.parse(readFileSync(indexFile, 'utf8')) : {}
-      symbols = index[artifactId(sourcePath)] || archiveNativeSymbols(sourcePath, { originalName: name })
+      symbols =
+        index[artifactId(sourcePath)] || archiveNativeSymbols(sourcePath, { originalName: name })
     }
     stripNativeFile(workingPath)
     copyFileSync(workingPath, join(nativeDir, name))
     if (symbols) identities.push(bindShippedSymbols(join(nativeDir, name), symbols))
     rmSync(workingPath, { force: true })
   }
-  writeFileSync(join(nativeDir, 'native-build-identities.json'), JSON.stringify(identities, null, 2))
+  writeFileSync(
+    join(nativeDir, 'native-build-identities.json'),
+    JSON.stringify(identities, null, 2)
+  )
   const binaryManifest = createAudioCapabilityManifest({ artifactDir: nativeDir })
   const runtimeStatus = observeRuntime({
     artifactDir: nativeDir,
@@ -130,23 +184,7 @@ function preparePackagedAudioStaging(
   refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus)
 
   const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  const audioConfig = sourceConfig.replace(
-    '  - from: resources/audio-engine',
-    `  - from: '${nativeDir.replaceAll('\\', '/')}'`
-  )
-  if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
-  // Mirror the installed production graph with native electron-builder file
-  // sets: its pnpm collector otherwise flattens away conflicting nested versions.
-  const fileSets = productionPackageFileSets(root).flatMap((entry) => [
-    `  - from: ${JSON.stringify(entry.from)}`,
-    `    to: ${JSON.stringify(entry.to)}`,
-    `    filter: ${JSON.stringify(entry.filter)}`
-  ])
-  const stagedConfig = audioConfig.replace(
-    /^files:\r?$/m,
-    ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
-  )
-  if (!/^files:\r?$/m.test(audioConfig)) throw new Error('Package files entry was not found')
+  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir })
   const configPath = join(temporaryDir, 'electron-builder.yml')
   writeFileSync(configPath, stagedConfig)
   return {
@@ -165,6 +203,8 @@ function preparePackagedAudioStaging(
 }
 
 module.exports = {
+  buildStagedElectronBuilderConfig,
+  preparePackagedAppStaging,
   preparePackagedAudioStaging,
   productionPackageFileSets,
   refreshAudioCapabilityArtifacts
