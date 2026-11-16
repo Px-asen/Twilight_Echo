@@ -208,3 +208,33 @@ test('CUE and SACD direct identities retain their segments and authorize only th
   assert.deepEqual(paths, [cue.filePath, sacd.filePath])
   assert.deepEqual(f.searches, [])
 })
+
+test('source recovery requests AutoMix preparation only when background prepare opts in', async () => {
+  const calls: Array<{ id: string; autoMixPrepare: boolean }> = []
+  const recovery = createPlaybackSourceRecovery({
+    resolver: {
+      resolve: async (candidate, _signal, resolveOptions) => {
+        const value = candidate as TrackData
+        calls.push({ id: value.id, autoMixPrepare: resolveOptions?.autoMixPrepare === true })
+        return value.source === 'expired'
+          ? null
+          : { source: `https://audio.test/${value.id}`, expiresAt: null }
+      }
+    },
+    identity,
+    versionsRevision: () => 0,
+    now: () => 1000,
+    authorize: async (source) => source,
+    search: async () => found(song('other'))
+  })
+
+  await recovery.prepare(song('other'))
+  await recovery.prepare(song('other'), undefined, { autoMixPrepare: true })
+  await recovery.recover!(song('expired'))
+
+  assert.deepEqual(calls, [
+    { id: 'other:one', autoMixPrepare: false },
+    { id: 'other:one', autoMixPrepare: true },
+    { id: 'other:one', autoMixPrepare: false }
+  ])
+})

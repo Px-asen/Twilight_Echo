@@ -266,6 +266,8 @@ interface UiCommandRpcMetadata {
 export interface TwilightProviderCallOptions {
   /** Main-only playback preparation: retain expiry without exposing the provider envelope. */
   playbackExpiry?: boolean
+  /** Background-only AutoMix preparation: materialize a local file before returning when AutoMix is active. */
+  autoMixPrepare?: boolean
   /** Reuse this key when retrying one user-initiated write after an unknown outcome. */
   idempotencyKey?: string
   /** Cancels queued or active plugin RPC work and propagates cancellation to the provider host. */
@@ -962,7 +964,8 @@ export class TwilightPluginManager extends EventEmitter {
                   {
                     ...(args[1] && typeof args[1] === 'object' ? args[1] : {}),
                     _twilightSourceIdentity: true,
-                    _twilightAutoMixPrepare: this.autoMixEnabled?.() === true
+                    _twilightAutoMixPrepare:
+                      options.autoMixPrepare === true && this.autoMixEnabled?.() === true
                   }
                 ]
               : args,

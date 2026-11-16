@@ -1178,7 +1178,8 @@ export class CorePlaybackSession {
         )
       return this.prepareSource(track, signal, {
         allowFallbackSearch: false,
-        skipPrefetchCache: true
+        skipPrefetchCache: true,
+        autoMixPrepare: true
       })
     }
     return this.options.resources ? this.options.resources.use(run) : run()
@@ -1186,7 +1187,7 @@ export class CorePlaybackSession {
   private async prepareSource(
     track: TrackData,
     signal?: AbortSignal,
-    options?: { allowFallbackSearch?: boolean; skipPrefetchCache?: boolean }
+    options?: { allowFallbackSearch?: boolean; skipPrefetchCache?: boolean; autoMixPrepare?: boolean }
   ): Promise<PreparedPlaybackSource> {
     // A warm lookahead entry is already authorized and expiry-checked; taking it
     // here keeps a skip from paying provider latency again.
@@ -1194,9 +1195,12 @@ export class CorePlaybackSession {
     if (warm) return warm
     if (this.options.sources)
       return this.options.sources.prepare(track, signal, {
-        allowFallbackSearch: options?.allowFallbackSearch
+        allowFallbackSearch: options?.allowFallbackSearch,
+        ...(options?.autoMixPrepare ? { autoMixPrepare: true } : {})
       })
-    const resolved = await this.options.resolver.resolve(track, signal)
+    const resolved = options?.autoMixPrepare
+      ? await this.options.resolver.resolve(track, signal, { autoMixPrepare: true })
+      : await this.options.resolver.resolve(track, signal)
     signal?.throwIfAborted()
     if (!resolved) throw new Error('Unable to resolve the selected audio source')
     const source = await authorizeNativeSource(resolved.source, this.options.authorize)
@@ -1489,7 +1493,8 @@ export class CorePlaybackSession {
       nativeQueueIndices: this.mapping,
       resolver: this.options.resolver,
       authorize: this.options.authorize,
-      prepareSource: (track, signal) => this.prepareSource(track, signal),
+      prepareSource: (track, signal) =>
+        this.prepareSource(track, signal, { autoMixPrepare: true }),
       commitSource: async ({ window }, occurrenceId, prepared) => {
         await this.repairSource(this.controller, window, occurrenceId, prepared)
       },

@@ -249,7 +249,9 @@ export class NativeQueueMaintainer {
       ? await this.loadQueueItem(logicalIndex)
       : this.queue[logicalIndex]
     if (!track || !this.isCurrent(generation)) return null
-    const resolved = await this.resolver.resolve(track, this.sourceReads.signal)
+    const resolved = await this.resolver.resolve(track, this.sourceReads.signal, {
+      autoMixPrepare: true
+    })
     if (!this.isCurrent(generation)) return null
     if (!resolved) {
       this.retryAfter.set(logicalIndex, this.now() + RESOLVE_RETRY_MS)

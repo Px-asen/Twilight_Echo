@@ -5164,3 +5164,50 @@ test('paused starts defer prefetch until play and automatic queues exclude banne
   assert.equal(autoReads.includes(bannedId), false)
   assert.ok(autoReads.includes(rows[1].track!.id))
 })
+
+test('foreground playback leaves autoMixPrepare unset while background prefetch and maintainer enable it', async (t) => {
+  const seen: Array<{ id: string; autoMixPrepare: boolean }> = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value, _signal, options) => {
+        const track = value as TrackData
+        seen.push({ id: track.id, autoMixPrepare: options?.autoMixPrepare === true })
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(async (append) =>
+    append([1, 2, 3].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await tick()
+  assert.deepEqual(seen.slice(0, 2), [
+    { id: 'ncm:1', autoMixPrepare: false },
+    { id: 'ncm:2', autoMixPrepare: true }
+  ])
+
+  await scheduler.flush()
+  const prefetchRead = seen.find((entry) => entry.id === 'ncm:3')
+  assert.deepEqual(prefetchRead, { id: 'ncm:3', autoMixPrepare: true })
+
+  // Un-prefetched jump triggers a foreground load, which must not request AutoMix preparation.
+  await f.session.fromPages(async (append) =>
+    append([4, 5].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await tick()
+  assert.ok(
+    seen.some((entry) => entry.id === 'ncm:4' && entry.autoMixPrepare === false),
+    'foreground queue start must omit autoMixPrepare'
+  )
+})

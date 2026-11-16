@@ -374,28 +374,47 @@ async function fixture(
   return { manager, descriptor, children, activationStarted, register, activate, directory }
 }
 
-test('only the host enables AutoMix preparation for the bundled provider', async (t) => {
+test('only background host reads enable AutoMix preparation for the bundled provider', async (t) => {
   let enabled = true
   const f = await fixture(t, {
     pluginId: 'com.twilightecho.provider.ncm',
     providerId: 'ncm',
     autoMixEnabled: () => enabled
   })
-  const first = f.manager.callProvider('ncm', 'getPlaybackUrl', [{ id: 'ncm:991' }, {}])
+  const first = f.manager.callProvider('ncm', 'getPlaybackUrl', [
+    { id: 'ncm:991' },
+    { _twilightAutoMixPrepare: true }
+  ])
   await f.activationStarted
   f.register()
   f.activate()
   await first
   let message = f.children[0].messages.filter((m) => m.kind === 'provider-call').at(-1)
+  assert.equal(message.args[1]._twilightAutoMixPrepare, false)
+  assert.equal(message.args[1]._twilightSourceIdentity, true)
+
+  await f.manager.callProvider(
+    'ncm',
+    'getPlaybackUrl',
+    [{ id: 'ncm:991' }, {}],
+    { autoMixPrepare: true }
+  )
+  message = f.children[0].messages.filter((m) => m.kind === 'provider-call').at(-1)
   assert.equal(message.args[1]._twilightAutoMixPrepare, true)
   assert.equal(message.args[1]._twilightSourceIdentity, true)
+
   enabled = false
-  await f.manager.callProvider('ncm', 'getPlaybackUrl', [
-    { id: 'ncm:991' },
-    {
-      _twilightAutoMixPrepare: true
-    }
-  ])
+  await f.manager.callProvider(
+    'ncm',
+    'getPlaybackUrl',
+    [
+      { id: 'ncm:991' },
+      {
+        _twilightAutoMixPrepare: true
+      }
+    ],
+    { autoMixPrepare: true }
+  )
   message = f.children[0].messages.filter((m) => m.kind === 'provider-call').at(-1)
   assert.equal(message.args[1]._twilightAutoMixPrepare, false)
 })

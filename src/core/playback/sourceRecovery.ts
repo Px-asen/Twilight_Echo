@@ -23,7 +23,7 @@ export interface PlaybackSourceRecovery {
   prepare(
     track: TrackData,
     signal?: AbortSignal,
-    options?: { allowFallbackSearch?: boolean }
+    options?: { allowFallbackSearch?: boolean; autoMixPrepare?: boolean }
   ): Promise<PreparedPlaybackSource>
   /** Only after native has explicitly rejected a source and Stop is confirmed. */
   recover?(track: TrackData, signal?: AbortSignal): Promise<PreparedPlaybackSource>
@@ -48,7 +48,8 @@ export function createPlaybackSourceRecovery(options: Options): PlaybackSourceRe
     track: TrackData,
     signal?: AbortSignal,
     skipOriginal = false,
-    allowFallbackSearch = true
+    allowFallbackSearch = true,
+    autoMixPrepare = false
   ): Promise<PreparedPlaybackSource> {
     const revision = options.versionsRevision()
     const confirmRevision = () => {
@@ -65,7 +66,9 @@ export function createPlaybackSourceRecovery(options: Options): PlaybackSourceRe
     // search for another path around a refused platform/media grant.
     const resolve = async (candidate: TrackData): Promise<PreparedPlaybackSource | null> => {
       guard()
-      const resolved = await options.resolver.resolve(candidate, signal)
+      const resolved = autoMixPrepare
+        ? await options.resolver.resolve(candidate, signal, { autoMixPrepare: true })
+        : await options.resolver.resolve(candidate, signal)
       guard()
       if (!resolved || !isSourceCurrent(resolved, options.now())) return null
       const source = await prepareNativeSource(resolved.source, options.authorize)
@@ -134,7 +137,13 @@ export function createPlaybackSourceRecovery(options: Options): PlaybackSourceRe
   return {
     repaired: options.repaired,
     prepare: (track, signal, prepareOptions) =>
-      prepareInternal(track, signal, false, prepareOptions?.allowFallbackSearch !== false),
-    recover: (track, signal) => prepareInternal(track, signal, true, true)
+      prepareInternal(
+        track,
+        signal,
+        false,
+        prepareOptions?.allowFallbackSearch !== false,
+        prepareOptions?.autoMixPrepare === true
+      ),
+    recover: (track, signal) => prepareInternal(track, signal, true, true, false)
   }
 }

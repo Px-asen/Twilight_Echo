@@ -7,8 +7,17 @@ export interface ResolvedSource {
   expiresAt: number | null
 }
 
+export interface SourceResolveOptions {
+  /** Materialize a local file for AutoMix only during background lookahead reads. */
+  autoMixPrepare?: boolean
+}
+
 export interface SourceResolver {
-  resolve(track: unknown, signal?: AbortSignal): Promise<ResolvedSource | null>
+  resolve(
+    track: unknown,
+    signal?: AbortSignal,
+    options?: SourceResolveOptions
+  ): Promise<ResolvedSource | null>
 }
 
 export class SourceAuthorizationError extends Error {
@@ -21,7 +30,7 @@ export interface SourceResolverDependencies {
     providerId: string,
     method: 'getPlaybackUrl',
     args: unknown[],
-    options: { signal: AbortSignal; playbackExpiry: true }
+    options: { signal: AbortSignal; playbackExpiry: true; autoMixPrepare?: boolean }
   ) => Promise<unknown>
   grants?: {
     resolve(handle: string, kind: 'audio'): { source: string } | Promise<{ source: string }>
@@ -147,7 +156,11 @@ export const createSourceResolver = (
   const now = dependencies.now ?? Date.now
   const injectedCallProvider = dependencies.callProvider
   return {
-    async resolve(track: unknown, signal?: AbortSignal): Promise<ResolvedSource | null> {
+    async resolve(
+      track: unknown,
+      signal?: AbortSignal,
+      resolveOptions?: SourceResolveOptions
+    ): Promise<ResolvedSource | null> {
       if (signal?.aborted) return null
       if (!track || typeof track !== 'object') return null
       const record = track as Record<string, unknown>
@@ -200,7 +213,8 @@ export const createSourceResolver = (
                 [track, { ...options, ...(force ? { force: true } : {}) }],
                 {
                   signal,
-                  playbackExpiry: true
+                  playbackExpiry: true,
+                  ...(resolveOptions?.autoMixPrepare ? { autoMixPrepare: true } : {})
                 }
               ),
             PROVIDER_TIMEOUT_MS,
