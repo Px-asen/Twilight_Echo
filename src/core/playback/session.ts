@@ -17,6 +17,7 @@ import type {
   LibraryQuery,
   LibraryTrackRecord,
   LibraryQueueEdit,
+  LibraryQueueInsertItem,
   LibraryQueuePlaybackWindow,
   LibraryQueueSnapshot
 } from '../../shared/libraryDatabase.ts'
@@ -35,9 +36,11 @@ import { nativeQueueItem } from './nativeQueueMaintainer.ts'
 import { authorizeNativeSource, isSourceCurrent, type SourceResolver } from './sourceResolver.ts'
 import { projectCoreError, projectCorePlayback, projectCoreTrack } from '../projections.ts'
 import type { CorePlaybackView, CoreTrackView } from '../../shared/coreViews.ts'
+import { getTrackSource } from '../../shared/trackSourceIdentity.ts'
 import { libraryQueueTrack } from './libraryTrack.ts'
 import { toPlaybackQueueSnapshot } from './queueSnapshots.ts'
 import type { LibraryQueueSeedProducer } from './libraryQueueBuild.ts'
+import type { LibraryQueueSeedItem } from '../../shared/libraryQueueBuild.ts'
 import { importLegacyQueue } from './legacyQueueImport.ts'
 import type { CoreQueueImportApi } from '../../shared/coreQueueImport.ts'
 import type { LibraryPlaybackQueueReference } from '../../shared/playbackSession.ts'
@@ -173,6 +176,7 @@ export class CorePlaybackSession {
   private mapping: number[] = []
   private info: PlaybackInfo | null = null
   private currentTrack: TrackData | null = null
+  private currentPrepared: { queueId: string; prepared: PreparedPlaybackSource } | null = null
   private mode: PlayMode = 'sequential'
   private error: string | null = null
   private startupAudioError: string | null = null
@@ -208,6 +212,8 @@ export class CorePlaybackSession {
   }
   private muted = false
   private lastAudibleVolume = DEFAULT_SOFTWARE_VOLUME
+  private readonly audioSuppressedClients = new Set<string>()
+  private suppressedUserVolume: number | null = null
   private loadingIntent: number | null = null
   /** Settles when the in-flight preparation finishes or is cancelled.
    * Background resource maintenance waits on it so a cache prune cannot
@@ -813,7 +819,7 @@ export class CorePlaybackSession {
       isStreamBuffering: this.streamBuffering,
       mute: {
         muted: this.muted,
-        userVolume: this.info?.volume ?? 0,
+        userVolume: this.effectiveUserVolume(),
         lastAudibleVolume: this.lastAudibleVolume
       },
       playback: this.info ? projectCorePlayback({ ...this.info, playMode: this.mode }) : null,
@@ -838,6 +844,31 @@ export class CorePlaybackSession {
         ? { ...this.heart.state(), ...(this.detachedHeartTrack ? { available: false } : {}) }
         : null
     }
+  }
+  /** Providers whose streams or queued occurrences this active session still relies on. */
+  retainedProviderIds(): string[] {
+    if (this.stopped) return []
+    const snapshot = this.snapshot()
+    const activePlayback =
+      snapshot.loading ||
+      snapshot.playback?.state === 'playing' ||
+      snapshot.playback?.state === 'paused'
+    if (!activePlayback) return []
+    const ids = new Set<string>()
+    if (snapshot.personalized?.providerId) {
+      ids.add(snapshot.personalized.providerId.trim().toLowerCase())
+    }
+    if (snapshot.heart?.active) ids.add('ncm')
+    if (snapshot.track) {
+      const source = getTrackSource(snapshot.track)
+      if (source && source !== 'local') ids.add(source)
+    }
+    for (const item of this.controller.window.value?.items ?? []) {
+      if (!item.track) continue
+      const source = getTrackSource(item.track)
+      if (source && source !== 'local') ids.add(source)
+    }
+    return [...ids]
   }
   private drainObservation(): void {
     if (this.observing || this.stopped || this.committing) return
@@ -1000,7 +1031,6 @@ export class CorePlaybackSession {
       if (remaining <= 0) return
       await new Promise<void>((resolve) => {
         const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, remaining)
-        timer.unref?.()
         const settle = (): void => {
           clearTimeout(timer)
           resolve()
@@ -1053,6 +1083,7 @@ export class CorePlaybackSession {
   private get sourcePrefetch(): SourcePrefetchQueue {
     if (!this.sourcePrefetchQueue)
       this.sourcePrefetchQueue = createSourcePrefetchQueue({
+        ahead: SOURCE_PREFETCH_AHEAD + 1,
         prepare: (track, signal) => this.preparePrefetchSource(track, signal),
         key: (track) => (track.queueEntryId ?? '') + ':' + track.id,
         retain: (prepared) => this.options.resources?.pin([prepared.resolved.source]),
@@ -1065,7 +1096,24 @@ export class CorePlaybackSession {
   private clearPrefetch(): void {
     this.cancelPrefetchTimer?.()
     this.cancelPrefetchTimer = null
+    this.currentPrepared = null
     this.sourcePrefetchQueue?.clear()
+  }
+
+  private seedPreviousPrepared(
+    queueId: string,
+    previousPrepared: { queueId: string; prepared: PreparedPlaybackSource } | null,
+    nextEntryId: string | undefined
+  ): void {
+    if (
+      previousPrepared &&
+      previousPrepared.queueId === queueId &&
+      previousPrepared.prepared.track.queueEntryId &&
+      previousPrepared.prepared.track.queueEntryId !== nextEntryId &&
+      isSourceCurrent(previousPrepared.prepared.resolved, this.options.now())
+    ) {
+      this.sourcePrefetch.seed(previousPrepared.prepared)
+    }
   }
 
   private canPrefetch(): boolean {
@@ -1157,6 +1205,27 @@ export class CorePlaybackSession {
       seen.add(item.queueEntryId)
       tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
     }
+    if (!detached && queue.total > 1) {
+      const canWrapPrevious = this.mode === 'listLoop' || this.mode === 'shuffle'
+      for (let offset = 1; offset <= maxScan; offset++) {
+        const rawPos = queue.index - offset
+        if (rawPos < 0 && !canWrapPrevious) break
+        const position = (rawPos + queue.total) % queue.total
+        const pageNumber = Math.floor(position / LIBRARY_PAGE_SIZE)
+        let page
+        try {
+          page = await this.controller.loadPage(pageNumber)
+        } catch {
+          return null
+        }
+        if (!page || page.revision !== queue.revision) return null
+        const item = page.items[position - pageNumber * LIBRARY_PAGE_SIZE]
+        if (!item?.track || seen.has(item.queueEntryId)) continue
+        seen.add(item.queueEntryId)
+        tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+        break
+      }
+    }
     if (this.automaticQueue() && tracks.length > 0 && this.options.automaticPlaybackAllowed) {
       const mask = await automaticPlaybackMask(
         tracks,
@@ -1178,7 +1247,8 @@ export class CorePlaybackSession {
         )
       return this.prepareSource(track, signal, {
         allowFallbackSearch: false,
-        skipPrefetchCache: true
+        skipPrefetchCache: true,
+        autoMixPrepare: true
       })
     }
     return this.options.resources ? this.options.resources.use(run) : run()
@@ -1186,7 +1256,7 @@ export class CorePlaybackSession {
   private async prepareSource(
     track: TrackData,
     signal?: AbortSignal,
-    options?: { allowFallbackSearch?: boolean; skipPrefetchCache?: boolean }
+    options?: { allowFallbackSearch?: boolean; skipPrefetchCache?: boolean; autoMixPrepare?: boolean }
   ): Promise<PreparedPlaybackSource> {
     // A warm lookahead entry is already authorized and expiry-checked; taking it
     // here keeps a skip from paying provider latency again.
@@ -1194,9 +1264,12 @@ export class CorePlaybackSession {
     if (warm) return warm
     if (this.options.sources)
       return this.options.sources.prepare(track, signal, {
-        allowFallbackSearch: options?.allowFallbackSearch
+        allowFallbackSearch: options?.allowFallbackSearch,
+        ...(options?.autoMixPrepare ? { autoMixPrepare: true } : {})
       })
-    const resolved = await this.options.resolver.resolve(track, signal)
+    const resolved = options?.autoMixPrepare
+      ? await this.options.resolver.resolve(track, signal, { autoMixPrepare: true })
+      : await this.options.resolver.resolve(track, signal)
     signal?.throwIfAborted()
     if (!resolved) throw new Error('Unable to resolve the selected audio source')
     const source = await authorizeNativeSource(resolved.source, this.options.authorize)
@@ -1413,6 +1486,12 @@ export class CorePlaybackSession {
               }
               this.info = await this.options.engine.getPlaybackInfo()
             }
+            const previousPrepared = this.currentPrepared
+            this.currentPrepared = {
+              queueId: window.queue.id,
+              prepared: { track, resolved: prepared.resolved }
+            }
+            if (play) this.seedPreviousPrepared(window.queue.id, previousPrepared, track.queueEntryId)
             this.error = null
           } catch (error) {
             // No automatic replay of a possibly committed load/play/SQL mutation.
@@ -1489,7 +1568,8 @@ export class CorePlaybackSession {
       nativeQueueIndices: this.mapping,
       resolver: this.options.resolver,
       authorize: this.options.authorize,
-      prepareSource: (track, signal) => this.prepareSource(track, signal),
+      prepareSource: (track, signal) =>
+        this.prepareSource(track, signal, { autoMixPrepare: true }),
       commitSource: async ({ window }, occurrenceId, prepared) => {
         await this.repairSource(this.controller, window, occurrenceId, prepared)
       },
@@ -1511,7 +1591,15 @@ export class CorePlaybackSession {
           } else if (reference?.entryId !== entryId && reference) {
             const changed = await this.controller.acceptNative(entryId, reference, this.mode)
             if (!changed || !current()) return null
-            await this.updateTrack(this.controller.track(changed))
+            const promoted = this.controller.track(changed)
+            const previousPrepared = this.currentPrepared
+            const warmNext = this.maintainer?.peekPreparedSuccessor()
+            this.currentPrepared =
+              warmNext && promoted?.queueEntryId && warmNext.track.queueEntryId === promoted.queueEntryId
+                ? { queueId: reference.id, prepared: warmNext }
+                : null
+            this.seedPreviousPrepared(reference.id, previousPrepared, promoted?.queueEntryId)
+            await this.updateTrack(promoted)
             this.schedulePrefetch()
           }
           const window = this.currentTrack
@@ -1615,6 +1703,36 @@ export class CorePlaybackSession {
       this.finishPreparation(intent)
       if (intent === this.intent) this.startMaintenance()
     }
+  }
+  /** Whether this playback runtime supports incremental tail extensions on submitted queues. */
+  canExtendSubmitted(): boolean {
+    return Boolean(this.options.queues.extendQueue)
+  }
+  /** Extends an already-adopted submitted queue outside the command lane so initial playback starts immediately. */
+  async extendSubmitted(
+    queueId: string,
+    items: readonly LibraryQueueSeedItem[],
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    const active = () =>
+      !this.stopped && !signal?.aborted && this.controller.reference()?.id === queueId
+    if (!active()) return false
+    if (!items.length) return true
+    const batch: LibraryQueueInsertItem[] = items.map((item) => ({
+      id: item.id,
+      snapshot: item.localSnapshot ?? item.snapshot
+    }))
+    const { extended } = await this.extendActiveQueue(active, batch, { preserveDuplicates: true })
+    if (extended && active()) {
+      void this.maintainer?.tick()
+      if (this.canPrefetch()) this.schedulePrefetch()
+    }
+    return extended
+  }
+  /** Persists the playback session after all progressive background queue batches land. */
+  async finishSubmitted(queueId: string): Promise<void> {
+    if (this.stopped || this.controller.reference()?.id !== queueId) return
+    await this.flush()
   }
   /** Internal source-owner entry point. Public clients submit identities, never arbitrary tracks. */
   async fromPages(
@@ -2341,6 +2459,9 @@ export class CorePlaybackSession {
         const recover = async () => {
           try {
             await restart()
+            if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+              await this.options.engine.setVolume(0)
+            }
             this.uncertain = false
             this.error = null
           } catch (error) {
@@ -2892,7 +3013,7 @@ export class CorePlaybackSession {
           const delta = action.direction === 'volumeUp' ? 0.05 : -0.05
           const volume = Math.min(
             1,
-            Math.max(0, Math.round(((this.info?.volume ?? 0) + delta) * 100) / 100)
+            Math.max(0, Math.round((this.effectiveUserVolume() + delta) * 100) / 100)
           )
           await this.setUserVolume(volume)
         })
@@ -2913,7 +3034,64 @@ export class CorePlaybackSession {
       }
     }
   }
+  private isAudioSuppressed(): boolean {
+    return this.audioSuppressedClients.size > 0
+  }
+  private effectiveUserVolume(): number {
+    if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+      return this.muted ? 0 : (this.suppressedUserVolume ?? 0)
+    }
+    return this.info?.volume ?? 0
+  }
+  /**
+   * Client-leased native audio output suppression (e.g. while an MV's original
+   * audio track is audible in the full-screen PlayingMusic view). Preserves
+   * logical userVolume/mute state and automatically restores native output gain
+   * when all suppressing clients release or disconnect.
+   */
+  async setAudioSuppressed(clientId: string, suppressed: boolean): Promise<void> {
+    if (!clientId || this.stopped) return
+    await this.transport(async () => {
+      const wasSuppressed = this.isAudioSuppressed()
+      if (suppressed) {
+        this.audioSuppressedClients.add(clientId)
+      } else {
+        this.audioSuppressedClients.delete(clientId)
+      }
+      const nowSuppressed = this.isAudioSuppressed()
+      if (wasSuppressed === nowSuppressed) return
+      if (nowSuppressed) {
+        const currentVolume = this.info?.volume ?? 0
+        if (!this.muted && currentVolume > 0) {
+          this.lastAudibleVolume = currentVolume
+        }
+        this.suppressedUserVolume = this.muted ? 0 : currentVolume
+        if (!this.options.cast?.active()) {
+          await this.applyVolume(0)
+        }
+      } else {
+        const restoreVolume = this.muted
+          ? 0
+          : (this.suppressedUserVolume ?? this.lastAudibleVolume)
+        this.suppressedUserVolume = null
+        if (!this.options.cast?.active()) {
+          await this.applyVolume(restoreVolume)
+        }
+      }
+      this.publish()
+    })
+  }
   private async setUserVolume(volume: number): Promise<void> {
+    if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+      this.suppressedUserVolume = volume
+      if (volume > 0) {
+        this.muted = false
+        this.lastAudibleVolume = volume
+      }
+      await this.applyVolume(0)
+      this.publish()
+      return
+    }
     await this.applyVolume(volume)
     if (this.info && this.info.volume > 0) {
       this.muted = false
@@ -2925,10 +3103,19 @@ export class CorePlaybackSession {
     this.assertIndependent()
     this.interruptSleep()
     await this.transport(async () => {
-      const volume = this.info?.volume ?? 0
+      const volume = this.effectiveUserVolume()
       const next = muted ?? (!this.muted && volume > 0)
       if (next && volume > 0) this.lastAudibleVolume = volume
-      await this.applyVolume(next ? 0 : Math.max(0.01, this.lastAudibleVolume))
+      const targetVolume = next ? 0 : Math.max(0.01, this.lastAudibleVolume)
+      if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+        this.suppressedUserVolume = targetVolume
+        this.muted = next
+        if (targetVolume > 0) this.lastAudibleVolume = targetVolume
+        await this.applyVolume(0)
+        this.publish()
+        return
+      }
+      await this.applyVolume(targetVolume)
       this.muted = next
       if (this.info && this.info.volume > 0) this.lastAudibleVolume = this.info.volume
       this.publish()
@@ -2991,31 +3178,63 @@ export class CorePlaybackSession {
             likedPlaylistId: liked.playlistId
           })
       }
-      if (command.selectedId) {
-        // A chosen occurrence can live on any page, so its index needs the whole
-        // seed before the queue can be published.
-        await this.stagePages(liked.produce, staged, intent, current)
-        return
-      }
-      // Start on the first page instead of pulling the entire playlist first: a
-      // 2190-song liked list used to hold the first sound back for ~40s.
-      let streamed = false
+      // Start as soon as the page covering the selected track (or first page
+      // when unindexed) lands, instead of pulling the entire playlist first.
+      let streamed = false,
+        more = true
       await this.stagePages(
         async (append) => {
-          const first = await liked.nextBatch()
-          if (!first?.length) return
-          await append(first)
-          streamed = true
+          while (!liked.hasSelected() || !streamed) {
+            const batch = await liked.nextBatch()
+            if (!batch) {
+              more = false
+              break
+            }
+            if (batch.length) {
+              await append(batch)
+              streamed = true
+            }
+          }
         },
         staged,
         intent,
         current
       )
-      if (streamed) this.drainLiked(liked)
+      if (streamed && more) this.drainLiked(liked)
     } finally {
       this.finishPreparation(intent)
       if (intent === this.intent) this.startMaintenance()
     }
+  }
+  private async extendActiveQueue(
+    active: () => boolean,
+    items: readonly LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
+  ): Promise<{ extended: boolean; added: number }> {
+    let committed = false,
+      extended = false,
+      added = 0
+    while (!committed && active()) {
+      if (this.loadingIntent !== null) await this.awaitPreparation()
+      if (!active()) break
+      await this.commit(async () => {
+        if (!active() || this.loadingIntent !== null) return
+        await this.nativeSelection()
+        if (!active()) return
+        const previous = this.controller.snapshot.value?.total ?? 0
+        const window = await this.controller.extend([...items], this.mode, options)
+        if (!window) {
+          committed = true
+          return
+        }
+        added += window.queue.total - previous
+        extended = true
+        committed = true
+        await this.updateTrack(this.controller.track(window))
+        this.publish()
+      })
+    }
+    return { extended, added }
   }
   /** Streams the remaining liked pages into the queue that is already playing.
    * Provider page IO stays outside the player command lane; each resolved batch
@@ -3042,26 +3261,9 @@ export class CorePlaybackSession {
         const batch = await liked.nextBatch()
         if (!batch) break
         if (!batch.length) continue
-        let committed = false
-        while (!committed && active()) {
-          if (this.loadingIntent !== null) await this.awaitPreparation()
-          if (!active()) break
-          await this.commit(async () => {
-            if (!active() || this.loadingIntent !== null) return
-            await this.nativeSelection()
-            if (!active()) return
-            const previous = this.controller.snapshot.value?.total ?? 0
-            const window = await this.controller.extend([...batch], this.mode)
-            if (!window) {
-              committed = true
-              return
-            }
-            added += window.queue.total - previous
-            committed = true
-            await this.updateTrack(this.controller.track(window))
-            this.publish()
-          })
-        }
+        const result = await this.extendActiveQueue(active, batch)
+        added += result.added
+        if (!result.extended) break
       }
       if (added > 0 && active()) {
         void this.maintainer?.tick()

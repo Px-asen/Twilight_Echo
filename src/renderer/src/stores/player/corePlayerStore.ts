@@ -16,11 +16,17 @@ import { createCorePlayerVisualization } from './corePlayerVisualization.ts'
 import { createCorePlayerQueue } from './corePlayerQueue.ts'
 import { createCorePlayerResource } from './corePlayerResource.ts'
 import type { CoreCommandName, CoreCommands } from '../../../../shared/coreProtocol.ts'
+import type { CorePlayerMvResult } from '../../../../shared/coreSystemPlayer.ts'
+import type {
+  MediaProviderMvQuality,
+  MediaProviderMvSource
+} from '../../../../shared/providerMv.ts'
 import type { PlayMode } from '../../../../shared/audioEngineTypes.ts'
 import type { LyricSource } from '../../../../shared/lyricsManagement.ts'
 import type { SleepTimerMode } from '../../../../shared/sleepTimer.ts'
 import type { PersonalizedStreamKey } from '../../../../shared/corePersonalized.ts'
 import { formatTime } from '../../utils/playerTime.ts'
+import { formatAudioError } from '../../utils/audioErrorPresentation.ts'
 import { extractDominantColor } from '../../utils/colorExtractor.ts'
 import { resolveCover } from '../../utils/coverLoader.ts'
 import { isDeepStrictEqual } from '../../../../shared/portableAsync.ts'
@@ -229,17 +235,19 @@ export function createCorePlayerStore(
           !core.state.value.audioRecovery?.error &&
           !['confirming', 'restarting-engine', 'restarting-services'].includes(core.state.value.audioRecovery?.phase ?? '')
       ),
-      audioEngineError: computed(
-        () =>
-          commandError.value?.message ??
-          core.failure.value?.message ??
+      audioEngineError: computed(() => {
+        const raw =
+          commandError.value ??
+          core.failure.value ??
           core.state.value?.audioRecovery?.error ??
           core.state.value?.error ??
           null
-      ),
+        if (raw == null || raw === '') return null
+        return formatAudioError(raw)
+      }),
       audioEngineRecoveryNotice: computed(() =>
         core.failure.value && recoveryKey.value !== dismissedRecovery.value
-          ? { kind: 'service-fatal' as const, message: core.failure.value.message }
+          ? { kind: 'service-fatal' as const, message: formatAudioError(core.failure.value) }
           : null),
       dismissAudioEngineRecoveryNotice: () => { dismissedRecovery.value = recoveryKey.value },
       isLoading: computed(() =>
@@ -270,6 +278,30 @@ export function createCorePlayerStore(
           trackId: state.track.id, occurrenceId: state.queue?.occurrenceId ?? null
         }).then(() => {})
       },
+      queryCurrentTrackMv: (
+        mvOptions?: {
+          quality?: MediaProviderMvQuality
+          source?: MediaProviderMvSource
+          force?: boolean
+        },
+        signal?: AbortSignal
+      ): Promise<CorePlayerMvResult | null> => {
+        const state = core.state.value
+        if (!state?.track) return Promise.resolve(null)
+        return core.query(
+          'player.mv',
+          {
+            trackId: state.track.id,
+            occurrenceId: state.queue?.occurrenceId ?? null,
+            ...(mvOptions?.quality ? { quality: mvOptions.quality } : {}),
+            ...(mvOptions?.source ? { source: mvOptions.source } : {}),
+            ...(mvOptions?.force ? { force: true } : {})
+          },
+          signal
+        )
+      },
+      setAudioSuppressed: (suppressed: boolean) =>
+        command('playback.suppressAudio', { suppressed }),
       coverThemeColor: shallowReadonly(coverThemeColor),
       themeCoverUrl,
       themeCoverIdentity,

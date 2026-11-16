@@ -97,6 +97,7 @@ export class HeartQueue {
     selectedId?: string
   ): Promise<{
     playlistId: number
+    hasSelected(): boolean
     selectedIndex(): number
     produce: LibraryQueueSeedProducer
     /** Reads the next 200-song page; null once the playlist is exhausted. */
@@ -148,6 +149,7 @@ export class HeartQueue {
     }
     return {
       playlistId,
+      hasSelected: () => !selectedId || selected >= 0,
       selectedIndex: () => {
         if (selected < 0) throw new Error('Selected liked song is unavailable')
         return selected

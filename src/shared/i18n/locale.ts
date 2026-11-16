@@ -68,3 +68,29 @@ export function resolveLocale(
 export function intlLocale(locale: AppLocale): string {
   return locale
 }
+
+export type MessageParams = Record<string, string | number | boolean | null | undefined>
+
+/** A catalog is flat: dotted keys, no nesting, so lookup is one property read. */
+export type MessageCatalog = Readonly<Record<string, string>>
+
+const PLACEHOLDER = /\{(\w+)\}/g
+const cjkRange = (start: number, end: number): string =>
+  `${String.fromCharCode(start)}-${String.fromCharCode(end)}`
+const CJK_CLASS = `[${cjkRange(0x3000, 0x303f)}${cjkRange(0x3400, 0x4dbf)}${cjkRange(0x4e00, 0x9fff)}${cjkRange(0xf900, 0xfaff)}]`
+// Constructed dynamically so Vite/esbuild IIFE bundles stay pure ASCII when loaded without a UTF-8 meta charset.
+const CJK_SPACE_CJK = new RegExp(`(${CJK_CLASS}) +(?=${CJK_CLASS})`, 'g')
+
+/**
+ * Substitute `{name}` placeholders and strip inter-script spaces introduced between
+ * CJK template fragments and CJK interpolated parameters.
+ */
+export function formatMessage(template: string, params?: MessageParams): string {
+  if (!params) return template
+  const substituted = template.replace(PLACEHOLDER, (match, name: string) => {
+    const value = params[name]
+    if (value === undefined || value === null) return match
+    return String(value)
+  })
+  return substituted === template ? substituted : substituted.replace(CJK_SPACE_CJK, '$1')
+}

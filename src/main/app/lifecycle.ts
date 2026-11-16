@@ -351,7 +351,9 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
         if (!filePath) {
           return new Response('Not Found', { status: 404 })
         }
-        const displayPath = await prepareBackgroundForDisplay(filePath)
+        const rawBlur = Number(url.searchParams.get('blur') ?? 0)
+        const blurPx = Number.isFinite(rawBlur) && rawBlur > 0 ? rawBlur : 0
+        const displayPath = await prepareBackgroundForDisplay(filePath, blurPx)
         // Stream from disk; Chromium owns the encoded/decode caches. Do not also
         // retain a full wallpaper Buffer in the main-process thumbnail LRU.
         const response = await net
@@ -428,30 +430,169 @@ function startDesktopApp(owner: 'legacy' | 'core'): void {
       // Chromium net.fetch in the main process — headers/redirects get mangled and
       // covers come back as 403 HTML. undici speaks plain HTTP with the UA/Referer
       // we set in remoteMediaGrants and is already a production dependency.
+      const MAX_CONCURRENT_IMAGE_FETCHES = 6
+      let activeImageFetches = 0
+      const imageFetchQueue: Array<{ grant: () => void }> = []
+      let undiciClientPromise: Promise<{
+        fetch: typeof import('undici').fetch
+        dispatcher: import('undici').Agent
+      }> | null = null
+
+      const getUndiciClient = () => {
+        if (!undiciClientPromise) {
+          undiciClientPromise = import('undici')
+            .then(({ fetch: undiciFetch, Agent }) => ({
+              fetch: undiciFetch,
+              dispatcher: new Agent({
+                connections: 4,
+                pipelining: 1,
+                keepAliveTimeout: 15_000,
+                keepAliveMaxTimeout: 30_000
+              })
+            }))
+            .catch((error) => {
+              undiciClientPromise = null
+              throw error
+            })
+        }
+        return undiciClientPromise
+      }
+
+      const readFetchHeader = (headers: HeadersInit | undefined, name: string): string | null => {
+        if (!headers) return null
+        const lower = name.toLowerCase()
+        if (typeof Headers !== 'undefined' && headers instanceof Headers) return headers.get(name)
+        if (Array.isArray(headers)) {
+          for (const [key, value] of headers) {
+            if (key.toLowerCase() === lower) return value
+          }
+          return null
+        }
+        for (const [key, value] of Object.entries(headers)) {
+          if (key.toLowerCase() === lower) return typeof value === 'string' ? value : null
+        }
+        return null
+      }
+
+      const releaseImageFetchSlot = (): void => {
+        if (activeImageFetches > 0) activeImageFetches -= 1
+        while (activeImageFetches < MAX_CONCURRENT_IMAGE_FETCHES && imageFetchQueue.length > 0) {
+          const next = imageFetchQueue.shift()!
+          next.grant()
+        }
+      }
+
+      const acquireImageFetchSlot = (signal?: AbortSignal | null): Promise<() => void> => {
+        signal?.throwIfAborted()
+        if (activeImageFetches < MAX_CONCURRENT_IMAGE_FETCHES) {
+          activeImageFetches += 1
+          let released = false
+          return Promise.resolve(() => {
+            if (released) return
+            released = true
+            releaseImageFetchSlot()
+          })
+        }
+        return new Promise<() => void>((resolve, reject) => {
+          let settled = false
+          const onAbort = () => {
+            if (settled) return
+            settled = true
+            const index = imageFetchQueue.indexOf(waiter)
+            if (index !== -1) imageFetchQueue.splice(index, 1)
+            try {
+              signal?.throwIfAborted()
+              reject(new Error('Aborted'))
+            } catch (error) {
+              reject(error)
+            }
+          }
+          const waiter = {
+            grant: () => {
+              if (settled) return
+              settled = true
+              signal?.removeEventListener('abort', onAbort)
+              activeImageFetches += 1
+              let released = false
+              resolve(() => {
+                if (released) return
+                released = true
+                releaseImageFetchSlot()
+              })
+            }
+          }
+          signal?.addEventListener('abort', onAbort, { once: true })
+          imageFetchQueue.push(waiter)
+        })
+      }
+
       protocol.handle(
         'twilight-media',
         createRemoteMediaRequestHandler({
           imageCache: mediaCoverCache,
           fetch: async (source, init) => {
-            const { fetch: undiciFetch } = await import('undici')
             init.signal?.throwIfAborted()
-            const upstream = await undiciFetch(source, {
-              method: init.method,
-              signal: init.signal,
-              headers: init.headers as Record<string, string> | undefined,
-              // Manual so remoteMediaGrants can re-apply NetEase Referer on each hop.
-              redirect: 'manual'
-            })
-            // Convert undici Response → web Response for protocol.handle consumers.
-            const headers = new Headers()
-            upstream.headers.forEach((value, key) => {
-              headers.set(key, value)
-            })
-            return new Response(upstream.body as ReadableStream<Uint8Array> | null, {
-              status: upstream.status,
-              statusText: upstream.statusText,
-              headers
-            })
+            const isGated =
+              (init.method ?? 'GET').toUpperCase() === 'GET' &&
+              !readFetchHeader(init.headers, 'range') &&
+              (readFetchHeader(init.headers, 'accept') ?? '').toLowerCase().includes('image/')
+            const release = isGated ? await acquireImageFetchSlot(init.signal) : null
+            try {
+              init.signal?.throwIfAborted()
+              const { fetch: undiciFetch, dispatcher } = await getUndiciClient()
+              init.signal?.throwIfAborted()
+              const upstream = await undiciFetch(source, {
+                method: init.method,
+                signal: init.signal,
+                headers: init.headers as Record<string, string> | undefined,
+                dispatcher,
+                // Manual so remoteMediaGrants can re-apply NetEase Referer on each hop.
+                redirect: 'manual'
+              })
+              // Convert undici Response → web Response for protocol.handle consumers.
+              const headers = new Headers()
+              upstream.headers.forEach((value, key) => {
+                headers.set(key, value)
+              })
+              const upstreamBody = upstream.body as ReadableStream<Uint8Array> | null
+              if (!release || !upstreamBody) {
+                release?.()
+                return new Response(upstreamBody, {
+                  status: upstream.status,
+                  statusText: upstream.statusText,
+                  headers
+                })
+              }
+              const reader = upstreamBody.getReader()
+              const trackedBody = new ReadableStream<Uint8Array>({
+                async pull(controller) {
+                  try {
+                    const chunk = await reader.read()
+                    if (chunk.done) {
+                      release()
+                      controller.close()
+                      return
+                    }
+                    controller.enqueue(chunk.value)
+                  } catch (error) {
+                    release()
+                    controller.error(error)
+                  }
+                },
+                cancel(reason) {
+                  release()
+                  return reader.cancel(reason)
+                }
+              })
+              return new Response(trackedBody, {
+                status: upstream.status,
+                statusText: upstream.statusText,
+                headers
+              })
+            } catch (error) {
+              release?.()
+              throw error
+            }
           }
         })
       )

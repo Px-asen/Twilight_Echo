@@ -58,3 +58,30 @@ export const BODY_CONTROL_SELECTOR =
 
 /** Disclosure headings describe a group; they are not painted widget bodies. */
 export const STRUCTURAL_CONTROL_SELECTOR = '.settings-group-trigger,.device-panel-disclosure'
+
+/** Repeated scrollable grid/list cards that converge to translucent surfaces without per-card blur. */
+export const DENSE_CARD_SURFACE_SELECTORS = [
+  '.artist-card',
+  '.album-card',
+  '.playlist-card',
+  '.playlist-grid-card',
+  '.playlist-tile',
+  '.playlist-list-item',
+  '.folder-card',
+  '.online-playlist',
+  '.fresh-tile',
+  '.gallery-tile',
+  '.toplist-card',
+  '.aggregate-card',
+  '.station-card',
+  '.plugin-card',
+  '.market-card',
+  '.plugin-extension-card',
+  '.tool-card',
+  '.theme-selection-card',
+  '.theme-plugin-card',
+  '.recent-card',
+  '.ranking-card'
+] as const
+
+export const DENSE_CARD_SURFACE_SELECTOR = DENSE_CARD_SURFACE_SELECTORS.join(',\n')

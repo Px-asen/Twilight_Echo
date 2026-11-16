@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useLyricsFontPicker } from '@renderer/composables/useLyricsFontPicker'
-import MiniPlayerSettingsSection from './MiniPlayerSettingsSection.vue'
 import ThemeControlsSettings from './ThemeControlsSettings.vue'
 import BackgroundEditorSettings from './BackgroundEditorSettings.vue'
 import FontRenderingSettings from './FontRenderingSettings.vue'
 import WindowTransparencySettings from './WindowTransparencySettings.vue'
 import SettingsGroup from './SettingsGroup.vue'
-import PlayerBarSettings from './PlayerBarSettings.vue'
-import PlayerBarLayoutSettings from './PlayerBarLayoutSettings.vue'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { fontFamilyOptions, uiDensityOptions, type BooleanSettingKey } from './types.ts'
 import { normalizeAppFontFamily } from '../../../../shared/appFont.ts'
@@ -56,7 +53,7 @@ function toggleSetting(key: BooleanSettingKey): void {
       <h2>外观</h2>
     </div>
 
-    <p class="settings-section-description">搭配主题、文字与播放器，让界面适合你的使用习惯。</p>
+    <p class="settings-section-description">主题与配色、背景材质、字体与界面密度。</p>
     <div class="setting-list">
       <div data-setting-id="appearance-workspace" class="setting-item">
         <div class="setting-copy">
@@ -171,57 +168,5 @@ function toggleSetting(key: BooleanSettingKey): void {
         </div>
       </div>
     </div>
-    <SettingsGroup
-      id="player-bar"
-      title="播放条"
-      :summary="
-        '形态：' +
-        { standard: '标准', mini: '迷你', compact: '紧凑' }[settings.playerBar.mode] +
-        ' · ' +
-        { visible: '常显', autoHide: '自动隐藏', hidden: '完全隐藏' }[settings.playerBar.visibility]
-      "
-      description="先选择形态与显示方式；需要调整播放页差异、自动隐藏或按钮布局时，再展开对应选项。"
-    >
-      <div class="setting-list">
-        <PlayerBarSettings />
-        <div
-          data-setting-id="compact-visualizer"
-          id="setting-compact-visualizer"
-          class="setting-item"
-        >
-          <div class="setting-copy">
-            <strong>歌词页底部动态频谱</strong
-            ><span>显示播放条上的动态频谱；关闭时停止频谱数据轮询。</span>
-          </div>
-          <button
-            type="button"
-            class="toggle-switch"
-            role="switch"
-            aria-label="歌词页底部动态频谱"
-            :aria-checked="settings.playerBar.compactVisualizerEnabled"
-            :class="{ active: settings.playerBar.compactVisualizerEnabled }"
-            @click="
-              updateSettings({
-                playerBar: {
-                  ...settings.playerBar,
-                  compactVisualizerEnabled: !settings.playerBar.compactVisualizerEnabled
-                }
-              })
-            "
-          />
-        </div>
-        <SettingsGroup
-          id="player-bar-layout-details"
-          title="按钮编排"
-          :summary="
-            '当前全局形态：' +
-            { standard: '标准', mini: '迷你', compact: '紧凑' }[settings.playerBar.mode]
-          "
-          description="调整每种播放条上的按钮和顺序；编辑布局不会切换正在使用的形态。"
-          ><PlayerBarLayoutSettings
-        /></SettingsGroup>
-      </div>
-    </SettingsGroup>
-    <MiniPlayerSettingsSection />
   </section>
 </template>

@@ -945,13 +945,13 @@ test('bundled NCM provider does not cache empty playback lookups', async () => {
   })
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  // auto quality: hires/lossless/exhigh/standard + classic br fallbacks (999/320/128)
+  // auto quality: hires/lossless/exhigh/standard + single classic br=320000 fallback
   // + one final gray-track match. Empty results remain uncached.
-  assert.equal(requests.length, 8)
-  assert.equal(new URL(requests[7].path, 'http://twilight.local').pathname, '/song/url/match')
+  assert.equal(requests.length, 6)
+  assert.equal(new URL(requests[5].path, 'http://twilight.local').pathname, '/song/url/match')
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  assert.equal(requests.length, 16)
+  assert.equal(requests.length, 12)
 
   providerModule.deactivate()
 })

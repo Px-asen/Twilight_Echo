@@ -217,6 +217,30 @@ test('audio shutdown waits for process exit and prevents polling from creating a
   } finally { binding.destroy() }
 })
 
+test('applyDspState rejects immediately instead of hanging once shutdown/destroy has stopped the binding', async () => {
+  class SlowExit extends ManualUtilityProcess {
+    override kill(): void { this.killCount++ }
+  }
+  const child = new SlowExit()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audio',
+    restartTimeoutMs: 1000,
+    launch: () => child
+  })
+  startAudioServiceForTest(binding)
+  const shutdown = binding.shutdown()
+  const payload = (revision: number) => ({
+    revision,
+    processing: { dspEnabled: true },
+    graph: { version: 1, enabled: true, nodes: [], edges: [] }
+  })
+  const midShutdownDsp = binding.applyDspState(1, payload(1))
+  await assert.rejects(midShutdownDsp, /音频服务已停止/)
+  child.emit('exit', 0)
+  await shutdown
+  await assert.rejects(binding.applyDspState(2, payload(2)), /音频服务已停止/)
+})
+
 test('old coalesced control completion cannot discard a replacement generation control', async (context) => {
   context.mock.timers.enable({ apis: ['setTimeout'] })
   const children: ManualUtilityProcess[] = []

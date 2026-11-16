@@ -112,6 +112,7 @@ function isCurrent(track: Track | null): boolean {
               :cover-source="track.coverSource"
               :identity="track.id"
               :core-track-id="!track.cover ? track.resolvedTrack?.id : undefined"
+              size="sm"
               fallback="./icon.png"
               alt="" /><span
               v-if="track.resolvedTrack"
@@ -165,6 +166,7 @@ function isCurrent(track: Track | null): boolean {
               :cover="artist.cover"
               :cover-source="artist.coverSource"
               :identity="artist.id"
+              size="sm"
               fallback="./icon.png"
               alt=""
           /></span>

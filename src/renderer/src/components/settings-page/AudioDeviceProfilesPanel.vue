@@ -9,6 +9,7 @@ import AudioDeviceProfileEditor from '@renderer/components/settings-page/AudioDe
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import type { CoreAudioProfileEdit } from '../../../../shared/coreAudio.ts'
 import { useAudioOutputDspStore } from '@renderer/stores/useAudioOutputDspStore'
+import { formatAudioError } from '@renderer/utils/audioErrorPresentation'
 
 defineProps<{ compact?: boolean }>()
 const emit = defineEmits<{ attention: [message: string] }>()
@@ -20,7 +21,7 @@ const feedback = ref('')
 watch(
   () =>
     error.value ||
-    snapshot.value?.error ||
+    (snapshot.value?.error ? formatAudioError(snapshot.value.error) : '') ||
     (busy.value || snapshot.value?.phase === 'applying' ? '正在应用设备档案…' : ''),
   (message) => emit('attention', message),
   { immediate: true }
@@ -36,7 +37,12 @@ async function readProfiles() {
   return state.profiles
 }
 async function editProfiles(edit: CoreAudioProfileEdit['edit']) {
-  await core.command('audio.profiles.edit', { revision: profileRevision, edit })
+  try {
+    await core.command('audio.profiles.edit', { revision: profileRevision, edit })
+  } catch (reason) {
+    await readProfiles().catch(() => {})
+    throw reason
+  }
   return readProfiles()
 }
 let readSequence = 0
@@ -49,7 +55,7 @@ async function refresh(): Promise<void> {
     const state = await readProfiles()
     if (sequence === readSequence) snapshot.value = state
   } catch (reason) {
-    if (sequence === readSequence) error.value = String(reason)
+    if (sequence === readSequence) error.value = formatAudioError(reason)
   }
 }
 
@@ -100,7 +106,7 @@ async function run(
     await outputStore.refreshAudioOutputState()
   } catch (reason) {
     if (sequence === actionSequence)
-      error.value = reason instanceof Error ? reason.message : String(reason)
+      error.value = formatAudioError(reason)
   } finally {
     if (sequence === actionSequence) busy.value = false
   }

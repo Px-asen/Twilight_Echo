@@ -47,6 +47,7 @@ function fixture(t: test.TestContext, hasQueue = true) {
     queue = scope.run(() => createCorePlayerQueue(core, (error) => errors.push(error)))!
   t.after(() => scope.stop())
   return {
+    core,
     queue,
     commands,
     errors,
@@ -195,4 +196,111 @@ test('coreQueueTrackInput forwards authorized provider artwork handles and drops
   if (rawRemote.kind === 'provider') {
     assert.equal('cover' in rawRemote.track, false)
   }
+})
+
+test('playTrackPages resolves as soon as the initial selected batch commits and streams remaining batches in background', async (t) => {
+  const f = fixture(t, false)
+  let releaseSecondBatch!: () => void
+  const secondBatchGate = new Promise<void>((resolve) => {
+    releaseSecondBatch = resolve
+  })
+  let committedSeen!: () => void
+  const commitReached = new Promise<void>((resolve) => {
+    committedSeen = resolve
+  })
+  t.after(() => releaseSecondBatch())
+
+  let adopted = false
+  f.core.command = async (name: string, payload: any) => {
+    f.commands.push({ name, payload })
+    if (name === 'queue.submit' && payload.kind === 'append') {
+      if (!adopted && payload.sequence === 1) {
+        adopted = true
+        return { id: 'stage', sequence: 1, total: payload.items.length, state: 'committed' }
+      }
+      return { id: 'stage', sequence: payload.sequence, total: 2, state: 'committed' }
+    }
+    if (name === 'queue.submit' && payload.kind === 'commit') {
+      committedSeen()
+    }
+    return {
+      id: 'stage',
+      sequence: payload.sequence ?? 0,
+      total: 0,
+      state: payload.kind === 'commit' ? 'committed' : 'building'
+    }
+  }
+
+  let aborted = false
+  await f.queue.playTrackPages(
+    async (append, signal) => {
+      signal.addEventListener('abort', () => {
+        aborted = true
+      })
+      await append([
+        {
+          id: 'ncm:1',
+          title: 'One',
+          artist: 'Artist',
+          album: 'Album',
+          duration: 120,
+          source: 'ncm',
+          ncmSongId: 1
+        } as any
+      ])
+      await secondBatchGate
+      if (signal.aborted) return
+      await append([
+        {
+          id: 'ncm:2',
+          title: 'Two',
+          artist: 'Artist',
+          album: 'Album',
+          duration: 120,
+          source: 'ncm',
+          ncmSongId: 2
+        } as any
+      ])
+    },
+    0,
+    () => {},
+    { mode: 'shuffle' }
+  )
+
+  assert.equal(f.commands[0].payload.progressive, true)
+  assert.equal(f.commands[0].payload.mode, 'shuffle')
+  assert.equal(f.commands.filter((c) => c.payload.kind === 'append').length, 1)
+
+  releaseSecondBatch()
+  await commitReached
+  assert.equal(aborted, false)
+  assert.equal(f.commands.filter((c) => c.payload.kind === 'append').length, 2)
+  assert.equal(f.commands.at(-1)?.payload.kind, 'commit')
+
+  // Starting a new queue playback supersedes an in-flight background drain cleanly.
+  let supersededSignal!: AbortSignal
+  let releasePending!: () => void
+  const pendingPage = new Promise<void>((resolve) => {
+    releasePending = resolve
+  })
+  t.after(() => releasePending())
+  adopted = false
+  await f.queue.playTrackPages(async (append, signal) => {
+    supersededSignal = signal
+    await append([
+      {
+        id: 'ncm:3',
+        title: 'Three',
+        artist: 'Artist',
+        album: 'Album',
+        duration: 120,
+        source: 'ncm',
+        ncmSongId: 3
+      } as any
+    ])
+    await pendingPage
+  })
+  assert.equal(supersededSignal.aborted, false)
+  await f.queue.playLikedTracks({ selectedId: 'ncm:9' })
+  assert.equal(supersededSignal.aborted, true)
 })

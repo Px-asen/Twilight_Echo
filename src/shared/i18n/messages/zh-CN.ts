@@ -540,6 +540,11 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
     '播放 {title} 失败，已尝试切换到 {source} 来源：{reason}',
   'error.audio.playback_fallback_rematched': '播放 {title} 失败，已重新匹配到 {source} 来源',
   'error.audio.current_track': '当前曲目',
+  'audio.outputFallback.asioToWasapi':
+    'ASIO 输出初始化失败（{reason}），已自动回退至 WASAPI 共享输出。如需原样直出，请安装对应解码器的 ASIO 驱动或开启 WASAPI 独占模式。',
+  'audio.outputFallback.generic':
+    '原输出通道不可用（{reason}），已自动切换至备用输出（{target}）。',
+  'audio.outputFallback.openSettings': '查看输出设置',
 
   // ── 引擎抛错（主进程 ipcError） ────────────────────────────────────────────
   // {detail} 是原生引擎给出的原始原因，通常是英文；没有原因时填「原生音频引擎不可用」。
@@ -566,7 +571,14 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   'error.audio.play_failed': '播放失败：{detail}',
   'error.audio.pause_failed': '暂停或继续播放失败：{detail}',
   'error.audio.stop_failed': '停止播放失败：{detail}',
+  'error.audio.volume_change_failed': '调整音量失败：{detail}',
   'error.audio.queue_load_failed': '播放队列加载失败：{detail}',
+  'error.audio.queue_append_empty': '尚未加载播放队列，无法追加曲目：{detail}',
+  'error.audio.queue_append_failed': '追加播放队列失败：{detail}',
+  'error.audio.queue_index_invalid': '播放队列索引超出范围：{detail}',
+  'error.audio.queue_current_source_immutable': '当前正在播放的队列曲目无法直接替换音源：{detail}',
+  'error.audio.queue_source_invalid': '播放队列音源地址无效：{detail}',
+  'error.audio.queue_source_update_failed': '更新播放队列音源失败：{detail}',
   'error.audio.play_mode_sync_failed': '播放模式同步失败：{detail}',
   'error.audio.play_mode_switch_failed': '播放模式切换失败：{detail}',
   'error.audio.decode_failed': '音频读取或解码失败，请检查文件完整性或音源是否可用',

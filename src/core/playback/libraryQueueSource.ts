@@ -1,5 +1,6 @@
 import {
   LIBRARY_CACHE_PAGES,
+  LIBRARY_MAX_PENDING_PAGE_READS,
   LIBRARY_PAGE_SIZE,
   type LibraryDatabaseApi,
   type LibraryQuery,
@@ -38,7 +39,7 @@ type PageRequest = {
 type LibraryQueueUndoEntry = { revision: number; label: string }
 export type LibraryPlaybackWindow = LibraryQueuePlaybackWindow
 
-/** Frozen membership lives in SQLite. Only ten 200-entry detail pages and two
+/** Frozen membership lives in SQLite. Only four 200-entry detail pages and two
  * read RPCs can be resident, even while the user replaces queues repeatedly. */
 export class LibraryQueueSource {
   private readonly api: LibraryQueueApi
@@ -264,7 +265,8 @@ export class LibraryQueueSource {
     })
   }
   extend(
-    items: import('../../shared/libraryDatabase.ts').LibraryQueueInsertItem[]
+    items: import('../../shared/libraryDatabase.ts').LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
   ): Promise<LibraryQueueEditResult | null> {
     const input = structuredClone(items),
       attachment = this.attachment
@@ -273,7 +275,11 @@ export class LibraryQueueSource {
       if (!this.api.extendQueue) throw new Error('Automatic queue extensions are unavailable')
       if (this.requiresRefresh) throw new Error('Refresh the library queue before extending it')
       try {
-        const result = await this.api.extendQueue(this.queue.id, this.queue.revision, input)
+        const result = options?.preserveDuplicates
+          ? await this.api.extendQueue(this.queue.id, this.queue.revision, input, {
+              preserveDuplicates: true
+            })
+          : await this.api.extendQueue(this.queue.id, this.queue.revision, input)
         if (!this.current(attachment)) return null
         this.queue = result.queue
         this.undoStack = []
@@ -356,7 +362,7 @@ export class LibraryQueueSource {
     const key = `${this.epoch}:${page}`,
       existing = this.reads.get(key)
     if (existing) return existing
-    if (this.waiting.length >= LIBRARY_CACHE_PAGES)
+    if (this.waiting.length >= LIBRARY_MAX_PENDING_PAGE_READS)
       return Promise.reject(new Error('Too many pending library queue pages'))
     const promise = new Promise<LibraryQueuePage | null>((resolve, reject) => {
       this.waiting.push({ epoch: this.epoch, queue: { ...this.queue! }, page, resolve, reject })

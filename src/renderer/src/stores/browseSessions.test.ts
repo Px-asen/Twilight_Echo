@@ -225,3 +225,87 @@ test('cached 100000-track display restoration reads only the bounded window', as
   assert.ok(p95 <= 300, `cached restore exceeded 300 ms: ${p95}`)
   assert.equal(f.calls.length, 500)
 })
+
+test('produce and produceBrowseSelection stream initial pages before later provider pages arrive', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'twilight-window-stream-'))
+  let serial = 0
+  let releasePage1!: () => void
+  const page1Gate = new Promise<void>((resolve) => {
+    releasePage1 = resolve
+  })
+  const calls: number[] = []
+  const service = new CoreBrowseService({
+    files,
+    root,
+    newId: () => `session-${++serial}`,
+    providerContext: () => 'account-1',
+    callProvider: async (_provider, _method, args) => {
+      const offset = Number(args[1]),
+        limit = Number(args[2])
+      calls.push(offset)
+      if (offset === 200) await page1Gate
+      return {
+        tracks: Array.from({ length: Math.max(0, Math.min(limit, 550 - offset)) }, (_, i) =>
+          track(offset + i)
+        ),
+        total: null,
+        nextOffset: Math.min(550, offset + limit),
+        hasMore: offset + limit < 550
+      }
+    }
+  })
+  const invoke = (name: string, payload: unknown, signal = new AbortController().signal) =>
+    service.execute(
+      'window',
+      {
+        kind:
+          name === 'browse.open' ||
+          name === 'browse.append' ||
+          name === 'browse.release' ||
+          name === 'browse.snapshot.save'
+            ? 'command'
+            : 'query',
+        name,
+        payload
+      } as CoreRequestEnvelope,
+      signal
+    )
+  const client = { command: invoke, query: invoke } as Pick<CorePlayerClient, 'command' | 'query'>
+  t.after(async () => {
+    releasePage1()
+    await service.shutdown()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  const session = (await invoke('browse.open', {
+    source: {
+      providerId: 'p',
+      method: 'fetchPlaylistTracksPage',
+      args: ['list', 0, 200],
+      paging: { offsetArg: 1, limitArg: 2 }
+    }
+  })) as { id: string }
+
+  const controller = new AbortController()
+  const batches: number[] = []
+  let firstDelivered!: () => void
+  const firstBatchPromise = new Promise<void>((resolve) => {
+    firstDelivered = resolve
+  })
+  const streaming = produceBrowseSelection(
+    { id: session.id, query: {}, count: 200 },
+    async (tracks) => {
+      batches.push(tracks.length)
+      firstDelivered()
+    },
+    controller.signal,
+    client
+  )
+  await firstBatchPromise
+  assert.deepEqual(batches, [200], 'page 0 must be delivered before page 1 resolves')
+
+  releasePage1()
+  await streaming
+  assert.deepEqual(batches, [200, 200, 150])
+  assert.deepEqual(calls, [0, 200, 400])
+})

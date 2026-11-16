@@ -115,6 +115,9 @@ export class OutputRouter {
   autoDeviceRebindInFlight: Promise<void> | null = null
   /** Last explicit device per backend, so a backend switch is not a device reset. */
   private readonly lastDeviceByOutput = new Map<AudioOutputId, string>()
+  private outputFallbackNotice: import('../../shared/coreAudio.ts').AudioOutputFallbackNotice | null =
+    null
+  private outputFallbackNoticeId = 0
 
   private readonly platform: CorePlatformId
   private readonly persist?: AudioEngineManagerDependencies['persistAudioOutput']
@@ -689,6 +692,7 @@ export class OutputRouter {
       this.device = options.nextDevice
       this.exclusiveMode = options.nextExclusiveMode
       this.outputConfig = options.nextConfig
+      this.outputFallbackNotice = null
       this.invalidateAudioDeviceOptionsCache(options.cacheReason)
       this.nativeOutputRouteSynced = true
       this.emitOutputRouteTransaction(options.context, 'commit')
@@ -996,6 +1000,37 @@ export class OutputRouter {
   invalidateAudioDeviceOptionsCache(reason: string): void {
     this.lastAudioDeviceOptionsCache = null
     this.emit('audio-device-options-changed', { reason })
+  }
+
+  getOutputFallbackNotice(): import('../../shared/coreAudio.ts').AudioOutputFallbackNotice | null {
+    return this.outputFallbackNotice ? { ...this.outputFallbackNotice } : null
+  }
+
+  commitFallbackOutputRoute(options: {
+    fromOutput: AudioOutputId
+    fromDevice: string
+    reason: string
+    cacheReason: string
+  }): void {
+    this.outputFallbackNotice = {
+      id: ++this.outputFallbackNoticeId,
+      fromOutput: options.fromOutput,
+      fromDevice: options.fromDevice,
+      toOutput: this.output,
+      toDevice: this.device,
+      reason: options.reason
+    }
+    try {
+      this.persist?.({
+        audioOutput: this.output,
+        audioDevice: this.device,
+        audioExclusiveMode: this.exclusiveMode,
+        audioOutputConfig: this.outputConfig
+      })
+    } catch {
+      // Persistence failure during playback fallback must never interrupt active audio.
+    }
+    this.invalidateAudioDeviceOptionsCache(options.cacheReason)
   }
 
   pollAudioDeviceOptionsForChanges(): void {

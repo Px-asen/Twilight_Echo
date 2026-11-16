@@ -260,6 +260,7 @@ export interface TwilightPlayerApi {
 export type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
+  | 'mv'
   | 'lyrics'
   | 'cover'
   | 'playlist'
@@ -302,8 +303,31 @@ export interface Track {
   lyrics: string | null
   translatedLyrics?: string | null
   source?: string
+  mvId?: string
   streamUrl?: string | null
   bpm?: number
+}
+
+export type MediaProviderMvQuality = 'auto' | '1080p' | '720p' | '480p'
+
+export interface MediaProviderMvOptions {
+  quality?: MediaProviderMvQuality
+  force?: boolean
+}
+
+export interface MediaProviderMvResult {
+  url: string
+  /** Optional separate audio stream URL for DASH providers such as Bilibili. */
+  audioUrl?: string | null
+  coverUrl?: string | null
+  /** Optional upstream Referer origin (e.g. 'https://www.bilibili.com/'), consumed by the host. */
+  referer?: string | null
+  quality?: string | null
+  width?: number | null
+  height?: number | null
+  durationSeconds?: number | null
+  mvId?: string | null
+  title?: string | null
 }
 
 /** nextOffset is a provider cursor; it need not equal the number of returned tracks. */
@@ -560,6 +584,11 @@ export interface TwilightMediaProviderRegistration {
     options?: PlaybackUrlOptions,
     context?: TwilightProviderRequestContext
   ): Promise<string | null>
+  getTrackMv?(
+    track: Track,
+    options?: MediaProviderMvOptions,
+    context?: TwilightProviderRequestContext
+  ): Promise<MediaProviderMvResult | null>
   getLyrics?(
     track: Track,
     context?: TwilightProviderRequestContext

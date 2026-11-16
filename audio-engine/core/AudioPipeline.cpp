@@ -3613,11 +3613,6 @@ TAE_Result AudioPipeline::playInternal(
                                    : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
   active->start();
   active->waitForPreroll(prerollFrames, std::chrono::milliseconds(500));
-  if ((gaplessEnabled || bridgeGroupOwned_.load(std::memory_order_acquire) || requestedAutoMixMode_.load(std::memory_order_acquire) != TA_AM_OFF) &&
-      !dopPath && !nativeDsdPath && !pcmToDsdPath) {
-    std::string preloadError;
-    preloadNext(upcomingItem, &preloadError);
-  }
 
   auto eventCallback = [this](OutputBackendEvent event, const std::string& message) {
     std::lock_guard lock(mutex_);
@@ -3735,6 +3730,17 @@ TAE_Result AudioPipeline::playInternal(
     outputInfo_.diagnostics.dsdMutePostRollFrames = mutePlan.postRollFrames;
     outputInfo_.diagnostics.dsdMuteTimeoutFrames = mutePlan.timeoutFrames;
     updatePerfectLocked();
+  }
+
+  // Defer preloading the next source until active output has started so remote
+  // opens do not delay the first audible frame of the current track. Skip an
+  // initial preload when a network active stream is still buffering startup PCM.
+  if ((gaplessEnabled || bridgeGroupOwned_.load(std::memory_order_acquire) ||
+       requestedAutoMixMode_.load(std::memory_order_acquire) != TA_AM_OFF) &&
+      !dopPath && !nativeDsdPath && !pcmToDsdPath &&
+      (!upcomingItem || active->readyForRender())) {
+    std::string preloadError;
+    preloadNext(upcomingItem, &preloadError);
   }
 
   if (nativeDsdPath || dopPath || pcmToDsdPath) {

@@ -118,7 +118,7 @@ const settle=async()=>{await nextTick();await new Promise(resolve=>setTimeout(re
 const loaded=async()=>{for(let i=0;i<30;i++){await settle();const img=document.querySelector('img');if(img?.complete&&img.naturalWidth)return img}throw Error('artwork did not load')}
 window.runArtworkTests=async()=>{
  const empty=await loaded(),fallback=empty.src
- expect(empty.naturalWidth===1254&&empty.loading==='lazy'&&empty.decoding==='async','bundled fallback is absent or loses image hints')
+ expect(empty.naturalWidth===512&&empty.loading==='lazy'&&empty.decoding==='async','bundled fallback is absent or loses image hints')
  expect(empty.classList.contains('default-track-cover'),'default art is not theme-aware')
  const lightContent=getComputedStyle(empty).content
  document.documentElement.dataset.theme='dark';await settle()

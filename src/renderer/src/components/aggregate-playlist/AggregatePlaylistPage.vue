@@ -515,6 +515,7 @@ function playAll(): void {
               <CoverImg
                 v-if="playlist.cover"
                 :cover="playlist.cover"
+                size="grid"
                 class="aggregate-cover"
                 alt="聚合歌单封面"
                 loading="lazy"
@@ -727,6 +728,7 @@ function playAll(): void {
                   <CoverImg
                     :identity="track.id"
                     :core-track-id="track.id"
+                    size="sm"
                     class="aggregate-row-cover"
                     alt=""
                     loading="lazy"

@@ -16,12 +16,29 @@ import {
   type AppLocale,
   type LanguagePreference
 } from '../../../shared/i18n/locale.ts'
-import { translate, type MessageParams } from '../../../shared/i18n/translate.ts'
+import {
+  ensureLocaleCatalog,
+  isLocaleCatalogLoaded,
+  subscribeLocaleCatalog,
+  translate,
+  type MessageParams
+} from '../../../shared/i18n/translate.ts'
 import {
   presentError,
   presentErrorDetail,
   type PresentedError
 } from '../../../shared/errors/presentError.ts'
+
+const catalogRevision = ref(0)
+subscribeLocaleCatalog(() => {
+  catalogRevision.value += 1
+})
+
+function ensureActiveCatalog(target: AppLocale): void {
+  if (!isLocaleCatalogLoaded(target)) {
+    void ensureLocaleCatalog(target).catch(() => {})
+  }
+}
 
 function readSystemLocale(): AppLocale {
   if (typeof navigator === 'undefined') return DEFAULT_LOCALE
@@ -40,8 +57,34 @@ function readSystemLocale(): AppLocale {
 const systemLocale = ref<AppLocale>(readSystemLocale())
 const preference = ref<LanguagePreference>('system')
 
-/** The locale every display surface should render in. */
-const locale = computed<AppLocale>(() => resolveLocale(preference.value, systemLocale.value))
+const resolvedLocale = computed<AppLocale>(() =>
+  resolveLocale(preference.value, systemLocale.value)
+)
+
+/**
+ * The locale every display surface should render in.
+ *
+ * Touching `catalogRevision` when reading `locale.value` ensures Vue templates
+ * and computed properties (such as `resolveReasonCode(locale.value, code)`)
+ * re-evaluate once a lazily loaded locale catalog arrives.
+ */
+const locale: ComputedRef<AppLocale> = Object.create(resolvedLocale, {
+  value: {
+    enumerable: true,
+    get() {
+      void catalogRevision.value
+      return resolvedLocale.value
+    }
+  }
+}) as ComputedRef<AppLocale>
+
+watch(
+  resolvedLocale,
+  (target) => {
+    ensureActiveCatalog(target)
+  },
+  { immediate: true, flush: 'sync' }
+)
 
 /**
  * Push the persisted setting in. Called once the settings snapshot lands and on
@@ -49,6 +92,7 @@ const locale = computed<AppLocale>(() => resolveLocale(preference.value, systemL
  */
 export function setLanguagePreference(value: unknown): void {
   preference.value = normalizeLanguagePreference(value)
+  ensureActiveCatalog(resolvedLocale.value)
 }
 
 export function useLocale(): {
@@ -66,9 +110,18 @@ export function useLocale(): {
     locale,
     preference,
     systemLocale,
-    t: (key, params) => translate(locale.value, key, params),
-    errorText: (error, fallbackKey) => presentError(locale.value, error, fallbackKey),
-    errorDetail: (error, fallbackKey) => presentErrorDetail(locale.value, error, fallbackKey)
+    t: (key, params) => {
+      void catalogRevision.value
+      return translate(locale.value, key, params)
+    },
+    errorText: (error, fallbackKey) => {
+      void catalogRevision.value
+      return presentError(locale.value, error, fallbackKey)
+    },
+    errorDetail: (error, fallbackKey) => {
+      void catalogRevision.value
+      return presentErrorDetail(locale.value, error, fallbackKey)
+    }
   }
 }
 

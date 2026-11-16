@@ -450,6 +450,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   applyDspState(revision: number, payload: DspStatePayload): Promise<DspGraphStatus> {
+    if (this.stopped) return Promise.reject(new Error('音频服务已停止'))
     assertPositiveDspRevision(revision)
     const normalized = normalizeDspStatePayload(payload, revision)
     this.desiredDspState = mergeDspStatePayload(this.desiredDspState, normalized)
@@ -650,6 +651,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     if (this.restartTimer) clearTimeout(this.restartTimer)
     this.restartTimer = null
     this.clearHealthProbe()
+    this.rejectQueuedDspState(new Error('音频服务已停止'))
     for (const child of new Set([this.child, this.retiringChild])) {
       if (child) await terminateAudioServiceChild(child, this.options.restartTimeoutMs ?? 20_000)
     }
@@ -1092,7 +1094,11 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private scheduleDspStateFlush(): void {
-    if (this.dspStateInFlight || this.dspStateFlushScheduled || this.stopped) return
+    if (this.stopped) {
+      this.rejectQueuedDspState(new Error('音频服务已停止'))
+      return
+    }
+    if (this.dspStateInFlight || this.dspStateFlushScheduled) return
     this.dspStateFlushScheduled = true
     queueMicrotask(() => {
       this.dspStateFlushScheduled = false
@@ -1101,7 +1107,11 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private async flushDspState(): Promise<void> {
-    if (this.dspStateInFlight || this.stopped) return
+    if (this.stopped) {
+      this.rejectQueuedDspState(new Error('音频服务已停止'))
+      return
+    }
+    if (this.dspStateInFlight) return
     const batch = this.queuedDspState
     if (!batch) return
     this.queuedDspState = null
@@ -1261,6 +1271,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private callUnobserved(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
+    if (this.stopped) return Promise.reject(new Error('音频服务已停止'))
     if (this.restarting) return Promise.reject(new Error('Audio engine is restarting'))
     if (this.fatalReason) return Promise.reject(new Error(this.fatalReason))
     if (!this.child && !this.restarting) this.start()

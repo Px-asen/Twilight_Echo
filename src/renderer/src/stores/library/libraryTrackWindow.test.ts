@@ -32,7 +32,7 @@ function page(query: LibraryQuery = {}, revision = 1, total = 300_000): LibraryP
   }
 }
 
-test('continuous rows straddle pages and deep scrolling retains only ten detail pages and a bounded viewport', async (t) => {
+test('continuous rows straddle pages and deep scrolling retains only four detail pages and a bounded viewport', async (t) => {
   const queries: LibraryQuery[] = []
   const source = createLibraryTrackWindow({
     queryTracks: async (query) => {
@@ -58,8 +58,8 @@ test('continuous rows straddle pages and deep scrolling retains only ten detail 
     assert.ok(source.pages.value.length <= 2)
   }
   assert.equal(source.selectionEpoch.value, selection)
-  assert.equal(source.cacheState.cachedPages, 10)
-  assert.equal(source.cacheState.cachedTracks, 2000)
+  assert.equal(source.cacheState.cachedPages, 4)
+  assert.equal(source.cacheState.cachedTracks, 800)
   assert.equal(source.trackAt(0), undefined)
   assert.equal(source.state.value.total, 300_000)
   assert.ok(queries.every((query) => query.limit === 200))
@@ -356,4 +356,12 @@ test('continuous locate uses complete SQL order and retains the absolute anchor 
   await tick()
   assert.equal(source.state.value.loading, false)
   assert.equal(source.state.value.total, null)
+  source.setQuery({ sort: 'duration', direction: 'asc' })
+  await settled(source)
+  const retainedRow = source.trackAt(0)!
+  source.setQuery({ sort: 'duration', direction: 'asc' }, true, true)
+  assert.equal(source.state.value.total, 605)
+  assert.equal(source.trackAt(0), retainedRow)
+  await settled(source)
+  assert.equal(source.state.value.total, 605)
 })

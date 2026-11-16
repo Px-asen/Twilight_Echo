@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import type { PlayMode } from '../../../../shared/audioEngineTypes.ts'
 import type { CorePlayerClient } from './corePlayerTypes.ts'
 import { createCorePlayerResource } from './corePlayerResource.ts'
 import type { TrackData } from '../../../../shared/track.ts'
@@ -77,6 +78,7 @@ export function coreQueueTrackInput(
         duration: track.duration,
         source,
         ...(track.ncmSongId === undefined ? {} : { ncmSongId: track.ncmSongId }),
+        ...(track.mvId === undefined ? {} : { mvId: track.mvId }),
         ...(cover === undefined ? {} : { cover })
       }
     }
@@ -201,6 +203,13 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
     if (!entry || entry.position !== index) throw new Error('该队列项已不可用，请刷新后重试')
     return entry
   }
+  let progressiveDrain: AbortController | null = null
+  const abortProgressiveDrain = () => {
+    progressiveDrain?.abort(
+      Object.assign(new Error('Playback request superseded'), { code: 'CANCELLED' })
+    )
+    progressiveDrain = null
+  }
   async function submitInputs(
     produce: (append: (items: CoreQueueTrackInput[]) => Promise<void>) => Promise<unknown>,
     selectedIndex: number,
@@ -209,6 +218,7 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
     check: () => void = () => {}
   ) {
     check()
+    abortProgressiveDrain()
     const started = (await core.command('queue.submit', {
       kind: 'begin',
       selectedIndex,
@@ -236,6 +246,96 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
         await core.command('queue.submit', { kind: 'abort', id: started.id }).catch(() => {})
       throw error
     }
+  }
+  async function submitProgressiveInputs(
+    produce: (
+      append: (items: CoreQueueTrackInput[]) => Promise<void>,
+      signal: AbortSignal
+    ) => Promise<unknown>,
+    selectedIndex: number,
+    guard: () => void = () => {},
+    options: { mode?: Exclude<PlayMode, 'heart'> } = {}
+  ): Promise<void> {
+    guard()
+    abortProgressiveDrain()
+    const drain = new AbortController()
+    progressiveDrain = drain
+    guard()
+    const started = (await core.command('queue.submit', {
+      kind: 'begin',
+      selectedIndex,
+      play: true,
+      progressive: true,
+      ...(options.mode ? { mode: options.mode } : {})
+    })) as CoreQueueSubmitReply
+    let sequence = started.sequence,
+      committing = false,
+      adopted = false,
+      settled = false
+    let settleInitial!: () => void
+    let rejectInitial!: (error: unknown) => void
+    const initialReady = new Promise<void>((resolve, reject) => {
+      settleInitial = resolve
+      rejectInitial = reject
+    })
+    const markAdopted = () => {
+      if (settled) return
+      settled = true
+      settleInitial()
+    }
+    const failInitial = (error: unknown) => {
+      if (settled) return
+      settled = true
+      rejectInitial(error)
+    }
+    const check = () => {
+      drain.signal.throwIfAborted()
+      if (!adopted) guard()
+    }
+    const work = (async () => {
+      let abortedByServer = false
+      try {
+        await produce(async (items) => {
+          for (let offset = 0; offset < items.length; offset += 200) {
+            check()
+            const chunk = items.slice(offset, offset + 200)
+            if (!chunk.length) continue
+            const reply = (await core.command('queue.submit', {
+              kind: 'append',
+              id: started.id,
+              sequence: ++sequence,
+              items: chunk
+            })) as CoreQueueSubmitReply
+            if (reply.state === 'committed') {
+              adopted = true
+              markAdopted()
+            } else if (reply.state === 'aborted') {
+              abortedByServer = true
+              const reason = Object.assign(new Error('队列提交已结束'), { code: 'CANCELLED' })
+              drain.abort(reason)
+              if (!adopted) throw reason
+              return
+            }
+          }
+        }, drain.signal)
+        check()
+        if (drain.signal.aborted) return
+        committing = true
+        await core.command('queue.submit', { kind: 'commit', id: started.id, sequence: ++sequence })
+        adopted = true
+        markAdopted()
+      } catch (error) {
+        if (!abortedByServer && !committing)
+          await core.command('queue.submit', { kind: 'abort', id: started.id }).catch(() => {})
+        if (adopted) drain.abort(error)
+        else failInitial(error)
+      } finally {
+        if (progressiveDrain === drain) progressiveDrain = null
+        markAdopted()
+      }
+    })()
+    void work.catch(() => {})
+    return initialReady
   }
   const isSupersededError = (error: unknown) => {
     if (typeof error !== 'object' || error === null) return false
@@ -306,6 +406,7 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
     }
   }
   async function playLikedTracks(options: Omit<CoreLikedPlayback, 'play'> = {}): Promise<void> {
+    abortProgressiveDrain()
     await core.command('liked.play', { ...options, play: true })
   }
   async function playTrackFromPosition(
@@ -428,14 +529,29 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
     ) => playTrackFromPosition(track, 0, tracks, context),
     playTrackFromPosition,
     playTrackPages: async (
-      produce: (append: (tracks: readonly QueueTrack[]) => Promise<void>) => Promise<unknown>,
+      produce: (
+        append: (tracks: readonly QueueTrack[]) => Promise<void>,
+        signal: AbortSignal
+      ) => Promise<unknown>,
       selectedIndex = 0,
-      guard: () => void = () => {}
+      guard: () => void = () => {},
+      options: { mode?: Exclude<PlayMode, 'heart'> } = {}
     ): Promise<void> => {
       try {
-        await submitInputs(
-          append => produce(tracks => append(tracks.map(track => coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)))),
-          selectedIndex, 0, true, guard
+        await submitProgressiveInputs(
+          (append, signal) =>
+            produce(
+              (tracks) =>
+                append(
+                  tracks.map((track) =>
+                    coreQueueTrackInput(track, core.state.value?.network?.revision ?? null)
+                  )
+                ),
+              signal
+            ),
+          selectedIndex,
+          guard,
+          options
         )
       } catch (error) {
         if (isSupersededError(error)) return
@@ -453,6 +569,7 @@ export function createCorePlayerQueue(core: CorePlayerClient, failed: (error: un
         onQueryFailure?: (error: unknown) => void
       } = {}
     ) => {
+      abortProgressiveDrain()
       try {
         await core.command('queue.fromQuery', {
           query,

@@ -398,7 +398,7 @@ test('a failed projection batch rolls back all summary counters and retries from
   assert.equal(page.items[0].sourceSummary?.provider, 1)
 })
 
-test('catalog paging keeps ten summary windows and invalidates late replies after membership/header changes', async (t) => {
+test('catalog paging keeps four summary windows and invalidates late replies after membership/header changes', async (t) => {
   const { db, owner, playlists, calls } = fixture(t)
   const input = Array.from({ length: 2405 }, (_, i) => ({
     ...playlists[i % 3],
@@ -427,8 +427,8 @@ test('catalog paging keeps ten summary windows and invalidates late replies afte
     assert.equal(pages.state.value.error, '')
     assert.equal(pages.state.value.page?.items.length, i === 12 ? 5 : 200)
   }
-  assert.equal(pages.cacheState.cachedPages, 10)
-  assert.ok(pages.cacheState.cachedItems <= 2000)
+  assert.equal(pages.cacheState.cachedPages, 4)
+  assert.ok(pages.cacheState.cachedItems <= 800)
   await owner.setCatalog([{ ...playlists[1], name: 'Renamed' }], preferences)
   while (pages.state.value.loading) await tick()
   assert.equal(pages.state.value.page?.items[0].name, 'Renamed')

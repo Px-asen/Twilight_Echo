@@ -23,9 +23,12 @@ import { resolveLyricVoiceLayout } from '../utils/lyricVoiceLayout.ts'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 import PlayingFluidBackdrop from './PlayingFluidBackdrop.vue'
+import PlayingMvBackdrop from './PlayingMvBackdrop.vue'
 import PlayingLyricLine from './PlayingLyricLine.vue'
 import PlayingMusicTimeChip from './PlayingMusicTimeChip.vue'
 import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
+import { pendingMvPlaybackRequest, usePlayingMv } from '../composables/usePlayingMv'
+import type { MediaProviderMvQuality } from '../../../shared/providerMv.ts'
 import { DEFAULT_NOW_PLAYING_FLUID_SETTINGS } from '../../../shared/appSettings.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
@@ -58,9 +61,16 @@ const {
   themeCoverUrl,
   lyricsLoadState,
   isPlaying,
+  volume,
+  muted,
+  playbackRate,
+  exclusiveMode,
+  castTargetName,
   currentTime,
   playbackClockSnapshot,
-  estimatePlaybackClockPosition
+  estimatePlaybackClockPosition,
+  queryCurrentTrackMv,
+  setAudioSuppressed
 } = playbackStore
 const lyricWordClock = {
   snapshot: playbackClockSnapshot,
@@ -121,9 +131,11 @@ const appearanceMenuPosition = ref({ x: 0, y: 0 })
 
 function openAppearanceMenu(event: MouseEvent): void {
   metadataCopyText.value = null
+  const estimatedHeight =
+    typeof mvMenuEstimatedHeight === 'function' ? mvMenuEstimatedHeight() : 96
   appearanceMenuPosition.value = {
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 52))
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 260)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - estimatedHeight))
   }
   appearanceMenuOpen.value = true
 }
@@ -304,6 +316,165 @@ const hasSwitchedPlaybackView = ref(false)
 const lyricsViewActive = computed(
   () => viewMode.value === 'cover' && displayedView.value === 'cover'
 )
+const playingRootEl = ref<HTMLElement | null>(null)
+const playingSurfaceMounted = ref(false)
+const isEmbeddedPreview = ref(false)
+const mvSurfaceActive = computed(
+  () =>
+    playingSurfaceMounted.value &&
+    !isEmbeddedPreview.value &&
+    !visualizerMounted.value &&
+    viewMode.value === 'cover'
+)
+const {
+  mvEnabled,
+  mvDisplayMode,
+  mvQuality,
+  mvSource,
+  mvAvailable,
+  mvStream,
+  mvOffsetSeconds,
+  mvOriginalAudioWanted,
+  mvOriginalAudioActive,
+  mvAmbientActive,
+  mvCinemaActive,
+  mvCinemaChromeRevealed,
+  mvQualityBadge,
+  mvProviderLabel,
+  toggleMvEnabled,
+  playMvCinema,
+  setMvDisplayMode,
+  toggleMvOriginalAudio,
+  setMvQuality,
+  cycleMvSource,
+  adjustMvOffsetSeconds,
+  resetMvOffsetSeconds,
+  handleMvReady,
+  handleMvStreamError
+} = usePlayingMv({
+  currentTrack,
+  surfaceActive: mvSurfaceActive,
+  exclusiveMode,
+  castTargetName,
+  queryCurrentTrackMv,
+  setAudioSuppressed,
+  onNotice: (message) => pushNotice({ kind: 'info', message })
+})
+
+watch(
+  pendingMvPlaybackRequest,
+  (request) => {
+    if (request && !isEmbeddedPreview.value && viewMode.value !== 'cover') {
+      viewMode.value = 'cover'
+    }
+  },
+  { immediate: true }
+)
+
+const isMvCinemaSelected = computed(
+  () => mvEnabled.value && mvDisplayMode.value === 'cinema' && viewMode.value === 'cover'
+)
+
+const MV_QUALITY_LABELS: Record<MediaProviderMvQuality, string> = {
+  auto: '自动',
+  '1080p': '超清 1080P',
+  '720p': '高清 720P',
+  '480p': '标清 480P'
+}
+const MV_QUALITY_ORDER: readonly MediaProviderMvQuality[] = ['auto', '1080p', '720p', '480p']
+const mvQualityLabel = computed(() => MV_QUALITY_LABELS[mvQuality.value] ?? '自动')
+
+const canConfigureTrackMv = computed(
+  () =>
+    !isEmbeddedPreview.value &&
+    Boolean(currentTrack.value) &&
+    currentTrack.value?.source !== 'radio' &&
+    currentTrack.value?.source !== 'podcast'
+)
+const showMvMenuSection = computed(
+  () => canConfigureTrackMv.value && (mvAvailable.value || mvSource.value === 'ncm')
+)
+const mvSourceMenuLabel = computed(() => {
+  if (mvSource.value === 'ncm') {
+    return mvProviderLabel.value === 'B站' ? '网易云（已回退 B站）' : '网易云'
+  }
+  return mvProviderLabel.value === '网易云' ? '哔哩哔哩优先（已切网易云）' : '哔哩哔哩优先'
+})
+
+function mvMenuEstimatedHeight(): number {
+  if (!showMvMenuSection.value) return 96
+  if (!mvAvailable.value) return 140
+  if (!mvEnabled.value) return 252
+  return mvOffsetSeconds.value !== 0 ? 396 : 360
+}
+
+function formatMvOffset(seconds: number): string {
+  const rounded = Math.round(seconds * 10) / 10
+  return rounded > 0 ? `+${rounded}s` : `${rounded}s`
+}
+
+function onMenuPlayMvCinema(): void {
+  closeAppearanceMenu()
+  if (isMvCinemaSelected.value) {
+    setMvDisplayMode('ambient')
+    return
+  }
+  if (viewMode.value !== 'cover') {
+    viewMode.value = 'cover'
+  }
+  playMvCinema()
+}
+
+function onMenuToggleMvOriginalAudio(): void {
+  closeAppearanceMenu()
+  if (!mvOriginalAudioWanted.value && viewMode.value !== 'cover') {
+    viewMode.value = 'cover'
+  }
+  toggleMvOriginalAudio()
+}
+
+function onMenuToggleMv(): void {
+  closeAppearanceMenu()
+  toggleMvEnabled()
+}
+
+function onMenuCycleMvSource(): void {
+  cycleMvSource()
+  closeAppearanceMenu()
+}
+
+function onMenuCycleMvQuality(): void {
+  const index = MV_QUALITY_ORDER.indexOf(mvQuality.value)
+  const next = MV_QUALITY_ORDER[(index + 1) % MV_QUALITY_ORDER.length] ?? 'auto'
+  setMvQuality(next)
+  closeAppearanceMenu()
+}
+
+function onMenuAdjustMvOffset(delta: number): void {
+  adjustMvOffsetSeconds(delta)
+}
+
+function onMenuResetMvOffset(): void {
+  resetMvOffsetSeconds()
+  closeAppearanceMenu()
+}
+
+function onMvEscapeKeydown(event: KeyboardEvent): void {
+  if (
+    event.key !== 'Escape' ||
+    event.defaultPrevented ||
+    event.repeat ||
+    event.isComposing ||
+    appearanceMenuOpen.value ||
+    lyricsCustomizerOpen.value
+  ) {
+    return
+  }
+  if (mvCinemaActive.value) {
+    setMvDisplayMode('ambient')
+    event.preventDefault()
+  }
+}
 
 // Finish the outgoing surface before mounting the iframe or restoring its blurred
 // backdrop. The cover/lyrics DOM survives the handoff, so returning does not
@@ -498,6 +669,43 @@ const reserveLyricsColumn = computed(
 )
 const activeLyricIndex = ref(-1)
 const highlightedLyricIndex = ref(-1)
+const activeCinemaLyricLine = computed(() => {
+  const index = highlightedLyricIndex.value
+  if (index < 0 || index >= displayLyricLines.value.length) return null
+  return displayLyricLines.value[index] ?? null
+})
+const activeCinemaLyricLayout = computed(() => {
+  const line = activeCinemaLyricLine.value
+  return line ? resolveLyricVoiceLayout(line) : null
+})
+const activeCinemaLyricText = computed(() => {
+  const line = activeCinemaLyricLine.value
+  if (!line) return ''
+  if (line.text.trim()) return line.text
+  const layout = activeCinemaLyricLayout.value
+  const leadTexts =
+    layout?.ordered
+      .filter((voice) => voice.role === 'lead')
+      .map((voice) => voice.text.trim())
+      .filter(Boolean) ?? []
+  return leadTexts.join(' ')
+})
+const activeCinemaLyricTranslation = computed(() => {
+  const line = activeCinemaLyricLine.value
+  if (!line) return ''
+  if (line.translation?.trim()) return line.translation.trim()
+  const layout = activeCinemaLyricLayout.value
+  if (!layout) return ''
+  const leadTranslations = layout.ordered
+    .filter((voice) => voice.role === 'lead')
+    .map((voice) => voice.translation?.text?.trim() ?? '')
+    .filter(Boolean)
+  if (leadTranslations.length > 0) return leadTranslations.join(' / ')
+  return layout.ordered
+    .map((voice) => voice.translation?.text?.trim() ?? '')
+    .filter(Boolean)
+    .join(' / ')
+})
 
 /**
  * Focus mode keeps a handful of lines around the active one. The rows all stay
@@ -791,6 +999,10 @@ watch(
 )
 
 onMounted(() => {
+  isEmbeddedPreview.value = Boolean(
+    playingRootEl.value?.closest('.live-preview-stage, .theme-studio-page, .settings-preview-page')
+  )
+  playingSurfaceMounted.value = true
   void lyricsManagement.ensureLoaded()
   lyricResizeObserver = new ResizeObserver(() => {
     onLyricContentResize()
@@ -814,10 +1026,12 @@ onMounted(() => {
   })
   window.addEventListener('resize', onLyricViewportResize)
   window.addEventListener('pointerdown', closeAppearanceMenu)
+  window.addEventListener('keydown', onMvEscapeKeydown, true)
   document.addEventListener('visibilitychange', onLyricVisibilityChange)
 })
 
 onBeforeUnmount(() => {
+  playingSurfaceMounted.value = false
   lyricViewport.dispose()
   lyricResizeObserver?.disconnect()
   lyricResizeObserver = null
@@ -826,14 +1040,22 @@ onBeforeUnmount(() => {
   lyricMotionObserver = null
   window.removeEventListener('resize', onLyricViewportResize)
   window.removeEventListener('pointerdown', closeAppearanceMenu)
+  window.removeEventListener('keydown', onMvEscapeKeydown, true)
   document.removeEventListener('visibilitychange', onLyricVisibilityChange)
 })
 </script>
 
 <template>
   <div
+    ref="playingRootEl"
     class="playing-music"
-    :class="`bg-${effectiveNowPlayingBackground}`"
+    :class="[
+      `bg-${effectiveNowPlayingBackground}`,
+      {
+        'playing-music--mv-ambient': mvAmbientActive,
+        'playing-music--mv-cinema': mvCinemaActive
+      }
+    ]"
     :style="{ '--accent-color': dominantColor }"
     @contextmenu.prevent="openAppearanceMenu"
   >
@@ -874,6 +1096,7 @@ onBeforeUnmount(() => {
                 :cover="currentTrack.cover"
                 :cover-source="currentTrack.coverSource"
                 :identity="currentTrack.id"
+                size="sm"
                 class="backdrop-cover"
                 alt=""
               />
@@ -894,11 +1117,37 @@ onBeforeUnmount(() => {
           <div class="backdrop-accent" />
         </div>
 
+        <PlayingMvBackdrop
+          v-if="!visualizerMounted"
+          :active="mvSurfaceActive"
+          :mv-enabled="mvEnabled"
+          :display-mode="mvDisplayMode"
+          :chrome-revealed="mvCinemaChromeRevealed"
+          :stream="mvStream"
+          :playing="isPlaying"
+          :original-audio="mvOriginalAudioActive"
+          :volume="volume"
+          :muted="muted"
+          :playback-rate="playbackRate"
+          :clock-snapshot="playbackClockSnapshot"
+          :estimate-position="estimatePlaybackClockPosition"
+          :offset-seconds="mvOffsetSeconds"
+          :track-title="currentTrack?.title ?? ''"
+          :track-artist="currentTrack?.artist ?? ''"
+          :quality-badge="mvQualityBadge"
+          :source-badge="mvProviderLabel"
+          :active-lyric-text="activeCinemaLyricText"
+          :active-lyric-translation="activeCinemaLyricTranslation"
+          @ready="handleMvReady"
+          @stream-error="handleMvStreamError"
+          @exit-cinema="setMvDisplayMode('ambient')"
+        />
+
         <div
           v-if="currentTrack"
           :key="`stage:${coverIdentity}`"
           class="stage"
-          :class="{ 'stage--lyrics': reserveLyricsColumn }"
+          :class="{ 'stage--lyrics': reserveLyricsColumn, 'stage--mv-cinema-hidden': mvCinemaActive }"
           :style="layoutStyle"
         >
           <main class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
@@ -1093,6 +1342,45 @@ onBeforeUnmount(() => {
           <button type="button" @click="customizePlayerAppearance">
             <i class="ph ph-palette"></i><span>定制此区域外观</span>
           </button>
+          <template v-if="showMvMenuSection">
+            <hr class="player-menu-divider" />
+            <template v-if="mvAvailable">
+              <button type="button" @click="onMenuPlayMvCinema">
+                <i :class="isMvCinemaSelected ? 'ph ph-corners-in' : 'ph ph-play-circle'"></i>
+                <span>{{ isMvCinemaSelected ? '退出纯享 MV' : '播放纯享 MV' }}</span>
+              </button>
+              <button type="button" @click="onMenuToggleMvOriginalAudio">
+                <i :class="mvOriginalAudioWanted ? 'ph ph-music-notes' : 'ph ph-speaker-high'"></i>
+                <span>{{ mvOriginalAudioWanted ? '切回歌曲音源' : '播放 MV 原声' }}</span>
+              </button>
+              <button type="button" @click="onMenuToggleMv">
+                <i class="ph ph-film-strip"></i>
+                <span>{{ mvEnabled ? '关闭背景 MV' : '开启背景 MV' }}</span>
+              </button>
+            </template>
+            <button type="button" @click="onMenuCycleMvSource">
+              <i class="ph ph-arrows-left-right"></i>
+              <span>MV 来源：{{ mvSourceMenuLabel }}</span>
+            </button>
+            <template v-if="mvAvailable && mvEnabled">
+              <button type="button" @click="onMenuCycleMvQuality">
+                <i class="ph ph-sliders-horizontal"></i>
+                <span>MV 画质：{{ mvQualityLabel }}</span>
+              </button>
+              <button type="button" @click="onMenuAdjustMvOffset(-0.5)">
+                <i class="ph ph-rewind"></i>
+                <span>MV 画面提前 0.5 秒</span>
+              </button>
+              <button type="button" @click="onMenuAdjustMvOffset(0.5)">
+                <i class="ph ph-fast-forward"></i>
+                <span>MV 画面延后 0.5 秒</span>
+              </button>
+              <button v-if="mvOffsetSeconds !== 0" type="button" @click="onMenuResetMvOffset">
+                <i class="ph ph-arrow-counter-clockwise"></i>
+                <span>重置 MV 同步 ({{ formatMvOffset(mvOffsetSeconds) }})</span>
+              </button>
+            </template>
+          </template>
         </template>
       </div>
     </Teleport>
@@ -1195,7 +1483,9 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
 .player-appearance-menu {
   position: fixed;
   z-index: 10000;
-  width: 218px;
+  min-width: 224px;
+  width: max-content;
+  max-width: 252px;
   padding: 5px;
   border: 1px solid var(--te-card-border);
   border-radius: 6px;
@@ -1221,6 +1511,13 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
 .player-appearance-menu button:hover {
   color: var(--te-primary-500);
   background: var(--te-hover-bg);
+}
+
+.player-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--te-card-border);
 }
 
 .backdrop {
@@ -1403,6 +1700,15 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   height: 100%;
   margin: 0 auto;
   padding: 72px 36px 28px;
+  transition:
+    opacity 320ms var(--te-ease-out-strong),
+    transform 320ms var(--te-ease-out-strong);
+}
+
+.stage--mv-cinema-hidden {
+  opacity: 0;
+  transform: translate3d(0, 12px, 0);
+  pointer-events: none;
 }
 
 .stage--visualizer {
@@ -2572,5 +2878,33 @@ html[data-te-motion='reduced'] .playback-view-leave-to {
   :global(html[data-te-artwork-transition] .playing-music .cover-frame) {
     animation: none;
   }
+}
+
+.playing-music--mv-ambient .backdrop-cover-wrap,
+.playing-music--mv-ambient .backdrop-fluid {
+  opacity: 0;
+}
+
+.playing-music--mv-ambient .backdrop-scrim {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:global(
+  html[data-theme='dark'] .playing-music.playing-music--mv-ambient.bg-blur .backdrop:has(.backdrop-cover-wrap)
+) {
+  filter: none;
+}
+
+:global(html[data-te-motion='reduced'] .playing-music .stage) {
+  transition-duration: 100ms !important;
+}
+
+:global(html[data-te-motion='reduced'] .playing-music .stage--mv-cinema-hidden) {
+  transform: none;
+}
+
+:global(html[data-te-motion='off'] .playing-music .stage) {
+  transition: none !important;
 }
 </style>

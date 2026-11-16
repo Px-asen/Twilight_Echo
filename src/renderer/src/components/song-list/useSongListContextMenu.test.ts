@@ -35,6 +35,7 @@ function createMenu(
     rematchMetadata?: (track: Track) => Promise<void> | void
     clearMetadataMatch?: (track: Track) => Promise<void> | void
     playNext?: (track: Track) => void
+    playMv?: (track: Track) => void
     viewArtist?: (track: Track) => void
     viewAlbum?: (track: Track) => void
   } = {}
@@ -66,6 +67,7 @@ function createMenu(
       rematchMetadata: overrides.rematchMetadata,
       clearMetadataMatch: overrides.clearMetadataMatch,
       playNext: overrides.playNext,
+      playMv: overrides.playMv,
       viewArtist: overrides.viewArtist,
       viewAlbum: overrides.viewAlbum
     })
@@ -107,6 +109,35 @@ test('context menu exposes play next action for any track', () => {
   assert.equal(playedTrackId, 'ncm:expired')
   assert.equal(menu.showContextMenu.value, false)
   assert.equal(menu.selectedTrack.value, null)
+})
+
+test('context menu exposes play MV action for local and provider songs while excluding radio/podcast streams', () => {
+  const mvTrackIds: string[] = []
+  const menu = createMenu({
+    playMv: (track) => {
+      mvTrackIds.push(track.id)
+    }
+  })
+
+  menu.selectedTrack.value = localTrack
+  assert.equal(menu.canPlayMvSelectedTrack.value, true)
+  menu.handlePlayMv()
+  assert.deepEqual(mvTrackIds, ['local:hash'])
+  assert.equal(menu.showContextMenu.value, false)
+  assert.equal(menu.selectedTrack.value, null)
+
+  menu.selectedTrack.value = providerTrack
+  assert.equal(menu.canPlayMvSelectedTrack.value, true)
+  menu.handlePlayMv()
+  assert.deepEqual(mvTrackIds, ['local:hash', 'ncm:expired'])
+
+  menu.selectedTrack.value = { ...providerTrack, id: 'radio:1', source: 'radio' }
+  assert.equal(menu.canPlayMvSelectedTrack.value, false)
+  menu.handlePlayMv()
+  assert.deepEqual(mvTrackIds, ['local:hash', 'ncm:expired'])
+
+  menu.selectedTrack.value = { ...providerTrack, id: 'podcast:1', source: 'podcast' }
+  assert.equal(menu.canPlayMvSelectedTrack.value, false)
 })
 
 test('context menu exposes view artist action when artist is present', () => {

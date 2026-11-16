@@ -57,7 +57,7 @@ test('content surfaces no longer register optical filters or geometry/pointer ob
   assert.doesNotMatch(baseStyle, /data-te-liquid-glass-coverage='expanded'/)
   assert.doesNotMatch(liquidGlassSettings, /扩展实验|首页媒体焦点液态玻璃|setLiquidGlassCoverage/)
   assert.match(liquidGlassSettings, /内容卡片使用普通材质/)
-  assert.match(app, /:active="playbarRefractionActive"/)
+  assert.match(app, /:active="playbarRefractionActive(?:\s*&&\s*!idleMinimizedTrimmed)?"/)
   assert.match(defs, /props.targetDocument \?\? document/)
   assert.match(defs, /doc.querySelector\('\.app-shell-player'\)/)
 })

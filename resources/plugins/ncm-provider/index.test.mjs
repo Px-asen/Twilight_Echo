@@ -889,6 +889,57 @@ test('token bucket survives a system clock rollback without wedging requests', a
   }
 })
 
+test('foreground playback token acquisitions overtake queued search and background prefetch requests', async () => {
+  const order = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/cloudsearch') {
+      order.push(`search:${url.searchParams.get('keywords')}`)
+      return { result: { songs: [], songCount: 0 } }
+    }
+    if (url.pathname === '/song/url/v1') {
+      const id = url.searchParams.get('id')
+      order.push(`play:${id}`)
+      return {
+        code: 200,
+        data: [{ id: Number(id), url: `https://music.example/${id}.flac`, code: 200 }]
+      }
+    }
+    throw new Error(`unexpected path: ${url.pathname}`)
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // Drain the 5-request burst bucket immediately.
+    await Promise.all(Array.from({ length: 5 }, (_, index) => provider.searchSongs(`burst-${index}`)))
+    order.length = 0
+
+    // Queue normal browse, low background prefetch, then foreground playback.
+    const normal = provider.searchSongs('queued-browse')
+    const background = provider.getPlaybackUrl(
+      { id: 'ncm:202' },
+      { quality: 'standard', _twilightAutoMixPrepare: true }
+    )
+    const foreground = provider.getPlaybackUrl({ id: 'ncm:101' }, { quality: 'standard' })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    assert.equal(await foreground, 'https://music.example/101.flac')
+    assert.deepEqual(order, ['play:101'])
+
+    mock.timers.tick(200)
+    await normal
+    assert.deepEqual(order, ['play:101', 'search:queued-browse'])
+
+    mock.timers.tick(200)
+    assert.equal(await background, 'https://music.example/202.flac')
+    assert.deepEqual(order, ['play:101', 'search:queued-browse', 'play:202'])
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
 test('personal FM returns fresh session tracks across repeated roaming requests', async () => {
   let requestNumber = 0
   const provider = await activateProvider(async (path) => {
@@ -1101,9 +1152,7 @@ test('premium-only tracks return no URL when official and unlock fallbacks are u
         'v1:lossless',
         'v1:exhigh',
         'v1:standard',
-        'br:999000',
         'br:320000',
-        'br:128000',
         'match:79'
       ]
     )
@@ -1148,7 +1197,7 @@ test('gray tracks use song URL matching only after every official endpoint fails
     )
     assert.deepEqual(
       requests.map((path) => parseRequest(path).pathname),
-      ['/song/url/v1', '/song/url', '/song/url', '/song/url', '/song/url/match']
+      ['/song/url/v1', '/song/url', '/song/url/match']
     )
     assert.deepEqual(cachedSongs, [
       { songId: 82, url: 'https://unblock.example/82.flac', fileName: 'gray-track.flac' }
@@ -1158,7 +1207,7 @@ test('gray tracks use song URL matching only after every official endpoint fails
       await provider.getPlaybackUrl(track, { quality: 'standard' }),
       'https://unblock.example/82.flac'
     )
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, 3)
     assert.equal(cachedSongs.length, 1)
   } finally {
     ncmProvider.deactivate()
@@ -1579,6 +1628,67 @@ for (const cacheState of ['removed', 'replaced', 'lookup-failed']) {
   })
 }
 
+test('cold stream cache reuses verified disk cache on first play after entitlement check and skips free trials', async () => {
+  const verifiedPath = 'D:\\Cache\\ncm-cache\\994.deadbeef0123456789.flac'
+  let freeTrial = false
+  let cacheWrites = 0
+  let resolvedChecks = 0
+  const provider = await activateProvider(
+    async () => ({
+      code: 200,
+      data: [
+        {
+          id: 994,
+          url: freeTrial ? 'https://music.example/994-trial.mp3' : 'https://m801.music.126.net/20261117000000/abcd/ymusic/994.flac',
+          level: 'lossless',
+          type: 'flac',
+          size: 409600,
+          code: 200,
+          freeTrialInfo: freeTrial ? { start: 0, end: 30 } : null
+        }
+      ]
+    }),
+    undefined,
+    {
+      ncm: {
+        getCachedSong: async () => verifiedPath,
+        resolveCachedSong: async (songId, _url, fileName, metadata) => {
+          resolvedChecks += 1
+          assert.equal(songId, 994)
+          assert.equal(fileName, '994.flac')
+          assert.equal(metadata.expectedBytes, 409600)
+          return verifiedPath
+        },
+        cacheSong: async () => {
+          cacheWrites += 1
+          return null
+        }
+      }
+    }
+  )
+
+  try {
+    const first = await provider.getPlaybackUrl(
+      { id: 'ncm:994' },
+      { quality: 'lossless', _twilightSourceIdentity: true }
+    )
+    assert.equal(first.streamUrl, verifiedPath)
+    assert.equal(first.providerSource.actualQuality, 'lossless')
+    assert.equal(resolvedChecks, 1)
+    assert.equal(cacheWrites, 0, 'verified cold cache hit must not start a redundant download')
+
+    freeTrial = true
+    const trial = await provider.getPlaybackUrl(
+      { id: 'ncm:994' },
+      { force: true, quality: 'lossless', _twilightSourceIdentity: true }
+    )
+    assert.equal(trial.streamUrl, 'https://music.example/994-trial.mp3')
+    assert.equal(resolvedChecks, 1, 'free-trial responses must never hit verified disk cache')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('playback fallback ladder backs off between steps instead of bursting', async () => {
   const requestTimes = []
   const provider = await activateProvider(async (path) => {
@@ -1602,19 +1712,41 @@ test('playback fallback ladder backs off between steps instead of bursting', asy
     await new Promise((resolve) => setImmediate(resolve))
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(requestTimes.length, 1)
-    mock.timers.tick(250)
+    mock.timers.tick(50)
     await new Promise((resolve) => setImmediate(resolve))
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(requestTimes.length, 2)
-    mock.timers.tick(500)
+    mock.timers.tick(100)
     assert.equal(await pending, 'https://music.example/92.mp3')
     assert.deepEqual(
       requestTimes.slice(1).map((time, index) => time - requestTimes[index]),
-      [250, 500],
-      'fallback steps must be spaced by a 250→500ms backoff'
+      [50, 100],
+      'fallback steps must be spaced by a 50→100ms backoff'
     )
   } finally {
     mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('permanent copyright unavailability jumps straight from v1 to gray-track match', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    requests.push(url.pathname)
+    if (url.pathname === '/song/url/match') {
+      return { code: 200, data: 'https://unblock.example/110.flac' }
+    }
+    return { code: 200, data: [{ id: 110, url: null, code: -110, msg: 'no copyright' }] }
+  })
+
+  try {
+    assert.equal(
+      await provider.getPlaybackUrl({ id: 'ncm:110' }, { quality: 'hires' }),
+      'https://unblock.example/110.flac'
+    )
+    assert.deepEqual(requests, ['/song/url/v1', '/song/url/match'])
+  } finally {
     ncmProvider.deactivate()
   }
 })
@@ -3520,3 +3652,136 @@ for (const loginMethod of ['QR', 'official web']) {
     }
   })
 }
+
+test('searchSongs normalizes mvId and getTrackMv resolves direct or detail-looked-up MV streams with quality fallback and caching', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/cloudsearch') {
+      return {
+        result: {
+          songCount: 1,
+          songs: [
+            {
+              id: 186016,
+              name: '晴天',
+              mv: 530012,
+              dt: 269000,
+              ar: [{ id: 6452, name: '周杰伦' }],
+              al: { id: 18905, name: '叶惠美', picUrl: 'https://p1.music.126.net/cover.jpg' }
+            }
+          ]
+        }
+      }
+    }
+    if (url.pathname === '/song/detail') {
+      assert.equal(url.searchParams.get('ids'), '186017')
+      return {
+        songs: [{ id: 186017, name: '暗号', mv: 530012 }]
+      }
+    }
+    if (url.pathname === '/mv/url') {
+      const r = Number(url.searchParams.get('r'))
+      assert.equal(url.searchParams.get('id'), '530012')
+      if (r === 1080) {
+        return { code: 200, data: { id: 530012, url: null, r: 1080 } }
+      }
+      if (r === 720) {
+        return {
+          code: 200,
+          data: {
+            id: 530012,
+            url: '//vodkgeyttp8.vod.126.net/cloudmusic/晴天-720p.mp4',
+            r: 720,
+            expi: 1800
+          }
+        }
+      }
+    }
+    throw new Error(`unexpected endpoint: ${path}`)
+  })
+
+  try {
+    const search = await provider.searchSongs('晴天', 5, 0)
+    assert.equal(search.items[0]?.mvId, '530012')
+
+    const directStream = await provider.getTrackMv(search.items[0], { quality: 'auto' })
+    assert.deepEqual(directStream, {
+      url: 'https://vodkgeyttp8.vod.126.net/cloudmusic/晴天-720p.mp4',
+      quality: '720p',
+      height: 720,
+      mvId: '530012',
+      providerId: 'ncm',
+      referer: 'https://music.163.com/'
+    })
+
+    // Cached repeat does not hit /mv/url again unless force=true
+    const beforeCachedCount = requests.length
+    const cachedStream = await provider.getTrackMv(search.items[0], { quality: 'auto' })
+    assert.deepEqual(cachedStream, directStream)
+    assert.equal(requests.length, beforeCachedCount)
+
+    // Uncached song without mvId resolves mvId via /song/detail
+    const lookedUp = await provider.getTrackMv({ id: 'ncm:186017', source: 'ncm' }, { quality: '720p' })
+    assert.equal(lookedUp?.mvId, '530012')
+    assert.equal(lookedUp?.quality, '720p')
+    assert.ok(requests.some((entry) => entry.startsWith('/song/detail')))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('405 frequency limits stop playback quality fallback early and playback jumps ahead of queued searches in token bucket', async () => {
+  const seenPaths = []
+  let blockPlaybackWith405 = true
+  const provider = await activateProvider(
+    async (path) => {
+      seenPaths.push(parseRequest(path).pathname)
+      if (path.startsWith('/song/url')) {
+        if (blockPlaybackWith405) {
+          return { code: 405, message: '操作频繁，请稍候再试' }
+        }
+        return {
+          code: 200,
+          data: [{ id: 186016, url: 'https://m8.music.126.net/playable.mp3', br: 320000, expi: 1200 }]
+        }
+      }
+      return { code: 200, result: { songs: [], songCount: 0 } }
+    },
+    new Map([['cookie', 'MUSIC_U=test-session;']])
+  )
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // 1. 405 操作频繁 stops the fallback ladder after 1 call instead of hammering all tiers + gray unlock.
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:186016' }, { quality: 'hires' }), null)
+    assert.deepEqual(seenPaths, ['/song/url/v1'])
+
+    // 2. Drain the remaining 4 burst tokens with searches, queue 2 more searches, then request playback:
+    //    playback must take the very next refilled token ahead of the queued searches!
+    seenPaths.length = 0
+    blockPlaybackWith405 = false
+    const searches = Array.from({ length: 6 }, (_, index) => provider.searchSongs(`bg-${index}`))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(seenPaths.length, 4, '4 remaining burst tokens consumed by initial searches')
+
+    const playPromise = provider.getPlaybackUrl({ id: 'ncm:186016' }, { quality: 'standard' })
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    assert.equal(await playPromise, 'https://m8.music.126.net/playable.mp3')
+    assert.equal(
+      seenPaths[4],
+      '/song/url/v1',
+      'playback token acquires ahead of queued background cloudsearch requests'
+    )
+
+    mock.timers.tick(400)
+    await Promise.all(searches)
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+

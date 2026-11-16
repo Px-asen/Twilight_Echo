@@ -266,6 +266,9 @@ function readSettingsPageSources(): string {
     'SettingsPage.vue',
     'settings-page/types.ts',
     'settings-page/usePluginSettingsPanels.ts',
+    'settings-page/OverviewSettingsSection.vue',
+    'settings-page/InterfaceSettingsSection.vue',
+    'settings-page/StorageSettingsSection.vue',
     'settings-page/AboutSettingsSection.vue',
     'settings-page/ShortcutsSettingsSection.vue',
     'settings-page/MiniPlayerSettingsSection.vue',
@@ -951,7 +954,7 @@ test('the download directory setting stays authorized from the picker to the dow
   )
   const store = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const generalSection = readFileSync(
-    new URL('../components/settings-page/LibrarySettingsSection.vue', import.meta.url),
+    new URL('../components/settings-page/StorageSettingsSection.vue', import.meta.url),
     'utf8'
   )
 

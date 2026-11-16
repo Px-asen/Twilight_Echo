@@ -175,6 +175,7 @@ function count(value: number | undefined): string {
             <CoverImg
               :cover="track.cover"
               :cover-source="track.coverSource"
+              size="grid"
               alt=""
               loading="eager"
             />
@@ -218,8 +219,9 @@ function count(value: number | undefined): string {
             <span class="music-track-number">{{ String(index + 1).padStart(2, '0') }}</span>
             <span class="music-track-cover"
               ><CoverImg
-                :cover="track.cover"
-                :cover-source="track.coverSource"
+                :cover="track.coverSmall || track.cover"
+                :cover-source="track.coverSmallSource || track.coverSource"
+                size="sm"
                 alt=""
                 loading="lazy" /><span class="music-track-play"><PlaybackIcon name="play" /></span
             ></span>
@@ -278,8 +280,9 @@ function count(value: number | undefined): string {
             <span>{{ String(position + 1).padStart(2, '0') }}</span
             ><span class="music-feature-cover"
               ><CoverImg
-                :cover="track.cover"
-                :cover-source="track.coverSource"
+                :cover="track.coverSmall || track.cover"
+                :cover-source="track.coverSmallSource || track.coverSource"
+                size="sm"
                 alt=""
                 loading="lazy" /></span
             ><strong
@@ -316,6 +319,7 @@ function count(value: number | undefined): string {
               ><CoverImg
                 :cover="playlist.coverSmall || playlist.cover"
                 :cover-source="playlist.coverSmallSource || playlist.coverSource"
+                size="grid"
                 alt=""
                 loading="lazy"
               /><span class="music-playlist-symbol"><PlaybackIcon name="play" /></span

@@ -16,8 +16,19 @@ const NCM_PLAYBACK_QUALITY_FALLBACKS = {
   exhigh: ['exhigh', 'standard'],
   standard: ['standard']
 }
+const NCM_MV_QUALITY_FALLBACKS = {
+  auto: [1080, 720, 480, 240],
+  '1080p': [1080, 720, 480, 240],
+  '720p': [720, 480, 240],
+  '480p': [480, 240]
+}
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
+const mvUrlCache = new Map()
+const songMvIdCache = new Map()
+const MV_URL_CACHE_TTL_MS = 15 * 60_000
+const MV_URL_CACHE_CAPACITY = 128
+const SONG_MV_ID_CACHE_CAPACITY = 512
 // CDN 签发地址会过期：无 TTL 的缓存会把 403 回放成多提供方大恢复，20 分钟
 // 内命中即可，超时强制重解析（批量 8.2）。
 const STREAM_URL_CACHE_TTL_MS = 20 * 60_000
@@ -65,7 +76,7 @@ export async function activate(context) {
   await context.twilight.providers.register({
     id: PROVIDER_ID,
     name: 'NetEase Cloud Music',
-    capabilities: ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'],
+    capabilities: ['search', 'playbackUrl', 'mv', 'lyrics', 'cover', 'playlist', 'library', 'login'],
     ui: {
       icon: 'pi pi-cloud',
       color: '#c20c0c',
@@ -86,6 +97,7 @@ export async function activate(context) {
       streamingSearch: true
     },
     getPlaybackUrl,
+    getTrackMv,
     getLyrics,
     searchSongs,
     searchRecordingIdentities,
@@ -157,6 +169,7 @@ export async function activate(context) {
 export function deactivate() {
   contextRef = null
   ncmApi = null
+  clearRequestTokenWaiters(new Error('NetEase provider is not active'))
   resetCaches()
   metadataRequestTail = Promise.resolve()
   metadataNextRequestAt = 0
@@ -199,7 +212,7 @@ function normalizeApiMessage(data, fallback) {
 // 也不含「高频」，只按关键词判定会漏掉它，于是回退阶梯把每一档音质都撞一遍
 // （实测每首歌 3～4 秒）。这里补上 -460 的文案，并允许调用方直接用错误码判定。
 function isRiskControlMessage(message) {
-  return /安全风险|网络环境.{0,8}风险|限制了当前网络环境|设备环境异常|操作已拦截|风险控制|高频|风控/i.test(
+  return /安全风险|网络环境.{0,8}风险|限制了当前网络环境|设备环境异常|操作已拦截|操作频繁|请求频繁|风险控制|高频|风控|ip 高频|IP 高频/i.test(
     message
   )
 }
@@ -223,7 +236,10 @@ function describeApiError(code, data) {
     if (/安全风险|设备环境异常|操作已拦截/i.test(rawMessage)) {
       return `网易云拦截了当前网络或设备环境：${rawMessage}。请停止频繁重试，切换网络/设备或按官方提示 24 小时后再试。`
     }
-    return `网易云登录接口触发高频或风控限制：${rawMessage}。请等待几分钟后再试。`
+    return `网易云接口触发高频或风控限制：${rawMessage}。请稍后再试。`
+  }
+  if (code === 405 || code === 429) {
+    return '网易云接口请求过于频繁，请稍后再试。'
   }
   if (code === 301) return '网易云登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试。'
   if (code === 400)
@@ -250,6 +266,8 @@ function normalizeCountryCode(countrycode) {
 function resetCaches() {
   playlistTrackCache.clear()
   streamUrlCache.clear()
+  mvUrlCache.clear()
+  songMvIdCache.clear()
   providerWriteResults.clear()
   likedTracksCache = null
   playlistCatalogueCache = null
@@ -267,9 +285,12 @@ function resetCaches() {
   ownedPlaylistIds = new Set()
   providerWriteRecordsLoaded = false
   providerWritePersistenceTail = Promise.resolve()
-  // 令牌桶随会话一起重置：排队中的 acquire 取的是新桶令牌，语义不受影响。
+  // 令牌桶随会话一起重置：通知已在排队的 waiter 重新按新桶尝试消费。
   requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
   requestTokenRefillAt = Date.now()
+  if (requestTokenWaiters.length > 0 && contextRef) {
+    queueMicrotask(pumpRequestTokens)
+  }
 }
 
 function runIdempotentProviderWrite(scope, args, requestContext, operation, replaySuccess) {
@@ -419,65 +440,147 @@ async function saveCookie(cookie) {
   }
 }
 
-function throwIfRequestAborted(requestContext) {
-  if (!requestContext?.signal?.aborted) return
-  const reason = requestContext.signal.reason
-  throw reason instanceof Error ? reason : new Error('Provider request was cancelled')
+function abortReasonError(signal) {
+  const reason = signal?.reason
+  return reason instanceof Error ? reason : new Error('Provider request was cancelled')
 }
 
-// 全局请求令牌桶（批量 8.6）：所有上游请求统一经 request() 出口，突发容量
-// 5、回灌速率 ~5 req/s。为批次 9 的并行化配安全带，同时降低风控触发概率。
+function throwIfRequestAborted(requestContext) {
+  if (!requestContext?.signal?.aborted) return
+  throw abortReasonError(requestContext.signal)
+}
+
+// 全局请求令牌桶（批量 8.6 + 播放优先队列）：所有上游请求统一经 request() 出口，
+// 突发容量 5、回灌速率 ~5 req/s；前台播放解析优先于歌单/登录/浏览分页与后台预取获配令牌。
 const REQUEST_TOKEN_BUCKET_CAPACITY = 5
 const REQUEST_TOKEN_REFILL_PER_MS = 5 / 1000
+const REQUEST_TOKEN_PRIORITY_RANK = { high: 0, normal: 1, low: 2 }
 let requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
 let requestTokenRefillAt = Date.now()
-let requestTokenTail = Promise.resolve()
+let requestTokenWaiters = []
+let requestTokenTimer = null
+let requestTokenTimerScheduled = false
 
-function acquireRequestToken(signal) {
-  const acquire = requestTokenTail.then(
-    () =>
-      new Promise((resolve, reject) => {
-        const attempt = () => {
-          if (signal?.aborted) {
-            reject(
-              signal.reason instanceof Error
-                ? signal.reason
-                : new Error('Provider request was cancelled')
-            )
-            return
-          }
-          const now = Date.now()
-          if (now < requestTokenRefillAt) {
-            // 系统时钟回拨（NTP 校时）：原地重置回灌基准，令牌不增不减，避免
-            // 回灌窗口永不可达导致全部请求挂死。
-            requestTokenRefillAt = now
-          } else {
-            requestTokenCount = Math.min(
-              REQUEST_TOKEN_BUCKET_CAPACITY,
-              requestTokenCount + (now - requestTokenRefillAt) * REQUEST_TOKEN_REFILL_PER_MS
-            )
-            requestTokenRefillAt = now
-          }
-          if (requestTokenCount >= 1) {
-            requestTokenCount -= 1
-            resolve()
-            return
-          }
-          setTimeout(
-            attempt,
-            Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
-          )
-        }
-        attempt()
-      })
+function requestPriorityRank(priority) {
+  return REQUEST_TOKEN_PRIORITY_RANK[priority] ?? REQUEST_TOKEN_PRIORITY_RANK.normal
+}
+
+function isHighPriorityRequestPath(path) {
+  return /^\/(?:song\/url|song\/match|mv\/|lyric|user\/playlist|likelist|playlist\/(?:detail|track)|playmode\/intelligence|personal[_/]fm|login\/|register\/|captcha\/)/i.test(
+    path
   )
-  requestTokenTail = acquire.catch(() => undefined)
-  return acquire
+}
+
+function refillRequestTokens() {
+  const now = Date.now()
+  if (now < requestTokenRefillAt) {
+    // 系统时钟回拨（NTP 校时）：原地重置回灌基准，令牌不增不减，避免
+    // 回灌窗口永不可达导致全部请求挂死。
+    requestTokenRefillAt = now
+  } else {
+    requestTokenCount = Math.min(
+      REQUEST_TOKEN_BUCKET_CAPACITY,
+      requestTokenCount + (now - requestTokenRefillAt) * REQUEST_TOKEN_REFILL_PER_MS
+    )
+    requestTokenRefillAt = now
+  }
+}
+
+function clearRequestTokenTimer() {
+  if (requestTokenTimer !== null) {
+    clearTimeout(requestTokenTimer)
+    requestTokenTimer = null
+  }
+  requestTokenTimerScheduled = false
+}
+
+function enqueueRequestTokenWaiter(waiter) {
+  let insertAt = requestTokenWaiters.length
+  for (let i = requestTokenWaiters.length - 1; i >= 0; i -= 1) {
+    if (requestTokenWaiters[i].rank <= waiter.rank) {
+      insertAt = i + 1
+      break
+    }
+    if (i === 0) insertAt = 0
+  }
+  requestTokenWaiters.splice(insertAt, 0, waiter)
+}
+
+function clearRequestTokenWaiters(reasonError) {
+  clearRequestTokenTimer()
+  const pending = requestTokenWaiters.splice(0)
+  for (const waiter of pending) {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+    waiter.reject(reasonError)
+  }
+}
+
+function pumpRequestTokens() {
+  clearRequestTokenTimer()
+  refillRequestTokens()
+  while (requestTokenWaiters.length > 0 && requestTokenCount >= 1) {
+    const waiter = requestTokenWaiters.shift()
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+    if (waiter.signal?.aborted) {
+      waiter.reject(abortReasonError(waiter.signal))
+      continue
+    }
+    requestTokenCount -= 1
+    waiter.resolve()
+  }
+  if (requestTokenWaiters.length > 0) {
+    // Mobile ABI v1 (sync-promise.js) invokes setTimeout callbacks synchronously
+    // before setTimeout() returns; guard assignment with requestTokenTimerScheduled.
+    requestTokenTimerScheduled = true
+    const timer = setTimeout(
+      () => {
+        requestTokenTimerScheduled = false
+        requestTokenTimer = null
+        pumpRequestTokens()
+      },
+      Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
+    )
+    if (requestTokenTimerScheduled) {
+      requestTokenTimer = timer
+    }
+  }
+}
+
+function acquireRequestToken(signal, priority = 'normal') {
+  if (signal?.aborted) {
+    return Promise.reject(abortReasonError(signal))
+  }
+  const rank = requestPriorityRank(priority)
+  refillRequestTokens()
+  if (requestTokenWaiters.length === 0 && requestTokenCount >= 1) {
+    requestTokenCount -= 1
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const waiter = { rank, signal, resolve, reject, onAbort: null }
+    if (signal) {
+      waiter.onAbort = () => {
+        const index = requestTokenWaiters.indexOf(waiter)
+        if (index >= 0) requestTokenWaiters.splice(index, 1)
+        if (requestTokenWaiters.length === 0) clearRequestTokenTimer()
+        reject(abortReasonError(signal))
+      }
+      signal.addEventListener('abort', waiter.onAbort, { once: true })
+    }
+    enqueueRequestTokenWaiter(waiter)
+    if (!requestTokenTimerScheduled) pumpRequestTokens()
+  })
 }
 
 async function request(path, cookie, requestContext) {
   throwIfRequestAborted(requestContext)
-  await acquireRequestToken(requestContext?.signal)
+  const priority =
+    requestContext?.priority ?? (isHighPriorityRequestPath(path) ? 'high' : 'normal')
+  await acquireRequestToken(requestContext?.signal, priority)
   const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie, {
     signal: requestContext?.signal,
     idempotencyKey: requestContext?.idempotencyKey
@@ -550,7 +653,11 @@ async function requestPublicMetadata(path, requestContext) {
     await waitWithAbort(Math.max(0, metadataNextRequestAt - Date.now()), requestContext?.signal)
     metadataNextRequestAt = Date.now() + 1000
     const data = await request(path, '', requestContext)
-    if (Number(data.code) === 429 || /操作频繁|请求频繁|高频/.test(normalizeApiMessage(data, ''))) {
+    if (
+      Number(data.code) === 405 ||
+      Number(data.code) === 429 ||
+      /操作频繁|请求频繁|高频|风控/.test(normalizeApiMessage(data, ''))
+    ) {
       metadataBlockedUntil = Date.now() + 60_000
       throw new Error('NCM_METADATA_RATE_LIMITED')
     }
@@ -730,6 +837,11 @@ function normalizeTrack(song) {
   const coverSmall = normalizeNcmCoverSize(rawCover, 140)
   const audioMeta = getSongAudioMeta(song)
   const bpm = normalizeBpm(song.bpm ?? song.tempo ?? song.mainSong?.bpm)
+  const rawMvField = song.mv ?? song.mvid ?? song.mainSong?.mvid ?? song.mainSong?.mv
+  const mvId = normalizeNcmMvId(rawMvField)
+  if (Number.isSafeInteger(songId) && songId > 0 && rawMvField !== undefined && rawMvField !== null) {
+    rememberSongMvId(songId, mvId)
+  }
 
   const track = {
     id: `ncm:${songId}`,
@@ -757,6 +869,7 @@ function normalizeTrack(song) {
     sampleRate: audioMeta.sampleRate,
     bitrate: audioMeta.bitrate
   }
+  if (mvId) track.mvId = mvId
   if (artistRefs.length > 0) track.artists = artistRefs
   if (bpm !== undefined) track.bpm = bpm
   return track
@@ -1841,14 +1954,19 @@ function getPlaybackUrlRequestPaths(songId, quality) {
     (level) =>
       `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}&encodeType=flac&crypto=eapi`
   )
-  // Classic bitrate endpoints remain as a compatibility fallback when the
-  // level-based player API returns no official URL for the signed-in account.
-  const bitratePaths = [
-    `/song/url?id=${encodedId}&br=999000`,
-    `/song/url?id=${encodedId}&br=320000`,
-    `/song/url?id=${encodedId}&br=128000`
-  ]
+  // Classic `/song/url?br=320000` already serves as a single ceiling-bitrate
+  // fallback down to 128k without burning extra RTTs across 999k/128k tiers.
+  const bitratePaths = [`/song/url?id=${encodedId}&br=320000`]
   return [...levelPaths, ...bitratePaths]
+}
+
+const PERMANENT_OFFICIAL_UNAVAILABLE_CODES = new Set([-110, -105])
+
+function isPermanentOfficialUnavailable(data, streamItem) {
+  const itemCode = Number(streamItem?.code)
+  if (Number.isFinite(itemCode) && PERMANENT_OFFICIAL_UNAVAILABLE_CODES.has(itemCode)) return true
+  const bodyCode = Number(data?.body?.code)
+  return Number.isFinite(bodyCode) && PERMANENT_OFFICIAL_UNAVAILABLE_CODES.has(bodyCode)
 }
 
 function getUnblockedPlaybackUrlPath(songId) {
@@ -1980,6 +2098,43 @@ async function prepareStreamEntry(entry, songId, fileName, options, requestConte
   return playbackIdentityResult(entry.url, entry.url, entry.item, options, entry.expiresAt)
 }
 
+async function finalizeAuthorizedStream(
+  cacheKey,
+  url,
+  songId,
+  fileName,
+  item,
+  options,
+  requestContext
+) {
+  const prepare = options?._twilightAutoMixPrepare === true
+  if (!prepare && typeof ncmApi.resolveCachedSong === 'function') {
+    let verifiedCachedPath = null
+    try {
+      const formatHint = normalizeNcmFormat(item?.type ?? item?.encodeType ?? item?.format)
+      const resolvedFileName =
+        fileName && /\.[a-z0-9]{1,8}$/i.test(fileName)
+          ? fileName
+          : formatHint
+            ? `${songId}.${formatHint}`
+            : fileName
+      verifiedCachedPath = await ncmApi.resolveCachedSong(songId, url, resolvedFileName, {
+        expectedBytes: Number(item?.size) > 0 ? Number(item.size) : null
+      })
+    } catch {
+      verifiedCachedPath = null
+    }
+    throwIfRequestAborted(requestContext)
+    if (verifiedCachedPath) {
+      const entry = rememberStreamUrl(cacheKey, url, songId, fileName, item, true)
+      entry.cachedPath = verifiedCachedPath
+      return playbackIdentityResult(verifiedCachedPath, url, item, options, entry.expiresAt)
+    }
+  }
+  const entry = rememberStreamUrl(cacheKey, url, songId, fileName, item, prepare)
+  return prepareStreamEntry(entry, songId, fileName, options, requestContext)
+}
+
 async function getPlaybackUrl(track, options = {}, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
@@ -2014,18 +2169,30 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     streamUrlCache.delete(cacheKey)
   }
 
+  const playbackPriority =
+    options?._twilightPlaybackPriority === 'low' ||
+    options?._twilightPlaybackPriority === 'normal' ||
+    options?._twilightPlaybackPriority === 'high'
+      ? options._twilightPlaybackPriority
+      : options?._twilightAutoMixPrepare === true
+        ? 'low'
+        : 'high'
+  const upstreamContext = requestContext
+    ? { ...requestContext, priority: playbackPriority }
+    : { priority: playbackPriority }
+
   let lastFailureMessage = ''
   let riskControlMessage = ''
   const requestPaths = getPlaybackUrlRequestPaths(songId, quality)
   for (let attempt = 0; attempt < requestPaths.length; attempt += 1) {
-    // 回退阶梯步间退避（250ms 起步、封顶 500ms）：连续失败的连打既放大风控
-    // 概率也让低级音质的响应无意义地挤占带宽（批量 8.5）。
+    // 收敛后的步间轻量退避（50ms 起步、封顶 100ms）：既避免连发触发风控，又将
+    // 回退总耗时控制在百毫秒级（原 2.75s）。
     if (attempt > 0) {
-      await waitWithAbort(Math.min(500, 250 * attempt), requestContext?.signal)
+      await waitWithAbort(Math.min(100, 50 * attempt), requestContext?.signal)
     }
     const path = requestPaths[attempt]
     try {
-      const data = await requestAuthed(path, requestContext)
+      const data = await requestAuthed(path, upstreamContext)
       const streamItems = getPlaybackStreamItems(data)
       const streamItem = streamItems[0] ?? {}
       // Only use a URL explicitly authorized by the signed-in account's official endpoint.
@@ -2033,15 +2200,15 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
         if (!streamItem.freeTrialInfo) {
-          const entry = rememberStreamUrl(
+          return finalizeAuthorizedStream(
             cacheKey,
             url,
             songId,
             track?.fileName,
             streamItem,
-            options?._twilightAutoMixPrepare === true
+            options,
+            requestContext
           )
-          return prepareStreamEntry(entry, songId, track?.fileName, options, requestContext)
         }
         return playbackIdentityResult(url, url, streamItem, options, null)
       }
@@ -2053,6 +2220,10 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       }
       if (isRiskControlMessage(attemptFailureMessage)) {
         riskControlMessage = attemptFailureMessage
+        break
+      }
+      // 无版权/已下架等全档位一致错误不再重复探测低档位，直接转入灰色解锁或结束。
+      if (isPermanentOfficialUnavailable(data, streamItem)) {
         break
       }
     } catch (error) {
@@ -2070,18 +2241,18 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
   // 风控命中后连灰色解锁也不再试——它同样是上游请求，会把风控窗口越拉越长。
   if (!riskControlMessage) {
     try {
-      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
+      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), upstreamContext)
       const url = getUnblockedPlaybackUrl(data)
       if (url) {
-        const entry = rememberStreamUrl(
+        return finalizeAuthorizedStream(
           cacheKey,
           url,
           songId,
           track?.fileName,
           {},
-          options?._twilightAutoMixPrepare === true
+          options,
+          requestContext
         )
-        return prepareStreamEntry(entry, songId, track?.fileName, options, requestContext)
       }
       lastFailureMessage =
         getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
@@ -2096,6 +2267,140 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     getContext().logger.warn(`网易云播放地址解析命中风控，已提前终止回退：${riskControlMessage}`)
   } else if (lastFailureMessage) {
     getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  }
+  return null
+}
+
+function normalizeNcmMvId(value) {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? String(value) : null
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed || trimmed === '0') return null
+    if (/^[1-9]\d*$/.test(trimmed)) return trimmed
+  }
+  return null
+}
+
+function rememberSongMvId(songId, mvId) {
+  songMvIdCache.delete(songId)
+  songMvIdCache.set(songId, mvId ?? null)
+  if (songMvIdCache.size > SONG_MV_ID_CACHE_CAPACITY) {
+    const oldest = songMvIdCache.keys().next().value
+    if (oldest !== undefined) songMvIdCache.delete(oldest)
+  }
+}
+
+function normalizeMvQualityOption(value) {
+  return typeof value === 'string' && value in NCM_MV_QUALITY_FALLBACKS ? value : 'auto'
+}
+
+function formatMvResolutionLabel(resolution) {
+  const numeric = Number(resolution)
+  if (Number.isFinite(numeric) && numeric > 0) return `${Math.trunc(numeric)}p`
+  return null
+}
+
+async function resolveTrackMvId(track, force, requestContext) {
+  const directMvId = normalizeNcmMvId(track?.mvId)
+  if (directMvId) return directMvId
+
+  const songId = getSongIdFromTrack(track)
+  if (songId == null) return null
+  if (!force && songMvIdCache.has(songId)) {
+    return songMvIdCache.get(songId) ?? null
+  }
+
+  const detail = await requestOptionalAuth(
+    `/song/detail?ids=${encodeURIComponent(String(songId))}`,
+    requestContext
+  )
+  throwIfRequestAborted(requestContext)
+  const songs = getSongItems(detail)
+  const song = songs.find((item) => Number(item?.id) === songId) ?? songs[0] ?? null
+  if (!song) return null
+  const mvId = normalizeNcmMvId(song.mv ?? song.mvid ?? song.mainSong?.mvid ?? song.mainSong?.mv)
+  rememberSongMvId(songId, mvId)
+  return mvId
+}
+
+async function getTrackMv(track, options = {}, requestContext) {
+  throwIfRequestAborted(requestContext)
+  const force = options?.force === true
+  const quality = normalizeMvQualityOption(options?.quality)
+  const mvId = await resolveTrackMvId(track, force, requestContext)
+  if (!mvId) return null
+
+  const cacheKey = `${mvId}:${quality}`
+  const cached = force ? null : mvUrlCache.get(cacheKey)
+  if (cached) {
+    if (cached.expiresAt > Date.now()) {
+      return { ...cached.stream }
+    }
+    mvUrlCache.delete(cacheKey)
+  }
+
+  const resolutions = NCM_MV_QUALITY_FALLBACKS[quality]
+  let lastError = ''
+  for (let index = 0; index < resolutions.length; index += 1) {
+    if (index > 0) {
+      await waitWithAbort(Math.min(400, 200 * index), requestContext?.signal)
+    }
+    const resolution = resolutions[index]
+    try {
+      const data = await requestOptionalAuth(
+        `/mv/url?id=${encodeURIComponent(mvId)}&r=${resolution}`,
+        requestContext
+      )
+      throwIfRequestAborted(requestContext)
+      const mvPayload = data?.data ?? data?.body?.data ?? null
+      const itemCode = Number(mvPayload?.code ?? data?.code)
+      if (Number.isFinite(itemCode) && itemCode !== 200) {
+        lastError = getPlaybackFailureMessage(data, mvPayload) || lastError
+        if (isRiskControlMessage(lastError)) break
+        continue
+      }
+      const url = normalizePlaybackStreamUrl(mvPayload?.url)
+      if (!url) {
+        lastError = getPlaybackFailureMessage(data, mvPayload) || lastError
+        continue
+      }
+      const actualResolution = Number(mvPayload?.r) || resolution
+      const expiSeconds = Number(mvPayload?.expi)
+      const ttlMs =
+        Number.isFinite(expiSeconds) && expiSeconds > 90
+          ? Math.min(MV_URL_CACHE_TTL_MS, Math.max(60_000, (expiSeconds - 60) * 1000))
+          : MV_URL_CACHE_TTL_MS
+      const stream = {
+        url,
+        quality: formatMvResolutionLabel(actualResolution),
+        ...(Number.isFinite(actualResolution) && actualResolution > 0
+          ? { height: actualResolution }
+          : {}),
+        mvId,
+        providerId: PROVIDER_ID,
+        referer: 'https://music.163.com/'
+      }
+      mvUrlCache.delete(cacheKey)
+      mvUrlCache.set(cacheKey, {
+        stream,
+        expiresAt: Date.now() + ttlMs
+      })
+      if (mvUrlCache.size > MV_URL_CACHE_CAPACITY) {
+        const oldest = mvUrlCache.keys().next().value
+        if (oldest !== undefined) mvUrlCache.delete(oldest)
+      }
+      return { ...stream }
+    } catch (error) {
+      throwIfRequestAborted(requestContext)
+      lastError = getErrorMessage(error)
+      if (isRiskControlMessage(lastError)) break
+    }
+  }
+
+  if (lastError) {
+    getContext().logger.warn(`网易云 MV 地址解析失败（mvId=${mvId}）：${lastError}`)
   }
   return null
 }

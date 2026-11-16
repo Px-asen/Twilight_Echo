@@ -539,7 +539,9 @@ export class LibraryNativeQueueMaintainer {
   private async prepare(track: TrackData): Promise<PreparedPlaybackSource> {
     if (this.options.prepareSource)
       return this.options.prepareSource(track, this.sourceReads.signal)
-    const resolved = await this.options.resolver.resolve(track, this.sourceReads.signal)
+    const resolved = await this.options.resolver.resolve(track, this.sourceReads.signal, {
+      autoMixPrepare: true
+    })
     this.sourceReads.signal.throwIfAborted()
     if (!resolved) throw new Error('afterglow_core_source_unavailable')
     return {

@@ -225,6 +225,7 @@ export interface TwilightPluginUninstallOptions {
 export type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
+  | 'mv'
   | 'lyrics'
   | 'cover'
   | 'playlist'
@@ -493,6 +494,7 @@ export type PluginHostResponse =
         | 'ncmRequest'
         | 'ncmOfficialLogin'
         | 'ncmGetCachedSong'
+        | 'ncmResolveCachedSong'
         | 'ncmCacheSong'
         | 'ncmPrepareAutoMixSong'
         | 'qishuiGetQrLogin'

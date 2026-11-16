@@ -60,6 +60,7 @@ useEscapeToClose(
         <CoverImg
           :cover="track.cover"
           :cover-source="track.coverSource"
+          size="grid"
           class="track-info-cover"
           alt=""
         />

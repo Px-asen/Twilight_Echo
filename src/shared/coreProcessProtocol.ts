@@ -50,6 +50,8 @@ export interface CoreProcessConfiguration {
       proxyAllowDirectFallback: boolean
     }
   }
+  /** Services hosted as in-process worker_threads inside musicCore (default on desktop). */
+  workerServices?: CoreServiceKind[]
   resumeMode?: PlaybackResumeMode
   audioConfig?: AudioEngineConfig
 }

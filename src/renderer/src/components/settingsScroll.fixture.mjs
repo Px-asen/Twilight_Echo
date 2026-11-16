@@ -50,18 +50,28 @@ window.settingsScrollMocks = {
 }
 window.api = { library: { getWatcherStatus: async () => null } }
 const expanded = ref(false)
+const topSectionKeys = [
+  'overview',
+  'general',
+  'appearance',
+  'interface',
+  'library',
+  'storage',
+  'connections',
+  'system'
+]
 window.makeSettingsSection = (key) => () =>
   h(
-    ['general', 'appearance', 'library', 'connections', 'system'].includes(key) ? 'section' : 'div',
+    topSectionKeys.includes(key) ? 'section' : 'div',
     {
       id: key,
-      class: ['general', 'appearance', 'library', 'connections', 'system'].includes(key)
+      class: topSectionKeys.includes(key)
         ? 'glass-card preview-section settings-section'
         : 'settings-fixture-block'
     },
     [
       h('h2', key),
-      ...(key === 'system'
+      ...(key === 'about'
         ? [
             h('button', { 'data-setting-id': 'app-update' }, '检查更新'),
             h('button', { 'data-setting-id': 'app-update-install' }, '下载更新'),
@@ -161,7 +171,7 @@ app.mount('#app')
     )
     expect(nav(key).getAttribute('aria-current') === 'page', 'active category missing: ' + key)
   }
-  expect(sections.length === 7, 'missing seven mounted category fixtures')
+  expect(sections.length === 12, 'missing twelve mounted category fixtures')
   await select('connections')
   resolveLoad()
   await settle()
@@ -262,21 +272,21 @@ app.mount('#app')
   nav('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
   await settle()
   const strip = page.querySelector('.settings-nav-categories')
-  const itemRect = nav('system').getBoundingClientRect(),
+  const itemRect = nav('updates').getBoundingClientRect(),
     stripRect = strip.getBoundingClientRect()
   expect(strip.scrollHeight > strip.clientHeight, 'short viewport did not exercise sidebar scroll')
   expect(
-    document.activeElement === nav('system') && visibleSections()[0].id === 'system',
+    document.activeElement === nav('updates') && visibleSections()[0].id === 'updates',
     'End did not focus and select the last category'
   )
   expect(
     itemRect.top >= stripRect.top - 1 && itemRect.bottom <= stripRect.bottom + 1,
     'focused category remained clipped in the sidebar'
   )
-  nav('system').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+  nav('updates').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
   await settle()
   expect(
-    document.activeElement === nav('general') && strip.scrollTop === 0,
+    document.activeElement === nav('overview') && strip.scrollTop === 0,
     'Home did not reveal the first category'
   )
   expect(
@@ -349,10 +359,10 @@ app.mount('#app')
   nav('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
   await nextTick()
   expect(
-    visibleSections()[0].id === 'system' &&
-      document.activeElement === nav('system') &&
+    visibleSections()[0].id === 'updates' &&
+      document.activeElement === nav('updates') &&
       !fades(header).length &&
-      !fades(document.querySelector('#system')).length,
+      !fades(document.querySelector('#updates')).length,
     'keyboard category navigation animated or failed to restore focus'
   )
   document.documentElement.dataset.teMotion = 'off'
@@ -368,11 +378,11 @@ app.mount('#app')
   mounted.value = true
   await settle()
   expect(
-    document.querySelector('[aria-current="page"]').textContent.includes('系统与关于'),
+    document.querySelector('[aria-current="page"]').textContent.includes('系统与维护'),
     'reopened settings selected wrong category'
   )
   persistence.stop()
   app.unmount()
   removeDecorations()
-  return 'SETTINGS_SCROLL_OK: category fades/interruption/motion preferences; seven panels; startup/drafts/geometry/search/Tab/sidebar keyboard/restore verified'
+  return 'SETTINGS_SCROLL_OK: category fades/interruption/motion preferences; twelve panels; startup/drafts/geometry/search/Tab/sidebar keyboard/restore verified'
 }

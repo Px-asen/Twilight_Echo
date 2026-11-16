@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useAudioOutputDspStore } from '@renderer/stores/useAudioOutputDspStore'
 import { useCoreConnection } from '@renderer/stores/coreConnection.ts'
 import { usePlayerStore } from '@renderer/stores/usePlayerStore'
+import { formatAudioError } from '@renderer/utils/audioErrorPresentation'
 import type { AudioDeviceOption } from '@renderer/types/settings'
 
 const props = defineProps<{ audioExclusiveMode: boolean }>()
@@ -41,7 +42,11 @@ const exclusiveAvailable = computed(
 const loudnessMatched = computed(() => audioProcessing.value.volumeNormalization !== 'off')
 
 function toggleLoudnessMatch(): void {
-  void setReplayGainMode(loudnessMatched.value ? 'off' : 'track')
+  void setReplayGainMode(loudnessMatched.value ? 'off' : 'track').catch((error) => {
+    if (!active) return
+    testToneError.value = formatAudioError(error)
+    testToneState.value = 'error'
+  })
 }
 
 async function selectDevice(id: string): Promise<void> {
@@ -55,7 +60,7 @@ async function selectDevice(id: string): Promise<void> {
     await setAudioDevice(id)
     if (audioDevice.value !== id) throw new Error('设备切换未成功，请检查设备连接后重试')
   } catch (error) {
-    testToneError.value = error instanceof Error ? error.message : String(error)
+    testToneError.value = formatAudioError(error)
     testToneState.value = 'error'
   } finally {
     deviceChanging.value = false
@@ -74,7 +79,7 @@ async function testOutput(): Promise<void> {
   } catch (error) {
     if (!active || attempt !== testAttempt) return
     testToneState.value = 'error'
-    testToneError.value = error instanceof Error ? error.message : String(error)
+    testToneError.value = formatAudioError(error)
   }
 }
 
@@ -87,7 +92,7 @@ async function stopTest(): Promise<boolean> {
   } catch (error) {
     if (active) {
       testToneState.value = 'error'
-      testToneError.value = error instanceof Error ? error.message : String(error)
+      testToneError.value = formatAudioError(error)
     }
     return false
   }

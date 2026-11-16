@@ -1,5 +1,7 @@
 import type { IpcMain } from 'electron'
 import {
+  COVER_GRID_JPEG_QUALITY,
+  COVER_GRID_THUMBNAIL_WIDTH,
   COVER_SMALL_JPEG_QUALITY,
   COVER_SMALL_THUMBNAIL_WIDTH,
   cacheCoverFromBuffer,
@@ -15,7 +17,7 @@ const MAX_DATA_URL_BYTES = 8 * 1024 * 1024
 const MAX_COVER_INPUT_BYTES = 16 * 1024 * 1024
 
 export type CoverIpcResult = Uint8Array | string | null
-export type CoverDisplaySize = 'sm' | 'md'
+export type CoverDisplaySize = 'sm' | 'grid' | 'md'
 
 export function registerCoverIpc(ipcMain: IpcMain): void {
   ipcMain.handle(
@@ -28,7 +30,7 @@ export function registerCoverIpc(ipcMain: IpcMain): void {
       if (!handle.startsWith('cover://')) return null
       const fileName = handle.slice('cover://'.length).split(/[?#]/, 1)[0]
       if (!fileName || fileName.includes('/') || !isCoverCacheFileName(fileName)) return null
-      if (size === 'sm') return await readCoverCacheThumbnailBytes(fileName, 'sm')
+      if (size === 'sm' || size === 'grid') return await readCoverCacheThumbnailBytes(fileName, size)
       return await readCoverCacheFileBytes(fileName)
     }
   )
@@ -54,14 +56,14 @@ function normalizeCoverDataUrl(handle: string, size?: CoverDisplaySize): CoverIp
   const match = handle.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/i)
   if (!match) return null
   if (Buffer.byteLength(handle, 'utf-8') > MAX_DATA_URL_BYTES) return null
-  if (size === 'sm' && !/^image\/gif$/i.test(match[1])) {
+  if ((size === 'sm' || size === 'grid') && !/^image\/gif$/i.test(match[1])) {
     try {
       const raw = Buffer.from(match[2], 'base64')
       const resized = resizeCoverImageBytes(
         raw,
         match[1],
-        COVER_SMALL_THUMBNAIL_WIDTH,
-        COVER_SMALL_JPEG_QUALITY
+        size === 'sm' ? COVER_SMALL_THUMBNAIL_WIDTH : COVER_GRID_THUMBNAIL_WIDTH,
+        size === 'sm' ? COVER_SMALL_JPEG_QUALITY : COVER_GRID_JPEG_QUALITY
       )
       if (resized) return resized.bytes
     } catch {

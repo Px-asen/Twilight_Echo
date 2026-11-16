@@ -3086,6 +3086,43 @@ test('unclassified startup failures still reject session initialization', async 
   await cold.shutdown()
 })
 
+test('client-leased setAudioSuppressed silences native engine output while preserving userVolume, mute controls, and multi-client release', async (t) => {
+  const f = await fixture(t)
+  await f.session.fromQuery({ ids: ['a'], sort: 'playlist' }, 'a', true)
+  await f.session.setVolume(0.75)
+  assert.equal(f.engine.info.volume, 0.75)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.75)
+
+  // Suppressing from two clients keeps native output at 0 while reporting logical userVolume 0.75
+  await f.session.setAudioSuppressed('client-1', true)
+  await f.session.setAudioSuppressed('client-2', true)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.75)
+  assert.equal(f.session.snapshot().mute.muted, false)
+
+  // Adjusting volume and mute while suppressed updates logical userVolume without unmuting native engine
+  await f.session.setVolume(0.55)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+
+  await f.session.configureMute(true)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.muted, true)
+  assert.equal(f.session.snapshot().mute.userVolume, 0)
+
+  await f.session.configureMute(false)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.muted, false)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+
+  // Releasing one client keeps suppression active; releasing the last client restores 0.55 to native engine
+  await f.session.setAudioSuppressed('client-1', false)
+  assert.equal(f.engine.info.volume, 0)
+  await f.session.setAudioSuppressed('client-2', false)
+  assert.equal(f.engine.info.volume, 0.55)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+})
+
 async function fixture(
   t: test.TestContext,
   resolver: SourceResolver = {
@@ -5163,4 +5200,216 @@ test('paused starts defer prefetch until play and automatic queues exclude banne
   await autoScheduler.flush()
   assert.equal(autoReads.includes(bannedId), false)
   assert.ok(autoReads.includes(rows[1].track!.id))
+})
+
+test('foreground playback leaves autoMixPrepare unset while background prefetch and maintainer enable it', async (t) => {
+  const seen: Array<{ id: string; autoMixPrepare: boolean }> = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value, _signal, options) => {
+        const track = value as TrackData
+        seen.push({ id: track.id, autoMixPrepare: options?.autoMixPrepare === true })
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(async (append) =>
+    append([1, 2, 3].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await tick()
+  assert.deepEqual(seen.slice(0, 2), [
+    { id: 'ncm:1', autoMixPrepare: false },
+    { id: 'ncm:2', autoMixPrepare: true }
+  ])
+
+  await scheduler.flush()
+  const prefetchRead = seen.find((entry) => entry.id === 'ncm:3')
+  assert.deepEqual(prefetchRead, { id: 'ncm:3', autoMixPrepare: true })
+
+  // Un-prefetched jump triggers a foreground load, which must not request AutoMix preparation.
+  await f.session.fromPages(async (append) =>
+    append([4, 5].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await tick()
+  assert.ok(
+    seen.some((entry) => entry.id === 'ncm:4' && entry.autoMixPrepare === false),
+    'foreground queue start must omit autoMixPrepare'
+  )
+})
+
+test('startLiked with selectedId starts on the matching batch while later pages drain in the background', async (t) => {
+  const tracks = Array.from({ length: 450 }, (_, index) => recommended(index + 1))
+  const secondPageEntered = deferred<void>()
+  const releaseSecondPage = deferred<void>()
+  t.after(() => releaseSecondPage.resolve())
+  const calls: number[] = []
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    const offset = Number(args[0]),
+      limit = Number(args[1])
+    calls.push(offset)
+    if (offset === 200) {
+      secondPageEntered.resolve()
+      await new Promise<void>((resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        void releaseSecondPage.promise.then(resolve)
+      })
+    }
+    return {
+      tracks: tracks.slice(offset, offset + limit),
+      nextOffset: offset + limit,
+      hasMore: offset + limit < tracks.length
+    }
+  }
+  const f = await heartFixture(t, provider)
+  await f.session.startLiked({ selectedId: 'ncm:42' })
+  assert.equal(f.session.snapshot().track?.id, 'ncm:42')
+  assert.equal(f.session.snapshot().queue?.total, 200)
+  assert.equal(calls.includes(400), false, 'page 2 must not be fetched before playback starts')
+
+  await secondPageEntered.promise
+  releaseSecondPage.resolve()
+  await waitFor(
+    () => f.session.snapshot().queue?.total === 450,
+    'selected liked queue background drain to finish'
+  )
+  assert.deepEqual(calls, [0, 200, 400])
+})
+
+test('extendSubmitted preserves duplicate occurrences and ignores stale queue ids', async (t) => {
+  const f = await fixture(t, {
+    resolve: async (track) => ({
+      source: `https://audio.test/${(track as TrackData).id}`,
+      expiresAt: null
+    })
+  })
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  const queueId = f.session.snapshot().queue!.id
+  const extended = await f.session.extendSubmitted(queueId, [
+    { id: 'ncm:1', snapshot: { ...recommended(1) } },
+    { id: 'ncm:3', snapshot: { ...recommended(3) } }
+  ])
+  assert.equal(extended, true)
+  const page = f.db.readLibraryQueue(queueId, 0, 10)
+  assert.deepEqual(
+    page.items.map((item) => item.track?.id),
+    ['ncm:1', 'ncm:2', 'ncm:1', 'ncm:3']
+  )
+  await f.session.finishSubmitted(queueId)
+  assert.equal(await f.session.extendSubmitted('stale-queue', [{ id: 'ncm:4', snapshot: { ...recommended(4) } }]), false)
+})
+
+test('retainedProviderIds reports active providers while playing or paused and clears on stop', async (t) => {
+  const f = await fixture(t, {
+    resolve: async (track) => ({
+      source: `https://audio.test/${(track as TrackData).id}`,
+      expiresAt: null
+    })
+  })
+  assert.deepEqual(f.session.retainedProviderIds(), [])
+
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  assert.deepEqual(f.session.retainedProviderIds(), ['ncm'])
+
+  await f.session.pause()
+  assert.deepEqual(f.session.retainedProviderIds(), ['ncm'])
+
+  await f.session.stop()
+  assert.deepEqual(f.session.retainedProviderIds(), [])
+})
+
+test('source prefetch warms previous neighbor and reuses departing track for navigate(-1)', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(
+    async (append) =>
+      append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } }))),
+    { selectedIndex: 3 }
+  )
+  await scheduler.flush()
+  // Playing index 3 (ncm:4) warms forward [5, 6, 1, 2] plus immediate previous ncm:3.
+  assert.deepEqual(reads, ['ncm:4', 'ncm:5', 'ncm:6', 'ncm:1', 'ncm:2', 'ncm:3'])
+
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  // Stepping back from ncm:3 -> ncm:2 hits the still-warm entry and then seeds ncm:3 before next/back skips.
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:4')
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  assert.deepEqual(reads, ['ncm:4', 'ncm:5', 'ncm:6', 'ncm:1', 'ncm:2', 'ncm:3'])
+})
+
+test('listLoop at index 0 prefetches the wrapped previous track alongside lookahead tracks', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(
+    async (append) =>
+      append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } }))),
+    { mode: 'listLoop' }
+  )
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
+
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:6')
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
 })

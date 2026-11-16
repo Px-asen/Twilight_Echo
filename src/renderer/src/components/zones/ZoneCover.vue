@@ -16,10 +16,10 @@ const props = withDefaults(
     message?: string
     /** Secondary line under the message, e.g. the peer name of an offline output. */
     detail?: string
-    size?: 'sm' | 'md'
+    size?: 'sm' | 'grid' | 'md'
     compact?: boolean
   }>(),
-  { message: '', detail: '', size: 'md', compact: false }
+  { message: '', detail: '', size: 'grid', compact: false }
 )
 
 const lit = computed(() => props.light === 'playing' || props.light === 'paused')

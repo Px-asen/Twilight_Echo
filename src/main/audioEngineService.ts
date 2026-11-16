@@ -185,8 +185,11 @@ servicePort.on('message', (message) => {
   )
 })
 
+const POLLED_NATIVE_METHODS =
+  /^(?:Get(?:PlaybackInfo|VisualizationData|SpectrumData|DspGraphStatus|DspPluginStatus|ConvolverInfo|UpcomingTrack)|EnumerateDevices|BridgeStatus|BridgeSourceTimeline)$/
+
 async function handleRequest(message: AudioServiceRequest): Promise<void> {
-  if (!/^(GetPlaybackInfo|GetVisualizationData|GetSpectrumData)$/.test(message.method))
+  if (!POLLED_NATIVE_METHODS.test(message.method))
     recordNativeStartup('native.request.start', {
       method: message.method,
       requestId: message.requestId,
@@ -227,7 +230,7 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
       ? message.args
       : bridgeRuntime!.beforeCall(message.method, message.args)
     const value = await (method as (...args: unknown[]) => unknown)(...args)
-    if (!/^(GetPlaybackInfo|GetVisualizationData|GetSpectrumData)$/.test(message.method))
+    if (!POLLED_NATIVE_METHODS.test(message.method))
       recordNativeStartup('native.request.complete', {
         method: message.method,
         requestId: message.requestId

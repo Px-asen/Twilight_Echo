@@ -62,6 +62,8 @@ export interface TrackData {
   metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
+  /** Optional provider MV identifier (e.g. NetEase mvid or Bilibili bvid). */
+  mvId?: string
   networkSource?: { profileId: string; entry: NetworkEntry }
   streamUrl?: string | null
   streamQuality?: NcmPlaybackQuality

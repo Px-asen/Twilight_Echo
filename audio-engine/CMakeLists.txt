@@ -559,7 +559,13 @@ if(TAE_BUILD_TESTS)
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_audio_buffer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Source-only lock checks miss libstdc++'s mutex-backed atomic notification.
+    target_compile_definitions(twilight_audio_buffer_tests PRIVATE TAE_TEST_RENDER_MUTEX_WRAP=1)
+    target_link_options(twilight_audio_buffer_tests PRIVATE "-Wl,--wrap=pthread_mutex_lock")
+  endif()
   add_test(NAME twilight_audio_buffer_unit COMMAND twilight_audio_buffer_tests)
+  set_tests_properties(twilight_audio_buffer_unit PROPERTIES TIMEOUT 20)
 
   add_executable(twilight_diagnostic_log_tests
     tests/diagnostic_log_tests.cpp
@@ -1338,4 +1344,16 @@ if(TAE_BUILD_TESTS)
     endif()
   endforeach()
 
+endif()
+
+# AudioBuffer's Windows producer wake must bypass libstdc++'s mutex-backed
+# atomic notification. WaitOnAddress/WakeByAddress* are provided by this SDK lib.
+if(WIN32)
+  foreach(tae_buffer_target
+      twilight_audio_engine twilight_audio_buffer_tests
+      twilight_runtime_queue_reroute_tests twilight_audio_performance_gate)
+    if(TARGET ${tae_buffer_target})
+      target_link_libraries(${tae_buffer_target} PRIVATE synchronization)
+    endif()
+  endforeach()
 endif()

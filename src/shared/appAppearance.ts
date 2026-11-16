@@ -372,7 +372,7 @@ export function backgroundCssVariables(
   return {
     '--appearance-color': background[tone],
     '--appearance-image': hasBackgroundImage(background)
-      ? `url("${backgroundDisplayUrl(background.image).replace(/["\\\n\r]/g, '')}")`
+      ? `url("${backgroundDisplayUrl(background.image, effect.blur).replace(/["\\\n\r]/g, '')}")`
       : 'none',
     '--appearance-blur': `${effect.blur}px`,
     '--appearance-brightness': `${effect.brightness}%`,

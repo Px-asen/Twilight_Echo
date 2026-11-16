@@ -105,7 +105,7 @@ export function analyzeBackgroundImage(
     options.signal?.addEventListener('abort', abort, { once: true })
     image.decoding = 'async'
     image.crossOrigin = 'anonymous'
-    image.src = backgroundDisplayUrl(source)
+    image.src = backgroundDisplayUrl(source, 20)
     let decoding: Promise<void>
     try {
       decoding = image.decode()

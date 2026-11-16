@@ -597,6 +597,11 @@ export const EN_US_MESSAGES: Record<string, string> = {
   'error.audio.playback_fallback_rematched':
     'Playing {title} failed; rematched to the {source} source',
   'error.audio.current_track': 'the current track',
+  'audio.outputFallback.asioToWasapi':
+    "ASIO output initialization failed ({reason}); automatically fell back to WASAPI Shared output. For bit-perfect passthrough, install your DAC's ASIO driver or enable WASAPI Exclusive mode.",
+  'audio.outputFallback.generic':
+    'The selected output route was unavailable ({reason}); automatically switched to {target}.',
+  'audio.outputFallback.openSettings': 'Output settings',
 
   // ── Engine throws (main-process ipcError) ────────────────────────────────
   // {detail} is the raw reason from the native engine, usually English; when
@@ -628,7 +633,16 @@ export const EN_US_MESSAGES: Record<string, string> = {
   'error.audio.play_failed': 'Playback failed: {detail}',
   'error.audio.pause_failed': 'Pause or resume failed: {detail}',
   'error.audio.stop_failed': 'Could not stop playback: {detail}',
+  'error.audio.volume_change_failed': 'Could not change playback volume: {detail}',
   'error.audio.queue_load_failed': 'Could not load the playback queue: {detail}',
+  'error.audio.queue_append_empty': 'Cannot append tracks before a playback queue is loaded: {detail}',
+  'error.audio.queue_append_failed': 'Could not append tracks to the playback queue: {detail}',
+  'error.audio.queue_index_invalid': 'Playback queue index is out of range: {detail}',
+  'error.audio.queue_current_source_immutable':
+    'The currently playing queue item cannot replace its audio source in place: {detail}',
+  'error.audio.queue_source_invalid': 'The playback queue audio source is invalid: {detail}',
+  'error.audio.queue_source_update_failed':
+    'Could not update the playback queue audio source: {detail}',
   'error.audio.play_mode_sync_failed': 'Could not sync the play mode: {detail}',
   'error.audio.play_mode_switch_failed': 'Could not switch the play mode: {detail}',
   'error.audio.decode_failed':

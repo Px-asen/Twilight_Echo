@@ -71,7 +71,11 @@ html .settings-preview-page[data-settings-layout='categories'] .settings-page-de
 html
   .settings-preview-page[data-settings-layout='categories']
   .preview-section
-  > :is(.section-title-row, .settings-section-description) {
+  > :is(.section-title-row, .settings-section-description),
+html
+  .settings-preview-page[data-settings-layout='categories']
+  :is(#hotkeys > #shortcuts, #updates > #about)
+  > .section-title-row {
   display: none;
 }
 html .settings-preview-page[data-settings-layout='categories'] .setting-list {
@@ -500,6 +504,17 @@ html[data-theme='dark']
   .settings-preview-page[data-settings-layout='categories']
   .brand-soft-button {
   color: var(--te-primary-300);
+}
+html[data-theme='dark']
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.soft-button, .muted-button) {
+  border: 1px solid var(--te-card-border);
+  background: color-mix(in srgb, var(--te-settings-text) 7%, var(--te-card-bg));
+}
+html[data-theme='dark']
+  .settings-preview-page[data-settings-layout='categories']
+  :is(.soft-button, .muted-button):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--te-settings-text) 13%, var(--te-card-bg));
 }
 @media (max-width: 900px) {
   html .settings-preview-page[data-settings-layout='categories'] {

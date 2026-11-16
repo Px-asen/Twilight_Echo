@@ -1232,18 +1232,31 @@ export class LibraryDatabaseQueues {
       return { queue: this.get(id), reachedEnd: false }
     })
   }
-  extend(id: string, revision: number, items: LibraryQueueInsertItem[]): LibraryQueueEditResult {
+  extend(
+    id: string,
+    revision: number,
+    items: LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
+  ): LibraryQueueEditResult {
     if (!Array.isArray(items) || items.length > 200)
       throw new Error('Invalid or oversized automatic queue extension')
     validateLibraryQueueEdit({ kind: 'insert', items }, true)
-    return this.edit(id, revision, { kind: 'insert', items }, true)
+    return this.edit(
+      id,
+      revision,
+      { kind: 'insert', items },
+      true,
+      false,
+      options?.preserveDuplicates === true
+    )
   }
   edit(
     id: string,
     revision: number,
     edit: LibraryQueueEdit,
     extension = false,
-    coreOwned = false
+    coreOwned = false,
+    preserveDuplicates = false
   ): LibraryQueueEditResult {
     if (edit?.kind === 'undo') return this.undo(id, revision)
     return this.owner.transaction(() => {
@@ -1251,7 +1264,7 @@ export class LibraryDatabaseQueues {
       if (!edit || typeof edit !== 'object' || Array.isArray(edit))
         throw new Error('Invalid queue edit')
       if (!extension) validateLibraryQueueEdit(edit, coreOwned, coreOwned)
-      if (extension && edit.kind === 'insert') {
+      if (extension && !preserveDuplicates && edit.kind === 'insert') {
         const items = edit.items!
         const known = new Set(
           (

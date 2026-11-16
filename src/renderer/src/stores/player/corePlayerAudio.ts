@@ -111,6 +111,7 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
   const audioOutputDeviceOptions = computed(() =>
     deviceOptionsForOutput(audioOutput.value, audioDeviceOptions.value)
   )
+  const audioOutputFallbackNotice = computed(() => output.value.value?.fallbackNotice ?? null)
   const graph = computed(
     () =>
       dsp.value.value?.scenes.graph ??
@@ -127,13 +128,19 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
   })
   async function editOutput(edit: CoreAudioOutputEdit['edit']): Promise<void> {
     if (!output.value.value) await output.refresh()
-    await core.command('audio.output.edit', { revision: output.value.value!.revision, edit })
-    await output.refresh()
+    try {
+      await core.command('audio.output.edit', { revision: output.value.value!.revision, edit })
+    } finally {
+      await output.refresh().catch(() => {})
+    }
   }
   async function editDsp(edit: CoreDspEdit['edit']): Promise<void> {
     if (!dsp.value.value) await dsp.refresh()
-    await core.command('audio.dsp.edit', { revision: dsp.value.value!.revision, edit })
-    await dsp.refresh()
+    try {
+      await core.command('audio.dsp.edit', { revision: dsp.value.value!.revision, edit })
+    } finally {
+      await dsp.refresh().catch(() => {})
+    }
   }
   const setAudioProcessing = async (
     settings: Partial<AudioProcessingSettings>,
@@ -143,6 +150,7 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
     audioProcessing,
     audioOutputConfig,
     audioOutputConfigApplyStatus,
+    audioOutputFallbackNotice,
     exclusiveMode,
     audioOutput,
     audioDevice,
@@ -180,11 +188,14 @@ export function createCorePlayerAudio(core: CorePlayerClient, failed: (error: un
       setAudioProcessing({ convolverEnabled: false, convolverIrPath: '' }),
     selectImpulseResponse: async () => {
       if (!dsp.value.value) await dsp.refresh()
-      await core.command('audio.dsp.import', {
-        revision: dsp.value.value!.revision,
-        kind: 'impulsePath'
-      })
-      await dsp.refresh()
+      try {
+        await core.command('audio.dsp.import', {
+          revision: dsp.value.value!.revision,
+          kind: 'impulsePath'
+        })
+      } finally {
+        await dsp.refresh().catch(() => {})
+      }
     }
   }
 }

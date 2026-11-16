@@ -18,6 +18,8 @@ import type { DspLibraryEdit, DspLibraryPage, DspUploadBegin, DspUploadKey, DspP
 import type {
   CoreSystemPlaybackAction,
   CorePlayerPresentation,
+  CorePlayerMvRequest,
+  CorePlayerMvResult,
   CoreSystemLyrics
 } from './coreSystemPlayer.ts'
 import type { OutputInfo } from './audioEngineTypes.ts'
@@ -510,6 +512,7 @@ export interface CoreCommands extends CorePlaylistCommands, CoreRemoteCommands, 
   'playback.previous': Record<string, never>
   'playback.volume': { volume: number }
   'playback.mute': { muted?: boolean }
+  'playback.suppressAudio': { suppressed: boolean }
   'playback.control': CoreSystemPlaybackAction
   'playback.favorite': CoreLyricsCurrent
   'playback.abLoop': CoreAbLoopCommand
@@ -582,6 +585,7 @@ export interface CoreQueries
   'opra.profile': { input: { id: string }; output: OpraProfile | null }
   'opra.status': { input: Record<string, never>; output: OpraCatalogStatus }
   'player.presentation': { input: Record<string, never>; output: CorePlayerPresentation }
+  'player.mv': { input: CorePlayerMvRequest; output: CorePlayerMvResult }
   'player.lyrics': { input: Record<string, never>; output: CoreSystemLyrics }
   'playback.diagnostics': { input: Record<string, never>; output: Omit<OutputInfo, 'nativeDsp'> }
   'audio.diagnostics': { input: CoreAudioDiagnosticsQuery; output: AudioDiagnosticReport }
@@ -857,6 +861,7 @@ const OPERATIONS: Record<
   'opra.status': { kind: 'query', permission: 'settings:read' },
   'opra.refresh': { kind: 'command', permission: 'settings:write' },
   'player.presentation': { kind: 'query', permission: 'playback:read' },
+  'player.mv': { kind: 'query', permission: 'playback:read' },
   'player.lyrics': { kind: 'query', permission: 'playback:read' },
   'playback.diagnostics': { kind: 'query', permission: 'settings:read' },
   'audio.diagnostics': { kind: 'query', permission: 'settings:read' },
@@ -1249,6 +1254,7 @@ const OPERATIONS: Record<
   'playback.previous': { kind: 'command', permission: 'playback:write' },
   'playback.volume': { kind: 'command', permission: 'playback:write' },
   'playback.mute': { kind: 'command', permission: 'playback:write' },
+  'playback.suppressAudio': { kind: 'command', permission: 'playback:write' },
   'playback.abLoop': { kind: 'command', permission: 'playback:write' },
   'playback.mode': { kind: 'command', permission: 'playback:write' },
   'queue.select': { kind: 'command', permission: 'playback:write' },

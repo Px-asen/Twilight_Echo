@@ -402,4 +402,18 @@ bool EmptyOutputDetector::sample(bool available, bool playing, bool eof, bool st
   return false;
 }
 
+bool HealthSampleGate::shouldWrite(bool active, uint64_t clockAgeMs, const std::string& signature) {
+  if (active || clockAgeMs >= 5000) {
+    hasIdleSample = false;
+    lastIdleSignature.clear();
+    return true;
+  }
+  if (!hasIdleSample || signature != lastIdleSignature) {
+    hasIdleSample = true;
+    lastIdleSignature = signature;
+    return true;
+  }
+  return false;
+}
+
 }  // namespace twilight::audio

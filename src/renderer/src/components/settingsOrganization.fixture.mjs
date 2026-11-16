@@ -10,6 +10,7 @@ import {
   DEFAULT_DSP_OUTPUT_STAGE,
   DEFAULT_DSP_STEREO_IMAGE
 } from '../../../shared/dspGraph.ts'
+import '../assets/primeicons.css'
 import '../assets/base.css'
 
 const actual = realSettingsStore()
@@ -181,7 +182,22 @@ window.runSettingsOrganizationTests = async () => {
   await settle()
   const page = document.querySelector('.settings-preview-page')
   const top = [...page.querySelectorAll('.settings-preview-stack > .preview-section')]
-  expect(top.length === 7, 'expected seven top-level categories, got ' + top.length)
+  expect(top.length === 12, 'expected twelve top-level categories, got ' + top.length)
+  expect(
+    page.querySelector('#overview').checkVisibility() &&
+      page.querySelectorAll('#overview .overview-status-card').length === 4 &&
+      page.querySelectorAll('#overview .overview-category-card').length === 11,
+    'overview landing page must render status cards and category map'
+  )
+  const overviewCards = [...page.querySelectorAll('#overview .overview-category-card')]
+  overviewCards.find((card) => card.textContent.includes('播放器界面')).click()
+  await settle()
+  expect(
+    page.querySelector('#interface').checkVisibility() &&
+      page.querySelector('#interface #player-bar') &&
+      page.querySelector('#interface #mini-player'),
+    'interface category must host player bar and mini player'
+  )
   page.querySelector('[data-settings-category="appearance"]').click()
   await settle()
   expect(
@@ -338,13 +354,13 @@ window.runSettingsOrganizationTests = async () => {
         {
           缓冲大小: '播放与音效',
           'VST3 搜索目录': '播放与音效',
-          流派分隔符: '媒体库与存储',
-          'BPM 分析缓存': '媒体库与存储',
-          开发者模式: '系统与关于',
+          流派分隔符: '媒体库',
+          'BPM 分析缓存': '下载与缓存',
+          开发者模式: '系统与维护',
           显示翻译: '歌词',
           '背景透明度 (Background Opacity)': '歌词',
-          迷你播放器显示在任务栏: '外观',
-          播放条按钮编排: '外观'
+          迷你播放器显示在任务栏: '播放器界面',
+          播放条按钮编排: '播放器界面'
         }[title]
       ),
       'incorrect active category for ' + title
@@ -375,6 +391,21 @@ window.runSettingsOrganizationTests = async () => {
   expect(
     !page.querySelector('.settings-inline-notice'),
     'new search retained stale prerequisite notice'
+  )
+  const searchInput = page.querySelector('#settings-search-input')
+  searchInput.value = '播放器界面'
+  searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+  await settle()
+  const categoryOption = [...page.querySelectorAll('[role="option"]')].find(
+    (item) => item.querySelector('.settings-nav-result-title').textContent === '播放器界面'
+  )
+  expect(categoryOption, 'category search option missing for 播放器界面')
+  categoryOption.click()
+  await settle()
+  expect(
+    page.querySelector('#interface').checkVisibility() &&
+      !page.querySelector('.settings-inline-notice'),
+    'category search did not navigate cleanly to interface'
   )
   const genre = document.querySelector('[data-setting-id="genre-separators"] input')
   genre.value = '保留输入 / 未提交'
@@ -480,7 +511,7 @@ window.runSettingsOrganizationTests = async () => {
   await new Promise((resolve) => setTimeout(resolve, 350))
   await settle()
   expect(
-    navigation.session.value.settingsSection === 'general' &&
+    navigation.session.value.settingsSection === 'overview' &&
       !document.activeElement.closest('[inert]'),
     'stale search overrode the latest category or focused hidden input'
   )

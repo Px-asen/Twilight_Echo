@@ -5,11 +5,21 @@ import { bridgeClockObservation, bridgeAdaptiveObservation } from '../../utils/b
 defineProps<{ path: CoreSignalPath }>()
 const format = (rate?: number | null, bits?: number, channels?: number) => rate
   ? `${rate / 1000} kHz${bits ? ` · ${bits} bit` : ''}${channels ? ` · ${channels} ch` : ''}` : '尚未确认'
+const decodedText = (path: CoreSignalPath) => {
+  if (path.decoded.dsdMode === 'dop') return `DoP · ${format(path.decoded.sampleRate, path.decoded.bitDepth || 24, path.decoded.channels)}`
+  if (path.decoded.dsdMode === 'native') return `原生 DSD · ${format(path.decoded.dsdRate || path.source.sampleRate, 1, path.decoded.channels || path.source.channels)}`
+  return format(path.decoded.sampleRate, path.decoded.bitDepth, path.decoded.channels)
+}
+const outputText = (path: CoreSignalPath) => {
+  if (path.output.dsdMode === 'dop') return `DoP · ${format(path.output.sampleRate, path.output.bitDepth || 24, path.output.channels)}`
+  if (path.output.dsdMode === 'native') return `原生 DSD · ${format(path.output.dsdRate || path.output.sampleRate, path.output.bitDepth || 1, path.output.channels)}`
+  return format(path.output.sampleRate, path.output.bitDepth, path.output.channels)
+}
 </script>
 
 <template>
   <ol class="core-signal-path">
-    <li><strong>音源 / 解码{{ path.source.codec ? ` · ${path.source.codec}` : '' }}</strong><span>{{ format(path.source.sampleRate, path.source.bitDepth, path.source.channels) }} → {{ format(path.decoded.sampleRate, path.decoded.bitDepth, path.decoded.channels) }}</span></li>
+    <li><strong>音源 / 解码{{ path.source.codec ? ` · ${path.source.codec}` : '' }}</strong><span>{{ format(path.source.sampleRate, path.source.bitDepth, path.source.channels) }} → {{ decodedText(path) }}</span></li>
     <li><strong>Core DSP · {{ path.dsp.applyState === 'pending' ? '应用中' : path.dsp.applyState === 'failed' ? '应用失败' : path.dsp.applyState === 'applied' ? '已应用' : '引擎状态' }}</strong>
       <span v-for="node in path.dsp.nodes" :key="node.id">{{ nodeLabel(node.type) }} · {{ node.active ? '实际运行' : node.bypassed ? '旁路' : '待命' }}</span>
       <span v-if="!path.dsp.nodes.length">未报告处理节点</span>
@@ -21,7 +31,7 @@ const format = (rate?: number | null, bits?: number, channels?: number) => rate
     <li v-if="path.transport.kind === 'tls-pcm'"><strong>时钟观测{{ path.timing?.output.source === 'wasapi-audio-clock' ? ' · WASAPI IAudioClock' : '' }}</strong>
       <span v-for="line in bridgeClockObservation(path.timing)" :key="line">{{ line }}</span>
     </li>
-    <li><strong>{{ path.output.deviceName || path.output.backend || '输出驱动' }}</strong><span>{{ format(path.output.sampleRate, path.output.bitDepth, path.output.channels) }} · 驱动回报；DAC 内部处理未知</span></li>
+    <li><strong>{{ path.output.deviceName || path.output.backend || '输出驱动' }}</strong><span>{{ outputText(path) }} · 驱动回报；DAC 内部处理未知</span></li>
   </ol>
 </template>
 

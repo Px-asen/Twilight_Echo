@@ -8,8 +8,10 @@ const yaml = require('js-yaml')
 const {
   WINDOWS_NODE_VERSION,
   prepareWindowsDesktopCore,
+  shouldBundleWindowsDesktopCore,
   verifyPackagedDesktopCore
 } = require('./desktop-core-packaging.cjs')
+const { buildStagedElectronBuilderConfig } = require('./packaged-audio-staging.cjs')
 const { ENTRIES } = require('./build-desktop-core.cjs')
 
 test('Windows staging uses an explicit matching Node release and rejects other platforms or architectures before build', async () => {
@@ -68,16 +70,35 @@ test('Windows staging uses an explicit matching Node release and rejects other p
   assert.equal(calls.length, 1)
 })
 
-test('Windows package verification requires the current complete runtime; other platforms do not include its resource', (t) => {
+test('default desktop build omits external core-node; opt-in staging injects and verifies complete runtime', (t) => {
   const root = path.resolve(__dirname, '..')
-  const config = yaml.load(fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8'))
+  const rawConfig = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8')
+  const config = yaml.load(rawConfig)
   assert.ok(!config.extraResources.some((resource) => resource.to === 'core-node'))
-  assert.deepEqual(
-    config.win.extraResources.find((resource) => resource.to === 'core-node'),
-    { from: 'out/desktop-core', to: 'core-node', filter: ['**/*', '!**/*.map'] }
-  )
+  assert.equal(config.win.extraResources, undefined)
   assert.equal(config.mac.extraResources, undefined)
   assert.equal(config.linux.extraResources, undefined)
+  for (const excluded of ['!out/server/**', '!out/server-service/**', '!out/renderer/automix-stems/**']) {
+    assert.ok(config.files.includes(excluded), `Expected ${excluded} in electron-builder.yml files`)
+  }
+  assert.equal(shouldBundleWindowsDesktopCore([], {}), false)
+  assert.equal(shouldBundleWindowsDesktopCore(['--with-node-core'], {}), true)
+  assert.equal(shouldBundleWindowsDesktopCore([], { TWILIGHT_BUNDLE_NODE_CORE: '1' }), true)
+  const defaultStaged = yaml.load(
+    buildStagedElectronBuilderConfig(rawConfig, root, 'staged/audio-engine', {
+      bundleNodeCore: false
+    })
+  )
+  assert.equal(defaultStaged.win.extraResources, undefined)
+  const optedInStaged = yaml.load(
+    buildStagedElectronBuilderConfig(rawConfig, root, 'staged/audio-engine', {
+      bundleNodeCore: true
+    })
+  )
+  assert.deepEqual(
+    optedInStaged.win.extraResources.find((resource) => resource.to === 'core-node'),
+    { from: 'out/desktop-core', to: 'core-node', filter: ['**/*', '!**/*.map'] }
+  )
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-package-node-check-'))
   t.after(() => {
     assert.equal(path.dirname(temporary), path.resolve(os.tmpdir()))
@@ -108,10 +129,11 @@ test('Windows package verification requires the current complete runtime; other 
   assert.throws(() => verifyPackagedDesktopCore(temporary, '2.0.0'), /not staged correctly/)
 })
 
-test('both Windows package entry points stage Node before native packaging and packaged verification', () => {
+test('both Windows package entry points gate external Node staging on shouldBundleWindowsDesktopCore before native packaging', () => {
   const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8')
   for (const name of ['build-app-package.cjs', 'build-windows-release.cjs']) {
     const source = read(name)
+    assert.ok(source.includes('shouldBundleWindowsDesktopCore('), name)
     const stage = source.indexOf('await prepareWindowsDesktopCore(')
     assert.ok(stage >= 0, name)
     assert.ok(stage < source.indexOf('prepareSmtcMsvc({'), name)

@@ -6,7 +6,7 @@ import type { BridgePeer, BridgePcmBlock, BridgeAudioBlock, BridgeAudioFormat, B
 import { validBridgePeer, readBridgeReceiverFacts, readBridgeAudioFormat, bridgeWireCode, bridgeSampleBytes, bridgeFrameRate, extendedBridgeFormat, bridgeCaptureDevice } from '../../shared/audioBridge.ts'
 import { BridgeClockMonitor, readBridgeClockExchange } from '../../shared/audioBridgeClock.ts'
 import { BridgeTimelineController, type BridgeSyncStatus, type BridgeSyncSeed } from '../../shared/audioBridgeSync.ts'
-import { readBridgePackets, sendBridgeJson, sendBridgePacket } from './bridgeWire.ts'
+import { readBridgePackets, sameBridgeAudioFormat, sendBridgeFramedBlock, sendBridgeJson } from './bridgeWire.ts'
 import { readBridgeSourceTimeline, type BridgeSourceTimeline } from '../../shared/bridgeSourceTimeline.ts'
 
 export interface BridgeNative {
@@ -483,7 +483,7 @@ export class AudioBridgeRuntime {
           this.openReceiver(this.host!)
           receiverOpen = true
           const actual = readBridgeAudioFormat(this.receiverFacts())
-          if (JSON.stringify(actual) !== JSON.stringify(format)) throw new Error('DAC format changed; reconnect required')
+          if (!sameBridgeAudioFormat(actual, format)) throw new Error('DAC format changed; reconnect required')
         }
         generation = next
       }
@@ -592,7 +592,7 @@ export class AudioBridgeRuntime {
             !Number.isInteger(message.frames) || Number(message.frames) < 1 || Number(message.frames) > 2048)
           throw new Error('Invalid PCM credit')
         this.facts = readBridgeReceiverFacts(message.facts)
-        if (JSON.stringify(readBridgeAudioFormat(this.facts)) !== JSON.stringify(negotiated)) throw new Error('Bridge format changed; reconnect required')
+        if (!negotiated || !sameBridgeAudioFormat(readBridgeAudioFormat(this.facts), negotiated)) throw new Error('Bridge format changed; reconnect required')
         if (this.timedPlan?.mediaHeld) { sendBridgeJson(socket, { type: 'idle', credit: message.credit, eof: false }); return }
         const block = this.extended ? this.bridge!.PullBridgeAudio!(Number(message.frames)) : this.bridge!.PullBridgePcm(Number(message.frames))
         const timeline = readBridgeSourceTimeline(block.sourceTimeline)
@@ -605,12 +605,22 @@ export class AudioBridgeRuntime {
             block.sampleRate !== negotiated!.sampleRate || block.channels !== negotiated!.channels ||
             ('audio' in block && (block.wireCode !== bridgeWireCode(negotiated!.wireFormat) || block.channelMask !== negotiated!.channelMask)) ||
             bytes.byteLength !== block.frames * block.channels * bridgeSampleBytes(negotiated!.wireFormat)) throw new Error('Native Bridge block does not match negotiated format')
-        const header = Buffer.alloc(this.extended ? 40 : 28)
-        header.writeUInt32BE(this.epoch); header.writeDoubleBE(block.generation, 4)
-        header.writeUInt32BE(block.sampleRate, 12); header.writeUInt32BE(block.channels, 16); header.writeUInt32BE(block.frames, 20)
-        header.writeUInt32BE(Number(message.credit), 24)
-        if (this.extended) { header.writeUInt32BE(bridgeWireCode(negotiated!.wireFormat), 28); header.writeDoubleBE(negotiated!.channelMask, 32) }
-        sendBridgePacket(socket, this.extended ? 2 : 1, Buffer.concat([header, Buffer.from(bytes)]))
+        const headerLength = this.extended ? 40 : 28
+        const credit = Number(message.credit)
+        const wireCode = this.extended ? bridgeWireCode(negotiated.wireFormat) : 0
+        const channelMask = this.extended ? negotiated.channelMask : 0
+        sendBridgeFramedBlock(socket, this.extended ? 2 : 1, headerLength, (header) => {
+          header.writeUInt32BE(this.epoch, 0)
+          header.writeDoubleBE(block.generation, 4)
+          header.writeUInt32BE(block.sampleRate, 12)
+          header.writeUInt32BE(block.channels, 16)
+          header.writeUInt32BE(block.frames, 20)
+          header.writeUInt32BE(credit, 24)
+          if (this.extended) {
+            header.writeUInt32BE(wireCode, 28)
+            header.writeDoubleBE(channelMask, 32)
+          }
+        }, bytes)
       })
     })
   }

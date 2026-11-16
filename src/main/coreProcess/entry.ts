@@ -143,6 +143,7 @@ import { CoreCatalogPlaybackScope } from '../../core/catalog/playbackScope.ts'
 import { CorePlaylistSubmission, createPlaylistInputResolver } from '../../core/playlists/submission.ts'
 import { CoreAudioDiagnosticsService } from '../../core/audio/diagnosticsService.ts'
 import { CorePlayerPresentationService } from '../../core/playback/presentationService.ts'
+import { createBilibiliMvResolver } from '../../core/playback/bilibiliMvResolver.ts'
 import { createQueueInputResolver } from '../../core/playback/queueInputResolver.ts'
 import { authorizeNativeSource } from '../../core/playback/sourceResolver.ts'
 import { CoreSleepTimer } from '../../core/playback/sleepService.ts'
@@ -190,6 +191,7 @@ import type {
 } from '../../shared/coreProcessProtocol.ts'
 import type { ServiceMessagePort } from '../services/servicePort.ts'
 import { CoreServiceLauncher, type CoreServiceLease } from './serviceLauncher.ts'
+import { createCoreServiceFactory } from './workerServiceLease.ts'
 import { CorePlatformClient } from './platformClient.ts'
 import type { CorePlatformOperations } from '../../shared/corePlatform.ts'
 import { CorePluginExperiences } from '../../core/plugins/experiences.ts'
@@ -213,6 +215,7 @@ initializeUtilityDiagnostics('twilight-core')
 let configuration: CoreProcessConfiguration | null = null
 let application: CoreApplication | null = null
 let launcher: CoreServiceLauncher | null = null
+let services: ReturnType<typeof createCoreServiceFactory> | null = null
 let platform: CorePlatformClient | null = null
 let database: LibraryDatabaseServiceClient | null = null
 let audio: AudioEngineManager | null = null
@@ -264,6 +267,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const lazyServices: CoreServiceFactories<CoreLazyServices> = {}
   let pluginMarketplaceStatus: (() => Promise<TwilightPluginIndexStatus>) | undefined
   launcher = new CoreServiceLauncher(config.epoch, send)
+  services = createCoreServiceFactory({
+    launcher,
+    workerServices: config.workerServices,
+    hostFilename: typeof __filename === 'string' ? __filename : undefined
+  })
   platform = new CorePlatformClient(config.epoch, send)
   database = new LibraryDatabaseServiceClient({
     changed: (revision) => { libraryRevision = revision; application?.changed(); catalog?.invalidate() },
@@ -279,7 +287,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     libraryFilePath: config.libraryFilePath,
     coverCacheDir: config.coverCacheDir,
     coreStateFilePath: join(config.root, 'core-state.sqlite'),
-    fork: () => launcher!.launch('database')
+    fork: () => services!.launch('database')
   })
   await database.coreStateOpen(join(config.root, 'core-state.sqlite'))
   // Recover the old journal before any staged owner can scan or mutate the library.
@@ -930,15 +938,22 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
     }
     return platform!.call('artwork.present', { cover, coverSource }, signal)
   }
+  const bilibiliMv = createBilibiliMvResolver({
+    protectResult: (value, signal) =>
+      platform!.call('media.protectProviderResult', { value, method: 'getTrackMv' }, signal)
+  })
   const presentation = new CorePlayerPresentationService({
     artwork: presentTrackArtwork,
     artworkRecovered: (track, artwork) => statistics.rememberArtwork(track, artwork),
     playlists,
+    listProviderIds: () => plugins?.listProviders().map((provider) => provider.id) ?? [],
     supportedMethods: (id) => plugins?.listProviders().find((provider) => provider.id === id)?.supportedMethods ?? [],
     callProvider: (id, method, args, signal) => {
       if (!plugins) throw new Error('Provider runtime is not configured')
       return plugins.callProvider(id, method, args, { signal })
     },
+    resolveBilibiliMv: (track, mvOptions, signal) =>
+      bilibiliMv.resolveTrackMv(track, mvOptions, signal),
     changed: () => application?.changed(),
     failed: (error) => console.error('[core.presentation]', error)
   })
@@ -1186,7 +1201,7 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
   const autoMix = new CoreAutoMixService({ ...autoMixDependencies, root: config.root, engine: audio })
   const scanner = new LocalLibraryScanServiceClient({
     serviceEntry: 'scan',
-    launch: () => launcher!.launch('scan')
+    launch: () => services!.launch('scan')
   })
   let scanRevision = -1
   let metadataScanJob: string | null = null
@@ -1349,6 +1364,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         }
         return false
       },
+      isProviderRetained: (_pluginId, providerIds) => {
+        if (providerIds.length === 0) return false
+        const retained = new Set(zones.retainedProviderIds())
+        return providerIds.some((providerId) => retained.has(providerId))
+      },
       recordPlaybackIdentity: (...args) => providerPlaybackIdentities.record(...args),
       settings: new PluginSettingsRepository({
         protect: (value, scope) => platform!.call('credentials.protect', { scope, value }),
@@ -1387,6 +1407,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         getCachedSong: async (id) =>
           settings.read().cachePolicy.streamingAudio === 'provider'
             ? ncmCache!.getCachedSong(id)
+            : null,
+        resolveCachedSong: async (id, url, fileName, metadata) =>
+          settings.read().cachePolicy.streamingAudio === 'provider'
+            ? ncmCache!.resolveCachedSong(id, url, fileName, metadata)
             : null,
         cacheSong: (id, url, name) =>
           settings.read().cachePolicy.streamingAudio === 'provider'
@@ -1834,7 +1858,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         ...(provider.id === 'ncm' || platformArtworkUsage()[provider.id] ? {
           artworkUsage: (id: string) => platformArtworkUsage(settings.read().musicIdentification.ncmLocalFallback !== false)[id] ?? null
         } : {}),
-        call: (id, method, externalId, signal) => plugins!.callProvider(id, method, [externalId], { signal }),
+        call: (id, method, externalId, signal) =>
+          plugins!.callProvider(id, method, [externalId], { signal, background: true }),
         ...(provider.id === 'ncm' ? {
           identity: ncmMetadataIdentity(() => entityMetadataPolicy),
           sourcePage: (_: string, id: string) => `https://music.163.com/#/artist?id=${encodeURIComponent(id)}`
@@ -1845,13 +1870,19 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
           responses: identificationResponses,
           inventory: identificationPlatforms,
           search: (id, method, query, limit, offset, signal) =>
-            plugins!.callProvider(id, method, [query, limit, offset], { signal }),
+            plugins!.callProvider(id, method, [query, limit, offset], { signal, background: true }),
           albumIdentity: (id, albumId, signal) =>
-            plugins!.callProvider(id, 'fetchAlbumIdentity', [albumId], { signal }),
+            plugins!.callProvider(id, 'fetchAlbumIdentity', [albumId], { signal, background: true }),
           recordingSearch: (id, query, signal, offset = 0) =>
-            plugins!.callProvider(id, 'searchRecordingIdentities', [query, 10, offset], { signal }),
+            plugins!.callProvider(id, 'searchRecordingIdentities', [query, 10, offset], {
+              signal,
+              background: true
+            }),
           artistIdentity: (id, artistId, signal) =>
-            plugins!.callProvider(id, 'fetchArtistIdentity', [artistId], { signal })
+            plugins!.callProvider(id, 'fetchArtistIdentity', [artistId], {
+              signal,
+              background: true
+            })
         }))],
       policy: () => entityMetadataPolicy,
       automation: () => settings.read().musicIdentification,
@@ -1883,7 +1914,8 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
                   'searchSongs',
                   [query, limit, offset],
                   {
-                    signal
+                    signal,
+                    background: true
                   }
                 )) as { items: import('../../shared/track.ts').TrackData[]; total: number }
               } catch (error) {
@@ -2386,6 +2418,8 @@ async function shutdown(requestId: string): Promise<void> {
     audio?.destroy()
     audio = null
     launcher?.destroy()
+    await services?.closeAll()
+    services = null
     platform?.destroy()
     send({ kind: 'core:shutdown-complete', epoch: configuration.epoch, requestId, ok: true })
   } catch (error) {

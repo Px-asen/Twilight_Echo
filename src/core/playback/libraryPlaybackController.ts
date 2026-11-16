@@ -524,9 +524,15 @@ export function createLibraryPlaybackController(
       return firstPlayable(mode, isCurrent)
     })
   }
-  function extend(items: LibraryQueueInsertItem[], mode: PlayMode) {
+  function extend(
+    items: LibraryQueueInsertItem[],
+    mode: PlayMode,
+    options?: { preserveDuplicates?: boolean }
+  ) {
     return run(async (isCurrent) => {
-      const result = await source.extend(items)
+      const result = options?.preserveDuplicates
+        ? await source.extend(items, { preserveDuplicates: true })
+        : await source.extend(items)
       if (!result || !isCurrent()) return null
       snapshot.value = result.queue
       return publish(await readSelection(mode, isCurrent))

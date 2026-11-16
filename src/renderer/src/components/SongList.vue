@@ -96,6 +96,7 @@ import ThemeIcon from './ThemeIcon.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
 import { useSongListContextMenu } from './song-list/useSongListContextMenu'
+import { requestMvPlayback } from '../composables/usePlayingMv'
 import { useSongListGridRendering } from './song-list/useSongListGridRendering'
 import { usePlaylistLifecycleActions } from './song-list/usePlaylistLifecycleActions.ts'
 import { useSongListSearch } from './song-list/useSongListSearch'
@@ -891,17 +892,43 @@ const databaseReadError = computed(() =>
         : '')
     : ''
 )
+let databaseTableIntent = ''
 watch(
   databaseQuery,
   (query, previous) => {
-    const { historyRevision: _nextHistory, ...next } = query ?? {}
-    const { historyRevision: _previousHistory, ...before } = previous ?? {}
-    const historyOnly =
-      query?.sort === 'lastPlayed' &&
-      previous?.sort === 'lastPlayed' &&
-      query.historyRevision !== previous.historyRevision &&
-      JSON.stringify(next) === JSON.stringify(before)
-    databasePages.setQuery(query, historyOnly)
+    const intent = JSON.stringify([
+      databaseTableEnabled.value,
+      props.category,
+      props.filter,
+      isPlaylistDetail.value ? currentPlaylist.value?.id : null,
+      props.category === 'recent' ? recentSource.value : null
+    ])
+    const previousIntent = databaseTableIntent
+    databaseTableIntent = intent
+    if (
+      previous !== undefined &&
+      intent === previousIntent &&
+      JSON.stringify(query) === JSON.stringify(previous)
+    )
+      return
+    const {
+      historyRevision: _nextHistory,
+      playlistView: _nextPlaylistView,
+      ...next
+    } = query ?? {}
+    const {
+      historyRevision: _previousHistory,
+      playlistView: _previousPlaylistView,
+      ...before
+    } = previous ?? {}
+    const backgroundRefresh =
+      !!query &&
+      !!previous &&
+      intent === previousIntent &&
+      JSON.stringify(next) === JSON.stringify(before) &&
+      (query.historyRevision !== previous.historyRevision ||
+        query.playlistView !== previous.playlistView)
+    databasePages.setQuery(query, backgroundRefresh, backgroundRefresh)
   },
   { immediate: true, flush: 'sync' }
 )
@@ -1113,7 +1140,8 @@ const unifiedSearchHealthItems = computed(() =>
 
 const unifiedSearchStatusText = computed(() => {
   if (!showUnifiedSearchStatus.value) return ''
-  if (unifiedSearch.loading.value) return '正在同时搜索本地库和在线音源'
+  if (unifiedSearch.loading.value && unifiedSearch.items.value.length === 0)
+    return '正在同时搜索本地库和在线音源'
   if (unifiedSearch.error.value) return `统一搜索失败：${unifiedSearch.error.value}`
   const providerCount = unifiedSearchHealthItems.value.length
   const failedCount = unifiedSearchHealthItems.value.filter((item) => item.state === 'error').length
@@ -1649,6 +1677,22 @@ async function handleMetadataRematch(track: Track): Promise<void> {
   }
 }
 
+function playSelectedTrackMv(track: Track): void {
+  if (props.previewTracks) return
+  requestMvPlayback(track.id)
+  if (currentTrack.value?.id === track.id) {
+    if (!playbackStore.isPlaying.value) {
+      void playbackStore.togglePlay()
+    }
+    return
+  }
+  if (track.source === 'network' && !databaseTableEnabled.value) {
+    void playNetworkTrack(track)
+    return
+  }
+  playTableTrack(track)
+}
+
 const {
   showContextMenu,
   menuX,
@@ -1656,7 +1700,9 @@ const {
   selectedTrack,
   canViewSelectedContext,
   canPlayNextSelectedTrack,
+  canPlayMvSelectedTrack,
   handlePlayNext,
+  handlePlayMv,
   handleViewArtist,
   handleViewAlbum,
   showPlaylistSubmenu,
@@ -1696,6 +1742,7 @@ const {
   createPlaylist,
   deletePlaylist,
   playNext: playNextTrack,
+  playMv: playSelectedTrackMv,
   viewArtist: (track) => {
     const artist = track.artist.trim()
     if (!artist) return
@@ -3730,6 +3777,7 @@ watch(
                         : item.coverTrackId
                     "
                     :identity="item.id ?? item.name"
+                    size="grid"
                     class="genre-card-bg"
                     alt=""
                     fallback=""
@@ -3812,6 +3860,7 @@ watch(
                           v-if="artist.cover || artist.coverSource"
                           :cover="artist.cover"
                           :cover-source="artist.coverSource"
+                          size="grid"
                           class="artist-cover"
                           :alt="artist.name"
                           loading="lazy"
@@ -3874,6 +3923,7 @@ watch(
                       <CoverImg
                         v-if="item.cover"
                         :cover="item.cover"
+                        size="grid"
                         class="album-cover"
                         alt="playlist cover"
                         loading="lazy"
@@ -3926,6 +3976,7 @@ watch(
                       <CoverImg
                         v-if="item.cover"
                         :cover="item.cover"
+                        size="grid"
                         class="album-cover"
                         alt="cover"
                         loading="lazy"
@@ -4596,7 +4647,12 @@ watch(
           >
             <p class="empty-text">正在读取曲库…</p>
           </div>
-          <div v-else-if="tableTrackCount === 0" class="empty-state">
+          <div
+            v-else-if="
+              tableTrackCount === 0 && !(shouldUseUnifiedSearch && unifiedSearch.loading.value)
+            "
+            class="empty-state"
+          >
             <div class="empty-icon">
               <ThemeIcon class="empty-library-icon" icon-slot="library.empty" />
             </div>
@@ -4931,6 +4987,19 @@ watch(
                 >
                   <PlaybackIcon name="next" />
                   <span>下一首播放</span>
+                </div>
+                <div
+                  v-if="canPlayMvSelectedTrack && contextActionCount <= 1"
+                  class="menu-item"
+                  role="menuitem"
+                  tabindex="0"
+                  data-te-interactive
+                  @click="handlePlayMv"
+                  @keydown.enter.prevent="handlePlayMv"
+                  @keydown.space.prevent="handlePlayMv"
+                >
+                  <i class="pi pi-video"></i>
+                  <span>播放 MV</span>
                 </div>
                 <div
                   class="menu-item"

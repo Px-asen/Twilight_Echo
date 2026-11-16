@@ -79,7 +79,11 @@ import {
   restoreBrowsePage,
   type BrowseSelection
 } from '../stores/browseSessions.ts'
-import type { BrowsePartState, BrowseSession } from '../../../shared/coreBrowse.ts'
+import {
+  BROWSE_PAGE_SIZE,
+  type BrowsePartState,
+  type BrowseSession
+} from '../../../shared/coreBrowse.ts'
 import type {
   StreamingTrackSort,
   StreamingSortDirection
@@ -95,6 +99,7 @@ import NcmPlaylistDialogs from './streaming-page/NcmPlaylistDialogs.vue'
 import { createNcmPlaylistEditor } from './streaming-page/ncmPlaylistEditor.ts'
 import ProviderDownloadsPanel from './streaming-page/ProviderDownloadsPanel.vue'
 import StreamingContextMenu from './streaming-page/StreamingContextMenu.vue'
+import { requestMvPlayback } from '../composables/usePlayingMv'
 import {
   getStreamingDiscoveryProviders,
   getStreamingHomeProviders,
@@ -930,15 +935,15 @@ function playHomeTrack(track: Track, trackQueue: Track[]): void {
       void (async () => {
         const { position } = await core.query('browse.locate', {
           id: session.id,
-          trackId: track.id,
-          complete: true
+          trackId: track.id
         })
         if (position < 0) return
         await playbackStore.playTrackPages(
-          (append) =>
+          (append, signal) =>
             produceBrowseSelection(
               { id: session.id, query: {}, count: session.total ?? session.loaded },
-              append
+              append,
+              signal
             ),
           position
         )
@@ -2906,6 +2911,27 @@ function handleContextPlayNext(): void {
   pushNotice({ kind: 'success', message: `下一首播放：${track.title}` })
 }
 
+const contextMenuCanPlayMv = computed(() => {
+  const track = streamingContextMenuTrack.value
+  if (!track || streamingContextActionCount.value !== 1) return false
+  return track.source !== 'radio' && track.source !== 'podcast'
+})
+
+async function handleContextPlayMv(): Promise<void> {
+  const track = streamingContextMenuTrack.value
+  closeStreamingContextMenu()
+  if (!track || track.source === 'radio' || track.source === 'podcast') return
+  requestMvPlayback(track.id)
+  if (currentTrack.value?.id === track.id) {
+    if (!playbackStore.isPlaying.value) {
+      playbackStore.togglePlay()
+    }
+    return
+  }
+  if (currentDetail.value) await playTrackFromCurrentDetail(track)
+  else playStreamingTrack(track, streamingListTracks.value)
+}
+
 async function handleContextFavorite(): Promise<void> {
   const tracks = captureTrackSelection(true)
   closeStreamingContextMenu()
@@ -3132,19 +3158,32 @@ async function playBrowseTracks(track?: Track, random = false): Promise<void> {
   const check = (): void => {
     if (token !== detailLoadToken) throw new Error('页面已切换，播放操作已取消')
   }
-  const selectedIndex = track ? await detailBrowse.locate(track.id) : 0
+  const useQueueShuffle =
+    random && (!detailBrowse.query.sort || detailBrowse.query.sort === 'default')
+  const initialWindow = Math.max(
+    1,
+    Math.min(session.loaded || BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE)
+  )
+  const selectedIndex = track
+    ? await detailBrowse.locate(track.id)
+    : useQueueShuffle
+      ? Math.floor(Math.random() * initialWindow)
+      : 0
   check()
   if (selectedIndex < 0) return
   await playbackStore.playTrackPages(
-    (append) =>
+    (append, signal) =>
       detailBrowse.produce(
         (tracks) => append(tracks),
         undefined,
-        undefined,
-        random ? { sort: 'random', seed: Math.floor(Math.random() * 0x100000000) } : {}
+        signal,
+        random && !useQueueShuffle
+          ? { sort: 'random', seed: Math.floor(Math.random() * 0x100000000) }
+          : {}
       ),
     selectedIndex,
-    check
+    check,
+    useQueueShuffle ? { mode: 'shuffle' } : undefined
   )
 }
 
@@ -3879,7 +3918,9 @@ watch(
   () => {
     ensureVisibleSidebarSelection()
   },
-  { flush: 'post' }
+  // Providers may already be registered when a keyed root page is mounted.
+  // Resolve its source on entry too, without persisting the surface fallback.
+  { immediate: true, flush: 'post' }
 )
 
 // Side effects of switching the resolved active provider (user toggle, plugin
@@ -4733,6 +4774,7 @@ async function restorePageState(): Promise<boolean> {
         :all-favorited="streamingContextAllFavorited"
         :favorite-label="contextFavoriteLabel"
         :action-label="streamingContextActionLabel"
+        :can-play-mv="contextMenuCanPlayMv"
         :can-like="contextMenuCanLike"
         :single-liked="contextMenuSingleLiked"
         :can-manage-playlists="canManageNcmPlaylists"
@@ -4745,6 +4787,7 @@ async function restorePageState(): Promise<boolean> {
         :show-aggregate-submenu="showStreamingAggregateSubmenu"
         @play="handleContextPlayTrack"
         @play-next="handleContextPlayNext"
+        @play-mv="handleContextPlayMv"
         @copy-track-names="handleContextCopyTrackNames"
         @favorite="handleContextFavorite"
         @like="handleContextLikeTrack"

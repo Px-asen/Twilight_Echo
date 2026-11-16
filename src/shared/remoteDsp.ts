@@ -53,21 +53,55 @@ export function projectRemoteDspStatus(graph: DspGraphStatus) {
 }
 export interface CoreSignalPath {
   zoneId: string
-  source: { sampleRate: number; bitDepth: number; channels: number; codec: string }
-  decoded: { sampleRate: number; bitDepth: number; channels: number; format: string }
+  source: { sampleRate: number; bitDepth: number; channels: number; codec: string; isDsd?: boolean }
+  decoded: {
+    sampleRate: number
+    bitDepth: number
+    channels: number
+    format: string
+    dsdMode?: CorePlaybackView['dsdMode']
+    dsdRate?: number
+  }
   dsp: ReturnType<typeof projectRemoteDspStatus>
   transport: { kind: 'local' | 'tls-pcm' | 'tls-dsd'; sampleRate: number; channels: number; format: string; connected: boolean }
   receiver: BridgeReceiverFacts | null
   timing?: BridgeClockStatus | null
-  output: { backend: string; sampleRate: number; bitDepth: number; channels: number; deviceName: string | null }
+  output: {
+    backend: string
+    sampleRate: number
+    bitDepth: number
+    channels: number
+    deviceName: string | null
+    dsdMode?: CorePlaybackView['dsdMode']
+    dsdRate?: number
+  }
   hardware: null
 }
 export function buildSignalPath(playback: CorePlaybackView | null, graph: DspGraphStatus, zone: BridgeRuntimeState | null): CoreSignalPath {
   const remote = zone?.selected === true, facts = remote ? zone.receiver : null
-  return { zoneId: 'local', source: { sampleRate: playback?.sourceSampleRate ?? 0, bitDepth: playback?.sourceBitDepth ?? 0,
-    channels: playback?.sourceChannels ?? 0, codec: playback?.codec ?? '' },
+  const codec = playback?.codec ?? ''
+  const sourceBits = playback?.sourceBitDepth ?? 0
+  const isDsd = playback?.isDsd === true || sourceBits === 1 || /^ds(?:d|f|diff)$/i.test(codec.trim())
+  const remoteDsdMode: CorePlaybackView['dsdMode'] | undefined = facts?.wireFormat === 'dop-int24-le'
+    ? 'dop'
+    : facts?.wireFormat?.startsWith('dsd-')
+      ? 'native'
+      : isDsd
+        ? 'pcm'
+        : undefined
+  const outputDsdMode = remote ? remoteDsdMode : playback?.dsdMode
+  const outputDsdRate = remote
+    ? remoteDsdMode === 'dop'
+      ? (facts?.actualSampleRate ?? 0) * 16
+      : remoteDsdMode === 'native'
+        ? (facts?.sampleRate ?? 0)
+        : 0
+    : (playback?.actualDsdRate || playback?.dsdRate || 0)
+  return { zoneId: 'local', source: { sampleRate: playback?.sourceSampleRate ?? 0, bitDepth: sourceBits,
+    channels: playback?.sourceChannels ?? 0, codec, isDsd },
     decoded: { sampleRate: playback?.decodedSampleRate ?? 0, bitDepth: playback?.decodedBitDepth ?? 0,
-      channels: playback?.decodedChannels ?? 0, format: playback?.decodedSampleFormat ?? '' },
+      channels: playback?.decodedChannels ?? 0, format: playback?.decodedSampleFormat ?? '',
+      dsdMode: playback?.dsdMode, dsdRate: playback?.dsdRate ?? 0 },
     dsp: projectRemoteDspStatus(graph),
     transport: { kind: remote ? facts?.wireFormat && facts.wireFormat !== 'float32-le' ? 'tls-dsd' : 'tls-pcm' : 'local', sampleRate: facts?.sampleRate ?? playback?.actualSampleRate ?? 0,
       channels: facts?.channels ?? playback?.actualChannels ?? 0, format: remote ? facts?.wireFormat ?? 'float32-le' : '', connected: !remote || zone.connected },
@@ -75,6 +109,7 @@ export function buildSignalPath(playback: CorePlaybackView | null, graph: DspGra
     output: { backend: remote ? facts?.backend ?? '' : playback?.outputBackend ?? '',
       sampleRate: remote ? facts?.actualSampleRate ?? 0 : playback?.actualSampleRate ?? 0,
       bitDepth: remote ? facts?.actualBitDepth ?? 0 : playback?.actualBitDepth ?? 0,
-      channels: remote ? facts?.actualChannels ?? 0 : playback?.actualChannels ?? 0, deviceName: facts?.deviceName ?? null },
+      channels: remote ? facts?.actualChannels ?? 0 : playback?.actualChannels ?? 0, deviceName: facts?.deviceName ?? null,
+      dsdMode: outputDsdMode, dsdRate: outputDsdRate },
     hardware: null }
 }

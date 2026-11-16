@@ -15,7 +15,8 @@ import type { PlayMode } from './audioEngineTypes.ts'
 
 export const LIBRARY_PAGE_SIZE = 200
 export const LIBRARY_MAX_PAGE_SIZE = 1_000
-export const LIBRARY_CACHE_PAGES = 10
+export const LIBRARY_CACHE_PAGES = 4
+export const LIBRARY_MAX_PENDING_PAGE_READS = 10
 export type LibraryTrackRecord = Record<string, unknown> & { id: string; filePath: string }
 export type LibrarySort =
   | 'title'

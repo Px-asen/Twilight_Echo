@@ -178,6 +178,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
               :cover="chart.coverSmall || chart.cover"
               :cover-source="chart.coverSmallSource || chart.coverSource"
               :identity="`ncm-chart:${chart.id}`"
+              size="sm"
               alt=""
               ><template #placeholder
                 ><i class="ph ph-chart-bar" aria-hidden="true"></i></template></CoverImg
@@ -241,7 +242,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
         >
           <header class="toplists-dialog-heading">
             <span class="toplists-dialog-cover"
-              ><CoverImg :cover="selected.cover" :cover-source="selected.coverSource" alt=""
+              ><CoverImg :cover="selected.cover" :cover-source="selected.coverSource" size="grid" alt=""
                 ><template #placeholder
                   ><i class="ph ph-chart-bar" aria-hidden="true"></i></template></CoverImg
             ></span>
@@ -307,6 +308,7 @@ async function openChart(chart: MediaProviderToplistSummary, autoplay = false): 
                       :cover="track.coverSmall || track.cover"
                       :cover-source="track.coverSmallSource || track.coverSource"
                       :identity="track.id"
+                      size="sm"
                       alt=""
                       ><template #placeholder
                         ><i class="ph ph-music-note" aria-hidden="true"></i></template></CoverImg

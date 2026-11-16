@@ -1,13 +1,18 @@
 #include "output/asio/windows/AsioDriverCompatibility.h"
+#include "output/asio/windows/AsioDriverCatalog.h"
 #include "output/asio/windows/AsioDriverSession.h"
 #include "output/asio/AsioDsdBufferGeometry.h"
 
 #include <array>
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <tuple>
+#include <vector>
 
 using namespace twilight::audio;
 using namespace twilight::audio::asio_abi;
@@ -45,6 +50,8 @@ struct Behavior {
   bool channelNumbersWrong = false;
   int channelQueries = 0, sets = 0, disposes = 0, starts = 0, releases = 0;
   bool windowValid = false;
+  AsioCallbacks callbacks{};
+  bool hasCallbacks = false;
   std::vector<std::tuple<int32_t, int32_t>> attempts;
   std::vector<std::vector<uint8_t>> storage;
 };
@@ -113,7 +120,7 @@ class Driver final : public AsioDriver {
     info->type = b->ioMode == kAsioIoFormatDsd ? kAsioSampleDsdInt8Lsb1 : b->type;
     return kAsioSuccess;
   }
-  AsioError createBuffers(AsioBufferInfo* buffers, int32_t count, int32_t frames, AsioCallbacks*) override {
+  AsioError createBuffers(AsioBufferInfo* buffers, int32_t count, int32_t frames, AsioCallbacks* callbacks) override {
     if (b->dirty) b->cleanupMissing = true;
     b->dirty = true;
     int32_t inputs = 0;
@@ -130,6 +137,10 @@ class Driver final : public AsioDriver {
       b->preferredSize = frames / scale;
     }
     for (int32_t i = 0; i < count; ++i) for (int j = 0; j < 2; ++j) buffers[i].buffers[j] = b->storage[i * 2 + j].data();
+    if (callbacks) {
+      b->callbacks = *callbacks;
+      b->hasCallbacks = true;
+    }
     b->created = true;
     if (b->wrongRateOnCreate) b->rate = 44100;
     return kAsioSuccess;
@@ -457,11 +468,92 @@ void testAllPcmWireTypes() {
     }
   }
 }
+void testAsioMessageCapabilitiesAndEvents() {
+  auto b = std::make_shared<Behavior>();
+  auto control = std::make_shared<AsioControlThread>();
+  AsioDriverSession session({.clsid = "{00000000-0000-0000-0000-000000000000}"}, control,
+      [b] { return new Driver(b); });
+  AsioOpenResult result;
+  std::string error;
+  assert(session.open(config(), &result, &error));
+
+  std::mutex eventMutex;
+  std::condition_variable eventCv;
+  std::vector<std::pair<AsioHostEvent, std::string>> events;
+  assert(session.createBuffers(
+      [](long) {},
+      [&](AsioHostEvent event, const std::string& message) {
+        {
+          std::lock_guard lock(eventMutex);
+          events.emplace_back(event, message);
+        }
+        eventCv.notify_all();
+      },
+      &error));
+  assert(b->hasCallbacks && b->callbacks.asioMessage != nullptr);
+
+  for (int32_t selector : {
+           kSelectorSupported,
+           kSelectorEngineVersion,
+           kSelectorResetRequest,
+           kSelectorBufferSizeChange,
+           kSelectorResyncRequest,
+           kSelectorLatenciesChanged,
+           kSelectorSupportsTimeInfo,
+           kSelectorOverload}) {
+    assert(b->callbacks.asioMessage(kSelectorSupported, selector, nullptr, nullptr) == kAsioTrue);
+  }
+  assert(b->callbacks.asioMessage(kSelectorSupported, kSelectorSupportsTimeCode, nullptr, nullptr) == kAsioFalse);
+  assert(b->callbacks.asioMessage(kSelectorSupported, 999, nullptr, nullptr) == kAsioFalse);
+
+  assert(b->callbacks.asioMessage(kSelectorEngineVersion, 0, nullptr, nullptr) == 2);
+  assert(b->callbacks.asioMessage(kSelectorSupportsTimeInfo, 0, nullptr, nullptr) == kAsioTrue);
+  assert(b->callbacks.asioMessage(kSelectorSupportsTimeCode, 0, nullptr, nullptr) == kAsioFalse);
+
+  assert(b->callbacks.asioMessage(kSelectorResetRequest, 0, nullptr, nullptr) == kAsioTrue);
+  assert(b->callbacks.asioMessage(kSelectorBufferSizeChange, 0, nullptr, nullptr) == kAsioTrue);
+  assert(b->callbacks.asioMessage(kSelectorOverload, 0, nullptr, nullptr) == kAsioTrue);
+
+  const auto hasEvent = [&](AsioHostEvent target) {
+    return std::any_of(events.begin(), events.end(), [target](const auto& item) { return item.first == target; });
+  };
+  {
+    std::unique_lock lock(eventMutex);
+    const bool delivered = eventCv.wait_for(lock, std::chrono::seconds(2), [&] {
+      return hasEvent(AsioHostEvent::DriverReset) &&
+             hasEvent(AsioHostEvent::BufferFailure) &&
+             hasEvent(AsioHostEvent::Xrun);
+    });
+    assert(delivered);
+  }
+
+  session.close();
+  assert(!b->dirty && b->releases == 1);
+}
+
+void testDriverCatalogNormalization() {
+  const std::wstring canonical = L"{838FE50A-C1AB-4B77-B9B6-0A40788B53F3}";
+  assert(AsioDriverCatalog::normalizeClsid(L"{838fe50a-c1ab-4b77-b9b6-0a40788b53f3}") == canonical);
+  assert(AsioDriverCatalog::normalizeClsid(L"838fe50a-c1ab-4b77-b9b6-0a40788b53f3") == canonical);
+  assert(AsioDriverCatalog::normalizeClsid(L"  {838fe50a-c1ab-4b77-b9b6-0a40788b53f3}\r\n") == canonical);
+  assert(AsioDriverCatalog::normalizeClsid(L"  838fe50a-c1ab-4b77-b9b6-0a40788b53f3 \t") == canonical);
+
+  assert(!AsioDriverCatalog::normalizeClsid(L"").has_value());
+  assert(!AsioDriverCatalog::normalizeClsid(L"Some.ProgId.1").has_value());
+  assert(!AsioDriverCatalog::normalizeClsid(L"{not-a-guid}").has_value());
+  assert(!AsioDriverCatalog::normalizeClsid(L"{838FE50A-C1AB-4B77-B9B6-0A40788B53F3").has_value());
+
+  assert(AsioDriverCatalog::selectDisplayName(L"  Vendor DAC ASIO  ", L"Fallback", L"KeyName") == "Vendor DAC ASIO");
+  assert(AsioDriverCatalog::selectDisplayName(L"   \t", L"  Default ASIO Driver  ", L"KeyName") == "Default ASIO Driver");
+  assert(AsioDriverCatalog::selectDisplayName(L"", L"\r\n", L"LegacyKey") == "LegacyKey");
+}
 }  // namespace
 
 int main() {
   testStrictReadbackAndDeadline(); testLegalCandidates(); testAllPcmWireTypes(); testDriverDsdGeometry(); testLifecycle();
   testRestoreFailureRemainsVisible();
   testNativeDsdPreservesPcmBufferPreference();
+  testAsioMessageCapabilitiesAndEvents();
+  testDriverCatalogNormalization();
   std::cout << "ASIO driver compatibility behavior passed\n";
 }

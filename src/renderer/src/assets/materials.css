@@ -289,6 +289,27 @@ body.te-no-blur [data-te-material], html[data-te-effects-mode='reduced'] [data-t
 @layer te-appearance {
 html[data-te-card-custom='on'] :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.figures > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background:var(--te-card-bg)!important;border:var(--te-card-border-width) solid var(--te-card-border)!important;border-radius:var(--te-card-radius)!important;box-shadow:var(--te-card-shadow),var(--te-card-glass-highlight)!important;backdrop-filter:var(--te-material-content-filter)!important;-webkit-backdrop-filter:var(--te-material-content-filter)!important}
 :where(html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off'] body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off'] body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace) :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.figures > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){background-color:color-mix(in srgb,var(--te-image-control-surface) 72%,transparent)!important;border-color:var(--te-image-control-border)!important;backdrop-filter:var(--te-image-card-filter)!important;-webkit-backdrop-filter:var(--te-image-card-filter)!important}
+:where(html[data-te-local-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off']:not([data-te-surface-material='transparent']) .audio-workspace) :is(.artist-card,
+.album-card,
+.playlist-card,
+.playlist-grid-card,
+.playlist-tile,
+.playlist-list-item,
+.folder-card,
+.online-playlist,
+.fresh-tile,
+.gallery-tile,
+.toplist-card,
+.aggregate-card,
+.station-card,
+.plugin-card,
+.market-card,
+.plugin-extension-card,
+.tool-card,
+.theme-selection-card,
+.theme-plugin-card,
+.recent-card,
+.ranking-card):is(html *){background-color:color-mix(in srgb,var(--te-image-control-surface) 82%,transparent)!important;border-color:color-mix(in srgb,var(--te-image-control-border) 88%,color-mix(in srgb,white 14%,transparent))!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 :where(html:not([data-te-surface-material='transparent'])) :where(html[data-te-local-image-palette='on'][data-te-card-custom='off'] body.te-local-surface,html[data-te-streaming-image-palette='on'][data-te-card-custom='off'] body.te-streaming-surface,html[data-te-settings-image-palette='on'][data-te-card-custom='off'] body.te-settings-surface,html[data-te-app-image-palette='on'][data-te-card-custom='off'] .audio-workspace) :is([data-te-material="content"],.feature-card,.signal-card,.chart-panel,.cal-panel,.empty-state,.album-card,.artist-card,.playlist-card,.glass-card,.playlist-tile,.folder-card,.online-hero,.online-playlist,.online-login-strip,.online-notice,.online-empty,.home-library-switch > button,.online-shortcuts > button,.figures > button,.fresh-tile,.gallery-tile,.archive-activity-panel,.toplist-card,.sf-track-panel,.aggregate-card,.chart-card,.parametric-toolbar-card,.audition-panel,.diagnostic-panel,.opra-panel,.an-panel,.network-profile-card,.network-surface,.network-create-form,.plugin-card,.plugin-extension-card,.tool-card,.station-card,.station-collection,.podcast-library,.podcast-subscribe-card,.episode-panel,.cloud-panel,.versions-panel,.theme-selection-card,.theme-plugin-card,.favorites-card,.profile-card,.recent-card,.ranking-card){
   --te-neutral-900: var(--te-image-control-text);
   --te-neutral-800: var(--te-image-control-text);

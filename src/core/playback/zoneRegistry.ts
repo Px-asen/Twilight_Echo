@@ -669,6 +669,17 @@ export class CoreZoneRegistry {
   }
   sources(): string[] { return [...this.owners.values()].flatMap(z => z.runtime?.sources() ?? [])
     .concat([...this.groups.values()].flatMap(g => g.runtime?.sources() ?? [])) }
+  retainedProviderIds(): string[] {
+    if (this.stopped) return []
+    const ids = new Set<string>()
+    for (const owner of this.owners.values()) {
+      for (const id of owner.runtime?.playback.retainedProviderIds?.() ?? []) ids.add(id)
+    }
+    for (const group of this.groups.values()) {
+      for (const id of group.runtime?.playback.retainedProviderIds?.() ?? []) ids.add(id)
+    }
+    return [...ids]
+  }
   async stopSources(matches: (source: string) => boolean): Promise<void> {
     await Promise.all([...this.groups.values()].map(g => g.runtime?.sources().some(matches) ? this.silenceGroup(g, true) : undefined))
     await Promise.all([...this.owners.values()].map(z => {
