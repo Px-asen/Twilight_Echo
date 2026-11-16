@@ -1031,7 +1031,6 @@ export class CorePlaybackSession {
       if (remaining <= 0) return
       await new Promise<void>((resolve) => {
         const timer: ReturnType<typeof setTimeout> = setTimeout(resolve, remaining)
-        timer.unref?.()
         const settle = (): void => {
           clearTimeout(timer)
           resolve()

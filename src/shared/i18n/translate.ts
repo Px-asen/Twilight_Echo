@@ -6,41 +6,16 @@
  * Deliberately not vue-i18n: half the strings that need localizing are thrown
  * from the main process, where a Vue plugin cannot reach.
  */
-import { DEFAULT_LOCALE, type AppLocale } from './locale.ts'
+import {
+  DEFAULT_LOCALE,
+  formatMessage,
+  type AppLocale,
+  type MessageCatalog,
+  type MessageParams
+} from './locale.ts'
 import { MESSAGES } from './messages/index.ts'
 
-export type MessageParams = Record<string, string | number | boolean | null | undefined>
-
-/** A catalog is flat: dotted keys, no nesting, so lookup is one property read. */
-export type MessageCatalog = Readonly<Record<string, string>>
-
-const PLACEHOLDER = /\{(\w+)\}/g
-
-/**
- * A space between two CJK characters, which Chinese typography never wants.
- *
- * Templates need the space for Latin values — `{node} 已启用` has to render as
- * "ReplayGain 已启用" — but the same template with a translated node name would
- * otherwise produce "均衡器 已启用". Rather than forcing every template to guess
- * the script of its own parameters, the space is written for the Latin case and
- * removed here when interpolation made both sides CJK.
- */
-const CJK_SPACE_CJK = /([\u3000-〿㐀-䶿一-鿿豈-﫿]) +(?=[\u3000-〿㐀-䶿一-鿿豈-﫿])/g
-
-/**
- * Substitute `{name}` placeholders. An absent param keeps its placeholder
- * visible rather than printing `undefined` — a visible `{device}` is a bug
- * report, while `undefined` reads like a crash to the user.
- */
-export function formatMessage(template: string, params?: MessageParams): string {
-  if (!params) return template
-  const substituted = template.replace(PLACEHOLDER, (match, name: string) => {
-    const value = params[name]
-    if (value === undefined || value === null) return match
-    return String(value)
-  })
-  return substituted === template ? substituted : substituted.replace(CJK_SPACE_CJK, '$1')
-}
+export { formatMessage, type MessageCatalog, type MessageParams }
 
 export function catalogFor(locale: AppLocale): MessageCatalog {
   return MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]

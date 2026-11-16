@@ -47,7 +47,7 @@ test(
       assert.ok(bundle)
       await writeFile(
         html,
-        `<!doctype html><html><body><script src="bundle/${bundle}"></script></body></html>`
+        `<!doctype html><html><head><meta charset="utf-8"></head><body><script src="bundle/${bundle}"></script></body></html>`
       )
       const bundleNode = (contents: string, outfile: string) =>
         buildSync({

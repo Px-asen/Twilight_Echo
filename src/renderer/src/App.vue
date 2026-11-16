@@ -148,7 +148,6 @@ const appearanceGuardRequested = ref(false)
 const appearanceSuspendReady = ref(true)
 const audioSuspendReady = ref(true)
 const appearanceLeavePending = ref(false)
-const idleMinimizedTrimmed = useIdleMemoryTrim()
 const appearanceGuardWorkspace: AppearanceWorkspace = {
   async requestLeave() {
     appearanceGuardRequested.value = true
@@ -227,6 +226,7 @@ watch(
 )
 const pageDock = providePageDock(() => (navigation.showAppearancePage.value ? 'appearance' : ''))
 const navigationPersistence = createNavigationSessionPersistence(navigation)
+const idleMinimizedTrimmed = useIdleMemoryTrim()
 const {
   menuOpen,
   showPlayingPage,
