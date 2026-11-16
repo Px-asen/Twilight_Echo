@@ -30,6 +30,7 @@ import { PluginOperationQueue } from './operationQueue.ts'
 import {
   normalizeInternalNcmRequestOptions,
   PluginRpcCoordinator,
+  type PluginRpcPriority,
   resolveProviderIdempotencyKey
 } from './rpcCoordinator.ts'
 import { trialStagedPluginCandidate } from './trialActivation.ts'
@@ -276,6 +277,8 @@ export interface TwilightProviderCallOptions {
   playbackExpiry?: boolean
   /** Background-only AutoMix preparation: materialize a local file before returning when AutoMix is active. */
   autoMixPrepare?: boolean
+  /** Scheduling priority in the per-plugin RPC queue (defaults to high for foreground getPlaybackUrl, normal otherwise). */
+  priority?: PluginRpcPriority
   /** Reuse this key when retrying one user-initiated write after an unknown outcome. */
   idempotencyKey?: string
   /** Cancels queued or active plugin RPC work and propagates cancellation to the provider host. */
@@ -352,7 +355,7 @@ export class TwilightPluginManager extends EventEmitter {
    * state, runtime, DSP chain, or plugin directory changes outside it.
    */
   private readonly pluginOperationQueue = new PluginOperationQueue()
-  private readonly rpcCalls = new PluginRpcCoordinator()
+  private readonly rpcCalls = new PluginRpcCoordinator({ highPriorityHeadroom: 2 })
   private statePersistence: PluginStatePersistence | null = null
   private shuttingDown = false
   private state: PluginStateFile = {}
@@ -939,10 +942,14 @@ export class TwilightPluginManager extends EventEmitter {
       this.identityContextChanged(running.descriptor.id)
       this.accountContextChanged(running.descriptor.id)
     }
+    const priority: PluginRpcPriority =
+      options.priority ??
+      (method === 'getPlaybackUrl' ? (options.autoMixPrepare ? 'low' : 'high') : 'normal')
     const result = this.rpcCalls.request<unknown, ProviderRpcMetadata>({
       requestId,
       pluginId: running.descriptor.id,
       kind: 'provider',
+      priority,
       timeoutMs: getProviderCallTimeoutMs(method),
       metadata: {
         providerId: normalizedProviderId,
@@ -975,7 +982,8 @@ export class TwilightPluginManager extends EventEmitter {
                     ...(args[1] && typeof args[1] === 'object' ? args[1] : {}),
                     _twilightSourceIdentity: true,
                     _twilightAutoMixPrepare:
-                      options.autoMixPrepare === true && this.autoMixEnabled?.() === true
+                      options.autoMixPrepare === true && this.autoMixEnabled?.() === true,
+                    _twilightPlaybackPriority: priority
                   }
                 ]
               : args,

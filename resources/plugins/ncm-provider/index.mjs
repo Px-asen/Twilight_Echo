@@ -157,6 +157,7 @@ export async function activate(context) {
 export function deactivate() {
   contextRef = null
   ncmApi = null
+  clearRequestTokenWaiters(new Error('NetEase provider is not active'))
   resetCaches()
   metadataRequestTail = Promise.resolve()
   metadataNextRequestAt = 0
@@ -267,9 +268,12 @@ function resetCaches() {
   ownedPlaylistIds = new Set()
   providerWriteRecordsLoaded = false
   providerWritePersistenceTail = Promise.resolve()
-  // 令牌桶随会话一起重置：排队中的 acquire 取的是新桶令牌，语义不受影响。
+  // 令牌桶随会话一起重置：通知已在排队的 waiter 重新按新桶尝试消费。
   requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
   requestTokenRefillAt = Date.now()
+  if (requestTokenWaiters.length > 0 && contextRef) {
+    queueMicrotask(pumpRequestTokens)
+  }
 }
 
 function runIdempotentProviderWrite(scope, args, requestContext, operation, replaySuccess) {
@@ -419,65 +423,132 @@ async function saveCookie(cookie) {
   }
 }
 
-function throwIfRequestAborted(requestContext) {
-  if (!requestContext?.signal?.aborted) return
-  const reason = requestContext.signal.reason
-  throw reason instanceof Error ? reason : new Error('Provider request was cancelled')
+function abortReasonError(signal) {
+  const reason = signal?.reason
+  return reason instanceof Error ? reason : new Error('Provider request was cancelled')
 }
 
-// 全局请求令牌桶（批量 8.6）：所有上游请求统一经 request() 出口，突发容量
-// 5、回灌速率 ~5 req/s。为批次 9 的并行化配安全带，同时降低风控触发概率。
+function throwIfRequestAborted(requestContext) {
+  if (!requestContext?.signal?.aborted) return
+  throw abortReasonError(requestContext.signal)
+}
+
+// 全局请求令牌桶（批量 8.6 + 播放优先队列）：所有上游请求统一经 request() 出口，
+// 突发容量 5、回灌速率 ~5 req/s；前台播放解析优先于浏览分页与后台预取获配令牌。
 const REQUEST_TOKEN_BUCKET_CAPACITY = 5
 const REQUEST_TOKEN_REFILL_PER_MS = 5 / 1000
+const REQUEST_TOKEN_PRIORITY_RANK = { high: 0, normal: 1, low: 2 }
 let requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
 let requestTokenRefillAt = Date.now()
-let requestTokenTail = Promise.resolve()
+let requestTokenWaiters = []
+let requestTokenTimer = null
 
-function acquireRequestToken(signal) {
-  const acquire = requestTokenTail.then(
-    () =>
-      new Promise((resolve, reject) => {
-        const attempt = () => {
-          if (signal?.aborted) {
-            reject(
-              signal.reason instanceof Error
-                ? signal.reason
-                : new Error('Provider request was cancelled')
-            )
-            return
-          }
-          const now = Date.now()
-          if (now < requestTokenRefillAt) {
-            // 系统时钟回拨（NTP 校时）：原地重置回灌基准，令牌不增不减，避免
-            // 回灌窗口永不可达导致全部请求挂死。
-            requestTokenRefillAt = now
-          } else {
-            requestTokenCount = Math.min(
-              REQUEST_TOKEN_BUCKET_CAPACITY,
-              requestTokenCount + (now - requestTokenRefillAt) * REQUEST_TOKEN_REFILL_PER_MS
-            )
-            requestTokenRefillAt = now
-          }
-          if (requestTokenCount >= 1) {
-            requestTokenCount -= 1
-            resolve()
-            return
-          }
-          setTimeout(
-            attempt,
-            Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
-          )
+function requestPriorityRank(priority) {
+  return REQUEST_TOKEN_PRIORITY_RANK[priority] ?? REQUEST_TOKEN_PRIORITY_RANK.normal
+}
+
+function refillRequestTokens() {
+  const now = Date.now()
+  if (now < requestTokenRefillAt) {
+    // 系统时钟回拨（NTP 校时）：原地重置回灌基准，令牌不增不减，避免
+    // 回灌窗口永不可达导致全部请求挂死。
+    requestTokenRefillAt = now
+  } else {
+    requestTokenCount = Math.min(
+      REQUEST_TOKEN_BUCKET_CAPACITY,
+      requestTokenCount + (now - requestTokenRefillAt) * REQUEST_TOKEN_REFILL_PER_MS
+    )
+    requestTokenRefillAt = now
+  }
+}
+
+function enqueueRequestTokenWaiter(waiter) {
+  let insertAt = requestTokenWaiters.length
+  for (let i = requestTokenWaiters.length - 1; i >= 0; i -= 1) {
+    if (requestTokenWaiters[i].rank <= waiter.rank) {
+      insertAt = i + 1
+      break
+    }
+    if (i === 0) insertAt = 0
+  }
+  requestTokenWaiters.splice(insertAt, 0, waiter)
+}
+
+function clearRequestTokenWaiters(reasonError) {
+  if (requestTokenTimer) {
+    clearTimeout(requestTokenTimer)
+    requestTokenTimer = null
+  }
+  const pending = requestTokenWaiters.splice(0)
+  for (const waiter of pending) {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+    waiter.reject(reasonError)
+  }
+}
+
+function pumpRequestTokens() {
+  if (requestTokenTimer) {
+    clearTimeout(requestTokenTimer)
+    requestTokenTimer = null
+  }
+  refillRequestTokens()
+  while (requestTokenWaiters.length > 0 && requestTokenCount >= 1) {
+    const waiter = requestTokenWaiters.shift()
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+    if (waiter.signal?.aborted) {
+      waiter.reject(abortReasonError(waiter.signal))
+      continue
+    }
+    requestTokenCount -= 1
+    waiter.resolve()
+  }
+  if (requestTokenWaiters.length > 0) {
+    requestTokenTimer = setTimeout(
+      () => {
+        requestTokenTimer = null
+        pumpRequestTokens()
+      },
+      Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
+    )
+  }
+}
+
+function acquireRequestToken(signal, priority = 'normal') {
+  if (signal?.aborted) {
+    return Promise.reject(abortReasonError(signal))
+  }
+  const rank = requestPriorityRank(priority)
+  refillRequestTokens()
+  if (requestTokenWaiters.length === 0 && requestTokenCount >= 1) {
+    requestTokenCount -= 1
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const waiter = { rank, signal, resolve, reject, onAbort: null }
+    if (signal) {
+      waiter.onAbort = () => {
+        const index = requestTokenWaiters.indexOf(waiter)
+        if (index >= 0) requestTokenWaiters.splice(index, 1)
+        if (requestTokenWaiters.length === 0 && requestTokenTimer) {
+          clearTimeout(requestTokenTimer)
+          requestTokenTimer = null
         }
-        attempt()
-      })
-  )
-  requestTokenTail = acquire.catch(() => undefined)
-  return acquire
+        reject(abortReasonError(signal))
+      }
+      signal.addEventListener('abort', waiter.onAbort, { once: true })
+    }
+    enqueueRequestTokenWaiter(waiter)
+    pumpRequestTokens()
+  })
 }
 
 async function request(path, cookie, requestContext) {
   throwIfRequestAborted(requestContext)
-  await acquireRequestToken(requestContext?.signal)
+  await acquireRequestToken(requestContext?.signal, requestContext?.priority)
   const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie, {
     signal: requestContext?.signal,
     idempotencyKey: requestContext?.idempotencyKey
@@ -1841,14 +1912,19 @@ function getPlaybackUrlRequestPaths(songId, quality) {
     (level) =>
       `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}&encodeType=flac&crypto=eapi`
   )
-  // Classic bitrate endpoints remain as a compatibility fallback when the
-  // level-based player API returns no official URL for the signed-in account.
-  const bitratePaths = [
-    `/song/url?id=${encodedId}&br=999000`,
-    `/song/url?id=${encodedId}&br=320000`,
-    `/song/url?id=${encodedId}&br=128000`
-  ]
+  // Classic `/song/url?br=320000` already serves as a single ceiling-bitrate
+  // fallback down to 128k without burning extra RTTs across 999k/128k tiers.
+  const bitratePaths = [`/song/url?id=${encodedId}&br=320000`]
   return [...levelPaths, ...bitratePaths]
+}
+
+const PERMANENT_OFFICIAL_UNAVAILABLE_CODES = new Set([-110, -105])
+
+function isPermanentOfficialUnavailable(data, streamItem) {
+  const itemCode = Number(streamItem?.code)
+  if (Number.isFinite(itemCode) && PERMANENT_OFFICIAL_UNAVAILABLE_CODES.has(itemCode)) return true
+  const bodyCode = Number(data?.body?.code)
+  return Number.isFinite(bodyCode) && PERMANENT_OFFICIAL_UNAVAILABLE_CODES.has(bodyCode)
 }
 
 function getUnblockedPlaybackUrlPath(songId) {
@@ -2051,18 +2127,30 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     streamUrlCache.delete(cacheKey)
   }
 
+  const playbackPriority =
+    options?._twilightPlaybackPriority === 'low' ||
+    options?._twilightPlaybackPriority === 'normal' ||
+    options?._twilightPlaybackPriority === 'high'
+      ? options._twilightPlaybackPriority
+      : options?._twilightAutoMixPrepare === true
+        ? 'low'
+        : 'high'
+  const upstreamContext = requestContext
+    ? { ...requestContext, priority: playbackPriority }
+    : { priority: playbackPriority }
+
   let lastFailureMessage = ''
   let riskControlMessage = ''
   const requestPaths = getPlaybackUrlRequestPaths(songId, quality)
   for (let attempt = 0; attempt < requestPaths.length; attempt += 1) {
-    // 回退阶梯步间退避（250ms 起步、封顶 500ms）：连续失败的连打既放大风控
-    // 概率也让低级音质的响应无意义地挤占带宽（批量 8.5）。
+    // 收敛后的步间轻量退避（50ms 起步、封顶 100ms）：既避免连发触发风控，又将
+    // 回退总耗时控制在百毫秒级（原 2.75s）。
     if (attempt > 0) {
-      await waitWithAbort(Math.min(500, 250 * attempt), requestContext?.signal)
+      await waitWithAbort(Math.min(100, 50 * attempt), requestContext?.signal)
     }
     const path = requestPaths[attempt]
     try {
-      const data = await requestAuthed(path, requestContext)
+      const data = await requestAuthed(path, upstreamContext)
       const streamItems = getPlaybackStreamItems(data)
       const streamItem = streamItems[0] ?? {}
       // Only use a URL explicitly authorized by the signed-in account's official endpoint.
@@ -2092,6 +2180,10 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
         riskControlMessage = attemptFailureMessage
         break
       }
+      // 无版权/已下架等全档位一致错误不再重复探测低档位，直接转入灰色解锁或结束。
+      if (isPermanentOfficialUnavailable(data, streamItem)) {
+        break
+      }
     } catch (error) {
       throwIfRequestAborted(requestContext)
       const errorMessage = getErrorMessage(error)
@@ -2107,7 +2199,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
   // 风控命中后连灰色解锁也不再试——它同样是上游请求，会把风控窗口越拉越长。
   if (!riskControlMessage) {
     try {
-      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
+      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), upstreamContext)
       const url = getUnblockedPlaybackUrl(data)
       if (url) {
         return finalizeAuthorizedStream(

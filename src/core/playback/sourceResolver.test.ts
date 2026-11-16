@@ -258,21 +258,28 @@ test('local, CUE, SACD, radio and podcast sources never call a provider', async 
 })
 
 test('resolver forwards autoMixPrepare only when explicitly requested for background preparation', async () => {
-  const seenOptions: Array<{ playbackExpiry: boolean; autoMixPrepare?: boolean }> = []
+  const seenOptions: Array<{
+    playbackExpiry: boolean
+    autoMixPrepare?: boolean
+    priority?: 'high' | 'normal' | 'low'
+  }> = []
   const resolver = createSourceResolver({
     now: () => now,
     callProvider: async (_id, _method, _args, options) => {
       seenOptions.push({
         playbackExpiry: options.playbackExpiry,
-        ...('autoMixPrepare' in options ? { autoMixPrepare: options.autoMixPrepare } : {})
+        ...('autoMixPrepare' in options ? { autoMixPrepare: options.autoMixPrepare } : {}),
+        ...(options.priority ? { priority: options.priority } : {})
       })
       return 'https://cdn.test/song.flac'
     }
   })
   await resolver.resolve(track)
   await resolver.resolve(track, undefined, { autoMixPrepare: true })
+  await resolver.resolve(track, undefined, { background: true })
   assert.deepEqual(seenOptions, [
-    { playbackExpiry: true },
-    { playbackExpiry: true, autoMixPrepare: true }
+    { playbackExpiry: true, priority: 'high' },
+    { playbackExpiry: true, autoMixPrepare: true, priority: 'low' },
+    { playbackExpiry: true, priority: 'low' }
   ])
 })

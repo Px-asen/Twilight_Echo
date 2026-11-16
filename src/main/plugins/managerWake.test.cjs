@@ -870,3 +870,42 @@ test('retained active providers stay resident past idle windows until playback r
   assert.equal(f.manager.running.has(f.descriptor.id), false)
   assert.equal(f.manager.isHibernated(f.descriptor.id), true)
 })
+
+test('callProvider routes foreground playback at high priority and AutoMix lookahead at low priority', async (t) => {
+  const f = await fixture(t, {
+    pluginId: 'com.twilightecho.provider.ncm',
+    providerId: 'ncm',
+    autoMixEnabled: () => true
+  })
+  const observed = []
+  const originalRequest = f.manager.rpcCalls.request.bind(f.manager.rpcCalls)
+  f.manager.rpcCalls.request = (opts) => {
+    observed.push({ method: opts.metadata.method, priority: opts.priority })
+    return originalRequest(opts)
+  }
+
+  const first = f.manager.callProvider('ncm', 'searchSongs', ['wake'])
+  await f.activationStarted
+  f.register()
+  f.activate()
+  await first
+  await f.manager.callProvider('ncm', 'getPlaybackUrl', [{ id: 'ncm:1' }, {}])
+  await f.manager.callProvider(
+    'ncm',
+    'getPlaybackUrl',
+    [{ id: 'ncm:2' }, {}],
+    { autoMixPrepare: true }
+  )
+  await f.manager.callProvider('ncm', 'getPlaybackUrl', [{ id: 'ncm:3' }, {}], { priority: 'low' })
+
+  assert.deepEqual(observed, [
+    { method: 'searchSongs', priority: 'normal' },
+    { method: 'getPlaybackUrl', priority: 'high' },
+    { method: 'getPlaybackUrl', priority: 'low' },
+    { method: 'getPlaybackUrl', priority: 'low' }
+  ])
+  const calls = f.children[0].messages.filter((m) => m.kind === 'provider-call')
+  assert.equal(calls[1].args[1]._twilightPlaybackPriority, 'high')
+  assert.equal(calls[2].args[1]._twilightPlaybackPriority, 'low')
+  assert.equal(calls[3].args[1]._twilightPlaybackPriority, 'low')
+})

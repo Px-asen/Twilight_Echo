@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   normalizeInternalNcmRequestOptions,
   PluginRpcCoordinator,
+  type PluginRpcPriority,
   resolveProviderIdempotencyKey
 } from './rpcCoordinator.ts'
 
@@ -11,6 +12,7 @@ function request(
   requestId: string,
   options: {
     timeoutMs?: number
+    priority?: PluginRpcPriority
     dispatches?: string[]
     cancellations?: string[]
     signal?: AbortSignal
@@ -21,6 +23,7 @@ function request(
     requestId,
     pluginId: 'com.example.provider',
     kind: 'provider',
+    priority: options.priority,
     timeoutMs: options.timeoutMs ?? 10_000,
     metadata: { requestId },
     dispatch: () => options.dispatches?.push(requestId),
@@ -259,4 +262,67 @@ test('in-flight idempotency records do not expire or get evicted before their ou
   coordinator.complete('com.example.provider', 'write-pending', { ok: true, value: 'liked' })
   assert.equal(await first, 'liked')
   assert.equal(await retry, 'liked')
+})
+
+test('priority scheduling drains high ahead of normal and low while preserving FIFO ties', async () => {
+  const coordinator = new PluginRpcCoordinator({ maxConcurrencyPerPlugin: 1 })
+  const dispatches: string[] = []
+  const first = request(coordinator, 'active-1', { dispatches })
+  const low = request(coordinator, 'low-1', { priority: 'low', dispatches })
+  const normal1 = request(coordinator, 'normal-1', { priority: 'normal', dispatches })
+  const high1 = request(coordinator, 'high-1', { priority: 'high', dispatches })
+  const normal2 = request(coordinator, 'normal-2', { dispatches })
+  const high2 = request(coordinator, 'high-2', { priority: 'high', dispatches })
+
+  assert.deepEqual(dispatches, ['active-1'])
+  for (const id of ['active-1', 'high-1', 'high-2', 'normal-1', 'normal-2', 'low-1']) {
+    coordinator.complete('com.example.provider', id, { ok: true, value: id })
+  }
+  assert.deepEqual(await Promise.all([first, high1, high2, normal1, normal2, low]), [
+    'active-1',
+    'high-1',
+    'high-2',
+    'normal-1',
+    'normal-2',
+    'low-1'
+  ])
+  assert.deepEqual(dispatches, ['active-1', 'high-1', 'high-2', 'normal-1', 'normal-2', 'low-1'])
+})
+
+test('highPriorityHeadroom dispatches urgent calls immediately without opening normal slots', async () => {
+  const coordinator = new PluginRpcCoordinator({
+    maxConcurrencyPerPlugin: 1,
+    highPriorityHeadroom: 1
+  })
+  const dispatches: string[] = []
+  const active = request(coordinator, 'normal-active', { dispatches })
+  const queuedNormal = request(coordinator, 'normal-queued', { dispatches })
+  assert.deepEqual(dispatches, ['normal-active'])
+
+  const urgent = request(coordinator, 'high-urgent', { priority: 'high', dispatches })
+  assert.deepEqual(dispatches, ['normal-active', 'high-urgent'])
+
+  const secondUrgent = request(coordinator, 'high-second', { priority: 'high', dispatches })
+  assert.deepEqual(dispatches, ['normal-active', 'high-urgent'])
+
+  coordinator.complete('com.example.provider', 'high-urgent', { ok: true, value: 'urgent' })
+  assert.deepEqual(dispatches, ['normal-active', 'high-urgent', 'high-second'])
+
+  coordinator.complete('com.example.provider', 'high-second', { ok: true, value: 'second' })
+  assert.deepEqual(dispatches, ['normal-active', 'high-urgent', 'high-second'])
+
+  coordinator.complete('com.example.provider', 'normal-active', { ok: true, value: 'active' })
+  coordinator.complete('com.example.provider', 'normal-queued', { ok: true, value: 'queued' })
+  assert.deepEqual(await Promise.all([active, queuedNormal, urgent, secondUrgent]), [
+    'active',
+    'queued',
+    'urgent',
+    'second'
+  ])
+  assert.deepEqual(dispatches, [
+    'normal-active',
+    'high-urgent',
+    'high-second',
+    'normal-queued'
+  ])
 })

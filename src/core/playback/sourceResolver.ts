@@ -10,6 +10,8 @@ export interface ResolvedSource {
 export interface SourceResolveOptions {
   /** Materialize a local file for AutoMix only during background lookahead reads. */
   autoMixPrepare?: boolean
+  /** Mark background read-ahead so provider RPC queues yield to foreground clicks/skips. */
+  background?: boolean
 }
 
 export interface SourceResolver {
@@ -30,7 +32,12 @@ export interface SourceResolverDependencies {
     providerId: string,
     method: 'getPlaybackUrl',
     args: unknown[],
-    options: { signal: AbortSignal; playbackExpiry: true; autoMixPrepare?: boolean }
+    options: {
+      signal: AbortSignal
+      playbackExpiry: true
+      autoMixPrepare?: boolean
+      priority?: 'high' | 'normal' | 'low'
+    }
   ) => Promise<unknown>
   grants?: {
     resolve(handle: string, kind: 'audio'): { source: string } | Promise<{ source: string }>
@@ -214,7 +221,9 @@ export const createSourceResolver = (
                 {
                   signal,
                   playbackExpiry: true,
-                  ...(resolveOptions?.autoMixPrepare ? { autoMixPrepare: true } : {})
+                  ...(resolveOptions?.autoMixPrepare ? { autoMixPrepare: true } : {}),
+                  priority:
+                    resolveOptions?.autoMixPrepare || resolveOptions?.background ? 'low' : 'high'
                 }
               ),
             PROVIDER_TIMEOUT_MS,

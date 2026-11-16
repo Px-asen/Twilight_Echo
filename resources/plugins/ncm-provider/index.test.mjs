@@ -889,6 +889,57 @@ test('token bucket survives a system clock rollback without wedging requests', a
   }
 })
 
+test('foreground playback token acquisitions overtake queued search and background prefetch requests', async () => {
+  const order = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/cloudsearch') {
+      order.push(`search:${url.searchParams.get('keywords')}`)
+      return { result: { songs: [], songCount: 0 } }
+    }
+    if (url.pathname === '/song/url/v1') {
+      const id = url.searchParams.get('id')
+      order.push(`play:${id}`)
+      return {
+        code: 200,
+        data: [{ id: Number(id), url: `https://music.example/${id}.flac`, code: 200 }]
+      }
+    }
+    throw new Error(`unexpected path: ${url.pathname}`)
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // Drain the 5-request burst bucket immediately.
+    await Promise.all(Array.from({ length: 5 }, (_, index) => provider.searchSongs(`burst-${index}`)))
+    order.length = 0
+
+    // Queue normal browse, low background prefetch, then foreground playback.
+    const normal = provider.searchSongs('queued-browse')
+    const background = provider.getPlaybackUrl(
+      { id: 'ncm:202' },
+      { quality: 'standard', _twilightAutoMixPrepare: true }
+    )
+    const foreground = provider.getPlaybackUrl({ id: 'ncm:101' }, { quality: 'standard' })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    assert.equal(await foreground, 'https://music.example/101.flac')
+    assert.deepEqual(order, ['play:101'])
+
+    mock.timers.tick(200)
+    await normal
+    assert.deepEqual(order, ['play:101', 'search:queued-browse'])
+
+    mock.timers.tick(200)
+    assert.equal(await background, 'https://music.example/202.flac')
+    assert.deepEqual(order, ['play:101', 'search:queued-browse', 'play:202'])
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
 test('personal FM returns fresh session tracks across repeated roaming requests', async () => {
   let requestNumber = 0
   const provider = await activateProvider(async (path) => {
@@ -1101,9 +1152,7 @@ test('premium-only tracks return no URL when official and unlock fallbacks are u
         'v1:lossless',
         'v1:exhigh',
         'v1:standard',
-        'br:999000',
         'br:320000',
-        'br:128000',
         'match:79'
       ]
     )
@@ -1148,7 +1197,7 @@ test('gray tracks use song URL matching only after every official endpoint fails
     )
     assert.deepEqual(
       requests.map((path) => parseRequest(path).pathname),
-      ['/song/url/v1', '/song/url', '/song/url', '/song/url', '/song/url/match']
+      ['/song/url/v1', '/song/url', '/song/url/match']
     )
     assert.deepEqual(cachedSongs, [
       { songId: 82, url: 'https://unblock.example/82.flac', fileName: 'gray-track.flac' }
@@ -1158,7 +1207,7 @@ test('gray tracks use song URL matching only after every official endpoint fails
       await provider.getPlaybackUrl(track, { quality: 'standard' }),
       'https://unblock.example/82.flac'
     )
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, 3)
     assert.equal(cachedSongs.length, 1)
   } finally {
     ncmProvider.deactivate()
@@ -1663,19 +1712,41 @@ test('playback fallback ladder backs off between steps instead of bursting', asy
     await new Promise((resolve) => setImmediate(resolve))
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(requestTimes.length, 1)
-    mock.timers.tick(250)
+    mock.timers.tick(50)
     await new Promise((resolve) => setImmediate(resolve))
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(requestTimes.length, 2)
-    mock.timers.tick(500)
+    mock.timers.tick(100)
     assert.equal(await pending, 'https://music.example/92.mp3')
     assert.deepEqual(
       requestTimes.slice(1).map((time, index) => time - requestTimes[index]),
-      [250, 500],
-      'fallback steps must be spaced by a 250→500ms backoff'
+      [50, 100],
+      'fallback steps must be spaced by a 50→100ms backoff'
     )
   } finally {
     mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('permanent copyright unavailability jumps straight from v1 to gray-track match', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    requests.push(url.pathname)
+    if (url.pathname === '/song/url/match') {
+      return { code: 200, data: 'https://unblock.example/110.flac' }
+    }
+    return { code: 200, data: [{ id: 110, url: null, code: -110, msg: 'no copyright' }] }
+  })
+
+  try {
+    assert.equal(
+      await provider.getPlaybackUrl({ id: 'ncm:110' }, { quality: 'hires' }),
+      'https://unblock.example/110.flac'
+    )
+    assert.deepEqual(requests, ['/song/url/v1', '/song/url/match'])
+  } finally {
     ncmProvider.deactivate()
   }
 })

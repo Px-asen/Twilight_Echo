@@ -42,6 +42,13 @@ export const DEFAULT_MAX_PLUGIN_RPC_LATE_RESULTS = 256
 export const DEFAULT_MAX_PLUGIN_RPC_IDEMPOTENCY_RECORDS = 512
 
 export type PluginRpcKind = 'provider' | 'ui-command' | 'experience'
+export type PluginRpcPriority = 'high' | 'normal' | 'low'
+
+const PLUGIN_RPC_PRIORITY_RANK: Record<PluginRpcPriority, number> = {
+  high: 0,
+  normal: 1,
+  low: 2
+}
 
 export interface PluginRpcIdempotency {
   /** A namespace chosen by the caller, usually plugin/provider/method. */
@@ -62,6 +69,8 @@ export interface PluginRpcRequestOptions<TMetadata> {
   onTimeout?: (error: Error) => void
   signal?: AbortSignal
   idempotency?: PluginRpcIdempotency
+  /** Scheduling priority inside the per-plugin queue (defaults to 'normal'). */
+  priority?: PluginRpcPriority
 }
 
 export type PluginRpcResult = { ok: true; value: unknown } | { ok: false; error: string }
@@ -72,6 +81,8 @@ export type PluginRpcCompletion<TMetadata> =
 
 export interface PluginRpcCoordinatorOptions {
   maxConcurrencyPerPlugin?: number
+  /** Extra concurrency slots reserved exclusively for `'high'` priority requests. */
+  highPriorityHeadroom?: number
   maxQueuePerPlugin?: number
   circuitFailureThreshold?: number
   circuitInitialBackoffMs?: number
@@ -100,6 +111,7 @@ interface PendingPluginRpc<TMetadata> {
   requestId: string
   pluginId: string
   kind: PluginRpcKind
+  priority: PluginRpcPriority
   timeoutMs: number
   metadata: TMetadata
   dispatch: () => void
@@ -133,6 +145,7 @@ interface IdempotencyRecord {
  */
 export class PluginRpcCoordinator {
   private readonly maxConcurrencyPerPlugin: number
+  private readonly highPriorityHeadroom: number
   private readonly maxQueuePerPlugin: number
   private readonly circuitFailureThreshold: number
   private readonly circuitInitialBackoffMs: number
@@ -152,6 +165,11 @@ export class PluginRpcCoordinator {
       options.maxConcurrencyPerPlugin,
       DEFAULT_MAX_PLUGIN_RPC_CONCURRENCY,
       'maxConcurrencyPerPlugin'
+    )
+    this.highPriorityHeadroom = nonNegativeInteger(
+      options.highPriorityHeadroom,
+      0,
+      'highPriorityHeadroom'
     )
     this.maxQueuePerPlugin = positiveInteger(
       options.maxQueuePerPlugin,
@@ -222,10 +240,11 @@ export class PluginRpcCoordinator {
     if (idempotency?.existing) return idempotency.existing
 
     const state = this.stateFor(options.pluginId)
+    const priority: PluginRpcPriority = options.priority ?? 'normal'
     const circuitError = this.reserveCircuitProbe(state, options.pluginId, options.requestId)
     if (circuitError) return Promise.reject(circuitError)
     if (
-      state.active.size >= this.maxConcurrencyPerPlugin &&
+      !this.canDispatch(state, priority) &&
       state.queue.length >= this.maxQueuePerPlugin
     ) {
       this.clearCircuitProbe(state, options.requestId)
@@ -246,6 +265,7 @@ export class PluginRpcCoordinator {
       requestId: options.requestId,
       pluginId: options.pluginId,
       kind: options.kind,
+      priority,
       timeoutMs: options.timeoutMs,
       metadata: options.metadata,
       dispatch: options.dispatch,
@@ -277,10 +297,10 @@ export class PluginRpcCoordinator {
     }
 
     if (pending.settled) return promise
-    if (state.active.size < this.maxConcurrencyPerPlugin) {
+    if (this.canDispatch(state, priority)) {
       this.start(state, pending as PendingPluginRpc<unknown>)
     } else {
-      state.queue.push(pending as PendingPluginRpc<unknown>)
+      this.enqueue(state, pending as PendingPluginRpc<unknown>)
     }
     return promise
   }
@@ -465,11 +485,37 @@ export class PluginRpcCoordinator {
     this.cleanupState(pending.pluginId, state)
   }
 
+  private canDispatch(state: PluginRpcState, priority: PluginRpcPriority): boolean {
+    const limit =
+      priority === 'high'
+        ? this.maxConcurrencyPerPlugin + this.highPriorityHeadroom
+        : this.maxConcurrencyPerPlugin
+    return state.active.size < limit
+  }
+
+  private enqueue(state: PluginRpcState, pending: PendingPluginRpc<unknown>): void {
+    const targetRank = PLUGIN_RPC_PRIORITY_RANK[pending.priority]
+    let insertAt = state.queue.length
+    for (let i = state.queue.length - 1; i >= 0; i -= 1) {
+      if (PLUGIN_RPC_PRIORITY_RANK[state.queue[i].priority] <= targetRank) {
+        insertAt = i + 1
+        break
+      }
+      if (i === 0) insertAt = 0
+    }
+    state.queue.splice(insertAt, 0, pending)
+  }
+
   private drain(pluginId: string, state: PluginRpcState): void {
     if (state.cancelling) return
-    while (state.active.size < this.maxConcurrencyPerPlugin && state.queue.length > 0) {
-      const pending = state.queue.shift()
-      if (!pending || pending.settled) continue
+    while (state.queue.length > 0) {
+      const head = state.queue[0]
+      if (!head || head.settled) {
+        state.queue.shift()
+        continue
+      }
+      if (!this.canDispatch(state, head.priority)) break
+      const pending = state.queue.shift()!
       if (this.circuitBlocksQueuedRequest(state, pending)) {
         this.settle(state, pending, {
           kind: 'cancelled-queued',
@@ -643,6 +689,14 @@ function positiveInteger(value: number | undefined, fallback: number, label: str
   const selected = value ?? fallback
   if (!Number.isInteger(selected) || selected < 1) {
     throw new Error(`${label} must be a positive integer.`)
+  }
+  return selected
+}
+
+function nonNegativeInteger(value: number | undefined, fallback: number, label: string): number {
+  const selected = value ?? fallback
+  if (!Number.isInteger(selected) || selected < 0) {
+    throw new Error(`${label} must be a non-negative integer.`)
   }
   return selected
 }
