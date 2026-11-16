@@ -20,7 +20,11 @@ export interface PreparedPlaybackSource {
 }
 
 export interface PlaybackSourceRecovery {
-  prepare(track: TrackData, signal?: AbortSignal): Promise<PreparedPlaybackSource>
+  prepare(
+    track: TrackData,
+    signal?: AbortSignal,
+    options?: { allowFallbackSearch?: boolean }
+  ): Promise<PreparedPlaybackSource>
   /** Only after native has explicitly rejected a source and Stop is confirmed. */
   recover?(track: TrackData, signal?: AbortSignal): Promise<PreparedPlaybackSource>
   repaired?(previous: TrackData, replacement: TrackData): Promise<void>
@@ -40,43 +44,52 @@ interface Options {
  * resulting identity, after its native/SQL occurrence fences are satisfied. */
 export function createPlaybackSourceRecovery(options: Options): PlaybackSourceRecovery {
   const fallback = createPlaybackFallback(options.identity)
-  async function prepare(
+  async function prepareInternal(
     track: TrackData,
     signal?: AbortSignal,
-    skipOriginal = false
+    skipOriginal = false,
+    allowFallbackSearch = true
   ): Promise<PreparedPlaybackSource> {
     const revision = options.versionsRevision()
-    const confirm = () => {
-      signal?.throwIfAborted()
+    const confirmRevision = () => {
       if (options.versionsRevision() !== revision)
         throw Object.assign(new Error('Recording preferences changed during source resolution'), {
           code: 'STALE_REVISION'
         })
     }
+    const guard = () => {
+      signal?.throwIfAborted()
+      confirmRevision()
+    }
     // Authorization errors are not source failures. In particular, never
     // search for another path around a refused platform/media grant.
     const resolve = async (candidate: TrackData): Promise<PreparedPlaybackSource | null> => {
-      confirm()
+      guard()
       const resolved = await options.resolver.resolve(candidate, signal)
-      confirm()
+      guard()
       if (!resolved || !isSourceCurrent(resolved, options.now())) return null
       const source = await prepareNativeSource(resolved.source, options.authorize)
-      confirm()
+      guard()
       if (source === null || !isSourceCurrent(resolved, options.now())) return null
-      return { track: candidate, resolved: { ...resolved, source }, confirm }
+      return { track: candidate, resolved: { ...resolved, source }, confirm: confirmRevision }
     }
     if (!skipOriginal) {
       const original = await resolve(track)
       if (original) return original
     }
     const failedSource = getTrackSource(track)
-    if (track.sourceSelection === 'explicit' || ['radio', 'podcast'].includes(failedSource) || options.identity.preferredSourceKey(track))
+    if (
+      !allowFallbackSearch ||
+      track.sourceSelection === 'explicit' ||
+      ['radio', 'podcast'].includes(failedSource) ||
+      options.identity.preferredSourceKey(track)
+    )
       throw new Error('Unable to resolve the selected audio source')
     const found = await options.search(
       [track.title, track.artist].filter(Boolean).join(' '),
       signal
     )
-    confirm()
+    guard()
     const candidates = found.items
       .filter((item) => item.providerAvailable)
       .map((item) => item.track)
@@ -120,7 +133,8 @@ export function createPlaybackSourceRecovery(options: Options): PlaybackSourceRe
   }
   return {
     repaired: options.repaired,
-    prepare,
-    recover: (track, signal) => prepare(track, signal, true)
+    prepare: (track, signal, prepareOptions) =>
+      prepareInternal(track, signal, false, prepareOptions?.allowFallbackSearch !== false),
+    recover: (track, signal) => prepareInternal(track, signal, true, true)
   }
 }
