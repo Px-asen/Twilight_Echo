@@ -84,7 +84,7 @@ test('storage discovery rejects invalid modes and failures without falling back 
   assert.equal(attempts, 3)
 })
 
-test('explicit 200-song pages retain total and stay within the ten-page detail bound', async (t) => {
+test('explicit 200-song pages retain total and stay within the four-page detail bound', async (t) => {
   const calls: LibraryQuery[] = []
   const pages = createLibraryTrackPages({
     queryTracks: async (query) => {
@@ -107,8 +107,8 @@ test('explicit 200-song pages retain total and stay within the ten-page detail b
     await settled(pages)
     assert.equal(pages.state.value.page?.offset, index * 200)
   }
-  assert.equal(pages.cacheState.cachedPages, 10)
-  assert.equal(pages.cacheState.cachedTracks, 2000)
+  assert.equal(pages.cacheState.cachedPages, 4)
+  assert.equal(pages.cacheState.cachedTracks, 800)
   assert.ok(calls.every((query) => query.limit === 200))
   pages.goToPage(14)
   await settled(pages)
@@ -147,7 +147,7 @@ test('selection fences distinguish page navigation from content changes, retry a
   await settled(pages)
 })
 
-test('selected compact rows survive ten-page cache eviction, while unselected page traversal retains no action records', async (t) => {
+test('selected compact rows survive four-page cache eviction, while unselected page traversal retains no action records', async (t) => {
   let revision = 1
   const pages = createLibraryTrackPages({
     queryTracks: async (query) => page(query, revision)
@@ -175,7 +175,7 @@ test('selected compact rows survive ten-page cache eviction, while unselected pa
     pages.goToPage(index)
     await settled(pages)
   }
-  assert.equal(pages.cacheState.cachedTracks, 2000)
+  assert.equal(pages.cacheState.cachedTracks, 800)
   assert.deepEqual(multi.getSelectedTrackIds(), ['song:0'])
   const selected = multi.getSelectedTracks()[0]
   assert.equal(selected.lyrics, undefined)

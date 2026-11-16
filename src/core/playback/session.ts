@@ -212,6 +212,8 @@ export class CorePlaybackSession {
   }
   private muted = false
   private lastAudibleVolume = DEFAULT_SOFTWARE_VOLUME
+  private readonly audioSuppressedClients = new Set<string>()
+  private suppressedUserVolume: number | null = null
   private loadingIntent: number | null = null
   /** Settles when the in-flight preparation finishes or is cancelled.
    * Background resource maintenance waits on it so a cache prune cannot
@@ -817,7 +819,7 @@ export class CorePlaybackSession {
       isStreamBuffering: this.streamBuffering,
       mute: {
         muted: this.muted,
-        userVolume: this.info?.volume ?? 0,
+        userVolume: this.effectiveUserVolume(),
         lastAudibleVolume: this.lastAudibleVolume
       },
       playback: this.info ? projectCorePlayback({ ...this.info, playMode: this.mode }) : null,
@@ -2458,6 +2460,9 @@ export class CorePlaybackSession {
         const recover = async () => {
           try {
             await restart()
+            if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+              await this.options.engine.setVolume(0)
+            }
             this.uncertain = false
             this.error = null
           } catch (error) {
@@ -3009,7 +3014,7 @@ export class CorePlaybackSession {
           const delta = action.direction === 'volumeUp' ? 0.05 : -0.05
           const volume = Math.min(
             1,
-            Math.max(0, Math.round(((this.info?.volume ?? 0) + delta) * 100) / 100)
+            Math.max(0, Math.round((this.effectiveUserVolume() + delta) * 100) / 100)
           )
           await this.setUserVolume(volume)
         })
@@ -3030,7 +3035,64 @@ export class CorePlaybackSession {
       }
     }
   }
+  private isAudioSuppressed(): boolean {
+    return this.audioSuppressedClients.size > 0
+  }
+  private effectiveUserVolume(): number {
+    if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+      return this.muted ? 0 : (this.suppressedUserVolume ?? 0)
+    }
+    return this.info?.volume ?? 0
+  }
+  /**
+   * Client-leased native audio output suppression (e.g. while an MV's original
+   * audio track is audible in the full-screen PlayingMusic view). Preserves
+   * logical userVolume/mute state and automatically restores native output gain
+   * when all suppressing clients release or disconnect.
+   */
+  async setAudioSuppressed(clientId: string, suppressed: boolean): Promise<void> {
+    if (!clientId || this.stopped) return
+    await this.transport(async () => {
+      const wasSuppressed = this.isAudioSuppressed()
+      if (suppressed) {
+        this.audioSuppressedClients.add(clientId)
+      } else {
+        this.audioSuppressedClients.delete(clientId)
+      }
+      const nowSuppressed = this.isAudioSuppressed()
+      if (wasSuppressed === nowSuppressed) return
+      if (nowSuppressed) {
+        const currentVolume = this.info?.volume ?? 0
+        if (!this.muted && currentVolume > 0) {
+          this.lastAudibleVolume = currentVolume
+        }
+        this.suppressedUserVolume = this.muted ? 0 : currentVolume
+        if (!this.options.cast?.active()) {
+          await this.applyVolume(0)
+        }
+      } else {
+        const restoreVolume = this.muted
+          ? 0
+          : (this.suppressedUserVolume ?? this.lastAudibleVolume)
+        this.suppressedUserVolume = null
+        if (!this.options.cast?.active()) {
+          await this.applyVolume(restoreVolume)
+        }
+      }
+      this.publish()
+    })
+  }
   private async setUserVolume(volume: number): Promise<void> {
+    if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+      this.suppressedUserVolume = volume
+      if (volume > 0) {
+        this.muted = false
+        this.lastAudibleVolume = volume
+      }
+      await this.applyVolume(0)
+      this.publish()
+      return
+    }
     await this.applyVolume(volume)
     if (this.info && this.info.volume > 0) {
       this.muted = false
@@ -3042,10 +3104,19 @@ export class CorePlaybackSession {
     this.assertIndependent()
     this.interruptSleep()
     await this.transport(async () => {
-      const volume = this.info?.volume ?? 0
+      const volume = this.effectiveUserVolume()
       const next = muted ?? (!this.muted && volume > 0)
       if (next && volume > 0) this.lastAudibleVolume = volume
-      await this.applyVolume(next ? 0 : Math.max(0.01, this.lastAudibleVolume))
+      const targetVolume = next ? 0 : Math.max(0.01, this.lastAudibleVolume)
+      if (this.isAudioSuppressed() && !this.options.cast?.active()) {
+        this.suppressedUserVolume = targetVolume
+        this.muted = next
+        if (targetVolume > 0) this.lastAudibleVolume = targetVolume
+        await this.applyVolume(0)
+        this.publish()
+        return
+      }
+      await this.applyVolume(targetVolume)
       this.muted = next
       if (this.info && this.info.volume > 0) this.lastAudibleVolume = this.info.volume
       this.publish()

@@ -19,7 +19,11 @@ const settingsAppearance = readFileSync(
   new URL('../components/settings-page/AppearanceSettingsSection.vue', import.meta.url),
   'utf8'
 )
-const settingsSurfaces = [settingsPage, settingsAppearance].join('\n')
+const settingsInterface = readFileSync(
+  new URL('../components/settings-page/InterfaceSettingsSection.vue', import.meta.url),
+  'utf8'
+)
+const settingsSurfaces = [settingsPage, settingsAppearance, settingsInterface].join('\n')
 const settingsStore = readFileSync(
   new URL('../stores/useSettingsStore.ts', import.meta.url),
   'utf8'

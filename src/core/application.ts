@@ -164,7 +164,9 @@ export interface CoreApplicationDependencies {
     | 'applyBpm'
     | 'clearBpm'
     | 'retainedProviderIds'
-  >
+    | 'setAudioSuppressed'
+  > &
+    Partial<Pick<CorePlaybackSession, 'setAudioSuppressed'>>
   library: Pick<LibraryDatabaseApi, 'getMetadata' | 'queryTracks' | 'readLibraryQueue'> &
     CoreLibraryReadDatabase
   state: CoreStateApi
@@ -623,6 +625,7 @@ export class CoreApplication {
     void this.dependencies.zones?.disconnectDspUploads(clientId).catch(error => console.error('[core.dsp.upload]', error))
     void this.dependencies.pluginManagement?.disconnect(clientId).catch(error => console.error('[core.plugins.upload]', error))
     void this.dependencies.browse?.disconnect(clientId).catch(error => console.error('[core.browse]', error))
+    void this.dependencies.playback.setAudioSuppressed?.(clientId, false).catch(error => console.error('[core.playback.suppress]', error))
     for (const controller of client.requests.values())
       controller.abort(failure('CANCELLED', 'Core client disconnected'))
   }
@@ -1062,6 +1065,10 @@ export class CoreApplication {
         if (!this.dependencies.presentation)
           throw failure('NOT_READY', 'Player presentation is unavailable')
         return this.dependencies.presentation.snapshot()
+      case 'player.mv':
+        if (!this.dependencies.presentation)
+          throw failure('NOT_READY', 'Player presentation is unavailable')
+        return this.dependencies.presentation.resolveMv(request.payload, signal)
       case 'player.lyrics':
         if (!this.dependencies.lyrics) throw failure('NOT_READY', 'Lyrics are unavailable')
         return {
@@ -2510,6 +2517,10 @@ export class CoreApplication {
         return playback.configureAbLoop(request.payload)
       case 'playback.mute':
         return playback.configureMute(request.payload.muted)
+      case 'playback.suppressAudio':
+        if (!playback.setAudioSuppressed)
+          throw failure('NOT_READY', 'Playback audio suppression is unavailable')
+        return playback.setAudioSuppressed(identity.id, request.payload.suppressed)
       case 'playback.next':
         return playback.navigate(1, signal)
       case 'playback.previous':
@@ -2518,9 +2529,9 @@ export class CoreApplication {
         const volume = nonnegative(request.payload.volume)
         if (volume > 1) throw failure('INVALID_REQUEST', 'Volume exceeds unity')
         await playback.setVolume(volume)
-        const actual = playback.snapshot().playback
-        if (actual && actual.outputBackend !== 'cast')
-          this.dependencies.settings?.rememberVolume(actual.volume)
+        const snapshot = playback.snapshot()
+        if (snapshot.playback && snapshot.playback.outputBackend !== 'cast')
+          this.dependencies.settings?.rememberVolume(snapshot.mute.userVolume)
         return
       }
       case 'playback.mode':

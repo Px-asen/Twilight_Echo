@@ -123,3 +123,53 @@ test('opaque wallpapers encode as compact JPEG derivatives while transparent wal
   assert.equal(await readFile(opaquePath, 'utf8'), 'compact-jpeg')
   assert.equal(await readFile(alphaPath, 'utf8'), 'alpha-png')
 })
+
+test('blurred wallpapers encode smaller tier derivatives without colliding with crisp display derivatives', async (t) => {
+  assert.equal(backgroundDisplayUrl('background://art.png', 0), 'background://art.png?display=v1')
+  assert.equal(backgroundDisplayUrl('background://art.png', 6), 'background://art.png?display=v1')
+  assert.equal(
+    backgroundDisplayUrl('background://art.png', 12),
+    'background://art.png?display=v1&blur=8'
+  )
+  assert.equal(
+    backgroundDisplayUrl('background://art.png', 28),
+    'background://art.png?display=v1&blur=20'
+  )
+
+  const crisp = backgroundDisplaySize(3840, 2160, 0)
+  const mediumBlur = backgroundDisplaySize(3840, 2160, 12)
+  const heavyBlur = backgroundDisplaySize(3840, 2160, 24)
+  assert.deepEqual(crisp, { width: 3840, height: 2160 })
+  assert.ok(mediumBlur.width <= 1280 && mediumBlur.height <= 1280)
+  assert.ok(heavyBlur.width <= 800 && heavyBlur.height <= 800)
+
+  const root = await mkdtemp(join(tmpdir(), 'twilight-background-blur-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const wallpaper = join(root, 'wall.jpg')
+  await writeFile(wallpaper, '4k-jpeg')
+
+  const requestedSizes: Array<{ width: number; height: number }> = []
+  const cache = createBackgroundDisplayCache(() => {
+    const image = {
+      isEmpty: () => false,
+      getSize: () => ({ width: 3840, height: 2160 }),
+      resize: (size: { width: number; height: number }) => {
+        requestedSizes.push({ width: size.width, height: size.height })
+        return image
+      },
+      toJPEG: (q: number) => Buffer.from(`jpg-q${q}`),
+      toPNG: () => Buffer.from('png')
+    }
+    return image
+  })
+
+  // Crisp 4K needs no resize, whereas blur=12 and blur=24 produce separate compact derivatives.
+  const crispPath = await cache(wallpaper, 0)
+  const mediumPath = await cache(wallpaper, 12)
+  const heavyPath = await cache(wallpaper, 24)
+  assert.equal(crispPath, wallpaper)
+  assert.match(mediumPath, /-b8\.jpg$/)
+  assert.match(heavyPath, /-b20\.jpg$/)
+  assert.notEqual(mediumPath, heavyPath)
+  assert.equal(requestedSizes.length, 2)
+})

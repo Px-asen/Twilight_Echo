@@ -2616,6 +2616,7 @@ void TwilightAudioEngine::waitForClockTick(bool active) {
 void TwilightAudioEngine::diagnosticLoop() {
   DiagnosticJournal journal;
   EmptyOutputDetector detector;
+  HealthSampleGate healthGate;
   journal.write("engine.started", "{}");
   while (diagnosticRunning_.load(std::memory_order_relaxed)) {
     const auto start = std::chrono::steady_clock::now();
@@ -2623,6 +2624,18 @@ void TwilightAudioEngine::diagnosticLoop() {
     pipeline_->sampleDecodeHealth(health); // Only atomics and a try-lock; never transport/clock locks.
     const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count());
     const auto heartbeatMs = clockHeartbeatMs_.load(std::memory_order_relaxed);
+    const uint64_t clockAgeMs = heartbeatMs && nowMs >= heartbeatMs ? nowMs - heartbeatMs : nowMs;
+    const bool playing = health.liveRenderState == static_cast<int>(PipelineState::Playing);
+    std::ostringstream stateKey;
+    stateKey << (health.decodeHealthAvailable ? 1 : 0) << '|' << health.decodeUnavailableReason << '|'
+             << health.liveRenderState << '|' << health.liveRenderCallbackCount << '|'
+             << health.sourceConsumedFrames << '|' << health.outputProducedFrames << '|'
+             << health.zeroFilledFrames << '|' << health.emptyOutputCount << '|'
+             << health.inactiveOutputCount << '|' << health.eofOutputCount << '|'
+             << health.decodeStreamToken << '|' << health.preloadStreamToken << '|'
+             << health.decodeBufferedFrames << '|' << health.decodeProducedFrames << '|'
+             << health.decodeStage << '|' << (health.decodeRunning ? 1 : 0) << '|'
+             << (health.decodeEof ? 1 : 0) << '|' << (health.decodeStopRequested ? 1 : 0);
     std::ostringstream out;
     out << "{\"available\":" << (health.decodeHealthAvailable ? "true" : "false")
         << ",\"unavailableReason\":\"" << health.decodeUnavailableReason << "\""
@@ -2636,9 +2649,11 @@ void TwilightAudioEngine::diagnosticLoop() {
         << ",\"decodeRunning\":" << (health.decodeRunning ? "true" : "false")
         << ",\"eof\":" << (health.decodeEof ? "true" : "false") << ",\"stopRequested\":" << (health.decodeStopRequested ? "true" : "false")
         << ",\"clockHeartbeat\":" << clockHeartbeat_.load(std::memory_order_relaxed)
-        << ",\"clockAgeMs\":" << (heartbeatMs && nowMs >= heartbeatMs ? nowMs - heartbeatMs : nowMs) << '}';
-    journal.write("health.sample", out.str());
-    if (detector.sample(health.decodeHealthAvailable, health.liveRenderState == static_cast<int>(PipelineState::Playing),
+        << ",\"clockAgeMs\":" << clockAgeMs << '}';
+    if (healthGate.shouldWrite(playing || health.decodeRunning, clockAgeMs, stateKey.str())) {
+      journal.write("health.sample", out.str());
+    }
+    if (detector.sample(health.decodeHealthAvailable, playing,
                         health.decodeEof, health.decodeStopRequested, health.decodeStreamToken,
                         health.liveRenderCallbackCount, health.sourceConsumedFrames)) {
       journal.write("incident.empty-output", "{\"beforeSeconds\":120,\"afterSeconds\":30,\"health\":" + out.str() + "}", DiagLevel::Warning);

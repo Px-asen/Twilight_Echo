@@ -78,6 +78,7 @@ export function coreQueueTrackInput(
         duration: track.duration,
         source,
         ...(track.ncmSongId === undefined ? {} : { ncmSongId: track.ncmSongId }),
+        ...(track.mvId === undefined ? {} : { mvId: track.mvId }),
         ...(cover === undefined ? {} : { cover })
       }
     }

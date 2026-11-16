@@ -139,6 +139,7 @@ export interface AudioOutputCommit {
 
 export interface AudioEngineManagerDependencies {
   initialBridgeSelected?: boolean
+  deferNativeStartup?: boolean
   persistBridgeSelection?: (selected: boolean) => Promise<void>
   platform?: CorePlatformId
   persistAudioOutput?: (commit: AudioOutputCommit) => void

@@ -53,6 +53,7 @@ export interface DspOrchestratorHost {
   ): Promise<boolean>
   getNative(): NativeAudioBinding | null
   getAudioServiceBinding(): AudioEngineServiceNativeBinding | null
+  isNativeStartupDeferred?(): boolean
   getPlaybackInfo(): PlaybackInfo
   setPlaybackInfo(info: PlaybackInfo): void
   getDevice(): string
@@ -631,6 +632,21 @@ export class DspOrchestrator {
     }
     this.dspGraphApplyState = 'pending'
     this.dspGraphApplyError = ''
+    if (this.host.isNativeStartupDeferred?.()) {
+      const status: DspGraphStatus = {
+        ...this.createDspGraphStatusFallback(),
+        revision
+      }
+      this.observeNativeDspGraphStatus(status)
+      if (revision === this.dspGraphRevision) this.lastNativeError = ''
+      return {
+        ...status,
+        requestedRevision: revision,
+        appliedRevision: revision,
+        applyState: 'applied',
+        applyError: ''
+      }
+    }
     try {
       const native = this.native
       if (!native) throw new Error('未加载 twilight_audio_node.node')
@@ -933,6 +949,11 @@ export class DspOrchestrator {
   }
 
   async getDspGraphStatus(): Promise<DspGraphStatus> {
+    if (this.host.isNativeStartupDeferred?.()) {
+      return this.decorateDspGraphStatus(
+        this.lastNativeDspGraphStatus ?? this.createDspGraphStatusFallback()
+      )
+    }
     try {
       let status: DspGraphStatus
       if (this.audioServiceBinding) {

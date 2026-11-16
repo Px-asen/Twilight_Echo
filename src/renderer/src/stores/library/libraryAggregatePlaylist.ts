@@ -1,5 +1,9 @@
 import { computed, shallowRef, toRaw } from 'vue'
-import { LIBRARY_PAGE_SIZE, type LibraryQuery } from '../../../../shared/libraryDatabase.ts'
+import {
+  LIBRARY_CACHE_PAGES,
+  LIBRARY_PAGE_SIZE,
+  type LibraryQuery
+} from '../../../../shared/libraryDatabase.ts'
 import type { createCoreLibraryApi } from './coreLibraryApi.ts'
 import type { CoreLibraryPage as LibraryPage } from '../../../../shared/coreViews.ts'
 import { createLibraryTrackPages } from './libraryTrackPages.ts'
@@ -63,7 +67,7 @@ export function createLibraryAggregatePlaylist(api: ReturnType<typeof createCore
       throw error
     }
   }
-  const pages = createLibraryTrackWindow({ queryTracks }, 9),
+  const pages = createLibraryTrackWindow({ queryTracks }, LIBRARY_CACHE_PAGES - 1),
     sources = createLibraryTrackPages({ queryTracks }, 1),
     variants = createLibraryTrackPages({ queryTracks }, 1)
   const cards = createLibraryCollectionWindow({

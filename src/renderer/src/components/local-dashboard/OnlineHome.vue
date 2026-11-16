@@ -123,6 +123,7 @@ const primaryLabel = computed(() => {
               :cover="hero.cover"
               :cover-source="hero.coverSource"
               :identity="hero.id"
+              size="grid"
               alt=""
               loading="eager"
               ><template #placeholder><i class="pi pi-headphones"></i></template
@@ -187,9 +188,10 @@ const primaryLabel = computed(() => {
           >
             <span class="online-track-cover"
               ><CoverImg
-                :cover="track.cover"
-                :cover-source="track.coverSource"
+                :cover="track.coverSmall || track.cover"
+                :cover-source="track.coverSmallSource || track.coverSource"
                 :identity="track.id"
+                size="sm"
                 alt=""
                 ><template #placeholder
                   ><i class="pi pi-headphones" aria-hidden="true"></i></template></CoverImg
@@ -295,9 +297,10 @@ const primaryLabel = computed(() => {
                 <span class="online-track-number">{{ String(index + 1).padStart(2, '0') }}</span>
                 <span class="online-track-cover"
                   ><CoverImg
-                    :cover="track.cover"
-                    :cover-source="track.coverSource"
+                    :cover="track.coverSmall || track.cover"
+                    :cover-source="track.coverSmallSource || track.coverSource"
                     :identity="track.id"
+                    size="sm"
                     alt=""
                     ><template #placeholder
                       ><i class="pi pi-headphones" aria-hidden="true"></i></template></CoverImg
@@ -337,7 +340,7 @@ const primaryLabel = computed(() => {
                 @click="emit('play-playlist', playlist)"
               >
                 <span class="online-playlist-cover"
-                  ><CoverImg :cover="playlist.cover" :cover-source="playlist.coverSource" alt=""
+                  ><CoverImg :cover="playlist.cover" :cover-source="playlist.coverSource" size="grid" alt=""
                     ><template #placeholder
                       ><i class="pi pi-headphones" aria-hidden="true"></i></template></CoverImg
                   ><span class="online-playlist-play"

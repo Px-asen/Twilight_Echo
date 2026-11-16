@@ -15,6 +15,7 @@ export type CoreTrackView = Pick<
   | 'albumId'
   | 'source'
   | 'ncmSongId'
+  | 'mvId'
   | 'duration'
   | 'size'
   | 'format'

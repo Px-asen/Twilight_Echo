@@ -298,6 +298,7 @@ onBeforeUnmount(() => {
           v-if="presentation.cover"
           :cover="presentation.cover"
           :identity="presentation.cover"
+          size="grid"
           :alt="`${presentation.name} · 人物照片`"
           fallback=""
           loading="eager"

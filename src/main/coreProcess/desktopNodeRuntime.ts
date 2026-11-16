@@ -1,8 +1,11 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
+import type { CoreServiceKind } from '../../shared/coreProtocol.ts'
 import type { CoreSupervisorOptions } from './supervisor.ts'
 
-export type DesktopCoreHost = 'electron' | 'node'
+export type DesktopCoreHost = 'electron' | 'electron-node' | 'node'
+
+const DEFAULT_IN_PROCESS_WORKER_SERVICES: CoreServiceKind[] = ['database', 'scan']
 
 export function desktopCoreHost(
   argv: string[] = process.argv,
@@ -13,13 +16,33 @@ export function desktopCoreHost(
   )
   const selected =
     flag < 0
-      ? env.TWILIGHT_CORE_HOST || 'electron'
+      ? env.TWILIGHT_CORE_HOST || 'electron-node'
       : argv[flag] === '--core-host'
         ? argv[flag + 1]
         : argv[flag].slice('--core-host='.length)
-  if (selected !== 'electron' && selected !== 'node')
+  if (selected !== 'electron' && selected !== 'electron-node' && selected !== 'node')
     throw new Error(`Unsupported Core host: ${String(selected)}`)
   return selected
+}
+
+/**
+ * Selects which pure-JS services run as worker_threads inside musicCore on desktop.
+ * External `node` host keeps process-per-service supervision intact unless overridden.
+ */
+export function inProcessWorkerServicesEnabled(
+  hostMode: DesktopCoreHost,
+  argv: string[] = process.argv,
+  env: NodeJS.ProcessEnv = process.env
+): CoreServiceKind[] | undefined {
+  if (hostMode === 'node') return undefined
+  if (
+    argv.includes('--isolate-all-services') ||
+    env.TWILIGHT_ISOLATE_ALL_SERVICES === '1' ||
+    env.TWILIGHT_CORE_WORKER_THREADS === '0'
+  ) {
+    return undefined
+  }
+  return [...DEFAULT_IN_PROCESS_WORKER_SERVICES]
 }
 
 export const DESKTOP_NODE_ENTRIES = [
@@ -108,17 +131,33 @@ export function resolveDesktopNodeRuntime(options: {
   }
 }
 
+function createCleanChildEnvironment(
+  resourcesPath: string,
+  source: NodeJS.ProcessEnv,
+  runAsElectronNode: boolean
+): NodeJS.ProcessEnv {
+  const env = { ...source }
+  // Loading stays inside the packaged/staged dependency closure, independent of
+  // external Node hooks; toggle ELECTRON_RUN_AS_NODE explicitly per child mode.
+  delete env.NODE_OPTIONS
+  delete env.NODE_PATH
+  if (runAsElectronNode) env.ELECTRON_RUN_AS_NODE = '1'
+  else delete env.ELECTRON_RUN_AS_NODE
+  env.TWILIGHT_DESKTOP_NODE_HOST = '1'
+  env.TWILIGHT_DESKTOP_RESOURCES_PATH = resourcesPath
+  return env
+}
+
 export function desktopNodeEnvironment(
   runtime: DesktopNodeRuntime,
   source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-  const env = { ...source }
-  // Loading stays inside the staged dependency closure, independent of the
-  // user's Node installation, preload hooks or Electron's Node-mode switch.
-  delete env.NODE_OPTIONS
-  delete env.NODE_PATH
-  delete env.ELECTRON_RUN_AS_NODE
-  env.TWILIGHT_DESKTOP_NODE_HOST = '1'
-  env.TWILIGHT_DESKTOP_RESOURCES_PATH = runtime.resourcesPath
-  return env
+  return createCleanChildEnvironment(runtime.resourcesPath, source, false)
+}
+
+export function desktopElectronNodeEnvironment(
+  resourcesPath: string,
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return createCleanChildEnvironment(resourcesPath, source, true)
 }

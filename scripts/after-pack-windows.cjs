@@ -9,7 +9,12 @@ exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'win32') return
   for (const name of ['twilight-crash-helper.exe', 'twilight-crash-helper-x86.exe'])
     if (!existsSync(join(context.appOutDir, 'resources', 'audio-engine', name))) throw new Error(`Missing diagnostic helper: ${name}`)
-  verifyPackagedDesktopCore(join(context.appOutDir, 'resources'), context.packager.appInfo.version)
+  if (
+    existsSync(join(context.appOutDir, 'resources', 'core-node')) ||
+    process.env.TWILIGHT_BUNDLE_NODE_CORE === '1'
+  ) {
+    verifyPackagedDesktopCore(join(context.appOutDir, 'resources'), context.packager.appInfo.version)
+  }
 
   await prepareStemZipDecoder({
     root: context.packager.projectDir,

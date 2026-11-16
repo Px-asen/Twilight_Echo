@@ -102,6 +102,7 @@ test('preview search does not react to Core revisions while live searches refres
           }
         throw new Error(`Unexpected dependency: ${id}`)
       },
+      Error,
       AbortController,
       queueMicrotask
     }
@@ -299,4 +300,115 @@ test('database refreshes coalesce, retain the page, and reject responses older t
   assert.deepEqual(calls.at(-1), { query: 'new', offset: 0 })
   assert.equal(calls.length, 4, 'a scheduled refresh cannot restart after a newer manual search')
   search.clear()
+})
+
+test('in-flight unified search coalesces refreshes without aborting or blanking visible items', async () => {
+  const signals: Array<AbortSignal | undefined> = []
+  const resolvers: Array<(page: UnifiedSearchResult) => void> = []
+  const updatedTrack: Track = { ...localTrack, id: 'ncm:2', title: 'Moon River (Online)', source: 'ncm' }
+  const search = createUnifiedMusicSearch({
+    searchAllSongs: ({ signal }) => {
+      signals.push(signal)
+      return new Promise<UnifiedSearchResult>((resolve) => {
+        resolvers.push(resolve)
+      })
+    }
+  })
+
+  const initial = search.search('moon')
+  assert.equal(signals.length, 1)
+  for (let i = 0; i < 5; i++) search.refresh()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(signals.length, 1, 'refresh during in-flight search must wait instead of restarting')
+  assert.equal(signals[0]?.aborted, false, 'in-flight multi-provider search must not be aborted')
+
+  resolvers[0](unifiedResult(localTrack))
+  await initial
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(signals.length, 2, 'queued refreshes coalesce into one follow-up read')
+  assert.deepEqual(
+    search.items.value.map((item) => item.track.id),
+    ['local:1'],
+    'background refresh retains existing items instead of flashing an empty list'
+  )
+  assert.equal(search.logicalItems.value.length, 1)
+  assert.equal(search.total.value, 1)
+
+  resolvers[1](unifiedResult(updatedTrack))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(
+    search.items.value.map((item) => item.track.id),
+    ['ncm:2']
+  )
+  assert.equal(search.loading.value, false)
+  search.clear()
+})
+
+test('automated Core revision updates skip failed searches while explicit refresh still retries', async () => {
+  const state = ref({ epoch: 'core', libraryRevision: 1, versionsRevision: 1, pluginsRevision: 1 })
+  let reads = 0
+  let shouldFail = true
+  const cleanups: Array<() => void> = []
+  const exports: {
+    useUnifiedMusicSearch?: typeof import('./useUnifiedMusicSearch.ts').useUnifiedMusicSearch
+  } = {}
+  runInNewContext(
+    ts.transpileModule(
+      readFileSync(new URL('./useUnifiedMusicSearch.ts', import.meta.url), 'utf8'),
+      {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+      }
+    ).outputText,
+    {
+      exports,
+      require: (id: string) => {
+        if (id === 'vue')
+          return {
+            ref,
+            shallowRef,
+            watch,
+            onBeforeUnmount: (cleanup: () => void) => cleanups.push(cleanup)
+          }
+        if (id === '../stores/coreConnection.ts')
+          return {
+            useCoreConnection: () => ({
+              state,
+              query: async () => {
+                reads++
+                if (shouldFail) throw new Error('network error')
+                return unifiedResult(localTrack)
+              }
+            })
+          }
+        throw new Error(`Unexpected dependency: ${id}`)
+      },
+      Error,
+      AbortController,
+      queueMicrotask
+    }
+  )
+
+  const live = exports.useUnifiedMusicSearch!()
+  try {
+    await live.search('moon')
+    assert.equal(reads, 1)
+    assert.equal(live.error.value, 'network error')
+
+    state.value.pluginsRevision++
+    state.value.libraryRevision++
+    await nextTick()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(reads, 1, 'Core revision bumps must not auto-retry an errored search')
+
+    shouldFail = false
+    live.refresh()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(reads, 2, 'explicit user refresh still recovers from error')
+    assert.equal(live.error.value, '')
+    assert.equal(live.items.value[0]?.track.id, localTrack.id)
+  } finally {
+    for (const cleanup of cleanups) cleanup()
+  }
 })

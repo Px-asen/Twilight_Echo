@@ -90,3 +90,20 @@ export function createTranslator(
 }
 
 export type Translator = ReturnType<typeof createTranslator>
+
+/**
+ * Main/Node loads all locale catalogs synchronously, so every catalog is ready
+ * on first access. These helpers match `translateRenderer.ts` so callers and
+ * `useLocale.ts` typecheck identically across Node and browser builds.
+ */
+export function isLocaleCatalogLoaded(_locale: AppLocale): boolean {
+  return true
+}
+
+export function ensureLocaleCatalog(locale: AppLocale): Promise<MessageCatalog> {
+  return Promise.resolve(MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE])
+}
+
+export function subscribeLocaleCatalog(_listener: () => void): () => void {
+  return () => {}
+}

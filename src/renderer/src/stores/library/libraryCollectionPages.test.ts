@@ -37,7 +37,7 @@ function page(query: LibraryQuery = {}, revision = 1, total = 300_000): LibraryC
   }
 }
 
-test('summary navigation caches at most ten 200-item pages and retains authoritative total and global letters', async (t) => {
+test('summary navigation caches at most four 200-item pages and retains authoritative total and global letters', async (t) => {
   const calls: LibraryQuery[] = []
   const pages = createLibraryCollectionPages({
     queryCollections: async (_kind, query) => {
@@ -56,8 +56,8 @@ test('summary navigation caches at most ten 200-item pages and retains authorita
     assert.equal(pages.state.value.page?.letterOffsets.Z, 299_900)
     assert.ok(pages.state.value.page?.items.every((item) => !('tracks' in item)))
   }
-  assert.equal(pages.cacheState.cachedPages, 10)
-  assert.equal(pages.cacheState.cachedItems, 2000)
+  assert.equal(pages.cacheState.cachedPages, 4)
+  assert.equal(pages.cacheState.cachedItems, 800)
   pages.goToPage(14)
   await settled(pages)
   assert.equal(calls.length, 15)

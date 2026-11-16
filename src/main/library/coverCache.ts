@@ -24,6 +24,8 @@ export const prepareBackgroundForDisplay = createBackgroundDisplayCache((bytes) 
 // for background use, eliminating expensive CSS filter: blur() at runtime.
 export const COVER_THUMBNAIL_WIDTH = 500
 export const COVER_JPEG_QUALITY = 85
+export const COVER_GRID_THUMBNAIL_WIDTH = 256
+export const COVER_GRID_JPEG_QUALITY = 82
 export const COVER_SMALL_THUMBNAIL_WIDTH = 128
 export const COVER_SMALL_JPEG_QUALITY = 80
 export const COVER_BLUR_WIDTH = 32
@@ -125,32 +127,34 @@ export async function readCoverCacheFileBytes(
 
 export async function readCoverCacheThumbnailBytes(
   fileName: string,
-  size: 'sm' | 'md' = 'md'
+  size: 'sm' | 'grid' | 'md' = 'md'
 ): Promise<ProtocolAssetBytes | null> {
-  if (size !== 'sm') return readCoverCacheFileBytes(fileName)
+  if (size !== 'sm' && size !== 'grid') return readCoverCacheFileBytes(fileName)
   const ext = extname(fileName).toLowerCase()
   if (ext === '.gif') return readCoverCacheFileBytes(fileName)
   const stem = ext ? fileName.slice(0, -ext.length) : fileName
-  const smallName = `${stem}_sm.jpg`
-  const cachedSmall = await readCoverCacheFileBytes(smallName)
-  if (cachedSmall) return cachedSmall
+  const derivedName = size === 'sm' ? `${stem}_sm.jpg` : `${stem}_grid.jpg`
+  const cachedDerived = await readCoverCacheFileBytes(derivedName)
+  if (cachedDerived) return cachedDerived
   const original = await readCoverCacheFileBytes(fileName)
   if (!original) return null
   if (coverMaintenance) return original
+  const targetWidth = size === 'sm' ? COVER_SMALL_THUMBNAIL_WIDTH : COVER_GRID_THUMBNAIL_WIDTH
+  const targetQuality = size === 'sm' ? COVER_SMALL_JPEG_QUALITY : COVER_GRID_JPEG_QUALITY
   const resized = resizeCoverImageBytes(
     original,
     getCoverCacheContentType(fileName),
-    COVER_SMALL_THUMBNAIL_WIDTH,
-    COVER_SMALL_JPEG_QUALITY
+    targetWidth,
+    targetQuality
   )
   if (!resized) return original
   try {
-    const targetPath = join(ensureCoverCacheDir(), smallName)
+    const targetPath = join(ensureCoverCacheDir(), derivedName)
     if (!existsSync(targetPath)) writeFileSync(targetPath, resized.bytes)
-    const cached = await readCoverCacheFileBytes(smallName)
+    const cached = await readCoverCacheFileBytes(derivedName)
     if (cached) return cached
   } catch {
-    // Serve resized bytes even if persisting the small thumbnail fails.
+    // Serve resized bytes even if persisting the derived thumbnail fails.
   }
   const copy = new Uint8Array(resized.bytes.byteLength)
   copy.set(resized.bytes)
@@ -200,6 +204,129 @@ export function cacheCoverFromBuffer(data: Buffer): string | null {
 }
 
 /**
+ * Fast header-only dimension reader for PNG, JPEG, and WebP so already-small
+ * images can skip nativeImage.createFromBuffer (and its C++ SkBitmap decode).
+ * Returns null if the format is unrecognized, truncated, or lacks header dims.
+ */
+export function readEncodedImageDimensions(
+  bytes: Uint8Array
+): { width: number; height: number } | null {
+  const len = bytes.byteLength
+  if (len < 12) return null
+  const view = new DataView(bytes.buffer, bytes.byteOffset, len)
+
+  // PNG: 8-byte signature + IHDR chunk (width at 16, height at 20).
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    if (len < 24) return null
+    if (
+      bytes[12] !== 0x49 ||
+      bytes[13] !== 0x48 ||
+      bytes[14] !== 0x44 ||
+      bytes[15] !== 0x52 ||
+      view.getUint32(8) < 8
+    ) {
+      return null
+    }
+    const width = view.getUint32(16)
+    const height = view.getUint32(20)
+    return width > 0 && height > 0 ? { width, height } : null
+  }
+
+  // JPEG: SOI (0xFF 0xD8), walk markers until SOF0..SOF3, SOF5..SOF7, SOF9..SOF11, SOF13..SOF15.
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2
+    while (offset + 1 < len) {
+      if (bytes[offset] !== 0xff) return null
+      while (offset + 1 < len && bytes[offset + 1] === 0xff) {
+        offset += 1
+      }
+      if (offset + 1 >= len) return null
+      const marker = bytes[offset + 1]
+      if (marker === 0xd9 || marker === 0xda || marker === 0x00) {
+        return null
+      }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        offset += 2
+        continue
+      }
+      if (offset + 4 > len) return null
+      const segmentLength = view.getUint16(offset + 2)
+      if (segmentLength < 2 || offset + 2 + segmentLength > len) return null
+      const isSof =
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf)
+      if (isSof) {
+        if (segmentLength < 7 || offset + 9 > len) return null
+        const height = view.getUint16(offset + 5)
+        const width = view.getUint16(offset + 7)
+        return width > 0 && height > 0 ? { width, height } : null
+      }
+      offset += 2 + segmentLength
+    }
+    return null
+  }
+
+  // WebP: RIFF....WEBP + VP8 / VP8L / VP8X.
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    if (len < 20) return null
+    const c0 = bytes[12]
+    const c1 = bytes[13]
+    const c2 = bytes[14]
+    const c3 = bytes[15]
+    const chunkSize = view.getUint32(16, true)
+    if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x20) {
+      if (len < 30 || chunkSize < 10) return null
+      if (
+        (bytes[20] & 0x01) !== 0 ||
+        bytes[23] !== 0x9d ||
+        bytes[24] !== 0x01 ||
+        bytes[25] !== 0x2a
+      ) {
+        return null
+      }
+      const width = view.getUint16(26, true) & 0x3fff
+      const height = view.getUint16(28, true) & 0x3fff
+      return width > 0 && height > 0 ? { width, height } : null
+    }
+    if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x4c) {
+      if (len < 25 || chunkSize < 5 || bytes[20] !== 0x2f) return null
+      const bits = view.getUint32(21, true)
+      const width = (bits & 0x3fff) + 1
+      const height = ((bits >>> 14) & 0x3fff) + 1
+      return width > 0 && height > 0 ? { width, height } : null
+    }
+    if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x58) {
+      if (len < 30 || chunkSize < 10) return null
+      const width = (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)) + 1
+      const height = (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)) + 1
+      return width > 0 && height > 0 ? { width, height } : null
+    }
+  }
+
+  return null
+}
+
+/**
  * Downscale encoded image bytes to the cover thumbnail width. Returns null when
  * the image already fits, cannot be decoded (GIF/SVG/WebP stay as-is), or is
  * not a raster type nativeImage handles; callers then keep the original bytes.
@@ -211,6 +338,8 @@ export function resizeCoverImageBytes(
   quality = COVER_JPEG_QUALITY
 ): { bytes: Buffer; mime: string } | null {
   if (!/^image\/(?:jpe?g|png|webp)$/i.test(mime.split(';', 1)[0].trim())) return null
+  const dimensions = readEncodedImageDimensions(bytes)
+  if (dimensions && dimensions.width > 0 && dimensions.width <= maxWidth) return null
   try {
     const img = nativeImage.createFromBuffer(
       Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)

@@ -3086,6 +3086,43 @@ test('unclassified startup failures still reject session initialization', async 
   await cold.shutdown()
 })
 
+test('client-leased setAudioSuppressed silences native engine output while preserving userVolume, mute controls, and multi-client release', async (t) => {
+  const f = await fixture(t)
+  await f.session.fromQuery({ ids: ['a'], sort: 'playlist' }, 'a', true)
+  await f.session.setVolume(0.75)
+  assert.equal(f.engine.info.volume, 0.75)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.75)
+
+  // Suppressing from two clients keeps native output at 0 while reporting logical userVolume 0.75
+  await f.session.setAudioSuppressed('client-1', true)
+  await f.session.setAudioSuppressed('client-2', true)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.75)
+  assert.equal(f.session.snapshot().mute.muted, false)
+
+  // Adjusting volume and mute while suppressed updates logical userVolume without unmuting native engine
+  await f.session.setVolume(0.55)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+
+  await f.session.configureMute(true)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.muted, true)
+  assert.equal(f.session.snapshot().mute.userVolume, 0)
+
+  await f.session.configureMute(false)
+  assert.equal(f.engine.info.volume, 0)
+  assert.equal(f.session.snapshot().mute.muted, false)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+
+  // Releasing one client keeps suppression active; releasing the last client restores 0.55 to native engine
+  await f.session.setAudioSuppressed('client-1', false)
+  assert.equal(f.engine.info.volume, 0)
+  await f.session.setAudioSuppressed('client-2', false)
+  assert.equal(f.engine.info.volume, 0.55)
+  assert.equal(f.session.snapshot().mute.userVolume, 0.55)
+})
+
 async function fixture(
   t: test.TestContext,
   resolver: SourceResolver = {

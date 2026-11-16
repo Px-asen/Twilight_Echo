@@ -704,10 +704,11 @@ function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, 
   const fallbackStylesheet = inheritedBaseline.join('')
   if (!appBackground) return fallbackStylesheet
   for (const page of ['app', ...APP_BACKGROUND_PAGES] as const) {
-    const { background, colorOverride, imageOverride, customBackground } =
+    const { background, effect, colorOverride, imageOverride, customBackground } =
       resolveBackgroundAppearance(appBackground, page, colorMode)
     if (colorOverride) variables[`--te-${page}-bg`] = background[colorMode]
-    if (imageOverride) variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background)
+    if (imageOverride)
+      variables[`--te-${page}-bg-image`] = toBackgroundImageValue(background, effect.blur)
     if (page === 'streaming' && customBackground)
       variables['--te-streaming-surface'] = 'var(--te-streaming-bg)'
     for (const [name, value] of Object.entries(backgroundCssVariables(background, colorMode))) {
@@ -747,9 +748,9 @@ function appearanceDataAttributes(tone: ThemeTone): Record<string, string> {
   return result
 }
 
-function toBackgroundImageValue(background: AppBackgroundColorPair): string {
+function toBackgroundImageValue(background: AppBackgroundColorPair, blurPx = 0): string {
   if (background.kind !== 'image' || !background.image) return 'none'
-  return `url("${escapeCssUrl(backgroundDisplayUrl(background.image))}")`
+  return `url("${escapeCssUrl(backgroundDisplayUrl(background.image, blurPx))}")`
 }
 
 function resolveRuntimeTone(

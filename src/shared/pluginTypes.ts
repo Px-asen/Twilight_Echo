@@ -225,6 +225,7 @@ export interface TwilightPluginUninstallOptions {
 export type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
+  | 'mv'
   | 'lyrics'
   | 'cover'
   | 'playlist'

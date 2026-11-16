@@ -411,6 +411,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
             v-if="person.picUrl"
             :cover="person.picUrl"
             :cover-source="person.picUrlSource"
+            size="grid"
             class="stage-person-avatar"
             alt=""
           />
@@ -442,6 +443,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
             v-if="item.coverSmall || item.cover"
             :cover="item.coverSmall || item.cover"
             :cover-source="item.coverSmallSource || item.coverSource"
+            size="grid"
             class="stage-collection-cover"
             alt=""
           />
@@ -552,6 +554,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
               <CoverImg
                 :cover="track.cover"
                 :cover-source="track.coverSource"
+                size="sm"
                 class="row-cover"
                 alt=""
               />

@@ -23,6 +23,7 @@ import { validCoreAudioDiagnosticsPayload } from './coreAudioDiagnostics.ts'
 import { validCoreLibraryReadPayload } from './coreLibrary.ts'
 import { validCorePlaylistProjectionPayload, validCorePlaylistSubmitPayload } from './corePlaylists.ts'
 import { isAuthorizedProviderQueueCover } from './coreQueueSubmission.ts'
+import { MEDIA_PROVIDER_MV_QUALITIES, MEDIA_PROVIDER_MV_SOURCES } from './providerMv.ts'
 import { trackCueRangePropertyIsValid } from './cue.ts'
 import { validCoreSettingsBackupPayload } from './coreSettingsBackup.ts'
 import { validCoreThemePayload } from './coreThemes.ts'
@@ -106,12 +107,23 @@ function queueInput(v: unknown): boolean {
       return (
         keys(v, ['kind', 'track']) &&
         record(v.track) &&
-        keys(v.track, ['id', 'source', 'title', 'artist', 'album', 'duration', 'ncmSongId', 'cover']) &&
+        keys(v.track, [
+          'id',
+          'source',
+          'title',
+          'artist',
+          'album',
+          'duration',
+          'ncmSongId',
+          'mvId',
+          'cover'
+        ]) &&
         text(v.track.id) &&
         text(v.track.source, 128) &&
         !['local', 'network', 'radio', 'podcast'].includes(v.track.source) &&
         display(v.track) &&
         optional(v.track.ncmSongId, (id) => uint(id) && id > 0) &&
+        optional(v.track.mvId, (mvId) => text(mvId, 128)) &&
         optional(v.track.cover, (cover) => cover === null || isAuthorizedProviderQueueCover(cover))
       )
     case 'network':
@@ -574,6 +586,15 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
     case 'player.lyrics':
     case 'playback.diagnostics':
       return keys(p, [])
+    case 'player.mv':
+      return (
+        keys(p, ['trackId', 'occurrenceId', 'quality', 'source', 'force']) &&
+        text(p.trackId) &&
+        (p.occurrenceId === null || text(p.occurrenceId, MAX_QUEUE_OCCURRENCE_ID_LENGTH)) &&
+        optional(p.quality, (q) => oneOf(q, MEDIA_PROVIDER_MV_QUALITIES)) &&
+        optional(p.source, (s) => oneOf(s, MEDIA_PROVIDER_MV_SOURCES)) &&
+        optional(p.force, (f) => typeof f === 'boolean')
+      )
     case 'playback.favorite':
       return (
         keys(p, ['trackId', 'occurrenceId']) &&
@@ -1850,6 +1871,8 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       return keys(p, ['volume']) && positive(p.volume) && p.volume <= 1
     case 'playback.mute':
       return keys(p, ['muted']) && optional(p.muted, (value) => typeof value === 'boolean')
+    case 'playback.suppressAudio':
+      return keys(p, ['suppressed']) && typeof p.suppressed === 'boolean'
     case 'playback.abLoop':
       return (
         keys(p, ['revision', 'occurrenceId', 'action', 'position']) &&

@@ -174,6 +174,157 @@ html:not([data-te-shell-layout='custom']) .app-shell.is-immersive .app-shell-tit
   border-radius: 0;
 }
 
+/* Pure MV cinema mode hides window title bar, visualizer controls/stage, and
+   playback progress chrome until the pointer moves downward to touch the bottom edge. */
+html[data-te-shell-layout='custom'][data-te-mv-cinema-chrome]
+  .app-shell.is-immersive
+  .app-shell-content {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+}
+
+html[data-te-mv-cinema-chrome]
+  .app-shell.is-immersive
+  :is(
+    .app-shell-title .title-bar,
+    .playing-music .visualizer-toggle-button,
+    .playing-music .playback-time
+  ) {
+  transition:
+    opacity 220ms var(--te-ease-out-strong),
+    transform 220ms var(--te-ease-out-strong),
+    visibility 0s;
+}
+
+html[data-te-mv-cinema-chrome] .app-shell.is-immersive .player-bar-shell .player-bar {
+  transition:
+    transform 240ms var(--te-ease-out-strong),
+    opacity 220ms var(--te-ease-out-strong),
+    visibility 0s;
+}
+
+html[data-te-mv-cinema-chrome='hidden']
+  .app-shell.is-immersive:not(:has(~ .settings-overlay-root--active))
+  .app-shell-title {
+  pointer-events: none !important;
+}
+
+html[data-te-mv-cinema-chrome='hidden']
+  .app-shell.is-immersive:not(:has(~ .settings-overlay-root--active))
+  .app-shell-title
+  .title-bar {
+  opacity: 0 !important;
+  transform: translateY(-100%) !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  -webkit-app-region: no-drag !important;
+  transition:
+    opacity 220ms var(--te-ease-out-strong),
+    transform 220ms var(--te-ease-out-strong),
+    visibility 0s 220ms;
+}
+
+html[data-te-mv-cinema-chrome='hidden']
+  .app-shell.is-immersive
+  .playing-music
+  :is(.visualizer-toggle-button, .playback-time) {
+  opacity: 0 !important;
+  transform: translateY(-12px) !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition:
+    opacity 220ms var(--te-ease-out-strong),
+    transform 220ms var(--te-ease-out-strong),
+    visibility 0s 220ms;
+}
+
+html[data-te-mv-cinema-chrome='hidden'] .app-shell.is-immersive .app-shell-player,
+html[data-te-mv-cinema-chrome='hidden'] .app-shell.is-immersive .player-bar-shell {
+  pointer-events: none !important;
+}
+
+html[data-te-mv-cinema-chrome='hidden']
+  .app-shell.is-immersive
+  .player-bar-shell
+  .player-bar.player-bar.player-bar {
+  transform: translateY(calc(100% + 24px)) !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition:
+    transform 240ms var(--te-ease-out-strong),
+    opacity 220ms var(--te-ease-out-strong),
+    visibility 0s 240ms;
+}
+
+html[data-te-mv-cinema-chrome='hidden']
+  .app-shell.is-immersive
+  .player-bar-shell
+  .player-bar
+  :is(.compact-visualizer, .compact-progress-rail, .mini-progress-rail) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+html[data-te-mv-cinema-chrome='revealed']
+  .app-shell.is-immersive
+  .player-bar-shell:not([data-te-playbar-visibility='hidden'])
+  .player-bar.player-bar.player-bar {
+  transform: translateY(0) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+html[data-te-mv-cinema-chrome='revealed']
+  .app-shell.is-immersive
+  .player-bar-shell:not([data-te-playbar-visibility='hidden'])
+  .player-bar.player-bar-compact.player-bar-compact-visualizer {
+  pointer-events: none !important;
+}
+
+html[data-te-mv-cinema-chrome='revealed']
+  .app-shell.is-immersive
+  .player-bar-shell:not([data-te-playbar-visibility='hidden'])
+  .player-bar.player-bar-compact.player-bar-compact-visualizer
+  > :not(.compact-visualizer) {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+html[data-te-mv-cinema-chrome='revealed']
+  .app-shell.is-immersive
+  .player-bar-shell:not([data-te-playbar-visibility='hidden'])
+  .player-bar
+  :is(.compact-progress-rail, .mini-progress-rail) {
+  pointer-events: auto !important;
+}
+
+html[data-te-motion='reduced'][data-te-mv-cinema-chrome]
+  .app-shell.is-immersive
+  :is(
+    .app-shell-title .title-bar,
+    .playing-music .visualizer-toggle-button,
+    .playing-music .playback-time,
+    .player-bar-shell .player-bar
+  ) {
+  transition-duration: 120ms !important;
+}
+
+html[data-te-motion='off'][data-te-mv-cinema-chrome]
+  .app-shell.is-immersive
+  :is(
+    .app-shell-title .title-bar,
+    .playing-music .visualizer-toggle-button,
+    .playing-music .playback-time,
+    .player-bar-shell .player-bar
+  ) {
+  transition: none !important;
+}
+
 /* Active lyrics are text-led, not cards. Keep this invariant after every
    built-in theme layout so presets cannot restore a glass capsule. */
 html body .playing-music button.lyric-row.active:not(.lyric-row--custom-background) {

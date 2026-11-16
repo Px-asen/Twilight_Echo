@@ -61,6 +61,18 @@ export interface PluginRpcIdempotency {
 export interface PluginRpcRequestOptions<TMetadata> {
   requestId: string
   pluginId: string
+  /**
+   * Optional isolation key for circuit-breaker tracking. Defaults to `pluginId`
+   * so host-wide callers share one circuit while multi-method providers can
+   * isolate e.g. background search failures from playback RPCs.
+   */
+  circuitKey?: string
+  /**
+   * Scheduling priority within a plugin's RPC queue. `'low'` background calls
+   * also leave foreground concurrency headroom when `maxConcurrencyPerPlugin`
+   * allows it, preventing metadata bursts from starving playback.
+   */
+  priority?: PluginRpcPriority
   kind: PluginRpcKind
   timeoutMs: number
   metadata: TMetadata
@@ -73,7 +85,9 @@ export interface PluginRpcRequestOptions<TMetadata> {
   priority?: PluginRpcPriority
 }
 
-export type PluginRpcResult = { ok: true; value: unknown } | { ok: false; error: string }
+export type PluginRpcResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: string; tripCircuit?: boolean }
 
 export type PluginRpcCompletion<TMetadata> =
   | { status: 'settled'; metadata: TMetadata; result: PluginRpcResult }
@@ -103,13 +117,15 @@ interface PluginCircuitState {
 interface PluginRpcState {
   active: Map<string, PendingPluginRpc<unknown>>
   queue: PendingPluginRpc<unknown>[]
-  circuit: PluginCircuitState
+  circuits: Map<string, PluginCircuitState>
   cancelling: boolean
 }
 
 interface PendingPluginRpc<TMetadata> {
   requestId: string
   pluginId: string
+  circuitKey: string
+  priority: PluginRpcPriority
   kind: PluginRpcKind
   priority: PluginRpcPriority
   timeoutMs: number
@@ -239,20 +255,28 @@ export class PluginRpcCoordinator {
     const idempotency = options.idempotency ? this.prepareIdempotency<T>(options.idempotency) : null
     if (idempotency?.existing) return idempotency.existing
 
-    const state = this.stateFor(options.pluginId)
+    const circuitKey = options.circuitKey?.trim() || options.pluginId
     const priority: PluginRpcPriority = options.priority ?? 'normal'
-    const circuitError = this.reserveCircuitProbe(state, options.pluginId, options.requestId)
+    const state = this.stateFor(options.pluginId)
+    const circuitError = this.reserveCircuitProbe(
+      state,
+      options.pluginId,
+      circuitKey,
+      options.requestId
+    )
     if (circuitError) return Promise.reject(circuitError)
-    if (
-      !this.canDispatch(state, priority) &&
-      state.queue.length >= this.maxQueuePerPlugin
-    ) {
-      this.clearCircuitProbe(state, options.requestId)
-      return Promise.reject(
-        new Error(
-          `Plugin ${options.pluginId} RPC queue is full (${this.maxQueuePerPlugin} waiting requests).`
+    if (!this.canDispatch(state, priority) && state.queue.length >= this.maxQueuePerPlugin) {
+      if (priority !== 'low' && this.preemptLowPriorityQueuedRequest(state, options.pluginId)) {
+        // A low-priority background RPC made room for foreground work.
+      } else {
+        this.clearCircuitProbe(state, circuitKey, options.requestId)
+        this.cleanupState(options.pluginId, state)
+        return Promise.reject(
+          new Error(
+            `Plugin ${options.pluginId} RPC queue is full (${this.maxQueuePerPlugin} waiting requests).`
+          )
         )
-      )
+      }
     }
 
     let resolve!: (value: unknown) => void
@@ -261,11 +285,13 @@ export class PluginRpcCoordinator {
       resolve = resolveRequest as (value: unknown) => void
       reject = rejectRequest
     })
+    const circuit = state.circuits.get(circuitKey)
     const pending: PendingPluginRpc<TMetadata> = {
       requestId: options.requestId,
       pluginId: options.pluginId,
-      kind: options.kind,
+      circuitKey,
       priority,
+      kind: options.kind,
       timeoutMs: options.timeoutMs,
       metadata: options.metadata,
       dispatch: options.dispatch,
@@ -278,7 +304,7 @@ export class PluginRpcCoordinator {
       timer: null,
       dispatched: false,
       settled: false,
-      circuitProbe: state.circuit.probeRequestId === options.requestId
+      circuitProbe: circuit?.probeRequestId === options.requestId
     }
     this.pendingById.set(pending.requestId, pending as PendingPluginRpc<unknown>)
     if (idempotency?.record) {
@@ -322,7 +348,11 @@ export class PluginRpcCoordinator {
     if (result.ok) {
       this.settle(state, pending, { kind: 'success', value: result.value })
     } else {
-      this.settle(state, pending, { kind: 'remote-error', error: new Error(result.error) })
+      this.settle(state, pending, {
+        kind: 'remote-error',
+        error: new Error(result.error),
+        tripCircuit: result.tripCircuit !== false
+      })
     }
     return { status: 'settled', metadata: pending.metadata as TMetadata, result }
   }
@@ -433,12 +463,12 @@ export class PluginRpcCoordinator {
     outcome:
       | { kind: 'success'; value: unknown }
       | {
-          kind:
-            | 'remote-error'
-            | 'timeout-active'
-            | 'timeout-queued'
-            | 'cancelled-active'
-            | 'cancelled-queued'
+          kind: 'remote-error'
+          error: Error
+          tripCircuit?: boolean
+        }
+      | {
+          kind: 'timeout-active' | 'timeout-queued' | 'cancelled-active' | 'cancelled-queued'
           error: Error
         }
   ): void {
@@ -456,7 +486,7 @@ export class PluginRpcCoordinator {
       const index = state.queue.indexOf(pending)
       if (index >= 0) state.queue.splice(index, 1)
     }
-    this.clearCircuitProbe(state, pending.requestId)
+    this.clearCircuitProbe(state, pending.circuitKey, pending.requestId)
 
     const preserveSucceededIdempotency = outcome.kind === 'success'
     const preserveUnknownIdempotency =
@@ -476,8 +506,14 @@ export class PluginRpcCoordinator {
       this.recordSuccess(state, pending)
       pending.resolve(outcome.value)
     } else {
-      if (outcome.kind === 'remote-error' || outcome.kind === 'timeout-active') {
+      if (outcome.kind === 'timeout-active') {
         this.recordFailure(state, pending)
+      } else if (outcome.kind === 'remote-error') {
+        if (outcome.tripCircuit !== false) {
+          this.recordFailure(state, pending)
+        } else {
+          this.recordSuccess(state, pending)
+        }
       }
       pending.reject(outcome.error)
     }
@@ -490,7 +526,16 @@ export class PluginRpcCoordinator {
       priority === 'high'
         ? this.maxConcurrencyPerPlugin + this.highPriorityHeadroom
         : this.maxConcurrencyPerPlugin
-    return state.active.size < limit
+    if (state.active.size >= limit) return false
+    if (priority === 'low' && this.maxConcurrencyPerPlugin >= 2) {
+      const lowLimit = this.maxConcurrencyPerPlugin >= 3 ? this.maxConcurrencyPerPlugin - 2 : 1
+      let activeLow = 0
+      for (const active of state.active.values()) {
+        if (active.priority === 'low') activeLow += 1
+      }
+      if (activeLow >= lowLimit) return false
+    }
+    return true
   }
 
   private enqueue(state: PluginRpcState, pending: PendingPluginRpc<unknown>): void {
@@ -508,48 +553,83 @@ export class PluginRpcCoordinator {
 
   private drain(pluginId: string, state: PluginRpcState): void {
     if (state.cancelling) return
-    while (state.queue.length > 0) {
-      const head = state.queue[0]
-      if (!head || head.settled) {
-        state.queue.shift()
+    let index = 0
+    const maxTotal = this.maxConcurrencyPerPlugin + this.highPriorityHeadroom
+    while (state.active.size < maxTotal && index < state.queue.length) {
+      const pending = state.queue[index]
+      if (!pending || pending.settled) {
+        state.queue.splice(index, 1)
         continue
       }
-      if (!this.canDispatch(state, head.priority)) break
-      const pending = state.queue.shift()!
       if (this.circuitBlocksQueuedRequest(state, pending)) {
+        const circuit = state.circuits.get(pending.circuitKey)
         this.settle(state, pending, {
           kind: 'cancelled-queued',
-          error: this.circuitError(pluginId, state.circuit.openUntil ?? this.now())
+          error: this.circuitError(pluginId, circuit?.openUntil ?? this.now())
         })
+        return
+      }
+      if (!this.canDispatch(state, pending.priority)) {
+        index += 1
         continue
       }
+      state.queue.splice(index, 1)
       this.start(state, pending)
     }
   }
 
+  private preemptLowPriorityQueuedRequest(state: PluginRpcState, pluginId: string): boolean {
+    for (let index = state.queue.length - 1; index >= 0; index -= 1) {
+      const candidate = state.queue[index]
+      if (!candidate || candidate.settled || candidate.priority !== 'low') continue
+      this.settle(state, candidate, {
+        kind: 'cancelled-queued',
+        error: new Error(`Plugin ${pluginId} background RPC was preempted by foreground work.`)
+      })
+      return true
+    }
+    return false
+  }
+
+  private circuitFor(state: PluginRpcState, circuitKey: string): PluginCircuitState {
+    const existing = state.circuits.get(circuitKey)
+    if (existing) return existing
+    const created: PluginCircuitState = {
+      consecutiveFailures: 0,
+      openUntil: null,
+      probeRequestId: null
+    }
+    state.circuits.set(circuitKey, created)
+    return created
+  }
+
   private recordSuccess(state: PluginRpcState, pending: PendingPluginRpc<unknown>): void {
+    const circuit = state.circuits.get(pending.circuitKey)
+    if (!circuit) return
     if (pending.circuitProbe) {
-      state.circuit.consecutiveFailures = 0
-      state.circuit.openUntil = null
+      circuit.consecutiveFailures = 0
+      circuit.openUntil = null
       return
     }
-    if (state.circuit.openUntil === null) state.circuit.consecutiveFailures = 0
+    if (circuit.openUntil === null) circuit.consecutiveFailures = 0
   }
 
   private recordFailure(state: PluginRpcState, pending: PendingPluginRpc<unknown>): void {
-    state.circuit.consecutiveFailures += 1
-    if (state.circuit.consecutiveFailures < this.circuitFailureThreshold) return
-    const exponent = state.circuit.consecutiveFailures - this.circuitFailureThreshold
+    const circuit = this.circuitFor(state, pending.circuitKey)
+    circuit.consecutiveFailures += 1
+    if (circuit.consecutiveFailures < this.circuitFailureThreshold) return
+    const exponent = circuit.consecutiveFailures - this.circuitFailureThreshold
     const backoff = Math.min(
       this.circuitMaxBackoffMs,
       this.circuitInitialBackoffMs * 2 ** Math.min(exponent, 30)
     )
-    state.circuit.openUntil = this.now() + backoff
-    state.circuit.probeRequestId = null
+    circuit.openUntil = this.now() + backoff
+    circuit.probeRequestId = null
     for (const queued of [...state.queue]) {
+      if (queued.circuitKey !== pending.circuitKey) continue
       this.settle(state, queued, {
         kind: 'cancelled-queued',
-        error: this.circuitError(pending.pluginId, state.circuit.openUntil)
+        error: this.circuitError(pending.pluginId, circuit.openUntil)
       })
     }
   }
@@ -557,15 +637,18 @@ export class PluginRpcCoordinator {
   private reserveCircuitProbe(
     state: PluginRpcState,
     pluginId: string,
+    circuitKey: string,
     requestId: string
   ): Error | null {
-    const openUntil = state.circuit.openUntil
+    const circuit = state.circuits.get(circuitKey)
+    if (!circuit) return null
+    const openUntil = circuit.openUntil
     if (openUntil === null) return null
     if (this.now() < openUntil) return this.circuitError(pluginId, openUntil)
-    if (state.circuit.probeRequestId) {
+    if (circuit.probeRequestId) {
       return new Error('Plugin RPC circuit is half-open; wait for the recovery probe to finish.')
     }
-    state.circuit.probeRequestId = requestId
+    circuit.probeRequestId = requestId
     return null
   }
 
@@ -573,7 +656,9 @@ export class PluginRpcCoordinator {
     state: PluginRpcState,
     pending: PendingPluginRpc<unknown>
   ): boolean {
-    const openUntil = state.circuit.openUntil
+    const circuit = state.circuits.get(pending.circuitKey)
+    if (!circuit) return false
+    const openUntil = circuit.openUntil
     if (openUntil === null) return false
     if (pending.circuitProbe) return this.now() < openUntil
     return true
@@ -584,8 +669,9 @@ export class PluginRpcCoordinator {
     return new Error(`Plugin ${pluginId} RPC circuit is open; retry after ${retryAfterMs}ms.`)
   }
 
-  private clearCircuitProbe(state: PluginRpcState, requestId: string): void {
-    if (state.circuit.probeRequestId === requestId) state.circuit.probeRequestId = null
+  private clearCircuitProbe(state: PluginRpcState, circuitKey: string, requestId: string): void {
+    const circuit = state.circuits.get(circuitKey)
+    if (circuit && circuit.probeRequestId === requestId) circuit.probeRequestId = null
   }
 
   private prepareIdempotency<T>(idempotency: PluginRpcIdempotency): {
@@ -627,7 +713,7 @@ export class PluginRpcCoordinator {
     const created: PluginRpcState = {
       active: new Map(),
       queue: [],
-      circuit: { consecutiveFailures: 0, openUntil: null, probeRequestId: null },
+      circuits: new Map(),
       cancelling: false
     }
     this.states.set(pluginId, created)
@@ -635,9 +721,18 @@ export class PluginRpcCoordinator {
   }
 
   private cleanupState(pluginId: string, state: PluginRpcState): void {
+    const now = this.now()
+    for (const [key, circuit] of state.circuits) {
+      if (
+        circuit.consecutiveFailures === 0 &&
+        circuit.probeRequestId === null &&
+        (circuit.openUntil === null || now >= circuit.openUntil)
+      ) {
+        state.circuits.delete(key)
+      }
+    }
     if (state.active.size !== 0 || state.queue.length !== 0) return
-    if (state.circuit.consecutiveFailures !== 0) return
-    if (state.circuit.openUntil !== null && this.now() < state.circuit.openUntil) return
+    if (state.circuits.size !== 0) return
     this.states.delete(pluginId)
   }
 

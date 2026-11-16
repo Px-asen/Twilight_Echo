@@ -3652,3 +3652,136 @@ for (const loginMethod of ['QR', 'official web']) {
     }
   })
 }
+
+test('searchSongs normalizes mvId and getTrackMv resolves direct or detail-looked-up MV streams with quality fallback and caching', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/cloudsearch') {
+      return {
+        result: {
+          songCount: 1,
+          songs: [
+            {
+              id: 186016,
+              name: '晴天',
+              mv: 530012,
+              dt: 269000,
+              ar: [{ id: 6452, name: '周杰伦' }],
+              al: { id: 18905, name: '叶惠美', picUrl: 'https://p1.music.126.net/cover.jpg' }
+            }
+          ]
+        }
+      }
+    }
+    if (url.pathname === '/song/detail') {
+      assert.equal(url.searchParams.get('ids'), '186017')
+      return {
+        songs: [{ id: 186017, name: '暗号', mv: 530012 }]
+      }
+    }
+    if (url.pathname === '/mv/url') {
+      const r = Number(url.searchParams.get('r'))
+      assert.equal(url.searchParams.get('id'), '530012')
+      if (r === 1080) {
+        return { code: 200, data: { id: 530012, url: null, r: 1080 } }
+      }
+      if (r === 720) {
+        return {
+          code: 200,
+          data: {
+            id: 530012,
+            url: '//vodkgeyttp8.vod.126.net/cloudmusic/晴天-720p.mp4',
+            r: 720,
+            expi: 1800
+          }
+        }
+      }
+    }
+    throw new Error(`unexpected endpoint: ${path}`)
+  })
+
+  try {
+    const search = await provider.searchSongs('晴天', 5, 0)
+    assert.equal(search.items[0]?.mvId, '530012')
+
+    const directStream = await provider.getTrackMv(search.items[0], { quality: 'auto' })
+    assert.deepEqual(directStream, {
+      url: 'https://vodkgeyttp8.vod.126.net/cloudmusic/晴天-720p.mp4',
+      quality: '720p',
+      height: 720,
+      mvId: '530012',
+      providerId: 'ncm',
+      referer: 'https://music.163.com/'
+    })
+
+    // Cached repeat does not hit /mv/url again unless force=true
+    const beforeCachedCount = requests.length
+    const cachedStream = await provider.getTrackMv(search.items[0], { quality: 'auto' })
+    assert.deepEqual(cachedStream, directStream)
+    assert.equal(requests.length, beforeCachedCount)
+
+    // Uncached song without mvId resolves mvId via /song/detail
+    const lookedUp = await provider.getTrackMv({ id: 'ncm:186017', source: 'ncm' }, { quality: '720p' })
+    assert.equal(lookedUp?.mvId, '530012')
+    assert.equal(lookedUp?.quality, '720p')
+    assert.ok(requests.some((entry) => entry.startsWith('/song/detail')))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('405 frequency limits stop playback quality fallback early and playback jumps ahead of queued searches in token bucket', async () => {
+  const seenPaths = []
+  let blockPlaybackWith405 = true
+  const provider = await activateProvider(
+    async (path) => {
+      seenPaths.push(parseRequest(path).pathname)
+      if (path.startsWith('/song/url')) {
+        if (blockPlaybackWith405) {
+          return { code: 405, message: '操作频繁，请稍候再试' }
+        }
+        return {
+          code: 200,
+          data: [{ id: 186016, url: 'https://m8.music.126.net/playable.mp3', br: 320000, expi: 1200 }]
+        }
+      }
+      return { code: 200, result: { songs: [], songCount: 0 } }
+    },
+    new Map([['cookie', 'MUSIC_U=test-session;']])
+  )
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // 1. 405 操作频繁 stops the fallback ladder after 1 call instead of hammering all tiers + gray unlock.
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:186016' }, { quality: 'hires' }), null)
+    assert.deepEqual(seenPaths, ['/song/url/v1'])
+
+    // 2. Drain the remaining 4 burst tokens with searches, queue 2 more searches, then request playback:
+    //    playback must take the very next refilled token ahead of the queued searches!
+    seenPaths.length = 0
+    blockPlaybackWith405 = false
+    const searches = Array.from({ length: 6 }, (_, index) => provider.searchSongs(`bg-${index}`))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(seenPaths.length, 4, '4 remaining burst tokens consumed by initial searches')
+
+    const playPromise = provider.getPlaybackUrl({ id: 'ncm:186016' }, { quality: 'standard' })
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    assert.equal(await playPromise, 'https://m8.music.126.net/playable.mp3')
+    assert.equal(
+      seenPaths[4],
+      '/song/url/v1',
+      'playback token acquires ahead of queued background cloudsearch requests'
+    )
+
+    mock.timers.tick(400)
+    await Promise.all(searches)
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+

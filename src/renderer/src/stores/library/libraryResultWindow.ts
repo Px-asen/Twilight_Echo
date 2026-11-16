@@ -14,7 +14,7 @@ export interface LibraryResultWindowState<P> {
   generation: number
 }
 
-/** A continuous viewport over the existing ten-page cache. Only the latest
+/** A continuous viewport over the bounded result page cache. Only the latest
  * viewport is queued; stale reads still occupy their two transport slots. */
 export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
   cache: LibraryResultPageCache<P>,
@@ -60,7 +60,11 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
         !failures.has(page.offset / LIBRARY_PAGE_SIZE)
     )
     const retainRevision =
-      missing.length > 0 && retained.some((page) => page.revision !== cached.revision)
+      missing.length > 0 &&
+      retained.some(
+        (page) =>
+          page.revision !== cached.revision || cache.peek(page.offset / LIBRARY_PAGE_SIZE) !== page
+      )
     const next = indexes.flatMap((index) => {
       const before = retained.find((page) => page.offset === index * LIBRARY_PAGE_SIZE)
       const page = retainRevision ? before : (cache.peek(index) ?? before)
@@ -218,10 +222,14 @@ export function createLibraryResultWindow<P extends LibraryResultPage, Item>(
     state,
     pages,
     selectionEpoch,
-    setQuery(value: LibraryQuery | null, preservePosition = false) {
+    setQuery(
+      value: LibraryQuery | null,
+      preservePosition = false,
+      preservePresentation = false
+    ) {
       query = value ? structuredClone(value) : null
       cache.setQuery(query ?? {})
-      reset(preservePosition)
+      reset(preservePosition, preservePresentation)
     },
     setRange,
     itemAt(index: number): Item | undefined {

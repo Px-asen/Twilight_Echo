@@ -247,3 +247,36 @@ test('quit joins native configuration work started outside a client request befo
   await closing
   assert.equal(f.persisted().audioDevice, 'b')
 })
+
+test('output state projects redacted fallbackNotice and clears it on explicit output edit', async (t) => {
+  const f = fixture(t)
+  ;(
+    f.manager as unknown as {
+      outputRouter: {
+        commitFallbackOutputRoute(fallback: {
+          fromOutput: 'asio'
+          fromDevice: string
+          reason: string
+          cacheReason: string
+        }): void
+      }
+    }
+  ).outputRouter.commitFallbackOutputRoute({
+    fromOutput: 'asio',
+    fromDevice: 'asio:studio',
+    reason: 'ASIO open failed for https://example.test/secret-token?sig=123',
+    cacheReason: 'asio-play-fallback'
+  })
+  const withFallback = await f.output.state()
+  assert.equal(withFallback.fallbackNotice?.fromOutput, 'asio')
+  assert.equal(withFallback.fallbackNotice?.toOutput, 'wasapi')
+  assert.equal(withFallback.fallbackNotice?.reason.includes('secret-token'), false)
+  assert.match(withFallback.fallbackNotice?.reason ?? '', /<media-url>/)
+
+  await f.output.edit(
+    { revision: withFallback.revision, edit: { kind: 'device', device: 'b' } },
+    signal()
+  )
+  const cleared = await f.output.state()
+  assert.equal(cleared.fallbackNotice, undefined)
+})

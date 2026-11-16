@@ -326,3 +326,136 @@ test('highPriorityHeadroom dispatches urgent calls immediately without opening n
     'normal-queued'
   ])
 })
+
+test('isolated circuit keys and non-tripping business errors keep playback RPCs working during search storms', async () => {
+  const now = 0
+  const coordinator = new PluginRpcCoordinator({
+    maxConcurrencyPerPlugin: 4,
+    maxQueuePerPlugin: 4,
+    circuitFailureThreshold: 2,
+    circuitInitialBackoffMs: 1_000,
+    now: () => now
+  })
+  const dispatches: string[] = []
+
+  // 1. Responsive provider rejections with tripCircuit:false never open the circuit.
+  for (let i = 0; i < 4; i += 1) {
+    const id = `rate-limit-${i}`
+    const pending = coordinator.request<string>({
+      requestId: id,
+      pluginId: 'com.twilightecho.provider.ncm',
+      circuitKey: 'com.twilightecho.provider.ncm:provider:ncm:searchSongs',
+      priority: 'low',
+      kind: 'provider',
+      timeoutMs: 10_000,
+      metadata: { id },
+      dispatch: () => dispatches.push(id)
+    })
+    const rejected = assert.rejects(pending, /操作频繁/)
+    coordinator.complete('com.twilightecho.provider.ncm', id, {
+      ok: false,
+      error: '网易云接口触发高频或风控限制：操作频繁，请稍候再试。请稍后再试。',
+      tripCircuit: false
+    })
+    await rejected
+  }
+
+  // 2. Even when searchSongs genuinely trips its own circuit, getPlaybackUrl and fetchLikedTracksPage stay open.
+  for (let i = 0; i < 2; i += 1) {
+    const id = `search-broken-${i}`
+    const pending = coordinator.request<string>({
+      requestId: id,
+      pluginId: 'com.twilightecho.provider.ncm',
+      circuitKey: 'com.twilightecho.provider.ncm:provider:ncm:searchSongs',
+      priority: 'low',
+      kind: 'provider',
+      timeoutMs: 10_000,
+      metadata: { id },
+      dispatch: () => dispatches.push(id)
+    })
+    const rejected = assert.rejects(pending, /broken/)
+    coordinator.complete('com.twilightecho.provider.ncm', id, { ok: false, error: 'broken' })
+    await rejected
+  }
+  await assert.rejects(
+    () =>
+      coordinator.request<string>({
+        requestId: 'search-blocked',
+        pluginId: 'com.twilightecho.provider.ncm',
+        circuitKey: 'com.twilightecho.provider.ncm:provider:ncm:searchSongs',
+        priority: 'low',
+        kind: 'provider',
+        timeoutMs: 10_000,
+        metadata: { id: 'search-blocked' },
+        dispatch: () => dispatches.push('search-blocked')
+      }),
+    /circuit is open/
+  )
+
+  const playback = coordinator.request<string>({
+    requestId: 'playback-1',
+    pluginId: 'com.twilightecho.provider.ncm',
+    circuitKey: 'com.twilightecho.provider.ncm:provider:ncm:getPlaybackUrl',
+    priority: 'high',
+    kind: 'provider',
+    timeoutMs: 10_000,
+    metadata: { id: 'playback-1' },
+    dispatch: () => dispatches.push('playback-1')
+  })
+  coordinator.complete('com.twilightecho.provider.ncm', 'playback-1', {
+    ok: true,
+    value: 'https://m8.music.126.net/song.flac'
+  })
+  assert.equal(await playback, 'https://m8.music.126.net/song.flac')
+})
+
+test('low-priority background RPCs reserve concurrency headroom and yield queue space to high-priority playback', async () => {
+  const coordinator = new PluginRpcCoordinator({
+    maxConcurrencyPerPlugin: 4,
+    maxQueuePerPlugin: 2
+  })
+  const dispatches: string[] = []
+  const enqueue = (requestId: string, priority: 'high' | 'normal' | 'low') =>
+    coordinator.request<string>({
+      requestId,
+      pluginId: 'com.twilightecho.provider.ncm',
+      priority,
+      kind: 'provider',
+      timeoutMs: 10_000,
+      metadata: { requestId },
+      dispatch: () => dispatches.push(requestId)
+    })
+
+  // Four low-priority calls: only 2 start immediately, leaving 2 slots free for foreground playback.
+  const low1 = enqueue('low-1', 'low')
+  const low2 = enqueue('low-2', 'low')
+  const low3 = enqueue('low-3', 'low')
+  const low4 = enqueue('low-4', 'low')
+  assert.deepEqual(dispatches, ['low-1', 'low-2'])
+
+  // High-priority playback starts immediately without waiting behind queued low-3 / low-4!
+  const play1 = enqueue('play-1', 'high')
+  const play2 = enqueue('play-2', 'high')
+  assert.deepEqual(dispatches, ['low-1', 'low-2', 'play-1', 'play-2'])
+
+  // Active=4 and Queue=2 ([low-3, low-4]): another high-priority call preempts low-4 instead of failing.
+  const low4Preempted = assert.rejects(low4, /preempted by foreground work/)
+  const play3 = enqueue('play-3', 'high')
+  await low4Preempted
+
+  // When play-1 finishes, queued play-3 runs ahead of low-3.
+  coordinator.complete('com.twilightecho.provider.ncm', 'play-1', { ok: true, value: 'ok-1' })
+  assert.equal(await play1, 'ok-1')
+  assert.deepEqual(dispatches, ['low-1', 'low-2', 'play-1', 'play-2', 'play-3'])
+
+  for (const [id, pending] of [
+    ['play-2', play2],
+    ['play-3', play3],
+    ['low-1', low1],
+    ['low-2', low2],
+    ['low-3', low3]
+  ] as const) {
+    coordinator.complete('com.twilightecho.provider.ncm', id, { ok: true, value: id })
+    assert.equal(await pending, id)
+  }
+})

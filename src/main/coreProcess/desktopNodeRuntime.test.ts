@@ -6,16 +6,23 @@ import test from 'node:test'
 import {
   DESKTOP_NODE_ENTRIES,
   desktopCoreHost,
+  desktopElectronNodeEnvironment,
   desktopNodeEnvironment,
+  inProcessWorkerServicesEnabled,
   resolveDesktopNodeRuntime
 } from './desktopNodeRuntime.ts'
 
-test('desktop Node host is explicit and command line selection wins over environment', () => {
-  assert.equal(desktopCoreHost([], {}), 'electron')
+test('desktop Core host defaults to electron-node and command line selection wins over environment', () => {
+  assert.equal(desktopCoreHost([], {}), 'electron-node')
+  assert.equal(desktopCoreHost([], { TWILIGHT_CORE_HOST: 'electron' }), 'electron')
   assert.equal(desktopCoreHost([], { TWILIGHT_CORE_HOST: 'node' }), 'node')
   assert.equal(
     desktopCoreHost(['--core-host=electron'], { TWILIGHT_CORE_HOST: 'node' }),
     'electron'
+  )
+  assert.equal(
+    desktopCoreHost(['--core-host=electron-node'], { TWILIGHT_CORE_HOST: 'electron' }),
+    'electron-node'
   )
   assert.equal(desktopCoreHost(['--core-host', 'node'], {}), 'node')
   assert.throws(() => desktopCoreHost(['--core-host'], {}), /Unsupported Core host/)
@@ -23,6 +30,28 @@ test('desktop Node host is explicit and command line selection wins over environ
     () => desktopCoreHost([], { TWILIGHT_CORE_HOST: '/external/node' }),
     /Unsupported Core host/
   )
+  assert.deepEqual(inProcessWorkerServicesEnabled('electron-node', [], {}), ['database', 'scan'])
+  assert.deepEqual(inProcessWorkerServicesEnabled('electron', [], {}), ['database', 'scan'])
+  assert.equal(inProcessWorkerServicesEnabled('node', [], {}), undefined)
+  assert.equal(
+    inProcessWorkerServicesEnabled('electron-node', ['--isolate-all-services'], {}),
+    undefined
+  )
+  assert.equal(
+    inProcessWorkerServicesEnabled('electron-node', [], { TWILIGHT_CORE_WORKER_THREADS: '0' }),
+    undefined
+  )
+  const electronNodeEnv = desktopElectronNodeEnvironment('/app/resources', {
+    NODE_OPTIONS: '--require injected',
+    NODE_PATH: 'outside',
+    TWILIGHT_LOG_SESSION_ID: 'session'
+  })
+  assert.equal(electronNodeEnv.ELECTRON_RUN_AS_NODE, '1')
+  assert.equal(electronNodeEnv.NODE_OPTIONS, undefined)
+  assert.equal(electronNodeEnv.NODE_PATH, undefined)
+  assert.equal(electronNodeEnv.TWILIGHT_DESKTOP_NODE_HOST, '1')
+  assert.equal(electronNodeEnv.TWILIGHT_DESKTOP_RESOURCES_PATH, '/app/resources')
+  assert.equal(electronNodeEnv.TWILIGHT_LOG_SESSION_ID, 'session')
 })
 
 test('desktop resolver uses complete package-owned entries outside asar and fails closed on missing runtime', (t) => {

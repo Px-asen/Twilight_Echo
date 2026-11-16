@@ -24,6 +24,12 @@ export function setUtilityDiagnosticSnapshotProvider(provider: () => unknown): v
 export const DIAGNOSTIC_OUTPUT_PREFIX = '[TwilightDiagnostic]'
 
 export function initializeUtilityDiagnostics(role: string): void {
+  const workerThreads = (
+    process as unknown as { getBuiltinModule?: (id: string) => { isMainThread?: boolean } | undefined }
+  ).getBuiltinModule?.('worker_threads')
+  // In-process worker_threads share the host Core process, which already owns
+  // process-wide stdout/console/network/crash diagnostic hooks.
+  if (workerThreads?.isMainThread === false) return
   if (!process.env.TWILIGHT_LOG_SESSION_ID) return
   registerWindowsCrashCapture()
   const stdout = process.stdout.write.bind(process.stdout)

@@ -412,3 +412,111 @@ test('useCover clears previous art when handle is not immediately displayable', 
     clearCoverCache()
   }
 })
+
+test('resolveCover and useCover pass sm/grid size tiers to local IPC and remote media grants', async () => {
+  clearCoverCache()
+  clearRemoteCoverGrantCache()
+  const localCalls: Array<{ handle: string; size?: string }> = []
+  const globalRecord = globalThis as Record<string, unknown>
+  const previous = globalRecord.window
+  globalRecord.window = {
+    api: {
+      data: {
+        getCover: async (handle: string, size?: string) => {
+          localCalls.push({ handle, size })
+          return `data:image/jpeg;base64,${size ?? 'md'}`
+        },
+        grantRemoteCover: async () => 'twilight-media://image/granted-token'
+      }
+    }
+  }
+
+  try {
+    assert.equal(await resolveCover('cover://album.jpg', null, 'grid'), 'data:image/jpeg;base64,grid')
+    assert.equal(await resolveCover('cover://album.jpg', null, 'sm'), 'data:image/jpeg;base64,sm')
+    assert.deepEqual(localCalls, [
+      { handle: 'cover://album.jpg', size: 'grid' },
+      { handle: 'cover://album.jpg', size: 'sm' }
+    ])
+
+    assert.equal(
+      await resolveCover('twilight-media://image/live-token', null, 'grid'),
+      'twilight-media://image/live-token?size=grid'
+    )
+    assert.equal(
+      await resolveCover(null, 'https://p1.music.126.net/art.jpg', 'sm'),
+      'twilight-media://image/granted-token?size=sm'
+    )
+    assert.equal(
+      readCachedCover(null, 'https://p1.music.126.net/art.jpg', 'grid'),
+      'twilight-media://image/granted-token?size=grid'
+    )
+  } finally {
+    globalRecord.window = previous
+    clearCoverCache()
+    clearRemoteCoverGrantCache()
+  }
+})
+
+test('DOM mode materializes Uint8Array covers as blob URLs and pins active useCover scopes before revoking', async () => {
+  clearCoverCache()
+  const { useCover } = (await import(
+    new URL('./coverLoader.ts', import.meta.url).href
+  )) as typeof import('./coverLoader')
+  const { effectScope, ref, nextTick } = await import('vue')
+
+  const globalRecord = globalThis as Record<string, unknown>
+  const previousWindow = globalRecord.window
+  const previousDocument = globalRecord.document
+  const origCreate = URL.createObjectURL
+  const origRevoke = URL.revokeObjectURL
+
+  let seq = 0
+  const created: string[] = []
+  const revoked: string[] = []
+  URL.createObjectURL = () => {
+    const url = `blob:twilight-test/${++seq}`
+    created.push(url)
+    return url
+  }
+  URL.revokeObjectURL = (url: string) => {
+    revoked.push(url)
+  }
+  globalRecord.document = {}
+  globalRecord.window = {
+    api: {
+      data: {
+        getCover: async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+      }
+    }
+  }
+
+  try {
+    const scope = effectScope()
+    const handle = ref<string | null>('cover://pinned.jpg')
+    let activeCover!: ReturnType<typeof useCover>
+    scope.run(() => {
+      activeCover = useCover(handle, undefined, 'grid')
+    })
+    await nextTick()
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    const pinnedUrl = activeCover.value
+    assert.equal(pinnedUrl, 'blob:twilight-test/1')
+    assert.equal(revoked.length, 0)
+
+    // Clearing the cache while useCover is still mounted must NOT revoke the pinned blob URL.
+    clearCoverCache()
+    assert.equal(revoked.includes('blob:twilight-test/1'), false)
+
+    // Once the component scope unmounts, the deferred revocation completes cleanly.
+    scope.stop()
+    assert.equal(revoked.includes('blob:twilight-test/1'), true)
+  } finally {
+    URL.createObjectURL = origCreate
+    URL.revokeObjectURL = origRevoke
+    globalRecord.window = previousWindow
+    if (previousDocument === undefined) delete globalRecord.document
+    else globalRecord.document = previousDocument
+    clearCoverCache()
+  }
+})

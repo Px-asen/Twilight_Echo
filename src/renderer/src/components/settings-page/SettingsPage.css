@@ -336,6 +336,92 @@ html:is(
   scale: 1.08;
 }
 
+/* ── 概览卡片分类色块 ──────────────────────────────── */
+.settings-tone-tile {
+  --te-settings-tone-fg: var(--te-primary-600, var(--te-primary-500, #2563eb));
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--te-settings-tone-fg) 13%, transparent);
+  color: var(--te-settings-tone-fg);
+  font-size: 14px;
+}
+
+.settings-tone-tile[data-settings-tone='accent'] {
+  --te-settings-tone-fg: var(--te-primary-600, var(--te-primary-500, #2563eb));
+}
+.settings-tone-tile[data-settings-tone='graphite'] {
+  --te-settings-tone-fg: #475569;
+}
+.settings-tone-tile[data-settings-tone='coral'] {
+  --te-settings-tone-fg: #d95b38;
+}
+.settings-tone-tile[data-settings-tone='teal'] {
+  --te-settings-tone-fg: #0d8a7c;
+}
+.settings-tone-tile[data-settings-tone='amber'] {
+  --te-settings-tone-fg: #b7740c;
+}
+.settings-tone-tile[data-settings-tone='rose'] {
+  --te-settings-tone-fg: #cf3b5c;
+}
+.settings-tone-tile[data-settings-tone='blue'] {
+  --te-settings-tone-fg: #2563eb;
+}
+.settings-tone-tile[data-settings-tone='green'] {
+  --te-settings-tone-fg: #15803d;
+}
+.settings-tone-tile[data-settings-tone='cyan'] {
+  --te-settings-tone-fg: #087ea4;
+}
+.settings-tone-tile[data-settings-tone='indigo'] {
+  --te-settings-tone-fg: #3b5bdb;
+}
+.settings-tone-tile[data-settings-tone='slate'] {
+  --te-settings-tone-fg: #526071;
+}
+
+html[data-theme='dark'] .settings-tone-tile {
+  background: color-mix(in srgb, var(--te-settings-tone-fg) 16%, transparent);
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='accent'] {
+  --te-settings-tone-fg: color-mix(in srgb, var(--te-primary-500, #3b82f6) 74%, #ffffff);
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='graphite'] {
+  --te-settings-tone-fg: #cbd5e1;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='coral'] {
+  --te-settings-tone-fg: #fb926c;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='teal'] {
+  --te-settings-tone-fg: #4fd1c5;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='amber'] {
+  --te-settings-tone-fg: #fbbf24;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='rose'] {
+  --te-settings-tone-fg: #fb7185;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='blue'] {
+  --te-settings-tone-fg: #60a5fa;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='green'] {
+  --te-settings-tone-fg: #4ade80;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='cyan'] {
+  --te-settings-tone-fg: #38bdf8;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='indigo'] {
+  --te-settings-tone-fg: #748ffc;
+}
+html[data-theme='dark'] .settings-tone-tile[data-settings-tone='slate'] {
+  --te-settings-tone-fg: #94a3b8;
+}
+
 @media (hover: hover) {
   html[data-te-motion='full'] .preview-nav-item:hover {
     translate: 2px 0;
@@ -733,6 +819,143 @@ html:is(
 
 .settings-page-header {
   padding: 8px 4px 0;
+}
+
+/* ── 概览分区与存储提示 ──────────────────────────────── */
+.storage-attention-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--te-settings-control-border, var(--te-card-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--te-warning-text, #b45309) 10%, var(--te-subtle-bg));
+  color: var(--te-warning-text, var(--te-settings-text));
+  font-size: calc(var(--te-font-size-body, 14px) * 13 / 14);
+  line-height: 1.5;
+}
+
+.settings-overview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-overview-section > .section-block {
+  margin-top: 0;
+}
+
+.overview-status-grid,
+.overview-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.overview-status-card,
+.overview-category-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--te-settings-control-border, var(--te-card-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--te-settings-text) 3%, transparent);
+  color: var(--te-settings-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.overview-status-card .settings-tone-tile,
+.overview-category-card .settings-tone-tile {
+  width: 34px;
+  height: 34px;
+  margin-top: 1px;
+  border-radius: 9px;
+  font-size: 15px;
+}
+
+.overview-status-copy,
+.overview-category-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.overview-status-label {
+  color: var(--te-settings-text-muted);
+  font-size: calc(var(--te-font-size-body, 14px) * 12 / 14);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.overview-status-copy strong,
+.overview-category-copy strong {
+  color: var(--te-settings-text);
+  font-size: calc(var(--te-font-size-body, 14px) * 14.5 / 14);
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.overview-status-copy small,
+.overview-category-copy small {
+  color: var(--te-settings-text-muted);
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
+  font-weight: 400;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.overview-card-chevron {
+  flex-shrink: 0;
+  margin-top: 8px;
+  color: var(--te-settings-text-muted);
+  opacity: 0.72;
+}
+
+.overview-group-list {
+  display: grid;
+  gap: 18px;
+}
+
+.overview-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overview-group-title {
+  margin: 0;
+  color: var(--te-settings-text-muted);
+  font-size: calc(var(--te-font-size-body, 14px) * 12.5 / 14);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.overview-status-card:focus-visible,
+.overview-category-card:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .overview-status-card:hover,
+  .overview-category-card:hover {
+    border-color: color-mix(in srgb, var(--te-primary-500) 32%, var(--te-card-border));
+    background: color-mix(in srgb, var(--te-settings-text) 6%, transparent);
+  }
+}
+
+@media (max-width: 680px) {
+  .overview-status-grid,
+  .overview-category-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .settings-page-title {

@@ -11,6 +11,7 @@ defineProps<{
   allFavorited: boolean
   favoriteLabel?: string
   actionLabel: string
+  canPlayMv?: boolean
   canLike: boolean
   singleLiked: boolean
   canManagePlaylists: boolean
@@ -26,6 +27,7 @@ defineProps<{
 const emit = defineEmits<{
   play: []
   playNext: []
+  playMv: []
   copyTrackNames: []
   favorite: []
   like: []
@@ -74,6 +76,19 @@ const emit = defineEmits<{
         @keydown.space.prevent="emit('playNext')"
       >
         <PlaybackIcon name="next" /><span>下一首播放</span>
+      </div>
+      <div
+        v-if="canPlayMv"
+        class="menu-item"
+        role="menuitem"
+        tabindex="0"
+        data-te-interactive
+        @click="emit('playMv')"
+        @keydown.enter.prevent="emit('playMv')"
+        @keydown.space.prevent="emit('playMv')"
+      >
+        <i class="pi pi-video"></i>
+        <span>播放 MV</span>
       </div>
       <div
         class="menu-item"

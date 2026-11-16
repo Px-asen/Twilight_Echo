@@ -127,6 +127,7 @@ function handleCreated(): void {
               :cover="playlist.coverValue"
               :cover-source="playlist.coverSourceValue"
               :identity="playlist.id"
+              size="grid"
               :alt="`${playlist.name} 封面`"
               loading="lazy"
             />

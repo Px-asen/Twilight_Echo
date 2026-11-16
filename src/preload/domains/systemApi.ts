@@ -1,5 +1,5 @@
 import { collectClosePersistenceOutcome } from '../closePersistence.ts'
-import { ipcRenderer } from 'electron'
+import { ipcRenderer, webFrame } from 'electron'
 import { afterglowApi } from './afterglowApi.ts'
 import {
   normalizePlaybackSessionSaveOptions,
@@ -89,7 +89,14 @@ export const systemApi = {
       ipcRenderer.invoke('contextMenu:close', requestId),
     minimize: (): void => ipcRenderer.send('window:minimize'),
     toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
-    close: (): void => ipcRenderer.send('window:close')
+    close: (): void => ipcRenderer.send('window:close'),
+    clearMemoryCache: (): void => {
+      try {
+        webFrame?.clearCache?.()
+      } catch {
+        // Ignore in non-Electron test environments.
+      }
+    }
   },
   dialog: {
     openFolder: (options?: { deferImport?: boolean }): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder', options)

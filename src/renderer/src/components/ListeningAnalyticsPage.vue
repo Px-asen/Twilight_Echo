@@ -183,6 +183,7 @@ onBeforeUnmount(() => { clearInterval(dayTimer); document.removeEventListener('v
                   :cover-source="favorite.coverSource"
                   :identity="favorite.id"
                   :core-track-id="!favorite.cover ? favorite.resolvedTrack?.id : undefined"
+                  size="grid"
                   fallback="./icon.png"
                   alt=""
                 />

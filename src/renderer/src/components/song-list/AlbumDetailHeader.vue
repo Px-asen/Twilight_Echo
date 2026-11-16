@@ -114,6 +114,7 @@ onBeforeUnmount(() => {
         :cover-source="album.coverSource"
         :identity="album.id"
         :name="album.name"
+        size="md"
         eager
       />
       <div class="album-detail-information">

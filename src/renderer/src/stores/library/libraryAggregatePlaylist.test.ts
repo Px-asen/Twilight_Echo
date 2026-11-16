@@ -285,7 +285,7 @@ test('aggregate renderer owns authoritative pages, full queues and visible varia
   assert.equal(owner.playbackQuery()!.search, 'Song 404')
 })
 
-test('aggregate renderer keeps ten detail pages total, including the variants menu', async (t) => {
+test('aggregate renderer keeps four detail pages total, including the variants menu', async (t) => {
   const records = Array.from({ length: 2205 }, (_, i) => record(`local${i}`)),
     playlist: Playlist = {
       id: 'mix',
@@ -302,8 +302,8 @@ test('aggregate renderer keeps ten detail pages total, including the variants me
   const track = owner.pageState.value.page!.tracks[0] as CoreTrackView
   owner.openVariants(track)
   await until(() => !!owner.variantState.value.page)
-  assert.equal(owner.readState.cachedDetailPages, 10)
-  assert.ok(owner.readState.cachedTracks <= 2000)
+  assert.equal(owner.readState.cachedDetailPages, 4)
+  assert.ok(owner.readState.cachedTracks <= 800)
 })
 
 test('continuous aggregate actions use each loaded page identity, including a secondary-page recording', async (t) => {
@@ -403,8 +403,8 @@ test('aggregate catalogs continuously expose bounded summaries, configured order
     assert.equal(owner.cardAt(i * 200)?.id, `list${2204 - i * 200}`)
     assert.ok(owner.cardPages.value.length <= 2)
   }
-  assert.equal(owner.readState.cachedCollectionPages, 10)
-  assert.ok(owner.readState.cachedSummaries <= 2000)
+  assert.equal(owner.readState.cachedCollectionPages, 4)
+  assert.ok(owner.readState.cachedSummaries <= 800)
   assert.equal(owner.cardAt(0), undefined)
   assert.ok(f.maximum <= 2)
 })

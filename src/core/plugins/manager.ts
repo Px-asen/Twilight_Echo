@@ -229,11 +229,13 @@ interface RunningPlugin {
   process: PluginHostProcess
   descriptor: TwilightPluginDescriptor
   trial: boolean
+  activating?: boolean
   subscriptions: Set<string>
   providers: TwilightMediaProviderRegistration[]
   ui: TwilightUiContribution[]
   themes: TwilightThemeContribution[]
   hasPlaybackProxy: boolean
+  hasDynamicIslandOverlay?: boolean
   proxySources?: Set<string>
 }
 
@@ -283,6 +285,8 @@ export interface TwilightProviderCallOptions {
   idempotencyKey?: string
   /** Cancels queued or active plugin RPC work and propagates cancellation to the provider host. */
   signal?: AbortSignal
+  /** Marks automated background metadata/search calls so foreground playback retains headroom. */
+  background?: boolean
 }
 
 const STATE_FILE = 'plugin-state.json'
@@ -832,7 +836,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private identityContextChanged(pluginId: string): void {
-    this.identityContexts.set(pluginId, (this.identityContexts.get(pluginId) ?? 0) + 1)
+    this.identityContexts?.set(pluginId, (this.identityContexts.get(pluginId) ?? 0) + 1)
     for (const plugin of this.contributingPlugins())
       if (plugin.descriptor.id === pluginId)
         for (const provider of plugin.providers) this.emit('provider-context', provider.id)
@@ -942,12 +946,42 @@ export class TwilightPluginManager extends EventEmitter {
       this.identityContextChanged(running.descriptor.id)
       this.accountContextChanged(running.descriptor.id)
     }
+    const highPriority = [
+      'getPlaybackUrl',
+      'getTrackMv',
+      'getLyrics',
+      'fetchUserLibrary',
+      'fetchLikedTracks',
+      'fetchLikedTracksPage',
+      'fetchPlaylistTracks',
+      'fetchPlaylistTracksPage',
+      'fetchIntelligenceList',
+      'fetchPersonalFm',
+      'checkLogin',
+      'getProfile',
+      'logout',
+      'openOfficialLogin',
+      'sendCaptcha',
+      'loginByPhonePassword',
+      'loginByPhoneCaptcha',
+      'loginByEmailPassword',
+      'loginWithServer',
+      'getQrLogin',
+      'getQrKey',
+      'getQrImage',
+      'checkQrLogin'
+    ].includes(method)
     const priority: PluginRpcPriority =
       options.priority ??
-      (method === 'getPlaybackUrl' ? (options.autoMixPrepare ? 'low' : 'high') : 'normal')
+      (options.background || (method === 'getPlaybackUrl' && options.autoMixPrepare)
+        ? 'low'
+        : highPriority
+          ? 'high'
+          : 'normal')
     const result = this.rpcCalls.request<unknown, ProviderRpcMetadata>({
       requestId,
       pluginId: running.descriptor.id,
+      circuitKey: `${running.descriptor.id}:provider:${normalizedProviderId}:${method}`,
       kind: 'provider',
       priority,
       timeoutMs: getProviderCallTimeoutMs(method),
@@ -1037,8 +1071,10 @@ export class TwilightPluginManager extends EventEmitter {
   private async ensureRunningForCall(id: string): Promise<RunningPlugin> {
     const waking = this.wakeOperations.get(id)
     if (waking) return waking
-    const running = this.running.get(id)
-    if (running) return running
+    if (!this.hibernating.has(id) && !this.stopOperations.has(id)) {
+      const running = this.running.get(id)
+      if (running) return running
+    }
     if (!this.hibernated.has(id)) throw new Error(`Provider 未启用：${id}`)
     return this.wakePlugin(id)
   }
@@ -1085,6 +1121,16 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
+  private supportsProviderHostHibernation(
+    descriptor: TwilightPluginDescriptor,
+    uiContributions: ReadonlyArray<TwilightUiContribution & { slot?: unknown }> = []
+  ): boolean {
+    const types = descriptor.type
+    if (!Array.isArray(types) || !types.includes('provider')) return false
+    if (!types.every((entry) => entry === 'provider' || entry === 'ui')) return false
+    return uiContributions.every((item) => item.autoLoad !== true && item.slot !== 'dynamicIsland')
+  }
+
   /**
    * Boots an enabled plugin straight into hibernation when the last run's
    * contributions are cached for this exact version and entry file, so the
@@ -1093,11 +1139,13 @@ export class TwilightPluginManager extends EventEmitter {
   private hibernateFromCache(descriptor: TwilightPluginDescriptor): boolean {
     if (!this.hostIdle || descriptor.id === QISHUI_PLUGIN_ID) return false
     // Background tools and hybrid plugins may own timers/work outside RPCs.
-    // Only pure providers follow the on-demand host lifetime contract.
-    if (descriptor.type.length !== 1 || descriptor.type[0] !== 'provider') return false
+    // Only providers (and provider+ui plugins without auto-load or dynamic island panels)
+    // follow the on-demand host lifetime contract.
+    if (!this.supportsProviderHostHibernation(descriptor)) return false
     if (this.state[descriptor.id]?.lastError) return false
     const cached = this.contributionsCache[descriptor.id]
     if (!cached || cached.version !== descriptor.version) return false
+    if (!this.supportsProviderHostHibernation(descriptor, cached.ui)) return false
     const signature = this.mainFileSignature(descriptor)
     if (!signature || cached.mainSignature !== signature) return false
     if (this.running.has(descriptor.id)) return false
@@ -1159,9 +1207,10 @@ export class TwilightPluginManager extends EventEmitter {
       running.hasPlaybackProxy = false
       running.proxySources?.clear()
     }
-    if (running.descriptor.type.length !== 1 || running.descriptor.type[0] !== 'provider') {
+    if (!this.supportsProviderHostHibernation(running.descriptor, running.ui ?? [])) {
       return false
     }
+    if (running.hasDynamicIslandOverlay) return false
     if (this.stopOperations.has(id) || this.wakeOperations.has(id)) return false
     if (this.rpcCalls.getPendingCount(id) > 0) return false
     for (const key of this.internalNcmRequests.keys()) {
@@ -1305,7 +1354,50 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
+  private async isBundledPluginUpToDate(
+    sourcePath: string,
+    targetRoot: string,
+    target: string,
+    manifest: TwilightPluginManifest
+  ): Promise<boolean> {
+    if (!existsSync(target)) return false
+    try {
+      const entries = await safeReadDir(targetRoot)
+      if (entries.length !== 1 || entries[0] !== manifest.version) return false
+      const [sourceManifestBytes, targetManifestBytes] = await Promise.all([
+        readFile(join(sourcePath, 'plugin.json')),
+        readFile(join(target, 'plugin.json'))
+      ])
+      if (PortableBuffer.compare(sourceManifestBytes, targetManifestBytes) !== 0) return false
+      const targetManifest = validatePluginManifest(
+        parseJsonWithNestingLimit(targetManifestBytes.toString('utf8'))
+      )
+      if (targetManifest.id !== manifest.id || targetManifest.version !== manifest.version) {
+        return false
+      }
+      if (manifest.main) {
+        const targetMain = resolve(target, manifest.main)
+        if (!resolvePluginFile(targetMain, target)) return false
+        const [sourceMainBytes, targetMainBytes] = await Promise.all([
+          readFile(resolve(sourcePath, manifest.main)),
+          readFile(targetMain)
+        ])
+        if (PortableBuffer.compare(sourceMainBytes, targetMainBytes) !== 0) return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private async syncBundledPlugins(): Promise<void> {
+    for (const id of Object.keys(this.state)) {
+      if (this.state[id]?.source !== 'bundled') continue
+      if (this.bundledPlugins.some((bundled) => bundled.id === id)) continue
+      await rm(join(this.roots.plugins, id), { recursive: true, force: true }).catch(() => undefined)
+      this.forgetContributions(id)
+      delete this.state[id]
+    }
     for (const bundled of this.bundledPlugins) {
       try {
         if (!existsSync(bundled.sourcePath)) continue
@@ -1316,9 +1408,11 @@ export class TwilightPluginManager extends EventEmitter {
 
         const targetRoot = join(this.roots.plugins, manifest.id)
         const target = this.versionRoot(manifest.id, manifest.version)
-        await rm(targetRoot, { recursive: true, force: true })
-        mkdirSync(dirname(target), { recursive: true })
-        await cp(bundled.sourcePath, target, { recursive: true })
+        if (!(await this.isBundledPluginUpToDate(bundled.sourcePath, targetRoot, target, manifest))) {
+          await rm(targetRoot, { recursive: true, force: true })
+          mkdirSync(dirname(target), { recursive: true })
+          await cp(bundled.sourcePath, target, { recursive: true, preserveTimestamps: true })
+        }
 
         const now = new Date().toISOString()
         const previous = this.state[manifest.id]
@@ -1339,6 +1433,7 @@ export class TwilightPluginManager extends EventEmitter {
       }
     }
     await this.saveState()
+    await this.contributionsSaveChain
   }
 
   private async syncNativeDspChain(descriptors?: TwilightPluginDescriptor[]): Promise<void> {
@@ -1409,6 +1504,7 @@ export class TwilightPluginManager extends EventEmitter {
       process: child,
       descriptor,
       trial: options.trial === true,
+      activating: true,
       subscriptions: new Set(),
       providers: [],
       ui: [],
@@ -1458,6 +1554,16 @@ export class TwilightPluginManager extends EventEmitter {
     })
     child.stdout?.on('data', (chunk) => this.appendLog(descriptor, 'info', chunk.toString()))
     child.stderr?.on('data', (chunk) => this.appendLog(descriptor, 'error', chunk.toString()))
+    const wakingSnapshot = this.hibernated.get(descriptor.id)
+    const previousProvidersSignature = wakingSnapshot
+      ? JSON.stringify(
+          (wakingSnapshot.providers ?? []).map((provider) => ({
+            provider,
+            available: this.getProviderHealth(provider.id).available
+          }))
+        )
+      : null
+    const previousUiSignature = wakingSnapshot ? JSON.stringify(wakingSnapshot.ui ?? []) : null
     const activation = this.waitForActivation(child, descriptor)
     child.postMessage({
       kind: 'activate',
@@ -1473,19 +1579,47 @@ export class TwilightPluginManager extends EventEmitter {
     } satisfies PluginHostRequest)
     try {
       await activation
-      this.hibernated.delete(descriptor.id)
+      running.activating = false
+      const wasHibernated = this.hibernated.delete(descriptor.id)
+      if (wasHibernated) {
+        const nextProvidersSignature = JSON.stringify(
+          running.providers.map((provider) => ({
+            provider,
+            available: this.getProviderHealth(provider.id).available
+          }))
+        )
+        const providersChanged = nextProvidersSignature !== previousProvidersSignature
+        const uiChanged = JSON.stringify(running.ui) !== previousUiSignature
+        if (providersChanged) {
+          this.identityContextChanged(descriptor.id)
+          for (const provider of wakingSnapshot?.providers ?? []) {
+            if (!running.providers.some((candidate) => candidate.id === provider.id)) {
+              this.emit('provider-context', provider.id)
+            }
+          }
+        }
+        if (providersChanged || uiChanged) this.emit('changed')
+      }
       if (options.persistState !== false) this.markStarted(descriptor)
       this.appendLog(descriptor, 'info', '插件已激活')
       if (!running.trial) {
         this.hostIdle?.touch(descriptor.id)
-        this.rememberContributions(descriptor.id, {
-          descriptor,
-          mainSignature: this.mainFileSignature(descriptor),
-          providers: running.providers,
-          ui: running.ui,
-          themes: running.themes,
-          subscriptions: running.subscriptions
-        })
+        if (
+          descriptor.id !== QISHUI_PLUGIN_ID &&
+          !running.hasDynamicIslandOverlay &&
+          this.supportsProviderHostHibernation(descriptor, running.ui)
+        ) {
+          this.rememberContributions(descriptor.id, {
+            descriptor,
+            mainSignature: this.mainFileSignature(descriptor),
+            providers: running.providers,
+            ui: running.ui,
+            themes: running.themes,
+            subscriptions: running.subscriptions
+          })
+        } else {
+          this.forgetContributions(descriptor.id)
+        }
       }
     } catch (error) {
       await this.stopPlugin(descriptor.id).catch(() => undefined)
@@ -1503,7 +1637,7 @@ export class TwilightPluginManager extends EventEmitter {
       // A hibernated plugin has no process; an explicit stop just forgets it.
       if (!this.hibernating.has(id)) {
         this.hibernated.delete(id)
-        this.forgetContributions(id)
+        if (!this.shuttingDown) this.forgetContributions(id)
       }
       this.rpcCalls.cancelPlugin(id, `Plugin ${id} is no longer running.`)
       this.abortInternalNcmRequests(id, `Plugin ${id} is no longer running.`)
@@ -1519,7 +1653,27 @@ export class TwilightPluginManager extends EventEmitter {
   private async stopRunningPlugin(id: string, running: RunningPlugin): Promise<void> {
     if (!this.hibernating.has(id)) {
       this.hibernated.delete(id)
-      if (!running.trial) this.forgetContributions(id)
+      if (!running.trial && !this.shuttingDown) this.forgetContributions(id)
+    }
+    if (this.shuttingDown && !running.trial && !running.activating) {
+      if (
+        id !== QISHUI_PLUGIN_ID &&
+        !this.state[id]?.lastError &&
+        this.state[id]?.enabled !== false &&
+        !running.hasDynamicIslandOverlay &&
+        this.supportsProviderHostHibernation(running.descriptor, running.ui ?? [])
+      ) {
+        this.rememberContributions(id, {
+          descriptor: running.descriptor,
+          mainSignature: this.mainFileSignature(running.descriptor),
+          providers: [...(running.providers ?? [])],
+          ui: [...(running.ui ?? [])],
+          themes: [...(running.themes ?? [])],
+          subscriptions: new Set(running.subscriptions ?? [])
+        })
+      } else {
+        this.forgetContributions(id)
+      }
     }
     this.rpcCalls.cancelPlugin(id, `Plugin ${id} was stopped before its RPC completed.`)
     this.abortInternalNcmRequests(id, `Plugin ${id} was stopped before its internal API completed.`)
@@ -1560,6 +1714,7 @@ export class TwilightPluginManager extends EventEmitter {
       await this.dynamicIsland?.hide(id)
       this.running.delete(id)
     }
+    this.rpcCalls.cancelPlugin(id, `Plugin ${id} was stopped before its RPC completed.`)
   }
 
   private waitForActivation(
@@ -1898,6 +2053,7 @@ export class TwilightPluginManager extends EventEmitter {
             [
               'search',
               'playbackUrl',
+              'mv',
               'lyrics',
               'cover',
               'playlist',
@@ -1934,8 +2090,10 @@ export class TwilightPluginManager extends EventEmitter {
     const existingIndex = running.providers.findIndex((candidate) => candidate.id === providerId)
     if (existingIndex >= 0) running.providers[existingIndex] = provider
     else running.providers.push(provider)
-    this.identityContextChanged(pluginId)
-    this.emit('changed')
+    if (!this.hibernated?.has(pluginId)) {
+      this.identityContextChanged(pluginId)
+      this.emit('changed')
+    }
     return provider
   }
 
@@ -2099,10 +2257,17 @@ export class TwilightPluginManager extends EventEmitter {
     this.requirePermission(pluginId, 'ui:inject', `overlay.${message.method}`)
     if (message.method === 'show') {
       await this.dynamicIsland.show(pluginId)
+      if (this.running) {
+        for (const [id, entry] of this.running) {
+          entry.hasDynamicIslandOverlay = id === pluginId
+        }
+      }
       return null
     }
     if (message.method === 'hide') {
       await this.dynamicIsland.hide(pluginId)
+      const running = this.running?.get(pluginId)
+      if (running) running.hasDynamicIslandOverlay = false
       return null
     }
     if (message.method === 'configure') {
@@ -2138,7 +2303,7 @@ export class TwilightPluginManager extends EventEmitter {
         message.args[0]
       )
       running.ui.push(contribution)
-      this.emit('changed')
+      if (!this.hibernated?.has(pluginId)) this.emit('changed')
       return contribution
     }
     if (message.method === 'registerTheme') {
@@ -2306,7 +2471,8 @@ export class TwilightPluginManager extends EventEmitter {
       } catch (error) {
         this.rpcCalls.complete(pluginId, message.requestId, {
           ok: false,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
+          tripCircuit: false
         })
         return
       }
@@ -2399,9 +2565,15 @@ export class TwilightPluginManager extends EventEmitter {
     const error = staleBundledProvider
       ? `${message.error}。内置音源插件尚未加载最新代码，请重启应用。`
       : message.error
+    const hostRuntimeBroken =
+      staleBundledProvider || /runtime is not initialized/i.test(message.error)
+    // A responsive plugin host returning a normal business or upstream error
+    // (login required, upstream rate-limit, missing track, invalid parameter)
+    // proves the RPC channel is alive and must not open the host RPC circuit.
     const completion = this.rpcCalls.complete<ProviderRpcMetadata>(pluginId, message.requestId, {
       ok: false,
-      error
+      error,
+      tripCircuit: hostRuntimeBroken
     })
     if (completion.status !== 'settled') return
     this.recordProviderCallFailure(

@@ -4231,6 +4231,65 @@ test('ASIO play failure falls back to native WASAPI instead of throwing to HTMLA
   assertPlaybackMirrorsOutputInfo(info)
 })
 
+test('ASIO play fallback persists fallback route, emits audio-device-options-changed and records fallback notice until next explicit route change', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.failAsioPlayWith = 'ASIO helper init_driver failed: ASIO driver init failed (code=-1000)'
+  const persistedCommits: Array<{
+    audioOutput: string
+    audioDevice: string
+    audioExclusiveMode: boolean
+  }> = []
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:studio'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS,
+      persistAudioOutput: (commit) => {
+        persistedCommits.push({
+          audioOutput: commit.audioOutput,
+          audioDevice: commit.audioDevice,
+          audioExclusiveMode: commit.audioExclusiveMode
+        })
+      }
+    }
+  )
+  const optionChangeReasons: string[] = []
+  manager.on('audio-device-options-changed', (payload: { reason: string }) => {
+    optionChangeReasons.push(payload.reason)
+  })
+
+  await manager.setAudioOutput('asio', 'asio:studio')
+  persistedCommits.length = 0
+  optionChangeReasons.length = 0
+
+  const result = await manager.play('album.flac', 0)
+  assert.equal(result.nativeStarted, true)
+  assert.deepEqual(persistedCommits, [
+    {
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioExclusiveMode: false
+    }
+  ])
+  assert.ok(optionChangeReasons.includes('asio-play-fallback'))
+  assert.deepEqual(manager.getOutputFallbackNotice(), {
+    id: 1,
+    fromOutput: 'asio',
+    fromDevice: 'asio:studio',
+    toOutput: 'wasapi',
+    toDevice: 'auto',
+    reason: 'ASIO helper init_driver failed: ASIO driver init failed (code=-1000)'
+  })
+
+  await manager.setExclusiveMode(true)
+  assert.equal(manager.getOutputFallbackNotice(), null)
+})
+
 test('audio service ASIO play fallback waits for WASAPI route RPCs before retrying playback', async () => {
   const service = new AsioFailingAudioServiceBinding([
     'SetOutputBackend',

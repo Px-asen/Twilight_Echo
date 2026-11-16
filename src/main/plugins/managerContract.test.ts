@@ -126,6 +126,7 @@ function playbackMetadataHarness(pluginId = 'com.twilightecho.provider.ncm') {
   }
   const Manager = runInNewContext(`${code}\nPlaybackMetadataManager`, {
     randomUUID,
+    UNSUPPORTED_METHOD_FALLBACK: new Set(['isTrackLiked', 'likeTrack', 'followArtist', 'followUser']),
     findProviderRoute: () => running,
     getProviderCallTimeoutMs: () => 1000,
     resolveProviderIdempotencyKey: () => undefined,
@@ -142,6 +143,11 @@ function playbackMetadataHarness(pluginId = 'com.twilightecho.provider.ncm') {
     ) => Promise<unknown>
     handleProviderResult: (owner: string, message: unknown) => void
   }
+  const dispatchedQueue: Array<{ requestId: string; method?: string }> = []
+  running.process.postMessage = (message: { requestId: string; method?: string }) => {
+    dispatched = message
+    dispatchedQueue.push(message)
+  }
   const manager = Object.assign(new Manager(), {
     platform: { protectProviderResult: (value: unknown, method: string) => protectProviderMedia(value, method, grants) },
     recordPlaybackIdentity: () => undefined,
@@ -149,11 +155,16 @@ function playbackMetadataHarness(pluginId = 'com.twilightecho.provider.ncm') {
     contributingPlugins: () => [running],
     ensureRunningForCall: async () => running,
     assertRunningPlugin: () => undefined,
+    isBundledPluginId: () => true,
+    identityContextChanged: () => undefined,
+    accountContextChanged: () => undefined,
     recordProviderCallSuccess: () => undefined,
     recordProviderCallFailure: () => undefined
   })
   return {
     grants,
+    manager,
+    dispatchedQueue,
     resolve: async (
       value: unknown,
       requested: unknown = false,
@@ -674,4 +685,77 @@ test('plugin hosts hibernate when idle and wake on demand without losing contrib
   assert.match(managerSource, /if \(this\.hibernateFromCache\(descriptor\)\) return/)
   assert.match(managerSource, /cached\.mainSignature !== signature/)
   assert.match(managerSource, /if \(this\.shuttingDown \|\| name === 'app:before-quit'\) return/)
+  // P2-A: provider+ui hibernation, shutdown contribution preservation, and bundled sync timestamp preservation.
+  assert.match(managerSource, /private supportsProviderHostHibernation\(/)
+  assert.match(managerSource, /if \(!running\.trial && !this\.shuttingDown\) this\.forgetContributions\(id\)/)
+  assert.match(managerSource, /preserveTimestamps: true/)
+  const coreRuntimeSource = readFileSync(
+    new URL('../app/coreApplicationRuntime.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(coreRuntimeSource, /hostIdleTimeoutMs:\s*15_000/)
+})
+
+test('background NCM search 405 rate limits neither trip the playback circuit nor starve getPlaybackUrl', async () => {
+  const f = playbackMetadataHarness()
+  const pluginId = 'com.twilightecho.provider.ncm'
+
+  // Simulate repeated upstream 405 rate-limit rejections on background searchSongs calls.
+  for (let i = 0; i < 5; i += 1) {
+    const pending = f.manager.callProvider('ncm', 'searchSongs', [`track-${i}`, 30, 0], {
+      background: true
+    })
+    await new Promise<void>((done) => setImmediate(done))
+    const call = f.dispatchedQueue.at(-1)
+    assert.ok(call)
+    const rejected = assert.rejects(pending, /操作频繁/)
+    f.manager.handleProviderResult(pluginId, {
+      kind: 'provider-result',
+      requestId: call.requestId,
+      ok: false,
+      error: '操作频繁，请稍候再试'
+    })
+    await rejected
+  }
+
+  // Fill background search concurrency; foreground playback must still dispatch immediately!
+  f.dispatchedQueue.length = 0
+  const bgCalls = Array.from({ length: 4 }, (_, i) =>
+    f.manager.callProvider('ncm', 'searchSongs', [`bg-${i}`, 30, 0], { background: true })
+  )
+  await new Promise<void>((done) => setImmediate(done))
+  assert.equal(f.dispatchedQueue.length, 2, 'background calls leave concurrency headroom')
+
+  const upstream = 'https://m8.music.126.net/playable.flac'
+  const playPending = f.manager.callProvider('ncm', 'getPlaybackUrl', [
+    { id: 'ncm:186016' },
+    { quality: 'lossless' }
+  ])
+  await new Promise<void>((done) => setImmediate(done))
+  const playCall = f.dispatchedQueue.find((item) => item.method === 'getPlaybackUrl')
+  assert.ok(playCall, 'getPlaybackUrl dispatches immediately despite queued background searches')
+  f.manager.handleProviderResult(pluginId, {
+    kind: 'provider-result',
+    requestId: playCall.requestId,
+    ok: true,
+    value: upstream
+  })
+  const grantedUrl = (await playPending) as string
+  assert.equal(f.grants.resolve(grantedUrl, 'audio').source, upstream)
+
+  // Finish the background calls cleanly.
+  while (f.dispatchedQueue.some((item) => item.method === 'searchSongs')) {
+    const batch = f.dispatchedQueue.splice(0, f.dispatchedQueue.length)
+    for (const item of batch) {
+      if (item.method !== 'searchSongs') continue
+      f.manager.handleProviderResult(pluginId, {
+        kind: 'provider-result',
+        requestId: item.requestId,
+        ok: true,
+        value: { items: [], total: 0 }
+      })
+    }
+    await new Promise<void>((done) => setImmediate(done))
+  }
+  await Promise.all(bgCalls)
 })

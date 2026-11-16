@@ -110,6 +110,10 @@ test(
         ['--no-sandbox', join(directory, 'runner.cjs'), directory],
         { windowsHide: true, timeout: 80_000, env, maxBuffer: 1024 * 1024 }
       )
+      if (process.env.TWILIGHT_STREAMING_PROVIDER_ONLY) {
+        assert.match(result.stdout, /STREAMING_PROVIDER_OK/)
+        return
+      }
       if (process.env.TWILIGHT_STREAMING_PERSONALIZED_ONLY) {
         assert.match(result.stdout, /STREAMING_PERSONALIZED_OK/)
         return
@@ -135,7 +139,7 @@ test(
 
 const fixtureAccess = `
 defineExpose({
-  fixtureState() { return { users: detailUsers.value.length, error: detailError.value, loading: restoringPage || detailLoading.value || browseState.value.loading, total: browseState.value.total, resident: detailTracks.value.length, offset: browseState.value.offset, draft: aggregateDraftName.value, stack: detailStack.value.map(entry => ({ type: entry.view.type, saved: !!entry.snapshot })) } },
+  fixtureState() { return { provider: activeProvider.value, tab: activeTab.value, users: detailUsers.value.length, error: detailError.value, loading: restoringPage || detailLoading.value || browseState.value.loading, total: browseState.value.total, resident: detailTracks.value.length, offset: browseState.value.offset, draft: aggregateDraftName.value, stack: detailStack.value.map(entry => ({ type: entry.view.type, saved: !!entry.snapshot })) } },
   fixtureDraft(value: string) { aggregateDraftName.value = value },
   async showFixtureDetail(kind: string, tracks: Track[], cover: string) {
     resetDetail({ animate: false })
@@ -166,6 +170,7 @@ import StreamingPage from '@renderer/components/StreamingPage.vue'
 import LoginPage from '@renderer/components/LoginPage.vue'
 import {useNcmStore} from '@renderer/stores/useNcmStore.ts'
 import {useProviderStore} from '@renderer/stores/useProviderStore.ts'
+import {useSettingsStore} from '@renderer/stores/useSettingsStore.ts'
 import {useCoreConnection} from '@renderer/stores/coreConnection.ts'
 import {useAppNoticeStore} from '@renderer/stores/useAppNoticeStore.ts'
 import { coreSnapshot } from '@renderer/stores/coreTestFixtures.ts'
@@ -177,7 +182,11 @@ installScrollToTopButton();
 const noop=()=>{};
 let authMode='guest',authProviders=[],authConnectDelay=0,authConnectCount=0;
 let recommendationMode='ready',recommendationCalls=0;
+const providerCalls=[],settingsWrites=[];
+let fixtureSettings={streamingActiveProvider:'ncm'};
+const settingsSnapshot=()=>({settings:fixtureSettings,defaults:{},paths:{},appVersion:'2.0.2',platform:'win32',restartReasons:[]});
 const authProfile={userId:42,nickname:'已保存的网易云账号',avatarUrl:'',signature:'',follows:0,followeds:0};
+const biliProfile={...authProfile,userId:84,nickname:'Bilibili 测试账号'};
 window.api={
  core:{
   connect:async()=>{authConnectCount++;if(authConnectDelay)await new Promise(resolve=>setTimeout(resolve,authConnectDelay));return {ok:true,value:{connectionId:'layout',snapshot:coreSnapshot()}}},
@@ -185,10 +194,17 @@ window.api={
   request:async(_id,request)=>{
    if(request.name==='providers.list')return {ok:true,value:authProviders};
    if(request.name==='providers.call'){
-     const {method}=request.payload;
+     const {providerId,method}=request.payload;
+     providerCalls.push({providerId,method});
+     if(method==='fetchUserLibrary')return {ok:true,value:providerId==='bili'?{likedPlaylist:{id:'bili-default',name:'默认收藏夹',trackCount:203},playlists:[]}:{likedPlaylist:null,playlists:[]}};
+     if(method==='fetchCloudSongsPage')return {ok:true,value:{items:[],total:0,hasMore:false,nextOffset:0}};
+     if(method==='fetchDiscoveryPlaylists'){
+       if(providerId!=='ncm')throw Error('Bilibili must not receive discovery requests');
+       return {ok:true,value:{items:[{id:'discovery-1',name:'网易云发现测试歌单',cover,trackCount:12}],total:1,offset:0,hasMore:false}};
+     }
      if(method==='checkLogin'){
        if(authMode==='offline')throw Error('登录状态检查暂时失败，请重试');
-       return {ok:true,value:{loggedIn:authMode==='ready',profile:authMode==='ready'?authProfile:null}};
+       return {ok:true,value:{loggedIn:authMode==='ready',profile:authMode==='ready'?(providerId==='bili'?biliProfile:authProfile):null}};
      }
      if(method==='openOfficialLogin'){authMode='ready';return {ok:true,value:{loggedIn:true,profile:authProfile}};}
      if(method==='logout'){authMode='guest';return {ok:true,value:undefined};}
@@ -219,6 +235,7 @@ window.api={
   }
  },
  data:{loadPlaybackBookmarks:async()=>null},
+ settings:{onChanged:()=>noop,get:async()=>settingsSnapshot(),update:async patch=>{settingsWrites.push(patch);fixtureSettings={...fixtureSettings,...patch};return settingsSnapshot()}},
  providers:{list:async()=>[],call:async()=>[]},
  providerDownloads:{list:async()=>[],onChanged:()=>noop},
  ncmCloud:{onProgress:()=>noop}
@@ -235,7 +252,45 @@ const tracks=Array.from({length:100},(_,i)=>({id:'fixture-'+i,title:'歌曲 '+i,
 const names=['Porter Robinson','C418','Ludicin','ReeK','Ophidian','n-buna','ヨルシカ','重音テト','Betwixt & Between','MIMI','25時、ナイトコードで。','花譜','Sad Keyboard Guy','void (Mournfinale)'];
 const portraits=['#c85f92','#527e8a','#bd8c58','#65628a'].map(color=>{paint.fillStyle=color;paint.fillRect(0,0,256,256);paint.fillStyle='#e9dbca';paint.beginPath();paint.ellipse(128,91,41,48,0,0,Math.PI*2);paint.fill();paint.fillStyle='#e1c4ae';paint.beginPath();paint.ellipse(128,248,85,92,0,0,Math.PI*2);paint.fill();return canvas.toDataURL()});
 const people=Array.from({length:80},(_,i)=>({id:i+1,name:names[i%names.length],picUrl:i%3===1?null:portraits[i%portraits.length],musicSize:0,userType:0}));
-const mount=async(wait=250)=>{app?.unmount();app=createApp({render:()=>loginVisible.value?h(LoginPage,{initialProviderId:'ncm',onLoginSuccess:()=>{loginVisible.value=false}}):h(StreamingPage,{ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value,rootNavigationRevision:authNavigationRevision.value,onLogin:()=>{loginVisible.value=true}})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');if(wait)await pause(wait);else await nextTick()};
+const mount=async(wait=250)=>{app?.unmount();app=createApp({render:()=>loginVisible.value?h(LoginPage,{initialProviderId:'ncm',onLoginSuccess:()=>{loginVisible.value=false}}):h(StreamingPage,{key:tab.value,ref:page,active:true,menuOpen:false,hasPlayer:false,initialTab:tab.value,rootNavigationRevision:authNavigationRevision.value,onLogin:()=>{loginVisible.value=true}})});app.config.errorHandler=error=>errors.push(String(error));app.mount('#app');if(wait)await pause(wait);else await nextTick()};
+window.checkStreamingProviderSelection=async stage=>{
+ const wait=async(predicate,label)=>{for(let i=0;i<100;i++){if(predicate())return;await pause(20)}throw Error(label+': '+JSON.stringify(page.value?.fixtureState())+' '+document.body.innerText.slice(-1000)+' '+errors.join(';'))};
+ if(stage==='switch-library'){
+  app?.unmount();app=null;authNavigationRevision.value++;authMode='ready';recommendationMode='ready';
+  authProviders=[
+   {id:'ncm',name:'网易云音乐',capabilities:['login','library','playlist'],supportedMethods:['checkLogin','fetchUserLibrary','fetchDiscoveryPlaylists','fetchRecommendSongs','fetchRecommendPlaylists'],ui:{icon:'pi pi-cloud',streamingSections:[{id:'daily',title:'每日推荐',icon:'pi pi-calendar',method:'fetchRecommendSongs'}]}},
+   {id:'bili',name:'Bilibili',capabilities:['login','library','playlist'],supportedMethods:['checkLogin','fetchUserLibrary'],ui:{icon:'pi pi-video',streamingLibraryTab:true}}
+  ];
+  await useSettingsStore().updateSettings({streamingActiveProvider:'ncm'});
+  document.documentElement.dataset.teMotion='off';
+  await useCoreConnection().attach();await useProviderStore().syncProviders();useNcmStore().setLogin(authProfile);
+  tab.value='library';await mount();
+  document.querySelector('.streaming-header-provider-switcher .provider-switcher-trigger').click();await nextTick();
+  [...document.querySelectorAll('.provider-switcher-option')].find(button=>button.textContent.includes('Bilibili')).click();
+  await wait(()=>document.querySelector('.favorites-info h2')?.textContent==='默认收藏夹','Bilibili library loads after explicit selection');
+  await wait(()=>useSettingsStore().settings.value.streamingActiveProvider==='bili','explicit selection is saved');
+  expect(document.body.innerText.includes('203'),'Bilibili favorite count changed');
+ }else{
+  tab.value=stage==='return-library'?'library':stage==='home'?'home':stage==='cloud'?'cloud':'discover';await nextTick();
+  if(stage==='return-library'){
+   await wait(()=>document.querySelector('.favorites-info h2')?.textContent==='默认收藏夹','return restores Bilibili library');
+   expect(page.value.fixtureState().provider==='bili','discovery changed the library selection');
+  }else if(stage==='home'){
+   await wait(()=>document.querySelector('.hero-title'),'homepage selects a supported source');
+   expect(page.value.fixtureState().provider==='ncm','homepage retained Bilibili');
+  }else if(stage==='cloud'){
+   await wait(()=>page.value?.fixtureState().provider==='ncm','cloud selects NetEase');
+  }else{
+   await wait(()=>document.querySelector('.disc')&&document.body.innerText.includes('网易云发现测试歌单'),'discovery must render the discovery source, not Bilibili favorites');
+   expect(page.value.fixtureState().tab==='discover'&&page.value.fixtureState().provider==='ncm','discovery retained library source');
+   expect(!document.querySelector('.favorites-info'),'discovery shows library content');
+  }
+  expect(useSettingsStore().settings.value.streamingActiveProvider==='bili','automatic surface fallback overwrote the saved library preference');
+ }
+ expect(!providerCalls.some(call=>call.providerId==='bili'&&call.method==='fetchDiscoveryPlaylists'),'discovery dispatched to Bilibili');
+ expect(settingsWrites.length===2,'surface fallback persisted an automatic provider selection');
+ expect(errors.length===0,errors.join(';'));
+};
 const streamStarts=[];
 let streamResolve,streamReject;
 window.layoutPlayer.startPersonalizedStream=(...args)=>{
@@ -524,6 +579,14 @@ async function checkPersonalizedPlayback(){
  }
  console.log('STREAMING_PERSONALIZED_OK');
 }
+async function checkProviderSelection(){
+ for(const stage of ['switch-library','discover','return-library','cached-discover','home','cloud','return-library']){
+  await win.webContents.executeJavaScript('window.checkStreamingProviderSelection('+JSON.stringify(stage)+')');
+  if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'provider-'+stage+'.png'),(await win.webContents.capturePage()).toPNG());
+ }
+ console.log('STREAMING_PROVIDER_OK');
+}
+if(process.env.TWILIGHT_STREAMING_PROVIDER_ONLY){await checkProviderSelection();app.exit(0);return;}
 if(process.env.TWILIGHT_STREAMING_PERSONALIZED_ONLY){await checkPersonalizedPlayback();app.exit(0);return;}
 if(process.env.TWILIGHT_STREAMING_AUTH_ONLY){
  for(const stage of ['offline','retry','delayed-entry','failed-cache','official','revisit']){
@@ -550,5 +613,6 @@ console.log('STREAMING_RESTORE_OK '+JSON.stringify(await win.webContents.execute
 if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE){fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'liked-floating-locator.png'),(await win.webContents.capturePage()).toPNG())}
 await win.webContents.executeJavaScript("(async()=>{for(const stage of ['offline','retry','delayed-entry','failed-cache','official','revisit'])await window.checkStreamingAuthentication(stage)})()");console.log('STREAMING_AUTH_OK');
 await checkPersonalizedPlayback();
+await checkProviderSelection();
 console.log('STREAMING_LAYOUT_OK');app.exit(0)}catch(error){if(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE)fs.writeFileSync(path.join(process.env.TWILIGHT_STREAMING_LAYOUT_EVIDENCE,'failure.png'),(await win.webContents.capturePage()).toPNG());console.error(error.stack);app.exit(1)}});
 `

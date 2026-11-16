@@ -137,6 +137,7 @@ export class CoreStatisticsService {
   /** Keep membership in Core; SQL supplies bounded pages, current local metadata and source filters. */
   recentPlaylist(): Playlist {
     if (this.recentView?.revision === this.revision) return this.recentView.playlist
+    const previous = this.recentView?.playlist
     const trackIds: string[] = []
     const trackSnapshots: Record<string, TrackData> = Object.create(null)
     const seen = new Set<string>()
@@ -144,17 +145,49 @@ export class CoreStatisticsService {
       .filter(([, stat]) => stat.lastPlayed > 0)
       .map(([id, stat]) => ({ id, ...stat }))
       .sort(compareRecentTracks)
+    let sameSnapshots = !!previous
     for (const stat of entries) {
       const id = stat.track?.id ?? stat.sourceIds?.[0]?.trackId ?? stat.id
       if (seen.has(id)) continue
       seen.add(id)
       trackIds.push(id)
-      if (stat.track)
-        trackSnapshots[id] = {
-          ...stat.track,
-          cover: stat.cover ?? stat.track.cover,
-          coverSource: stat.coverSource ?? stat.track.coverSource
+      if (stat.track) {
+        const cover = stat.cover ?? stat.track.cover
+        const coverSource = stat.coverSource ?? stat.track.coverSource
+        const before = previous?.trackSnapshots?.[id]
+        if (
+          before &&
+          before.id === stat.track.id &&
+          before.title === stat.track.title &&
+          before.artist === stat.track.artist &&
+          before.album === stat.track.album &&
+          before.duration === stat.track.duration &&
+          before.filePath === stat.track.filePath &&
+          before.cover === cover &&
+          before.coverSource === coverSource
+        ) {
+          trackSnapshots[id] = before
+        } else {
+          sameSnapshots = false
+          trackSnapshots[id] = {
+            ...stat.track,
+            cover,
+            coverSource
+          }
         }
+      } else if (previous?.trackSnapshots?.[id]) {
+        sameSnapshots = false
+      }
+    }
+    if (
+      previous &&
+      sameSnapshots &&
+      previous.trackIds.length === trackIds.length &&
+      trackIds.every((id, index) => id === previous.trackIds[index]) &&
+      Object.keys(previous.trackSnapshots ?? {}).length === Object.keys(trackSnapshots).length
+    ) {
+      this.recentView = { revision: this.revision, playlist: previous }
+      return previous
     }
     const playlist: Playlist = {
       id: CORE_RECENT_PLAYLIST_ID,

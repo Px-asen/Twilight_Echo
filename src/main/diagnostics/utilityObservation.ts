@@ -5,6 +5,8 @@ import { sanitizeDiagnosticText, summarizeDiagnosticArguments } from './sanitize
 import type { DiagnosticEvent } from '../../shared/diagnostics.ts'
 import { registerDiagnosticProcess } from './processEvidence.ts'
 const observed = new WeakSet<object>()
+const POLLED_UTILITY_RPC =
+  /^(?:Get(?:PlaybackInfo|VisualizationData|SpectrumData|DspGraphStatus|DspPluginStatus|ConvolverInfo|UpcomingTrack)|EnumerateDevices|BridgeStatus|BridgeSourceTimeline)$/
 const states = new Map<
   string,
   {
@@ -74,7 +76,7 @@ export function observeUtilityProcess(child: any, role: string): void {
         const method = message.method ?? message.analysis ?? message.kind
         if (pending.size < 1024)
           pending.set(message.requestId, { started: performance.now(), method, context })
-        if (!/^Get(?:PlaybackInfo|VisualizationData|SpectrumData)$/.test(method))
+        if (!POLLED_UTILITY_RPC.test(method))
           writeDiagnostic(
             `rpc.${role}`,
             'dispatch',
@@ -91,7 +93,7 @@ export function observeUtilityProcess(child: any, role: string): void {
       const item = pending.get(message.requestId)
       if (!item) return
       pending.delete(message.requestId)
-      if (!message.ok || !/^Get(?:PlaybackInfo|VisualizationData|SpectrumData)$/.test(item.method))
+      if (!message.ok || !POLLED_UTILITY_RPC.test(item.method))
         writeDiagnostic(
           `rpc.${role}`,
           message.ok ? 'response' : 'failed',

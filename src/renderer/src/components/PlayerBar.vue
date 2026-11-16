@@ -38,6 +38,7 @@ import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import { describeResampler } from '../../../shared/resamplerStatus.ts'
 import { resolveReasonCode } from '../../../shared/audio/reasonCodes.ts'
 import { useLocale } from '../app/useLocale.ts'
+import { formatAudioError } from '../utils/audioErrorPresentation.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 const HiFiSidebar = defineAsyncComponent(() => import('./player-bar/HiFiSidebar.vue'))
@@ -201,8 +202,8 @@ const {
   setAudioOutputConfig,
   setAudioOutput,
   setAudioDevice,
-  setOutputStage,
-  setStereoImage,
+  setOutputStage: storeSetOutputStage,
+  setStereoImage: storeSetStereoImage,
   refreshAudioOutputState,
   toggleDspEnabled,
   toggleEqEnabled,
@@ -1240,63 +1241,83 @@ async function runPlayerBarExtension(command?: string): Promise<void> {
   await executeCoreExtension(command, [currentTrack.value])
 }
 
-function onToggleClipGuard(): void {
-  void setAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
-}
-
-function onToggleConvolver(): void {
-  void setAudioProcessing({
-    dspEnabled: true,
-    convolverEnabled: !audioProcessing.value.convolverEnabled
+function runAudioAction(work: () => Promise<unknown>): void {
+  void work().catch((error) => {
+    pushNotice({
+      kind: 'error',
+      message: formatAudioError(error),
+      dedupeKey: 'player-audio-action-error'
+    })
   })
 }
 
+function setOutputStage(patch: Parameters<typeof storeSetOutputStage>[0]): void {
+  runAudioAction(() => storeSetOutputStage(patch))
+}
+
+function setStereoImage(patch: Parameters<typeof storeSetStereoImage>[0]): void {
+  runAudioAction(() => storeSetStereoImage(patch))
+}
+
+function onToggleClipGuard(): void {
+  runAudioAction(() => setAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard }))
+}
+
+function onToggleConvolver(): void {
+  runAudioAction(() =>
+    setAudioProcessing({
+      dspEnabled: true,
+      convolverEnabled: !audioProcessing.value.convolverEnabled
+    })
+  )
+}
+
 function onSetReplayGainMode(mode: VolumeNormalizationMode): void {
-  void setReplayGainMode(mode)
+  runAudioAction(() => setReplayGainMode(mode))
 }
 
 function onSetCrossfeedStrength(strength: number): void {
-  void setCrossfeedStrength(strength)
+  runAudioAction(() => setCrossfeedStrength(strength))
 }
 
 function onSetCrossfadeSeconds(seconds: number): void {
-  void setAudioProcessing({ crossfadeSeconds: seconds })
+  runAudioAction(() => setAudioProcessing({ crossfadeSeconds: seconds }))
 }
 
 function onSetReplayGainPreamp(db: number): void {
-  void setAudioProcessing({ dspEnabled: true, replayGainPreamp: db })
+  runAudioAction(() => setAudioProcessing({ dspEnabled: true, replayGainPreamp: db }))
 }
 
 function onSetPreferredBufferSize(frames: number): void {
-  void setAudioOutputConfig({ preferredBufferSize: frames })
+  runAudioAction(() => setAudioOutputConfig({ preferredBufferSize: frames }))
 }
 
 function onSetRoutingMode(mode: ChannelRoutingMode): void {
-  void setAudioOutputConfig({ routingMode: mode })
+  runAudioAction(() => setAudioOutputConfig({ routingMode: mode }))
 }
 
 function onSetPcmToDsdMode(mode: PcmToDsdMode): void {
-  void setAudioOutputConfig({ pcmToDsdMode: mode })
+  runAudioAction(() => setAudioOutputConfig({ pcmToDsdMode: mode }))
 }
 
 function onSetDsdOutputMode(mode: DsdOutputMode): void {
-  void setAudioProcessing({ dsdOutputMode: mode })
+  runAudioAction(() => setAudioProcessing({ dsdOutputMode: mode }))
 }
 
 function onSetDsdRatePolicy(policy: DsdRatePolicy): void {
-  void setAudioProcessing({ dsdRatePolicy: policy })
+  runAudioAction(() => setAudioProcessing({ dsdRatePolicy: policy }))
 }
 
 function onSetAudioOutput(output: AudioOutputId): void {
-  void setAudioOutput(output)
+  runAudioAction(() => setAudioOutput(output))
 }
 
 function onSetAudioDevice(device: string): void {
-  void setAudioDevice(device)
+  runAudioAction(() => setAudioDevice(device))
 }
 
 function onRefreshDevices(): void {
-  void refreshAudioOutputState()
+  runAudioAction(refreshAudioOutputState)
 }
 
 async function onReloadLyrics(prefer: 'auto' | 'local' | 'amll' | 'provider'): Promise<void> {
@@ -2233,11 +2254,11 @@ onBeforeUnmount(() => {
             @open-dsp="openDspSettings"
             @open-equalizer="openEqualizerPage"
             @set-unity-volume="setUnityVolume"
-            @toggle-exclusive="toggleExclusiveMode"
-            @toggle-dsp="toggleDspEnabled"
-            @toggle-eq="toggleEqEnabled"
-            @toggle-gapless="toggleGapless"
-            @toggle-crossfeed="toggleCrossfeed"
+            @toggle-exclusive="runAudioAction(toggleExclusiveMode)"
+            @toggle-dsp="runAudioAction(toggleDspEnabled)"
+            @toggle-eq="runAudioAction(toggleEqEnabled)"
+            @toggle-gapless="runAudioAction(toggleGapless)"
+            @toggle-crossfeed="runAudioAction(toggleCrossfeed)"
             @toggle-clip-guard="onToggleClipGuard"
             @toggle-convolver="onToggleConvolver"
             @toggle-desktop-lyrics="toggleDesktopLyrics"
@@ -2255,8 +2276,8 @@ onBeforeUnmount(() => {
             @set-audio-output="onSetAudioOutput"
             @set-audio-device="onSetAudioDevice"
             @refresh-devices="onRefreshDevices"
-            @select-impulse-response="selectImpulseResponse"
-            @clear-impulse-response="clearImpulseResponse"
+            @select-impulse-response="runAudioAction(selectImpulseResponse)"
+            @clear-impulse-response="runAudioAction(clearImpulseResponse)"
             @reload-lyrics="onReloadLyrics"
             @set-lyric-layer-selection="setLyricLayerSelection"
             @toggle-translation-visibility="toggleTranslationVisibility"

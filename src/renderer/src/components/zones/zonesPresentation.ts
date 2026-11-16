@@ -99,6 +99,24 @@ function receiverOf(zone: ZoneView): BridgeReceiverFacts | null {
   return zone.output?.selected && zone.output.connected ? zone.output.receiver : null
 }
 
+function isDsdSourceSpec(source: {
+  bitDepth?: number | null
+  codec?: string | null
+  isDsd?: boolean | null
+}): boolean {
+  return Boolean(
+    source.isDsd ||
+      source.bitDepth === 1 ||
+      /^ds(?:d|f|diff)$/i.test((source.codec ?? '').trim())
+  )
+}
+
+function dsdCarrierLabel(mode: string | null | undefined): string {
+  if (mode === 'dop') return 'DoP'
+  if (mode === 'native') return '原生 DSD'
+  return ''
+}
+
 /** "FLAC · 96 kHz / 24 bit → WASAPI 独占 · 48 kHz / 24 bit" — only facts Core reported. */
 export function zoneFormatLine(zone: ZoneView): string {
   const playback = zone.playback
@@ -114,14 +132,30 @@ export function zoneFormatLine(zone: ZoneView): string {
     .filter(Boolean)
     .join(' · ')
   const receiver = receiverOf(zone)
+  const receiverDsdMode =
+    receiver?.wireFormat === 'dop-int24-le'
+      ? 'dop'
+      : receiver?.wireFormat?.startsWith('dsd-')
+        ? 'native'
+        : null
+  const localDsdMode =
+    playback?.dsdMode === 'dop' || playback?.dsdMode === 'native' ? playback.dsdMode : null
+  const localOutputRate =
+    localDsdMode === 'native' && playback?.actualDsdRate
+      ? playback.actualDsdRate
+      : playback?.actualSampleRate
+  const localOutputBits =
+    localDsdMode === 'native' ? playback?.actualBitDepth || 1 : playback?.actualBitDepth
   const output = receiver
     ? [
         backendLabel(receiver.backend, receiver.exclusive),
+        dsdCarrierLabel(receiverDsdMode),
         formatAudio(receiver.actualSampleRate, receiver.actualBitDepth)
       ]
     : [
         backendLabel(playback?.outputBackend),
-        formatAudio(playback?.actualSampleRate, playback?.actualBitDepth)
+        dsdCarrierLabel(localDsdMode),
+        formatAudio(localOutputRate, localOutputBits)
       ]
   const sink = output.filter(Boolean).join(' · ')
   if (source && sink) return `${source} → ${sink}`
@@ -177,6 +211,121 @@ function decodedLabel(format: string): string {
   return bits ? `${bits} 位整数` : format
 }
 
+function effectiveOutputDsdMode(
+  path: CoreSignalPath,
+  sourceIsDsd: boolean
+): 'dop' | 'native' | 'pcm' | 'unsupported' | null {
+  const explicit = path.output.dsdMode ?? path.decoded.dsdMode
+  if (explicit === 'dop' || explicit === 'native' || explicit === 'unsupported') return explicit
+  if (path.receiver?.wireFormat === 'dop-int24-le' || path.transport.format === 'dop-int24-le')
+    return 'dop'
+  if (
+    path.receiver?.wireFormat?.startsWith('dsd-') ||
+    path.transport.format.startsWith('dsd-')
+  )
+    return 'native'
+  if (sourceIsDsd) return 'pcm'
+  return null
+}
+
+function buildDecodeNode(path: CoreSignalPath, playing: boolean, sourceIsDsd: boolean): PathNode {
+  if (!playing) {
+    return {
+      id: 'decode',
+      label: '解码',
+      icon: 'ph-wave-sine',
+      value: '待机',
+      tone: 'idle',
+      detail: []
+    }
+  }
+  const decodedMode =
+    path.decoded.dsdMode === 'dop' ||
+    path.decoded.dsdMode === 'native' ||
+    path.decoded.dsdMode === 'unsupported'
+      ? path.decoded.dsdMode
+      : !path.decoded.dsdMode
+        ? effectiveOutputDsdMode(path, sourceIsDsd)
+        : sourceIsDsd
+          ? 'pcm'
+          : null
+
+  if (sourceIsDsd && decodedMode === 'dop') {
+    const dopRateExact =
+      !path.decoded.sampleRate ||
+      path.decoded.sampleRate * 16 === path.source.sampleRate ||
+      path.decoded.sampleRate === path.source.sampleRate
+    return {
+      id: 'decode',
+      label: '解码',
+      icon: 'ph-wave-sine',
+      value:
+        ['DoP 封装', formatAudio(path.decoded.sampleRate, path.decoded.bitDepth || 24)]
+          .filter(Boolean)
+          .join(' · ') || 'DoP 封装',
+      tone: dopRateExact ? 'exact' : 'adapted',
+      detail: [
+        dopRateExact ? '1-bit DSD 原样封装为 DoP 帧（未转 PCM）' : 'DoP 封装采样率已调整',
+        path.decoded.format ? `载体格式 ${path.decoded.format}` : '24 bit DoP 载体'
+      ]
+    }
+  }
+  if (sourceIsDsd && decodedMode === 'native') {
+    const semanticRate = path.decoded.dsdRate || path.source.sampleRate
+    const nativeRateExact =
+      !semanticRate ||
+      (semanticRate === path.source.sampleRate &&
+        (!path.decoded.sampleRate ||
+          path.decoded.sampleRate === path.source.sampleRate ||
+          path.decoded.sampleRate * 8 === path.source.sampleRate ||
+          path.decoded.sampleRate * 32 === path.source.sampleRate))
+    return {
+      id: 'decode',
+      label: '解码',
+      icon: 'ph-wave-sine',
+      value:
+        ['原生 DSD', formatAudio(semanticRate, 1)].filter(Boolean).join(' · ') || '原生 DSD',
+      tone: nativeRateExact ? 'exact' : 'adapted',
+      detail: [
+        nativeRateExact ? '1-bit DSD 位流直通（未转 PCM）' : 'DSD 速率已转换',
+        path.decoded.format ? `样本格式 ${path.decoded.format}` : '原生 DSD 位流'
+      ]
+    }
+  }
+  if (sourceIsDsd && decodedMode === 'pcm') {
+    return {
+      id: 'decode',
+      label: '解码',
+      icon: 'ph-wave-sine',
+      value:
+        [decodedLabel(path.decoded.format), formatRate(path.decoded.sampleRate)]
+          .filter(Boolean)
+          .join(' · ') || 'DSD 转 PCM',
+      tone: 'adapted',
+      detail: [
+        'DSD 已转换为 PCM（非 DSD 直出）',
+        path.decoded.format ? `样本格式 ${path.decoded.format}` : '样本格式未报告'
+      ]
+    }
+  }
+  const decodedChanged =
+    path.decoded.sampleRate > 0 && path.decoded.sampleRate !== path.source.sampleRate
+  return {
+    id: 'decode',
+    label: '解码',
+    icon: 'ph-wave-sine',
+    value:
+      [decodedLabel(path.decoded.format), formatRate(path.decoded.sampleRate)]
+        .filter(Boolean)
+        .join(' · ') || '已解码',
+    tone: decodedChanged ? 'adapted' : 'exact',
+    detail: [
+      decodedChanged ? '解码时改变了采样率' : '采样率与音源一致',
+      path.decoded.format ? `样本格式 ${path.decoded.format}` : '样本格式未报告'
+    ]
+  }
+}
+
 export function signalPathStages(
   path: CoreSignalPath,
   options: { peerName?: string | null } = {}
@@ -184,6 +333,8 @@ export function signalPathStages(
   const playing = path.source.sampleRate > 0
   const remote = path.transport.kind !== 'local'
   const codec = codecLabel(path.source.codec)
+  const sourceIsDsd = isDsdSourceSpec(path.source)
+  const outDsdMode = effectiveOutputDsdMode(path, sourceIsDsd)
   const source: PathNode = {
     id: 'source',
     label: '音源',
@@ -196,25 +347,7 @@ export function signalPathStages(
       ? [`${path.source.channels || 2} 声道`, codec ? `${codec} 文件` : '音频文件']
       : ['开始播放后显示实际格式']
   }
-  const decodedChanged =
-    playing && path.decoded.sampleRate > 0 && path.decoded.sampleRate !== path.source.sampleRate
-  const decode: PathNode = {
-    id: 'decode',
-    label: '解码',
-    icon: 'ph-wave-sine',
-    value: playing
-      ? [decodedLabel(path.decoded.format), formatRate(path.decoded.sampleRate)]
-          .filter(Boolean)
-          .join(' · ') || '已解码'
-      : '待机',
-    tone: !playing ? 'idle' : decodedChanged ? 'adapted' : 'exact',
-    detail: playing
-      ? [
-          decodedChanged ? '解码时改变了采样率' : '采样率与音源一致',
-          path.decoded.format ? `样本格式 ${path.decoded.format}` : '样本格式未报告'
-        ]
-      : []
-  }
+  const decode = buildDecodeNode(path, playing, sourceIsDsd)
   const active = path.dsp.nodes.filter((node) => node.active && !node.bypassed)
   const dspTone: PathTone =
     path.dsp.applyState === 'failed'
@@ -258,6 +391,32 @@ export function signalPathStages(
     { id: 'core', label: '此电脑', nodes: [source, decode, dsp, src] }
   ]
   const receiver = path.receiver
+  const outputNativeDsdRate =
+    path.output.dsdRate ||
+    (sourceIsDsd &&
+    (path.output.sampleRate * 8 === path.source.sampleRate ||
+      path.output.sampleRate * 32 === path.source.sampleRate)
+      ? path.source.sampleRate
+      : path.output.sampleRate)
+  const deviceFormatLabel =
+    outDsdMode === 'dop'
+      ? ['DoP', formatAudio(path.output.sampleRate, path.output.bitDepth || 24)]
+          .filter(Boolean)
+          .join(' · ')
+      : outDsdMode === 'native'
+        ? ['原生 DSD', formatAudio(outputNativeDsdRate, path.output.bitDepth || 1)]
+            .filter(Boolean)
+            .join(' · ')
+        : formatAudio(path.output.sampleRate, path.output.bitDepth)
+  const deviceAdapted = sourceIsDsd
+    ? outDsdMode === 'dop'
+      ? Boolean(path.output.sampleRate && path.output.sampleRate * 16 !== path.source.sampleRate)
+      : outDsdMode === 'native'
+        ? Boolean(outputNativeDsdRate && outputNativeDsdRate !== path.source.sampleRate)
+        : true
+    : outDsdMode === 'dop' ||
+      outDsdMode === 'native' ||
+      Boolean(path.output.sampleRate && path.output.sampleRate !== path.source.sampleRate)
   const device: PathNode = {
     id: 'device',
     label: '输出设备',
@@ -267,7 +426,7 @@ export function signalPathStages(
         path.output.deviceName ||
           backendLabel(path.output.backend, receiver?.exclusive) ||
           (remote ? '输出桥设备' : '系统默认设备'),
-        formatAudio(path.output.sampleRate, path.output.bitDepth)
+        deviceFormatLabel
       ]
         .filter(Boolean)
         .join(' · ') || '未报告',
@@ -276,7 +435,7 @@ export function signalPathStages(
         ? 'fault'
         : !playing
           ? 'idle'
-          : path.output.sampleRate && path.output.sampleRate !== path.source.sampleRate
+          : deviceAdapted
             ? 'adapted'
             : 'exact',
     detail: [

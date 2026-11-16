@@ -16,6 +16,7 @@ export default defineConfig(({ command }) => {
         rollupOptions: {
           input: {
             index: resolve(__dirname, 'src/main/index.ts'),
+            bootstrap: resolve(__dirname, 'src/main/server/bootstrap.ts'),
             musicCore: resolve(__dirname, 'src/main/coreProcess/entry.ts'),
             modelPackWorker: resolve(__dirname, 'src/main/coreProcess/modelPackWorker.ts'),
             diagnosticWriter: resolve(__dirname, 'src/main/diagnostics/writerWorker.ts'),
@@ -32,9 +33,32 @@ export default defineConfig(({ command }) => {
     renderer: {
       define: autoMixDefine,
       resolve: {
-        alias: {
-          '@renderer': resolve('src/renderer/src')
-        }
+        alias: [
+          {
+            find: resolve(__dirname, 'src/shared/i18n/translate.ts'),
+            replacement: resolve(__dirname, 'src/shared/i18n/translateRenderer.ts')
+          },
+          {
+            find: resolve(__dirname, 'src/shared/i18n/translate.ts').replace(/\\/g, '/'),
+            replacement: resolve(__dirname, 'src/shared/i18n/translateRenderer.ts')
+          },
+          {
+            find: resolve(__dirname, 'src/shared/i18n/translate'),
+            replacement: resolve(__dirname, 'src/shared/i18n/translateRenderer.ts')
+          },
+          {
+            find: resolve(__dirname, 'src/shared/i18n/translate').replace(/\\/g, '/'),
+            replacement: resolve(__dirname, 'src/shared/i18n/translateRenderer.ts')
+          },
+          {
+            find: /^(?:(?:\.\.?\/)+(?:shared\/)?|src\/shared\/)i18n\/translate(?:\.ts)?$/,
+            replacement: resolve(__dirname, 'src/shared/i18n/translateRenderer.ts')
+          },
+          {
+            find: '@renderer',
+            replacement: resolve('src/renderer/src')
+          }
+        ]
       },
       publicDir: resolve('resources'),
       plugins: [vue()],
@@ -44,7 +68,8 @@ export default defineConfig(({ command }) => {
         rollupOptions: {
           output: {
             manualChunks: {
-              'locale-messages': [resolve('src/shared/i18n/messages/index.ts')],
+              'locale-zh-CN': [resolve(__dirname, 'src/shared/i18n/messages/zh-CN.ts')],
+              'locale-en-US': [resolve(__dirname, 'src/shared/i18n/messages/en-US.ts')],
               'media-providers': [resolve('src/renderer/src/providers/index.ts')],
               'vendor-vue': ['vue'],
               'vendor-music-metadata': ['music-metadata'],

@@ -5,15 +5,35 @@ import {
   LEGACY_SETTINGS_TARGETS,
   normalizeSettingsSection,
   resolveSettingsSearchEntry,
-  sections
+  sections,
+  settingsSectionGroups
 } from './types.ts'
 import { useAppNavigation } from '../../app/useAppNavigation.ts'
 import { normalizeNavigationSession } from '../../app/navigationSession.ts'
 
-test('settings have seven canonical categories and each search destination has a stable identity', () => {
+test('settings have twelve canonical categories and each search destination has a stable identity', () => {
   assert.deepEqual(
     sections.map((section) => section.key),
-    ['general', 'appearance', 'playback', 'lyrics', 'library', 'connections', 'system']
+    [
+      'overview',
+      'general',
+      'appearance',
+      'interface',
+      'lyrics',
+      'playback',
+      'library',
+      'storage',
+      'connections',
+      'hotkeys',
+      'system',
+      'updates'
+    ]
+  )
+  assert.ok(
+    sections.every(
+      (section) =>
+        settingsSectionGroups.some((group) => group.key === section.group) && Boolean(section.tone)
+    )
   )
   const ids = SETTINGS_SEARCH_INDEX.map((entry) => entry.id)
   assert.ok(ids.every(Boolean))
@@ -24,7 +44,7 @@ test('settings have seven canonical categories and each search destination has a
     )
   )
   assert.equal(SETTINGS_SEARCH_INDEX.filter((entry) => entry.title.includes('防破音')).length, 1)
-  assert.equal(normalizeSettingsSection('__proto__'), 'general')
+  assert.equal(normalizeSettingsSection('__proto__'), 'overview')
 })
 
 test('legacy entry points open their new category and preserve the intended internal anchor', () => {
@@ -55,7 +75,7 @@ test('opening settings without a destination returns to the last browsed categor
   navigation.rememberSettingsSection('cache')
   navigation.closeSettingsPage()
   navigation.openSettingsPage()
-  assert.equal(navigation.settingsInitialSection.value, 'library')
+  assert.equal(navigation.settingsInitialSection.value, 'storage')
   assert.equal(navigation.settingsNavigationTarget.value.anchor, undefined)
   navigation.openSettingsPage('dsp')
   assert.equal(navigation.settingsInitialSection.value, 'playback')

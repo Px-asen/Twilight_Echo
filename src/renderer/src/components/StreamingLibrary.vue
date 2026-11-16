@@ -1622,8 +1622,28 @@ function deleteMenuPlaylist(): void {
   box-shadow:
     0 18px 48px rgba(0, 0, 0, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+:global(html[data-window-transparent='on'] .library-view .glass-card),
+:global(html[data-window-transparent='on'] .library-view .empty-state),
+:global(html[data-window-transparent='on'] .library-view .provider-menu),
+:global(html[data-window-transparent='on'] .library-view .provider-switch-btn),
+:global(html[data-window-transparent='on'] .library-view .stat-badge),
+:global(html[data-window-transparent='on'] .library-view .playlist-pin-button),
+:global(html[data-window-transparent='on'] .library-view .feature-card .enter-btn),
+:global(
+  html[data-window-transparent='on'][data-te-card-custom='on'] .library-view .playlist-item
+) {
   backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+}
+
+:global(
+  html[data-window-transparent='on']:not([data-te-card-custom='on']) .library-view .playlist-item
+) {
+  border-color: color-mix(in srgb, white 12%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 :global(html[data-window-transparent='on'] .library-view .glass-card:hover),

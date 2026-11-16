@@ -27,6 +27,11 @@ const { stagedVst3Files } = require('./prepare-vst3-msvc.cjs')
 const { readStagedAudioRuntimeObservation } = require('./staged-audio-runtime-observation.cjs')
 const { collectProductionPackages } = require('./server-package-dependencies.cjs')
 
+const PACKAGE_SPECIFIC_FILTERS = {
+  '@neteasecloudmusicapienhanced/api': ['!public/**'],
+  'opencc-js': ['!dist/esm/**', '!dist/esm-lib/**', '!types/**']
+}
+
 function productionPackageFileSets(root) {
   const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   // Electron supplies its own built-in module; do not embed its development
@@ -43,12 +48,27 @@ function productionPackageFileSets(root) {
       '!**/*.map',
       '!**/*.ts',
       '!**/*.md',
-      ...(record.manifest.name === '@neteasecloudmusicapienhanced/api' ? ['!public/**'] : [])
+      ...(PACKAGE_SPECIFIC_FILTERS[record.manifest.name] || [])
     ]
   }))
 }
 
-function buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir = null } = {}) {
+/** Transforms electron-builder.yml with staged native assets, pnpm production packages, and optional core-node. */
+function buildStagedElectronBuilderConfig(
+  sourceConfig,
+  root,
+  nativeDirOrOptions = null,
+  extraOptions = {}
+) {
+  const nativeDir =
+    typeof nativeDirOrOptions === 'string'
+      ? nativeDirOrOptions
+      : (nativeDirOrOptions?.nativeDir ?? null)
+  const bundleNodeCore = Boolean(
+    (typeof nativeDirOrOptions === 'object' && nativeDirOrOptions !== null
+      ? nativeDirOrOptions.bundleNodeCore
+      : undefined) ?? extraOptions?.bundleNodeCore
+  )
   let config = sourceConfig
   if (nativeDir) {
     const audioConfig = sourceConfig.replace(
@@ -58,6 +78,7 @@ function buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir = null
     if (audioConfig === sourceConfig) throw new Error('Audio engine resource entry was not found')
     config = audioConfig
   }
+  if (!/^files:\r?$/m.test(config)) throw new Error('Package files entry was not found')
   // Mirror the installed production graph with native electron-builder file
   // sets: its pnpm collector otherwise flattens away conflicting nested versions.
   const fileSets = productionPackageFileSets(root).flatMap((entry) => [
@@ -65,17 +86,34 @@ function buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir = null
     `    to: ${JSON.stringify(entry.to)}`,
     `    filter: ${JSON.stringify(entry.filter)}`
   ])
-  if (!/^files:\r?$/m.test(config)) throw new Error('Package files entry was not found')
-  return config.replace(
+  let stagedConfig = config.replace(
     /^files:\r?$/m,
     ['files:', "  - '!node_modules/**'", ...fileSets].join('\n')
   )
+  if (bundleNodeCore) {
+    if (!/^win:\r?$/m.test(stagedConfig)) {
+      throw new Error('Windows package config entry was not found')
+    }
+    stagedConfig = stagedConfig.replace(
+      /^win:\r?$/m,
+      [
+        'win:',
+        '  extraResources:',
+        '    - from: out/desktop-core',
+        '      to: core-node',
+        '      filter:',
+        "        - '**/*'",
+        "        - '!**/*.map'"
+      ].join('\n')
+    )
+  }
+  return stagedConfig
 }
 
-function preparePackagedAppStaging(root) {
+function preparePackagedAppStaging(root, { bundleNodeCore = false } = {}) {
   const temporaryDir = mkdtempSync(join(tmpdir(), 'twilight-packaged-app-'))
   const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root)
+  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root, { bundleNodeCore })
   const configPath = join(temporaryDir, 'electron-builder.yml')
   writeFileSync(configPath, stagedConfig)
   return {
@@ -109,6 +147,7 @@ function preparePackagedAudioStaging(
   root,
   {
     nativeOverrides = {},
+    bundleNodeCore = false,
     environment = process.env,
     stripNativeFile = defaultStripNativeFile,
     observeRuntime = readStagedAudioRuntimeObservation
@@ -184,7 +223,9 @@ function preparePackagedAudioStaging(
   refreshAudioCapabilityArtifacts(nativeDir, runtimeStatus)
 
   const sourceConfig = readFileSync(join(root, 'electron-builder.yml'), 'utf8')
-  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root, { nativeDir })
+  const stagedConfig = buildStagedElectronBuilderConfig(sourceConfig, root, nativeDir, {
+    bundleNodeCore
+  })
   const configPath = join(temporaryDir, 'electron-builder.yml')
   writeFileSync(configPath, stagedConfig)
   return {

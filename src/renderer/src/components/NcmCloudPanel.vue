@@ -233,6 +233,7 @@ function progressLabel(task: NcmCloudTransferTask): string {
               :cover="song.track.cover"
               :cover-source="song.track.coverSource"
               :identity="song.track.id"
+              size="sm"
               alt=""
               loading="lazy"
             />

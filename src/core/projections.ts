@@ -80,6 +80,7 @@ export function projectCoreTrack(
       : undefined,
     source: string(track.source),
     ncmSongId: number(track.ncmSongId),
+    mvId: typeof track.mvId === 'string' && track.mvId.trim() ? track.mvId.trim().slice(0, 128) : undefined,
     duration: track.duration,
     size: track.size,
     format: string(track.format),

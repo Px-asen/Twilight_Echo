@@ -5,7 +5,12 @@ import { useSettingsDisclosure } from './settingsDisclosureRegistry.ts'
 import { storeToRefs } from 'pinia'
 import AudioDeviceProfilesPanel from '@renderer/components/settings-page/AudioDeviceProfilesPanel.vue'
 import AudioTroubleshootingPanel from './AudioTroubleshootingPanel.vue'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, unref, onMounted, onUnmounted, type MaybeRef } from 'vue'
+import type { AudioOutputFallbackNotice } from '../../../../shared/coreAudio.ts'
+import {
+  formatAudioError,
+  formatAudioOutputFallbackNotice
+} from '../../utils/audioErrorPresentation.ts'
 import { useAudioOutputDspStore } from '../../stores/useAudioOutputDspStore'
 import { useCoreConnection } from '../../stores/coreConnection.ts'
 import { usePlayerStore } from '../../stores/usePlayerStore'
@@ -115,6 +120,21 @@ const profileAttention = ref('')
 function setProfileAttention(message: string): void {
   profileAttention.value = message
 }
+const audioOutputFallbackNotice = computed<AudioOutputFallbackNotice | null>(
+  () =>
+    unref(
+      (
+        audioOutputDspStore as {
+          audioOutputFallbackNotice?: MaybeRef<AudioOutputFallbackNotice | null | undefined>
+        }
+      ).audioOutputFallbackNotice
+    ) ?? null
+)
+const fallbackNoticeText = computed(() =>
+  audioOutputFallbackNotice.value
+    ? formatAudioOutputFallbackNotice(audioOutputFallbackNotice.value)
+    : ''
+)
 const exclusiveAutoReleaseApplying = ref(false)
 const autoMixModeApplying = ref(false)
 const stemCapabilities = ref<CoreAutoMixCapabilities>({
@@ -277,7 +297,7 @@ async function toggleStems(): Promise<void> {
       autoMixStemMode: settings.value.autoMixStemMode === 'off' ? 'auto' : 'off'
     })
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : String(error)
+    actionError.value = formatAudioError(error)
   } finally {
     stemApplying.value = false
   }
@@ -299,7 +319,7 @@ async function setStemDevice(event: Event): Promise<void> {
   try {
     await updateSettings({ autoMixStemDevice: device })
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : String(error)
+    actionError.value = formatAudioError(error)
     select.value = settings.value.autoMixStemDevice
   } finally {
     stemApplying.value = false
@@ -337,7 +357,7 @@ async function applyAutoMixMode(mode: AutoMixMode): Promise<void> {
     await updateSettings({ autoMixMode: mode })
     djModeDialog.value?.close()
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : String(error)
+    actionError.value = formatAudioError(error)
   } finally {
     autoMixModeApplying.value = false
   }
@@ -351,7 +371,7 @@ async function toggleExclusiveAutoRelease(): Promise<void> {
   try {
     await setExclusiveAutoRelease(!settings.value.audioExclusiveAutoRelease)
   } catch (error) {
-    actionError.value = error instanceof Error ? error.message : String(error)
+    actionError.value = formatAudioError(error)
   } finally {
     exclusiveAutoReleaseApplying.value = false
   }
@@ -373,6 +393,8 @@ const outputChainText = computed(() => {
   const src = [codec, depth, rate].filter(Boolean).join(' ')
   const out = outputInfo.value
   const backend = out?.actualBackend || info.actualBackend || audioOutput.value
+  const dsdMode = out?.dsdMode || info.dsdMode
+  const dsdLabel = dsdMode === 'dop' ? 'DoP' : dsdMode === 'native' ? 'Native DSD' : ''
   const actualDepth =
     (out?.actualBitDepth || info.actualBitDepth || 0) > 0
       ? `${out?.actualBitDepth || info.actualBitDepth}bit`
@@ -381,7 +403,10 @@ const outputChainText = computed(() => {
     (out?.actualSampleRate || info.actualSampleRate || 0) > 0
       ? compactRate(out?.actualSampleRate || info.actualSampleRate)
       : ''
-  return `${src} -> ${backend.toUpperCase()} ${actualDepth} ${actualRate}`.trim()
+  const outPart = [backend.toUpperCase(), dsdLabel, actualDepth, actualRate]
+    .filter(Boolean)
+    .join(' ')
+  return `${src} -> ${outPart}`.trim()
 })
 
 const outputLatencyText = computed(() => {
@@ -564,62 +589,112 @@ function setNcmPlaybackQuality(event: Event): void {
   })
 }
 
+function runAudioSettingAction(work: () => Promise<unknown>, onReject?: () => void): void {
+  actionError.value = ''
+  void work().catch((error) => {
+    actionError.value = formatAudioError(error)
+    onReject?.()
+  })
+}
+
 function selectAudioOutput(output: AudioOutputId): void {
   if (audioOutput.value === output) return
-  void setAudioOutput(output)
+  runAudioSettingAction(() => setAudioOutput(output))
 }
 
 function selectAudioDevice(deviceId: string): void {
   if (audioDevice.value === deviceId) return
-  void setAudioDevice(deviceId)
+  runAudioSettingAction(() => setAudioDevice(deviceId))
+}
+
+function selectAudioDeviceFromSelect(event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const deviceId = select.value
+  if (audioDevice.value === deviceId) return
+  runAudioSettingAction(
+    () => setAudioDevice(deviceId),
+    () => {
+      select.value = audioDevice.value
+    }
+  )
+}
+
+function onToggleExclusiveMode(): void {
+  if (!exclusiveAvailable.value) return
+  runAudioSettingAction(() => toggleExclusiveMode())
+}
+
+function onRefreshAudioOutputState(): void {
+  runAudioSettingAction(() => refreshAudioOutputState())
 }
 
 function setPreferredBufferSize(event: Event): void {
   if (audioOutputConfigApplyStatus.value.state === 'pending') return
-  const value = Number((event.target as HTMLSelectElement).value)
+  const select = event.target as HTMLSelectElement
+  const value = Number(select.value)
   if (audioOutputConfig.value.preferredBufferSize === value) return
-  void setAudioOutputConfig({ preferredBufferSize: value })
+  runAudioSettingAction(
+    () => setAudioOutputConfig({ preferredBufferSize: value }),
+    () => {
+      select.value = String(audioOutputConfig.value.preferredBufferSize)
+    }
+  )
 }
 
 function setAsioOutputChannelStart(event: Event): void {
   if (audioOutputConfigApplyStatus.value.state === 'pending') return
   const value = Number((event.target as HTMLInputElement).value)
   if (!Number.isFinite(value)) return
-  void setAudioOutputConfig({
-    asioOutputChannelStart: Math.min(255, Math.max(0, Math.trunc(value) - 1))
-  })
+  runAudioSettingAction(() =>
+    setAudioOutputConfig({
+      asioOutputChannelStart: Math.min(255, Math.max(0, Math.trunc(value) - 1))
+    })
+  )
 }
 
 function setRoutingMode(event: Event): void {
   const target = event.target as HTMLSelectElement
-  void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
+  runAudioSettingAction(
+    () => setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode }),
+    () => {
+      target.value = audioOutputConfig.value.routingMode
+    }
+  )
 }
 
 function setPcmToDsdMode(event: Event): void {
   if (audioOutputConfigApplyStatus.value.state === 'pending') return
-  const value = (event.target as HTMLSelectElement).value as PcmToDsdMode
+  const select = event.target as HTMLSelectElement
+  const value = select.value as PcmToDsdMode
   if ((audioOutputConfig.value.pcmToDsdMode ?? 'off') === value) return
-  void setAudioOutputConfig({ pcmToDsdMode: value })
+  runAudioSettingAction(
+    () => setAudioOutputConfig({ pcmToDsdMode: value }),
+    () => {
+      select.value = audioOutputConfig.value.pcmToDsdMode ?? 'off'
+    }
+  )
 }
 
 function setUpmixParam(field: keyof OutputConfig, event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
-  void setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>)
+  runAudioSettingAction(() => setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>))
 }
 
 function toggleWasapiExclusivePushMode(): void {
   if (audioOutputConfigApplyStatus.value.state === 'pending') return
-  void setAudioOutputConfig({
-    wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
-  })
+  runAudioSettingAction(() =>
+    setAudioOutputConfig({
+      wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
+    })
+  )
 }
 
 function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
-  void setAudioProcessing(patch)
+  runAudioSettingAction(() => setAudioProcessing(patch))
 }
 
-async function selectDsdOutputMode(value: DsdOutputMode): Promise<void> {
-  await setAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
+function selectDsdOutputMode(value: DsdOutputMode): void {
+  runAudioSettingAction(() => setAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' }))
 }
 
 const dsdRoute = computed<DsdRouteSettings>(() => audioProcessing.value.dsdRoute)
@@ -691,7 +766,7 @@ function toggleClipGuard(): void {
 }
 
 function toggleGaplessPlayback(): void {
-  void toggleGapless()
+  runAudioSettingAction(() => toggleGapless())
 }
 
 function setCrossfadeSeconds(event: Event): void {
@@ -714,17 +789,29 @@ function setCrossfadeContent(event: Event): void {
 }
 
 function setPlaybackPolicy(event: Event): void {
-  void setAudioOutputConfig({
-    playbackPolicy: (event.target as HTMLSelectElement).value as OutputConfig['playbackPolicy']
-  })
+  const select = event.target as HTMLSelectElement
+  runAudioSettingAction(
+    () =>
+      setAudioOutputConfig({
+        playbackPolicy: select.value as OutputConfig['playbackPolicy']
+      }),
+    () => {
+      select.value = audioOutputConfig.value.playbackPolicy ?? 'bit-perfect-first'
+    }
+  )
 }
 
 function setContinuitySampleRate(event: Event): void {
-  void setAudioOutputConfig({
-    continuitySampleRate: Number(
-      (event.target as HTMLSelectElement).value
-    ) as OutputConfig['continuitySampleRate']
-  })
+  const select = event.target as HTMLSelectElement
+  runAudioSettingAction(
+    () =>
+      setAudioOutputConfig({
+        continuitySampleRate: Number(select.value) as OutputConfig['continuitySampleRate']
+      }),
+    () => {
+      select.value = String(audioOutputConfig.value.continuitySampleRate ?? 48000)
+    }
+  )
 }
 </script>
 
@@ -839,6 +926,10 @@ function setContinuitySampleRate(event: Event): void {
       </div>
     </div>
     <div v-if="actionError || audioEngineError" class="engine-error">{{ actionError || audioEngineError }}</div>
+    <div v-if="fallbackNoticeText" class="engine-warning" role="status">
+      <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+      <span>{{ fallbackNoticeText }}</span>
+    </div>
     <div class="section-block">
       <h3>声音输出</h3>
       <div data-setting-id="audio-device" id="setting-audio-device" class="setting-item">
@@ -851,7 +942,7 @@ function setContinuitySampleRate(event: Event): void {
             class="preview-select wide"
             aria-label="输出设备"
             :value="audioDevice"
-            @change="selectAudioDevice(($event.target as HTMLSelectElement).value)"
+            @change="selectAudioDeviceFromSelect"
           >
             <option value="auto">跟随系统默认设备</option>
             <option
@@ -876,7 +967,7 @@ function setContinuitySampleRate(event: Event): void {
             class="icon-button"
             aria-label="刷新设备列表"
             title="刷新设备列表"
-            @click="refreshAudioOutputState"
+            @click="onRefreshAudioOutputState"
           >
             <i class="pi pi-refresh" aria-hidden="true" />
           </button>
@@ -893,6 +984,7 @@ function setContinuitySampleRate(event: Event): void {
         "
         :attention="
           audioEngineError ||
+          fallbackNoticeText ||
           profileAttention ||
           (audioOutputConfigApplyStatus.state === 'pending' ? '正在应用输出参数…' : '')
         "
@@ -932,7 +1024,7 @@ function setContinuitySampleRate(event: Event): void {
                 :aria-checked="exclusiveMode"
                 :disabled="!exclusiveAvailable"
                 :title="exclusiveAvailable ? '' : '当前后端不支持独占模式'"
-                @click="exclusiveAvailable && toggleExclusiveMode()"
+                @click="onToggleExclusiveMode"
               ></button>
             </div>
             <hr />
@@ -1086,7 +1178,7 @@ function setContinuitySampleRate(event: Event): void {
                 type="button"
                 class="icon-button"
                 title="刷新设备列表"
-                @click="refreshAudioOutputState"
+                @click="onRefreshAudioOutputState"
               >
                 <i class="pi pi-refresh"></i>
               </button>

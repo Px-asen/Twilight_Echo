@@ -26,6 +26,7 @@ export function useSongListContextMenu({
   createPlaylist,
   deletePlaylist,
   playNext,
+  playMv,
   viewArtist,
   viewAlbum,
   addToAggregatePlaylist,
@@ -37,7 +38,9 @@ export function useSongListContextMenu({
   selectedTrack: Ref<Track | null>
   canViewSelectedContext: ComputedRef<boolean>
   canPlayNextSelectedTrack: ComputedRef<boolean>
+  canPlayMvSelectedTrack: ComputedRef<boolean>
   handlePlayNext: () => void
+  handlePlayMv: () => void
   handleViewArtist: () => void
   handleViewAlbum: () => void
   showPlaylistSubmenu: Ref<boolean>
@@ -93,6 +96,12 @@ export function useSongListContextMenu({
     return !!track && (!!viewArtist || !!viewAlbum)
   })
   const canPlayNextSelectedTrack = computed(() => !!selectedTrack.value && !!playNext)
+  const canPlayMvSelectedTrack = computed(() => {
+    const track = selectedTrack.value
+    if (!track || !playMv) return false
+    const source = getTrackSource(track)
+    return source !== 'radio' && source !== 'podcast'
+  })
 
   function onContextMenu(event: MouseEvent, track: Track): void {
     event.preventDefault()
@@ -209,6 +218,13 @@ export function useSongListContextMenu({
     closeContextMenu()
   }
 
+  function handlePlayMv(): void {
+    const track = selectedTrack.value
+    if (!track || !canPlayMvSelectedTrack.value || !playMv) return
+    playMv(track)
+    closeContextMenu()
+  }
+
   function handleViewArtist(): void {
     const track = selectedTrack.value
     if (!track || !viewArtist) return
@@ -240,7 +256,9 @@ export function useSongListContextMenu({
     selectedTrack,
     canViewSelectedContext,
     canPlayNextSelectedTrack,
+    canPlayMvSelectedTrack,
     handlePlayNext,
+    handlePlayMv,
     handleViewArtist,
     handleViewAlbum,
     showPlaylistSubmenu,

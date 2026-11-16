@@ -147,6 +147,11 @@ export async function syncPluginProviders(): Promise<void> {
           ? (id, offset, limit, options) =>
               callProvider('readPlaylistImportPage', [id, offset, limit], options)
           : undefined
+        const getTrackMv: MediaProvider['getTrackMv'] =
+          provider.capabilities.includes('mv') && supports('getTrackMv')
+            ? (track, mvOptions, callOptions) =>
+                callProvider('getTrackMv', [track, mvOptions], callOptions)
+            : undefined
         if (mediaProviders.get(provider.id)) {
           mediaProviders.update(provider.id, {
             call: callProvider,
@@ -154,6 +159,7 @@ export async function syncPluginProviders(): Promise<void> {
             capabilities: provider.capabilities,
             health: provider.health as MediaProviderHealth | undefined,
             isEnabled: () => isPluginProviderEnabled(provider.health),
+            getTrackMv,
             searchAlbums,
             searchPlaylists,
             readPlaylistImportPage
@@ -172,6 +178,7 @@ export async function syncPluginProviders(): Promise<void> {
           getPlaybackUrl: provider.capabilities.includes('playbackUrl')
             ? (track, options) => callProvider<string | null>('getPlaybackUrl', [track, options])
             : undefined,
+          getTrackMv,
           getLyrics: provider.capabilities.includes('lyrics')
             ? (track, options) =>
                 callProvider<{

@@ -388,3 +388,27 @@ test('server login requires both a declared method and login capability', () => 
   const host = readFileSync(new URL('./host.ts', import.meta.url), 'utf8')
   assert.match(host, /'loginWithServer'/)
 })
+
+test('getTrackMv is routed only when mv capability and handler are declared and uses media playback timeout', () => {
+  assert.equal(isTwilightMediaProviderMethod('getTrackMv'), true)
+  assert.equal(getProviderCallTimeoutMs('getTrackMv'), 30_000)
+
+  const mvProvider = {
+    id: 'bili',
+    name: 'Bilibili',
+    capabilities: ['search' as const, 'mv' as const],
+    supportedMethods: ['searchSongs' as const, 'getTrackMv' as const]
+  }
+  assert.equal(providerSupportsMethod(mvProvider, 'getTrackMv'), true)
+  assert.equal(
+    providerSupportsMethod({ ...mvProvider, capabilities: ['search'] }, 'getTrackMv'),
+    false
+  )
+  assert.equal(
+    providerSupportsMethod({ ...mvProvider, supportedMethods: ['searchSongs'] }, 'getTrackMv'),
+    false
+  )
+  const host = readFileSync(new URL('./host.ts', import.meta.url), 'utf8')
+  assert.match(host, /'getTrackMv'/)
+})
+

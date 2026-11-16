@@ -5,6 +5,13 @@
 #include <cstring>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0602
+#endif
+#include <windows.h>
+#endif
+
 namespace twilight::audio {
 namespace {
 
@@ -66,9 +73,31 @@ void AudioBuffer::beginControlReset() {
 
 void AudioBuffer::endControlReset() {
   readerState_.store(0, std::memory_order_release);
-  producerWakeEpoch_.fetch_add(1, std::memory_order_release);
-  producerWakeEpoch_.notify_all();
+  notifyProducer(true);
   notEmpty_.notify_all();
+}
+
+void AudioBuffer::waitForProducerWake(uint64_t epoch) noexcept {
+#ifdef _WIN32
+  static_assert(std::atomic<uint64_t>::is_always_lock_free);
+  static_assert(sizeof(producerWakeEpoch_) == sizeof(epoch));
+  // The producer rechecks free space and cancellation after every wake. If
+  // the consumer advanced the epoch before this call, it returns immediately.
+  WaitOnAddress(&producerWakeEpoch_, &epoch, sizeof(epoch), INFINITE);
+#else
+  producerWakeEpoch_.wait(epoch, std::memory_order_acquire);
+#endif
+}
+
+void AudioBuffer::notifyProducer(bool all) noexcept {
+  producerWakeEpoch_.fetch_add(1, std::memory_order_release);
+#ifdef _WIN32
+  if (all) WakeByAddressAll(&producerWakeEpoch_);
+  else WakeByAddressSingle(&producerWakeEpoch_);
+#else
+  if (all) producerWakeEpoch_.notify_all();
+  else producerWakeEpoch_.notify_one();
+#endif
 }
 
 void AudioBuffer::reset(int channels, size_t capacityFrames) {
@@ -113,8 +142,7 @@ void AudioBuffer::clear() {
 }
 
 void AudioBuffer::notifyAll() {
-  producerWakeEpoch_.fetch_add(1, std::memory_order_release);
-  producerWakeEpoch_.notify_all();
+  notifyProducer(true);
   notEmpty_.notify_all();
 }
 
@@ -153,7 +181,7 @@ size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>
       const size_t currentRead = readPosition_.load(std::memory_order_acquire);
       if (currentWrite - currentRead >= capacityFrames_ && running.load(std::memory_order_acquire) &&
           (readerState_.load(std::memory_order_acquire) & kControlResetBit) == 0) {
-        producerWakeEpoch_.wait(wakeEpoch, std::memory_order_acquire);
+        waitForProducerWake(wakeEpoch);
       }
       continue;
     }
@@ -210,8 +238,7 @@ size_t AudioBuffer::read(PcmBlock& block) {
   const size_t read = readFrames(boundedBlock, targetBytesPerFrame);
   endRead();
   if (read > 0) {
-    producerWakeEpoch_.fetch_add(1, std::memory_order_release);
-    producerWakeEpoch_.notify_one();
+    notifyProducer();
   }
   return read;
 }
@@ -252,8 +279,7 @@ size_t AudioBuffer::discard(size_t frames) noexcept {
   readPosition_.store(read+skipped,std::memory_order_release);
   endRead();
   if (skipped) {
-    producerWakeEpoch_.fetch_add(1,std::memory_order_release);
-    producerWakeEpoch_.notify_one();
+    notifyProducer();
   }
   return skipped;
 }

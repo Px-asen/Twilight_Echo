@@ -35,6 +35,7 @@ export type PlaylistActions = {
   createPlaylist: (name: string) => void
   deletePlaylist: (playlistId: string) => void
   playNext?: (track: Track) => void
+  playMv?: (track: Track) => void
   viewArtist?: (track: Track) => void
   viewAlbum?: (track: Track) => void
   /** 把右键选中的曲目加进某个聚合歌单。 */

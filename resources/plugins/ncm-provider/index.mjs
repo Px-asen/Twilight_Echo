@@ -16,8 +16,19 @@ const NCM_PLAYBACK_QUALITY_FALLBACKS = {
   exhigh: ['exhigh', 'standard'],
   standard: ['standard']
 }
+const NCM_MV_QUALITY_FALLBACKS = {
+  auto: [1080, 720, 480, 240],
+  '1080p': [1080, 720, 480, 240],
+  '720p': [720, 480, 240],
+  '480p': [480, 240]
+}
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
+const mvUrlCache = new Map()
+const songMvIdCache = new Map()
+const MV_URL_CACHE_TTL_MS = 15 * 60_000
+const MV_URL_CACHE_CAPACITY = 128
+const SONG_MV_ID_CACHE_CAPACITY = 512
 // CDN 签发地址会过期：无 TTL 的缓存会把 403 回放成多提供方大恢复，20 分钟
 // 内命中即可，超时强制重解析（批量 8.2）。
 const STREAM_URL_CACHE_TTL_MS = 20 * 60_000
@@ -65,7 +76,7 @@ export async function activate(context) {
   await context.twilight.providers.register({
     id: PROVIDER_ID,
     name: 'NetEase Cloud Music',
-    capabilities: ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'],
+    capabilities: ['search', 'playbackUrl', 'mv', 'lyrics', 'cover', 'playlist', 'library', 'login'],
     ui: {
       icon: 'pi pi-cloud',
       color: '#c20c0c',
@@ -86,6 +97,7 @@ export async function activate(context) {
       streamingSearch: true
     },
     getPlaybackUrl,
+    getTrackMv,
     getLyrics,
     searchSongs,
     searchRecordingIdentities,
@@ -200,7 +212,7 @@ function normalizeApiMessage(data, fallback) {
 // 也不含「高频」，只按关键词判定会漏掉它，于是回退阶梯把每一档音质都撞一遍
 // （实测每首歌 3～4 秒）。这里补上 -460 的文案，并允许调用方直接用错误码判定。
 function isRiskControlMessage(message) {
-  return /安全风险|网络环境.{0,8}风险|限制了当前网络环境|设备环境异常|操作已拦截|风险控制|高频|风控/i.test(
+  return /安全风险|网络环境.{0,8}风险|限制了当前网络环境|设备环境异常|操作已拦截|操作频繁|请求频繁|风险控制|高频|风控|ip 高频|IP 高频/i.test(
     message
   )
 }
@@ -224,7 +236,10 @@ function describeApiError(code, data) {
     if (/安全风险|设备环境异常|操作已拦截/i.test(rawMessage)) {
       return `网易云拦截了当前网络或设备环境：${rawMessage}。请停止频繁重试，切换网络/设备或按官方提示 24 小时后再试。`
     }
-    return `网易云登录接口触发高频或风控限制：${rawMessage}。请等待几分钟后再试。`
+    return `网易云接口触发高频或风控限制：${rawMessage}。请稍后再试。`
+  }
+  if (code === 405 || code === 429) {
+    return '网易云接口请求过于频繁，请稍后再试。'
   }
   if (code === 301) return '网易云登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试。'
   if (code === 400)
@@ -251,6 +266,8 @@ function normalizeCountryCode(countrycode) {
 function resetCaches() {
   playlistTrackCache.clear()
   streamUrlCache.clear()
+  mvUrlCache.clear()
+  songMvIdCache.clear()
   providerWriteResults.clear()
   likedTracksCache = null
   playlistCatalogueCache = null
@@ -434,7 +451,7 @@ function throwIfRequestAborted(requestContext) {
 }
 
 // 全局请求令牌桶（批量 8.6 + 播放优先队列）：所有上游请求统一经 request() 出口，
-// 突发容量 5、回灌速率 ~5 req/s；前台播放解析优先于浏览分页与后台预取获配令牌。
+// 突发容量 5、回灌速率 ~5 req/s；前台播放解析优先于歌单/登录/浏览分页与后台预取获配令牌。
 const REQUEST_TOKEN_BUCKET_CAPACITY = 5
 const REQUEST_TOKEN_REFILL_PER_MS = 5 / 1000
 const REQUEST_TOKEN_PRIORITY_RANK = { high: 0, normal: 1, low: 2 }
@@ -442,9 +459,16 @@ let requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
 let requestTokenRefillAt = Date.now()
 let requestTokenWaiters = []
 let requestTokenTimer = null
+let requestTokenTimerScheduled = false
 
 function requestPriorityRank(priority) {
   return REQUEST_TOKEN_PRIORITY_RANK[priority] ?? REQUEST_TOKEN_PRIORITY_RANK.normal
+}
+
+function isHighPriorityRequestPath(path) {
+  return /^\/(?:song\/url|song\/match|mv\/|lyric|user\/playlist|likelist|playlist\/(?:detail|track)|playmode\/intelligence|personal[_/]fm|login\/|register\/|captcha\/)/i.test(
+    path
+  )
 }
 
 function refillRequestTokens() {
@@ -462,6 +486,14 @@ function refillRequestTokens() {
   }
 }
 
+function clearRequestTokenTimer() {
+  if (requestTokenTimer !== null) {
+    clearTimeout(requestTokenTimer)
+    requestTokenTimer = null
+  }
+  requestTokenTimerScheduled = false
+}
+
 function enqueueRequestTokenWaiter(waiter) {
   let insertAt = requestTokenWaiters.length
   for (let i = requestTokenWaiters.length - 1; i >= 0; i -= 1) {
@@ -475,10 +507,7 @@ function enqueueRequestTokenWaiter(waiter) {
 }
 
 function clearRequestTokenWaiters(reasonError) {
-  if (requestTokenTimer) {
-    clearTimeout(requestTokenTimer)
-    requestTokenTimer = null
-  }
+  clearRequestTokenTimer()
   const pending = requestTokenWaiters.splice(0)
   for (const waiter of pending) {
     if (waiter.signal && waiter.onAbort) {
@@ -489,10 +518,7 @@ function clearRequestTokenWaiters(reasonError) {
 }
 
 function pumpRequestTokens() {
-  if (requestTokenTimer) {
-    clearTimeout(requestTokenTimer)
-    requestTokenTimer = null
-  }
+  clearRequestTokenTimer()
   refillRequestTokens()
   while (requestTokenWaiters.length > 0 && requestTokenCount >= 1) {
     const waiter = requestTokenWaiters.shift()
@@ -507,13 +533,20 @@ function pumpRequestTokens() {
     waiter.resolve()
   }
   if (requestTokenWaiters.length > 0) {
-    requestTokenTimer = setTimeout(
+    // Mobile ABI v1 (sync-promise.js) invokes setTimeout callbacks synchronously
+    // before setTimeout() returns; guard assignment with requestTokenTimerScheduled.
+    requestTokenTimerScheduled = true
+    const timer = setTimeout(
       () => {
+        requestTokenTimerScheduled = false
         requestTokenTimer = null
         pumpRequestTokens()
       },
       Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
     )
+    if (requestTokenTimerScheduled) {
+      requestTokenTimer = timer
+    }
   }
 }
 
@@ -533,22 +566,21 @@ function acquireRequestToken(signal, priority = 'normal') {
       waiter.onAbort = () => {
         const index = requestTokenWaiters.indexOf(waiter)
         if (index >= 0) requestTokenWaiters.splice(index, 1)
-        if (requestTokenWaiters.length === 0 && requestTokenTimer) {
-          clearTimeout(requestTokenTimer)
-          requestTokenTimer = null
-        }
+        if (requestTokenWaiters.length === 0) clearRequestTokenTimer()
         reject(abortReasonError(signal))
       }
       signal.addEventListener('abort', waiter.onAbort, { once: true })
     }
     enqueueRequestTokenWaiter(waiter)
-    pumpRequestTokens()
+    if (!requestTokenTimerScheduled) pumpRequestTokens()
   })
 }
 
 async function request(path, cookie, requestContext) {
   throwIfRequestAborted(requestContext)
-  await acquireRequestToken(requestContext?.signal, requestContext?.priority)
+  const priority =
+    requestContext?.priority ?? (isHighPriorityRequestPath(path) ? 'high' : 'normal')
+  await acquireRequestToken(requestContext?.signal, priority)
   const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie, {
     signal: requestContext?.signal,
     idempotencyKey: requestContext?.idempotencyKey
@@ -621,7 +653,11 @@ async function requestPublicMetadata(path, requestContext) {
     await waitWithAbort(Math.max(0, metadataNextRequestAt - Date.now()), requestContext?.signal)
     metadataNextRequestAt = Date.now() + 1000
     const data = await request(path, '', requestContext)
-    if (Number(data.code) === 429 || /操作频繁|请求频繁|高频/.test(normalizeApiMessage(data, ''))) {
+    if (
+      Number(data.code) === 405 ||
+      Number(data.code) === 429 ||
+      /操作频繁|请求频繁|高频|风控/.test(normalizeApiMessage(data, ''))
+    ) {
       metadataBlockedUntil = Date.now() + 60_000
       throw new Error('NCM_METADATA_RATE_LIMITED')
     }
@@ -801,6 +837,11 @@ function normalizeTrack(song) {
   const coverSmall = normalizeNcmCoverSize(rawCover, 140)
   const audioMeta = getSongAudioMeta(song)
   const bpm = normalizeBpm(song.bpm ?? song.tempo ?? song.mainSong?.bpm)
+  const rawMvField = song.mv ?? song.mvid ?? song.mainSong?.mvid ?? song.mainSong?.mv
+  const mvId = normalizeNcmMvId(rawMvField)
+  if (Number.isSafeInteger(songId) && songId > 0 && rawMvField !== undefined && rawMvField !== null) {
+    rememberSongMvId(songId, mvId)
+  }
 
   const track = {
     id: `ncm:${songId}`,
@@ -828,6 +869,7 @@ function normalizeTrack(song) {
     sampleRate: audioMeta.sampleRate,
     bitrate: audioMeta.bitrate
   }
+  if (mvId) track.mvId = mvId
   if (artistRefs.length > 0) track.artists = artistRefs
   if (bpm !== undefined) track.bpm = bpm
   return track
@@ -2225,6 +2267,140 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     getContext().logger.warn(`网易云播放地址解析命中风控，已提前终止回退：${riskControlMessage}`)
   } else if (lastFailureMessage) {
     getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  }
+  return null
+}
+
+function normalizeNcmMvId(value) {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? String(value) : null
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed || trimmed === '0') return null
+    if (/^[1-9]\d*$/.test(trimmed)) return trimmed
+  }
+  return null
+}
+
+function rememberSongMvId(songId, mvId) {
+  songMvIdCache.delete(songId)
+  songMvIdCache.set(songId, mvId ?? null)
+  if (songMvIdCache.size > SONG_MV_ID_CACHE_CAPACITY) {
+    const oldest = songMvIdCache.keys().next().value
+    if (oldest !== undefined) songMvIdCache.delete(oldest)
+  }
+}
+
+function normalizeMvQualityOption(value) {
+  return typeof value === 'string' && value in NCM_MV_QUALITY_FALLBACKS ? value : 'auto'
+}
+
+function formatMvResolutionLabel(resolution) {
+  const numeric = Number(resolution)
+  if (Number.isFinite(numeric) && numeric > 0) return `${Math.trunc(numeric)}p`
+  return null
+}
+
+async function resolveTrackMvId(track, force, requestContext) {
+  const directMvId = normalizeNcmMvId(track?.mvId)
+  if (directMvId) return directMvId
+
+  const songId = getSongIdFromTrack(track)
+  if (songId == null) return null
+  if (!force && songMvIdCache.has(songId)) {
+    return songMvIdCache.get(songId) ?? null
+  }
+
+  const detail = await requestOptionalAuth(
+    `/song/detail?ids=${encodeURIComponent(String(songId))}`,
+    requestContext
+  )
+  throwIfRequestAborted(requestContext)
+  const songs = getSongItems(detail)
+  const song = songs.find((item) => Number(item?.id) === songId) ?? songs[0] ?? null
+  if (!song) return null
+  const mvId = normalizeNcmMvId(song.mv ?? song.mvid ?? song.mainSong?.mvid ?? song.mainSong?.mv)
+  rememberSongMvId(songId, mvId)
+  return mvId
+}
+
+async function getTrackMv(track, options = {}, requestContext) {
+  throwIfRequestAborted(requestContext)
+  const force = options?.force === true
+  const quality = normalizeMvQualityOption(options?.quality)
+  const mvId = await resolveTrackMvId(track, force, requestContext)
+  if (!mvId) return null
+
+  const cacheKey = `${mvId}:${quality}`
+  const cached = force ? null : mvUrlCache.get(cacheKey)
+  if (cached) {
+    if (cached.expiresAt > Date.now()) {
+      return { ...cached.stream }
+    }
+    mvUrlCache.delete(cacheKey)
+  }
+
+  const resolutions = NCM_MV_QUALITY_FALLBACKS[quality]
+  let lastError = ''
+  for (let index = 0; index < resolutions.length; index += 1) {
+    if (index > 0) {
+      await waitWithAbort(Math.min(400, 200 * index), requestContext?.signal)
+    }
+    const resolution = resolutions[index]
+    try {
+      const data = await requestOptionalAuth(
+        `/mv/url?id=${encodeURIComponent(mvId)}&r=${resolution}`,
+        requestContext
+      )
+      throwIfRequestAborted(requestContext)
+      const mvPayload = data?.data ?? data?.body?.data ?? null
+      const itemCode = Number(mvPayload?.code ?? data?.code)
+      if (Number.isFinite(itemCode) && itemCode !== 200) {
+        lastError = getPlaybackFailureMessage(data, mvPayload) || lastError
+        if (isRiskControlMessage(lastError)) break
+        continue
+      }
+      const url = normalizePlaybackStreamUrl(mvPayload?.url)
+      if (!url) {
+        lastError = getPlaybackFailureMessage(data, mvPayload) || lastError
+        continue
+      }
+      const actualResolution = Number(mvPayload?.r) || resolution
+      const expiSeconds = Number(mvPayload?.expi)
+      const ttlMs =
+        Number.isFinite(expiSeconds) && expiSeconds > 90
+          ? Math.min(MV_URL_CACHE_TTL_MS, Math.max(60_000, (expiSeconds - 60) * 1000))
+          : MV_URL_CACHE_TTL_MS
+      const stream = {
+        url,
+        quality: formatMvResolutionLabel(actualResolution),
+        ...(Number.isFinite(actualResolution) && actualResolution > 0
+          ? { height: actualResolution }
+          : {}),
+        mvId,
+        providerId: PROVIDER_ID,
+        referer: 'https://music.163.com/'
+      }
+      mvUrlCache.delete(cacheKey)
+      mvUrlCache.set(cacheKey, {
+        stream,
+        expiresAt: Date.now() + ttlMs
+      })
+      if (mvUrlCache.size > MV_URL_CACHE_CAPACITY) {
+        const oldest = mvUrlCache.keys().next().value
+        if (oldest !== undefined) mvUrlCache.delete(oldest)
+      }
+      return { ...stream }
+    } catch (error) {
+      throwIfRequestAborted(requestContext)
+      lastError = getErrorMessage(error)
+      if (isRiskControlMessage(lastError)) break
+    }
+  }
+
+  if (lastError) {
+    getContext().logger.warn(`网易云 MV 地址解析失败（mvId=${mvId}）：${lastError}`)
   }
   return null
 }

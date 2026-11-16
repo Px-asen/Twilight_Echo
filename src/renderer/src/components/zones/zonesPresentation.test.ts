@@ -314,3 +314,75 @@ test('native DSD signal paths name their wire format and count buffered byte-fra
   assert.equal(nodes.find(n => n.id === 'buffer')!.value, '100 ms')
   assert.match(nodes.find(n => n.id === 'device')!.detail.join(' '), /驱动未报告扬声器布局/)
 })
+
+test('local DoP and native DSD signal paths report exact passthrough while DSD-to-PCM fallback stays adapted', () => {
+  assert.equal(
+    zoneFormatLine(
+      zone('local', {
+        playback: {
+          state: 'playing',
+          codec: 'dsd',
+          sourceSampleRate: 2822400,
+          sourceBitDepth: 1,
+          outputBackend: 'wasapi-exclusive',
+          actualSampleRate: 176400,
+          actualBitDepth: 24,
+          isDsd: true,
+          dsdMode: 'dop'
+        } as ZoneView['playback']
+      })
+    ),
+    'DSD · 2822.4 kHz / 1 bit → WASAPI 独占 · DoP · 176.4 kHz / 24 bit'
+  )
+
+  const dopStages = signalPathStages(
+    path({
+      source: { sampleRate: 2822400, bitDepth: 1, channels: 2, codec: 'dsd', isDsd: true },
+      decoded: { sampleRate: 176400, bitDepth: 24, channels: 2, format: 'int24', dsdMode: 'dop', dsdRate: 2822400 },
+      dsp: { ...path().dsp, outputStage: null },
+      transport: { kind: 'local', sampleRate: 176400, channels: 2, format: '', connected: true },
+      receiver: null,
+      output: { backend: 'wasapi-exclusive', sampleRate: 176400, bitDepth: 24, channels: 2, deviceName: null, dsdMode: 'dop', dsdRate: 2822400 }
+    })
+  )
+  const dopNodes = dopStages.flatMap((stage) => stage.nodes)
+  const dopDecode = dopNodes.find((n) => n.id === 'decode')!
+  const dopDevice = dopNodes.find((n) => n.id === 'device')!
+  assert.equal(dopDecode.tone, 'exact')
+  assert.equal(dopDecode.value, 'DoP 封装 · 176.4 kHz / 24 bit')
+  assert.match(dopDecode.detail.join(' '), /未转 PCM/)
+  assert.equal(dopDevice.tone, 'exact')
+  assert.equal(dopDevice.value, 'WASAPI 独占 · DoP · 176.4 kHz / 24 bit')
+  assert.deepEqual(signalPathVerdict(dopStages), { label: '原样输出', tone: 'success' })
+
+  const nativeStages = signalPathStages(
+    path({
+      source: { sampleRate: 2822400, bitDepth: 1, channels: 2, codec: 'dsd', isDsd: true },
+      decoded: { sampleRate: 2822400, bitDepth: 1, channels: 2, format: 'dsd', dsdMode: 'native', dsdRate: 2822400 },
+      dsp: { ...path().dsp, outputStage: null },
+      transport: { kind: 'local', sampleRate: 2822400, channels: 2, format: '', connected: true },
+      receiver: null,
+      output: { backend: 'asio', sampleRate: 2822400, bitDepth: 1, channels: 2, deviceName: null, dsdMode: 'native', dsdRate: 2822400 }
+    })
+  )
+  assert.deepEqual(signalPathVerdict(nativeStages), { label: '原样输出', tone: 'success' })
+  assert.equal(
+    nativeStages[0].nodes.find((n) => n.id === 'device')?.value,
+    'ASIO · 原生 DSD · 2822.4 kHz / 1 bit'
+  )
+
+  const pcmFallbackStages = signalPathStages(
+    path({
+      source: { sampleRate: 2822400, bitDepth: 1, channels: 2, codec: 'dsd', isDsd: true },
+      decoded: { sampleRate: 352800, bitDepth: 32, channels: 2, format: 'f32', dsdMode: 'pcm', dsdRate: 0 },
+      dsp: { ...path().dsp, outputStage: { actualSampleRate: 384000, effectiveResampler: 'soxr', resampled: true, headroomGainDb: -6, active: true } },
+      transport: { kind: 'local', sampleRate: 384000, channels: 2, format: '', connected: true },
+      receiver: null,
+      output: { backend: 'wasapi', sampleRate: 384000, bitDepth: 32, channels: 2, deviceName: null, dsdMode: 'pcm', dsdRate: 0 }
+    })
+  )
+  const pcmDecode = pcmFallbackStages[0].nodes.find((n) => n.id === 'decode')!
+  assert.equal(pcmDecode.tone, 'adapted')
+  assert.match(pcmDecode.detail.join(' '), /DSD 已转换为 PCM/)
+  assert.deepEqual(signalPathVerdict(pcmFallbackStages), { label: '已转换', tone: 'info' })
+})

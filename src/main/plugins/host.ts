@@ -209,6 +209,7 @@ interface TwilightPluginContext {
 
 const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'getPlaybackUrl',
+  'getTrackMv',
   'getLyrics',
   'searchSongs',
   'searchAlbums',

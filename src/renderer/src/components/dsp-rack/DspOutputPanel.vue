@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAudioOutputDspStore } from '@renderer/stores/useAudioOutputDspStore'
+import { formatAudioError } from '@renderer/utils/audioErrorPresentation'
 import { dspSampleRate } from '@renderer/utils/dspSignalOverview'
 import { describeResampler } from '../../../../shared/resamplerStatus.ts'
 import {
@@ -231,7 +232,7 @@ async function applyBuffer(): Promise<void> {
           ? '已提交，等待设备确认。'
           : '缓冲请求已应用；实际值以设备报告为准。'
   } catch (cause) {
-    bufferError.value = cause instanceof Error ? cause.message : String(cause)
+    bufferError.value = formatAudioError(cause)
   } finally {
     bufferBusy.value = false
     emit('busy', false)

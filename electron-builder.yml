@@ -17,11 +17,17 @@ afterPack: scripts/after-pack.cjs
 files:
   - out/**
   - '!out/**/*.map'
-  # Pure Node cannot read app.asar; its runtime is staged as a separate resource.
+  # Desktop uses Electron ASAR directly; exclude standalone server bundles and
+  # renderer-public copies of resources already staged via extraResources.
   - '!out/desktop-core/**'
+  - '!out/server/**'
+  - '!out/server-service/**'
   - package.json
   - THIRD-PARTY-NOTICES.txt
   - '!out/renderer/audio-engine/**'
+  - '!out/renderer/automix-stems/**'
+  - '!out/renderer/remote/**'
+  - '!out/renderer/server-runtime/**'
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
   # Keep packaged Inter/Jakarta + MiSans subsets; strip legacy TTF/OTF/WOFF.
@@ -33,6 +39,7 @@ files:
   - '!node_modules/**/*.ts'
   - '!node_modules/**/*.md'
   - '!node_modules/@neteasecloudmusicapienhanced/api/public/**'
+  - '!node_modules/opencc-js/{dist/esm,dist/esm-lib,types}/**'
 extraResources:
   - from: resources/automix-stems
     to: automix-stems
@@ -125,14 +132,8 @@ extraResources:
     filter:
       - '**/*'
 win:
-  # Windows packaging stages its pinned Node runtime before electron-builder.
-  # macOS/Linux keep their existing Electron host and do not ship this runtime.
-  extraResources:
-    - from: out/desktop-core
-      to: core-node
-      filter:
-        - '**/*'
-        - '!**/*.map'
+  # Built-in Electron Node (ELECTRON_RUN_AS_NODE=1) is used by default; opt-in
+  # --with-node-core staging injects external resources/core-node when requested.
   executableName: TwilightEcho
   icon: build/icon.ico
   # Personal-project Windows packages are intentionally unsigned. Release integrity is provided
