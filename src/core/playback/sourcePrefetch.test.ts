@@ -205,7 +205,7 @@ test('seed adopts warm entries without starting a batch and cancel aborts in-fli
     now: () => 1_000,
     gapMs: 0,
     prepare: (value, signal) =>
-      new Promise<PreparedPlaybackSource>((resolve, reject) => {
+      new Promise<PreparedPlaybackSource>((_resolve, reject) => {
         reads.push(value.id)
         signal.addEventListener(
           'abort',
