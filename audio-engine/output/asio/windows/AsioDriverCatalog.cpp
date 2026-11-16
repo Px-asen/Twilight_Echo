@@ -4,11 +4,20 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <iterator>
 
 namespace twilight::audio::asio_windows {
 namespace {
 
-std::string utf8(const std::wstring& value) {
+std::wstring_view trimWide(std::wstring_view value) {
+  constexpr std::wstring_view kWhitespace = L" \t\r\n";
+  const size_t first = value.find_first_not_of(kWhitespace);
+  if (first == std::wstring_view::npos) return {};
+  const size_t last = value.find_last_not_of(kWhitespace);
+  return value.substr(first, last - first + 1);
+}
+
+std::string utf8(std::wstring_view value) {
   if (value.empty()) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
   if (size <= 0) return {};
@@ -24,24 +33,32 @@ std::wstring readString(HKEY key, const wchar_t* name) {
       (type != REG_SZ && type != REG_EXPAND_SZ) || bytes < sizeof(wchar_t)) {
     return {};
   }
-  std::wstring value(bytes / sizeof(wchar_t), L'\0');
+  const size_t wcharCount = (static_cast<size_t>(bytes) + sizeof(wchar_t) - 1) / sizeof(wchar_t);
+  std::wstring value(wcharCount, L'\0');
+  DWORD queryBytes = static_cast<DWORD>(value.size() * sizeof(wchar_t));
   if (RegQueryValueExW(
-          key, name, nullptr, &type, reinterpret_cast<LPBYTE>(value.data()), &bytes) != ERROR_SUCCESS) {
+          key, name, nullptr, &type, reinterpret_cast<LPBYTE>(value.data()), &queryBytes) != ERROR_SUCCESS) {
     return {};
   }
-  value.resize(wcsnlen(value.c_str(), value.size()));
+  const size_t maxChars = std::min(value.size(), static_cast<size_t>(queryBytes) / sizeof(wchar_t));
+  value.resize(wcsnlen(value.c_str(), maxChars));
   return value;
 }
 
-bool hasInProcessServer(const std::wstring& clsid, REGSAM registryView) {
+bool hasInProcessServerAt(HKEY rootKey, const std::wstring& path, REGSAM registryView) {
   HKEY key = nullptr;
-  const std::wstring path = L"CLSID\\" + clsid + L"\\InprocServer32";
-  const LSTATUS status = RegOpenKeyExW(
-      HKEY_CLASSES_ROOT, path.c_str(), 0, KEY_READ | registryView, &key);
+  const LSTATUS status = RegOpenKeyExW(rootKey, path.c_str(), 0, KEY_READ | registryView, &key);
   if (status != ERROR_SUCCESS) return false;
-  const bool hasPath = !readString(key, nullptr).empty();
+  const bool hasPath = !trimWide(readString(key, nullptr)).empty();
   RegCloseKey(key);
   return hasPath;
+}
+
+bool hasInProcessServer(const std::wstring& canonicalClsid, REGSAM registryView) {
+  return hasInProcessServerAt(
+             HKEY_LOCAL_MACHINE, L"SOFTWARE\\Classes\\CLSID\\" + canonicalClsid + L"\\InprocServer32", registryView) ||
+         hasInProcessServerAt(
+             HKEY_CLASSES_ROOT, L"CLSID\\" + canonicalClsid + L"\\InprocServer32", registryView);
 }
 
 int countRegisteredDrivers(REGSAM registryView) {
@@ -74,6 +91,43 @@ int countRegisteredDrivers(REGSAM registryView) {
 
 }  // namespace
 
+std::optional<std::wstring> AsioDriverCatalog::normalizeClsid(std::wstring_view rawClsid) {
+  const std::wstring_view trimmed = trimWide(rawClsid);
+  if (trimmed.empty()) return std::nullopt;
+  std::wstring candidate;
+  if (trimmed.size() == 36 && trimmed.front() != L'{' && trimmed.back() != L'}') {
+    candidate = L"{" + std::wstring(trimmed) + L"}";
+  } else {
+    candidate = std::wstring(trimmed);
+  }
+  // Reject malformed strings or COM ProgIDs before invoking CLSIDFromString.
+  if (candidate.size() != 38 || candidate.front() != L'{' || candidate.back() != L'}') {
+    return std::nullopt;
+  }
+  CLSID clsid{};
+  if (FAILED(CLSIDFromString(candidate.c_str(), &clsid))) {
+    return std::nullopt;
+  }
+  wchar_t canonical[64] = {};
+  if (StringFromGUID2(clsid, canonical, static_cast<int>(std::size(canonical))) <= 0) {
+    return std::nullopt;
+  }
+  return std::wstring(canonical);
+}
+
+std::string AsioDriverCatalog::selectDisplayName(
+    std::wstring_view description,
+    std::wstring_view defaultValue,
+    std::wstring_view keyName) {
+  if (const auto trimmedDescription = trimWide(description); !trimmedDescription.empty()) {
+    return utf8(trimmedDescription);
+  }
+  if (const auto trimmedDefault = trimWide(defaultValue); !trimmedDefault.empty()) {
+    return utf8(trimmedDefault);
+  }
+  return utf8(std::wstring(keyName));
+}
+
 std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate(AsioArchitecture architecture) {
   const REGSAM registryView = architecture == AsioArchitecture::X86 ? KEY_WOW64_32KEY : KEY_WOW64_64KEY;
   std::vector<AsioDriverEntry> entries;
@@ -94,20 +148,20 @@ std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate(AsioArchitecture archi
     if (RegOpenKeyExW(catalog, keyName, 0, KEY_READ | registryView, &driverKey) != ERROR_SUCCESS) continue;
     const std::wstring clsidText = readString(driverKey, L"CLSID");
     const std::wstring description = readString(driverKey, L"Description");
+    const std::wstring defaultDescription = readString(driverKey, nullptr);
     RegCloseKey(driverKey);
 
-    CLSID clsid{};
-    if (clsidText.empty() || FAILED(CLSIDFromString(clsidText.c_str(), &clsid)) || !hasInProcessServer(clsidText, registryView)) {
+    const auto canonical = normalizeClsid(clsidText);
+    if (!canonical || !hasInProcessServer(*canonical, registryView)) {
       continue;
     }
-    wchar_t canonical[64] = {};
-    if (StringFromGUID2(clsid, canonical, static_cast<int>(std::size(canonical))) <= 0) continue;
 
     AsioDriverEntry entry;
-    entry.clsid = utf8(canonical);
+    entry.clsid = utf8(*canonical);
     entry.architecture = architecture;
     entry.id = asioDeviceId(entry.clsid, architecture);
-    entry.displayName = utf8(description.empty() ? std::wstring(keyName, keyNameSize) : description);
+    entry.displayName = selectDisplayName(
+        description, defaultDescription, std::wstring_view(keyName, keyNameSize));
     entries.push_back(std::move(entry));
   }
 

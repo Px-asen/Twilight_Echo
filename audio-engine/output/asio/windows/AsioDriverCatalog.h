@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace twilight::audio::asio_windows {
@@ -30,6 +31,11 @@ class AsioDriverCatalog final {
   static std::optional<AsioDriverEntry> resolveEntries(
       const std::vector<AsioDriverEntry>& entries, const std::string& id);
   static AsioDriverCatalogDiagnostics diagnostics();
+  static std::optional<std::wstring> normalizeClsid(std::wstring_view rawClsid);
+  static std::string selectDisplayName(
+      std::wstring_view description,
+      std::wstring_view defaultValue,
+      std::wstring_view keyName);
 };
 
 }  // namespace twilight::audio::asio_windows

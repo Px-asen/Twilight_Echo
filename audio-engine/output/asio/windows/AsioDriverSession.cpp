@@ -382,9 +382,19 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
   int32_t onAsioMessage(int32_t selector, int32_t value, void*, double*) noexcept override {
     switch (selector) {
       case asio_abi::kSelectorSupported:
-        return value == asio_abi::kSelectorEngineVersion || value == asio_abi::kSelectorSupportsTimeInfo
-                   ? asio_abi::kAsioTrue
-                   : asio_abi::kAsioFalse;
+        switch (value) {
+          case asio_abi::kSelectorSupported:
+          case asio_abi::kSelectorEngineVersion:
+          case asio_abi::kSelectorResetRequest:
+          case asio_abi::kSelectorBufferSizeChange:
+          case asio_abi::kSelectorResyncRequest:
+          case asio_abi::kSelectorLatenciesChanged:
+          case asio_abi::kSelectorSupportsTimeInfo:
+          case asio_abi::kSelectorOverload:
+            return asio_abi::kAsioTrue;
+          default:
+            return asio_abi::kAsioFalse;
+        }
       case asio_abi::kSelectorResetRequest:
       case asio_abi::kSelectorResyncRequest:
         pendingEvents.fetch_or(kEventReset, std::memory_order_release);
