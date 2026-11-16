@@ -1980,6 +1980,43 @@ async function prepareStreamEntry(entry, songId, fileName, options, requestConte
   return playbackIdentityResult(entry.url, entry.url, entry.item, options, entry.expiresAt)
 }
 
+async function finalizeAuthorizedStream(
+  cacheKey,
+  url,
+  songId,
+  fileName,
+  item,
+  options,
+  requestContext
+) {
+  const prepare = options?._twilightAutoMixPrepare === true
+  if (!prepare && typeof ncmApi.resolveCachedSong === 'function') {
+    let verifiedCachedPath = null
+    try {
+      const formatHint = normalizeNcmFormat(item?.type ?? item?.encodeType ?? item?.format)
+      const resolvedFileName =
+        fileName && /\.[a-z0-9]{1,8}$/i.test(fileName)
+          ? fileName
+          : formatHint
+            ? `${songId}.${formatHint}`
+            : fileName
+      verifiedCachedPath = await ncmApi.resolveCachedSong(songId, url, resolvedFileName, {
+        expectedBytes: Number(item?.size) > 0 ? Number(item.size) : null
+      })
+    } catch {
+      verifiedCachedPath = null
+    }
+    throwIfRequestAborted(requestContext)
+    if (verifiedCachedPath) {
+      const entry = rememberStreamUrl(cacheKey, url, songId, fileName, item, true)
+      entry.cachedPath = verifiedCachedPath
+      return playbackIdentityResult(verifiedCachedPath, url, item, options, entry.expiresAt)
+    }
+  }
+  const entry = rememberStreamUrl(cacheKey, url, songId, fileName, item, prepare)
+  return prepareStreamEntry(entry, songId, fileName, options, requestContext)
+}
+
 async function getPlaybackUrl(track, options = {}, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
@@ -2033,15 +2070,15 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
         if (!streamItem.freeTrialInfo) {
-          const entry = rememberStreamUrl(
+          return finalizeAuthorizedStream(
             cacheKey,
             url,
             songId,
             track?.fileName,
             streamItem,
-            options?._twilightAutoMixPrepare === true
+            options,
+            requestContext
           )
-          return prepareStreamEntry(entry, songId, track?.fileName, options, requestContext)
         }
         return playbackIdentityResult(url, url, streamItem, options, null)
       }
@@ -2073,15 +2110,15 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
       const url = getUnblockedPlaybackUrl(data)
       if (url) {
-        const entry = rememberStreamUrl(
+        return finalizeAuthorizedStream(
           cacheKey,
           url,
           songId,
           track?.fileName,
           {},
-          options?._twilightAutoMixPrepare === true
+          options,
+          requestContext
         )
-        return prepareStreamEntry(entry, songId, track?.fileName, options, requestContext)
       }
       lastFailureMessage =
         getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'

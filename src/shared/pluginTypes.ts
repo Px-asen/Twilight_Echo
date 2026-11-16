@@ -493,6 +493,7 @@ export type PluginHostResponse =
         | 'ncmRequest'
         | 'ncmOfficialLogin'
         | 'ncmGetCachedSong'
+        | 'ncmResolveCachedSong'
         | 'ncmCacheSong'
         | 'ncmPrepareAutoMixSong'
         | 'qishuiGetQrLogin'

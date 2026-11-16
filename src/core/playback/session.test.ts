@@ -5277,3 +5277,24 @@ test('extendSubmitted preserves duplicate occurrences and ignores stale queue id
   await f.session.finishSubmitted(queueId)
   assert.equal(await f.session.extendSubmitted('stale-queue', [{ id: 'ncm:4', snapshot: { ...recommended(4) } }]), false)
 })
+
+test('retainedProviderIds reports active providers while playing or paused and clears on stop', async (t) => {
+  const f = await fixture(t, {
+    resolve: async (track) => ({
+      source: `https://audio.test/${(track as TrackData).id}`,
+      expiresAt: null
+    })
+  })
+  assert.deepEqual(f.session.retainedProviderIds(), [])
+
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  assert.deepEqual(f.session.retainedProviderIds(), ['ncm'])
+
+  await f.session.pause()
+  assert.deepEqual(f.session.retainedProviderIds(), ['ncm'])
+
+  await f.session.stop()
+  assert.deepEqual(f.session.retainedProviderIds(), [])
+})

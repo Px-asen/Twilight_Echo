@@ -25,7 +25,12 @@ import {
   requestNcmApi,
   openNcmOfficialLogin
 } from '../ncm/api'
-import { getCachedNcmSong, cacheNcmSong, prepareNcmAutoMixSong } from '../cache/ncmCache'
+import {
+  getCachedNcmSong,
+  resolveCachedNcmSong,
+  cacheNcmSong,
+  prepareNcmAutoMixSong
+} from '../cache/ncmCache'
 import { TWILIGHT_AUTOMIX_AVAILABLE } from '../../shared/twilightAutoMix.ts'
 import {
   normalizeFiniteNumber,
@@ -109,6 +114,10 @@ export function setupPluginIpc(): void {
       getCachedSong: async (songId) => {
         if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null
         return getCachedNcmSong(Number(songId))
+      },
+      resolveCachedSong: async (songId, url, fileName, metadata) => {
+        if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null
+        return resolveCachedNcmSong(Number(songId), url, fileName, metadata)
       },
       cacheSong: async (songId, url, fileName) => {
         if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null

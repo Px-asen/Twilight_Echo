@@ -127,6 +127,12 @@ export interface TwilightPluginManagerOptions {
     ) => Promise<unknown>
     officialLogin: (signal?: AbortSignal) => Promise<string>
     getCachedSong: (songId: number) => Promise<string | null>
+    resolveCachedSong?: (
+      songId: number,
+      url: string,
+      fileName?: string,
+      options?: { expectedBytes?: number | null }
+    ) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
     prepareAutoMixSong?: (
       songId: number,
@@ -199,6 +205,8 @@ export interface TwilightPluginManagerOptions {
    */
   hostIdleTimeoutMs?: number
   isPlaybackProxyActive?: (pluginId: string, proxySources: ReadonlySet<string>) => boolean
+  /** Keep pure provider hosts resident while active playback/queues still rely on them. */
+  isProviderRetained?: (pluginId: string, providerIds: readonly string[]) => boolean
 }
 
 /**
@@ -321,6 +329,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly hostCaptureApi: TwilightPluginManagerOptions['hostCaptureApi']
   private readonly dynamicIsland: TwilightPluginManagerOptions['dynamicIsland']
   private readonly isPlaybackProxyActive: TwilightPluginManagerOptions['isPlaybackProxyActive']
+  private readonly isProviderRetained: TwilightPluginManagerOptions['isProviderRetained']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly hibernated = new Map<string, HibernatedPlugin>()
   private readonly wakeOperations = new Map<string, Promise<RunningPlugin>>()
@@ -367,6 +376,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.hostCaptureApi = options.hostCaptureApi
     this.dynamicIsland = options.dynamicIsland
     this.isPlaybackProxyActive = options.isPlaybackProxyActive
+    this.isProviderRetained = options.isProviderRetained
     const idleTimeoutMs = options.hostIdleTimeoutMs ?? DEFAULT_PLUGIN_HOST_IDLE_TIMEOUT_MS
     this.hostIdle =
       idleTimeoutMs > 0
@@ -1148,6 +1158,15 @@ export class TwilightPluginManager extends EventEmitter {
     if (this.rpcCalls.getPendingCount(id) > 0) return false
     for (const key of this.internalNcmRequests.keys()) {
       if (key.startsWith(`${id}\u0000`)) return false
+    }
+    if (
+      running.providers.length > 0 &&
+      this.isProviderRetained?.(
+        id,
+        running.providers.map((provider) => provider.id)
+      )
+    ) {
+      return false
     }
     return true
   }
@@ -1979,6 +1998,29 @@ export class TwilightPluginManager extends EventEmitter {
       const songId = Number(message.args[0])
       if (!Number.isFinite(songId)) throw new Error('ncmGetCachedSong songId 无效')
       return this.ncm.getCachedSong(songId)
+    }
+    if (message.method === 'ncmResolveCachedSong') {
+      if (!this.ncm.resolveCachedSong) return null
+      const [rawId, url, fileName, rawMeta] = message.args
+      const songId = Number(rawId)
+      if (!Number.isSafeInteger(songId) || songId <= 0) {
+        throw new Error('ncmResolveCachedSong songId 无效')
+      }
+      if (typeof url !== 'string') throw new Error('ncmResolveCachedSong url 必须是字符串')
+      const meta =
+        rawMeta && typeof rawMeta === 'object' ? (rawMeta as Record<string, unknown>) : {}
+      const expectedBytes =
+        typeof meta.expectedBytes === 'number' &&
+        Number.isFinite(meta.expectedBytes) &&
+        meta.expectedBytes > 0
+          ? meta.expectedBytes
+          : null
+      return this.ncm.resolveCachedSong(
+        songId,
+        url,
+        typeof fileName === 'string' ? fileName : undefined,
+        { expectedBytes }
+      )
     }
     if (message.method === 'ncmCacheSong') {
       const songId = Number(message.args[0])

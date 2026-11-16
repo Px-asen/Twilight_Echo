@@ -1579,6 +1579,67 @@ for (const cacheState of ['removed', 'replaced', 'lookup-failed']) {
   })
 }
 
+test('cold stream cache reuses verified disk cache on first play after entitlement check and skips free trials', async () => {
+  const verifiedPath = 'D:\\Cache\\ncm-cache\\994.deadbeef0123456789.flac'
+  let freeTrial = false
+  let cacheWrites = 0
+  let resolvedChecks = 0
+  const provider = await activateProvider(
+    async () => ({
+      code: 200,
+      data: [
+        {
+          id: 994,
+          url: freeTrial ? 'https://music.example/994-trial.mp3' : 'https://m801.music.126.net/20261117000000/abcd/ymusic/994.flac',
+          level: 'lossless',
+          type: 'flac',
+          size: 409600,
+          code: 200,
+          freeTrialInfo: freeTrial ? { start: 0, end: 30 } : null
+        }
+      ]
+    }),
+    undefined,
+    {
+      ncm: {
+        getCachedSong: async () => verifiedPath,
+        resolveCachedSong: async (songId, _url, fileName, metadata) => {
+          resolvedChecks += 1
+          assert.equal(songId, 994)
+          assert.equal(fileName, '994.flac')
+          assert.equal(metadata.expectedBytes, 409600)
+          return verifiedPath
+        },
+        cacheSong: async () => {
+          cacheWrites += 1
+          return null
+        }
+      }
+    }
+  )
+
+  try {
+    const first = await provider.getPlaybackUrl(
+      { id: 'ncm:994' },
+      { quality: 'lossless', _twilightSourceIdentity: true }
+    )
+    assert.equal(first.streamUrl, verifiedPath)
+    assert.equal(first.providerSource.actualQuality, 'lossless')
+    assert.equal(resolvedChecks, 1)
+    assert.equal(cacheWrites, 0, 'verified cold cache hit must not start a redundant download')
+
+    freeTrial = true
+    const trial = await provider.getPlaybackUrl(
+      { id: 'ncm:994' },
+      { force: true, quality: 'lossless', _twilightSourceIdentity: true }
+    )
+    assert.equal(trial.streamUrl, 'https://music.example/994-trial.mp3')
+    assert.equal(resolvedChecks, 1, 'free-trial responses must never hit verified disk cache')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('playback fallback ladder backs off between steps instead of bursting', async () => {
   const requestTimes = []
   const provider = await activateProvider(async (path) => {

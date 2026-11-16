@@ -36,6 +36,7 @@ import { nativeQueueItem } from './nativeQueueMaintainer.ts'
 import { authorizeNativeSource, isSourceCurrent, type SourceResolver } from './sourceResolver.ts'
 import { projectCoreError, projectCorePlayback, projectCoreTrack } from '../projections.ts'
 import type { CorePlaybackView, CoreTrackView } from '../../shared/coreViews.ts'
+import { getTrackSource } from '../../shared/trackSourceIdentity.ts'
 import { libraryQueueTrack } from './libraryTrack.ts'
 import { toPlaybackQueueSnapshot } from './queueSnapshots.ts'
 import type { LibraryQueueSeedProducer } from './libraryQueueBuild.ts'
@@ -840,6 +841,31 @@ export class CorePlaybackSession {
         ? { ...this.heart.state(), ...(this.detachedHeartTrack ? { available: false } : {}) }
         : null
     }
+  }
+  /** Providers whose streams or queued occurrences this active session still relies on. */
+  retainedProviderIds(): string[] {
+    if (this.stopped) return []
+    const snapshot = this.snapshot()
+    const activePlayback =
+      snapshot.loading ||
+      snapshot.playback?.state === 'playing' ||
+      snapshot.playback?.state === 'paused'
+    if (!activePlayback) return []
+    const ids = new Set<string>()
+    if (snapshot.personalized?.providerId) {
+      ids.add(snapshot.personalized.providerId.trim().toLowerCase())
+    }
+    if (snapshot.heart?.active) ids.add('ncm')
+    if (snapshot.track) {
+      const source = getTrackSource(snapshot.track)
+      if (source && source !== 'local') ids.add(source)
+    }
+    for (const item of this.controller.window.value?.items ?? []) {
+      if (!item.track) continue
+      const source = getTrackSource(item.track)
+      if (source && source !== 'local') ids.add(source)
+    }
+    return [...ids]
   }
   private drainObservation(): void {
     if (this.observing || this.stopped || this.committing) return

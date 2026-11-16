@@ -13,6 +13,7 @@ const cache = createNcmCache({
 export const getMusicCacheRoot = cache.getMusicCacheRoot
 export const getNcmCacheDir = cache.getNcmCacheDir
 export const getCachedNcmSong = cache.getCachedSong
+export const resolveCachedNcmSong = cache.resolveCachedSong
 export const cacheNcmSong = cache.cacheSong
 export const prepareNcmAutoMixSong = cache.prepareAutoMixSong
 export const shutdownNcmCache = cache.shutdown

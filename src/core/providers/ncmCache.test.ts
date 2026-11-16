@@ -370,3 +370,55 @@ test('shutdown joins an active maintenance failure without preventing service cl
   await Promise.all([rejected, stopping])
   assert.equal(stopped, true)
 })
+
+test('resolveCachedSong and cacheSong reuse verified disk caches across rotated NCM CDN URLs', async (t) => {
+  const bytes = wav()
+  let calls = 0
+  const { cache, root } = await fixture(t, {
+    fetch: async () => {
+      calls++
+      return new Response(bytes, { headers: { 'content-type': 'audio/wav' } })
+    }
+  })
+  const firstUrl =
+    'https://m701.music.126.net/20261116000000/0123456789abcdef0123456789abcdef/ymusic/obj/test/77.wav'
+  const rotatedUrl =
+    'https://m804.music.126.net/20261117001500/fedcba9876543210fedcba9876543210/ymusic/obj/test/77.wav'
+  const saved = await cache.cacheSong(77, firstUrl)
+  assert.ok(saved)
+  assert.equal(calls, 1)
+
+  assert.equal(cache.resolveCachedSong(77, rotatedUrl, undefined, { expectedBytes: bytes.length }), saved)
+  assert.equal(cache.resolveCachedSong(77, rotatedUrl, undefined, { expectedBytes: bytes.length + 1 }), null)
+  assert.equal(await cache.cacheSong(77, rotatedUrl), saved)
+  assert.equal(await cache.prepareAutoMixSong(77, rotatedUrl, undefined, { expectedBytes: bytes.length }), saved)
+  assert.equal(calls, 1)
+
+  // Unhashed legacy files stay excluded from verified resolveCachedSong lookups, while
+  // pre-existing hashed files (across Core restart) match exact size & extension even across URL changes.
+  const dir = cache.getNcmCacheDir()
+  const legacyPath = join(dir, '78.flac')
+  await writeFile(legacyPath, bytes)
+  const preExistingHashed = join(dir, '79.abcdef0123456789abcdef0123456789.wav')
+  await writeFile(preExistingHashed, bytes)
+
+  const restarted = createNcmCache({ root: () => root })
+  try {
+    assert.equal(
+      restarted.resolveCachedSong(78, 'https://m801.music.126.net/a.flac', undefined, {
+        expectedBytes: bytes.length
+      }),
+      null
+    )
+    assert.equal(
+      restarted.resolveCachedSong(79, 'https://other.cdn.example/renamed/79.wav', undefined, {
+        expectedBytes: bytes.length
+      }),
+      preExistingHashed
+    )
+    assert.equal(restarted.resolveCachedSong(77, rotatedUrl, undefined, { expectedBytes: bytes.length }), saved)
+  } finally {
+    await restarted.shutdown()
+  }
+  assert.equal(await readFile(join(root, 'ncm-cache', '79.abcdef0123456789abcdef0123456789.wav')).then((b) => b.length), bytes.length)
+})

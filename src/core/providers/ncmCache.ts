@@ -159,6 +159,80 @@ export function createNcmCache(options: NcmCacheOptions) {
   }
 
   /**
+   * NetEase CDN URLs rotate edge hostnames, expiration timestamps, and hex auth
+   * signatures on every `/song/url/v1` resolution. Canonicalize the timed object
+   * path so repeat plays across restarts reuse the verified cached audio file.
+   */
+  function computeNcmCacheSourceKey(url: string): string {
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname.toLowerCase().endsWith('.music.126.net')) {
+        const assetMatch = /^\/\d{8,16}\/[0-9a-f]{16,64}(\/.+)$/i.exec(parsed.pathname)
+        if (assetMatch) {
+          return createHash('sha256').update(`ncm-asset:${assetMatch[1]}`).digest('hex')
+        }
+      }
+    } catch {
+      /* keep raw url hash fallback */
+    }
+    return createHash('sha256').update(url).digest('hex')
+  }
+
+  function isHashedNcmCacheFileName(name: string, songId: number): boolean {
+    const prefix = `${songId}.`
+    if (!name.startsWith(prefix)) return false
+    const rest = name.slice(prefix.length)
+    const dot = rest.indexOf('.')
+    return dot >= 16 && /^[0-9a-f]+$/i.test(rest.slice(0, dot))
+  }
+
+  function findMatchingCachedNcmSong(
+    songId: number,
+    url: string,
+    fileName?: string,
+    expectedBytes?: number | null
+  ): string | null {
+    if (cacheBarrier || lifetime.signal.aborted) return null
+    if (!Number.isFinite(songId) || songId <= 0 || !isSafeRemoteMediaUrl(url)) return null
+    const entry = getNcmCacheEntryName(songId)
+    if (!entry) return null
+    const fullPath = join(entry.dir, entry.name)
+    let size = 0
+    try {
+      const info = statSync(fullPath)
+      if (!info.isFile() || info.size <= 0) {
+        if (ncmCacheIndex?.dir === entry.dir) ncmCacheIndex.files.delete(songId)
+        return null
+      }
+      size = info.size
+    } catch {
+      if (ncmCacheIndex?.dir === entry.dir) ncmCacheIndex.files.delete(songId)
+      return null
+    }
+    const sourceKey = computeNcmCacheSourceKey(url)
+    const keyMatch = entry.name.startsWith(`${songId}.${sourceKey}.`)
+    const hasExpectedBytes =
+      expectedBytes != null && Number.isFinite(expectedBytes) && expectedBytes > 0
+    const validSize = !hasExpectedBytes || size === expectedBytes
+    const expectedExt = inferNcmCacheExtension(url, null, fileName).toLowerCase()
+    const extMatch = extname(entry.name).toLowerCase() === expectedExt
+    const sizeMatch =
+      !keyMatch &&
+      hasExpectedBytes &&
+      size === expectedBytes &&
+      extMatch &&
+      isHashedNcmCacheFileName(entry.name, songId)
+    if ((!keyMatch || !validSize) && !sizeMatch) return null
+    try {
+      const accessedAt = new Date(now())
+      utimesSync(fullPath, accessedAt, accessedAt)
+    } catch {
+      /* ignore mtime update failure on read-only fs */
+    }
+    return fullPath
+  }
+
+  /**
    * 缓存目录快照索引：命中走内存，免去每次播放的整目录 readdirSync（批量 8.3）。
    * 索引内 .part 临时文件绝不入录，缓存目录变更（设置改路径）即整体失效惰重建。
    */
@@ -290,9 +364,9 @@ export function createNcmCache(options: NcmCacheOptions) {
       .then(async () => {
         options.signal?.throwIfAborted()
         if (now() >= deadline) return null
-        const sourceKey = createHash('sha256').update(url).digest('hex')
-        const cached = getCachedNcmSong(songId)
-        if (cached && cached.includes(`${songId}.${sourceKey}.`)) return cached
+        const sourceKey = computeNcmCacheSourceKey(url)
+        const cached = findMatchingCachedNcmSong(songId, url, fileName, options.expectedBytes)
+        if (cached) return cached
         // Avoid an old delayed write replacing or competing with prepared bytes.
         for (const active of activeCacheDownloads.values())
           active.abort(new Error(NCM_CACHE_DOWNLOAD_SUPERSEDED_MESSAGE))
@@ -360,9 +434,9 @@ export function createNcmCache(options: NcmCacheOptions) {
     )
       return null
 
-    const sourceKey = createHash('sha256').update(url).digest('hex')
-    const cached = getCachedNcmSong(songId)
-    if (cached && cached.includes(`${songId}.${sourceKey}.`)) return cached
+    const sourceKey = computeNcmCacheSourceKey(url)
+    const cached = findMatchingCachedNcmSong(songId, url, fileName)
+    if (cached) return cached
 
     // 批量 8.1②：快速连切时只允许当前解析对应的一份全文件下载在跑。
     // 新解析到达即取消所有进行中的缓存下载（含同 songId 的旧 URL 重解析）。
@@ -474,6 +548,12 @@ export function createNcmCache(options: NcmCacheOptions) {
     getMusicCacheRoot,
     getNcmCacheDir,
     getCachedSong: getCachedNcmSong,
+    resolveCachedSong: (
+      songId: number,
+      url: string,
+      fileName?: string,
+      resolveOptions?: { expectedBytes?: number | null }
+    ) => findMatchingCachedNcmSong(songId, url, fileName, resolveOptions?.expectedBytes),
     cacheSong: (songId: number, url: string, fileName?: string) =>
       start(() => cacheNcmSong(songId, url, fileName)),
     prepareAutoMixSong: (...args: Parameters<typeof prepareNcmAutoMixSong>) =>

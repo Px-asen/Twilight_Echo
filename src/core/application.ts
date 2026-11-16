@@ -163,6 +163,7 @@ export interface CoreApplicationDependencies {
     | 'setSleepTimerGain'
     | 'applyBpm'
     | 'clearBpm'
+    | 'retainedProviderIds'
   >
   library: Pick<LibraryDatabaseApi, 'getMetadata' | 'queryTracks' | 'readLibraryQueue'> &
     CoreLibraryReadDatabase

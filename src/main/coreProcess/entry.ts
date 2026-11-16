@@ -1349,6 +1349,11 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         }
         return false
       },
+      isProviderRetained: (_pluginId, providerIds) => {
+        if (providerIds.length === 0) return false
+        const retained = new Set(zones.retainedProviderIds())
+        return providerIds.some((providerId) => retained.has(providerId))
+      },
       recordPlaybackIdentity: (...args) => providerPlaybackIdentities.record(...args),
       settings: new PluginSettingsRepository({
         protect: (value, scope) => platform!.call('credentials.protect', { scope, value }),
@@ -1387,6 +1392,10 @@ async function initialize(config: CoreProcessConfiguration): Promise<void> {
         getCachedSong: async (id) =>
           settings.read().cachePolicy.streamingAudio === 'provider'
             ? ncmCache!.getCachedSong(id)
+            : null,
+        resolveCachedSong: async (id, url, fileName, metadata) =>
+          settings.read().cachePolicy.streamingAudio === 'provider'
+            ? ncmCache!.resolveCachedSong(id, url, fileName, metadata)
             : null,
         cacheSong: (id, url, name) =>
           settings.read().cachePolicy.streamingAudio === 'provider'

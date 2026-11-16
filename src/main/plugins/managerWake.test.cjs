@@ -190,6 +190,7 @@ async function fixture(
     providerId = 'demo',
     pluginId = 'com.example.demo',
     autoMixEnabled = () => false,
+    isProviderRetained,
     ncm
   } = {}
 ) {
@@ -306,6 +307,7 @@ async function fixture(
     hostIdleTimeoutMs: 300000,
     getPlaybackInfo: () => ({}),
     autoMixEnabled,
+    isProviderRetained,
     ncm,
     applyNativeDspPluginChain: () => {},
     player: {}
@@ -836,4 +838,35 @@ test('CDN playback URLs and non-playback loopback results still allow idle hiber
       )
     })
   }
+})
+
+test('retained active providers stay resident past idle windows until playback releases them', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let retained = true
+  const observedProviders = []
+  const f = await fixture(t, {
+    pluginId: 'com.twilightecho.provider.ncm',
+    providerId: 'ncm',
+    isProviderRetained: (_pluginId, providerIds) => {
+      observedProviders.push([...providerIds])
+      return retained
+    }
+  })
+  const call = f.manager.callProvider('ncm', 'searchSongs', ['keepalive'])
+  await f.activationStarted
+  f.register()
+  f.activate()
+  await call
+
+  t.mock.timers.tick(300000)
+  await new Promise(setImmediate)
+  assert.equal(f.manager.running.has(f.descriptor.id), true)
+  assert.equal(f.manager.isHibernated(f.descriptor.id), false)
+  assert.deepEqual(observedProviders, [['ncm']])
+
+  retained = false
+  t.mock.timers.tick(300000)
+  await new Promise(setImmediate)
+  assert.equal(f.manager.running.has(f.descriptor.id), false)
+  assert.equal(f.manager.isHibernated(f.descriptor.id), true)
 })
