@@ -176,6 +176,7 @@ export class CorePlaybackSession {
   private mapping: number[] = []
   private info: PlaybackInfo | null = null
   private currentTrack: TrackData | null = null
+  private currentPrepared: { queueId: string; prepared: PreparedPlaybackSource } | null = null
   private mode: PlayMode = 'sequential'
   private error: string | null = null
   private startupAudioError: string | null = null
@@ -1081,6 +1082,7 @@ export class CorePlaybackSession {
   private get sourcePrefetch(): SourcePrefetchQueue {
     if (!this.sourcePrefetchQueue)
       this.sourcePrefetchQueue = createSourcePrefetchQueue({
+        ahead: SOURCE_PREFETCH_AHEAD + 1,
         prepare: (track, signal) => this.preparePrefetchSource(track, signal),
         key: (track) => (track.queueEntryId ?? '') + ':' + track.id,
         retain: (prepared) => this.options.resources?.pin([prepared.resolved.source]),
@@ -1093,7 +1095,24 @@ export class CorePlaybackSession {
   private clearPrefetch(): void {
     this.cancelPrefetchTimer?.()
     this.cancelPrefetchTimer = null
+    this.currentPrepared = null
     this.sourcePrefetchQueue?.clear()
+  }
+
+  private seedPreviousPrepared(
+    queueId: string,
+    previousPrepared: { queueId: string; prepared: PreparedPlaybackSource } | null,
+    nextEntryId: string | undefined
+  ): void {
+    if (
+      previousPrepared &&
+      previousPrepared.queueId === queueId &&
+      previousPrepared.prepared.track.queueEntryId &&
+      previousPrepared.prepared.track.queueEntryId !== nextEntryId &&
+      isSourceCurrent(previousPrepared.prepared.resolved, this.options.now())
+    ) {
+      this.sourcePrefetch.seed(previousPrepared.prepared)
+    }
   }
 
   private canPrefetch(): boolean {
@@ -1184,6 +1203,27 @@ export class CorePlaybackSession {
       if (!item?.track || seen.has(item.queueEntryId)) continue
       seen.add(item.queueEntryId)
       tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+    }
+    if (!detached && queue.total > 1) {
+      const canWrapPrevious = this.mode === 'listLoop' || this.mode === 'shuffle'
+      for (let offset = 1; offset <= maxScan; offset++) {
+        const rawPos = queue.index - offset
+        if (rawPos < 0 && !canWrapPrevious) break
+        const position = (rawPos + queue.total) % queue.total
+        const pageNumber = Math.floor(position / LIBRARY_PAGE_SIZE)
+        let page
+        try {
+          page = await this.controller.loadPage(pageNumber)
+        } catch {
+          return null
+        }
+        if (!page || page.revision !== queue.revision) return null
+        const item = page.items[position - pageNumber * LIBRARY_PAGE_SIZE]
+        if (!item?.track || seen.has(item.queueEntryId)) continue
+        seen.add(item.queueEntryId)
+        tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+        break
+      }
     }
     if (this.automaticQueue() && tracks.length > 0 && this.options.automaticPlaybackAllowed) {
       const mask = await automaticPlaybackMask(
@@ -1445,6 +1485,12 @@ export class CorePlaybackSession {
               }
               this.info = await this.options.engine.getPlaybackInfo()
             }
+            const previousPrepared = this.currentPrepared
+            this.currentPrepared = {
+              queueId: window.queue.id,
+              prepared: { track, resolved: prepared.resolved }
+            }
+            if (play) this.seedPreviousPrepared(window.queue.id, previousPrepared, track.queueEntryId)
             this.error = null
           } catch (error) {
             // No automatic replay of a possibly committed load/play/SQL mutation.
@@ -1544,7 +1590,15 @@ export class CorePlaybackSession {
           } else if (reference?.entryId !== entryId && reference) {
             const changed = await this.controller.acceptNative(entryId, reference, this.mode)
             if (!changed || !current()) return null
-            await this.updateTrack(this.controller.track(changed))
+            const promoted = this.controller.track(changed)
+            const previousPrepared = this.currentPrepared
+            const warmNext = this.maintainer?.peekPreparedSuccessor()
+            this.currentPrepared =
+              warmNext && promoted?.queueEntryId && warmNext.track.queueEntryId === promoted.queueEntryId
+                ? { queueId: reference.id, prepared: warmNext }
+                : null
+            this.seedPreviousPrepared(reference.id, previousPrepared, promoted?.queueEntryId)
+            await this.updateTrack(promoted)
             this.schedulePrefetch()
           }
           const window = this.currentTrack

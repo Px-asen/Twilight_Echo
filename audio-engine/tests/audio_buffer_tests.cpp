@@ -23,8 +23,8 @@ void testNetworkBufferHysteresisAndShortTail() {
   StreamBufferGate gate;
   gate.configure(48000, true);
   assert(gate.waiting());
-  assert(!gate.allow(47999, 480, false));
-  assert(gate.allow(48000, 480, false));
+  assert(!gate.allow(11999, 480, false));
+  assert(gate.allow(12000, 480, false));
   assert(!gate.waiting());
   assert(gate.allow(480, 480, false));
   assert(!gate.allow(479, 480, false));
@@ -38,13 +38,14 @@ void testNetworkBufferHysteresisAndShortTail() {
   assert(gate.allow(123, 480, true));
   assert(!gate.waiting());
   gate.reset();
-  assert(!gate.allow(47999, 480, false));
-  assert(gate.allow(48000, 480, false));
+  assert(!gate.allow(11999, 480, false));
+  assert(gate.allow(12000, 480, false));
   for (int rate : {8000, 44100, 96000, 192000, 768000}) {
+    const size_t startup = static_cast<size_t>(rate) / 4;
     gate.configure(rate, true);
-    assert(gate.prerollFrames(480) == static_cast<size_t>(rate));
-    assert(gate.ready(rate, false));
-    assert(!gate.ready(rate - 1, false));
+    assert(gate.prerollFrames(480) == startup);
+    assert(gate.ready(startup, false));
+    assert(!gate.ready(startup - 1, false));
     assert(gate.ready(1, true));
     assert(gate.allow(1, 480, true));
   }
@@ -56,10 +57,11 @@ void testNetworkBufferHysteresisAndShortTail() {
   // High-rate/multichannel streams hit the PCM memory bound before three seconds.
   // Both thresholds must fit that bound, including oversized consumer requests.
   gate.configure(768000, true, 524288);
-  assert(gate.prerollFrames(480) == 524288);
-  assert(!gate.allow(524287, 480, false));
-  assert(gate.allow(524288, 480, false));
+  assert(gate.prerollFrames(480) == 192000);
+  assert(!gate.allow(191999, 480, false));
+  assert(gate.allow(192000, 480, false));
   assert(!gate.allow(0, 480, false));
+  assert(!gate.allow(524287, 480, false));
   assert(gate.allow(524288, 600000, false));
 }
 

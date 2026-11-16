@@ -5298,3 +5298,81 @@ test('retainedProviderIds reports active providers while playing or paused and c
   await f.session.stop()
   assert.deepEqual(f.session.retainedProviderIds(), [])
 })
+
+test('source prefetch warms previous neighbor and reuses departing track for navigate(-1)', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(
+    async (append) =>
+      append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } }))),
+    { selectedIndex: 3 }
+  )
+  await scheduler.flush()
+  // Playing index 3 (ncm:4) warms forward [5, 6, 1, 2] plus immediate previous ncm:3.
+  assert.deepEqual(reads, ['ncm:4', 'ncm:5', 'ncm:6', 'ncm:1', 'ncm:2', 'ncm:3'])
+
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  // Stepping back from ncm:3 -> ncm:2 hits the still-warm entry and then seeds ncm:3 before next/back skips.
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:4')
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  assert.deepEqual(reads, ['ncm:4', 'ncm:5', 'ncm:6', 'ncm:1', 'ncm:2', 'ncm:3'])
+})
+
+test('listLoop at index 0 prefetches the wrapped previous track alongside lookahead tracks', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+
+  await f.session.fromPages(
+    async (append) =>
+      append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } }))),
+    { mode: 'listLoop' }
+  )
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
+
+  await f.session.navigate(-1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:6')
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
+})

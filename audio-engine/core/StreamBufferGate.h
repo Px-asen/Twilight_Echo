@@ -16,7 +16,8 @@ class StreamBufferGate {
     enabled_ = enabled;
     capacityFrames_ = std::max<size_t>(1, capacityFrames);
     const size_t second = static_cast<size_t>(std::max(1, sampleRate));
-    startupFrames_ = std::min(second, capacityFrames_);
+    const size_t startup = std::max<size_t>(1, second / 4);
+    startupFrames_ = std::min(startup, capacityFrames_);
     refillFrames_ = std::min(second * 3, capacityFrames_);
     reset();
   }
