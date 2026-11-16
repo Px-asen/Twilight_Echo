@@ -1618,7 +1618,11 @@ test('settings readiness, permissions and a slow settings edit leave Pause indep
   assert.equal((await editing).ok, true)
   const initial = f.playback.snapshot()
   const actual = { volume: 0.4, outputBackend: 'wasapi' } as NonNullable<typeof initial.playback>
-  f.playback.snapshot = () => ({ ...initial, playback: actual })
+  f.playback.snapshot = () => ({
+    ...initial,
+    playback: actual,
+    mute: { ...initial.mute, userVolume: actual.volume }
+  })
   await f.request('desktop', 'playback.volume', { volume: 0.9 })
   assert.deepEqual(volumes, [0.4], 'persist the applied device ceiling, not the requested value')
   actual.outputBackend = 'cast'
