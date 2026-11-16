@@ -452,6 +452,7 @@ export class CorePlaybackSession {
       throw Object.assign(new Error('Cast occurrence changed'), { code: 'STALE_REVISION' })
     if (this.currentTrack) cast.assertTrack(this.currentTrack)
     const intent = this.beginPreparation()
+    this.clearPrefetch()
     let position = 0
     try {
       await this.transport(async () => {
@@ -909,6 +910,7 @@ export class CorePlaybackSession {
       if (!window || window.queue.index !== index) throw new Error('Heart exit successor changed')
       this.detachedHeartTrack = false
       await this.updateTrack(this.controller.track(window))
+      this.schedulePrefetch()
       return
     }
     if (reference.entryId !== entry.queueEntryId) {
@@ -918,6 +920,7 @@ export class CorePlaybackSession {
       const previous = this.currentTrack
       await this.updateTrack(this.controller.track(result))
       await this.applyTrackRate(previous, this.currentTrack)
+      this.schedulePrefetch()
     } else if (this.currentTrack?.id !== entry.id) {
       // A natural repeat can commit a new source for the same occurrence.
       const selected = this.controller.track()
@@ -1059,6 +1062,26 @@ export class CorePlaybackSession {
     return this.sourcePrefetchQueue
   }
 
+  private clearPrefetch(): void {
+    this.cancelPrefetchTimer?.()
+    this.cancelPrefetchTimer = null
+    this.sourcePrefetchQueue?.clear()
+  }
+
+  private canPrefetch(): boolean {
+    return (
+      !this.stopped &&
+      !this.outputClaim &&
+      !this.uncertain &&
+      !this.restored &&
+      !this.recoveringAudio &&
+      !this.sourceBarrier &&
+      !this.options.cast?.active() &&
+      !this.options.sleepTimer?.triggered() &&
+      this.info?.state === 'playing'
+    )
+  }
+
   /** Warm after playback is visibly running: a click that arrives during a start
    * must not compete with a batch of provider reads. */
   private schedulePrefetch(): void {
@@ -1079,18 +1102,26 @@ export class CorePlaybackSession {
   /** Warm the occurrences after the cursor so the next skip does not wait on the
    * provider. Page reads and source reads stay off the transport lane. */
   private prefetchAhead(): void {
-    if (this.stopped || this.outputClaim || this.uncertain || this.restored) return
-    // A Cast session resolves on the remote device; a local warm source would be
-    // an unused provider read (and a competing resolution).
-    if (this.options.cast?.active()) return
+    if (!this.canPrefetch()) return
     const intent = this.intent
     const queue = this.controller.window.value?.queue
-    if (!queue || queue.index < 0) return
+    const detached = this.detachedHeartTrack
+    if (!queue || queue.total <= 0 || (!detached && queue.index < 0)) return
+    const currentEntryId = this.currentTrack?.queueEntryId ?? queue.selectedEntryId ?? null
     void (async () => {
       await this.maintainer?.waitForPreparation()
-      if (this.stopped || this.outputClaim || intent !== this.intent) return
-      const tracks = await this.readAheadTracks(queue)
-      if (this.stopped || this.outputClaim || intent !== this.intent) return
+      if (!this.canPrefetch() || intent !== this.intent) return
+      const tracks = await this.readAheadTracks(queue, detached, currentEntryId)
+      if (tracks === null || !this.canPrefetch() || intent !== this.intent) return
+      const currentQueue = this.controller.window.value?.queue
+      if (
+        !currentQueue ||
+        currentQueue.id !== queue.id ||
+        currentQueue.revision !== queue.revision ||
+        currentQueue.index !== queue.index ||
+        this.detachedHeartTrack !== detached
+      )
+        return
       const warmSuccessor = this.maintainer?.peekPreparedSuccessor()
       if (warmSuccessor) this.sourcePrefetch.seed(warmSuccessor)
       this.sourcePrefetch.schedule(
@@ -1099,16 +1130,40 @@ export class CorePlaybackSession {
     })().catch(() => {})
   }
 
-  private async readAheadTracks(queue: LibraryQueueSnapshot): Promise<TrackData[]> {
-    const last = Math.min(queue.total - 1, queue.index + SOURCE_PREFETCH_AHEAD)
+  private async readAheadTracks(
+    queue: LibraryQueueSnapshot,
+    detached: boolean,
+    currentEntryId: string | null
+  ): Promise<TrackData[] | null> {
+    if (!detached && queue.total <= 1) return []
+    const startPos = detached ? Math.max(0, queue.index) : queue.index + 1
+    const maxScan = Math.min(queue.total, 16)
     const tracks: TrackData[] = []
-    for (let position = queue.index + 1; position <= last; position++) {
+    const seen = new Set<string>()
+    if (currentEntryId) seen.add(currentEntryId)
+    for (let step = 0; step < maxScan && tracks.length < SOURCE_PREFETCH_AHEAD; step++) {
+      const position = (startPos + step) % queue.total
       const pageNumber = Math.floor(position / LIBRARY_PAGE_SIZE)
-      const page = await this.controller.loadPage(pageNumber)
+      let page
+      try {
+        page = await this.controller.loadPage(pageNumber)
+      } catch {
+        return null
+      }
       // A queue edit or a library revision invalidates this lookahead wholesale.
-      if (!page || page.revision !== queue.revision) return []
+      if (!page || page.revision !== queue.revision) return null
       const item = page.items[position - pageNumber * LIBRARY_PAGE_SIZE]
-      if (item?.track) tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+      if (!item?.track || seen.has(item.queueEntryId)) continue
+      seen.add(item.queueEntryId)
+      tracks.push(libraryQueueTrack(item.track, item.queueEntryId))
+    }
+    if (this.automaticQueue() && tracks.length > 0 && this.options.automaticPlaybackAllowed) {
+      const mask = await automaticPlaybackMask(
+        tracks,
+        this.options.automaticPlaybackAllowed,
+        this.preview.signal
+      )
+      return tracks.filter((_, index) => mask[index])
     }
     return tracks
   }
@@ -1392,7 +1447,8 @@ export class CorePlaybackSession {
     }
     this.guard(intent, signal)
     if (!staged) this.startMaintenance()
-    this.schedulePrefetch()
+    if (play && !this.options.cast?.active()) this.schedulePrefetch()
+    else this.clearPrefetch()
     await this.flush()
   }
   private async recoverSource(track: TrackData, intent: number, signal?: AbortSignal) {
@@ -1451,10 +1507,12 @@ export class CorePlaybackSession {
             if (!selected || !current()) return null
             this.detachedHeartTrack = false
             await this.updateTrack(this.controller.track(selected))
+            this.schedulePrefetch()
           } else if (reference?.entryId !== entryId && reference) {
             const changed = await this.controller.acceptNative(entryId, reference, this.mode)
             if (!changed || !current()) return null
             await this.updateTrack(this.controller.track(changed))
+            this.schedulePrefetch()
           }
           const window = this.currentTrack
             ? await this.controller.playbackWindow(this.currentTrack, this.mode)
@@ -1531,7 +1589,7 @@ export class CorePlaybackSession {
           await this.clearAbLoop()
           this.guard(intent, signal)
           this.controller = candidate; this.clearHeart(); this.mode = nextMode
-          adopted = true; previous.dispose()
+          adopted = true; previous.dispose(); this.clearPrefetch()
           await this.updateTrack(candidate.track(window))
           this.restored = true; this.uncertain = false; this.error = null
           this.info = { ...info, state: 'paused', position: options.position ?? 0, duration: this.currentTrack?.duration ?? 0 }
@@ -1548,6 +1606,7 @@ export class CorePlaybackSession {
           this.mode = nextMode
           adopted = true
           previous.dispose()
+          this.sourcePrefetchQueue?.clear()
         },
         owner: candidate
       })
@@ -1646,6 +1705,7 @@ export class CorePlaybackSession {
             this.mode = mode
             adopted = true
             previous.dispose()
+            this.sourcePrefetchQueue?.clear()
             options.onAdopt?.()
           }
           if (options.play === false) {
@@ -1846,6 +1906,7 @@ export class CorePlaybackSession {
           this.mode = session.playMode
           adopted = true
           previous.dispose()
+          this.sourcePrefetchQueue?.clear()
         }
         const prepare = async (playing: boolean) => {
           await beforeAdopt(playing)
@@ -2136,6 +2197,7 @@ export class CorePlaybackSession {
   }
   /** A library rescan changes content/access paths, not queue order or native playback. */
   invalidateLibrary(revision: number): void {
+    this.clearPrefetch()
     this.controller.invalidateLibrary(revision)
     this.heartBase?.invalidateLibrary(revision)
   }
@@ -2204,6 +2266,7 @@ export class CorePlaybackSession {
       })
     }
     this.startMaintenance()
+    this.schedulePrefetch()
     this.publish()
   }
   async pause(): Promise<void> {
@@ -2270,6 +2333,7 @@ export class CorePlaybackSession {
       throw new Error('Stop casting before restarting the local audio engine')
     this.recoveringAudio = true
     const intent = this.revoke()
+    this.clearPrefetch()
     this.resetAbLoopState()
     this.restored = true
     try {
@@ -2310,6 +2374,7 @@ export class CorePlaybackSession {
   }
   private async stopTransport(current = () => true): Promise<void> {
     this.abortLikedDrain()
+    this.clearPrefetch()
     await this.transport(async () => {
       if (!current()) return
       try {
@@ -2392,6 +2457,7 @@ export class CorePlaybackSession {
       if (this.info) this.options.playbackSeeked?.(this.info)
     })
     this.startMaintenance()
+    if (this.canPrefetch()) this.schedulePrefetch()
     this.publish()
   }
   private automaticQueue(): boolean {
@@ -2642,6 +2708,7 @@ export class CorePlaybackSession {
     this.mapping = [this.detachedHeartTrack ? -1 : this.controller.reference()!.index]
   }
   private async failStopped(error: unknown): Promise<void> {
+    this.clearPrefetch()
     this.uncertain = true
     this.error = errorText(error)
     this.resetAbLoopState()
@@ -2729,7 +2796,11 @@ export class CorePlaybackSession {
       this.publish()
       await this.flush()
     } finally {
-      if (intent === this.intent) this.startMaintenance()
+      if (intent === this.intent) {
+        this.startMaintenance()
+        if (this.restored) this.clearPrefetch()
+        else if (this.canPrefetch()) this.schedulePrefetch()
+      }
     }
   }
   async setMode(mode: PlayMode, signal?: AbortSignal): Promise<void> {
@@ -2751,6 +2822,7 @@ export class CorePlaybackSession {
   async refresh(): Promise<void> {
     this.assertIndependent()
     this.revoke()
+    this.clearPrefetch()
     await this.transport(async () => {
       await this.clearAbLoop()
       await this.options.cast?.stop()
@@ -2993,6 +3065,7 @@ export class CorePlaybackSession {
       }
       if (added > 0 && active()) {
         void this.maintainer?.tick()
+        if (this.canPrefetch()) this.schedulePrefetch()
         await this.flush()
       }
     })()
@@ -3059,7 +3132,10 @@ export class CorePlaybackSession {
       )
     } finally {
       this.finishPreparation(intent)
-      if (intent === this.intent) this.startMaintenance()
+      if (intent === this.intent) {
+        this.startMaintenance()
+        if (this.canPrefetch()) this.schedulePrefetch()
+      }
     }
   }
   private async exitHeart(signal?: AbortSignal): Promise<void> {
@@ -3079,7 +3155,10 @@ export class CorePlaybackSession {
       await this.restoreHeartBase(base, context.likedPlaylistId, selection, intent, current)
     } finally {
       this.heartTransition = false
-      if (intent === this.intent) this.startMaintenance()
+      if (intent === this.intent) {
+        this.startMaintenance()
+        if (this.canPrefetch()) this.schedulePrefetch()
+      }
     }
   }
   private async restoreHeartBase(
@@ -3151,6 +3230,7 @@ export class CorePlaybackSession {
           this.controller = candidate
           adopted = true
           onAdopt(previous)
+          this.sourcePrefetchQueue?.clear()
           await this.updateTrack(
             this.detachedHeartTrack ? selection.track : candidate.track(window)
           )
@@ -3336,6 +3416,7 @@ export class CorePlaybackSession {
     }
     if (added) {
       void this.maintainer?.tick()
+      if (this.canPrefetch()) this.schedulePrefetch()
       await this.flush()
     }
     return added
@@ -3354,6 +3435,7 @@ export class CorePlaybackSession {
     if (options?.background) await this.awaitPreparation(options.preparationGraceMs)
     const resume = this.maintainer?.isActive()
     const intent = this.revoke()
+    this.clearPrefetch()
     let release!: () => void
     this.sourceBarrier = new Promise<void>((resolve) => {
       release = resolve
@@ -3367,8 +3449,10 @@ export class CorePlaybackSession {
     } finally {
       this.sourceBarrier = null
       release()
-      if (this.info?.state === 'playing' || (intent === this.intent && resume))
+      if (this.info?.state === 'playing' || (intent === this.intent && resume)) {
         this.startMaintenance()
+        if (this.canPrefetch()) this.schedulePrefetch()
+      }
     }
   }
   private scheduleSave(): void {
@@ -3418,7 +3502,10 @@ export class CorePlaybackSession {
     if (this.currentTrack?.source === 'radio') throw new Error('直播电台不支持位置接力')
     const paused = this.pause()
     // Reserve the output before SQL IO; Pause/Stop now revoke the group creation.
-    if (claim) this.outputClaim = claim
+    if (claim) {
+      this.outputClaim = claim
+      this.clearPrefetch()
+    }
     const intent = this.intent, sourceSignal = this.preview.signal
     await paused
     this.guard(intent, signal)
@@ -3471,7 +3558,7 @@ export class CorePlaybackSession {
         await this.clearAbLoop()
         current()
         const previous = this.controller
-        this.controller = candidate; adopted = true; previous.dispose()
+        this.controller = candidate; adopted = true; previous.dispose(); this.clearPrefetch()
         this.clearHeart(); this.personalized?.stop(); this.mode = capture.mode
         await this.updateTrack(candidate.track(window))
         this.restored = true; this.uncertain = false; this.error = null
@@ -3553,9 +3640,7 @@ export class CorePlaybackSession {
     else await this.clearAbLoop()
     this.stopped = true
     this.likedDrain?.abort()
-    this.cancelPrefetchTimer?.()
-    this.cancelPrefetchTimer = null
-    this.sourcePrefetchQueue?.clear()
+    this.clearPrefetch()
     await this.options.cast?.shutdown()
     if (!options.audioTerminated) await this.options.engine.stop()
     this.resetStreamBuffering()
