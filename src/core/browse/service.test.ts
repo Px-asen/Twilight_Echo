@@ -315,3 +315,88 @@ test('a replacement Core clears abandoned epoch caches before writing new accoun
   await f.execute('browse.snapshot.save', { providerIds: ['p'], value: { draft: 'new account' } })
   assert.deepEqual((await readdir(f.root)).sort(), ['session-id-1', 'unrelated.txt'])
 })
+
+test('browse.locate scans provider pages incrementally without pulling later pages unnecessarily', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'twilight-browse-locate-'))
+  let serial = 0
+  const calls: number[] = []
+  const service = new CoreBrowseService({
+    files,
+    root,
+    newId: () => `id-${++serial}`,
+    providerContext: () => 'account-a:version-1',
+    callProvider: async (_id, _method, args) => {
+      const offset = Number(args[1]),
+        limit = Number(args[2])
+      calls.push(offset)
+      return {
+        tracks: Array.from({ length: Math.max(0, Math.min(limit, 550 - offset)) }, (_, i) =>
+          track(offset + i)
+        ),
+        total: null,
+        nextOffset: Math.min(550, offset + limit),
+        hasMore: offset + limit < 550
+      }
+    }
+  })
+  t.after(async () => {
+    await service.shutdown()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  const session = await service.open(
+    'window',
+    {
+      source: {
+        providerId: 'p',
+        method: 'fetchPlaylistTracksPage',
+        args: ['playlist', 0, 200],
+        paging: { offsetArg: 1, limitArg: 2 }
+      }
+    },
+    new AbortController().signal
+  )
+  assert.deepEqual(calls, [0])
+
+  const onPage0 = (await service.execute(
+    'window',
+    {
+      kind: 'query',
+      name: 'browse.locate',
+      payload: { id: session.id, trackId: 'p:42' },
+      epoch: 'one',
+      requestId: 'r1'
+    } as CoreRequestEnvelope,
+    new AbortController().signal
+  )) as { position: number }
+  assert.equal(onPage0.position, 42)
+  assert.deepEqual(calls, [0], 'locating a track on page 0 must not pull additional pages')
+
+  const onPage1 = (await service.execute(
+    'window',
+    {
+      kind: 'query',
+      name: 'browse.locate',
+      payload: { id: session.id, trackId: 'p:250' },
+      epoch: 'one',
+      requestId: 'r2'
+    } as CoreRequestEnvelope,
+    new AbortController().signal
+  )) as { position: number }
+  assert.equal(onPage1.position, 250)
+  assert.deepEqual(calls, [0, 200], 'locating on page 1 must stop before page 2')
+
+  const missing = (await service.execute(
+    'window',
+    {
+      kind: 'query',
+      name: 'browse.locate',
+      payload: { id: session.id, trackId: 'p:9999' },
+      epoch: 'one',
+      requestId: 'r3'
+    } as CoreRequestEnvelope,
+    new AbortController().signal
+  )) as { position: number }
+  assert.equal(missing.position, -1)
+  assert.deepEqual(calls, [0, 200, 400])
+})

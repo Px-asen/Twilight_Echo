@@ -306,3 +306,135 @@ test('provider queue submissions persist durable coverSource in SQLite snapshots
   assert.equal(page.items[1].track?.cover, null)
   assert.equal(page.items[1].track?.coverSource, undefined)
 })
+
+test('progressive queue submissions adopt at the selected batch, preserve duplicates, and stop on queue switch', async (t) => {
+  const f = fixture(t)
+  const runtimeState: { queue: LibraryQueueSnapshot | null } = { queue: null }
+  let finishedId: string | null = null
+  const resolver = createQueueInputResolver({
+    database: {
+      getTracksByIds: async (ids) => f.db.getTracksByIds(ids),
+      readLibraryQueue: async (...args) => f.db.readLibraryQueue(...args)
+    },
+    authorizeLocal: async (source) => source,
+    providers: () => new Set(['ncm']),
+    streams: () => new Map(),
+    resolveProviderCovers: async () => ({}),
+    network: async () => {
+      throw new Error('Not indexed')
+    }
+  })
+  const service = new CoreQueueSubmission({
+    newId: () => 'prog-1',
+    schedule: (callback) => {
+      void callback
+      return () => {}
+    },
+    resolve: resolver,
+    playback: {
+      snapshot: () => ({ queue: runtimeState.queue }) as ReturnType<CorePlaybackSession['snapshot']>,
+      edit: async (id, revision, edit) => {
+        runtimeState.queue = f.db.editLibraryQueue(id, revision, edit).queue
+      },
+      canExtendSubmitted: () => true,
+      extendSubmitted: async (queueId, items) => {
+        if (runtimeState.queue?.id !== queueId) return false
+        runtimeState.queue = f.db.extendPlaybackQueue(
+          queueId,
+          runtimeState.queue.revision,
+          items.map((item) => ({ id: item.id, snapshot: item.localSnapshot ?? item.snapshot })),
+          { preserveDuplicates: true }
+        ).queue
+        return true
+      },
+      finishSubmitted: async (queueId) => {
+        finishedId = queueId
+      },
+      fromPages: async (produce, options = {}, signal) => {
+        const ready = await buildLibraryQueuePages(
+          {
+            buildQueue: async (command) => f.db.buildLibraryQueue(command),
+            deleteQueue: async (...args) => {
+              f.db.deleteLibraryQueue(...args)
+            }
+          },
+          produce,
+          {
+            contentRevision: f.db.getMetadata().revision,
+            order: options.mode === 'shuffle' ? 'shuffle' : 'original',
+            selectedIndex: options.selectedIndex
+          },
+          { signal }
+        )
+        runtimeState.queue = ready
+      }
+    }
+  })
+  t.after(async () => {
+    await service.shutdown()
+  })
+
+  // Click track at index 1 in a 3-batch playlist where track 7 repeats across batches.
+  const started = await service.submit('window', {
+    kind: 'begin',
+    selectedIndex: 1,
+    play: true,
+    progressive: true
+  })
+  assert.equal(started.state, 'building')
+
+  const firstReply = await service.submit('window', {
+    kind: 'append',
+    id: started.id,
+    sequence: 1,
+    items: [provider(7), { kind: 'local', id: 'cue' }]
+  })
+  assert.equal(firstReply.state, 'committed', 'queue must adopt and start once total > selectedIndex')
+  assert.equal(runtimeState.queue?.total, 2)
+  assert.equal(runtimeState.queue?.index, 1)
+
+  const secondReply = await service.submit('window', {
+    kind: 'append',
+    id: started.id,
+    sequence: 2,
+    items: [provider(7), provider(8)]
+  })
+  assert.equal(secondReply.state, 'committed')
+  assert.equal(
+    runtimeState.queue?.total,
+    4,
+    'progressive tail extensions must preserve duplicate playlist occurrences'
+  )
+  const tail = f.db.readLibraryQueue(runtimeState.queue!.id, 0, 10)
+  assert.deepEqual(
+    tail.items.map((row) => row.track?.id),
+    ['ncm:7', 'cue', 'ncm:7', 'ncm:8']
+  )
+
+  const done = await service.submit('window', { kind: 'commit', id: started.id, sequence: 3 })
+  assert.equal(done.state, 'committed')
+  assert.equal(finishedId, runtimeState.queue!.id)
+
+  // If the active queue changes mid-drain, the next append returns state='aborted' cleanly.
+  const second = await service.submit('window', {
+    kind: 'begin',
+    selectedIndex: 0,
+    play: true,
+    progressive: true
+  })
+  const adoptSecond = await service.submit('window', {
+    kind: 'append',
+    id: second.id,
+    sequence: 1,
+    items: [provider(9)]
+  })
+  assert.equal(adoptSecond.state, 'committed')
+  runtimeState.queue = { ...runtimeState.queue!, id: 'other-queue' }
+  const abortedReply = await service.submit('window', {
+    kind: 'append',
+    id: second.id,
+    sequence: 2,
+    items: [provider(10)]
+  })
+  assert.equal(abortedReply.state, 'aborted')
+})

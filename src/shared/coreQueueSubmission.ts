@@ -1,3 +1,4 @@
+import type { PlayMode } from './audioEngineTypes.ts'
 import type { CueRange } from './cue.ts'
 import type { TrackData } from './track.ts'
 
@@ -41,7 +42,14 @@ export function isAuthorizedProviderQueueCover(value: unknown): value is string 
 }
 
 export type CoreQueueSubmitCommand =
-  | { kind: 'begin'; selectedIndex: number; position?: number; play?: boolean }
+  | {
+      kind: 'begin'
+      selectedIndex: number
+      position?: number
+      play?: boolean
+      mode?: Exclude<PlayMode, 'heart'>
+      progressive?: boolean
+    }
   | { kind: 'append'; id: string; sequence: number; items: CoreQueueTrackInput[] }
   | { kind: 'commit'; id: string; sequence: number }
   | { kind: 'abort'; id: string }

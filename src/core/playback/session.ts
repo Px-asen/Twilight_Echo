@@ -17,6 +17,7 @@ import type {
   LibraryQuery,
   LibraryTrackRecord,
   LibraryQueueEdit,
+  LibraryQueueInsertItem,
   LibraryQueuePlaybackWindow,
   LibraryQueueSnapshot
 } from '../../shared/libraryDatabase.ts'
@@ -38,6 +39,7 @@ import type { CorePlaybackView, CoreTrackView } from '../../shared/coreViews.ts'
 import { libraryQueueTrack } from './libraryTrack.ts'
 import { toPlaybackQueueSnapshot } from './queueSnapshots.ts'
 import type { LibraryQueueSeedProducer } from './libraryQueueBuild.ts'
+import type { LibraryQueueSeedItem } from '../../shared/libraryQueueBuild.ts'
 import { importLegacyQueue } from './legacyQueueImport.ts'
 import type { CoreQueueImportApi } from '../../shared/coreQueueImport.ts'
 import type { LibraryPlaybackQueueReference } from '../../shared/playbackSession.ts'
@@ -1621,6 +1623,36 @@ export class CorePlaybackSession {
       if (intent === this.intent) this.startMaintenance()
     }
   }
+  /** Whether this playback runtime supports incremental tail extensions on submitted queues. */
+  canExtendSubmitted(): boolean {
+    return Boolean(this.options.queues.extendQueue)
+  }
+  /** Extends an already-adopted submitted queue outside the command lane so initial playback starts immediately. */
+  async extendSubmitted(
+    queueId: string,
+    items: readonly LibraryQueueSeedItem[],
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    const active = () =>
+      !this.stopped && !signal?.aborted && this.controller.reference()?.id === queueId
+    if (!active()) return false
+    if (!items.length) return true
+    const batch: LibraryQueueInsertItem[] = items.map((item) => ({
+      id: item.id,
+      snapshot: item.localSnapshot ?? item.snapshot
+    }))
+    const { extended } = await this.extendActiveQueue(active, batch, { preserveDuplicates: true })
+    if (extended && active()) {
+      void this.maintainer?.tick()
+      if (this.canPrefetch()) this.schedulePrefetch()
+    }
+    return extended
+  }
+  /** Persists the playback session after all progressive background queue batches land. */
+  async finishSubmitted(queueId: string): Promise<void> {
+    if (this.stopped || this.controller.reference()?.id !== queueId) return
+    await this.flush()
+  }
   /** Internal source-owner entry point. Public clients submit identities, never arbitrary tracks. */
   async fromPages(
     produce: LibraryQueueSeedProducer,
@@ -2996,31 +3028,63 @@ export class CorePlaybackSession {
             likedPlaylistId: liked.playlistId
           })
       }
-      if (command.selectedId) {
-        // A chosen occurrence can live on any page, so its index needs the whole
-        // seed before the queue can be published.
-        await this.stagePages(liked.produce, staged, intent, current)
-        return
-      }
-      // Start on the first page instead of pulling the entire playlist first: a
-      // 2190-song liked list used to hold the first sound back for ~40s.
-      let streamed = false
+      // Start as soon as the page covering the selected track (or first page
+      // when unindexed) lands, instead of pulling the entire playlist first.
+      let streamed = false,
+        more = true
       await this.stagePages(
         async (append) => {
-          const first = await liked.nextBatch()
-          if (!first?.length) return
-          await append(first)
-          streamed = true
+          while (!liked.hasSelected() || !streamed) {
+            const batch = await liked.nextBatch()
+            if (!batch) {
+              more = false
+              break
+            }
+            if (batch.length) {
+              await append(batch)
+              streamed = true
+            }
+          }
         },
         staged,
         intent,
         current
       )
-      if (streamed) this.drainLiked(liked)
+      if (streamed && more) this.drainLiked(liked)
     } finally {
       this.finishPreparation(intent)
       if (intent === this.intent) this.startMaintenance()
     }
+  }
+  private async extendActiveQueue(
+    active: () => boolean,
+    items: readonly LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
+  ): Promise<{ extended: boolean; added: number }> {
+    let committed = false,
+      extended = false,
+      added = 0
+    while (!committed && active()) {
+      if (this.loadingIntent !== null) await this.awaitPreparation()
+      if (!active()) break
+      await this.commit(async () => {
+        if (!active() || this.loadingIntent !== null) return
+        await this.nativeSelection()
+        if (!active()) return
+        const previous = this.controller.snapshot.value?.total ?? 0
+        const window = await this.controller.extend([...items], this.mode, options)
+        if (!window) {
+          committed = true
+          return
+        }
+        added += window.queue.total - previous
+        extended = true
+        committed = true
+        await this.updateTrack(this.controller.track(window))
+        this.publish()
+      })
+    }
+    return { extended, added }
   }
   /** Streams the remaining liked pages into the queue that is already playing.
    * Provider page IO stays outside the player command lane; each resolved batch
@@ -3047,26 +3111,9 @@ export class CorePlaybackSession {
         const batch = await liked.nextBatch()
         if (!batch) break
         if (!batch.length) continue
-        let committed = false
-        while (!committed && active()) {
-          if (this.loadingIntent !== null) await this.awaitPreparation()
-          if (!active()) break
-          await this.commit(async () => {
-            if (!active() || this.loadingIntent !== null) return
-            await this.nativeSelection()
-            if (!active()) return
-            const previous = this.controller.snapshot.value?.total ?? 0
-            const window = await this.controller.extend([...batch], this.mode)
-            if (!window) {
-              committed = true
-              return
-            }
-            added += window.queue.total - previous
-            committed = true
-            await this.updateTrack(this.controller.track(window))
-            this.publish()
-          })
-        }
+        const result = await this.extendActiveQueue(active, batch)
+        added += result.added
+        if (!result.extended) break
       }
       if (added > 0 && active()) {
         void this.maintainer?.tick()

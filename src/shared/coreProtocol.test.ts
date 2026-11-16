@@ -501,6 +501,28 @@ test('playback presentation and queue upload expose finite, revision-fenced iden
     track: { id: 'ncm:7', source: 'ncm', title: 'Seven', artist: '', album: '', duration: 60 }
   }
   assert.equal(isCoreRequest(request('queue.submit', { kind: 'begin', selectedIndex: 0 })), true)
+  assert.equal(
+    isCoreRequest(
+      request('queue.submit', {
+        kind: 'begin',
+        selectedIndex: 0,
+        play: true,
+        progressive: true,
+        mode: 'shuffle'
+      })
+    ),
+    true
+  )
+  assert.equal(
+    isCoreRequest(
+      request('queue.submit', { kind: 'begin', selectedIndex: 0, progressive: true, mode: 'heart' })
+    ),
+    false
+  )
+  assert.equal(
+    isCoreRequest(request('queue.submit', { kind: 'begin', selectedIndex: 0, progressive: 'yes' })),
+    false
+  )
   const page = { kind: 'append', id: 'upload', sequence: 1, items: [provider] }
   assert.equal(isCoreRequest(request('queue.submit', page)), true)
   assert.equal(

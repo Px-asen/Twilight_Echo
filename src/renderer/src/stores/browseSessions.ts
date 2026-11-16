@@ -39,12 +39,16 @@ export async function produceBrowseSelection(
   signal?: AbortSignal,
   core: Client = useCoreConnection()
 ): Promise<void> {
+  const maxRangeEnd = selected.ranges?.length
+    ? Math.max(...selected.ranges.map(([, end]) => end))
+    : Infinity
   let offset = 0
   for (;;) {
     signal?.throwIfAborted()
+    if (offset >= maxRangeEnd) return
     const page = await core.query(
       'browse.page',
-      { ...selected.query, id: selected.id, offset, limit: BROWSE_PAGE_SIZE, complete: true },
+      { ...selected.query, id: selected.id, offset, limit: BROWSE_PAGE_SIZE },
       signal
     )
     const rows = selected.ranges
@@ -54,8 +58,12 @@ export async function produceBrowseSelection(
       : page.items
     if (rows.length) await append(rows as Track[])
     offset += page.items.length
-    if (offset >= page.filteredTotal) return
-    if (!page.items.length) throw new Error('浏览分页读取中断')
+    if (offset >= maxRangeEnd) return
+    if (page.complete && offset >= page.filteredTotal) return
+    if (!page.items.length) {
+      if (page.complete) return
+      throw new Error('浏览分页读取中断')
+    }
   }
 }
 export interface BrowseWindowState {
@@ -328,10 +336,12 @@ export function createBrowseWindow(
     ): Promise<void> {
       const id = state.value.session?.id
       if (!id) return
-      const query = { ...selection, ...override, id, complete: true }
+      const query = { ...selection, ...override, id }
+      const maxRangeEnd = ranges?.length ? Math.max(...ranges.map(([, end]) => end)) : Infinity
       let offset = 0
       for (;;) {
         signal?.throwIfAborted()
+        if (offset >= maxRangeEnd) break
         const page = await core.query(
           'browse.page',
           { ...query, offset, limit: BROWSE_PAGE_SIZE },
@@ -344,16 +354,17 @@ export function createBrowseWindow(
           : page.items
         if (selected.length) await append(selected as Track[], offset)
         offset += page.items.length
-        if (offset >= page.filteredTotal) break
-        if (!page.items.length) throw new Error('浏览分页读取中断')
+        if (offset >= maxRangeEnd) break
+        if (page.complete && offset >= page.filteredTotal) break
+        if (!page.items.length) {
+          if (page.complete) break
+          throw new Error('浏览分页读取中断')
+        }
       }
     },
     locate: async (trackId: string) => {
       const id = state.value.session?.id
-      return id
-        ? (await core.query('browse.locate', { ...selection, id, trackId, complete: true }))
-            .position
-        : -1
+      return id ? (await core.query('browse.locate', { ...selection, id, trackId })).position : -1
     },
     dispose() {
       revision++

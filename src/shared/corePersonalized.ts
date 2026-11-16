@@ -29,11 +29,12 @@ export function isCorePersonalizedContext(value: unknown): value is CorePersonal
   )
 }
 /** Private append-only capability. Unlike public queue insertions, provider
- * snapshots resolve lazily. Automatic extensions are deduplicated and not undoable. */
+ * snapshots resolve lazily. Automatic extensions are deduplicated by default and not undoable. */
 export interface CoreQueueExtensionApi {
   extendPlaybackQueue(
     id: string,
     revision: number,
-    items: LibraryQueueInsertItem[]
+    items: LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
   ): Promise<LibraryQueueEditResult>
 }

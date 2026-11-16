@@ -694,15 +694,22 @@ export class CoreBrowseService {
       }
       case 'browse.locate': {
         const query = request.payload
+        const session = this.session(query.id, owner)
+        if (!session.source && query.complete && !session.complete)
+          throw failure('浏览内容仍在写入，请稍后重试', 'NOT_READY')
         for (let offset = 0; ; offset += BROWSE_PAGE_SIZE) {
           const page = await this.page(
             owner,
-            { ...query, offset, limit: BROWSE_PAGE_SIZE, complete: true },
+            { ...query, offset, limit: BROWSE_PAGE_SIZE, complete: false },
             signal
           )
           const index = page.items.findIndex((track) => track.id === query.trackId)
           if (index >= 0) return { position: offset + index }
-          if (offset + page.items.length >= page.filteredTotal) return { position: -1 }
+          if (
+            !page.items.length ||
+            (page.complete && offset + page.items.length >= page.filteredTotal)
+          )
+            return { position: -1 }
         }
       }
     }

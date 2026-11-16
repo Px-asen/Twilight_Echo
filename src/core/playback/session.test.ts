@@ -5211,3 +5211,69 @@ test('foreground playback leaves autoMixPrepare unset while background prefetch 
     'foreground queue start must omit autoMixPrepare'
   )
 })
+
+test('startLiked with selectedId starts on the matching batch while later pages drain in the background', async (t) => {
+  const tracks = Array.from({ length: 450 }, (_, index) => recommended(index + 1))
+  const secondPageEntered = deferred<void>()
+  const releaseSecondPage = deferred<void>()
+  t.after(() => releaseSecondPage.resolve())
+  const calls: number[] = []
+  const provider = heartProvider(),
+    original = provider.call
+  provider.call = async (method, args, signal) => {
+    if (method !== 'fetchLikedTracksPage') return original(method, args, signal)
+    const offset = Number(args[0]),
+      limit = Number(args[1])
+    calls.push(offset)
+    if (offset === 200) {
+      secondPageEntered.resolve()
+      await new Promise<void>((resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        void releaseSecondPage.promise.then(resolve)
+      })
+    }
+    return {
+      tracks: tracks.slice(offset, offset + limit),
+      nextOffset: offset + limit,
+      hasMore: offset + limit < tracks.length
+    }
+  }
+  const f = await heartFixture(t, provider)
+  await f.session.startLiked({ selectedId: 'ncm:42' })
+  assert.equal(f.session.snapshot().track?.id, 'ncm:42')
+  assert.equal(f.session.snapshot().queue?.total, 200)
+  assert.equal(calls.includes(400), false, 'page 2 must not be fetched before playback starts')
+
+  await secondPageEntered.promise
+  releaseSecondPage.resolve()
+  await waitFor(
+    () => f.session.snapshot().queue?.total === 450,
+    'selected liked queue background drain to finish'
+  )
+  assert.deepEqual(calls, [0, 200, 400])
+})
+
+test('extendSubmitted preserves duplicate occurrences and ignores stale queue ids', async (t) => {
+  const f = await fixture(t, {
+    resolve: async (track) => ({
+      source: `https://audio.test/${(track as TrackData).id}`,
+      expiresAt: null
+    })
+  })
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  const queueId = f.session.snapshot().queue!.id
+  const extended = await f.session.extendSubmitted(queueId, [
+    { id: 'ncm:1', snapshot: { ...recommended(1) } },
+    { id: 'ncm:3', snapshot: { ...recommended(3) } }
+  ])
+  assert.equal(extended, true)
+  const page = f.db.readLibraryQueue(queueId, 0, 10)
+  assert.deepEqual(
+    page.items.map((item) => item.track?.id),
+    ['ncm:1', 'ncm:2', 'ncm:1', 'ncm:3']
+  )
+  await f.session.finishSubmitted(queueId)
+  assert.equal(await f.session.extendSubmitted('stale-queue', [{ id: 'ncm:4', snapshot: { ...recommended(4) } }]), false)
+})

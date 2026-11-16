@@ -2015,8 +2015,13 @@ export class LibraryDatabase {
   ) {
     return this.queues.restoreNamedPlaybackQueue(command)
   }
-  extendPlaybackQueue(id: string, revision: number, items: LibraryQueueInsertItem[]) {
-    return this.queues.extend(id, revision, items)
+  extendPlaybackQueue(
+    id: string,
+    revision: number,
+    items: LibraryQueueInsertItem[],
+    options?: { preserveDuplicates?: boolean }
+  ) {
+    return this.queues.extend(id, revision, items, options)
   }
   insertCorePlaybackQueue(id: string, revision: number, edit: Extract<LibraryQueueEdit, { kind: 'insert' }>) {
     return this.queues.edit(id, revision, edit, false, true)

@@ -1908,10 +1908,17 @@ export function validCorePayload(name: CoreOperation, payload: unknown): boolean
       switch (p.kind) {
         case 'begin':
           return (
-            keys(p, ['kind', 'selectedIndex', 'position', 'play']) &&
+            keys(p, ['kind', 'selectedIndex', 'position', 'play', 'mode', 'progressive']) &&
             uint(p.selectedIndex) &&
             optional(p.position, positive) &&
-            optional(p.play, (v) => typeof v === 'boolean')
+            optional(p.play, (v) => typeof v === 'boolean') &&
+            optional(p.mode, (mode) =>
+              oneOf(
+                mode,
+                modes.filter((m) => m !== 'heart')
+              )
+            ) &&
+            optional(p.progressive, (v) => typeof v === 'boolean')
           )
         case 'append':
           return (

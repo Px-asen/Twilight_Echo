@@ -79,7 +79,11 @@ import {
   restoreBrowsePage,
   type BrowseSelection
 } from '../stores/browseSessions.ts'
-import type { BrowsePartState, BrowseSession } from '../../../shared/coreBrowse.ts'
+import {
+  BROWSE_PAGE_SIZE,
+  type BrowsePartState,
+  type BrowseSession
+} from '../../../shared/coreBrowse.ts'
 import type {
   StreamingTrackSort,
   StreamingSortDirection
@@ -930,15 +934,15 @@ function playHomeTrack(track: Track, trackQueue: Track[]): void {
       void (async () => {
         const { position } = await core.query('browse.locate', {
           id: session.id,
-          trackId: track.id,
-          complete: true
+          trackId: track.id
         })
         if (position < 0) return
         await playbackStore.playTrackPages(
-          (append) =>
+          (append, signal) =>
             produceBrowseSelection(
               { id: session.id, query: {}, count: session.total ?? session.loaded },
-              append
+              append,
+              signal
             ),
           position
         )
@@ -3132,19 +3136,32 @@ async function playBrowseTracks(track?: Track, random = false): Promise<void> {
   const check = (): void => {
     if (token !== detailLoadToken) throw new Error('页面已切换，播放操作已取消')
   }
-  const selectedIndex = track ? await detailBrowse.locate(track.id) : 0
+  const useQueueShuffle =
+    random && (!detailBrowse.query.sort || detailBrowse.query.sort === 'default')
+  const initialWindow = Math.max(
+    1,
+    Math.min(session.loaded || BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE)
+  )
+  const selectedIndex = track
+    ? await detailBrowse.locate(track.id)
+    : useQueueShuffle
+      ? Math.floor(Math.random() * initialWindow)
+      : 0
   check()
   if (selectedIndex < 0) return
   await playbackStore.playTrackPages(
-    (append) =>
+    (append, signal) =>
       detailBrowse.produce(
         (tracks) => append(tracks),
         undefined,
-        undefined,
-        random ? { sort: 'random', seed: Math.floor(Math.random() * 0x100000000) } : {}
+        signal,
+        random && !useQueueShuffle
+          ? { sort: 'random', seed: Math.floor(Math.random() * 0x100000000) }
+          : {}
       ),
     selectedIndex,
-    check
+    check,
+    useQueueShuffle ? { mode: 'shuffle' } : undefined
   )
 }
 
