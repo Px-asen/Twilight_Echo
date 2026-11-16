@@ -166,6 +166,22 @@ test('cancellation and recording revision changes fence both pending and prepare
   })
   await assert.rejects(cancelled.recovery.prepare(song(), controller.signal), /Pause cancelled/)
   assert.deepEqual(cancelled.reads, ['expired:one'])
+
+  let batchRevision = 0
+  const batchController = new AbortController()
+  const decoupled = fixture({ versionsRevision: () => batchRevision })
+  const retained = await decoupled.recovery.prepare(song('other'), batchController.signal)
+  batchController.abort(new Error('Batch superseded'))
+  assert.doesNotThrow(() => retained.confirm?.())
+  batchRevision++
+  assert.throws(() => retained.confirm?.(), { code: 'STALE_REVISION' })
+
+  const noFallback = fixture()
+  await assert.rejects(
+    noFallback.recovery.prepare(song('expired'), undefined, { allowFallbackSearch: false }),
+    /Unable to resolve the selected audio source$/
+  )
+  assert.deepEqual(noFallback.searches, [])
 })
 
 test('CUE and SACD direct identities retain their segments and authorize only the physical ISO', async () => {

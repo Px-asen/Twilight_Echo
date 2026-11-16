@@ -1991,6 +1991,60 @@ test('injecting automatic preferences leaves ordinary playlist native preloading
   assert.equal(f.engine.items.length, 2)
   assert.equal(reads, 0)
 })
+function createPrefetchTestScheduler() {
+  const callbacks: Array<() => void> = []
+  const schedulePrefetch = (callback: () => void) => {
+    callbacks.push(callback)
+    return () => {
+      const index = callbacks.indexOf(callback)
+      if (index >= 0) callbacks.splice(index, 1)
+    }
+  }
+  const flush = async () => {
+    for (let round = 0; round < 10; round++) {
+      await tick()
+      if (!callbacks.length) continue
+      const batch = callbacks.splice(0)
+      for (const callback of batch) callback()
+      round = -1
+    }
+  }
+  return { schedulePrefetch, flush, pending: () => callbacks.length }
+}
+
+test('the session warms the occurrence after the cursor so a skip resolves without another provider read', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+  await f.session.fromPages(async (append) =>
+    append([1, 2].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  assert.deepEqual(reads, ['ncm:1'])
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2'])
+  await f.session.navigate(1)
+  // The skip consumes the warm entry instead of paying provider latency again.
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2'])
+  assert.equal(f.session.snapshot().track?.id, 'ncm:2')
+})
 
 test('Cast recommendation EOF skips newly banned queue entries before issuing remote LOAD', async (t) => {
   const banned = new Set<string>()
@@ -3048,7 +3102,14 @@ async function fixture(
   extra?: Partial<
     Pick<
       CorePlaybackSessionOptions,
-      'sleepTimer' | 'setNativeSleepGain' | 'naturalBoundary' | 'schedule' | 'automaticPlaybackAllowed' | 'playbackStarted' | 'playbackSeeked'
+      | 'sleepTimer'
+      | 'setNativeSleepGain'
+      | 'naturalBoundary'
+      | 'schedule'
+      | 'schedulePrefetch'
+      | 'automaticPlaybackAllowed'
+      | 'playbackStarted'
+      | 'playbackSeeked'
     >
   >
 ) {
@@ -4885,4 +4946,221 @@ test('initialize recovers to an empty paused session when a BSOD rolls back the 
   assert.equal(cold.snapshot().track, null)
   assert.match(cold.snapshot().error ?? '', /Queue missing after WAL rollback/)
   await cold.shutdown()
+})
+
+test('source prefetch survives multi-step skips with source recovery and drops stale entries when versionsRevision changes', async (t) => {
+  const reads: string[] = []
+  let revision = 0
+  const scheduler = createPrefetchTestScheduler()
+  const resolver: SourceResolver = {
+    resolve: async (value) => {
+      const track = value as TrackData
+      reads.push(track.id)
+      return { source: `https://audio.test/${track.id}`, expiresAt: null }
+    }
+  }
+  const recovery = createPlaybackSourceRecovery({
+    resolver,
+    authorize: async (source) => source,
+    identity: createLogicalTrackModel(() => undefined),
+    versionsRevision: () => revision,
+    search: async () => ({ items: [], logicalItems: [], health: {}, total: 0 }),
+    now: () => 1000
+  })
+  const f = await fixture(
+    t,
+    resolver,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    recovery,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+  await f.session.fromPages(async (append) =>
+    append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5'])
+
+  // Skip to ncm:2 -> consumes warm ncm:2, then schedules batch #2 (aborting batch #1).
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:2')
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5'])
+
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
+
+  // Skip to ncm:3 -> retained entry from batch #1 must still confirm without AbortError/failStopped.
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  assert.equal(f.session.snapshot().playback?.state, 'playing')
+  assert.equal(f.session.snapshot().error, null)
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5', 'ncm:6'])
+
+  // Changing versionsRevision invalidates warm entries cleanly so ncm:4 re-resolves without failStopped.
+  revision++
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:4')
+  assert.equal(f.session.snapshot().playback?.state, 'playing')
+  assert.equal(f.session.snapshot().error, null)
+  assert.equal(reads.filter((id) => id === 'ncm:4').length, 2)
+})
+
+test('gapless native auto-advance slides the prefetch window forward', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+  await f.session.fromPages(async (append) =>
+    append([1, 2, 3, 4, 5, 6].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3', 'ncm:4', 'ncm:5'])
+
+  // Maintainer already preloaded ncm:2 into engine.items[1]; simulate native gapless transition.
+  assert.equal(f.engine.items.length, 2)
+  f.engine.info.queueIndex = 1
+  f.engine.info.source = f.engine.items[1].source
+  f.engine.emit('playback-info', f.engine.info)
+  await tick()
+  await tick()
+  assert.equal(f.session.snapshot().track?.id, 'ncm:2')
+
+  await scheduler.flush()
+  assert.ok(reads.includes('ncm:6'))
+})
+
+test('maintainSources unpins and clears warm prefetch entries before running maintenance', async (t) => {
+  const reads: string[] = []
+  const resources = new SourceResources()
+  const scheduler = createPrefetchTestScheduler()
+  const f = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    resources,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+  await f.session.fromPages(async (append) =>
+    append([1, 2, 3].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } })))
+  )
+  await scheduler.flush()
+  assert.ok(resources.protectedSources().includes('https://audio.test/ncm:3'))
+
+  let protectedDuringMaintenance: string[] = []
+  await f.session.maintainSources(async () => {
+    protectedDuringMaintenance = resources.protectedSources()
+  })
+  assert.equal(protectedDuringMaintenance.includes('https://audio.test/ncm:3'), false)
+
+  // Warm cache was cleared, so navigating to ncm:3 resolves fresh instead of reusing cleared entries.
+  const beforeNavigate = reads.length
+  await f.session.navigate(1)
+  await f.session.navigate(1)
+  assert.equal(f.session.snapshot().track?.id, 'ncm:3')
+  assert.ok(reads.slice(beforeNavigate).includes('ncm:3'))
+})
+
+test('paused starts defer prefetch until play and automatic queues exclude banned tracks from prefetch', async (t) => {
+  const reads: string[] = []
+  const scheduler = createPrefetchTestScheduler()
+  const paused = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        reads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { schedulePrefetch: scheduler.schedulePrefetch }
+  )
+  await paused.session.fromPages(
+    async (append) =>
+      append([1, 2, 3].map((id) => ({ id: `ncm:${id}`, snapshot: { ...recommended(id) } }))),
+    { play: false }
+  )
+  await scheduler.flush()
+  assert.equal(reads.length, 0)
+
+  await paused.session.play()
+  await scheduler.flush()
+  assert.deepEqual(reads, ['ncm:1', 'ncm:2', 'ncm:3'])
+
+  const autoReads: string[] = []
+  const banned = new Set<string>()
+  const autoScheduler = createPrefetchTestScheduler()
+  const auto = await fixture(
+    t,
+    {
+      resolve: async (value) => {
+        const track = value as TrackData
+        autoReads.push(track.id)
+        return { source: `https://audio.test/${track.id}`, expiresAt: null }
+      }
+    },
+    undefined,
+    undefined,
+    {
+      supportedMethods: () => ['fetchPersonalFm'],
+      call: async () => [1, 2, 3, 4, 5].map(recommended)
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      schedulePrefetch: autoScheduler.schedulePrefetch,
+      automaticPlaybackAllowed: async (tracks) => tracks.map((track) => !banned.has(track.id))
+    }
+  )
+  await auto.session.startPersonalized({ providerId: 'ncm', key: 'fm' })
+  const rows = auto.db.readLibraryQueue(auto.session.snapshot().queue!.id).items
+  const bannedId = rows[2].track!.id
+  banned.add(bannedId)
+  await autoScheduler.flush()
+  assert.equal(autoReads.includes(bannedId), false)
+  assert.ok(autoReads.includes(rows[1].track!.id))
 })

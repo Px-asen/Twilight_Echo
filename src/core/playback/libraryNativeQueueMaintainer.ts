@@ -99,6 +99,7 @@ export class LibraryNativeQueueMaintainer {
   private hasEndTarget = false
   private endRecovery: { key: string; deadline: number } | null = null
   private sourceReads = new AbortController()
+  private preparing: Promise<void> | null = null
 
   constructor(options: LibraryNativeQueueMaintainerOptions) {
     this.options = options
@@ -110,6 +111,35 @@ export class LibraryNativeQueueMaintainer {
   }
   isActive(): boolean {
     return this.active
+  }
+
+  waitForPreparation(): Promise<void> {
+    if (!this.preparing && !this.pending) return Promise.resolve()
+    return (async () => {
+      while (this.preparing || this.pending) {
+        await (this.preparing ?? this.pending)
+      }
+    })()
+  }
+
+  peekPreparedSuccessor(): PreparedPlaybackSource | null {
+    const prepared = this.source?.prepared
+    if (!prepared) return null
+    if (!isSourceCurrent(prepared.resolved, (this.options.now ?? Date.now)())) return null
+    try {
+      prepared.confirm?.()
+      return prepared
+    } catch {
+      return null
+    }
+  }
+
+  isInRetryBackoff(occurrenceId: string): boolean {
+    if (!occurrenceId || !this.retry) return false
+    return (
+      this.retry.key.startsWith(`${occurrenceId}:`) &&
+      (this.options.now ?? Date.now)() < this.retry.after
+    )
   }
 
   getPlaybackEndRecoveryDeadline(): number | null {
@@ -223,10 +253,11 @@ export class LibraryNativeQueueMaintainer {
       const cached = this.source?.key === key ? this.source.prepared : null
       let prepared: PreparedPlaybackSource
       try {
+        const endTrack = libraryQueueTrack(endTarget.track, endTarget.queueEntryId)
         prepared =
           cached && isSourceCurrent(cached.resolved, (this.options.now ?? Date.now)())
             ? cached
-            : await this.prepare(libraryQueueTrack(endTarget.track, endTarget.queueEntryId))
+            : await this.trackPreparation(() => this.prepare(endTrack))
         if (!current()) return
       } catch (error) {
         if (!current()) return
@@ -455,7 +486,8 @@ export class LibraryNativeQueueMaintainer {
     if (this.retry && now < this.retry.after) return
     let prepared: PreparedPlaybackSource
     try {
-      prepared = await this.prepare(libraryQueueTrack(next.track, next.queueEntryId))
+      const nextTrack = libraryQueueTrack(next.track, next.queueEntryId)
+      prepared = await this.trackPreparation(() => this.prepare(nextTrack))
     } catch (error) {
       if (!current()) return
       this.retry = { key: nextKey, after: (this.options.now ?? Date.now)() + 30_000 }
@@ -489,6 +521,19 @@ export class LibraryNativeQueueMaintainer {
   private requireFreshSource(key: string, resolved: ResolvedSource, position: number): void {
     if (isSourceCurrent(resolved, (this.options.now ?? Date.now)())) return
     throw this.expiredSourceError(key, position)
+  }
+
+  private trackPreparation<T>(action: () => Promise<T>): Promise<T> {
+    const work = action()
+    const done = work.then(
+      () => {},
+      () => {}
+    )
+    this.preparing = done
+    void done.finally(() => {
+      if (this.preparing === done) this.preparing = null
+    })
+    return work
   }
 
   private async prepare(track: TrackData): Promise<PreparedPlaybackSource> {

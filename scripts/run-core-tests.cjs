@@ -56,6 +56,7 @@ const files = [
   "src/core/playback/sourceResolver.test.ts",
   "src/core/playback/sourceRecovery.test.ts",
   "src/core/playback/sourceResources.test.ts",
+  "src/core/playback/sourcePrefetch.test.ts",
   "src/core/playback/legacyQueueImport.test.ts",
   "src/core/library/maintenanceService.test.ts",
   "src/core/library/duplicatesService.test.ts",
