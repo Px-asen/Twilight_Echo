@@ -81,8 +81,6 @@ export interface PluginRpcRequestOptions<TMetadata> {
   onTimeout?: (error: Error) => void
   signal?: AbortSignal
   idempotency?: PluginRpcIdempotency
-  /** Scheduling priority inside the per-plugin queue (defaults to 'normal'). */
-  priority?: PluginRpcPriority
 }
 
 export type PluginRpcResult =
@@ -127,7 +125,6 @@ interface PendingPluginRpc<TMetadata> {
   circuitKey: string
   priority: PluginRpcPriority
   kind: PluginRpcKind
-  priority: PluginRpcPriority
   timeoutMs: number
   metadata: TMetadata
   dispatch: () => void
