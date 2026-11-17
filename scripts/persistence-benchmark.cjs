@@ -1,5 +1,5 @@
 /*
- * TE-3.3d persistence benchmark.
+ * Persistence backend benchmark (JSON atomic envelope vs SQLite).
  *
  * This is intentionally an evaluation harness, not a production persistence
  * layer. It compares a JSON atomic-envelope model that follows the app's
@@ -684,7 +684,7 @@ function runBenchmark(options) {
     }
     return {
       schemaVersion: 1,
-      title: 'Twilight Echo TE-3.3d persistence benchmark',
+      title: 'Twilight Echo persistence benchmark',
       startedAt,
       completedAt: nowIso(),
       provenance: {

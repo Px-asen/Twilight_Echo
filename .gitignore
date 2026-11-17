@@ -37,10 +37,8 @@ audio-engine/cmake_install.cmake
 audio-engine/compile_commands.json
 audio-engine/Testing/
 audio-engine/vcpkg_installed/
-# Staged native binaries are local/release artifacts, not source
 resources/audio-engine/**
 !resources/audio-engine/.gitkeep
-# AutoMix public conversion outputs and private research stay outside source.
 audio-engine/automix-native/**/*.tamg
 audio-engine/automix-native/**/*.onnx
 audio-engine/automix-native/**/*.ckpt
@@ -57,12 +55,13 @@ playwright-report/
 test-results/
 Testing/
 output/
+outputs/
 !audio-engine/output/
 !audio-engine/output/asio/
 !audio-engine/output/asio/abi/
 !audio-engine/output/asio/windows/
 
-# Caches / typecheck incremental
+# Caches / incremental typecheck
 __pycache__/
 *.py[cod]
 .cache/
@@ -73,11 +72,12 @@ __pycache__/
 .parcel-cache/
 .webpack/
 .rollup.cache/
-skills-lock.json
 
 # Logs
 logs/
 *.log
+.*.log
+*.log.*
 .tmp-*.log
 .tmp-*.out
 npm-debug.log*
@@ -86,7 +86,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Environment / secrets
+# Environment & credentials
 .env
 .env.*
 !.env.example
@@ -95,73 +95,36 @@ lerna-debug.log*
 *.key
 *.p12
 *.pfx
+*.cer
+*.crt
+*.p7b
+*.spc
+*.pvk
+*.snk
 secrets/
 .secrets/
 
-# OS files
+# OS & IDE files
 .DS_Store
 Thumbs.db
 Desktop.ini
 ehthumbs.db
 $RECYCLE.BIN/
-
-# AI editor rules (personal development configs)
-.clinerules
-.cursorrules
-CLAUDE.md
-/AGENTS.md
-/.github/*
-!/.github/workflows/
-!/.github/workflows/**
-!/.github/ISSUE_TEMPLATE/
-!/.github/ISSUE_TEMPLATE/**
-
-# AI agent session state / local tool state
-.birdview/
-.workbuddy/
-.omo/
-.superpowers/
-**/docs/history-session/
-**/docs/performance-audit-evidence/
-**/docs/plans/
-**/docs/handoffs/
-**/docs/*-plan*.md
-**/docs/*-roadmap.md
-**/docs/*-handoff-*.md
-**/docs/*-audit*.md
-**/docs/audit-*.md
-**/docs/*-review-*.md
-**/docs/*-implementation-*.md
-**/docs/*-fixes-*.md
-.worktrees/
-agent-tools/
 .idea/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
-.codex-tools/
-.codex/
-.claude/
-.agents/
-.gemini/
-.opencode/
-.qoder/
-.local/
-.codegraph/
-.zcode/
-.pi/
-plans/
-history-session/
-/audio-engine/automix-native/EVALUATION-*.md
-/audio-engine/automix-native/validation.json
-/audio-engine/automix-native/stems/MEMORY-*.md
-/orig-labels.json
-/.service-exe-label-helper.ps1
-/.service-exe-label-original.json
 
-# Documentation: only public developer entry points and plugin authoring guides.
+# GitHub configuration whitelist
+/.github/*
+!/.github/workflows/
+!/.github/workflows/**
+!/.github/ISSUE_TEMPLATE/
+!/.github/ISSUE_TEMPLATE/**
+
+# Public developer documentation whitelist
 /docs/**
 !/docs/README.md
 !/docs/DEVELOPER_README.md
@@ -172,72 +135,28 @@ history-session/
 !/docs/plugin-sidebar-widgets.md
 !/docs/plugin-experiences.md
 
-# Temporary files / local scratch
-/.remote-library-editor-package-path.txt
-/.server-upgrade-extracted.json
+# Local temporary & staging directories
 tmp/
 temp/
 /work/
-/.core-import-dialog.png
-/.core-legacy-usePlayerStore.txt
-/.core-library-drawer.png
-/.core-packaged-render.png
-/.core-packaged-result.json
-/.core-player-obsolete-files.json
-/.core-production-render.png
-/.core-queue-workspace.png
-/.core-renderer-runtime-graph.json
-/.org-build.mjs
-/.org-entry.txt
-/.renderer-equalizer-tsconfig.json
-/.store-tests-tsconfig.json
-/.repro-policy/
 *.tmp
 *.temp
 tmp_*.py
 tmp_*.out
 tmp_*.log
-electron.vite.config.[0-9]*.mjs
 *.orig
 *.bak
 *~
-
-# Original font files (backup, WOFF2 versions are used)
-resources/font/_originals/
-
-# Local design prototype output (never publish)
-outputs/
-/.artifacts/
-
-# Local packaging / signing artifacts
 /dist-release-*/
 /dist.pre-unpack-*/
-/out-cloud-validation-*/
-/out-package-*/
-/out-release-*/
-/out-strip-quarantine-*/
-/out-eq-validation-*/
-/out-folder-genre-validation-*/
-/out-fonts-pre-unpack-*/
-/out-frequency-response-validation-*/
-/out-lyric-*/
-/out-lyrics-*/
-*.cer
-*.crt
-*.p7b
-*.spc
-*.pvk
-*.snk
+/out-*/
 
-# Self-hosted telemetry service (deployed separately, never part of the app build)
+# Unshipped local directories & font backups
+resources/font/_originals/
 /server/
-
-# Local telemetry mock server runtime database (SQLite + WAL)
 /data/
 
-# Sponsor payment QR codes packaged with the settings sponsor dialog
-resources/sponsor/alipay.jpg
-resources/sponsor/wechat.png
+# Packaged sponsor QR assets
 !resources/sponsor/
 !resources/sponsor/alipay.jpg
 !resources/sponsor/wechat.png

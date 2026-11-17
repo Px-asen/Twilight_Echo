@@ -13,10 +13,101 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  repository:
-    name: Repository Quality
+  preflight:
+    name: Fast Gate & Build
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect dependency manifest changes
+        id: dep-changes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "audit=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            CHANGED="$(git diff --name-only FETCH_HEAD HEAD || true)"
+          else
+            CHANGED="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo 'package.json')"
+          fi
+          if echo "$CHANGED" | grep -Eq '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|patches/)'; then
+            echo "audit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "audit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install frozen dependency tree
+        run: pnpm install --frozen-lockfile
+
+      - name: Fast static, lint, and boundary gate
+        run: node scripts/local-gate.cjs --fast --ci
+
+      - name: Test release delivery policy
+        run: pnpm run test:release-artifacts
+
+      - name: Test production dependency audit gate
+        run: pnpm run test:production-audit
+
+      - name: Audit production dependency tree
+        if: steps.dep-changes.outputs.audit == 'true'
+        run: pnpm run audit:production -- --output "$RUNNER_TEMP/production-dependency-audit.json"
+
+      - name: Upload production dependency audit
+        if: always() && steps.dep-changes.outputs.audit == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dependency-audit
+          path: ${{ runner.temp }}/production-dependency-audit.json
+          if-no-files-found: warn
+
+      # Compile utility services and renderer once for all downstream product shards.
+      - name: Production build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm run build
+
+      - name: Upload compiled application bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-out
+          path: out/
+          include-hidden-files: true
+          retention-days: 1
+
+  product:
+    name: Product Tests (${{ matrix.group }})
+    needs: [preflight]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - library-and-sources
+          - playback-and-audio
+          - application-and-boundaries
     defaults:
       run:
         shell: bash
@@ -34,13 +125,20 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: pnpm
 
       - name: Install frozen dependency tree
         run: pnpm install --frozen-lockfile
 
+      - name: Download compiled application bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-out
+          path: out
+
       - name: Prepare Windows bridge compiler
+        if: matrix.group == 'playback-and-audio'
         shell: pwsh
         run: |
           $compiler = (Get-Command g++.exe -ErrorAction SilentlyContinue).Source
@@ -58,66 +156,42 @@ jobs:
           & $compiler --version
           if ($LASTEXITCODE -ne 0) { throw 'Windows bridge compiler could not start' }
 
-      - name: Verify dependency install policy
-        run: pnpm run verify:install-policy
-
-      - name: Verify NCM dependency patch
-        run: pnpm run verify:ncm-patch
-
-      - name: Test release delivery policy
-        run: pnpm run test:release-artifacts
-
-      - name: Test production dependency audit gate
-        run: pnpm run test:production-audit
-
-      - name: Audit production dependency tree
-        run: pnpm run audit:production -- --output "$RUNNER_TEMP/production-dependency-audit.json"
-
-      - name: Upload production dependency audit
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-dependency-audit
-          path: ${{ runner.temp }}/production-dependency-audit.json
-          if-no-files-found: warn
-
-      - name: Lint
-        run: pnpm run lint
-
-      # Core-backed behavior tests launch the compiled utility services.
-      - name: Production build
-        run: pnpm run build
-
-      - name: Test product behavior
+      - name: Test product behavior (${{ matrix.group }})
         # Avoid Windows user TEMP aliases giving Vite fixtures multiple module identities.
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: pnpm run test:product -- --report "$RUNNER_TEMP/product-quality-gate.json"
+        run: >-
+          pnpm run test:product --
+          --group "${{ matrix.group }}"
+          --report "$RUNNER_TEMP/product-quality-gate-${{ matrix.group }}.json"
 
       - name: Upload product quality report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: product-quality-gate
+          name: product-quality-gate-${{ matrix.group }}
           path: |
-            ${{ runner.temp }}/product-quality-gate.json
+            ${{ runner.temp }}/product-quality-gate-${{ matrix.group }}.json
             ${{ runner.temp }}/backdrop-filter-probe.png
           if-no-files-found: warn
 
-      - name: Verify duplicate detection benchmark contract
-        run: pnpm run test:duplicate-detection-benchmark
+      - name: Verify duplicate detection contract & Core window bridge
+        if: matrix.group == 'application-and-boundaries'
+        run: |
+          pnpm run test:duplicate-detection-benchmark
+          node --test scripts/core-window-bridge.test.cjs
 
       - name: Run isolated duplicate detection 10k benchmark
         id: duplicate-benchmark
-        if: github.event_name == 'workflow_dispatch'
+        if: matrix.group == 'application-and-boundaries' && github.event_name == 'workflow_dispatch'
         run: >-
           pnpm run benchmark:duplicate-detection:ci --
           --output "$RUNNER_TEMP/duplicate-detection-benchmark.json"
           --manifest "$RUNNER_TEMP/duplicate-detection-benchmark.manifest.json"
 
       - name: Upload duplicate detection benchmark evidence
-        if: always() && steps.duplicate-benchmark.outcome != 'skipped'
+        if: always() && steps.duplicate-benchmark.outcome != 'skipped' && steps.duplicate-benchmark.outcome != ''
         uses: actions/upload-artifact@v4
         with:
           name: duplicate-detection-benchmark
@@ -125,9 +199,6 @@ jobs:
             ${{ runner.temp }}/duplicate-detection-benchmark.json
             ${{ runner.temp }}/duplicate-detection-benchmark.manifest.json
           if-no-files-found: warn
-
-      - name: Test sandboxed Core window bridge
-        run: node --test scripts/core-window-bridge.test.cjs
 
   native-audio:
     name: Native Audio (windows-latest)
@@ -151,7 +222,7 @@ jobs:
       - name: Setup Node.js for cross-bitness ASIO checks
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
 
       - name: Validate x86 ASIO bridge
         shell: pwsh
@@ -164,7 +235,7 @@ jobs:
   required:
     name: Required Quality Gate
     if: always()
-    needs: [repository, native-audio]
+    needs: [preflight, product, native-audio]
     runs-on: windows-latest
     defaults:
       run:
@@ -172,8 +243,10 @@ jobs:
     steps:
       - name: Require every quality job
         env:
-          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          PRODUCT_RESULT: ${{ needs.product.result }}
           NATIVE_AUDIO_RESULT: ${{ needs.native-audio.result }}
         run: |
-          test "$REPOSITORY_RESULT" = "success"
+          test "$PREFLIGHT_RESULT" = "success"
+          test "$PRODUCT_RESULT" = "success"
           test "$NATIVE_AUDIO_RESULT" = "success"

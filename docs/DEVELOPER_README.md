@@ -39,7 +39,7 @@ pnpm run build
 
 按改动选择 `package.json` 中已有的 `test:*` 入口。`pnpm run test:quality-policy` 检查测试归属、IPC 基线与架构边界；`pnpm run test:product` 执行产品行为测试。
 
-插件工具链可运行 `pnpm run build:plugin-api`、`pnpm run test:plugin-tooling` 和 `pnpm run test:plugins`。公共 IPC 基线位于 `scripts/fixtures/ipc-channel-baseline.json`；确认接口变更后用 `node scripts/write-ipc-channel-baseline.cjs` 更新。
+插件工具链可运行 `pnpm run build:plugin-api`、`pnpm run test:plugin-tooling` 和 `pnpm run test:plugins`。公共 IPC 通道清单可通过 `pnpm run report:ipc-channels` 查看。
 
 ## Windows 原生音频构建
 

@@ -87,7 +87,7 @@ test('welcome wizard keeps choices, audition and retryable Core-backed saves in 
     assert.match(result.stdout, /ONBOARDING_OK/)
     if (process.env.TWILIGHT_ONBOARDING_PREVIEW_DIR) {
       const destination = resolve(process.env.TWILIGHT_ONBOARDING_PREVIEW_DIR)
-      assert.ok(destination.startsWith(resolve(workspace, '.codex-tools') + sep))
+      assert.ok(destination.startsWith(resolve(workspace, 'output') + sep))
       await mkdir(destination, { recursive: true })
       await cp(directory, destination, { recursive: true })
     }

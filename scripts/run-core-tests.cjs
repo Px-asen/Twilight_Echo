@@ -1,8 +1,9 @@
 const { spawnSync } = require('node:child_process')
 const { resolve } = require('node:path')
+const { mergeCoreTestFiles } = require('./test-discovery.cjs')
 
 // Keep the complete suite outside cmd.exe's 8191-character command limit.
-const files = [
+const explicitFiles = [
   "src/shared/coreProtocol.test.ts",
   "src/core/application.test.ts",
   "src/core/serviceRegistry.test.ts",
@@ -242,6 +243,8 @@ const files = [
   "src/renderer/src/components/song-list/albumReleaseDate.test.ts"
 ]
 
+const files = mergeCoreTestFiles(explicitFiles)
+
 function runCoreTests(args = process.argv.slice(2), run = spawnSync) {
   if (process.platform === 'win32') {
     const prepared = run(process.execPath, ['scripts/prepare-automix-stem-zip-decoder.cjs'], {
@@ -258,5 +261,5 @@ function runCoreTests(args = process.argv.slice(2), run = spawnSync) {
   return result.status ?? 1
 }
 
-module.exports = { files, runCoreTests }
+module.exports = { explicitFiles, files, runCoreTests }
 if (require.main === module) process.exitCode = runCoreTests()

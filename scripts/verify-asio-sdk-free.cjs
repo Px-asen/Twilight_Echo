@@ -2,7 +2,17 @@ const { existsSync, readdirSync, readFileSync } = require('node:fs')
 const { join, relative, resolve } = require('node:path')
 const { spawnSync } = require('node:child_process')
 
-const IGNORED_DIRECTORIES = new Set(['.git', '.workbuddy', 'node_modules', 'build', 'dist', 'out'])
+const IGNORED_DIRECTORIES = new Set([
+  '.git',
+  'node_modules',
+  'build',
+  'dist',
+  'out',
+  'output',
+  'outputs',
+  'tmp',
+  'temp'
+])
 const TEXT_EXTENSIONS = new Set([
   '.c',
   '.cc',
@@ -36,7 +46,8 @@ function shouldRead(path) {
 function collectFiles(root, directory = root, result = []) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!IGNORED_DIRECTORIES.has(entry.name))
+      const isHiddenLocal = entry.name.startsWith('.') && entry.name !== '.github'
+      if (!isHiddenLocal && !IGNORED_DIRECTORIES.has(entry.name))
         collectFiles(root, join(directory, entry.name), result)
       continue
     }

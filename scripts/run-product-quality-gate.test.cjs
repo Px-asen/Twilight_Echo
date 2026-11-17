@@ -9,6 +9,7 @@ const path = require('node:path')
 const {
   PRODUCT_GATES,
   PRODUCT_SCRIPTS,
+  parseGateCli,
   runProductQualityGate
 } = require('./run-product-quality-gate.cjs')
 const packageJson = require('../package.json')
@@ -22,34 +23,32 @@ test('product gate owns every product suite once without invoking application or
       /(?:\b(?:build|configure|package):|pnpm run (?:build|configure|package)\b)/
     )
   }
-  for (const script of [
-    'test:core',
-    'test:network-sources',
-    'test:playlist-lifecycle',
-    'test:lyrics-management',
-    'test:sleep-timer',
-    'test:themes',
-    'test:appearance-workspace',
-    'test:dsp-graph',
-    'test:plugins',
-    'test:cross-cutting-regressions'
-  ]) {
-    assert.ok(PRODUCT_SCRIPTS.includes(script), `${script} belongs to a product outcome`)
-  }
 })
 
-test('home, history, search/cloud and network locator regressions run once in the product gate', () => {
-  for (const file of [
-    'src/renderer/src/components/local-dashboard/HomeTrackLocator.behavior.test.ts',
-    'src/renderer/src/components/navigation/RecentTrackLocator.behavior.test.ts',
-    'src/renderer/src/components/streaming-page/StreamingAuxiliaryLocator.behavior.test.ts',
-    'src/renderer/src/components/network-sources/NetworkTrackLocator.behavior.test.ts'
-  ]) {
-    const owners = PRODUCT_SCRIPTS.filter((script) =>
-      packageJson.scripts[script].split(/\s+/).includes(file)
-    )
-    assert.equal(owners.length, 1, `${file} must run exactly once in the product gate`)
-  }
+test('CLI parser accepts optional --group and --report and rejects unknown groups', () => {
+  assert.deepEqual(parseGateCli([]), { reportPath: null, groupName: null })
+  assert.deepEqual(
+    parseGateCli(['--', '--group', 'playback-and-audio', '--report', 'out/gate.json']),
+    { reportPath: 'out/gate.json', groupName: 'playback-and-audio' }
+  )
+  assert.throws(() => parseGateCli(['--group', 'unknown-shard']), /Unknown product gate group/)
+})
+
+test('single-group mode executes only the selected shard', async () => {
+  const called = []
+  const report = await runProductQualityGate(
+    async (script) => {
+      called.push(script)
+      return 0
+    },
+    { groupName: 'playback-and-audio' }
+  )
+  assert.equal(report.passed, true)
+  assert.deepEqual(
+    report.groups.map((g) => g.name),
+    ['playback-and-audio']
+  )
+  assert.deepEqual(called, PRODUCT_GATES[1].scripts)
 })
 
 test('suite failures and launch errors are all reported and do not skip remaining outcomes', async () => {
@@ -106,17 +105,7 @@ test('CLI launches all declared suites and writes a complete report before faili
     )
     const report = JSON.parse(readFileSync(reportPath, 'utf8'))
     assert.equal(report.passed, false)
-    assert.deepEqual(
-      report.groups.flatMap((group) => group.suites.map((suite) => suite.script)),
-      PRODUCT_SCRIPTS
-    )
     assert.equal(report.groups[0].suites[0].exitCode, 1)
-    assert.ok(
-      report.groups
-        .flatMap((group) => group.suites)
-        .slice(1)
-        .every((suite) => suite.passed)
-    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

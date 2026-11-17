@@ -7,7 +7,7 @@ import type { SQLInputValue } from 'node:sqlite'
 import { openMixedLibraryFixture } from './fixtures/mixed-music-library.ts'
 import { reconcileMusicLibrary } from '../src/main/library/libraryDatabaseReconciliation.ts'
 
-// node --expose-gc --experimental-strip-types scripts/benchmark-unified-music-library.ts 50000 docs/audit-evidence/m5.3-unified-library-100k.json
+// node --expose-gc --experimental-strip-types scripts/benchmark-unified-music-library.ts 50000 output/unified-library-100k.json
 // Query-only follow-up: append --reuse-fixture=<absolute root> --ingestion-evidence=<original report>.
 // After the worker probe, also declare --expected-completed-metadata-jobs=2 --expected-metadata-facts=1.
 const args = process.argv.slice(2), positional = args.filter(arg => !arg.startsWith('--'))
@@ -25,7 +25,7 @@ const countOption = (name: string) => {
 const expectedMetadata = { completedJobs: countOption('expected-completed-metadata-jobs'), facts: countOption('expected-metadata-facts') }
 assert.ok(!ingestionEvidencePath || reuseRoot, '--ingestion-evidence requires --reuse-fixture')
 const perSource = Number(positional[0] ?? 50_000)
-const output = resolve(positional[1] ?? (reuseRoot ? 'docs/audit-evidence/m5.3-unified-library-100k-reused.json' : 'docs/audit-evidence/m5.3-unified-library-100k.json'))
+const output = resolve(positional[1] ?? (reuseRoot ? 'output/unified-library-100k-reused.json' : 'output/unified-library-100k.json'))
 const comparablePath = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
 if (ingestionEvidencePath) assert.notEqual(comparablePath(output), comparablePath(ingestionEvidencePath), 'Query output must not overwrite its ingestion evidence')
 const rounds = Number(process.env.MUSIC_BENCHMARK_ROUNDS ?? 3)

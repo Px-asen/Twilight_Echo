@@ -15,12 +15,9 @@ export const DUPLICATE_BENCHMARK_UNIQUE_P95_BUDGET_MS = 1_500
 export const DUPLICATE_BENCHMARK_COLLISION_P95_BUDGET_MS = 2_500
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const BENCHMARK_CORE_SOURCE_PATH = 'src/core/library/duplicateDetection.ts'
 const BENCHMARK_SOURCE_PATH = 'src/main/library/duplicateDetection.ts'
 const BENCHMARK_SHARED_CONTRACT_PATH = 'src/shared/duplicateDetection.ts'
-const BENCHMARK_RUNNER_PATH = 'scripts/duplicate-detection-benchmark.ts'
-const BENCHMARK_RUNNER_CONTRACT_PATH = 'scripts/duplicate-detection-benchmark.test.ts'
-const BENCHMARK_PACKAGE_PATH = 'package.json'
-const BENCHMARK_LOCKFILE_PATH = 'pnpm-lock.yaml'
 
 export interface DuplicateDetectionBenchmarkScenario {
   rows: number
@@ -51,12 +48,9 @@ export interface DuplicateDetectionBenchmarkResult {
 
 export interface DuplicateDetectionBenchmarkProvenance {
   algorithm: 'sha256'
+  coreSource: { path: string; sha256: string }
   source: { path: string; sha256: string }
   sharedContract: { path: string; sha256: string }
-  runner: { path: string; sha256: string }
-  runnerContract: { path: string; sha256: string }
-  packageManifest: { path: string; sha256: string }
-  lockfile: { path: string; sha256: string }
 }
 
 export interface DuplicateDetectionBenchmarkManifest {
@@ -323,12 +317,9 @@ export async function collectDuplicateDetectionBenchmarkProvenance(): Promise<Du
   })
   return {
     algorithm: 'sha256',
+    coreSource: await entry(BENCHMARK_CORE_SOURCE_PATH),
     source: await entry(BENCHMARK_SOURCE_PATH),
-    sharedContract: await entry(BENCHMARK_SHARED_CONTRACT_PATH),
-    runner: await entry(BENCHMARK_RUNNER_PATH),
-    runnerContract: await entry(BENCHMARK_RUNNER_CONTRACT_PATH),
-    packageManifest: await entry(BENCHMARK_PACKAGE_PATH),
-    lockfile: await entry(BENCHMARK_LOCKFILE_PATH)
+    sharedContract: await entry(BENCHMARK_SHARED_CONTRACT_PATH)
   }
 }
 

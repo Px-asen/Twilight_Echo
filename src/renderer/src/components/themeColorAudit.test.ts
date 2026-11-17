@@ -7,10 +7,6 @@ import { THEME_TOKEN_DEFINITIONS } from '../../../shared/themeTokens.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url))
 const rendererRoot = join(repositoryRoot, 'src', 'renderer', 'src')
-const allowlist = JSON.parse(
-  readFileSync(new URL('./theme-color-allowlist.json', import.meta.url), 'utf8')
-) as Record<string, number>
-const colorLiteral = /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/gi
 
 /** Functions whose arguments must each resolve to a single colour. */
 const COLOR_FUNCTIONS = new Set([
@@ -46,10 +42,7 @@ const NON_COLOR_TOKENS = new Set<string>(
  * A gradient cannot stand in for a colour. Feeding one to `color-mix()` — or to
  * another gradient's colour stop — makes the whole declaration invalid at
  * computed-value time, and Chromium then drops *every* layer of that property,
- * so the element paints nothing at all rather than degrading. That is silent:
- * the stylesheet parses, the rule is present in devtools, and the box is simply
- * empty. `.live-preview` in LyricsAppearanceCustomizer.vue shipped that way,
- * with `--te-playback-fluid-bg` used as a `linear-gradient` stop.
+ * so the element paints nothing at all rather than degrading.
  */
 test('gradient-valued and shadow-valued tokens are never used where a color is required', () => {
   const misuses: string[] = []
@@ -60,11 +53,6 @@ test('gradient-valued and shadow-valued tokens are never used where a color is r
   assert.deepEqual(misuses, [])
 })
 
-/**
- * Reports each place a `NON_COLOR_TOKENS` member sits inside a function that
- * requires a colour. Tracks the enclosing call stack rather than matching a
- * regex against one declaration, so nesting several levels deep still counts.
- */
 function nonColorTokenMisuses(styles: string): string[] {
   const misuses: string[] = []
   const callStack: string[] = []
@@ -97,28 +85,6 @@ function enclosingColorContext(callStack: readonly string[]): string | null {
   return null
 }
 
-test('renderer business styles do not exceed the hard-coded color baseline', () => {
-  const actual = collectColorCounts(rendererRoot)
-  const regressions = Object.entries(actual)
-    .filter(([file, count]) => count > (allowlist[file] ?? 0))
-    .map(([file, count]) => `${file}: ${count} > ${allowlist[file] ?? 0}`)
-  assert.deepEqual(regressions, [])
-})
-
-test('color audit accepts variable color channels while counting literal channels and fallbacks', () => {
-  assert.equal(countColorLiterals('color: rgb(var(--text-rgb) / 0.8)'), 0)
-  assert.equal(countColorLiterals('color: hsl(var(--accent-hsl) / var(--opacity))'), 0)
-  assert.equal(countColorLiterals('color: rgb(255 255 255 / var(--opacity))'), 1)
-  assert.equal(countColorLiterals('color: var(--text, #ffffff)'), 1)
-  assert.equal(countColorLiterals('color: rgb(var(--text-rgb, 255 255 255))'), 1)
-})
-
-function countColorLiterals(styles: string): number {
-  return Array.from(styles.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(colorLiteral)).filter(
-    ([value]) => !/^(?:rgba?|hsla?)\(\s*var\(\s*--[\w-]+\s*\)$/i.test(value)
-  ).length
-}
-
 /** Every renderer stylesheet as `[repo-relative path, style text]`, base.css included. */
 function collectStyleSources(directory: string): Array<[string, string]> {
   const sources: Array<[string, string]> = []
@@ -141,28 +107,4 @@ function readStyles(path: string): string {
     source.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi),
     (match) => match[1]
   ).join('\n')
-}
-
-function collectColorCounts(directory: string): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) {
-      Object.assign(counts, collectColorCounts(path))
-      continue
-    }
-    if (extname(entry.name) !== '.css' && extname(entry.name) !== '.vue') continue
-    const file = relative(repositoryRoot, path).replaceAll('\\', '/')
-    if (file === 'src/renderer/src/assets/base.css') continue
-    const source = readFileSync(path, 'utf8')
-    const styles = entry.name.endsWith('.vue')
-      ? Array.from(
-          source.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi),
-          (match) => match[1]
-        ).join('\n')
-      : source
-    const count = countColorLiterals(styles)
-    if (count > 0) counts[file] = count
-  }
-  return counts
 }

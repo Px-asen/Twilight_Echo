@@ -259,7 +259,7 @@ export function runBenchmark(options: QueueBenchmarkOptions) {
   }
   const result = {
     schemaVersion: 2,
-    title: 'Twilight Echo TE-3.4 production queue virtualization benchmark',
+    title: 'Twilight Echo production queue virtualization benchmark',
     generatedAt: new Date().toISOString(),
     runner: {
       implementation: 'src/renderer/src/utils/playbackQueueVirtualization.ts',
