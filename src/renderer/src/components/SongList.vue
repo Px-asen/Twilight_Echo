@@ -49,6 +49,11 @@ import {
 import type { Track } from '../types/music'
 import { copyTrackNamePages } from '../composables/copyTrackNames'
 import { getTrackSearchBlob, normalizeSearchText } from '../utils/localLibrarySearch'
+import {
+  getPrimaryStreamingArtistId,
+  getPrimaryStreamingArtistName,
+  type StreamingMetadataNavigationRequest
+} from '../utils/streamingArtistResolution.ts'
 const getLogicalTrackSource = (track: Track): string => track.source ?? 'local'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { useBackHandler } from '../app/useBackStack.ts'
@@ -149,6 +154,12 @@ function activateCollectionCard(event: KeyboardEvent): void {
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
   customizeAppearance: []
+  /**
+   * 流媒体曲目的歌手/专辑详情交给对应音源打开。
+   * 表格视图只有本地曲库的索引，未下载的在线曲目按曲目 id 查不到专辑，
+   * 所以这类点击必须回到音源侧解析，不能落进 openDatabaseAlbum。
+   */
+  openStreamingMetadata: [request: StreamingMetadataNavigationRequest]
 }>()
 
 const {
@@ -1746,11 +1757,13 @@ const {
   viewArtist: (track) => {
     const artist = track.artist.trim()
     if (!artist) return
+    if (openStreamingArtistDetail(track)) return
     emit('selectView', 'artists', `artist:${artist}`)
   },
   viewAlbum: (track) => {
     const album = track.album?.trim()
     if (!album) return
+    if (openStreamingAlbumDetail(track)) return
     if (libraryStorage.mode.value === 'sqlite') {
       void openDatabaseAlbum(track)
       return
@@ -1772,6 +1785,54 @@ const {
   }
 })
 
+let streamingMetadataRequestKey = 0
+
+/**
+ * 在线曲目（未下载）的歌手/专辑详情归音源所有，本地曲库没有这些实体。
+ * 判定条件与 StreamingPage.vue 的 `canOpenTrackArtist` / `canOpenTrackAlbum` 一致，
+ * 返回 true 表示已交给音源打开，调用方不要再走本地曲库。
+ */
+function openStreamingArtistDetail(track: Track): boolean {
+  const source = getLogicalTrackSource(track)
+  if (!source || source === 'local') return false
+  if (!(track.artists?.[0]?.name || track.artist).trim()) return false
+  const methods = providerStore.getProvider(source)?.supportedMethods ?? []
+  if (
+    !methods.includes('fetchArtistTopSongs') ||
+    (track.artists?.[0]?.id == null && !methods.includes('searchArtists'))
+  )
+    return false
+  const artistId = getPrimaryStreamingArtistId(track.artist, track.artists)
+  emit('openStreamingMetadata', {
+    kind: 'artist',
+    key: ++streamingMetadataRequestKey,
+    providerId: source,
+    artistName: getPrimaryStreamingArtistName(track.artists?.[0]?.name || track.artist),
+    ...(artistId == null ? {} : { artistId })
+  })
+  return true
+}
+
+function openStreamingAlbumDetail(track: Track): boolean {
+  const source = getLogicalTrackSource(track)
+  if (!source || source === 'local') return false
+  // 专辑详情必须拿到音源侧专辑 id，否则只能退化成按名搜索。
+  if (!track.album.trim() || !track.albumId?.trim()) return false
+  if (providerStore.getProvider(source)?.supportedMethods?.includes('fetchAlbumTracks') !== true)
+    return false
+  emit('openStreamingMetadata', {
+    kind: 'album',
+    key: ++streamingMetadataRequestKey,
+    providerId: source,
+    albumId: track.albumId.trim(),
+    albumName: track.album.trim(),
+    artist: track.albumArtist || track.artist,
+    cover: track.cover ?? null,
+    coverSource: track.coverSource
+  })
+  return true
+}
+
 let albumNavigationIntent = 0
 watch(currentLibraryViewKey, () => {
   albumNavigationIntent++
@@ -1788,7 +1849,12 @@ async function openDatabaseAlbum(track: Track): Promise<void> {
     })
     if (intent !== albumNavigationIntent) return
     const album = result.items[0]
-    if (!album) throw new Error('此歌曲已不在曲库中，请刷新后重试')
+    if (!album) {
+      // 查不到专辑说明这首歌没有落在本地曲库里（未下载 / 已移除），
+      // 「请刷新后重试」会把人引向徒劳的刷新，直接说明真实原因。
+      repairMessage.value = `本地曲库中没有「${track.title || '这首歌'}」所在的专辑`
+      return
+    }
     emit('selectView', 'albums', `album:${album.id}`)
   } catch (error) {
     if (intent === albumNavigationIntent)

@@ -680,6 +680,13 @@ function handleAnalyticsArtistOpen(request: { name: string; providerId: string }
   enterStreamingMode()
 }
 
+/** 表格视图里的在线曲目详情同样交给流媒体页面打开（与播放栏一致）。 */
+function openStreamingMetadata(request: StreamingMetadataNavigationRequest): void {
+  streamingMetadataRequest.value = { ...request, key: ++streamingMetadataRequestKey }
+  streamingMetadataTab.value = pageTarget.value.kind === 'streaming' ? streamingTab.value : 'home'
+  enterStreamingMode(streamingMetadataTab.value)
+}
+
 const favoriteButtonVisible = computed(() => currentFavorite.value?.available ?? false)
 const favoriteButtonLiked = computed(() => currentFavorite.value?.liked ?? false)
 const favoriteButtonLoading = computed(() => currentFavorite.value?.loading ?? false)
@@ -1244,6 +1251,7 @@ onBeforeUnmount(() => onWorkshopDecorationsUnmount?.())
             :target="pageTarget.kind === 'recent' ? pageTarget : undefined"
             :has-player="hasPlayerBar"
             @select-view="onSelectView"
+            @open-streaming-metadata="openStreamingMetadata"
           />
           <RadioPodcastPage v-else-if="showRadioPodcastPage" />
           <NetworkSourcesPage v-else-if="showNetworkSourcesPage" />

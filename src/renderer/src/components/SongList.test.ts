@@ -776,3 +776,102 @@ test('song list unified search suppresses empty-state and status text flicker wh
     /v-else-if="\s*tableTrackCount === 0 && !\(shouldUseUnifiedSearch && unifiedSearch\.loading\.value\)\s*"/
   )
 })
+
+test('recent playback routes online tracks to the provider instead of the local library', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const script = parse(source).descriptor.scriptSetup!.content
+  const ast = ts.createSourceFile('SongList.ts', script, ts.ScriptTarget.Latest, true)
+  const wanted = new Set(['openStreamingArtistDetail', 'openStreamingAlbumDetail'])
+  const chunks: string[] = []
+  for (const statement of ast.statements) {
+    if (ts.isVariableStatement(statement)) {
+      const names = statement.declarationList.declarations.map((node) => node.name.getText(ast))
+      if (names.includes('streamingMetadataRequestKey')) chunks.push(statement.getText(ast))
+    } else if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name &&
+      wanted.has(statement.name.text)
+    )
+      chunks.push(statement.getText(ast))
+  }
+  assert.equal(chunks.length, 3, 'streaming detail handlers must exist in SongList.vue')
+
+  const emitted: Array<Record<string, unknown>> = []
+  const providers: Record<string, string[]> = {
+    lxtx: ['fetchArtistTopSongs', 'fetchAlbumTracks', 'searchArtists']
+  }
+  const context: Record<string, unknown> = {
+    emit: (event: string, request: Record<string, unknown>) => emitted.push({ event, ...request }),
+    getLogicalTrackSource: (track: Track): string => track.source ?? 'local',
+    getPrimaryStreamingArtistName: (value: string): string =>
+      value.trim().split(/\s+\/\s+/, 1)[0] ?? value,
+    getPrimaryStreamingArtistId: (
+      displayName: string,
+      artists?: Array<{ id?: string | number; name: string }>
+    ): string | number | undefined =>
+      artists?.[0]?.id == null || artists[0].name !== displayName.trim()
+        ? undefined
+        : artists[0].id,
+    providerStore: { getProvider: (id: string) => (providers[id] ? { supportedMethods: providers[id] } : null) }
+  }
+  runInNewContext(
+    ts.transpileModule(chunks.join('\n'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    context
+  )
+  const openArtist = context.openStreamingArtistDetail as (track: Track) => boolean
+  const openAlbum = context.openStreamingAlbumDetail as (track: Track) => boolean
+
+  // 未下载的在线曲目：必须交给音源解析，而不是按曲目 id 查本地曲库。
+  const online = {
+    id: 'lxtx:2401276699',
+    title: 'I am',
+    artist: 'BLU-SWING',
+    artists: [{ id: 'artist-42', name: 'BLU-SWING' }],
+    album: 'BLU-SWING 10th ANNIVERSARY BEST',
+    albumId: 'album-7',
+    duration: 200,
+    source: 'lxtx'
+  } as unknown as Track
+  assert.equal(openArtist(online), true)
+  assert.equal(openAlbum(online), true)
+  assert.deepEqual(
+    emitted.map((entry) => ({ ...entry, key: 0 })),
+    [
+      {
+        event: 'openStreamingMetadata',
+        kind: 'artist',
+        key: 0,
+        providerId: 'lxtx',
+        artistName: 'BLU-SWING',
+        artistId: 'artist-42'
+      },
+      {
+        event: 'openStreamingMetadata',
+        kind: 'album',
+        key: 0,
+        providerId: 'lxtx',
+        albumId: 'album-7',
+        albumName: 'BLU-SWING 10th ANNIVERSARY BEST',
+        artist: 'BLU-SWING',
+        cover: null,
+        coverSource: undefined
+      }
+    ]
+  )
+
+  // 本地曲目、缺少音源能力或缺少专辑 id 时都不接管，保持原有跳转。
+  const before = emitted.length
+  assert.equal(openArtist({ ...online, source: 'local' } as Track), false)
+  assert.equal(openAlbum({ ...online, source: 'local' } as Track), false)
+  assert.equal(openAlbum({ ...online, albumId: undefined } as unknown as Track), false)
+  providers.plain = ['searchSongs']
+  assert.equal(openArtist({ ...online, source: 'plain' } as Track), false)
+  assert.equal(emitted.length, before)
+})
+
+test('album lookup no longer asks the user to refresh for a track outside the library', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /此歌曲已不在曲库中，请刷新后重试/)
+})

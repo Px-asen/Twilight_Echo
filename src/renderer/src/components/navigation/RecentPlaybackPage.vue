@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
+import type { StreamingMetadataNavigationRequest } from '@renderer/utils/streamingArtistResolution.ts'
 
 const SongList = defineAsyncComponent(() => import('@renderer/components/SongList.vue'))
 defineProps<{
@@ -9,6 +10,7 @@ defineProps<{
 }>()
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
+  openStreamingMetadata: [request: StreamingMetadataNavigationRequest]
 }>()
 </script>
 
@@ -21,6 +23,7 @@ const emit = defineEmits<{
       :recent-provider-id="target?.providerId"
       transition-name="page-down"
       @select-view="(category, filter) => emit('selectView', category, filter)"
+      @open-streaming-metadata="(request) => emit('openStreamingMetadata', request)"
     />
   </section>
 </template>
