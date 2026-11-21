@@ -176,8 +176,8 @@ linux:
     - target: tar.gz
       arch: [x64]
   maintainer: mrcwoods
-  category: Audio
-  icon: build/icon.png
+  category: AudioVideo
+  icon: build/icons
   executableName: music
   synopsis: Modern desktop music player
   description: >
