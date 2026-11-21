@@ -161,6 +161,7 @@ Dynamic cover-art ambient lighting blends seamlessly with bilingual synchronized
 | **Windows 10 / 11** | `*-setup.exe` | Run the installer and follow the setup wizard to choose your installation directory. |
 | **macOS** | `*-mac-arm64.dmg` (Apple Silicon)<br />`*-mac-x64.dmg` (Intel) | Drag into Applications. On first launch, right-click the app and select **Open**, or run:<br />`xattr -dr com.apple.quarantine /Applications/TwilightEcho.app` |
 | **Linux (x64)** | `*.AppImage` / `*.deb` / `*.rpm` / `*.tar.gz` | Make `.AppImage` executable (`chmod +x`) to run directly, or install `.deb` / `.rpm` via your package manager. |
+| **Arch Linux (AUR)** | `twilight-echo-bin` | Community-maintained binary package. Install with an AUR helper: `paru -S twilight-echo-bin` or `yay -S twilight-echo-bin`. It repackages the official Linux `.deb` and is not an official package; report packaging issues in the AUR comments. |
 
 > macOS (CoreAudio) and Linux (ALSA) backends and packages are available, but have not received the same release and real-device validation as Windows.
 
