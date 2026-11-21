@@ -23,6 +23,9 @@ release-builds/
 !/build/entitlements.mac.plist
 !/build/icon.ico
 !/build/icon.png
+!/build/icons/
+/build/icons/*
+!/build/icons/*.png
 !/build/smtc/
 /build/smtc/*
 !/build/smtc/*.ico
