@@ -18,14 +18,16 @@
  * audio device.
  */
 
+const SENTINEL_OBJECT_URL_TYPE = 'audio/wav'
+
 /**
- * Builds a short silent mono 8-bit PCM WAV as a data URI.
+ * Builds a short silent mono 8-bit PCM WAV payload.
  *
  * 8-bit PCM encodes silence as 0x80 (unsigned midpoint), not 0x00, and the RIFF
  * and `data` chunk sizes must match the payload exactly or Chromium rejects the
  * source and publishes no player.
  */
-export function silentWavDataUri(milliseconds = 100, sampleRate = 8000): string {
+export function silentWavBytes(milliseconds = 100, sampleRate = 8000): Uint8Array {
   const dataSize = Math.max(1, Math.round((sampleRate * milliseconds) / 1000))
   const buffer = new Uint8Array(44 + dataSize)
   const view = new DataView(buffer.buffer)
@@ -47,9 +49,18 @@ export function silentWavDataUri(milliseconds = 100, sampleRate = 8000): string 
   writeAscii(36, 'data')
   view.setUint32(40, dataSize, true)
   buffer.fill(0x80, 44)
+  return buffer
+}
+
+/**
+ * Builds the same silent PCM WAV as a `data:` URI. Kept for callers and tests
+ * that need an inline source; the sentinel itself no longer uses it because the
+ * production `media-src` CSP does not allow `data:` (it allows `blob:`).
+ */
+export function silentWavDataUri(milliseconds = 100, sampleRate = 8000): string {
+  const buffer = silentWavBytes(milliseconds, sampleRate)
   let binary = ''
-  for (let index = 0; index < buffer.length; index++)
-    binary += String.fromCharCode(buffer[index]!)
+  for (let index = 0; index < buffer.length; index++) binary += String.fromCharCode(buffer[index]!)
   return `data:audio/wav;base64,${btoa(binary)}`
 }
 
@@ -64,7 +75,16 @@ export interface MediaSessionSentinelOptions {
   /** Platform gate; only Linux needs the sentinel because the native engine owns audio. */
   required?: boolean
   createElement?: () => HTMLAudioElement
+  /**
+   * Overrides the sentinel source. Defaults to a `blob:` URL built from
+   * `silentWavBytes`, because production `media-src` CSP includes `blob:` but
+   * not `data:`.
+   */
   buildSource?: () => string
+  /** Wraps a Blob into an object URL; injectable so tests avoid a real Blob URL. */
+  createObjectUrl?: (blob: Blob) => string
+  /** Releases an object URL; injectable so tests can assert revocation. */
+  revokeObjectUrl?: (url: string) => void
   onError?: (error: unknown) => void
 }
 
@@ -89,7 +109,21 @@ export function createMediaSessionSentinel(
       audio.loop = true
       return audio
     })
-  const buildSource = options.buildSource ?? (() => silentWavDataUri())
+  const createObjectUrl = options.createObjectUrl ?? ((blob: Blob) => URL.createObjectURL(blob))
+  const revokeObjectUrl = options.revokeObjectUrl ?? ((url: string) => URL.revokeObjectURL(url))
+  let objectUrl: string | null = null
+  const defaultBuildSource = (): string => {
+    // Reuse the same URL across arms so a failed first arm (for example a
+    // blocked autoplay) cannot strand an extra object URL.
+    if (!objectUrl)
+      objectUrl = createObjectUrl(
+        // The DOM lib types BlobPart against ArrayBuffer views, but a plain
+        // Uint8Array is a valid part at runtime; cast like the cover loader does.
+        new Blob([silentWavBytes() as unknown as BlobPart], { type: SENTINEL_OBJECT_URL_TYPE })
+      )
+    return objectUrl
+  }
+  const buildSource = options.buildSource ?? defaultBuildSource
   let element: HTMLAudioElement | null = null
   let playPendingOrSucceeded = false
   let disposed = false
@@ -107,6 +141,17 @@ export function createMediaSessionSentinel(
       })
     } catch (error) {
       playPendingOrSucceeded = false
+      report(error)
+    }
+  }
+
+  function releaseObjectUrl(): void {
+    if (!objectUrl) return
+    const url = objectUrl
+    objectUrl = null
+    try {
+      revokeObjectUrl(url)
+    } catch (error) {
       report(error)
     }
   }
@@ -148,14 +193,16 @@ export function createMediaSessionSentinel(
       playPendingOrSucceeded = false
       const audio = element
       element = null
-      if (!audio) return
       try {
-        audio.pause()
-        audio.removeAttribute('src')
-        audio.load()
+        if (audio) {
+          audio.pause()
+          audio.removeAttribute('src')
+          audio.load()
+        }
       } catch (error) {
         report(error)
       }
+      releaseObjectUrl()
     }
   }
 }
