@@ -161,6 +161,7 @@
 | **Windows 10 / 11** | `*-setup.exe` | 下载后直接运行安装向导，选择安装目录即可完成安装与桌面快捷方式创建。 |
 | **macOS** | `*-mac-arm64.dmg` (Apple 芯片)<br />`*-mac-x64.dmg` (Intel 芯片) | 拖入 Applications 即可。首次打开如遇系统提示，可右键应用选择「打开」，或在终端运行 `xattr -dr com.apple.quarantine /Applications/TwilightEcho.app`。 |
 | **Linux (x64)** | `*.AppImage` / `*.deb` / `*.rpm` / `*.tar.gz` | `.AppImage` 赋予执行权限后可直接运行；Debian/Ubuntu 推荐使用 `.deb`，Fedora/RHEL 推荐使用 `.rpm`。 |
+| **Arch Linux (AUR)** | `twilight-echo-bin` | 社区维护的二进制包，用 AUR 助手安装：`paru -S twilight-echo-bin`，或 `yay -S twilight-echo-bin`。该包重打包官方 Linux `.deb`，属非官方包；打包相关问题请到 AUR 评论区反馈。 |
 
 > macOS（CoreAudio）与 Linux（ALSA）已有实现和安装包，但尚未经过与 Windows 同等级别的发布和真实设备验证。
 
